@@ -37,9 +37,12 @@ A rule applies to a request when every selector it sets matches.
 
 A rule only ever applies to hosts your account owns: another account's rule
 never runs on your traffic, even with `match_host` `*`. A host pattern other
-than `@app` covers every host of your account that it matches, including
-hosts of your other apps. To keep a rule to one app, use `@app` or the app's
-own hostnames.
+than `@app` covers every host it matches among the apps with the same owner
+as the rule's app: a rule on one of your personal apps covers your other
+personal apps' hosts, and a rule on an organization's app covers that
+organization's apps' hosts. It never crosses between the two, although apps
+you create for an organization stay under your account. To keep a rule to one
+app, use `@app` or the app's own hostnames.
 
 A PR preview applies its production app's `@app` rules as well as its own, so
 a `jwt`, `ip`, `geo`, `waf` or `challenge` rule on production also gates the
@@ -219,8 +222,15 @@ keep refusing in a penalty box for the whole app; see
 ```
 
 The matched request is served by `target_app_slug`, which must be an app of
-the same account. The path is unchanged; add a `rewrite` rule to change it.
+the same account and owner: one of your personal apps for a rule on a personal
+app, or an app of the same organization for a rule on an organization's app.
+The path is unchanged; add a `rewrite` rule to change it.
 Renaming the target app updates the route rules that name it.
+
+The rest of a routed request runs as the target app's: its `@app` rules
+apply, and the source app's `@app` rules do not. Rules written for the host
+itself (an exact host, `*` or a glob) still apply. To gate routed paths too,
+put the gate on the host, or on the target app's `@app`.
 
 ### rewrite
 
@@ -272,7 +282,10 @@ expanded value is capped at 1 KiB and loses control characters.
 letter case; a rule that names one is rejected. The client address that IP,
 `geo`, `throttle` and `challenge` rules use, and that your app receives in
 `X-Faas-Client-Ip` and `X-Real-IP`, is the one the request arrived with,
-whatever a `headers` rule does. Request headers are changed before authentication. Use `set`, not
+whatever a `headers` rule does. A `Set-Cookie` value, here or in a
+`redirect` rule's headers, loses a `Domain` attribute that names the shared
+apps or platform domain, as your app's own cookies do, so the cookie stays
+with the host that set it; your custom domain's `Domain` is kept. Request headers are changed before authentication. Use `set`, not
 `add`, for a header your app relies on, so a client cannot supply its own
 value alongside it. For common security headers,
 [Security headers on your app](security#security-headers-on-your-app) sets a

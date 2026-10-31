@@ -196,7 +196,7 @@ that throws (the runner answers 500), any other 5xx, a timeout, and a handler
 that answers `408` or `429`. Any other 4xx means the handler refused the
 event, so it is not retried but moves straight to the dead-letter queue, where
 you can replay it after a fix
-([ADR 20261031100000](adr/20261031100000-event-delivery-failures.md)). Retries
+([ADR 20261031100001](adr/20261031100001-event-delivery-failures.md)). Retries
 are paced by the app's `retry_policy` in `gregale.yaml` when it sets one,
 waiting at most 5 minutes between attempts, otherwise 5 seconds
 doubling to 5 minutes, with ±20 % jitter. The plan limits the attempts (3 on
@@ -225,6 +225,37 @@ choose the idempotency key explicitly. The flag-based form remains supported:
 gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
+
+### Subscription limits and removal
+
+On a production deploy, the `event_triggers` in `gregale.yaml` are the app's
+whole set of event subscriptions
+([ADR 20261031130000](adr/20261031130000-event-subscription-reconcile.md)):
+
+- A trigger you remove is disabled. Events not yet routed to it are not
+  delivered; their receipts show it as filtered. Deliveries that already
+  started finish.
+- Changing a trigger's filter replaces its subscription; the old filter stops
+  delivering.
+- Declaring a trigger again re-enables the same subscription, with its
+  history and controls.
+- A deploy whose `gregale.yaml` has no `event_triggers` disables them all. A
+  deploy without a `gregale.yaml`, a stage deploy and `gregale deploy
+  --no-triggers` leave subscriptions as they are.
+
+Each plan caps the enabled subscriptions per app and per account:
+
+| Plan | Per app | Per account |
+|---|---:|---:|
+| Free | 0 | 0 |
+| Hobby | 5 | 10 |
+| Pro | 20 | 50 |
+| Scale | 100 | 500 |
+
+A deploy that would go past a cap is refused with `403
+plan_event_subscription_quota`, naming the limit and the count it would have
+reached, and changes nothing. Numbers in filters are kept exactly, so a filter
+on an integer ID larger than 2^53 matches only that ID.
 
 ### Delivery identity
 

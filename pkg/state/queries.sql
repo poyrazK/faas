@@ -1367,6 +1367,15 @@ update custom_domains set verified_at = now() where domain = $1;
 -- name: DeleteCustomDomain :exec
 delete from custom_domains where domain = $1;
 
+-- name: ListSoonestExpiringCustomDomainCerts :many
+-- Verified custom domains whose edge certificate the domain doctor observed,
+-- soonest expiry first: the source of the certificate-expiry alerts.
+select domain::text as domain, cert_expires_at::timestamptz as cert_expires_at
+from custom_domains
+where verified_at is not null and cert_expires_at is not null
+order by cert_expires_at, domain
+limit $1;
+
 -- name: CreateCron :one
 insert into crons (id, app_id, schedule, path, enabled, timezone, skip_if_running)
 values (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
@@ -1504,6 +1513,36 @@ returning id, account_id, app_id, source, type, filter, enabled,
 -- name: DeleteEventSubscription :exec
 delete from event_subscriptions
 where id = $1 and account_id = $2 and app_id = $3;
+
+-- name: SetEventSubscriptionEnabled :execrows
+-- ADR-20261031130000: a deploy disables the subscriptions its manifest no
+-- longer declares; rolling the deploy back enables them again.
+update event_subscriptions set enabled = sqlc.arg(enabled)::boolean, updated_at = now()
+where id = sqlc.arg(id)::uuid and account_id = sqlc.arg(account_id)::uuid
+  and app_id = sqlc.arg(app_id)::uuid;
+
+-- name: CountEnabledEventSubscriptionsForQuota :one
+-- ADR-20261031130000: the enabled subscriptions of one app and of every app
+-- sharing its billing subject (the cron quota subject).
+with target as (
+  select (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) as subject
+  from apps a left join orgs o on o.id = a.org_id
+  where a.id = sqlc.arg(app_id)::uuid
+)
+select (count(*) filter (where s.app_id = sqlc.arg(app_id)::uuid))::int as app_count,
+       count(*)::int as account_count
+from target t
+join apps a on (a.account_id = t.subject or a.org_id = t.subject) and a.status <> 'deleted'
+left join orgs o on o.id = a.org_id
+join event_subscriptions s on s.app_id = a.id and s.enabled
+where (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) = t.subject;
+
+-- name: EventRoutingSubscriptionEnabled :one
+-- ADR-20261031130000: routing admits a recipient only while its subscription
+-- is still enabled.
+select enabled from event_subscriptions
+where id = sqlc.arg(id)::uuid and account_id = sqlc.arg(account_id)::uuid
+  and app_id = sqlc.arg(app_id)::uuid;
 
 -- name: ListEventsByWakeID :many
 -- issue #517 / PR-C / ADR-064 — wake-timeline read-side query.
@@ -26400,7 +26439,7 @@ FROM apps a WHERE a.id=s.app_id AND a.account_id=s.account_id AND a.status<>'del
 AND s.id=sqlc.arg(subscription_id)::uuid AND s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid;
 
 -- name: EventAckInvocationLock :one
-SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved,coalesce(i.async_quota_subject_id,i.account_id) AS quota_subject_id FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.id=sqlc.arg(invocation_id)::uuid AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted' FOR UPDATE OF i;
 
 -- name: EventAckGet :one
@@ -26423,7 +26462,7 @@ RETURNING i.lease_expires_at;
 SELECT clock_timestamp()::timestamptz;
 
 -- name: EventAckExpired :many
-SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,coalesce(i.async_quota_subject_id,i.account_id) AS quota_subject_id,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
 WHERE i.state='dispatching' AND a.phase='awaiting' AND i.lease_expires_at<=clock_timestamp()
 ORDER BY i.lease_expires_at,i.id LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE OF i SKIP LOCKED;
 

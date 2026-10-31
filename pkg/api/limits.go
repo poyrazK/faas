@@ -1297,6 +1297,19 @@ const ReleaseGateAIMaxIncreaseMin = 1
 const ReleaseGateAIMaxIncreaseMax = 1000
 const ReleaseGateAIDefaultMaxIncrease = 50
 
+// Synthetic and metric_change gates (ADR-20261022082305). A synthetic gate
+// allows ReleaseGateDefaultMaxFailurePercent failed probes by default and is
+// judged after ReleaseGateDefaultSyntheticMinSamples probes of the
+// candidate; each probe round sends a gate's check
+// ReleaseGateSyntheticProbesPerRound times to the candidate and to the
+// stable revision. A metric_change gate allows its metric to move at most
+// ReleaseGateMaxChangePercentMax percent. Plan-independent: gates judge
+// releases, they do not meter anything.
+const ReleaseGateDefaultMaxFailurePercent = 10
+const ReleaseGateDefaultSyntheticMinSamples = 6
+const ReleaseGateSyntheticProbesPerRound = 2
+const ReleaseGateMaxChangePercentMax = 1000
+
 // Release approvals (ADR-20261020085706). A policy requires 1 to
 // ReleaseApprovalsRequiredMax approvals, waits in canary stage 1 to
 // ReleaseApprovalStageMax, and aborts a release that waited longer than its
@@ -1323,6 +1336,10 @@ const ReleaseApprovalNotifyRetryBase = time.Minute
 // build's SBOM.
 const ReleaseDiffPackagesMax = 100
 const ReleaseDiffSBOMMaxBytes = 16 << 20
+
+// A release timeline (ADR-20261022120744) reads at most
+// ReleaseTimelineAuditRowsMax of the release's newest audit rows.
+const ReleaseTimelineAuditRowsMax = 500
 
 // Scheduled releases (ADR-20261021152201). A release may be scheduled at
 // most ScheduledReleaseMaxAhead ahead, and up to ScheduledReleasePastSkew in
@@ -3372,6 +3389,16 @@ const (
 	MaxObjectStorageAccountLimiters       = 10_000
 )
 
+// ObjectStorageEgressPerIncludedByte sizes every plan's monthly egress
+// ceiling from its included storage (ADR-20261031122757). The ceiling is a
+// limit, not a meter: egress stays unpriced, and it bounds what a
+// traffic-heavy account costs the gateways that carry its bytes.
+const ObjectStorageEgressPerIncludedByte = 10
+
+// ObjectStorageLimitsDocsURL documents the object-storage limits an error
+// names.
+const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/docs/object-storage.md#limits"
+
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
@@ -3432,8 +3459,10 @@ type Limits struct {
 	Profiling    ProfilingLimits
 	EventStorage EventStorageLimits
 	// ObjectStorage is the plan's object-storage ceilings and allowances
-	// (ADR-1320). Plans include stored bytes per ADR-1430; request and egress
-	// allowances wait for exporters that classify reads and writes.
+	// (ADR-1320). Plans include stored bytes per ADR-1430 and cap monthly
+	// egress at ObjectStorageEgressPerIncludedByte times that, unpriced
+	// (ADR-20261031122757); request and egress allowances wait for exporters
+	// that classify reads and writes.
 	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
 	EventPublish    EventPublishLimits
@@ -3890,6 +3919,16 @@ type Limits struct {
 	// pkg/state.PgStore.CreateCronIfUnderQuota.
 	CronLimitPerApp     int
 	CronLimitPerAccount int
+
+	// EventSubscriptionsPerApp and EventSubscriptionsPerAccount cap the
+	// enabled event subscriptions (gregale.yaml event_triggers) of one app
+	// and of all apps sharing a billing subject (ADR-20261031130000). Every
+	// publish is matched against each enabled subscription of its account,
+	// so the count bounds the routing work one event can cause. Enforced
+	// under the cron quota subject lock in
+	// pkg/state.PgStore.UpsertEventSubscriptionWithinLimits.
+	EventSubscriptionsPerApp     int
+	EventSubscriptionsPerAccount int
 
 	// QueueControlsAllowed (ADR-124 deployment queue controls)
 	// gates the reorder + deploy-immediately surface (Free =
@@ -5080,8 +5119,9 @@ var planLimits = map[Plan]Limits{
 		RequestBudgetMaxMs:    30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       20,
-		// ADR-1430: 1 GiB included and Free's hard stop.
-		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, IncludedBytes: 1 << 30},
+		// ADR-1430: 1 GiB included and Free's hard stop; egress capped at
+		// ten times that (ADR-20261031122757).
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
@@ -5137,8 +5177,10 @@ var planLimits = map[Plan]Limits{
 		// invoke). Handler returns 402 ErrPlanCronsNotAllowed before
 		// the store is touched; the 0/0 here is a defence-in-depth
 		// value the store still reads.
-		CronLimitPerApp:     0,
-		CronLimitPerAccount: 0,
+		CronLimitPerApp:              0,
+		CronLimitPerAccount:          0,
+		EventSubscriptionsPerApp:     0,
+		EventSubscriptionsPerAccount: 0,
 		// M-2 / ADR-137+138: Free stays request-only — same
 		// posture as sidecars (ADR-069). Defaults are tight so
 		// a stray async deploy stays bounded; per-mode replica
@@ -5488,7 +5530,8 @@ var planLimits = map[Plan]Limits{
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
-		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 10 << 30},
+		// Egress capped at ten times the included storage (ADR-20261031122757).
+		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -5576,8 +5619,10 @@ var planLimits = map[Plan]Limits{
 		// budget that absorbs ~2 Hobby-tier apps (10). Tracks the
 		// Hobby apps cap (5) with headroom for the cron-example
 		// template's tutorials.
-		CronLimitPerApp:     5,
-		CronLimitPerAccount: 10,
+		CronLimitPerApp:              5,
+		CronLimitPerAccount:          10,
+		EventSubscriptionsPerApp:     5,
+		EventSubscriptionsPerAccount: 10,
 		// M-2 / ADR-137+138: Hobby gets the documented 30 s
 		// StopGracePeriod default + 30 s StartupDeadline default
 		// (ADR-138 §Decision 4 / §Decision 5). Hobby unlocks
@@ -5925,7 +5970,8 @@ var planLimits = map[Plan]Limits{
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
-		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 50 << 30},
+		// Egress capped at ten times the included storage (ADR-20261031122757).
+		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -6014,8 +6060,10 @@ var planLimits = map[Plan]Limits{
 		// ceiling is 4× Hobby (5→20); the per-account ceiling is 5×
 		// Hobby (10→50) — slightly steeper because Pro customers
 		// run more apps (25) than Hobby (5).
-		CronLimitPerApp:     20,
-		CronLimitPerAccount: 50,
+		CronLimitPerApp:              20,
+		CronLimitPerAccount:          50,
+		EventSubscriptionsPerApp:     20,
+		EventSubscriptionsPerAccount: 50,
 		// M-2 / ADR-137+138: Pro doubles Hobby's defaults
 		// (ADR-138 §Decision 4 / §Decision 5). Replica caps
 		// scale to a meaningful production fan-out (3 workers,
@@ -6327,7 +6375,8 @@ var planLimits = map[Plan]Limits{
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
-		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 200 << 30},
+		// Egress capped at ten times the included storage (ADR-20261031122757).
+		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -6425,8 +6474,10 @@ var planLimits = map[Plan]Limits{
 		// per-app ceiling (20→100) and 10× Pro's per-account ceiling
 		// (50→500); the per-account figure absorbs 5× Scale-tier apps
 		// at the per-app cap, the typical SaaS fan-out.
-		CronLimitPerApp:     100,
-		CronLimitPerAccount: 500,
+		CronLimitPerApp:              100,
+		CronLimitPerAccount:          500,
+		EventSubscriptionsPerApp:     100,
+		EventSubscriptionsPerAccount: 500,
 		// M-2 / ADR-137+138: Scale doubles Pro (ADR-138
 		// §Decision 4 / §Decision 5). Replica caps land where
 		// a single Scale customer can host a small SaaS
@@ -6847,6 +6898,22 @@ const (
 	// the same capacity as 1 h in the ADR's simulation while holding fewer
 	// resident VMs.
 	FrozenTTLSeconds = 600
+	// FrozenChargeFloorMB is a frozen instance's charge floor in place of
+	// MeasuredChargeFloorMB (ADR 20261031143521): a paused VM cannot grow and
+	// a thaw re-admits its full reservation. See FrozenChargeMB.
+	FrozenChargeFloorMB = 8
+	// Proactive compression (ADR 20261031143521). On a node whose admission
+	// usage reaches FrozenCompressHighWaterPercent of its ceiling, schedd
+	// compresses frozen VMs frozen at least FrozenCompressMinAgeSeconds,
+	// longest frozen first, at most FrozenCompressPerNodePerTick per reaper
+	// tick, until the charges it freed bring the node under
+	// FrozenCompressLowWaterPercent. A node whose vmmd cannot compress (no
+	// zswap) is not asked again for FrozenCompressUnavailableBackoffSeconds.
+	FrozenCompressHighWaterPercent          = 85
+	FrozenCompressLowWaterPercent           = 75
+	FrozenCompressMinAgeSeconds             = 60
+	FrozenCompressPerNodePerTick            = 4
+	FrozenCompressUnavailableBackoffSeconds = 600
 	// FrozenEarlyFreezeMinSeconds and FrozenEarlyFreezeMaxSeconds bound
 	// schedd's frozen_tier_early_freeze_after_s (ADR-20261021215353): at
 	// least the 2 s quiet pause, and well inside the shortest app idle
@@ -8221,6 +8288,14 @@ const (
 	// from several Prometheus replicas inside the same scrape interval.
 	CustomMetricExportCacheSeconds = 15
 
+	// CustomDomainCertExpiryExportMaxHosts caps the per-host certificate
+	// expiry series apid exports: the soonest-expiring verified domains,
+	// which are the ones an alert can be about (bug hunt 32 M6).
+	CustomDomainCertExpiryExportMaxHosts = 100
+	// CustomDomainCertExpiryExportCacheSeconds reuses one store read across
+	// scrapes; the doctor refreshes expiries every 30 s at most.
+	CustomDomainCertExpiryExportCacheSeconds = 60
+
 	// CustomMetricSeriesDefaultRange is the history window when ?range= is
 	// omitted (ADR-745).
 	CustomMetricSeriesDefaultRange = "24h"
@@ -9233,6 +9308,14 @@ const (
 	// AgentWaitPauseAfterMaxMillis bounds the model-wait pause delay a run
 	// spec may carry (ADR-20261027090012 §1).
 	AgentWaitPauseAfterMaxMillis = 60_000
+	// AgentRunUsageFloorMB is the private memory an unpaused second of an
+	// agent run counts at when it uses less (ADR-20261027090011 floor,
+	// proposed; open questions 2 and 3). vmmd's usage record applies it to
+	// billable_mb_ms; nothing bills that yet (rollout step 2).
+	AgentRunUsageFloorMB = 256
+	// AgentRunUsageSampleMillis is how often vmmd samples an agent run VM's
+	// private memory (ADR-20261027090011 Measurement).
+	AgentRunUsageSampleMillis = 1000
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2

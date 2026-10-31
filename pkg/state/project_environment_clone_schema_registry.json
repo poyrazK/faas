@@ -1713,12 +1713,15 @@
       "id",
       "kind",
       "max_burn_rate",
+      "max_change_percent",
+      "max_failure_percent",
       "max_new_groups",
       "metric_name",
       "min_events",
       "min_samples",
       "name",
       "slo_id",
+      "synthetic_check_id",
       "threshold"
     ],
     "kind": "configuration",
@@ -16866,6 +16869,18 @@
     "kind": "operational"
   },
   {
+    "table": "release_gate_probe_results",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "failures",
+      "gate_id",
+      "requests",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "release_secret_key_retirement_fence",
     "columns": [
       "generation",
@@ -19493,6 +19508,25 @@
       "log_truncated",
       "result",
       "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_usage",
+    "columns": [
+      "account_id",
+      "billable_mb_ms",
+      "cold_boot",
+      "expected_samples",
+      "measured_ms",
+      "method",
+      "paused_ms",
+      "peak_private_mb",
+      "private_mb_ms",
+      "recorded_at",
+      "run_id",
+      "samples",
+      "unpaused_private_mb_ms"
     ],
     "kind": "operational"
   },

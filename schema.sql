@@ -28877,6 +28877,43 @@ COMMENT ON TABLE public.agent_run_outputs IS 'ADR-20261027090010 agent run outpu
 
 
 --
+-- Name: agent_run_usage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_usage (
+    run_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    method smallint NOT NULL,
+    samples integer NOT NULL,
+    expected_samples integer NOT NULL,
+    measured_ms bigint NOT NULL,
+    paused_ms bigint NOT NULL,
+    private_mb_ms bigint NOT NULL,
+    unpaused_private_mb_ms bigint NOT NULL,
+    billable_mb_ms bigint NOT NULL,
+    peak_private_mb bigint NOT NULL,
+    cold_boot boolean NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_run_usage_billable_mb_ms_check CHECK ((billable_mb_ms >= 0)),
+    CONSTRAINT agent_run_usage_check CHECK ((expected_samples >= samples)),
+    CONSTRAINT agent_run_usage_check1 CHECK (((paused_ms >= 0) AND (paused_ms <= measured_ms))),
+    CONSTRAINT agent_run_usage_check2 CHECK (((unpaused_private_mb_ms >= 0) AND (unpaused_private_mb_ms <= private_mb_ms))),
+    CONSTRAINT agent_run_usage_measured_ms_check CHECK ((measured_ms >= 0)),
+    CONSTRAINT agent_run_usage_method_check CHECK ((method >= 1)),
+    CONSTRAINT agent_run_usage_peak_private_mb_check CHECK ((peak_private_mb >= 0)),
+    CONSTRAINT agent_run_usage_private_mb_ms_check CHECK ((private_mb_ms >= 0)),
+    CONSTRAINT agent_run_usage_samples_check CHECK ((samples >= 0))
+);
+
+
+--
+-- Name: TABLE agent_run_usage; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_usage IS 'ADR-20261027090011 measured private memory of agent run VMs, written by agentd from vmmd''s usage frame; not billed yet.';
+
+
+--
 -- Name: agent_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30843,19 +30880,23 @@ CREATE TABLE public.app_release_gates (
     min_samples integer NOT NULL,
     created_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    synthetic_check_id uuid,
+    max_failure_percent integer,
+    max_change_percent integer,
     CONSTRAINT app_release_gates_ai_check CHECK (((kind <> 'ai'::text) OR ((metric_name = ANY (ARRAY['error_rate'::text, 'flagged_rate'::text, 'cost_per_call'::text, 'ttfb_ms'::text])) AND (threshold IS NOT NULL) AND ((threshold >= (1)::double precision) AND (threshold <= (1000)::double precision)) AND (comparison IS NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL)))),
     CONSTRAINT app_release_gates_check CHECK (((kind <> 'slo'::text) OR ((slo_id IS NOT NULL) AND (max_burn_rate IS NOT NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
     CONSTRAINT app_release_gates_check1 CHECK (((kind <> 'new_errors'::text) OR ((max_new_groups IS NOT NULL) AND (min_events IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
     CONSTRAINT app_release_gates_check2 CHECK (((kind <> 'custom_metric'::text) OR ((metric_name IS NOT NULL) AND (comparison IS NOT NULL) AND (threshold IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL)))),
     CONSTRAINT app_release_gates_comparison_check CHECK (((comparison IS NULL) OR (comparison = ANY (ARRAY['below'::text, 'above'::text])))),
     CONSTRAINT app_release_gates_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 320))),
-    CONSTRAINT app_release_gates_kind_check CHECK ((kind = ANY (ARRAY['slo'::text, 'new_errors'::text, 'custom_metric'::text, 'ai'::text]))),
+    CONSTRAINT app_release_gates_kind_check CHECK ((kind = ANY (ARRAY['slo'::text, 'new_errors'::text, 'custom_metric'::text, 'ai'::text, 'synthetic'::text, 'metric_change'::text]))),
     CONSTRAINT app_release_gates_max_burn_rate_check CHECK (((max_burn_rate IS NULL) OR ((max_burn_rate >= 1) AND (max_burn_rate <= 1000)))),
     CONSTRAINT app_release_gates_max_new_groups_check CHECK (((max_new_groups IS NULL) OR ((max_new_groups >= 0) AND (max_new_groups <= 100)))),
     CONSTRAINT app_release_gates_metric_name_check CHECK (((metric_name IS NULL) OR (metric_name ~ '^[a-z][a-z0-9_]{0,62}$'::text))),
     CONSTRAINT app_release_gates_min_events_check CHECK (((min_events IS NULL) OR ((min_events >= 1) AND (min_events <= 100000)))),
     CONSTRAINT app_release_gates_min_samples_check CHECK (((min_samples >= 1) AND (min_samples <= 1000000))),
     CONSTRAINT app_release_gates_name_check CHECK ((name ~ '^[a-z][a-z0-9_-]{0,62}$'::text)),
+    CONSTRAINT app_release_gates_probe_change_chk CHECK ((((kind = 'synthetic'::text) = (synthetic_check_id IS NOT NULL)) AND ((kind = 'synthetic'::text) = (max_failure_percent IS NOT NULL)) AND ((kind = 'metric_change'::text) = (max_change_percent IS NOT NULL)) AND ((kind <> 'synthetic'::text) OR ((slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL))) AND ((kind <> 'metric_change'::text) OR ((metric_name IS NOT NULL) AND (comparison IS NOT NULL) AND (threshold IS NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL))) AND ((max_failure_percent IS NULL) OR ((max_failure_percent >= 0) AND (max_failure_percent <= 100))) AND ((max_change_percent IS NULL) OR ((max_change_percent >= 1) AND (max_change_percent <= 1000))))),
     CONSTRAINT app_release_gates_threshold_check CHECK (((threshold IS NULL) OR ((threshold = threshold) AND (threshold > '-Infinity'::double precision) AND (threshold < 'Infinity'::double precision))))
 );
 
@@ -52860,6 +52901,23 @@ CREATE TABLE public.release_freezes (
 
 
 --
+-- Name: release_gate_probe_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_gate_probe_results (
+    gate_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    requests integer NOT NULL,
+    failures integer NOT NULL,
+    CONSTRAINT release_gate_probe_results_check CHECK (((failures >= 0) AND (failures <= requests))),
+    CONSTRAINT release_gate_probe_results_requests_check CHECK (((requests >= 1) AND (requests <= 10000))),
+    CONSTRAINT release_gate_probe_results_window_start_check CHECK ((date_trunc('minute'::text, window_start) = window_start))
+);
+
+
+--
 -- Name: release_secret_key_retirement_fence; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56890,6 +56948,14 @@ ALTER TABLE ONLY public.agent_run_ai_spend
 
 ALTER TABLE ONLY public.agent_run_outputs
     ADD CONSTRAINT agent_run_outputs_pkey PRIMARY KEY (run_id);
+
+
+--
+-- Name: agent_run_usage agent_run_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_usage
+    ADD CONSTRAINT agent_run_usage_pkey PRIMARY KEY (run_id);
 
 
 --
@@ -67493,6 +67559,14 @@ ALTER TABLE ONLY public.release_freezes
 
 
 --
+-- Name: release_gate_probe_results release_gate_probe_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_gate_probe_results
+    ADD CONSTRAINT release_gate_probe_results_pkey PRIMARY KEY (gate_id, deployment_id, window_start);
+
+
+--
 -- Name: release_secret_key_retirement_fence release_secret_key_retirement_fence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69323,6 +69397,13 @@ CREATE INDEX agent_run_outputs_account_idx ON public.agent_run_outputs USING btr
 
 
 --
+-- Name: agent_run_usage_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_run_usage_account_idx ON public.agent_run_usage USING btree (account_id, recorded_at DESC);
+
+
+--
 -- Name: agent_runs_account_queued_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -69971,6 +70052,13 @@ CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credent
 --
 
 CREATE INDEX app_release_gates_slo ON public.app_release_gates USING btree (slo_id) WHERE (slo_id IS NOT NULL);
+
+
+--
+-- Name: app_release_gates_synthetic_check; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_release_gates_synthetic_check ON public.app_release_gates USING btree (synthetic_check_id) WHERE (synthetic_check_id IS NOT NULL);
 
 
 --
@@ -77892,6 +77980,13 @@ CREATE INDEX release_freezes_org_unlifted ON public.release_freezes USING btree 
 --
 
 CREATE INDEX release_freezes_unlifted ON public.release_freezes USING btree (account_id, created_at, id) WHERE (lifted_at IS NULL);
+
+
+--
+-- Name: release_gate_probe_results_window; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_gate_probe_results_window ON public.release_gate_probe_results USING btree (window_start);
 
 
 --
@@ -86645,6 +86740,22 @@ ALTER TABLE ONLY public.agent_run_outputs
 
 
 --
+-- Name: agent_run_usage agent_run_usage_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_usage
+    ADD CONSTRAINT agent_run_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_usage agent_run_usage_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_usage
+    ADD CONSTRAINT agent_run_usage_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: agent_runs agent_runs_agent_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -88010,6 +88121,14 @@ ALTER TABLE ONLY public.app_release_gates
 
 ALTER TABLE ONLY public.app_release_gates
     ADD CONSTRAINT app_release_gates_slo_id_fkey FOREIGN KEY (slo_id) REFERENCES public.app_slos(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_release_gates app_release_gates_synthetic_check_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_gates
+    ADD CONSTRAINT app_release_gates_synthetic_check_id_fkey FOREIGN KEY (synthetic_check_id) REFERENCES public.synthetic_checks(id) ON DELETE CASCADE;
 
 
 --
@@ -99946,6 +100065,30 @@ ALTER TABLE ONLY public.release_freezes
 
 ALTER TABLE ONLY public.release_freezes
     ADD CONSTRAINT release_freezes_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_gate_probe_results release_gate_probe_results_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_gate_probe_results
+    ADD CONSTRAINT release_gate_probe_results_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_gate_probe_results release_gate_probe_results_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_gate_probe_results
+    ADD CONSTRAINT release_gate_probe_results_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_gate_probe_results release_gate_probe_results_gate_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_gate_probe_results
+    ADD CONSTRAINT release_gate_probe_results_gate_id_fkey FOREIGN KEY (gate_id) REFERENCES public.app_release_gates(id) ON DELETE CASCADE;
 
 
 --

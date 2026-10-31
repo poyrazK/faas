@@ -1,0 +1,1188 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
+import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
+import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
+import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
+import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
+import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
+import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgresComputePolicyChange.js';
+import type { ManagedPostgresConnectionBudget } from '../models/ManagedPostgresConnectionBudget.js';
+import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
+import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
+import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
+import type { Problem } from '../models/Problem.js';
+import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
+import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
+import type { CancelablePromise } from '../../generated/core/CancelablePromise.js';
+import { OpenAPI } from '../../generated/core/OpenAPI.js';
+import { request as __request } from '../../generated/core/request.js';
+export class ManagedPostgresService {
+  /**
+   * Show plan and region PostgreSQL feature support
+   * Returns configured provider-neutral support after plan limits without provider calls. provisioning_enabled includes qualification and canary gates. Current usage, budget, and quota admission are checked separately at reservation. Existing databases remain pinned to their original backend.
+   * @returns ManagedPostgresCapabilities Effective regional capability contract
+   * @returns Problem Authentication or capability lookup error
+   * @throws ApiError
+   */
+  public static getManagedPostgresCapabilities({
+    region,
+  }: {
+    /**
+     * Portable region name; defaults to the configured region.
+     */
+    region?: string,
+  }): CancelablePromise<ManagedPostgresCapabilities | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/capabilities',
+      query: {
+        'region': region,
+      },
+    });
+  }
+  /**
+   * List managed PostgreSQL databases
+   * @returns ManagedPostgresDatabaseList Account databases
+   * @returns Problem Authentication or database listing error
+   * @throws ApiError
+   */
+  public static listManagedPostgresDatabases(): CancelablePromise<ManagedPostgresDatabaseList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases',
+    });
+  }
+  /**
+   * Create a managed PostgreSQL database
+   * @returns Problem Invalid request, plan limit, or provider unavailable
+   * @returns ManagedPostgresDatabase Database accepted or ready
+   * @throws ApiError
+   */
+  public static createManagedPostgresDatabase({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: CreateManagedPostgresDatabaseRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresDatabase> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get managed PostgreSQL database status
+   * @returns ManagedPostgresDatabase Database status without provider credentials
+   * @returns Problem Authentication or database status error
+   * @throws ApiError
+   */
+  public static getManagedPostgresDatabase({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Delete a managed PostgreSQL database
+   * A ready database is kept for 7 days with its compute stopped and its connections refused, and can be undeleted until restorable_until. It still counts toward the plan's database limit and keeps its name until it is purged. Any other database, or a delete with purge=true, is deleted at once. Bindings and restore dependencies must be removed first.
+   * @returns ManagedPostgresDatabase Database deletion status
+   * @returns Problem Authentication or database deletion error
+   * @throws ApiError
+   */
+  public static deleteManagedPostgresDatabase({
+    id,
+    idempotencyKey,
+    purge = false,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    /**
+     * true deletes the database at once, including one already scheduled for deletion. It cannot be undone.
+     */
+    purge?: boolean,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/postgres/databases/{id}',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'purge': purge,
+      },
+    });
+  }
+  /**
+   * Undelete a managed PostgreSQL database
+   * Returns a database whose delete is scheduled to ready, with its data, spec and restore history, while restorable_until is in the future. The plan must still allow the database's spec. After the window the database is gone and the request returns 404.
+   * @returns ManagedPostgresDatabase Database returned to ready
+   * @returns Problem Window ended, database not scheduled for deletion, plan limit, or provider error
+   * @throws ApiError
+   */
+  public static undeleteManagedPostgresDatabase({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/undelete',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+    });
+  }
+  /**
+   * Read managed PostgreSQL usage and guardrail state
+   * Requires usage read scope. Returns normalized current-month meters,
+   * plan headroom, and freshness state. Provider IDs, rates, credentials,
+   * and internal cost line items are never returned.
+   *
+   * @returns ManagedPostgresUsageResponse Current managed PostgreSQL usage; Cache-Control no-store
+   * @returns Problem Authentication or managed PostgreSQL accounting error
+   * @throws ApiError
+   */
+  public static getManagedPostgresUsage(): CancelablePromise<ManagedPostgresUsageResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/managed-postgres-usage',
+    });
+  }
+  /**
+   * Change managed PostgreSQL scale-to-zero policy
+   * Durably reserves a scale-to-zero policy change on the pinned dataset. Clients may disconnect during the policy change. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute idle policy changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+   * @returns Problem Compute policy validation, concurrency, entitlement or provider admission failure
+   * @returns ManagedPostgresComputePolicyChange Accepted policy change or current progress for an existing request
+   * @throws ApiError
+   */
+  public static changeManagedPostgresComputePolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ChangeManagedPostgresComputePolicyRequest,
+  }): CancelablePromise<Problem | ManagedPostgresComputePolicyChange> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/compute-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get managed PostgreSQL compute policy progress
+   * Reads a durable compute policy request for the authenticated account and database. Responses are not cached and omit private provider identity.
+   * @returns ManagedPostgresComputePolicyChange Account and database scoped compute policy progress
+   * @returns Problem Authentication or policy lookup error
+   * @throws ApiError
+   */
+  public static getManagedPostgresComputePolicyChange({
+    id,
+    changeId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Canonical UUID supplied as request_id when reserving this policy change.
+     */
+    changeId: string,
+  }): CancelablePromise<ManagedPostgresComputePolicyChange | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/compute-policy-changes/{change_id}',
+      path: {
+        'id': id,
+        'change_id': changeId,
+      },
+    });
+  }
+  /**
+   * Resize managed PostgreSQL compute
+   * Durably reserves a service-class change on the pinned dataset. Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute class changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+   * @returns Problem Invalid request, conflict, plan limit or backend unavailable
+   * @returns ManagedPostgresResize Accepted resize or current progress for an existing request
+   * @throws ApiError
+   */
+  public static resizeManagedPostgresDatabase({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ResizeManagedPostgresDatabaseRequest,
+  }): CancelablePromise<Problem | ManagedPostgresResize> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/resize',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get managed PostgreSQL resize progress
+   * Reads a durable resize request for the authenticated account and database. Responses are not cached and omit private provider identity.
+   * @returns ManagedPostgresResize Account and database scoped resize progress
+   * @returns Problem Authentication or resize lookup error
+   * @throws ApiError
+   */
+  public static getManagedPostgresResize({
+    id,
+    resizeId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Canonical UUID supplied as request_id when reserving this resize.
+     */
+    resizeId: string,
+  }): CancelablePromise<ManagedPostgresResize | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/resizes/{resize_id}',
+      path: {
+        'id': id,
+        'resize_id': resizeId,
+      },
+    });
+  }
+  /**
+   * Restore a database into a new managed PostgreSQL database
+   * @returns Problem Invalid point in time, plan limit, or provider error
+   * @returns ManagedPostgresDatabase Restore accepted or ready
+   * @throws ApiError
+   */
+  public static restoreManagedPostgresDatabase({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: RestoreManagedPostgresDatabaseRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresDatabase> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/restore',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Inspect read-only database connection planning
+   * Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL, reserve connections or change admission. Current adapters have no verified usable-capacity observation and return unknown with canonical pool estimates. Database snapshots are independent.
+   * @returns ManagedPostgresConnectionBudget Bounded credential-free planning and explicit unknown coverage
+   * @returns Problem Authentication, ownership or metadata read error
+   * @throws ApiError
+   */
+  public static getManagedPostgresConnectionBudget({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresConnectionBudget | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/connection-budget',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * List workload bindings for a database
+   * @returns ManagedPostgresBindingList Bindings without credential material
+   * @returns Problem Authentication or binding listing error
+   * @throws ApiError
+   */
+  public static listManagedPostgresBindings({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresBindingList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/bindings',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Bind a workload app to a database
+   * The selected database backend must advertise the requested credential access. Unsupported access is rejected before a durable binding is reserved or provider credentials are requested.
+   * @returns Problem Invalid request, conflict, or provider error
+   * @returns ManagedPostgresBinding Binding accepted or ready; credentials are delivered through the app secret
+   * @throws ApiError
+   */
+  public static createManagedPostgresBinding({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: CreateManagedPostgresBindingRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresBinding> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/bindings',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get a workload database binding
+   * @returns ManagedPostgresBinding Binding metadata without credential material
+   * @returns Problem Authentication or binding status error
+   * @throws ApiError
+   */
+  public static getManagedPostgresBinding({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresBinding | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/bindings/{id}',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Remove a workload database binding
+   * @returns ManagedPostgresBinding Binding deletion status
+   * @returns Problem Authentication or binding deletion error
+   * @throws ApiError
+   */
+  public static deleteManagedPostgresBinding({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ManagedPostgresBinding | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/postgres/bindings/{id}',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+    });
+  }
+  /**
+   * Rotate a workload database credential
+   * Creates a replacement credential, refreshes the app runtime, and retains the previous provider identity until the rolling refresh completes.
+   * @returns ManagedPostgresBinding Binding credential generation and rotation status
+   * @returns Problem Authentication or binding rotation error
+   * @throws ApiError
+   */
+  public static rotateManagedPostgresBinding({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ManagedPostgresBinding | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/bindings/{id}/rotate',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+    });
+  }
+  /**
+   * List the organization's managed PostgreSQL databases.
+   * Returns the company inventory across current and legacy storage namespaces. Current membership is required; personal databases are excluded.
+   * @returns ManagedPostgresDatabaseList Result of the request to list the organization's managed PostgreSQL databases.
+   * @returns Problem Problem while attempting to list the organization's managed PostgreSQL databases.
+   * @throws ApiError
+   */
+  public static listOrgManagedPostgresDatabases({
+    organization,
+  }: {
+    /**
+     * Organization selected to list the organization's managed postgresql databases.
+     */
+    organization: string,
+  }): CancelablePromise<ManagedPostgresDatabaseList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases',
+      path: {
+        'organization': organization,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Create a database owned by the organization.
+   * An owner or admin reserves the database in the company namespace. Organization billing adoption, plan allowances and the shared database quota apply before provisioning.
+   * @returns Problem Problem while attempting to create a database owned by the organization.
+   * @returns ManagedPostgresDatabase Result of the request to create a database owned by the organization.
+   * @throws ApiError
+   */
+  public static createOrgManagedPostgresDatabase({
+    organization,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Organization selected to list the organization's managed postgresql databases.
+     */
+    organization: string,
+    requestBody: CreateManagedPostgresDatabaseRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresDatabase> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases',
+      path: {
+        'organization': organization,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read PostgreSQL capabilities for the company plan.
+   * Reports qualified provider capabilities intersected with the organization's plan. Reading capabilities does not open the provisioning rollout gate.
+   * @returns ManagedPostgresCapabilities Result of the request to read PostgreSQL capabilities for the company plan.
+   * @returns Problem Problem while attempting to read PostgreSQL capabilities for the company plan.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresCapabilities({
+    organization,
+    region,
+  }: {
+    /**
+     * Organization selected to read postgresql capabilities for the company plan.
+     */
+    organization: string,
+    /**
+     * Placement region used to read postgresql capabilities for the company plan.
+     */
+    region?: string,
+  }): CancelablePromise<ManagedPostgresCapabilities | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/capabilities',
+      path: {
+        'organization': organization,
+      },
+      query: {
+        'region': region,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Inspect a company PostgreSQL database.
+   * Reads the database under its persisted organization owner. Existing resource and provider identities remain stable after the creator leaves.
+   * @returns ManagedPostgresDatabase Result of the request to inspect a company PostgreSQL database.
+   * @returns Problem Problem while attempting to inspect a company PostgreSQL database.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresDatabase({
+    organization,
+    id,
+  }: {
+    /**
+     * Organization selected to inspect a company postgresql database.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Delete a company PostgreSQL resource.
+   * An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must be removed first; accounting evidence remains available. A ready database is kept for 7 days and can be undeleted until restorable_until; purge=true deletes at once.
+   * @returns ManagedPostgresDatabase Result of the request to delete a company PostgreSQL resource.
+   * @returns Problem Problem while attempting to delete a company PostgreSQL resource.
+   * @throws ApiError
+   */
+  public static deleteOrgManagedPostgresDatabase({
+    organization,
+    id,
+    idempotencyKey,
+    purge = false,
+  }: {
+    /**
+     * Organization selected to inspect a company postgresql database.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    /**
+     * true deletes the company database at once, even during its undelete window. It cannot be undone.
+     */
+    purge?: boolean,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'purge': purge,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List the company database's app bindings.
+   * Returns app and environment binding metadata for this organization-owned database. Connection credentials remain sealed and are not included in the response.
+   * @returns ManagedPostgresBindingList Result of the request to list the company database's app bindings.
+   * @returns Problem Problem while attempting to list the company database's app bindings.
+   * @throws ApiError
+   */
+  public static listOrgManagedPostgresBindings({
+    organization,
+    id,
+  }: {
+    /**
+     * Organization selected to list the company database's app bindings.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresBindingList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/bindings',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Attach the company database to an app environment.
+   * The app and database must belong to the addressed company. Their storage namespaces may differ. Owners, admins and developers may attach bindings with the required database scope.
+   * @returns Problem Problem while attempting to attach the company database to an app environment.
+   * @returns ManagedPostgresBinding Result of the request to attach the company database to an app environment.
+   * @throws ApiError
+   */
+  public static createOrgManagedPostgresBinding({
+    organization,
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Organization selected to list the company database's app bindings.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: CreateManagedPostgresBindingRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresBinding> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/bindings',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Inspect a company database binding.
+   * Resolves ownership through the binding's database before exposing metadata. Current organization membership is required even when the binding retains a creator namespace.
+   * @returns ManagedPostgresBinding Result of the request to inspect a company database binding.
+   * @returns Problem Problem while attempting to inspect a company database binding.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresBinding({
+    organization,
+    id,
+  }: {
+    /**
+     * Organization selected to inspect a company database binding.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresBinding | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/bindings/{id}',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Detach a company database binding.
+   * Revokes the managed provider credential and removes its sealed app-secret target. Other bindings on the same company database remain usable.
+   * @returns ManagedPostgresBinding Result of the request to detach a company database binding.
+   * @returns Problem Problem while attempting to detach a company database binding.
+   * @throws ApiError
+   */
+  public static deleteOrgManagedPostgresBinding({
+    organization,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Organization selected to inspect a company database binding.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ManagedPostgresBinding | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/postgres/bindings/{id}',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read a company database resize operation.
+   * Returns progress for a durable resize UUID owned by this database and organization. Reading progress does not submit another resize.
+   * @returns ManagedPostgresResize Result of the request to read a company database resize operation.
+   * @returns Problem Problem while attempting to read a company database resize operation.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresResize({
+    organization,
+    id,
+    resizeId,
+  }: {
+    /**
+     * Organization selected to read a company database resize operation.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * UUID of the resize request whose company database progress is returned.
+     */
+    resizeId: string,
+  }): CancelablePromise<ManagedPostgresResize | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/resizes/{resize_id}',
+      path: {
+        'organization': organization,
+        'id': id,
+        'resize_id': resizeId,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read a company database compute-policy operation.
+   * Returns the durable policy change recorded for the addressed company database. The organization permission check also applies to old operation UUIDs.
+   * @returns ManagedPostgresComputePolicyChange Result of the request to read a company database compute-policy operation.
+   * @returns Problem Problem while attempting to read a company database compute-policy operation.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresComputePolicyChange({
+    organization,
+    id,
+    changeId,
+  }: {
+    /**
+     * Organization selected to read a company database compute-policy operation.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * UUID of the compute-policy change recorded for the company database.
+     */
+    changeId: string,
+  }): CancelablePromise<ManagedPostgresComputePolicyChange | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/compute-policy-changes/{change_id}',
+      path: {
+        'organization': organization,
+        'id': id,
+        'change_id': changeId,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Undelete a company PostgreSQL database.
+   * An owner or admin returns a company database whose delete is scheduled to ready while restorable_until is in the future. The company plan must still allow the database's spec.
+   * @returns ManagedPostgresDatabase Result of the request to undelete a company PostgreSQL database.
+   * @returns Problem Problem while attempting to undelete a company PostgreSQL database.
+   * @throws ApiError
+   */
+  public static undeleteOrgManagedPostgresDatabase({
+    organization,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Organization that owns the company database to undelete.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/undelete',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Restore the company database to a separate resource.
+   * An owner or admin creates a restore within the source database's organization. The company plan, restore window and aggregate database reservation quota are enforced.
+   * @returns Problem Problem while attempting to restore the company database to a separate resource.
+   * @returns ManagedPostgresDatabase Result of the request to restore the company database to a separate resource.
+   * @throws ApiError
+   */
+  public static restoreOrgManagedPostgresDatabase({
+    organization,
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Organization selected to restore the company database to a separate resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: RestoreManagedPostgresDatabaseRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresDatabase> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/restore',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Change the company database service class.
+   * An owner or admin submits a durable resize request. The requested class must fit the company plan and provider capabilities; connection interruption may occur.
+   * @returns Problem Problem while attempting to change the company database service class.
+   * @returns ManagedPostgresResize Result of the request to change the company database service class.
+   * @throws ApiError
+   */
+  public static resizeOrgManagedPostgresDatabase({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Organization selected to change the company database service class.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ResizeManagedPostgresDatabaseRequest,
+  }): CancelablePromise<Problem | ManagedPostgresResize> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/resize',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Change the company database compute policy.
+   * An owner or admin changes scale-to-zero policy with a durable request UUID. Current organization entitlements govern the request, including legacy databases.
+   * @returns Problem Problem while attempting to change the company database compute policy.
+   * @returns ManagedPostgresComputePolicyChange Result of the request to change the company database compute policy.
+   * @throws ApiError
+   */
+  public static changeOrgManagedPostgresComputePolicy({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Organization selected to change the company database compute policy.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ChangeManagedPostgresComputePolicyRequest,
+  }): CancelablePromise<Problem | ManagedPostgresComputePolicyChange> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/compute-policy',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Rotate a credential for a company app binding.
+   * An owner or admin starts the existing credential refresh protocol. The previous generation stays valid until runtime delivery completes; the binding ID is preserved.
+   * @returns ManagedPostgresBinding Result of the request to rotate a credential for a company app binding.
+   * @returns Problem Problem while attempting to rotate a credential for a company app binding.
+   * @throws ApiError
+   */
+  public static rotateOrgManagedPostgresBinding({
+    organization,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Organization selected to rotate a credential for a company app binding.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ManagedPostgresBinding | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/bindings/{id}/rotate',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read the organization's PostgreSQL usage totals.
+   * Aggregates normalized usage across company database namespaces after billing adoption. Billing seats may read these totals without receiving database names or credentials.
+   * @returns ManagedPostgresUsageResponse Result of the request to read the organization's PostgreSQL usage totals.
+   * @returns Problem Problem while attempting to read the organization's PostgreSQL usage totals.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresUsage({
+    organization,
+  }: {
+    /**
+     * Organization selected to read the organization's postgresql usage totals.
+     */
+    organization: string,
+  }): CancelablePromise<ManagedPostgresUsageResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/usage',
+      path: {
+        'organization': organization,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+}
