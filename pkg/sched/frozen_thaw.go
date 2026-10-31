@@ -125,7 +125,7 @@ type frozenCandidate struct {
 // Rows whose shape no longer matches the app, or whose node is gone, stale
 // or leaving (draining, maintenance), are parked. Each node is read once however many candidates it holds.
 func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]frozenCandidate, error) {
-	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return nil, fmt.Errorf("sched: frozen thaw: list candidates: %w", err)
 	}

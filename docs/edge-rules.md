@@ -227,6 +227,11 @@ app, or an app of the same organization for a rule on an organization's app.
 The path is unchanged; add a `rewrite` rule to change it.
 Renaming the target app updates the route rules that name it.
 
+The rest of a routed request runs as the target app's: its `@app` rules
+apply, and the source app's `@app` rules do not. Rules written for the host
+itself (an exact host, `*` or a glob) still apply. To gate routed paths too,
+put the gate on the host, or on the target app's `@app`.
+
 ### rewrite
 
 ```json

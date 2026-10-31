@@ -8281,6 +8281,14 @@ const (
 	// from several Prometheus replicas inside the same scrape interval.
 	CustomMetricExportCacheSeconds = 15
 
+	// CustomDomainCertExpiryExportMaxHosts caps the per-host certificate
+	// expiry series apid exports: the soonest-expiring verified domains,
+	// which are the ones an alert can be about (bug hunt 32 M6).
+	CustomDomainCertExpiryExportMaxHosts = 100
+	// CustomDomainCertExpiryExportCacheSeconds reuses one store read across
+	// scrapes; the doctor refreshes expiries every 30 s at most.
+	CustomDomainCertExpiryExportCacheSeconds = 60
+
 	// CustomMetricSeriesDefaultRange is the history window when ?range= is
 	// omitted (ADR-745).
 	CustomMetricSeriesDefaultRange = "24h"
