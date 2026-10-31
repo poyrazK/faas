@@ -151,7 +151,7 @@ func TestDrainDefersWorkHeldByAComputeBudget(t *testing.T) {
 		t.Fatal("harness store has no financial budgets")
 	}
 	if _, err := budgets.CreateFinancialBudget(ctx, inv.AccountID, uuid.NewString(), "test", financial.BudgetSpec{
-		Name: "compute cap", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"},
+		Name: "compute cap", Scope: financial.BudgetScope{Kind: "app", ID: inv.AppID}, Currency: "USD", Meters: []string{"compute"},
 		Basis: "gross_usage", LimitMillicents: 0, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true,
 	}); err != nil {
 		t.Fatal(err)
