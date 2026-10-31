@@ -1,4 +1,4 @@
-// adr: 049 §B.1 billing usage reconciliation.
+// adr: 049 §B.1 billing usage reconciliation; 20261031161842 receipts as the local side.
 // Package reconciler tests (ADR-049 §B.1). Pure unit tests —
 // uses stub Provider + state.MemStore so pkg/billing/reconciler
 // stays pgxpool-free. The full Store integration is exercised by
@@ -61,12 +61,13 @@ func (s *stubProvider) Capabilities() billing.CapabilitySet {
 }
 func (s *stubProvider) UsageMode() billing.UsageMode { return s.mode }
 
-// seedMemStore constructs a MemStore with one account + a row
-// of per-hour usage. MemStore.CreateAccount generates a fresh
+// seedMemStore constructs a MemStore with one account, a row of per-hour
+// usage, and a delivery receipt of delivered MB-seconds for that hour from
+// each provider (what the pusher recorded as handed over). MemStore.CreateAccount generates a fresh
 // random ID per call, so we look up the created account via
 // ListAllAccounts and use its real ID for AppendUsage. The
 // reconciler-side ListAllAccounts picks up the same ID.
-func seedMemStore(t *testing.T, label string, plan api.Plan, mbSeconds int64) (*state.MemStore, string) {
+func seedMemStore(t *testing.T, label string, plan api.Plan, mbSeconds, delivered int64) (*state.MemStore, string) {
 	t.Helper()
 	store := state.NewMemStore()
 	if _, err := store.CreateAccount(context.Background(), label+"@example.com", plan); err != nil {
@@ -97,7 +98,20 @@ func seedMemStore(t *testing.T, label string, plan api.Plan, mbSeconds int64) (*
 		mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("AppendUsage: %v", err)
 	}
+	seedDelivery(t, store, id, delivered)
 	return store, id
+}
+
+// seedDelivery records a receipt of delivered MB-seconds from every provider
+// for the last complete hour, the hour seedMemStore's usage falls in.
+func seedDelivery(t *testing.T, store *state.MemStore, id string, delivered int64) {
+	t.Helper()
+	hour := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour)
+	for _, provider := range []string{"stripe", "paddle", "polar"} {
+		if err := store.RecordBillingUsageDelivery(context.Background(), provider, id, hour, delivered); err != nil {
+			t.Fatalf("RecordBillingUsageDelivery(%s): %v", provider, err)
+		}
+	}
 }
 
 // listAcctIDs reflects over MemStore to dump the account-id set so
@@ -125,7 +139,7 @@ var _ = listAcctIDs // keep the helper exported for future tests
 // when local sum == pushed sum. This is the steady state the
 // BillingDrift alert expects to see in production.
 func TestReconciler_ZeroDriftIsHappyPath(t *testing.T) {
-	store, id := seedMemStore(t, "acct_a", api.PlanHobby, 3600)
+	store, id := seedMemStore(t, "acct_a", api.PlanHobby, 3600, 3600)
 	prov := &stubProvider{pushed: 3600, caps: billing.CapabilitySet(billing.CapUsageReconcile)}
 	rec := New("stripe", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err := rec.RunOnce(context.Background()); err != nil {
@@ -151,7 +165,7 @@ func TestReconciler_ZeroDriftIsHappyPath(t *testing.T) {
 }
 
 func TestReconciler_DisabledModeDoesNotReportFailure(t *testing.T) {
-	store, _ := seedMemStore(t, "acct_disabled", api.PlanHobby, 3600)
+	store, _ := seedMemStore(t, "acct_disabled", api.PlanHobby, 3600, 3600)
 	rec := New("stripe", store, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil).
 		WithMode(billing.ModeDisabled)
 	if err := rec.RunOnce(context.Background()); err != nil {
@@ -174,14 +188,9 @@ func TestReconciler_DisabledModeDoesNotReportFailure(t *testing.T) {
 	}
 }
 
-func TestReconciler_OverageProviderUsesNetCalendarMonthUsage(t *testing.T) {
-	store, id := seedMemStore(t, "acct_overage", api.PlanHobby, int64(api.PlanHobby.PlanIncludedGBHours()+2)*api.SecondsPerGBHour)
-	prov := &stubProvider{
-		pushed: 2 * api.SecondsPerGBHour,
-		mode:   billing.UsageModeOverage,
-		caps:   billing.CapabilitySet(billing.CapUsageReconcile),
-	}
-	rec := New("polar", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+// scrapeReconciler runs one pass and returns the scrape body.
+func scrapeReconciler(t *testing.T, rec *Reconciler) string {
+	t.Helper()
 	if err := rec.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
@@ -193,8 +202,60 @@ func TestReconciler_OverageProviderUsesNetCalendarMonthUsage(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), `meterd_billing_drift_mb_seconds{account_id="`+id+`",provider="polar"} 0`) {
-		t.Fatalf("net overage drift was not zero:\n%s", body)
+	return string(body)
+}
+
+// ADR-20261031161842: the provider is compared with what the pusher recorded
+// as delivered, not with usage. Usage the pusher correctly withheld (above
+// the spend cap every paid plan starts with, in an hour not final yet, or of
+// a suspended subject) is not drift; a delivered hour the provider lacks is.
+func TestReconciler_ComparesDeliveredNotUsage(t *testing.T) {
+	overage := int64(api.PlanHobby.PlanIncludedGBHours()+2) * api.SecondsPerGBHour
+	for _, tc := range []struct {
+		name              string
+		delivered, pushed int64
+		drift             string
+	}{
+		{name: "withheld usage", delivered: 0, pushed: 0, drift: "0"},
+		{name: "capped delivery", delivered: api.SecondsPerGBHour, pushed: api.SecondsPerGBHour, drift: "0"},
+		{name: "lost at provider", delivered: 2 * api.SecondsPerGBHour, pushed: api.SecondsPerGBHour, drift: "3.6864e+06"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, id := seedMemStore(t, "acct_overage", api.PlanHobby, overage, tc.delivered)
+			prov := &stubProvider{pushed: tc.pushed, mode: billing.UsageModeOverage, caps: billing.CapabilitySet(billing.CapUsageReconcile)}
+			body := scrapeReconciler(t, New("polar", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+			want := `meterd_billing_drift_mb_seconds{account_id="` + id + `",provider="polar"} ` + tc.drift
+			if !strings.Contains(body, want+"\n") {
+				t.Fatalf("missing %q in scrape:\n%s", want, body)
+			}
+		})
+	}
+}
+
+// A company organization is a billing subject of its own (#6029): the pusher
+// delivers its hours, so its drift is measured too.
+func TestReconciler_ReconcilesOrganizationSubjects(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "drift-co", Name: "Drift Co", Plan: api.PlanPro, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !org.ResourceOwnershipEnabled {
+		t.Fatal("fixture organization must be its own billing subject")
+	}
+	if err := store.UpsertBillingIdentity(ctx, state.BillingIdentity{
+		AccountID: org.ID, Provider: "polar", CustomerID: "polar-customer-" + org.ID,
+		SubscriptionID: "polar-subscription-" + org.ID, BillingFrom: time.Unix(0, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedDelivery(t, store, org.ID, 1000)
+	prov := &stubProvider{pushed: 400, mode: billing.UsageModeOverage, caps: billing.CapabilitySet(billing.CapUsageReconcile)}
+	body := scrapeReconciler(t, New("polar", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+	want := `meterd_billing_drift_mb_seconds{account_id="` + org.ID + `",provider="polar"} 600`
+	if !strings.Contains(body, want) {
+		t.Fatalf("missing %q in scrape:\n%s", want, body)
 	}
 }
 
@@ -202,7 +263,7 @@ func TestReconciler_OverageProviderUsesNetCalendarMonthUsage(t *testing.T) {
 // the local-pushed gap. The BillingDrift alert gates on ratio >
 // 0.005; this test pins the formula.
 func TestReconciler_EmitsDriftOnMismatch(t *testing.T) {
-	store, id := seedMemStore(t, "acct_drift", api.PlanHobby, 1000)
+	store, id := seedMemStore(t, "acct_drift", api.PlanHobby, 1000, 1000)
 	prov := &stubProvider{pushed: 990, caps: billing.CapabilitySet(billing.CapUsageReconcile)}
 	rec := New("stripe", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err := rec.RunOnce(context.Background()); err != nil {
@@ -230,7 +291,7 @@ func TestReconciler_EmitsDriftOnMismatch(t *testing.T) {
 // TestReconciler_ProviderErrorFailsSoft asserts a provider error
 // for one account does not block the loop or fail RunOnce.
 func TestReconciler_ProviderErrorFailsSoft(t *testing.T) {
-	store, id := seedMemStore(t, "acct_err", api.PlanHobby, 500)
+	store, id := seedMemStore(t, "acct_err", api.PlanHobby, 500, 500)
 	// caps advertises CapUsageReconcile so the new short-circuit
 	// does NOT skip the SDK call — the fail-soft-on-provider-error
 	// path must still be exercised by this test.
@@ -260,7 +321,7 @@ func TestReconciler_ProviderErrorFailsSoft(t *testing.T) {
 // not-yet-implemented ErrNotImplemented is treated as "no drift
 // signal" rather than an error.
 func TestReconciler_ErrNotImplementedSkipped(t *testing.T) {
-	store, id := seedMemStore(t, "acct_p", api.PlanHobby, 1234)
+	store, id := seedMemStore(t, "acct_p", api.PlanHobby, 1234, 1234)
 	// caps advertises CapUsageReconcile so the new short-circuit
 	// does NOT skip the SDK call — the errors.Is(err, ErrNotImplemented)
 	// swallow path must still be exercised by this test.
@@ -301,7 +362,7 @@ func TestReconciler_ErrNotImplementedSkipped(t *testing.T) {
 // test with a clear signal (the local and pushed sums must NOT
 // be equal so Prometheus emits a non-zero gauge).
 func TestReconciler_CapabilityShortCircuit(t *testing.T) {
-	store, id := seedMemStore(t, "acct_paddle", api.PlanHobby, 1234)
+	store, id := seedMemStore(t, "acct_paddle", api.PlanHobby, 1234, 1234)
 	// Stub advertises NO CapUsageReconcile. pushed differs from
 	// the seeded local sum so a non-short-circuited call would
 	// produce a non-zero gauge that Prometheus actually emits.
@@ -330,7 +391,7 @@ func TestReconciler_CapabilityShortCircuit(t *testing.T) {
 // TestReconciler_FreePlanSkipped asserts Free plan accounts do not
 // produce drift gauge rows.
 func TestReconciler_FreePlanSkipped(t *testing.T) {
-	store, id := seedMemStore(t, "acct_free", api.PlanFree, 100)
+	store, id := seedMemStore(t, "acct_free", api.PlanFree, 100, 100)
 	prov := &stubProvider{pushed: 0}
 	rec := New("stripe", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err := rec.RunOnce(context.Background()); err != nil {
@@ -353,7 +414,7 @@ func TestReconciler_FreePlanSkipped(t *testing.T) {
 // tripwire: the Loop must exit when ctx is cancelled (otherwise the
 // meterd daemon hangs on shutdown).
 func TestReconciler_LoopStopsOnContextCancel(t *testing.T) {
-	store, _ := seedMemStore(t, "acct_a", api.PlanHobby, 100)
+	store, _ := seedMemStore(t, "acct_a", api.PlanHobby, 100, 100)
 	prov := &stubProvider{}
 	rec := New("stripe", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -5,9 +5,16 @@ the `BillingDrift` + `BillingDriftAccount` alert blocks
 (ADR-049 §B.1).
 
 Metrics: `meterd_billing_drift_mb_seconds{account_id, provider}`
-(signed local − pushed) and `meterd_billing_drift_ratio{account_id,
-provider}` (abs(drift) / max(local, pushed)) over the rolling
-24 h window. Reconciliation failures are counted by
+(signed delivered − provider) and `meterd_billing_drift_ratio{account_id,
+provider}` (abs(drift) / max(delivered, provider)) over the rolling
+24 h window. "Delivered" is what meterd's pusher recorded as handed to
+the provider (`billing_usage_deliveries` receipts), not usage
+(ADR-20261031161842): usage above the spend cap, in hours not yet final,
+or of a suspended subject is correctly undelivered and is not drift.
+Whether the receipts match what should have been billed is the ledger
+dual run's job (`meterd_financial_ledger_reconcile_accounts`). Company
+organizations that own resources are billing subjects; their
+`account_id` label carries the organization ID. Reconciliation failures are counted by
 `meterd_billing_drift_reconcile_failures_total{provider,reason}`;
 when non-zero, the gauges may be stale. Capability health is explicit in
 `meterd_billing_reconcile_supported{provider}`; zero means drift is unknown,
@@ -40,15 +47,17 @@ The `provider` label distinguishes Polar, Paddle, and Stripe. The
 `account_id` label carries the offending customer id (omitted on
 the fleet-wide rule, which aggregates by `provider`).
 
-A sustained drift in one direction (e.g. local > pushed) means the
-provider is missing usage records; the other direction (pushed >
-local) is rarer and indicates duplicate pushes — both are revenue
-or reputational risks.
+A positive drift (delivered > provider) means the provider lacks
+usage events the pusher saw accepted; a negative one (provider >
+delivered) means the provider counts events meterd has no receipt for,
+such as a duplicate push or a push whose receipt write failed (the
+next pass re-sends it under the same external ID and records the
+receipt). Both are revenue or reputational risks.
 
 ## Verify
 
 The reconciler is read-only against the provider surface. The
-local-vs-pushed comparison runs in `pkg/billing/reconciler` on
+delivered-vs-provider comparison runs in `pkg/billing/reconciler` on
 every `FAAS_RECONCILE_INTERVAL` tick (default 6 h). The Pusher
 (`pkg/meter/pusher.go`) is the write-side complement — it runs on
 the hourly cadence and durably replays completed windows after a
@@ -102,11 +111,14 @@ curl -fsS http://127.0.0.1:9090/metrics | grep meterd_billing_drift_reconcile_fa
 # Confirm the reconciler is registered with the /metrics endpoint
 curl -fsS http://127.0.0.1:9090/metrics | grep meterd_billing_drift
 
-# Cross-check the local usage_minutes sum for the offending
-# account (replace $ACCOUNT_ID)
+# Cross-check the delivered receipts for the offending subject over
+# the reconciler's window, hour by hour (replace $ACCOUNT_ID)
 ACCOUNT_ID=<uuid>
-psql -t -A -c "select sum(mb_seconds) from usage_minutes where account_id = '${ACCOUNT_ID}' and minute >= now() - interval '24 hours'"
+psql -t -A -c "select window_start, mb_seconds from billing_usage_deliveries where provider = 'polar' and account_id = '${ACCOUNT_ID}' and window_start >= date_trunc('hour', now()) - interval '24 hours' and window_start < date_trunc('hour', now()) order by window_start"
 ```
+
+Compare the hours with the provider's hourly quantities for the same
+customer to find the missing or doubled event.
 
 A drift paired with low `meterd_billing_drift_mb_seconds` per-account
 count indicates a transient provider blip (Polar/Paddle/Stripe 5xx,
@@ -117,9 +129,9 @@ customer — escalate.
 
 A fleet-wide `BillingDrift` on one provider but not the others means
 that provider is the affected surface. A fleet-wide drift on all
-providers is rare and indicates an upstream Postgres issue (the local
-sum would be the side most likely wrong) — check meterd's DB connectivity
-first.
+providers is rare and indicates an upstream Postgres issue (the
+receipts would be the side most likely wrong) — check meterd's DB
+connectivity first.
 
 ## Silence
 
@@ -151,18 +163,17 @@ Three-step cascade, ordered from least to most disruptive:
    provider reports an outage, the recovery is on their side —
    silence the alert (above) and wait.
 
-2. **Reconcile manually for the affected window.** If the provider
-   is up but `meterd_billing_drift_mb_seconds` is non-zero,
-   the meterd pusher automatically replays the durable usage windows.
-   For a fleet-wide provider outage, the hourly pusher's idempotency-key
-   contract means the next successful tick covers the gap — no manual
-   replay needed. Cross-check by waiting one pusher interval (1 h) and
-   re-querying the drift
-   gauge; it should fall below the threshold.
+2. **Wait one reconcile for a lagging provider.** A provider that
+   accepted events but aggregates them late reads short until it
+   catches up; the next reconcile tick (6 h) clears that drift. A
+   push that failed never got a receipt, so it is not drift: the
+   pusher replays it on its own. A receipt marks its hour delivered
+   and the pusher does not send it again, so drift that survives a
+   tick is an event the provider lost or doubled after accepting it.
 
 3. **Escalate: contact provider support with the per-account
    query results.** For a per-account `BillingDriftAccount` that
-   persists beyond a 7-day window, the local-vs-pushed mismatch
+   persists beyond a 7-day window, the delivered-vs-provider mismatch
    is real and unrecoverable from the box side. Open a support
    ticket with the provider, attach the `meterd_billing_drift_mb_seconds`
    series for that account, and request a manual replay of the
