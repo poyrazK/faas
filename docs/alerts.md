@@ -71,7 +71,7 @@ is being rejected or would be:
   (503) are not counted. Break the total down by gate with
   `gateway_edge_rejections_total{app="APP_ID"}`, whose `kind` and `status`
   labels name the gate and response. When a flood comes from more sources
-  than rules can keep up with, `gregale edge rule attack-mode on` challenges
+  than rules can keep up with, `gregale edge rule attack-mode set on` challenges
   every visitor for a set time ([attack mode](security.md#attack-mode)).
 - `edge_waf_detections` (Pro and above) fires when `kind=waf` edge rules detect
   more than 25 likely attacks in 15 minutes, counting sampled detections and

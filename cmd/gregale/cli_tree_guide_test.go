@@ -56,6 +56,11 @@ func renderCliTreeGuide() string {
 			rows = append(rows, fmt.Sprintf("| `gregale %s` | `gregale %s` |\n", typed, now))
 		}
 	}
+	for _, fold := range *main.CliTreeFlagFolds {
+		if released[strings.Fields(fold.Old)[0]] {
+			rows = append(rows, fmt.Sprintf("| `gregale %s` | `gregale %s` |\n", fold.Old, main.CliTreeFlagFoldSpelling(fold)))
+		}
+	}
 	slices.Sort(rows)
 	rows = slices.Compact(rows)
 	for _, row := range rows {

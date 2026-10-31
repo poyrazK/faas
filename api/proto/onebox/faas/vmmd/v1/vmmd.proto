@@ -1647,6 +1647,14 @@ message StatsResponse {
   // units are off or on an older vmmd. Measured admission adds it to the
   // node's charge; it is platform overhead and never billed.
   google.protobuf.Int64Value instance_bridge_resident_bytes = 5;
+  // ADR 20261030100950: the "some avg10" value of faas-tenant.slice's
+  // cpu.pressure, in percent: the share of the last 10 s in which a tenant
+  // task waited for a CPU. Absent on a host without the file.
+  google.protobuf.DoubleValue tenant_cpu_pressure_some_avg10 = 6;
+  // ADR 20261030100950: the host's busy share of all CPUs over the last
+  // api.NodeCPUBusyWindowSeconds, in percent, from /proc/stat. Absent until
+  // vmmd has sampled half the window, and on a host without the file.
+  google.protobuf.DoubleValue host_cpu_busy_percent = 7;
 }
 
 message InstanceStats {

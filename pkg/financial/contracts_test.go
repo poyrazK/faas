@@ -29,3 +29,19 @@ func TestCostContractsSharedGrantAndRateChanges(t *testing.T) {
 		t.Fatalf("price-changing replay accepted: %v", err)
 	}
 }
+
+// adr: 20261030093512 — compute's grant is the time-weighted allowance the
+// provider bills against, not the largest version's.
+func TestCostContractsWithGrantUsesTheGivenGrant(t *testing.T) {
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	prices := []Price{{Version: "a", Meter: "compute", Currency: BillingCurrency, Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1, IncludedQuantity: 50}, {Version: "b", Meter: "compute", Currency: BillingCurrency, Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1, IncludedQuantity: 100}}
+	entries := []VersionedEvidence{{PriceVersion: "a", Evidence: Evidence{AccountID: "acct", SourceID: "1", Meter: "compute", Quantity: 200, Start: start, End: start.Add(time.Minute), Attribution: Attribution{AppID: "app"}}}}
+	got, err := CostContractsWithGrant("acct", start, end, prices, entries, 60)
+	if err != nil || got.IncludedQuantity != 60 || got.NetMillicents != 140 || got.AllowanceMethod != "time_weighted_period_grant_quantity_share_v1" {
+		t.Fatalf("weighted grant: %+v, %v", got, err)
+	}
+	if _, err := CostContractsWithGrant("acct", start, end, prices, entries, -1); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("negative grant accepted: %v", err)
+	}
+}
