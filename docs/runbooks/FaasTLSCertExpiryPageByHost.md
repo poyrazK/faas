@@ -1,132 +1,27 @@
 # FaasTLSCertExpiryPageByHost
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
-Metric: `gateway_tls_cert_expiry_by_host_seconds{hostname,kind}` (gatewayd-public `/metrics`).
-Spec: §12 + ADR-024 H3 follow-up (Finding 2 of the pre-split edge gap
-analysis; PR in the archived Tier-1 worktree).
+Metric: `gateway_tls_cert_expiry_by_host_seconds{hostname,kind}` (apid `/metrics`, `pkg/apid/certexpiry`).
+Spec: §12, ADR-024 H3 follow-up, ADR-520.
 Severity: warn (ADR-1236). `FaasTLSCertExpiryImminent` pages below 72 hours.
-
-> **Legacy daemon only (revised 2026-08-04).** This runbook applies
-> to the legacy `cmd/gatewayd/` daemon and to `cmd/gatewayd-public/`
-> *before* PR #633. The production deployment terminates TLS at
-> Caddy + Cloudflare upstream of `api.gregale.dev`, not in the
-> daemon. PR #633 stripped certmagic + Hetzner DNS-01 from
-> `gatewayd-public`; the legacy daemon keeps them during the
-> migration window. PR-C sweeps the certmagic packages and
-> this runbook will be archived alongside them.
->
-> Any `*.apps.<zone>` wildcard examples below describe the legacy
-> daemon's former hostname shape. Current release checks use
-> `*.<zone>` and a representative `<slug>.gregale.dev` endpoint.
->
-> The certificate metrics and this runbook are retained for legacy
-> observability only. Current production TLS terminates at the upstream
-> Caddy/Cloudflare edge; use `docs/ops/secrets-rotation.md` for the current
-> provider-token procedure. The legacy `gatewayd.toml` config file is kept
-> only as migration reference.
 
 ## Symptom
 
-Per-host cert expiry is ≤ 14 days. The aggregate
-`FaasTLSCertExpiryPage` rule fires on the same condition — this rule
-attaches the `hostname` + `kind` labels so the alert routes to the
-specific custom domain (or wildcard) that's affected. `kind` is
-either `wildcard` (DNS-01, the `*.apps.<zone>` cert) or `ondemand`
-(HTTP-01, customer custom domains).
-
-The bounded-admission overflow (`hostname="__other__"`) and
-misclassifications (`kind="unknown"`) are excluded from the rule so
-they never page — those conditions are operator-actionable
-diagnostics, not customer-facing alerts.
-
-## Triage by kind
-
-```bash
-# What's currently low across the fleet?
-curl -fsS http://127.0.0.1:9090/metrics \
-  | grep '^gateway_tls_cert_expiry_by_host_seconds{' \
-  | awk '$2 < 14 * 86400 {print}'
-```
-
-### kind=wildcard
-
-A single wildcard cert covers `*.apps.<zone>`. Renewals are
-DNS-01-driven and run automatically; failure modes are:
-
-- Legacy DNS provider credentials were rotated without following the
-  provider-owned secret procedure — see `FaasTLSCertExpiryPage.md` for the
-  historical daemon path.
-- The apps zone no longer delegates to this box's IP — check with
-  `dig +short <zone>` and `dig +short <zone> NS`.
-
-### kind=ondemand
-
-Customer-owned custom domains. Each customer gets a fresh cert on
-their first request. Failure modes:
-
-- The customer's CNAME no longer points to the gatewayd-public IP — verify
-  `dig +short CNAME <customer-domain>` returns the apps-domain
-  target.
-- The customer's HTTP-01 challenge endpoint (`/.well-known/acme-challenge/`)
-  is being intercepted by their own CDN/proxy — verify by curl from
-  outside the box.
-- The customer removed their `custom_domains` row in apid but kept
-  the DNS record — gatewayd-public's allowlist will reject the mint.
-  Reach out to the customer; this is a legitimate revoke.
+The edge certificate for the alert's host has under 14 days left. apid exports
+the soonest-expiring verified custom domains (at most
+`CustomDomainCertExpiryExportMaxHosts`) from the expiries its domain doctor
+records; `kind` is `ondemand`, because the edge obtains every customer
+certificate on demand. A wildcard row's hostname is the wildcard itself
+(`*.example.com`); the doctor measures it through
+`gregale-wildcard-check.example.com`.
 
 ## Verify
 
 ```bash
-# Is the refresher alive at all? Frozen = stale alerts.
-curl -fsS http://127.0.0.1:9090/metrics | grep gateway_tls_cert_expiry_refresher_walk_complete_total
-# Has any tick been partial in the last hour?
-# (the FaasTLSCertExpiryRefresherPartial alert covers this — if
-# it fires alongside, the gauge is stale.)
-
-# What's the current allowlist state for an on-demand host?
-psql -U faas -d faas -c "SELECT hostname, verified_at FROM custom_domains WHERE hostname='$HOST';"
+openssl s_client -connect <edge-ip>:443 -servername <host> </dev/null 2>/dev/null | openssl x509 -noout -enddate -issuer
 ```
 
-## Recover
+## Fix
 
-For `kind=wildcard`:
-
-```bash
-gregale domains verify '*.<zone>'   # re-checks DNS and certificate state
-journalctl -u faas-gatewayd-public -f        # watch for "renewing" log line
-```
-
-For `kind=ondemand`:
-
-```bash
-# Trigger a fresh mint by hitting the cert-mint path directly.
-curl -fsS https://$HOST/healthz   # this is what gatewayd-public's allowlist hooks
-gregale domains verify "$HOST"    # explicit refresh for diagnostic logging
-```
-
-If certmagic's renew loop is wedged (the same Warn line repeating
-for > 30 minutes):
-
-```bash
-systemctl restart faas-gatewayd-public
-# Watch the gauge climb back above 60d within 10 minutes of the
-# first mint after restart.
-```
-
-## Silence
-
-```bash
-amtool silence add \
-  --matchers='alertname=FaasTLSCertExpiryPageByHost,hostname=foo.example.com' \
-  --duration=1h \
-  --comment='customer decommissioning custom domain'
-```
-
-## Notes
-
-This rule complements (does not replace) the aggregate
-`FaasTLSCertExpiryPage`. Operators should expect the per-host rule
-to fire first and with more context; the aggregate catches the
-"smallest remaining" case but loses the per-host attribution. Both
-fire from the same gauge family; the per-host variant is the
-actionable signal.
+Follow the Fix section of `FaasTLSCertExpiryPage.md` for this host: verified
+row, on-demand ask decision, HTTP-01 on port 80, CAA allowing Let's Encrypt.
