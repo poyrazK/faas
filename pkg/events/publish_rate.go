@@ -18,6 +18,9 @@ const publishLimiterAccounts = 10000
 // publication path counts each event once, so a burst of publishes cannot
 // queue on the account's publication lock and hold database connections.
 type PublishLimiter struct {
+	// Now is the limiter's clock; nil is time.Now.
+	Now func() time.Time
+
 	mu      sync.Mutex
 	buckets map[string]*publishBucket
 }
@@ -45,6 +48,9 @@ func (l *PublishLimiter) Allow(accountID string, limits api.EventPublishLimits, 
 		l.buckets[accountID] = bucket
 	}
 	now := time.Now()
+	if l.Now != nil {
+		now = l.Now()
+	}
 	reservation := bucket.limiter.ReserveN(now, n)
 	if !reservation.OK() {
 		// More events than the bucket ever holds: wait for a full bucket.

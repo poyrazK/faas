@@ -142,7 +142,7 @@ func TestMFADisabledAlertPublicPathsAndFailureBoundaries(t *testing.T) {
 						}
 					} else {
 						for _, field := range strings.Fields(recorder.messages[0].TextBody) {
-							if strings.Contains(field, "/disable-email/confirm?token=") {
+							if strings.Contains(field, "/auth/reset/mfa?token=") {
 								u, err := url.Parse(field)
 								if err != nil {
 									t.Fatal(err)
