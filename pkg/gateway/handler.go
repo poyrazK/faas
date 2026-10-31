@@ -2599,7 +2599,7 @@ func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (*EdgeRuleRe
 	ctx, err = h.pinAppEdgeHosts(ctx, hostApp.ID)
 	if err != nil {
 		*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, err))
-		return nil
+		return nil, App{}
 	}
 	rule := h.edgeRules.MatchRoute(ctx, hostname(r.Host), r.URL.Path, r.Method)
 	if rule == nil || rule.AccountID != hostApp.AccountID {
