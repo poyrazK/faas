@@ -153,6 +153,15 @@ type Config struct {
 	// shortens its guest dial timeout (ADR-20261026120000). On by default
 	// (amendment 2026-10-27); FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
 	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
+	// StreamBridgeGOMAXPROCS and StreamBridgeGOGC set GOMAXPROCS and GOGC
+	// for the stream bridges vmmd starts from now on, one per instance.
+	// 0 keeps Go's default (one P per host CPU, GOGC=100). A bridge relays a
+	// single VM capped at one core, and Go's scheduler was 26–33% of the
+	// request path's daemon profiles on 2026-10-25, so a node A/B measures
+	// these before they get defaults. FAAS_STREAM_BRIDGE_GOMAXPROCS and
+	// FAAS_STREAM_BRIDGE_GOGC override TOML.
+	StreamBridgeGOMAXPROCS int `toml:"stream_bridge_gomaxprocs"`
+	StreamBridgeGOGC       int `toml:"stream_bridge_gogc"`
 	// RequireSecretBinding refuses runtime secret envelopes that carry no
 	// account binding (ADR-20261023173624, contract step). Off by default;
 	// the seal_domains role turns it on once every stored envelope is
@@ -936,6 +945,24 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_BRIDGE_STREAM_HEADROOM must be a boolean (got %q)", v)
 		}
 		c.BridgeStreamHeadroom = enabled
+	}
+	for _, knob := range []struct {
+		env, key string
+		value    *int
+	}{
+		{"FAAS_STREAM_BRIDGE_GOMAXPROCS", "stream_bridge_gomaxprocs", &c.StreamBridgeGOMAXPROCS},
+		{"FAAS_STREAM_BRIDGE_GOGC", "stream_bridge_gogc", &c.StreamBridgeGOGC},
+	} {
+		if v := os.Getenv(knob.env); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil {
+				return nil, fmt.Errorf("vmmd: %s must be an integer (got %q)", knob.env, v)
+			}
+			*knob.value = n
+		}
+		if *knob.value < 0 {
+			return nil, fmt.Errorf("vmmd: %s (%s) must be 0 for Go's default or a positive integer (got %d)", knob.key, knob.env, *knob.value)
+		}
 	}
 	if v := os.Getenv("FAAS_INVOKE_HOOK_BACKOFF"); v != "" {
 		enabled, perr := strconv.ParseBool(v)

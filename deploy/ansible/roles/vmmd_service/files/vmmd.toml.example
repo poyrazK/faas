@@ -160,6 +160,14 @@
 # Default: true
 # bridge_stream_headroom = false
 
+# stream_bridge_gomaxprocs / stream_bridge_gogc: GOMAXPROCS and GOGC for the
+# per-instance stream bridges vmmd starts from now on. 0 keeps Go's default
+# (one P per host CPU, GOGC=100). Set per node for a CPU A/B before they get
+# defaults. FAAS_STREAM_BRIDGE_GOMAXPROCS / FAAS_STREAM_BRIDGE_GOGC override.
+# Default: 0
+# stream_bridge_gomaxprocs = 1
+# stream_bridge_gogc = 200
+
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file does not exist. Default: /srv/fc/base/vmlinux-6.1
 # kernel_path = "/srv/fc/base/vmlinux-6.1"
