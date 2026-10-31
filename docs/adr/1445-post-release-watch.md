@@ -70,3 +70,7 @@ it. Both now use the target a plain `gregale rollback` returns to
 (`LatestRetainedRollbackDeployment`, the H5-62 rule): the deployment that
 served most recently (`serving_ended_at`), never a canary aborted before it
 completed, created before the release.
+
+## Amendment 2 (2026-10-31): a regression the watch cannot roll back is recorded
+
+When the rollback to the predecessor would cross a release command ([ADR-1448](1448-releases-that-change-the-database.md)), the watch keeps the release serving, as automation never acknowledges crossed releases. It used to only log that, on every sweep, and the release timeline then reported "Post-release watch passed". Now the watch records its abort decision on the release with `rollback_skipped: "rollback_crosses_release"` and emits `app.post_release_rollback_skipped`; a release with such a decision is not judged again. The timeline shows a `watch_regressed` event and the release's summary names the regression; the decision on `GET /v1/deployments/{id}` says how to roll back (`--acknowledge-releases`) or ship a fix.

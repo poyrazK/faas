@@ -55,7 +55,7 @@ func TestHostingDiagnosticsFlagsRoutesAndCIReadAuthority(t *testing.T) {
 		t.Fatal(caps.Code, caps.Body)
 	}
 	for _, ops := range [][]string{{"stage"}, {"preview"}, {"stage", "preview"}} {
-		minted := env.Do(t, "POST", root+"/automation-credentials", api.CreateHostingAutomationCredentialRequest{Label: "diagnostics", Operations: ops}, nil)
+		minted := env.DoOperator(t, "POST", root+"/automation-credentials", api.CreateHostingAutomationCredentialRequest{Label: "diagnostics", Operations: ops}, nil)
 		var token api.HostingAutomationCredentialResponse
 		if minted.Code != 201 || json.Unmarshal(minted.Body.Bytes(), &token) != nil {
 			t.Fatal(minted.Code, minted.Body)
