@@ -325,7 +325,7 @@ func (a *Agentd) drive(ctx context.Context, claim agentstore.Claim) {
 			Vcpu: int32(machine.VCPU), CpuMillicores: int32(machine.CPUMillicores), Run: body,
 			Relay: &scheddpb.AgentRunRelay{LeaseToken: claim.LeaseToken, TenantId: claim.TenantID, AgentId: claim.AgentID,
 				AgentVersion: int32(claim.AgentVersion)},
-			InputKey: inputKey,
+			InputKey: inputKey, PauseDuringModelCalls: claim.PauseDuringModelCalls,
 		}}})
 	}
 	if err != nil {

@@ -64,12 +64,18 @@ func (s *server) drainRouteProbes(ctx context.Context) error {
 		if err := store.PruneRouteProbeData(ctx, now.Add(-api.RouteHealthProbeRetention)); err != nil {
 			s.log.Warn("route probe prune failed", "err", err)
 		}
+		if probes, ok := s.store.(state.ReleaseGateProbeStore); ok {
+			if err := probes.PruneReleaseGateProbeResults(ctx, now.Add(-api.RouteHealthProbeRetention)); err != nil {
+				s.log.Warn("release gate probe prune failed", "err", err)
+			}
+		}
 	}
 	gated, err := store.ListRouteProbeTargets(ctx)
 	if err != nil {
 		return err
 	}
 	targets := release.MergeProbeTargets(gated, s.defaultRouteProbeTargets(ctx))
+	targets = release.AddSyntheticGates(targets, s.syntheticGateProbeTargets(ctx))
 	minute := now.Truncate(time.Minute)
 	for _, target := range targets {
 		if ctx.Err() != nil {
@@ -127,7 +133,7 @@ func routeProbePlans(gate api.RouteHealthGate, report api.RouteHealthReport) []r
 
 func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RouteProbeStore, target release.ProbeTarget, minute time.Time) error {
 	plans, stableID, err := s.routeProbeRound(ctx, target)
-	if err != nil || len(plans) == 0 || stableID == "" {
+	if err != nil || len(plans) == 0 && len(target.Synthetic) == 0 || stableID == "" {
 		return err
 	}
 	deployments := []string{target.CandidateID, stableID}
@@ -157,6 +163,12 @@ func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RoutePr
 	case <-time.After(routeProbeChallengeDelay):
 	}
 	observations := s.sendRouteProbes(ctx, target.Slug, plans, deployments, tokens, minute)
+	if err := s.probeSyntheticGates(ctx, target, deployments, tokens, minute); err != nil {
+		s.log.Warn("synthetic gate probes not recorded", "app_id", target.AppID, "err", err)
+	}
+	if len(plans) == 0 {
+		return nil
+	}
 	return store.RecordRouteProbeObservations(ctx, target.AccountID, target.AppID, observations)
 }
 

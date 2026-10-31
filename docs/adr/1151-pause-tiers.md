@@ -370,7 +370,9 @@ schedd `quiet_pause_admission` now defaults to on (`cmd/schedd/config.go`),
 together with measured CPU admission (ADR 20261029151111) and the CPU pressure
 backstop (ADR 20261030100950), which bounds the overcommit when paused
 instances resume together. `quiet_pause_admission = false` in `schedd.toml`
-turns it off. `frozen_tier`, `frozen_tier_workers`, early freeze and the
+turns it off; because a manifest render rewrites that file, the lasting
+per-node opt-out is `FAAS_QUIET_PAUSE_ADMISSION=false` in an environment
+drop-in, which overrides the file either way. `frozen_tier`, `frozen_tier_workers`, early freeze and the
 billing switches (`quiet_pause_ledger`, meterd `quiet_pause_unbilled`) are
 unchanged.
 

@@ -58,5 +58,10 @@
     "step": "TestTrafficSplitAndRollback/production_wakes_v1_while_staged",
     "bug": "#6121: after deploy --no-traffic, a parked or frozen serving release cannot wake beside the staged release's instance: production answers 429 app_concurrency_reached until that instance idles out (the gateway grants ADR-199's rollout slot only for a positive-weight sibling)",
     "since": "2026-10-31"
+  },
+  {
+    "step": "TestEdgeTrafficPolicies/route",
+    "bug": "#6148: a route rule on an app's own URL never applies on production (edge rule trace says it routes, edge rule stats records no match); the slug-resolved public host source never sets CanSubstitute",
+    "since": "2026-10-31"
   }
 ]

@@ -347,7 +347,13 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 // app on a public host. Unknown slugs and other accounts' apps keep their
 // handling (the gateway refuses them at match time), so the check reveals
 // nothing about slugs the caller does not own.
-func (s *Service) RouteTargetProblem(ctx context.Context, accountID, kind string, raw json.RawMessage) *api.Problem {
+//
+// A target of the account in another edge-rule scope is refused too (ADR-091
+// amendment 2026-10-31): a company app keeps its creator's account, so a
+// route on the creator's personal app could serve the company app on the
+// personal host, out of the company's sight, and the gateway refuses such a
+// route at match time.
+func (s *Service) RouteTargetProblem(ctx context.Context, accountID, sourceAppID, kind string, raw json.RawMessage) *api.Problem {
 	if kind != string(state.EdgeRuleKindRoute) || len(raw) == 0 {
 		return nil
 	}
@@ -362,10 +368,37 @@ func (s *Service) RouteTargetProblem(ctx context.Context, accountID, kind string
 	if err != nil {
 		return api.ErrCapacity("could not check the route target")
 	}
-	if target.AccountID != accountID || api.NormalizeAppVisibility(target.Visibility) != api.AppVisibilityInternal {
+	if target.AccountID != accountID {
 		return nil
 	}
-	return InternalRouteTargetProblem(target.Slug)
+	if api.NormalizeAppVisibility(target.Visibility) == api.AppVisibilityInternal {
+		return InternalRouteTargetProblem(target.Slug)
+	}
+	return s.routeTargetScopeProblem(ctx, sourceAppID, target)
+}
+
+// routeTargetScopeProblem refuses a route target outside the source app's
+// edge-rule scope.
+func (s *Service) routeTargetScopeProblem(ctx context.Context, sourceAppID string, target state.App) *api.Problem {
+	if sourceAppID == "" || sourceAppID == target.ID {
+		return nil
+	}
+	source, err := s.Host.Store().AppByID(ctx, sourceAppID)
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	sourceScope, err := state.AppEdgeRuleScope(ctx, s.Host.Store(), source)
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	targetScope, err := state.AppEdgeRuleScope(ctx, s.Host.Store(), target)
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	if sourceScope == targetScope {
+		return nil
+	}
+	return api.ErrValidation(fmt.Sprintf("route target %q belongs to a different owner than this app: route only between your personal apps, or between one organization's apps", target.Slug))
 }
 
 // InternalRouteTargetProblem is the refusal for a route rule, or manifest path

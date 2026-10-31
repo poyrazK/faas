@@ -139,8 +139,10 @@ func TestHandlePullRequest_ForkRefusalOnlyForPreviewedRepos(t *testing.T) {
 	}
 }
 
-// A service the PR adds keeps the bound app's gates and the visibility
-// production would give it.
+// A service the PR adds keeps the bound app's access gates, its project's
+// org and the visibility production would give it. The bound app's route
+// contract lists another service's routes, so the new service does not take
+// it; without its org, an org project refused the whole PR environment.
 func TestPreviewDependencyParents_NewServiceKeepsGatesAndVisibility(t *testing.T) {
 	ctx := context.Background()
 	rig := newPreviewRig(t)
@@ -149,7 +151,9 @@ func TestPreviewDependencyParents_NewServiceKeepsGatesAndVisibility(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent.PublicAuthIPAllowlist, parent.RequireSigned = allow, true
+	parent.PublicAuthIPAllowlist, parent.RequireSigned, parent.OrgID = allow, true, "org-shop"
+	parent.OnlyAllowDeclaredRoutes = true
+	parent.DeclaredRoutes = []state.DeclaredRoute{{Path: "/api/items", Methods: []string{"GET"}}}
 	svc, _ := newPreviewService(t, rig)
 	parents, err := svc.previewDependencyParents(ctx, parent, reposcan.Result{Workloads: []reposcan.Workload{
 		{Name: "api", DependsOn: []string{"admin"}}, {Name: "admin", Unpublished: true},
@@ -163,9 +167,14 @@ func TestPreviewDependencyParents_NewServiceKeepsGatesAndVisibility(t *testing.T
 		t.Fatalf("new service preview = visibility %q, signed %t, allowlist %v; want internal with the bound app's gates",
 			admin.Visibility, admin.RequireSigned, admin.PublicAuthIPAllowlist)
 	}
+	if admin.OrgID != parent.OrgID || admin.OnlyAllowDeclaredRoutes || len(admin.DeclaredRoutes) != 0 {
+		t.Fatalf("new service preview = org %q, route contract (%t, %v); want the project's org and no contract",
+			admin.OrgID, admin.OnlyAllowDeclaredRoutes, admin.DeclaredRoutes)
+	}
 	preview, err := makePRDependencyPreview(admin, 42, time.Now().Add(time.Hour), state.DefaultGitHubDeployPolicy(rig.parentProjectID, rig.acct))
-	if err != nil || preview.Visibility != api.AppVisibilityInternal || !preview.RequireSigned {
-		t.Fatalf("preview row = (%+v, %v), want the template's visibility and gates", preview, err)
+	if err != nil || preview.Visibility != api.AppVisibilityInternal || !preview.RequireSigned ||
+		preview.OrgID != parent.OrgID || preview.OnlyAllowDeclaredRoutes {
+		t.Fatalf("preview row = (%+v, %v), want the template's visibility, gates and org", preview, err)
 	}
 }
 

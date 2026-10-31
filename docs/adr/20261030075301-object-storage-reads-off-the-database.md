@@ -75,7 +75,11 @@ monthly counters, enforced by those same writes.
 
 1. `s3-gatewayd` `GET`/`HEAD` under gateway safety: cached decisions, batched
    counts, per-account limit (this change).
-2. Public bucket reads in `gatewayd-public` use the same admitter.
+2. Public bucket reads in `gatewayd-public` use the same admitter. The edge
+   runs its own instance, built with the anonymous read policy (75% of the
+   ceilings, ADR 20261023223000), with its own metrics
+   (`gatewayd_public_object_read_*`) and alert
+   (`FaasPublicObjectReadUsageFlushFailing`).
 3. Organization-fenced credentials: cache the fence check per credential and
    membership revision with the same TTL, and move those reads to the cache.
    The gateway caches each (organization, member) revision, read without
