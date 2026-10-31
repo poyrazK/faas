@@ -142,7 +142,7 @@ func TestCustomDomainTLSHostAdmission(t *testing.T) {
 			if v := admit("n0."+suffix, later, 1); v != state.TLSHostRegisteredDomainFull {
 				t.Fatalf("re-created wildcard refilled its budget: %v", v)
 			}
-			if v := admit("c."+suffix, later.Add(time.Minute), 2); v != state.TLSHostRegisteredDomainFull {
+			if v := admit("c."+suffix, later.Add(time.Minute), 1); v != state.TLSHostRegisteredDomainFull {
 				t.Fatalf("a host forgotten with its wildcard must count again: %v", v)
 			}
 			if v := admit("n0."+suffix, later.Add(window+time.Minute), 1); v != state.TLSHostAdmitted {

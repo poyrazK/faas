@@ -7051,6 +7051,17 @@ groups:
           summary: "Custom-domain certificate checks are being rate-limited"
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
           description: "TLS handshakes with unknown server names exceed the ask endpoint's lookup budget for 15m, usually a scan. Legitimate names are retried on the client's next handshake but may see failed first connections."
+      - alert: FaasCustomDomainTLSFleetBudget
+        expr: sum(increase(gateway_tls_on_demand_ask_total{decision="deny_fleet_budget"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: custom_domain_tls
+        annotations:
+          summary: "New wildcard custom-domain hosts are refused at the fleet issuance cap"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+          description: "The deployment admitted OnDemandTLSFleetNewHostsPer3h new hosts below wildcard custom domains in 3 hours, so no tenant can add another until admissions age out. The cap keeps the shared ACME account under Let's Encrypt's order limit; find the owners and registered domains that drew it."
       - alert: FaasCustomDomainCertIssuanceFailing
         expr: sum(increase(apid_cert_issuance_failed_total[1h])) >= 5
         for: 5m

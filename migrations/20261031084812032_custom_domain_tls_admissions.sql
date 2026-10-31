@@ -1,4 +1,5 @@
 -- filename: 20261031084812032_custom_domain_tls_admissions.sql
+-- migration-compat: expand
 
 -- +goose Up
 -- +goose StatementBegin
