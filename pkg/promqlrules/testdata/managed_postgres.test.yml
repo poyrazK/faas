@@ -58,3 +58,54 @@ tests:
               summary: "Managed PostgreSQL usage collection is stale"
               description: "The usage ledger is enabled but apid has not completed a full provider usage sweep for more than 15m. New database reservations fail closed while observations are stale; check the usage collector, provider API, and apid database connectivity."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+  # ADR-20261025094915: a cap sweep that never succeeds warns; a fresh one,
+  # shadow or on, does not; off never warns.
+  - interval: 30s
+    name: "stalled compute cap enforcement warns"
+    input_series:
+      - series: 'apid_managed_postgres_usage_policy_enabled{job="apid",instance="cp"}'
+        values: '1x80'
+      - series: 'apid_managed_postgres_cap_enforcement_mode{job="apid",instance="cp",mode="on"}'
+        values: '1x80'
+      - series: 'apid_managed_postgres_cap_enforcement_mode{job="apid",instance="cp",mode="shadow"}'
+        values: '0x80'
+      - series: 'apid_managed_postgres_cap_last_sweep_timestamp_seconds{job="apid",instance="cp"}'
+        values: '0x80'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasManagedPostgresCapEnforcementStale
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasManagedPostgresCapEnforcementStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+              job: apid
+              instance: cp
+            exp_annotations:
+              summary: "Managed PostgreSQL compute caps are not being enforced"
+              description: "apid has not completed a compute cap sweep without a failed account for more than 45m. Running databases keep the quotas last written, so a stalled sweep neither lifts nor imposes a suspension; check the usage collector, the provider API and apid_managed_postgres_cap_accounts{state=\"failed\"}."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+  - interval: 30s
+    name: "fresh shadow sweeps and disabled enforcement stay quiet"
+    input_series:
+      - series: 'apid_managed_postgres_usage_policy_enabled{job="apid",instance="cp"}'
+        values: '1x80'
+      - series: 'apid_managed_postgres_cap_enforcement_mode{job="apid",instance="cp",mode="shadow"}'
+        values: '1x80'
+      - series: 'apid_managed_postgres_cap_last_sweep_timestamp_seconds{job="apid",instance="cp"}'
+        values: '0+30x80'
+      - series: 'apid_managed_postgres_usage_policy_enabled{job="apid",instance="cp2"}'
+        values: '1x80'
+      - series: 'apid_managed_postgres_cap_enforcement_mode{job="apid",instance="cp2",mode="off"}'
+        values: '1x80'
+      - series: 'apid_managed_postgres_cap_last_sweep_timestamp_seconds{job="apid",instance="cp2"}'
+        values: '0x80'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasManagedPostgresCapEnforcementStale
+        exp_alerts: []

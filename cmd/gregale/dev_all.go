@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -40,6 +41,23 @@ type devAllApp struct {
 	Project   string // developer-session project name passed as --name
 	RootDir   string // slash path relative to the discovery root, "." for the root
 	SourceDir string // absolute source directory passed as --path
+	// Service is the name the other apps call it by: the scanner's service
+	// name when it is a DNS label (`ui`), else Project (ADR-20261026105459).
+	Service string
+	// Depends are the Service names of the group's apps it declares it calls.
+	Depends []string
+	// GoCommand is the `cmd/<name>` a command of a multi-command Go module
+	// builds, passed as --go-command (ADR-20261026120412).
+	GoCommand string
+	// declared is the scanner's raw service name, kept to report a name
+	// that cannot be called.
+	declared string
+}
+
+// childEnv hands a child loop its group identity: the name it registers
+// under and the siblings it gets service URLs for.
+func (a devAllApp) childEnv() []string {
+	return []string{devGroupServiceEnv + "=" + a.Service, devGroupDependsEnv + "=" + strings.Join(a.Depends, ",")}
 }
 
 // devAllOptions are the single-app flags forwarded unchanged to every child.
@@ -82,6 +100,9 @@ func (o devAllOptions) childArgs(app devAllApp, jsonMode bool) []string {
 	if o.devAllWatches(app) {
 		args = append(args, "--watch")
 	}
+	if app.GoCommand != "" && !o.stop {
+		args = append(args, "--go-command", app.GoCommand)
+	}
 	args = appendDevBucketArgs(args, o.buckets)
 	// Pass the output mode explicitly: a child would otherwise fall back to a
 	// persisted JSON preference that the parent's --json=false overrode.
@@ -104,20 +125,61 @@ func discoverDevAllApps(root string, discover func(string) ([]projectSource, err
 		if !rootDeployable(root) {
 			return nil, fmt.Errorf("no deployable apps found below %s; run `gregale scan --path .` to inspect the workspace", root)
 		}
-		return []devAllApp{{Project: devAllProjectName(filepath.Base(root), "."), RootDir: ".", SourceDir: root}}, nil
+		project := devAllProjectName(filepath.Base(root), ".")
+		return []devAllApp{{Project: project, RootDir: ".", SourceDir: root, Service: project}}, nil
 	}
 	apps := make([]devAllApp, 0, len(sources))
 	owners := make(map[string]string, len(sources))
+	byDeclared := make(map[string]string, len(sources)) // declared name -> Service
+	services := make(map[string]string, len(sources))   // Service -> root dir
 	for _, source := range sources {
 		project := devAllProjectName(source.Name, source.RootDir)
 		if previous, ok := owners[project]; ok {
 			return nil, fmt.Errorf("apps %s and %s both map to developer project %q; rename one workspace or run them separately with --path and --name", previous, source.RootDir, project)
 		}
 		owners[project] = source.RootDir
-		apps = append(apps, devAllApp{Project: project, RootDir: source.RootDir, SourceDir: source.Path})
+		service := api.ServiceDNSName(source.Name)
+		if !api.ValidServiceName(service) {
+			service = project
+		}
+		if previous, ok := services[service]; ok {
+			return nil, fmt.Errorf("apps %s and %s are both called %q; rename one service", previous, source.RootDir, service)
+		}
+		services[service] = source.RootDir
+		byDeclared[strings.ToLower(strings.TrimSpace(source.Name))] = service
+		apps = append(apps, devAllApp{Project: project, RootDir: source.RootDir, SourceDir: source.Path, Service: service, declared: source.Name,
+			Depends: source.DependsOn, GoCommand: source.GoCommand})
 	}
-	sort.Slice(apps, func(i, j int) bool { return apps[i].RootDir < apps[j].RootDir })
+	for i := range apps {
+		apps[i].Depends = groupDependencies(apps[i], byDeclared)
+	}
+	sort.Slice(apps, func(i, j int) bool {
+		return apps[i].RootDir < apps[j].RootDir || (apps[i].RootDir == apps[j].RootDir && apps[i].Project < apps[j].Project)
+	})
 	return apps, nil
+}
+
+// sourceLabel is where an app's source lives: its root, or the command of a
+// Go module it builds.
+func (a devAllApp) sourceLabel() string {
+	if a.GoCommand != "" {
+		return "cmd/" + a.GoCommand
+	}
+	return a.RootDir
+}
+
+// groupDependencies maps an app's declared dependencies to the Service names
+// of the group's apps; a dependency outside the group (a database image, a
+// deployed service) has no developer environment to point at.
+func groupDependencies(app devAllApp, byDeclared map[string]string) []string {
+	var out []string
+	for _, dep := range app.Depends {
+		if service, ok := byDeclared[strings.ToLower(dep)]; ok && service != app.Service && !slices.Contains(out, service) {
+			out = append(out, service)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // devAllProjectName prefers the scanner's workload name and falls back to the
@@ -173,7 +235,7 @@ type devAllProcess interface {
 }
 
 // devAllLauncher starts one child loop writing to the supplied streams.
-type devAllLauncher func(args []string, stdout, stderr io.Writer) (devAllProcess, error)
+type devAllLauncher func(args, env []string, stdout, stderr io.Writer) (devAllProcess, error)
 
 type execDevAllProcess struct{ cmd *exec.Cmd }
 
@@ -191,14 +253,14 @@ func (p execDevAllProcess) Wait() (int, error) {
 
 func (p execDevAllProcess) Signal(sig os.Signal) error { return p.cmd.Process.Signal(sig) }
 
-func launchDevAllChild(args []string, stdout, stderr io.Writer) (devAllProcess, error) {
+func launchDevAllChild(args, env []string, stdout, stderr io.Writer) (devAllProcess, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate gregale executable: %w", err)
 	}
 	cmd := exec.Command(executable, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, stdout, stderr
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), env...)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -332,7 +394,7 @@ func runDevAll(ctx context.Context, apps []devAllApp, opts devAllOptions, launch
 			_, _ = fmt.Fprintf(stdout, "%swatch mode: no development command detected; this app keeps production-shaped builds\n", prefix)
 			mu.Unlock()
 		}
-		process, err := launch(opts.childArgs(app, jsonOutput), out, errOut)
+		process, err := launch(opts.childArgs(app, jsonOutput), app.childEnv(), out, errOut)
 		if err != nil {
 			_ = out.Close()
 			mu.Lock()
@@ -395,16 +457,22 @@ func cmdDevAll(sourceDir string, opts devAllOptions) int {
 	if err != nil {
 		return printErr("No developer apps selected", err)
 	}
+	// Every app's developer environment lives in one group workspace, derived
+	// from the --all root; each child joins the group's namespace after
+	// creating its environment, so the apps call each other by name
+	// (ADR-20261025121530).
+	developerID, err := loadOrCreateDeveloperID()
+	if err != nil {
+		return printErr("Could not load local developer identity", err)
+	}
+	workspace, err := deriveDevWorkspaceID(developerID, sourceDir)
+	if err != nil {
+		return printErr("Could not identify developer workspace", err)
+	}
 	if !opts.stop {
-		developerID, err := loadOrCreateDeveloperID()
-		if err != nil {
-			return printErr("Could not load local developer identity", err)
-		}
 		workspaceIDs := make([]string, len(apps))
-		for i, app := range apps {
-			if workspaceIDs[i], err = deriveDevWorkspaceID(developerID, app.SourceDir); err != nil {
-				return printErr("Could not identify developer workspace", err)
-			}
+		for i := range apps {
+			workspaceIDs[i] = workspace
 		}
 		client, err := authedClient()
 		if err != nil {
@@ -417,12 +485,20 @@ func cmdDevAll(sourceDir string, opts devAllOptions) int {
 			return printErr("Developer environment quota exceeded", err)
 		}
 	}
+	if err := os.Setenv(devGroupWorkspaceEnv, workspace); err != nil {
+		return printErr("Could not start the developer loops", err)
+	}
 	if !jsonOutput {
 		labels := make([]string, len(apps))
 		for i, app := range apps {
-			labels[i] = app.Project + " (" + app.RootDir + ")"
+			labels[i] = app.Project + " (" + app.sourceLabel() + ")"
 		}
 		PrintProgress(osStdout, "Starting %d developer loops: %s", len(apps), strings.Join(labels, ", "))
+		for _, app := range apps {
+			if note := describeDevGroupService(app); note != "" {
+				PrintWarn(osStderr, "[%s] %s", app.Project, note)
+			}
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

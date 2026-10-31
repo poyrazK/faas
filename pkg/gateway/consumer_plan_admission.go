@@ -105,7 +105,7 @@ func (h *Handler) consumerPlanPolicy(ctx context.Context, app App, consumerID st
 // cost one cached lookup and no counter write.
 func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, deploymentSmoke bool) bool {
 	consumerID := authenticatedFrom(r.Context()).ConsumerID
-	if deploymentSmoke || h.consumerPlanStore == nil || consumerID == "" || !h.apiMonetizationEnabled() {
+	if deploymentSmoke || h.consumerPlanStore == nil || consumerID == "" || !h.APIMonetizationEnabledFor(app.AccountID) {
 		return true
 	}
 	policy, err := h.consumerPlanPolicy(r.Context(), app, consumerID)

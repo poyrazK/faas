@@ -135,6 +135,7 @@ func runResumeHookTimed(hostTimeUnixNano int64, hostEntropy []byte, t *resumetim
 		return fmt.Errorf("resume: write uuid marker: %w", err)
 	}
 	lap(&t.UUIDMarkerUs)
+	restoreGeneration.bump()
 	return nil
 }
 

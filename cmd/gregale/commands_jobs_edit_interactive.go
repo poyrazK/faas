@@ -54,7 +54,7 @@ func cmdJobsUpdateInteractive() int {
 		}
 		return n
 	}
-	ram, err := scalePromptInt(ctx, prompt, "RAM per task (MB)", job.RAMMB, 1, maximum(api.JobRAMMB[:]))
+	ram, err := scalePromptInt(ctx, prompt, "RAM per task (MB)", job.RAMMB, api.JobMinRAMMB, maximum(api.JobRAMMB[:]))
 	if err != nil {
 		return startInputExit(err)
 	}
@@ -175,7 +175,7 @@ func cmdJobsUpdateInteractive() int {
 	defer cancel()
 	updated, err := client.UpdateJob(writeCtx, job.Name, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update job", err)
 	}
 	if updated.ID != job.ID || updated.AccountID != job.AccountID || updated.Name != job.Name {
 		return printErr("Invalid update receipt", errors.New("server returned a different Job"))

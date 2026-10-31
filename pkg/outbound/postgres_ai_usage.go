@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -140,7 +141,14 @@ func scanOpenedAISettlement(results pgx.BatchResults, leaseID uuid.UUID, record 
 		return opened, err
 	}
 	if record.Log != nil {
-		if err := results.QueryRow().Scan(&opened.logID); err != nil {
+		err := results.QueryRow().Scan(&opened.logID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// ADR 20261021171712: the call's ID is already logged, so an
+			// earlier attempt committed this settlement.
+			opened.settled = true
+			return opened, nil
+		}
+		if err != nil {
 			return opened, err
 		}
 	}
@@ -176,12 +184,17 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	plan := aiSettlementPlan{
 		endUser:  record.EndUser != "",
 		tags:     len(record.Tags) > 0,
+		trace:    record.TraceID != "",
 		counters: record.Usage.BudgetTokens() > 0 || record.CostMillicents > 0,
 		binding:  record.Usage.BudgetTokens() > 0 && appCaller(record.Caller),
 		lease:    leaseID != uuid.Nil,
 		content:  record.Log != nil && record.Log.Content != nil,
 		route:    record.Route != nil,
+		// ADR 20261022153155: an app instance's call counts toward its
+		// deployment; a cache hit settles elsewhere and never reaches here.
+		deployment: appCaller(record.Caller) && validUUID(record.Caller) && validUUID(record.InstanceID) && !record.Cached,
 	}
+	plan.evaluation = plan.content && record.EvaluationSampled
 	batch := &pgx.Batch{}
 	queueAIUsageRollup(batch, integrationID, record)
 	if plan.endUser {
@@ -190,6 +203,9 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	if plan.tags {
 		queueAITagUsageRollup(batch, integrationID, record)
 	}
+	if plan.trace {
+		queueAITraceRollup(batch, integrationID, record)
+	}
 	queueAIUsageCounters(batch, integrationID, record, plan)
 	if plan.lease {
 		batch.Queue(`DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND lease_id = $2`, integrationID, leaseID)
@@ -197,8 +213,14 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	if plan.content {
 		queueAIRequestContent(batch, integrationID, opened.logID, record.Log.Content)
 	}
+	if plan.evaluation {
+		queueAIOnlineEvaluation(batch, integrationID, opened.logID)
+	}
 	if plan.route {
 		queueAIRouteAttempt(batch, record)
+	}
+	if plan.deployment {
+		queueAIDeploymentMinute(batch, record)
 	}
 	results := tx.SendBatch(ctx, batch)
 	crossings, err := scanAIUsageRows(results, record, opened, plan)
@@ -210,7 +232,43 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 
 // aiSettlementPlan names the statements one settlement sends.
 type aiSettlementPlan struct {
-	endUser, tags, counters, binding, lease, content, route bool
+	endUser, tags, trace, counters, binding, lease, content, evaluation, route, deployment bool
+}
+
+// queueAIDeploymentMinute adds an app instance's call to its deployment's
+// row for the current UTC minute (ADR 20261022153155). The deployment is
+// the instance row's, read in the same statement; an instance that is gone,
+// or belongs to another app, writes nothing. The table has no foreign keys,
+// so a settlement never fails on it.
+func queueAIDeploymentMinute(batch *pgx.Batch, record AIUsageRecord) {
+	var errorCalls, flaggedCalls, ttfbCalls, ttfbMS int64
+	if record.Outcome == AIUsageOutcomeError {
+		errorCalls = 1
+	}
+	if len(record.QualityFlags) > 0 {
+		flaggedCalls = 1
+	}
+	if record.TTFBMS != nil {
+		ttfbCalls, ttfbMS = 1, max(*record.TTFBMS, 0)
+	}
+	batch.Queue(`
+		INSERT INTO outbound_ai_deployment_minutes AS stats
+		    (deployment_id, minute, app_id, calls, error_calls, flagged_calls, cost_millicents, input_tokens, output_tokens,
+		     ttfb_calls, ttfb_ms_total)
+		SELECT instance.deployment_id, date_trunc('minute', now()), instance.app_id, 1, $3, $4, $5, $6, $7, $8, $9
+		  FROM instances instance
+		 WHERE instance.id = $1 AND instance.app_id = $2 AND instance.deployment_id IS NOT NULL
+		ON CONFLICT (deployment_id, minute) DO UPDATE SET
+		    calls = stats.calls + 1,
+		    error_calls = stats.error_calls + EXCLUDED.error_calls,
+		    flagged_calls = stats.flagged_calls + EXCLUDED.flagged_calls,
+		    cost_millicents = stats.cost_millicents + EXCLUDED.cost_millicents,
+		    input_tokens = stats.input_tokens + EXCLUDED.input_tokens,
+		    output_tokens = stats.output_tokens + EXCLUDED.output_tokens,
+		    ttfb_calls = stats.ttfb_calls + EXCLUDED.ttfb_calls,
+		    ttfb_ms_total = stats.ttfb_ms_total + EXCLUDED.ttfb_ms_total`,
+		uuid.MustParse(record.InstanceID), uuid.MustParse(record.Caller), errorCalls, flaggedCalls, max(record.CostMillicents, 0),
+		max(record.Usage.InputTokens, 0), max(record.Usage.OutputTokens, 0), ttfbCalls, ttfbMS)
 }
 
 // queueAIRouteAttempt adds a route attempt to its target's row for the
@@ -312,6 +370,11 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 			return nil, err
 		}
 	}
+	if plan.trace {
+		if _, err := results.Exec(); err != nil {
+			return nil, err
+		}
+	}
 	budgetTokens, cost := record.Usage.BudgetTokens(), record.CostMillicents
 	limits := opened.limits
 	day, month := utcDayStart(opened.now), utcMonthStart(opened.now)
@@ -357,7 +420,17 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 			}
 		}
 	}
+	if plan.evaluation {
+		if _, err := results.Exec(); err != nil {
+			return nil, err
+		}
+	}
 	if plan.route {
+		if _, err := results.Exec(); err != nil {
+			return nil, err
+		}
+	}
+	if plan.deployment {
 		if _, err := results.Exec(); err != nil {
 			return nil, err
 		}
@@ -393,7 +466,8 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		    (integration_id, usage_date, caller, model, requests, error_requests, usage_unknown_requests,
 		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
 		     images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb,
-		     cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens)
+		     cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens,
+		     truncated_requests, refused_requests, empty_requests, invalid_json_requests, tool_error_requests)
 		SELECT $1, day.today, $2,
 		       CASE WHEN EXISTS (SELECT 1 FROM outbound_ai_usage_daily existing
 		                          WHERE existing.integration_id = $1 AND existing.usage_date = day.today
@@ -401,7 +475,8 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		              OR (SELECT count(DISTINCT existing.model) FROM outbound_ai_usage_daily existing
 		                   WHERE existing.integration_id = $1 AND existing.usage_date = day.today) < $4
 		            THEN $3 ELSE $5 END,
-		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
+		       $25, $26, $27, $28, $29
 		  FROM (SELECT (now() AT TIME ZONE 'UTC')::date AS today) day
 		ON CONFLICT (integration_id, usage_date, caller, model) DO UPDATE SET
 		    requests = usage.requests + 1,
@@ -424,12 +499,27 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		    prompt_cache_saved_millicents = usage.prompt_cache_saved_millicents + EXCLUDED.prompt_cache_saved_millicents,
 		    input_audio_tokens = usage.input_audio_tokens + EXCLUDED.input_audio_tokens,
 		    output_audio_tokens = usage.output_audio_tokens + EXCLUDED.output_audio_tokens,
+		    truncated_requests = usage.truncated_requests + EXCLUDED.truncated_requests,
+		    refused_requests = usage.refused_requests + EXCLUDED.refused_requests,
+		    empty_requests = usage.empty_requests + EXCLUDED.empty_requests,
+		    invalid_json_requests = usage.invalid_json_requests + EXCLUDED.invalid_json_requests,
+		    tool_error_requests = usage.tool_error_requests + EXCLUDED.tool_error_requests,
 		    updated_at = now()`,
 		integrationID, record.Caller, usage.Model, api.OutboundAIUsageModelsPerDay, aiUsageOverflowModel,
 		errorRequests, unknownRequests, usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens,
 		usage.OutputTokens, record.CostMillicents, usage.Images, usage.AudioSeconds, usage.Characters, usage.VideoSeconds,
 		usage.WebSearches, usage.FileSearches, usage.CodeSessionGB, cachedRequests(record), record.CacheSavedMillicents,
-		record.PromptCacheSavedMillicents, usage.InputAudioTokens, usage.OutputAudioTokens)
+		record.PromptCacheSavedMillicents, usage.InputAudioTokens, usage.OutputAudioTokens,
+		flagged(record, AIQualityTruncated), flagged(record, AIQualityRefused), flagged(record, AIQualityEmpty),
+		flagged(record, AIQualityInvalidJSON), flagged(record, AIQualityToolError))
+}
+
+// flagged counts a call carrying a quality flag (ADR 20261021171712).
+func flagged(record AIUsageRecord, flag string) int64 {
+	if slices.Contains(record.QualityFlags, flag) {
+		return 1
+	}
+	return 0
 }
 
 // recordAIBudgetAlerts stores first-time alerts and enqueues one
@@ -537,12 +627,34 @@ func queueAIRequestLog(batch *pgx.Batch, integrationID uuid.UUID, record AIUsage
 	batch.Queue(`
 		INSERT INTO outbound_ai_request_log
 		    (integration_id, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens,
-		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, tags)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''), $16)
+		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, tags,
+		     trace_id, tool_calls, id, quality_flags)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''), $16, NULLIF($17, ''), $18,
+		        COALESCE($19::uuid, gen_random_uuid()), $20)
+		ON CONFLICT (id) DO NOTHING
 		RETURNING id`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
-		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser, nilIfEmpty(record.Tags))
+		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser, nilIfEmpty(record.Tags),
+		record.TraceID, nilIfEmpty(record.ToolCalls), nullableAppID(record.CallID), nilIfEmpty(record.QualityFlags))
+}
+
+// queueAIOnlineEvaluation marks a sampled call pending for the online
+// evaluation worker when both its bodies were captured whole and the
+// integration has evaluations left today (ADR 20261021171712).
+func queueAIOnlineEvaluation(batch *pgx.Batch, integrationID, logID uuid.UUID) {
+	batch.Queue(`
+		WITH slot AS (
+		    INSERT INTO outbound_ai_online_evaluation_days AS days (integration_id, usage_date, evaluations)
+		    SELECT $1, (now() AT TIME ZONE 'UTC')::date, 1
+		     WHERE EXISTS (SELECT 1 FROM outbound_ai_request_content content
+		                    WHERE content.log_id = $2 AND NOT content.request_truncated AND NOT content.response_truncated)
+		    ON CONFLICT (integration_id, usage_date) DO UPDATE SET evaluations = days.evaluations + 1 WHERE days.evaluations < $3
+		    RETURNING 1
+		)
+		UPDATE outbound_ai_request_log SET evaluation_state = 'pending'
+		 WHERE id = $2 AND integration_id = $1 AND EXISTS (SELECT 1 FROM slot)`,
+		integrationID, logID, api.OutboundAIOnlineEvaluationsPerDay)
 }
 
 // queueAIRequestContent stores a logged call's captured bodies while the
@@ -586,6 +698,15 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_budget_alerts WHERE period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_request_log WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIRequestLogRetentionDays},
+		// ADR 20261020202035: traces follow the request log, and their day
+		// counters only need today's.
+		{`DELETE FROM outbound_ai_traces WHERE last_at < now() - make_interval(days => $1::int)`, api.OutboundAIRequestLogRetentionDays},
+		{`DELETE FROM outbound_ai_trace_days WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, 1},
+		// ADR 20261021171712: drift alerts, and online evaluation day
+		// counters, which only need today's.
+		{`DELETE FROM outbound_ai_quality_alerts WHERE detected_at < now() - make_interval(days => $1::int)`,
+			api.OutboundAIQualityAlertRetentionDays},
+		{`DELETE FROM outbound_ai_online_evaluation_days WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, 1},
 		// ADR-996: captured content expires sooner, and an integration that
 		// turned capture off loses what it captured within one prune.
 		{`DELETE FROM outbound_ai_request_content content
@@ -609,6 +730,9 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		// ADR-1340: canary rows and export lines.
 		{`DELETE FROM outbound_ai_route_target_minutes WHERE minute < now() - make_interval(hours => $1::int)`, api.OutboundAIRouteStatsRetentionHours},
 		{`DELETE FROM outbound_ai_log_exports WHERE created_at < now() - make_interval(hours => $1::int)`, api.OutboundAILogExportRetentionHours},
+		// ADR 20261022153155: AI calls by deployment.
+		{`DELETE FROM outbound_ai_deployment_minutes WHERE minute < now() - make_interval(days => $1::int)`,
+			api.OutboundAIDeploymentStatsRetentionDays},
 		// ADR-1431: settled batches, evaluations with their items, and
 		// tokens that expired or were revoked.
 		{`DELETE FROM outbound_ai_batches WHERE state = 'settled' AND settled_at < now() - make_interval(days => $1::int)`, api.OutboundAIBatchRetentionDays},

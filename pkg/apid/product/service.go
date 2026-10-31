@@ -27,9 +27,11 @@ type Host interface {
 }
 
 type Service struct {
-	EmailTransport     *productemail.Transport
-	EmailSeal          func(string, string) ([]byte, error)
-	EmailOpen          func(string, []byte) (string, error)
+	EmailTransport *productemail.Transport
+	EmailSeal      func(string, string) ([]byte, error)
+	EmailOpen      func(string, []byte) (string, error)
+	// EmailOrigin is the platform's public https origin, for links back to
+	// the portal in email and provider pages.
 	EmailOrigin        string
 	EmailReady         func() bool
 	EmailWebhookSecret string
@@ -58,6 +60,17 @@ type Service struct {
 	// PlanPricingEnabled reads the product_control_plan_pricing_enabled
 	// release gate (ADR-20261021154511); nil is off.
 	PlanPricingEnabled func() bool
+	// SignupEnabled reads the product_control_signup_enabled switch
+	// (ADR-20261022100735); nil is off.
+	SignupEnabled func() bool
+	// SignupCustomer creates a signup's customer in the account's billing
+	// provider and returns its ID.
+	SignupCustomer func(ctx context.Context, acct state.Account, provider, idempotencyKey, email, name string, metadata map[string]string) (string, *api.Problem)
+	// PaymentMethod, PaymentMethodCheckout and CompletePaymentMethod reach a
+	// workspace's card on file in the account's Stripe.
+	PaymentMethod         func(ctx context.Context, acct state.Account, customer string) (*api.ProductPaymentMethod, *api.Problem)
+	PaymentMethodCheckout func(ctx context.Context, acct state.Account, customer, currency, idempotencyKey, successURL, cancelURL string) (string, *api.Problem)
+	CompletePaymentMethod func(ctx context.Context, acct state.Account, customer, sessionID string) (*api.ProductPaymentMethod, *api.Problem)
 }
 
 // errPlanPricingUnavailable refuses a catalog with plan fees or included
@@ -286,7 +299,7 @@ func customerViewWithHistory(parent context.Context, store state.ProductControlS
 func populateCustomerView(ctx context.Context, store state.ProductControlStore, view *api.ProductPortal, permissions api.ProductPermissions, period string, observed time.Time, history bool) error {
 	var err error
 	var usage *api.ProductUsage
-	starts := map[string]int64{}
+	starts, paid := map[string]int64{}, map[string]int64{}
 	if permissions.ViewWork && history {
 		view.Operations, err = productHistory(ctx, store, view.AccountID, view.AppID, view.Customer.TenantID, view.Catalog)
 		if err != nil {
@@ -305,8 +318,18 @@ func populateCustomerView(ctx context.Context, store state.ProductControlStore, 
 		for _, line := range value.Lines {
 			starts[line.Feature] += line.Starts
 		}
+		// Starts during the trial use no included starts (ADR-20261021195901).
+		for feature, n := range value.TrialStarts {
+			paid[feature] -= n
+		}
 		for name, grant := range view.Catalog.Spec.Plans[view.Customer.Plan].Features {
 			view.Allowances[name] = max(0, grant.MonthlyStarts-starts[name])
+			if grant.IncludedStarts > 0 {
+				if view.IncludedRemaining == nil {
+					view.IncludedRemaining = map[string]int64{}
+				}
+				view.IncludedRemaining[name] = max(0, grant.IncludedStarts-(starts[name]+paid[name]))
+			}
 		}
 	}
 	if permissions.RunWork || permissions.ViewBilling {
@@ -320,7 +343,7 @@ func populateCustomerView(ctx context.Context, store state.ProductControlStore, 
 			return err
 		}
 		for name := range view.Catalog.Spec.Features {
-			view.Quotes[name] = productcontrol.Quote(view.AccountID, view.AppID, view.Customer.TenantID, name, view.Catalog, view.Customer, period, starts[name])
+			view.Quotes[name] = productcontrol.Quote(view.AccountID, view.AppID, view.Customer.TenantID, name, view.Catalog, view.Customer, period, starts[name]+paid[name], observed)
 		}
 	}
 	if period == productcontrol.Period(observed) {
@@ -408,6 +431,8 @@ func respond(w http.ResponseWriter, value any, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Product unavailable", "no product catalog or customer plan is available"))
 	case errors.Is(err, state.ErrInvalidArgument):
 		api.WriteProblem(w, api.ErrValidation("invalid product catalog, customer assignment or usage selector"))
+	case errors.Is(err, state.ErrProductTrialUnavailable):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProductTrialUnavailable, "Trial unavailable", "the customer has no running trial; a customer gets one trial per app"))
 	case errors.Is(err, errPlanPricingUnavailable):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProductPlanPricingUnavailable, "Plan pricing unavailable",
 			"plan fees and included starts are released by the operator's product_control_plan_pricing_enabled setting; publish the catalog without them"))

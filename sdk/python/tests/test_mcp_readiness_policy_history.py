@@ -1,6 +1,6 @@
-from faas_sdk.models.mcp_readiness_policy_diff import MCPReadinessPolicyDiff
-from faas_sdk.models.mcp_readiness_policy_history import MCPReadinessPolicyHistory
-from faas_sdk.models.restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
+from faas_sdk.preview.models.mcp_readiness_policy_diff import MCPReadinessPolicyDiff
+from faas_sdk.preview.models.mcp_readiness_policy_history import MCPReadinessPolicyHistory
+from faas_sdk.preview.models.restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
 
 
 def test_policy_history_restore_and_diff_round_trip():

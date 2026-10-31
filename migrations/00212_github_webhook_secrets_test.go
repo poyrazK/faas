@@ -67,9 +67,11 @@ func TestMigrations_00212_GithubWebhookSecrets(t *testing.T) {
 		hasDef   bool
 	}{
 		"installation_id": {"bigint", "NO", false},
-		"secret_value":    {"bytea", "NO", false},
-		"upgraded_at":     {"timestamp with time zone", "NO", true},
-		"upgraded_by":     {"text", "NO", true},
+		// Nullable since 20261023201337575_github_webhook_secret_plaintext_optional.sql:
+		// new rows keep only the sealed copy (ADR-20261022111812).
+		"secret_value": {"bytea", "YES", false},
+		"upgraded_at":  {"timestamp with time zone", "NO", true},
+		"upgraded_by":  {"text", "NO", true},
 	}
 	got := map[string]struct {
 		typ      string

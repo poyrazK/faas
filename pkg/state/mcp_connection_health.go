@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"net/url"
@@ -16,6 +17,44 @@ import (
 type MCPConnectionHealthStore interface {
 	MCPConnectionHealth(context.Context, string, string, int, time.Time) (api.MCPConnectionHealthSnapshot, error)
 }
+
+// MCPConnectionHealthVisibleStore reads connection health without the issues
+// of hidden apps: company apps the caller may no longer see
+// (appaccess.HiddenApps). They are neither listed nor counted, so the counts,
+// pages and fingerprints describe only what the caller is shown.
+type MCPConnectionHealthVisibleStore interface {
+	MCPConnectionHealthVisible(ctx context.Context, account, app string, hidden map[string]bool, offset int, at time.Time) (api.MCPConnectionHealthSnapshot, error)
+}
+
+// VisibleMCPConnectionHealth reads connection health for a caller with hidden
+// apps. A store that cannot leave them out is an error once any app is hidden,
+// never a snapshot that still shows them.
+func VisibleMCPConnectionHealth(ctx context.Context, source MCPConnectionHealthStore, account, app string, hidden map[string]bool, offset int, at time.Time) (api.MCPConnectionHealthSnapshot, error) {
+	if len(hidden) == 0 {
+		return source.MCPConnectionHealth(ctx, account, app, offset, at)
+	}
+	visible, ok := source.(MCPConnectionHealthVisibleStore)
+	if !ok {
+		return api.MCPConnectionHealthSnapshot{}, errors.New("connection health cannot leave out hidden apps")
+	}
+	return visible.MCPConnectionHealthVisible(ctx, account, app, hidden, offset, at)
+}
+
+// visibleHealthRows drops the rows of hidden apps, after the source limit
+// decided whether the read was complete.
+func visibleHealthRows(rows []mcpHealthRow, hidden map[string]bool) []mcpHealthRow {
+	if len(hidden) == 0 {
+		return rows
+	}
+	out := rows[:0:0]
+	for _, row := range rows {
+		if !hidden[row.AppID] {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 type mcpHealthRow struct {
 	Scope            string     `json:"scope,omitempty"`
 	ObserverState    string     `json:"observer_state"`
@@ -126,6 +165,10 @@ func connectionHealthSnapshot(rows []mcpHealthRow, complete bool, offset int, at
 	return out
 }
 func (s *PgStore) MCPConnectionHealth(ctx context.Context, account, app string, offset int, at time.Time) (api.MCPConnectionHealthSnapshot, error) {
+	return s.MCPConnectionHealthVisible(ctx, account, app, nil, offset, at)
+}
+
+func (s *PgStore) MCPConnectionHealthVisible(ctx context.Context, account, app string, hidden map[string]bool, offset int, at time.Time) (api.MCPConnectionHealthSnapshot, error) {
 	if offset < 0 || offset > api.MCPConnectionHealthMaxOffset {
 		return api.MCPConnectionHealthSnapshot{}, ErrInvalidArgument
 	}
@@ -161,9 +204,13 @@ func (s *PgStore) MCPConnectionHealth(ctx context.Context, account, app string, 
 	}
 	complete := len(rows) <= api.MCPConnectionHealthSourceLimit
 	rows = rows[:min(len(rows), api.MCPConnectionHealthSourceLimit)]
-	return connectionHealthSnapshot(rows, complete, offset, at), nil
+	return connectionHealthSnapshot(visibleHealthRows(rows, hidden), complete, offset, at), nil
 }
-func (m *MemStore) MCPConnectionHealth(_ context.Context, account, app string, offset int, at time.Time) (api.MCPConnectionHealthSnapshot, error) {
+func (m *MemStore) MCPConnectionHealth(ctx context.Context, account, app string, offset int, at time.Time) (api.MCPConnectionHealthSnapshot, error) {
+	return m.MCPConnectionHealthVisible(ctx, account, app, nil, offset, at)
+}
+
+func (m *MemStore) MCPConnectionHealthVisible(_ context.Context, account, app string, hidden map[string]bool, offset int, at time.Time) (api.MCPConnectionHealthSnapshot, error) {
 	if offset < 0 || offset > api.MCPConnectionHealthMaxOffset {
 		return api.MCPConnectionHealthSnapshot{}, ErrInvalidArgument
 	}
@@ -222,5 +269,5 @@ func (m *MemStore) MCPConnectionHealth(_ context.Context, account, app string, o
 	})
 	complete := len(rows) <= api.MCPConnectionHealthSourceLimit
 	rows = rows[:min(len(rows), api.MCPConnectionHealthSourceLimit)]
-	return connectionHealthSnapshot(rows, complete, offset, at), nil
+	return connectionHealthSnapshot(visibleHealthRows(rows, hidden), complete, offset, at), nil
 }

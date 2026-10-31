@@ -67,7 +67,7 @@ type AppEventPublishStatusResponse struct {
 	Evidence           *AppEventPublishStatusEvidence `json:"evidence,omitempty"`
 }
 
-func (c *Client) GetAppEventPublishStatus(ctx context.Context, slug string, query AppEventPublishStatusQuery) (AppEventPublishStatusResponse, error) {
+func (c *PreviewClient) GetAppEventPublishStatus(ctx context.Context, slug string, query AppEventPublishStatusQuery) (AppEventPublishStatusResponse, error) {
 	var out AppEventPublishStatusResponse
 	if err := query.Normalize(); err != nil {
 		return out, err

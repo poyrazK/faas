@@ -12,7 +12,7 @@ export type ManagedPostgresCutover = {
   target_database_id: string;
   app_id: string;
   scope: string;
-  state: 'preparing' | 'prepared' | 'verifying' | 'verified' | 'cancelling' | 'cancelled';
+  state: 'preparing' | 'prepared' | 'verifying' | 'verified' | 'cancelling' | 'cancelled' | 'activated';
   /**
    * All staged members have SQL evidence no older than verification_max_age_seconds.
    */

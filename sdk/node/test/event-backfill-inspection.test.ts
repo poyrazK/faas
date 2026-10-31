@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient } from '../src/index.js';
+import { FaaSClient } from '../src/preview.js';
 import { EventsService } from '../src/generated/services/EventsService.js';
 import type { EventReceiptResponse } from '../src/generated/models/EventReceiptResponse.js';
 

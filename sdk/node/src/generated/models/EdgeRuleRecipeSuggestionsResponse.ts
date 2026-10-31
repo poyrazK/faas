@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { EdgeRuleRecipeSuggestion } from './EdgeRuleRecipeSuggestion.js';
 /**
- * Protection recipes suggested from the app's traffic (ADR-20261020105000).
+ * Protection recipes suggested from the app's traffic.
  */
 export type EdgeRuleRecipeSuggestionsResponse = {
   /**

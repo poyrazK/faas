@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One plan alert threshold a consumer crossed in one UTC month (ADR-849).
+ * One plan alert threshold a consumer crossed in one UTC month.
  */
 export type APIConsumerUsageAlertResponse = {
   id: string;

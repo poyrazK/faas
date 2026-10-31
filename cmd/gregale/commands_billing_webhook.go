@@ -43,7 +43,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
-	stripewebhook "github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/billing/stripe/webhooksig"
 )
 
 const billingSubWebhookTest = "webhook-test"
@@ -60,7 +60,27 @@ const webhookTestTimeout = 30 * time.Second
 // The dispatch model matches commands_billing.go::cmdBilling — the
 // CLI flag package stops at the first non-flag token, so the first
 // positional is the provider discriminator.
+// billingWebhookTestHelp documents the operator-only webhook signer, which
+// the customer help manifest deliberately does not advertise.
+const billingWebhookTestHelp = `Usage:
+  gregale billing webhook-test <paddle|stripe> (--url URL | --live) (--secret SECRET | --secret-file PATH) [--payload PATH] [--timeout SECONDS]
+
+Operator tool: sends a signed test webhook to a billing webhook endpoint.
+
+Flags:
+  --url URL             endpoint to post the signed webhook to
+  --live                post to the provider's sandbox API instead (paddle)
+  --secret SECRET       webhook signing secret
+  --secret-file PATH    read the signing secret from a file
+  --payload PATH        JSON payload to sign (default: a synthetic event)
+  --timeout SECONDS     request timeout (default 30)
+`
+
 func cmdBillingWebhookTest(args []string) int {
+	if hasHelpFlag(args) {
+		_, _ = fmt.Fprint(osStdout, billingWebhookTestHelp)
+		return 0
+	}
 	if len(args) == 0 {
 		printCommandValidation(os.Stderr, "usage: gregale billing webhook-test <paddle|stripe> [flags]\n")
 		return 1
@@ -102,9 +122,8 @@ func cmdBillingWebhookTestPaddle(args []string) int {
 
 // cmdBillingWebhookTestStripe sends a signed Stripe payload. Stripe's
 // signing format is `t=<unix>,v1=<hmac-sha256-hex>` where the hmac is
-// over `<t>.<body>`. We use the production-side helper
-// pkg/billing/stripe::SignForTest so the operator's local sign
-// matches what the verifier on the server side accepts.
+// over `<t>.<body>`. pkg/billing/stripe/webhooksig is the same
+// function the server-side verifier uses, without linking stripe-go.
 func cmdBillingWebhookTestStripe(args []string) int {
 	cfg, err := parseWebhookTestFlags(args, "https://api.stripe.com")
 	if err != nil {
@@ -115,7 +134,7 @@ func cmdBillingWebhookTestStripe(args []string) int {
 	if err != nil {
 		return printErr("Could not load payload", err)
 	}
-	header := stripewebhook.SignForTest(body, cfg.secret, time.Now())
+	header := webhooksig.Header(body, cfg.secret, time.Now())
 	return postSignedWebhook(cfg.url, "Stripe-Signature", header, body, cfg.timeout)
 }
 

@@ -50,6 +50,8 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.app_release_review import AppReleaseReview
     from ..models.build_plan import BuildPlan
+    from ..models.database_switch import DatabaseSwitch
+    from ..models.deployment_companion import DeploymentCompanion
     from ..models.deployment_configuration_status import DeploymentConfigurationStatus
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
@@ -66,6 +68,7 @@ if TYPE_CHECKING:
     from ..models.rollback_operation import RollbackOperation
     from ..models.rollout_decision import RolloutDecision
     from ..models.scan_result import ScanResult
+    from ..models.scheduled_release import ScheduledRelease
     from ..models.secret_scan_result import SecretScanResult
     from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
     from ..models.workflow_spec import WorkflowSpec
@@ -78,10 +81,10 @@ T = TypeVar("T", bound="DeploymentResponse")
 @_attrs_define
 class DeploymentResponse:
     """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
-    `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 /
-    ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy
-    pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the
-    ref shape is non-secret by design.
+    `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object; they round-trip
+    via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are
+    NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret
+    by design.
 
     """
 
@@ -101,20 +104,24 @@ class DeploymentResponse:
     tasks. Overdue spans passed their deadline without a recorded outcome."""
     promotion_hold: DeploymentPromotionHold | Unset = UNSET
     """Compatibility hold and durable recovery progress for a deployment awaiting promotion."""
+    scheduled_release: ScheduledRelease | Unset = UNSET
+    """A release built ahead of time that starts its rollout at release_at."""
+    database_switch: DatabaseSwitch | Unset = UNSET
+    """A rollback that restores the app's managed PostgreSQL database with the code. The database is restored to
+    restore_point as a new database, and the app moves to it and to the target release while it is fenced."""
     durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
     """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
     stage_state: DeploymentStageState | Unset = UNSET
-    """Customer-visible deployment stage progress (ADR-117). `current` is the open stage, or an empty string once
-    the deployment is live, failed or cancelled and that stage has moved into `history`."""
+    """Customer-visible deployment stage progress. `current` is the open stage, or an empty string once the
+    deployment is live, failed or cancelled and that stage has moved into `history`."""
     dev_patch: DevPatchPreview | Unset = UNSET
     """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have
-    been applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a
+    been applied as a live source patch to the deployment that was live at upload time (phase 1). It is a
     measurement only; the normal developer build always runs."""
     revision: int | Unset = UNSET
-    """Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this
-    API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the
-    `deploy-{N}-{slug}` preview hostname. Omitted for rows created before the column existed; address those by id.
-   """
+    """Per-app deployment revision, rendered as `v42`. Accepted in place of a deployment id wherever this API takes
+    one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the `deploy-{N}-{slug}`
+    preview hostname. Omitted for rows created before the column existed; address those by id."""
     build_id: None | str | Unset = UNSET
     build_cache_status: DeploymentResponseBuildCacheStatus | Unset = UNSET
     """Builderd cache decision for the associated build. Omitted until the build reaches its cache lookup."""
@@ -124,7 +131,7 @@ class DeploymentResponse:
     error: None | str | Unset = UNSET
     error_code: None | str | Unset = UNSET
     error_hint: None | str | Unset = UNSET
-    """One-line next-action lifted from pkg/whycopy catalog."""
+    """One-line next-action lifted catalog."""
     error_why: None | str | Unset = UNSET
     """Human-readable cause with observed value."""
     error_fix: None | str | Unset = UNSET
@@ -151,7 +158,7 @@ class DeploymentResponse:
     override_cmd: list[str] | Unset = UNSET
     """Cmd override echoed verbatim from the create request."""
     override_env_keys: list[str] | Unset = UNSET
-    """Sorted set of env-var keys set by the env override. VALUES ARE NEVER ECHOED (ADR-053 §Decision 4)."""
+    """Sorted set of env-var keys set by the env override. VALUES ARE NEVER ECHOED."""
     override_env_secret_keys: list[str] | Unset = UNSET
     """Sorted set of env-var keys set by the env_secrets override. The parallel refs are echoed in
     `override_env_secret_refs` because the ref shape is non-secret by design."""
@@ -168,21 +175,20 @@ class DeploymentResponse:
     override_main_depends_on: list[WorkloadDependency] | Unset = UNSET
     """Primary workload startup dependencies echoed verbatim. Init companions remain implicit prerequisites."""
     override_liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
-    """Liveness-probe override echoed verbatim (issue #554 / ADR-078). nil when the deployment used the per-plan
-    default (Hobby/Pro/Scale → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so
-    the customer can audit which probe the host (cmd/vmmd) is running against the VM."""
+    """Liveness-probe override echoed verbatim. nil when the deployment used the per-plan default (Hobby/Pro/Scale
+    → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so the customer can audit
+    which probe the host is running against the VM."""
     min_instances: int | Unset = UNSET
-    """Per-deployment cold-wake floor override (issue #557 closure / ADR-072). 0 = inherit from parent app
-    (default); positive value is the deployment's own floor. Effective per-instance floor =
-    max(app.EffectiveMinInstances(), d.EffectiveMinInstances()). Validated against the parent app's plan
-    MaxMinInstances cap on PATCH."""
+    """Per-deployment cold-wake floor override (closure). 0 = inherit from parent app (default); positive value is
+    the deployment's own floor. Effective per-instance floor = max(app.EffectiveMinInstances,
+    d.EffectiveMinInstances). Validated against the parent app's plan MaxMinInstances cap on PATCH."""
     scan: None | ScanResult | Unset = UNSET
-    """Per-deploy grype CVE scan surface (issue #464 / ADR-055). nil on pre-feature rows (the migration backfilled
-    scan_status='skipped' + scan_result={reason: 'pre-feature'} on those; the apid read path returns nil so the
-    dashboard / CLI see a clean absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil
-    for post-feature rows in any of the {pending, complete, failed, skipped} states. With security_policy=enforce,
-    the deployment is promoted only after a complete, digest-matched scan with no HIGH, CRITICAL, or UNKNOWN
-    findings; off/warn remain advisory."""
+    """Per-deploy grype CVE scan surface. nil on pre-feature rows (the migration backfilled scan_status='skipped' +
+    scan_result={reason: 'pre-feature'} on those; the API read path returns nil so the dashboard / CLI see a clean
+    absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil for post-feature rows in any
+    of the {pending, complete, failed, skipped} states. With security_policy=enforce, the deployment is promoted
+    only after a complete, digest-matched scan with no HIGH, CRITICAL, or UNKNOWN findings; off/warn remain
+    advisory."""
     parked_reason: (
         DeploymentResponseParkedReasonType1
         | DeploymentResponseParkedReasonType2Type1
@@ -190,45 +196,46 @@ class DeploymentResponse:
         | None
         | Unset
     ) = UNSET
-    """Per-deployment parking reason (issue #554 / ADR-079 follow-up and scheduled image quarantine). Closed-set
-    vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked
-    deployments — surfaced as no field on the wire via omitempty."""
+    """Per-deployment parking reason (and scheduled image quarantine). Closed-set vocabulary enforced at the schema
+    layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no
+    field on the wire via omitempty."""
     parked_at: datetime.datetime | None | Unset = UNSET
-    """Wall-clock timestamp the deployment was parked (set once, idempotent across schedd restart cycles). nil for
-    never-parked deployments."""
+    """Wall-clock timestamp the deployment was parked (set once, idempotent across the scheduler restart cycles).
+    nil for never-parked deployments."""
     traffic_percent: int | Unset = UNSET
-    """Per-deployment traffic-split weight (issue #556 PR-A). Summed across live rows for the app = 100 by
-    construction."""
+    """Per-deployment traffic-split weight. Summed across live rows for the app = 100 by construction."""
     scope: None | str | Unset = UNSET
-    """Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
-    nil/omitted = `default`."""
+    """Per-deployment env scope. Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted =
+    `default`."""
     secret_scan: None | SecretScanResult | Unset = UNSET
-    """Per-deploy secret-scan audit row (PR-A / ADR-101). Mirrors
+    """Per-deploy secret-scan audit row. Mirrors
     the `scan` field shape — absent when the row has not been
-    scanned yet (deploy mid-pipeline or pre-PR-A), present
+    scanned yet (deploy mid-pipeline or an older deployment), present
     with `findings=[]` for a clean walk, present with
     one-or-more entries for a hit. Read by the dashboard's
     "secret scan" card and the CLI's `--show-secret-scan`
-    flag. Stamped both for the imaged-side layer walk (main
+    flag. Stamped both for the image service-side layer walk (main
     image + each sidecar; post-build, loud-fail on any
-    finding) and — forward-compat — for the apid-side
+    finding) and — forward-compat — for the API-side
     source-tree 422 path. Status closed-set the writer
     stamps: "complete" (clean) | "complete_with_redactions"
     (hit). The `image_digest` sub-field records which OCI
-    digest the imaged walk ran against; null on legacy
-    pre-PR-A rows. See `pkg/imaged/secretscan.go`.
+    digest the image service walk ran against; null on legacy
+    older rows.
     """
     build_plan: BuildPlan | None | Unset = UNSET
-    """Auto-detected build plan (issue #961 / Mega-A PR-2). One-line summary the CLI prints after `gregale deploy`.
-    nil for image deploys."""
+    """Auto-detected build plan. One-line summary the CLI prints after `gregale deploy`. nil for image deploys."""
     workflows: list[WorkflowSpec] | Unset = UNSET
     """Validated workflow definitions persisted with this immutable deployment revision."""
+    companions: list[DeploymentCompanion] | Unset = UNSET
+    """Companions this deployment carries: name, image, port and size. Environment values and secret grants are
+    never included."""
     hosting_receipt: DeploymentResponseHostingReceiptType0 | None | Unset = UNSET
     """Durable non-secret deployment evidence captured after readiness, including the resolved API profile,
     artifact identity, and post-readiness smoke result."""
     deployed_by_user_id: None | Unset | UUID = UNSET
     """UUID of the deploying local account (FK → accounts.id, ON DELETE SET NULL). Empty when the deploy came from
-    a non-local source (e.g. a githubd pusher not bound to a local account)."""
+    a non-local source (e.g. a GitHub integration pusher not bound to a local account)."""
     deployed_via: (
         DeploymentResponseDeployedViaType1
         | DeploymentResponseDeployedViaType2Type1
@@ -237,18 +244,18 @@ class DeploymentResponse:
         | Unset
     ) = UNSET
     """Closed-set classifier of how this deployment was submitted. One of `api` (SDK / API key) / `cli` (bearer
-    token) / `dashboard` (session cookie) / `github` (githubd_bridge) / `operator` (admin). Enforced at the schema
-    layer by migrations/00303_deployments_actor.sql's CHECK constraint."""
+    token) / `dashboard` (session cookie) / `github` (GitHub integration) / `operator` (admin). Enforced by a
+    database CHECK constraint."""
     deployed_from_ip: None | str | Unset = UNSET
-    """Trusted remote IP captured by `pkg/middleware.ClientIP` at handler entry (XFF + loopback trust contract).
-    Loopback (127.0.0.1) for the githubd_bridge path. Both IPv4 and IPv6 are accepted at the wire and stored in
-    Postgres' native `inet` type (which canonicalises both families); the OpenAPI schema intentionally omits
-    `format: ipv4` so v6 deployments (which grow as the public gateway picks up AAAA records) do not fail schema
-    validation. v6 is rendered as the bracketed colon-hex form per RFC 5952."""
+    """The client IP the platform's edge established for the request. Deployments started by the GitHub integration
+    record an internal platform address. Both IPv4 and IPv6 are accepted at the wire and stored in Postgres' native
+    `inet` type (which canonicalises both families); the OpenAPI schema intentionally omits `format: ipv4` so v6
+    deployments (which grow as the public gateway picks up AAAA records) do not fail schema validation. v6 is
+    rendered as the bracketed colon-hex form per RFC 5952."""
     pusher_login: None | str | Unset = UNSET
     """Raw GitHub login of the pusher when `deployed_via == "github"`. Empty for all other via values. Distinct
-    from the human-readable `DeployedBy` text column (issue #977 / PR #984) — pusher_login is the unmodified GH
-    identity, suitable for downstream GitHub-API correlation."""
+    from the human-readable `DeployedBy` text column — pusher_login is the unmodified GH identity, suitable for
+    downstream GitHub-API correlation."""
     reason: str | Unset = UNSET
     """Free-form operator note on the source-ref deploy request (≤280 chars). Example: 'Emergency rollback after
     payment provider incident'."""
@@ -256,10 +263,10 @@ class DeploymentResponse:
     """Closed-set annotation tag on the source-ref deploy request for grouping/filtering."""
     deployed_by: str | Unset = UNSET
     """Human-readable actor label on the source-ref deploy request. CLI auto-captures from `git config user.name`;
-    githubd stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}."""
+    the GitHub integration stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}."""
     pr_number: int | Unset = UNSET
-    """Pull-request number that drove this source-ref deploy request (githubd pull_request.number; Action ${{
-    github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."""
+    """Pull-request number that drove this source-ref deploy request (the GitHub integration pull_request.number;
+    Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."""
     canary_preset: DeploymentResponseCanaryPreset | Unset = UNSET
     """Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment
     path."""
@@ -280,18 +287,18 @@ class DeploymentResponse:
     rollout_aborted_reason: str | Unset = UNSET
     """Operator or orchestrator reason recorded when the rollout is aborted."""
     rollout_decision: RolloutDecision | Unset = UNSET
-    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
-    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
+    """Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted.
+    Aggregates only; no request payloads, routes, URLs or customer text."""
     rollout_hold: RolloutDecision | Unset = UNSET
-    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
-    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
+    """Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted.
+    Aggregates only; no request payloads, routes, URLs or customer text."""
     release: DeploymentRelease | Unset = UNSET
-    """A deployment's release command run (ADR-1448)."""
+    """A deployment's release command run."""
     rollback_operation: RollbackOperation | Unset = UNSET
     """Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback
-    (manual, dashboard, alert, or first-wake 5xx auto-rollback, ADR-1446) reports preparing until its target serves
-    (complete, with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move
-    traffic for another operation."""
+    (manual, dashboard, alert, or first-wake 5xx auto-rollback) reports preparing until its target serves (complete,
+    with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move traffic for
+    another operation."""
     service_rollout_handoff: ServiceRolloutHandoffResponse | Unset = UNSET
     """Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -332,6 +339,14 @@ class DeploymentResponse:
         promotion_hold: dict[str, Any] | Unset = UNSET
         if not isinstance(self.promotion_hold, Unset):
             promotion_hold = self.promotion_hold.to_dict()
+
+        scheduled_release: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.scheduled_release, Unset):
+            scheduled_release = self.scheduled_release.to_dict()
+
+        database_switch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.database_switch, Unset):
+            database_switch = self.database_switch.to_dict()
 
         durable_entity_validator: dict[str, Any] | Unset = UNSET
         if not isinstance(self.durable_entity_validator, Unset):
@@ -530,6 +545,13 @@ class DeploymentResponse:
                 workflows_item = workflows_item_data.to_dict()
                 workflows.append(workflows_item)
 
+        companions: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.companions, Unset):
+            companions = []
+            for companions_item_data in self.companions:
+                companions_item = companions_item_data.to_dict()
+                companions.append(companions_item)
+
         hosting_receipt: dict[str, Any] | None | Unset
         if isinstance(self.hosting_receipt, Unset):
             hosting_receipt = UNSET
@@ -666,6 +688,10 @@ class DeploymentResponse:
             field_dict["worker_drain"] = worker_drain
         if promotion_hold is not UNSET:
             field_dict["promotion_hold"] = promotion_hold
+        if scheduled_release is not UNSET:
+            field_dict["scheduled_release"] = scheduled_release
+        if database_switch is not UNSET:
+            field_dict["database_switch"] = database_switch
         if durable_entity_validator is not UNSET:
             field_dict["durable_entity_validator"] = durable_entity_validator
         if stage_state is not UNSET:
@@ -742,6 +768,8 @@ class DeploymentResponse:
             field_dict["build_plan"] = build_plan
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
+        if companions is not UNSET:
+            field_dict["companions"] = companions
         if hosting_receipt is not UNSET:
             field_dict["hosting_receipt"] = hosting_receipt
         if deployed_by_user_id is not UNSET:
@@ -795,6 +823,8 @@ class DeploymentResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_release_review import AppReleaseReview
         from ..models.build_plan import BuildPlan
+        from ..models.database_switch import DatabaseSwitch
+        from ..models.deployment_companion import DeploymentCompanion
         from ..models.deployment_configuration_status import DeploymentConfigurationStatus
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
@@ -811,6 +841,7 @@ class DeploymentResponse:
         from ..models.rollback_operation import RollbackOperation
         from ..models.rollout_decision import RolloutDecision
         from ..models.scan_result import ScanResult
+        from ..models.scheduled_release import ScheduledRelease
         from ..models.secret_scan_result import SecretScanResult
         from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
         from ..models.workflow_spec import WorkflowSpec
@@ -856,6 +887,20 @@ class DeploymentResponse:
             promotion_hold = UNSET
         else:
             promotion_hold = DeploymentPromotionHold.from_dict(_promotion_hold)
+
+        _scheduled_release = d.pop("scheduled_release", UNSET)
+        scheduled_release: ScheduledRelease | Unset
+        if isinstance(_scheduled_release, Unset):
+            scheduled_release = UNSET
+        else:
+            scheduled_release = ScheduledRelease.from_dict(_scheduled_release)
+
+        _database_switch = d.pop("database_switch", UNSET)
+        database_switch: DatabaseSwitch | Unset
+        if isinstance(_database_switch, Unset):
+            database_switch = UNSET
+        else:
+            database_switch = DatabaseSwitch.from_dict(_database_switch)
 
         _durable_entity_validator = d.pop("durable_entity_validator", UNSET)
         durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset
@@ -1193,6 +1238,15 @@ class DeploymentResponse:
 
                 workflows.append(workflows_item)
 
+        _companions = d.pop("companions", UNSET)
+        companions: list[DeploymentCompanion] | Unset = UNSET
+        if _companions is not UNSET:
+            companions = []
+            for companions_item_data in _companions:
+                companions_item = DeploymentCompanion.from_dict(companions_item_data)
+
+                companions.append(companions_item)
+
         def _parse_hosting_receipt(data: object) -> DeploymentResponseHostingReceiptType0 | None | Unset:
             if data is None:
                 return data
@@ -1440,6 +1494,8 @@ class DeploymentResponse:
             staged_review=staged_review,
             worker_drain=worker_drain,
             promotion_hold=promotion_hold,
+            scheduled_release=scheduled_release,
+            database_switch=database_switch,
             durable_entity_validator=durable_entity_validator,
             stage_state=stage_state,
             dev_patch=dev_patch,
@@ -1478,6 +1534,7 @@ class DeploymentResponse:
             secret_scan=secret_scan,
             build_plan=build_plan,
             workflows=workflows,
+            companions=companions,
             hosting_receipt=hosting_receipt,
             deployed_by_user_id=deployed_by_user_id,
             deployed_via=deployed_via,

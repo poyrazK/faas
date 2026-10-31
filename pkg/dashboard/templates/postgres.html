@@ -24,7 +24,7 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/postgres">PostgreSQL</a>
+      {{if $.On "managed-postgres"}}<a href="/dashboard/postgres">PostgreSQL</a>{{end}}
       <a href="/dashboard/usage">Usage</a>
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/account">Account</a>
@@ -33,8 +33,23 @@
   <main>
     {{template "email-verification-banner" .}}
     <h1>Managed PostgreSQL</h1>
-    <p>Provisioned databases and app bindings for <code>{{.Account.Email}}</code>. Use <code>gregale postgres</code> for create, restore, and delete operations.</p>
+    <p>Provisioned databases and app bindings for <code>{{.Account.Email}}</code>. Use <code>gregale postgres</code> for create, restore, delete, and undelete operations.</p>
     {{if .Data.Error}}<p class="error">{{.Data.Error}}</p>{{end}}
+    {{with .Data.Overage}}
+      <section aria-label="Compute overage">
+        <h2>Compute overage</h2>
+        {{if .Flash}}<p><strong>{{.Flash}}</strong></p>{{end}}
+        <p>Your plan includes {{.AllowanceLabel}} of database compute a month.
+        {{if .Enabled}}Overage is <strong>on</strong>: databases keep running past it until {{.CeilingLabel}}, then are suspended.
+        {{else}}Overage is <strong>off</strong>: databases are suspended when the allowance is used, until next month or an upgrade.{{end}}
+        Suspended databases keep their data.</p>
+        <form method="POST" action="/dashboard/postgres/overage">
+          <input type="hidden" name="csrf_token" value="{{.ConfirmToken}}">
+          <input type="hidden" name="enabled" value="{{if .Enabled}}off{{else}}on{{end}}">
+          <button type="submit">{{if .Enabled}}Turn overage off{{else}}Turn overage on{{end}}</button>
+        </form>
+      </section>
+    {{end}}
     {{if and .Data.Available (not .Data.Error) (not .Data.Databases)}}
       <p>No managed PostgreSQL databases yet. Create one with <code>gregale postgres create NAME --region REGION</code>.</p>
     {{end}}
@@ -44,6 +59,7 @@
         <table>
           <tbody>
             <tr><th>State</th><td><strong>{{.State}}</strong>{{if .LastErrorCode}} <code>{{.LastErrorCode}}</code>{{end}}</td></tr>
+            {{if .RestorableUntil}}<tr><th>Scheduled for deletion</th><td>Undo before {{.RestorableUntil}} with <code>gregale postgres recover {{.Name}}</code>. It counts toward your plan's database limit until then; <code>gregale postgres delete {{.Name}} --purge</code> deletes it now.</td></tr>{{end}}
             <tr><th>Placement</th><td>{{.Region}} · PostgreSQL {{.PostgresMajor}} · {{.ServiceClass}} · {{.Availability}}</td></tr>
             <tr><th>Compute</th><td>{{if .ScaleToZero}}scales to zero when idle{{else}}always on{{end}}</td></tr>
             <tr><th>Storage / restore</th><td>{{.StorageLimitLabel}} · {{.RestoreWindowSeconds}} seconds</td></tr>

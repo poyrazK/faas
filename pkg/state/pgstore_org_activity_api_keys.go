@@ -10,6 +10,7 @@ import (
 var _ OrgActivityAPIKeyMutationStore = (*PgStore)(nil)
 
 func (s *PgStore) CreateOrgAPIKeyWithActivity(ctx context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string, activity OrgActivity) (APIKey, int64, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	activity, err := normalizeOrgActivity(activity, time.Now())
 	if err != nil {
 		return APIKey{}, 0, err
@@ -99,6 +100,7 @@ func (s *PgStore) RevokeOrgAPIKeyWithActivity(ctx context.Context, orgID, keyID 
 }
 
 func (s *PgStore) RotateOrgAPIKeyWithActivity(ctx context.Context, orgID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration, createdIP, createdUA string, parent *string, activity OrgActivity) (APIKey, APIKey, int64, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	activity, err := normalizeOrgActivity(activity, time.Now())
 	if err != nil {
 		return APIKey{}, APIKey{}, 0, err
@@ -133,13 +135,13 @@ func (s *PgStore) RotateOrgAPIKeyWithActivity(ctx context.Context, orgID, oldKey
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, created_ip, created_ua, parent_key_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, created_ip, created_ua, parent_key_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at, expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),''), coalesce(created_ua,''), parent_key_id`,
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID,
-		nullString(createdIP), nullString(createdUA), parent)
+		nullString(createdIP), nullString(createdUA), parent, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, 0, err
 	}

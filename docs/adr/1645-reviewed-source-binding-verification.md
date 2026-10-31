@@ -13,3 +13,6 @@
 
 See [worker canaries](1644-managed-worker-queue-canaries.md) and the
 [native acceptance runbook](../ops/managed-service-binding-native-acceptance.md).
+
+Managed probes of HTTP-transport callers use the `managed-http-v1` contract
+from [ADR-20261019200059](20261019200059-http-service-binding-evidence.md).

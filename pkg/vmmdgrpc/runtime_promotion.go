@@ -10,6 +10,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
+// admissionHolder reports a parent receipt this vmmd holds through a restart
+// (fcvm.Manager.AdmissionHeldFrom).
+type admissionHolder interface {
+	AdmissionHeldFrom(instance string, parent runtimeadmission.Receipt) string
+}
+
 type admittedPromotionVMM interface {
 	RuntimeAdmissionIdentity() (runtimeadmission.Identity, error)
 	PromoteAdmitted(context.Context, runtimeadmission.Promotion) (*fcvm.Instance, runtimeadmission.Receipt, error)
@@ -49,6 +55,11 @@ func (s *Server) parseAdmittedPromotion(ctx context.Context, req *vmmdpb.Promote
 	p, err := runtimeadmission.PromotionFromProto(req)
 	if err != nil {
 		return nil, runtimeadmission.Promotion{}, admissionStatus(err)
+	}
+	// A guest this vmmd adopted carries a parent its predecessor issued
+	// (ADR-595 extension); the hold also covers the receipt check after.
+	if h, ok := vmm.(admissionHolder); ok {
+		p = p.Held(h.AdmissionHeldFrom(p.Binding.InstanceID, p.Parent))
 	}
 	if err := p.Validate(time.Now()); err != nil {
 		return nil, runtimeadmission.Promotion{}, admissionStatus(err)

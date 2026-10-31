@@ -1,3 +1,26 @@
+-- name: QueueCanarySnapshotView :one
+-- ADR-570: the same read without row locks, for read-only snapshot views.
+SELECT jsonb_build_object(
+ 'BindingID',b.id,'Name',b.name,'QueueName',b.queue_name,'Scope',d.scope,
+ 'EnvironmentID',b.environment_id,'BindingScope',b.deployment_scope,'TriggerID',t.id,
+ 'RevisionTTLSeconds',coalesce((a.manifest->>'revision_pin_ttl_seconds')::int,0),'MaxAttempts',t.max_attempts,'PayloadMaxBytes',t.payload_max_bytes,'FilterCriteria',t.filter_criteria,'PoisonStrategy',t.broker_poison_strategy,'Config',t.config,'BatchSize',t.batch_size_max,'BatchWindow',t.batch_window_ms,
+ 'Retry',b.retry_policy,'Concurrency',b.max_concurrency,
+ 'DeploymentID',d.id,'OverrideEnv',d.override_env,'RootfsKey',d.rootfs_key,'ImageDigest',d.image_digest,
+ 'ConsumerClass',b.workload_class,'ManagedRuntime',d.environment_workload_runtime
+)::jsonb AS snapshot, to_jsonb(d)::jsonb AS deployment
+FROM apps a JOIN queue_bindings b ON b.app_id=a.id AND b.account_id=a.account_id
+JOIN deployments d ON d.app_id=a.id
+JOIN triggers t ON t.queue_binding_id=b.id AND t.app_id=a.id AND t.account_id=a.account_id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+AND d.id=sqlc.arg(deployment_id)::uuid AND d.status='live' AND d.deleted_at IS NULL
+AND (d.environment_workload_runtime IS NOT NULL OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::int,0)>0 AND (d.traffic_percent>0 OR EXISTS(SELECT 1 FROM deployment_revision_pins pins WHERE pins.deployment_id=d.id AND pins.expires_at>clock_timestamp()))))
+AND b.name=sqlc.arg(binding)::text AND b.enabled AND b.retired_at IS NULL AND b.mode='push'
+AND ((b.deployment_scope='' AND d.scope IN ('production','default')) OR (b.deployment_scope=d.scope AND EXISTS(SELECT 1 FROM project_environments e WHERE e.id=b.environment_id AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope)))
+AND t.enabled AND t.kind='queue' AND t.source='queue'
+AND t.queue_binding_scope=b.deployment_scope AND t.queue_binding_environment_id IS NOT DISTINCT FROM b.environment_id
+AND NOT EXISTS(SELECT 1 FROM queue_bindings other_binding WHERE other_binding.app_id=b.app_id AND other_binding.name=b.name AND other_binding.id<>b.id AND other_binding.retired_at IS NULL AND (other_binding.deployment_scope='' OR other_binding.deployment_scope=d.scope))
+AND NOT EXISTS(SELECT 1 FROM triggers other WHERE other.queue_binding_id=b.id AND other.id<>t.id);
+
 -- name: QueueCanarySnapshot :one
 SELECT jsonb_build_object(
  'BindingID',b.id,'Name',b.name,'QueueName',b.queue_name,'Scope',d.scope,

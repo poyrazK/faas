@@ -114,6 +114,17 @@ class RunContracts(unittest.TestCase):
         self.report["resources"].update(apps=dict(self.api.apps), project_id=self.api.project_id,
                                         environment_id=self.api.environment_id, provisioning="accepted")
 
+    def test_lost_reply_acceptance_appears_only_in_recovery_guidance(self):
+        # After a lost commit reply deploy may name the accepted deployment in
+        # its recovery guidance; any other mention means the session adopted it.
+        deployment = uid()
+        for line in ("Stage: submission; inspect: gregale deployment " + deployment,
+                     "Deployment: " + deployment + "; resume: gregale deploy resume " + uid().replace("-", ""),
+                     "  gregale deployment wait " + deployment + " --timeout 1200"):
+            self.assertTrue(native.RECOVERY_GUIDANCE.search(line), line)
+        for line in ("Deployment accepted " + deployment, "Verified deployment " + deployment):
+            self.assertFalse(native.RECOVERY_GUIDANCE.search(line), line)
+
     def test_provision_cleanup_pins_ids_and_preserves_unrelated_resources(self):
         self.run.provision(self.sources())
         self.assertEqual(self.report["resources"]["apps"], self.api.apps)

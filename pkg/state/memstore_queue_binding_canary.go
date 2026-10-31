@@ -138,6 +138,11 @@ func (m *MemStore) GetQueueBindingCanary(_ context.Context, account, app, id str
 	defer m.mu.Unlock()
 	return m.getQueueCanaryLocked(account, app, id)
 }
+
+// The invocation version snapshot already holds the store lock.
+func (s memInvocationVersionReader) GetQueueBindingCanary(_ context.Context, account, app, id string) (api.QueueBindingCanary, error) {
+	return s.store.getQueueCanaryLocked(account, app, id)
+}
 func (m *MemStore) CancelQueueBindingCanary(_ context.Context, account, app, id string) (api.QueueBindingCanary, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

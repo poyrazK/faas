@@ -14,14 +14,16 @@ import (
 // large but valid quantities.
 
 // CapRemainingMillicents is the cap in exact millicents less the billable
-// compute (mb_seconds) and egress already reserved against it. A nil egress
+// compute (mb_seconds), egress and object storage (millicents, delivered or
+// pending, ADR-20261027093220) already reserved against it. A nil egress
 // policy reserves no egress. ok=false (negative input or an invalid egress
 // price) fails the caller closed.
-func CapRemainingMillicents(capCents, computeMBSeconds, egress int64, egressPolicy *MeterUsagePolicy) (*big.Rat, bool) {
-	if capCents < 0 || computeMBSeconds < 0 || egress < 0 {
+func CapRemainingMillicents(capCents, computeMBSeconds, egress int64, egressPolicy *MeterUsagePolicy, objectStorageMillicents int64) (*big.Rat, bool) {
+	if capCents < 0 || computeMBSeconds < 0 || egress < 0 || objectStorageMillicents < 0 {
 		return nil, false
 	}
 	remaining := new(big.Rat).SetInt(new(big.Int).Mul(big.NewInt(capCents), big.NewInt(api.MillicentsPerCent)))
+	remaining.Sub(remaining, new(big.Rat).SetInt64(objectStorageMillicents))
 	remaining.Sub(remaining, new(big.Rat).SetFrac(
 		new(big.Int).Mul(big.NewInt(computeMBSeconds), big.NewInt(api.OverageMillicentsPerGBHour)),
 		big.NewInt(api.SecondsPerGBHour)))

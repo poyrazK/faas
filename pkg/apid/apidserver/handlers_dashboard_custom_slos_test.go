@@ -21,6 +21,10 @@ func TestCustomSLOView(t *testing.T) {
 		{"missed", api.SLOStatus{AttainmentPct: f(99), BudgetRemainingPct: f(-100)}, "bad", "-100.0%"},
 		{"no traffic", api.SLOStatus{Source: "degraded: prometheus not configured"}, "dim", "—"},
 	}
+	pending := customSLOView(def, &api.SLOStatus{WindowStart: "2026-10-22T12:00:00Z", BurnRate1h: f(9.3)})
+	if pending.Attained != "pending: first hour closes 13:00 UTC" {
+		t.Errorf("open creation hour: attained %q, want the pending label (Hunt 12 H12-22)", pending.Attained)
+	}
 	for _, tt := range tests {
 		v := customSLOView(def, &tt.status)
 		if v.BudgetClass != tt.wantClass || v.BudgetRemaining != tt.wantLeft {

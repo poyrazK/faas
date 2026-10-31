@@ -18,7 +18,7 @@ func (s *server) subscriptionEndedRequested() bool {
 // Only a verified ingress selects this path, before its expiring replay claim.
 // Selection cannot fall back to inline mail if configuration or a later gate fails.
 func (s *server) handleSubscriptionEndedOutbox(w http.ResponseWriter, r *http.Request, provider string, ev billing.Event, acct state.Account) bool {
-	if ev.Type != billing.EventSubscriptionCanceled || !s.subscriptionEndedRequested() {
+	if ev.Type != billing.EventSubscriptionCanceled || !s.subscriptionEndedRequested() || orgBillingSubject(acct) {
 		return false
 	}
 	if err := s.endSubscriptionWithNotice(r.Context(), provider, ev, acct); err != nil {

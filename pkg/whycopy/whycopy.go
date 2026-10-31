@@ -59,6 +59,20 @@ type Render struct {
 	Observed func(observed any) (why, fix string)
 }
 
+const (
+	executionModeConflictWhy = "a worker must keep running without listening on a port, and a job must run to completion without serving; at startup your app did the other thing (the detail shows the port it bound or the code it exited with)"
+	executionModeConflictFix = "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• or change the start command so the process matches the mode you declared"
+)
+
+// ProjectServiceModeConflict is the observed value for a project service's
+// CodeExecutionModeConflict: the service's repository name and the conflict
+// vmmd reported. A service deployed as a worker that listens gets the
+// Compose fix instead of the gregale.yaml one (ADR-20261029120000).
+type ProjectServiceModeConflict struct {
+	Service  string
+	Conflict api.ExecutionModeConflict
+}
+
 // catalog is the static explanation table. Order does not matter;
 // lookup is map-based. Adding a new code → add a row here.
 // Tripwire: TestEveryCodeHasWhycopyEntry in
@@ -68,7 +82,7 @@ var catalog = map[string]Render{
 		Title: "No process listening on $PORT",
 		Hint:  "your app isn't accepting traffic on the port we expect",
 		Why:   "the wake readiness probe found no listener on $PORT after the wake timeout — either nothing is bound, or your listener bound to a different port/address",
-		Fix:   "• make sure your app listens on process.env.PORT (or 8080)\n• if you bind manually, bind to 0.0.0.0 not 127.0.0.1\n• run `gregale doctor` to scan your source for bind issues",
+		Fix:   "• make sure your app listens on process.env.PORT\n• if your app must use a fixed port, declare it: hosting.port in gregale.yaml\n• if you bind manually, bind to 0.0.0.0 not 127.0.0.1\n• run `gregale doctor` to scan your source for bind issues",
 		Observed: func(observed any) (why, fix string) {
 			if observed == nil {
 				return "", ""
@@ -163,7 +177,10 @@ var catalog = map[string]Render{
 		Title: "Application startup timeout",
 		Hint:  "your app didn't become ready in time",
 		Why:   "the application did not satisfy its configured readiness check before the startup deadline; the app's startup deadline (`startup_deadline_s` in gregale.yaml, `--startup-deadline-s` on deploy) controls this window, while its idle timeout controls parking",
-		Fix:   "• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• defer expensive initialization where possible\n• raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only when healthy startup needs more time",
+		// The deadline cannot exceed the cold-boot window every later wake must
+		// meet (H12-10), so "raise the deadline" was advice no app could follow
+		// (Hunt 14 H14-4).
+		Fix: fmt.Sprintf("• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• listen first and defer expensive initialization: the app must answer within %d s, the cold-boot window every later wake must also meet, and `startup_deadline_s` cannot be raised above it", api.ColdBootReadyWindowS),
 	},
 	api.CodeAppStartupCrash: {
 		Title: "Application exited during startup",
@@ -174,13 +191,22 @@ var catalog = map[string]Render{
 	api.CodeExecutionModeConflict: {
 		Title: "Execution mode conflict",
 		Hint:  "your app did not behave like its execution mode",
-		Why:   "a worker must keep running without listening on a port, and a job must run to completion without serving; at startup your app did the other thing (the detail shows the port it bound or the code it exited with)",
-		Fix:   "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• or change the start command so the process matches the mode you declared",
+		Why:   executionModeConflictWhy,
+		Fix:   executionModeConflictFix,
+		Observed: func(observed any) (why, fix string) {
+			conflict, ok := observed.(ProjectServiceModeConflict)
+			if !ok || conflict.Service == "" || !conflict.Conflict.ListeningWorker() {
+				return executionModeConflictWhy, executionModeConflictFix
+			}
+			port := conflict.Conflict.Port
+			return fmt.Sprintf("nothing in the repository showed that other services call %q, so it was deployed as a background worker, but it listens on port %d; a worker must not listen", conflict.Service, port),
+				fmt.Sprintf("• if other services call it, give it `expose: [\"%d\"]` in Compose and list it in their depends_on, or set a caller's variable to its URL (http://%s:%d); the next deploy runs it as a service (ADR-20261029120000)\n• if it is a background worker, stop it from listening on a port", port, conflict.Service, port)
+		},
 	},
 	api.CodeStatelessOnlyViolation: {
 		Title: "Stateless-only platform",
 		Hint:  "this app shape needs persistent storage we don't provide",
-		Why:   "the deploy shape (or resolved base image) is a stateful one this platform does not support in year one — a Dockerfile with VOLUME, a top-level data/ or db/ directory, or a known stateful base image (postgres/redis/etc.)",
+		Why:   "the deploy shape (or resolved base image) is a stateful one this platform does not support in year one — a Dockerfile with VOLUME, a database file (SQLite, Postgres or Redis data) inside a top-level data/ or db/ directory, or a known stateful base image (postgres/redis/etc.)",
 		Fix:   "• use a managed service (Neon, Upstash, S3, R2, MongoDB Atlas) and wire credentials via `gregale secrets`\n• if you need a quick start, `gregale init --template=s3-uploader` shows the pattern",
 	},
 	// ADR-117 §Production-ready follow-on: per-stage failure
@@ -209,9 +235,27 @@ var catalog = map[string]Render{
 	},
 	api.CodeStageImageBuildTimeout: {
 		Title: "Image build timed out",
-		Hint:  "the build VM exceeded the 10-minute build-time ceiling",
-		Why:   "the build VM has a hard 10-minute wall-clock ceiling (ADR-003 §SLO). Cold-cache dependency restores, large monorepo clones, or stuck network calls trip this; the build VM is forcibly killed",
+		Hint:  "the build VM exceeded the 15-minute build-time ceiling",
+		Why:   "the build VM has a hard 15-minute wall-clock ceiling (ADR-791). Cold-cache dependency restores, large monorepo clones, or stuck network calls trip this; the build VM is forcibly killed",
 		Fix:   "• warm the dependency cache first (`gregale deploy` will reuse a recent cache hit within 24 h)\n• split a monolithic build into smaller, parallelized CI jobs\n• if the build is genuinely large, file a ticket — the ceiling is on the roadmap to be plan-tiered",
+	},
+	api.CodeBuildFailed: {
+		Title: "Build failed",
+		Hint:  "a step of your build exited with an error",
+		Why:   "the build VM ran your app's install and build steps and one of them exited non-zero; the failing command and its output are in the build log",
+		Fix:   "• read the build log: `gregale logs <slug> --deployment <id>` (`gregale deploy` prints the failing lines)\n• reproduce the step locally, fix it, and deploy again",
+	},
+	api.CodeBuildInfrastructure: {
+		Title: "Build could not run",
+		Hint:  "a platform problem stopped the build; your code did not cause it",
+		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane) before your build steps could finish",
+		Fix:   "• deploy again; the build is retried from the start\n• if it keeps failing, contact support with the deployment id",
+	},
+	api.CodeAppLayerTooBig: {
+		Title: "App too large",
+		Hint:  "the built app is larger than your plan's app filesystem",
+		Why:   "your dependencies and code go into the app's own layer, apart from the shared runtime base, and each plan caps that layer; the error names the cap and the size this build needed",
+		Fix:   "• install production dependencies only, and keep build caches, test data and other large files out of the deployed source\n• or move to a plan with a larger app filesystem",
 	},
 	api.CodeStageSecurityScanFindings: {
 		Title: "Security scan flagged findings",
@@ -314,11 +358,11 @@ func startupFailureGuidance(detail string) (why, fix string) {
 	for _, field := range strings.Fields(detail) {
 		switch strings.TrimRight(field, ":;,") {
 		case "startup_phase=guest_startup":
-			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", "• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only after confirming healthy startup needs more time"
+			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", fmt.Sprintf("• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• listen first and defer expensive initialization: the app must answer within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
 		case "startup_phase=handler_healthcheck":
-			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", "• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only when healthy initialization needs more time"
+			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", fmt.Sprintf("• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• report ready sooner: the app must be ready within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
 		case "startup_phase=image_healthcheck":
-			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", "• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace; raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only when healthy initialization needs more time"
+			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", fmt.Sprintf("• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace: the check must pass within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
 
 		}
 	}

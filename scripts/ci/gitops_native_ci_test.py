@@ -157,7 +157,7 @@ class NativeCIContracts(unittest.TestCase):
         job_minutes = max(map(int, re.findall(r"timeout-minutes: (\d+)", workflow)))
         self.assertGreater(outer, test_minutes)
         self.assertGreater(job_minutes, outer + cleanup)
-        upload = workflow.split("uses: actions/upload-artifact@v4", 1)[1]
+        upload = workflow.split("uses: actions/upload-artifact@", 1)[1]
         paths = re.findall(r"\$\{\{ env.GREGALE_GITOPS_CI_EVIDENCE \}\}/([^\n]+)", upload)
         self.assertEqual(paths, ["public/summary.json", "public/summary.md"])
 

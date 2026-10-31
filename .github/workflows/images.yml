@@ -109,7 +109,7 @@ jobs:
       builder: ${{ steps.changed.outputs.builder }}
       bases: ${{ steps.changed.outputs.bases }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -170,10 +170,10 @@ jobs:
           fi
 
           # Runtime bases contain these Dockerfiles, the shared skeleton,
-          # and profiling bootstraps. Daemon code and guest runner shims ship
-          # in the signed
+          # runner-python312's pip pin, and the profiling and tracing
+          # bootstraps (their hashed Python locks). Daemon code and guest runner shims ship in the signed
           # release bundle and cannot change these image bytes.
-          if grep -Eq '^(images/(base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|guest/profiling/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+          if grep -Eq '^(images/(agent-base|base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|images/agent-base/|images/agent_base_install_test\.py$|pkg/agentpresets/presets\.json$|images/runner-python312-pip\.txt$|guest/(profiling|tracing)/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
             bases=true
           fi
 
@@ -181,12 +181,30 @@ jobs:
           echo "bases=$bases" >> "$GITHUB_OUTPUT"
           echo "Image build decision: builder=$builder bases=$bases"
 
+      # imaged stages runner-node24 and runner-python312 as deltas over the
+      # Debian parent (ADR-053). Every image builds and scans cleanly on its
+      # own even when a digest bump breaks that layer chain, so check it
+      # before the matrix runs.
+      - name: Debian parent is a layer prefix of its runtimes
+        if: steps.changed.outputs.bases == 'true'
+        run: |
+          python3 scripts/ci/check_parent_base_chain_test.py
+          python3 scripts/ci/check_parent_base_chain.py
+
   builder-base:
     name: builder-base (${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64 + linux/arm64' }})
     needs: runtime-change
     if: needs.runtime-change.outputs.builder == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # About 17 minutes on main (2026-10-29) before the two SBOM scans.
+    timeout-minutes: 30
+    # Issue #295: main pushes attest the promoted image's provenance
+    # (Sigstore keyless, through the workflow's OIDC token).
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     # Issue #938 / PR-B / ADR-114: PR builds push to a local
     # registry service container so the verify step can `crane
     # export` the just-built image. Service containers stay
@@ -211,13 +229,13 @@ jobs:
       BUILDKIT_REVISION: "991535e0973488b6a429096d21fa13f81f2d89d8"
       RAILPACK_VERSION: "0.38.0"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: linux/amd64,linux/arm64
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         # `driver-opts: network=host` puts the buildkitd container
         # on the runner's host network namespace. That makes
         # `localhost:5000` resolve the same way in both namespaces:
@@ -245,7 +263,7 @@ jobs:
 
       - name: Login to ghcr.io
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -449,6 +467,77 @@ jobs:
             --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
             "${IMAGE_NAME}:ci-${GITHUB_SHA}"
 
+      # Issue #295: a Sigstore-signed SLSA provenance attestation for each
+      # platform image, the digests operators and hosts pin (`crane digest
+      # --platform`). It is pushed to ghcr beside the image and kept in the
+      # repository's attestations. Verify with
+      #   gh attestation verify oci://ghcr.io/poyrazk/builder-base@<digest> --owner poyrazK
+      - name: Resolve platform digests (main)
+        id: platform-digests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            echo "${arch}=$(crane digest --platform "linux/${arch}" "${IMAGE_NAME}:ci-${GITHUB_SHA}")" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Attest builder base provenance (main, linux/amd64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digests.outputs.amd64 }}
+          push-to-registry: true
+
+      - name: Attest builder base provenance (main, linux/arm64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digests.outputs.arm64 }}
+          push-to-registry: true
+
+      # Issue #295: an SPDX SBOM of each platform image, attested beside its
+      # provenance. Verify with
+      #   gh attestation verify oci://ghcr.io/poyrazk/builder-base@<digest> --owner poyrazK \
+      #     --predicate-type https://spdx.dev/Document/v2.3
+      - name: Install pinned Syft (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SYFT_VERSION: "1.49.0"
+          SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
+        run: bash scripts/ci/install-syft.sh "$RUNNER_TEMP/syft"
+
+      - name: Generate builder base SBOMs (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          AMD64_DIGEST: ${{ steps.platform-digests.outputs.amd64 }}
+          ARM64_DIGEST: ${{ steps.platform-digests.outputs.arm64 }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/syft" scan "registry:${IMAGE_NAME}@${AMD64_DIGEST}" --platform linux/amd64 -q \
+            -o "spdx-json=$RUNNER_TEMP/sbom-amd64.spdx.json"
+          "$RUNNER_TEMP/syft" scan "registry:${IMAGE_NAME}@${ARM64_DIGEST}" --platform linux/arm64 -q \
+            -o "spdx-json=$RUNNER_TEMP/sbom-arm64.spdx.json"
+
+      - name: Attest builder base SBOM (main, linux/amd64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digests.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sbom-amd64.spdx.json
+          push-to-registry: true
+
+      - name: Attest builder base SBOM (main, linux/arm64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digests.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom-arm64.spdx.json
+          push-to-registry: true
+
   # Runtime bases are single-arch artifacts today because the image lock and
   # the production compute fleet pin linux/amd64 children. They are published
   # separately from the multi-arch builder image so an operator can resolve a
@@ -459,6 +548,13 @@ jobs:
     if: needs.runtime-change.outputs.bases == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Issue #295: main pushes attest the promoted image's provenance
+    # (Sigstore keyless, through the workflow's OIDC token).
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -481,24 +577,30 @@ jobs:
             dockerfile: images/runner-go124.Dockerfile
           - image: runner-go124-alpine
             dockerfile: images/runner-go124-alpine.Dockerfile
+          # ADR-20261027090010 §2: the shared agent drive0 with the preset harnesses.
+          - image: agent-base
+            dockerfile: images/agent-base.Dockerfile
     env:
       IMAGE_NAME: ghcr.io/poyrazk/${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check curated wheel installer
         run: python3 images/install_execution_profile_test.py
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Check agent-base install script
+        run: python3 images/agent_base_install_test.py
 
-      - uses: actions/setup-go@v7
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Login to ghcr.io
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -559,11 +661,14 @@ jobs:
           # Debian lanes on their existing fixed-finding gate until their
           # shared parent migration lands separately.
           GRYPE_ONLY_FIXED: ${{ (matrix.image == 'runner-python313' || matrix.image == 'execution-python-data-v1') && 'false' || 'true' }}
-          # The staging-only Debian parent cannot patch its own layer
-          # (ADR-053); its version-pinned exceptions are documented in the
-          # file. Every other lane scans without it.
-          GRYPE_CONFIG: ${{ matrix.image == 'base-debian-parent' && 'images/base-debian-parent.grype.yaml' || '' }}
+          # A lane's version-pinned exceptions live in images/<image>.grype.yaml
+          # (ADR-053 for the Debian parent, ADR 20261024132405 for runtimes).
+          # A lane without that file scans without exceptions.
+          MATRIX_IMAGE: ${{ matrix.image }}
         run: |
+          if [[ -f "images/${MATRIX_IMAGE}.grype.yaml" ]]; then
+            export GRYPE_CONFIG="images/${MATRIX_IMAGE}.grype.yaml"
+          fi
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             ref="${IMAGE_NAME}:ci-${GITHUB_SHA}"
           else
@@ -582,6 +687,59 @@ jobs:
             --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
             "${IMAGE_NAME}:ci-${GITHUB_SHA}"
 
+      # Issue #295: as for builder-base, attest the linux/amd64 image the
+      # release pins in runtime-bases.env.
+      - name: Resolve platform digest (main)
+        id: platform-digest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          # The same checksum-pinned crane as builder-base, and the lookup
+          # release.yml uses for runtime-bases.env.
+          CRANE_SHA256=ffca5eafe0af8078f2c627fb852104f9d762fad1eb36c04e93ca14fce76d47d2
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-all-errors --retry-delay 2 \
+            -o "$RUNNER_TEMP/crane.tgz" \
+            https://github.com/google/go-containerregistry/releases/download/v0.21.1/go-containerregistry_Linux_x86_64.tar.gz
+          echo "${CRANE_SHA256}  $RUNNER_TEMP/crane.tgz" | sha256sum --check --strict
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/crane.tgz" crane
+          echo "amd64=$("$RUNNER_TEMP/crane" digest --platform linux/amd64 "${IMAGE_NAME}:ci-${GITHUB_SHA}")" >> "$GITHUB_OUTPUT"
+
+      - name: Attest runtime base provenance (main, linux/amd64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digest.outputs.amd64 }}
+          push-to-registry: true
+
+      # Issue #295: as for builder-base, an SPDX SBOM attested beside the
+      # provenance of the linux/amd64 image the release pins.
+      - name: Install pinned Syft (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SYFT_VERSION: "1.49.0"
+          SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
+        run: bash scripts/ci/install-syft.sh "$RUNNER_TEMP/syft"
+
+      - name: Generate runtime base SBOM (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          AMD64_DIGEST: ${{ steps.platform-digest.outputs.amd64 }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/syft" scan "registry:${IMAGE_NAME}@${AMD64_DIGEST}" --platform linux/amd64 -q \
+            -o "spdx-json=$RUNNER_TEMP/sbom-amd64.spdx.json"
+
+      - name: Attest runtime base SBOM (main, linux/amd64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digest.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sbom-amd64.spdx.json
+          push-to-registry: true
+
   # Keep source-artifact tests parallel with the image matrix. This job runs
   # on every PR because it is small enough to be a useful always-on signal;
   # the final gate below still aggregates its result fail-closed.
@@ -592,15 +750,15 @@ jobs:
     # The test process below keeps its separate two-minute execution limit.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
 
       - name: restore Go build and module cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -631,7 +789,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Validate runtime documentation contract
         run: bash scripts/ci/validate-runtime-docs.sh

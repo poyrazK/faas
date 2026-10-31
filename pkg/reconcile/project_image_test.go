@@ -62,8 +62,18 @@ func TestProjectImageReconcileAndSourceTransition(t *testing.T) {
 		t.Fatalf("source transition = %+v, %v", result, err)
 	}
 	manifest := result.Changed[0].Manifest
-	if manifest.ProjectImage != "" || manifest.ProjectImageCommand != nil || manifest.ProjectImagePort != 0 || manifest.ProjectImageHealthcheck != nil || manifest.BuildDockerfile != "Dockerfile" || manifest.Env["CUSTOM_VALUE"] != "keep" {
+	if manifest.ProjectImage != "" || manifest.ProjectImageCommand != nil || manifest.ProjectImagePort != 0 || manifest.BuildDockerfile != "Dockerfile" || manifest.Env["CUSTOM_VALUE"] != "keep" {
 		t.Fatalf("source transition metadata = %+v", manifest)
+	}
+	// A built service keeps the healthcheck it still declares (ADR-20261019195000)
+	// and loses it once the declaration goes.
+	if !reflect.DeepEqual(manifest.ProjectImageHealthcheck, scan.Workloads[0].ImageHealthcheck) {
+		t.Fatalf("source transition dropped the declared healthcheck: %+v", manifest.ProjectImageHealthcheck)
+	}
+	scan.Workloads[0].ImageHealthcheck = nil
+	result, err = service.Reconcile(t.Context(), project, scan, "", "main", nil)
+	if err != nil || len(result.Changed) != 1 || result.Changed[0].Manifest.ProjectImageHealthcheck != nil {
+		t.Fatalf("removed healthcheck = %+v, %v", result, err)
 	}
 }
 
@@ -103,5 +113,44 @@ func TestProjectImageAdoptionDefaultsExistingWorkerLifecycle(t *testing.T) {
 	result, err = service.Reconcile(t.Context(), project, scan, "", "main", nil)
 	if err != nil || len(result.Changed) != 0 {
 		t.Fatalf("worker reapply = %+v, %v", result, err)
+	}
+}
+
+// A scanned HTTP or gRPC readiness check is stored on the app, reapplying it
+// changes nothing, and changing or dropping it changes the app
+// (ADR-20261029093621 §3).
+func TestProjectReadinessCheckReconcile(t *testing.T) {
+	store := newFakeStore()
+	_, project := seedProject(t, store, state.ProjectScanSourceCompose, "main")
+	service := NewService(store, newFakeAuditor(store), nil)
+	scan := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{{
+		Name: "api", Image: "docker.io/acme/api:1", ReadinessCheck: &api.DeploymentHealthcheck{Path: "/ready", IntervalS: 5, TimeoutS: 1, Retries: 3},
+		Class: reposcan.ClassHTTP, SourceSHA256: "accepted", Ports: []int{8080},
+		Tier: reposcan.TierCompose, Source: "compose.yaml: api",
+	}}}
+	result, err := service.Reconcile(t.Context(), project, scan, "", "main", nil)
+	if err != nil || len(result.Added) != 1 {
+		t.Fatalf("create = %+v, %v", result, err)
+	}
+	app := result.Added[0]
+	if !reflect.DeepEqual(app.Manifest.ProjectReadinessCheck, scan.Workloads[0].ReadinessCheck) {
+		t.Fatalf("readiness check = %+v", app.Manifest.ProjectReadinessCheck)
+	}
+	app.Manifest.ProjectSourceSHA256 = "accepted"
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &app.Manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if result, err = service.Reconcile(t.Context(), project, scan, "", "main", nil); err != nil || len(result.Changed) != 0 {
+		t.Fatalf("reapply = %+v, %v", result, err)
+	}
+	scan.Workloads[0].ReadinessCheck = &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "api.v1"}}
+	result, err = service.Reconcile(t.Context(), project, scan, "", "main", nil)
+	if err != nil || len(result.Changed) != 1 || result.Changed[0].Manifest.ProjectReadinessCheck.GRPC == nil {
+		t.Fatalf("readiness-only change = %+v, %v", result, err)
+	}
+	scan.Workloads[0].ReadinessCheck = nil
+	result, err = service.Reconcile(t.Context(), project, scan, "", "main", nil)
+	if err != nil || len(result.Changed) != 1 || result.Changed[0].Manifest.ProjectReadinessCheck != nil {
+		t.Fatalf("removed readiness check = %+v, %v", result, err)
 	}
 }

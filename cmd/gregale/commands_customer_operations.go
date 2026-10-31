@@ -45,6 +45,9 @@ type customerOperationCommand struct {
 	approval                                                            api.OperationApprovalRequest
 }
 
+// errUnknownCustomerOperationsCommand marks a verb the parser does not know.
+var errUnknownCustomerOperationsCommand = errors.New("unknown customer-operations command")
+
 func cmdCustomerOperations(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|bindings|start|list|get|milestones|outcomes|outcome-summary|attention|attention-summary|events|executions|timeline|watch|download|cancel|signal|approve|recover|delivery|delivery-attempts|retry-delivery|types|inspect>", "customer-operations")
@@ -84,6 +87,10 @@ func cmdCustomerOperations(args []string) int {
 		return cmdCustomerOperationDeveloper(args)
 	}
 	command, err := parseCustomerOperationCommand(args)
+	if errors.Is(err, errUnknownCustomerOperationsCommand) {
+		printCommandValidation(os.Stderr, "%s\n", err)
+		return unknownSubcommandChoices(os.Stderr, "customer-operations", nestedCliCommand("customer-operations"), args[0])
+	}
 	if err != nil {
 		return printErr("Invalid customer-operations command", err)
 	}
@@ -165,7 +172,7 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 		fs.StringVar(&resultFile, "result-file", "", "JSON result required for succeeded")
 	case "get", "inspect", "retry-delivery":
 	default:
-		return c, fmt.Errorf("unknown customer-operations command %q", c.verb)
+		return c, fmt.Errorf("%w %q", errUnknownCustomerOperationsCommand, c.verb)
 	}
 	flags, positionals := splitArgsForFlags(args[1:], "self", "preview")
 	if err := fs.Parse(flags); err != nil {
@@ -176,7 +183,12 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 		expected = 0
 	}
 	if len(positionals) != expected || fs.NArg() != 0 || (!c.self && strings.TrimSpace(c.app) == "") || c.timeout < 0 {
-		return c, fmt.Errorf("%s requires --app and %d operation ID positional argument(s)", c.verb, expected)
+		// "list requires --app and 0 operation ID positional argument(s)"
+		// read badly (Hunt 12 H12-48).
+		if expected == 0 {
+			return c, fmt.Errorf("%s requires --app and takes no operation ID", c.verb)
+		}
+		return c, fmt.Errorf("%s requires --app and one operation ID", c.verb)
 	}
 	if c.self {
 		switch c.verb {
@@ -200,7 +212,8 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 		}
 	}
 	if c.verb == "list" && api.ValidateScope(c.scope) != nil {
-		return c, fmt.Errorf("list requires a valid explicit --scope")
+		// The bare "valid explicit --scope" named no value (Hunt 14 H14-64).
+		return c, fmt.Errorf("list needs --scope naming the deployment environment to read, for example --scope %s", api.DefaultEnvScope)
 	}
 	if c.verb == "watch" && c.interval <= 0 {
 		return c, fmt.Errorf("--interval must be positive")

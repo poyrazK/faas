@@ -249,6 +249,7 @@ func TestPrintPlanText_BlockedPlanRetainsDetails(t *testing.T) {
 		Name: "api", RootDir: "services/api", Class: "http",
 		ServiceBindingPolicy:      api.ServiceBindingPolicyDeclared,
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsDeny,
+		Visibility:                api.AppVisibilityInternal,
 	}}
 	plan.Managed = []api.PlanManaged{{Name: "db", Kind: "postgres", EnvHint: "DATABASE_URL", Image: "postgres:17"}}
 	plan.Warnings = []string{"ignored unsupported field"}
@@ -262,7 +263,7 @@ func TestPrintPlanText_BlockedPlanRetainsDetails(t *testing.T) {
 		"can_apply: false",
 		"reason: apps over plan limit",
 		"reason: duplicate workload slug",
-		"Workloads:", "services/api", "class=http", "service_policy=declared", "preview_calls=deny",
+		"Workloads:", "services/api", "class=http", "service_policy=declared", "preview_calls=deny", "visibility=internal",
 		"Managed (not provisioned):", "DATABASE_URL", "postgres:17",
 		"Warnings:", "ignored unsupported field",
 	} {

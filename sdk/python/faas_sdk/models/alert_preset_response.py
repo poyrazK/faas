@@ -26,7 +26,7 @@ T = TypeVar("T", bound="AlertPresetResponse")
 
 @_attrs_define
 class AlertPresetResponse:
-    """One row of the alert-preset catalog (issue #1233, ADR-123).
+    """One row of the alert-preset catalog.
     The catalog is system-seeded and R/O for customers — the
     enable endpoint clones the row into a real alert_rules row
     the customer owns from then on. No persistent preset_id FK

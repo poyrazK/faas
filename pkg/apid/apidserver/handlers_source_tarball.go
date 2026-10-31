@@ -34,6 +34,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -64,6 +65,9 @@ type sidecarPayload struct {
 	NoTriggers               bool                       `json:"no_triggers,omitempty"`
 	// OverrideFreeze is api.CreateDeploymentRequest.OverrideFreeze.
 	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt and ReleaseNotify are api.CreateDeploymentRequest's.
+	ReleaseAt     string   `json:"release_at,omitempty"`
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
@@ -132,6 +136,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			"Bad multipart", err.Error()))
 		return
 	}
+	if _, sent := r.MultipartForm.Value["overrides"]; sent {
+		api.WriteProblem(w, multipartOverridesProblem())
+		return
+	}
 
 	tarballFile, _, err := r.FormFile(fieldNameTarball)
 	if err != nil {
@@ -151,7 +159,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride, OverrideFreeze: sidecar.OverrideFreeze}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride, OverrideFreeze: sidecar.OverrideFreeze, ReleaseAt: sidecar.ReleaseAt, ReleaseNotify: sidecar.ReleaseNotify}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(sidecar.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
@@ -162,11 +170,16 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
+		api.WriteProblem(w, ap)
+		return
+	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -175,6 +188,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	sched.park(rolloutReq)
 	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
@@ -232,14 +246,29 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			s.log.Warn("local-tarball manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+	if prob := s.scanSourceTarballSecrets(spoolPath, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan)
+	if prob := scanForStatefulShapeAtRoot(spoolPath, false, app.RootDir); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
+	}
+	sourceBuild, hasSourceBuild, buildProblem := resolveSourceDockerfileBuild(spoolPath, app.RootDir, app, manifest)
+	if buildProblem != nil {
+		api.WriteProblem(w, buildProblem)
+		return
+	}
+	kind := state.DeploymentKindTarball
+	if hasSourceBuild {
+		// This route records no source root, so the Dockerfile is named
+		// from the archive root.
+		kind, sourceBuild.path = state.DeploymentKindDockerfile, path.Join(app.RootDir, sourceBuild.path)
 	}
 	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
 	if workloadProblem != nil {
@@ -281,9 +310,11 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "local_tarball", "scope": rollout.Scope}),
 		AppID:                     app.ID,
-		Kind:                      state.DeploymentKindTarball,
+		Kind:                      kind,
 		SourcePath:                spoolPath,
 		SourceBytes:               spoolBytes,
+		DockerfilePath:            sourceBuild.path,
+		DockerfileBuild:           sourceBuild.options,
 		SourceURL:                 sourceURL,
 		CommitSHA:                 commitSHA,
 		Scope:                     rollout.Scope,
@@ -334,6 +365,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
+		return
+	}
+	if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/bridgecompletion"
 	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -29,6 +30,10 @@ import (
 // gRPC → manager → transport lifecycle without constructing a Firecracker VMM.
 type forwardV2IntegrationVMM struct {
 	VmmdAPI
+}
+
+func (forwardV2IntegrationVMM) AcquireHTTPForward(ctx context.Context, _ string) (context.Context, func(), error) {
+	return ctx, func() {}, nil
 }
 
 func (forwardV2IntegrationVMM) NetnsFor(instance string) (string, bool) {
@@ -44,19 +49,39 @@ func (forwardV2IntegrationVMM) NetnsFor(instance string) (string, bool) {
 // manager-owned child instead of receiving an unavailable response from a
 // stale socket or starting a replacement process.
 func TestForwardHTTPStreamV2_ReusesBridgeAcrossRPCs(t *testing.T) {
-	testForwardV2BridgeLifecycle(t, false)
+	testForwardV2BridgeLifecycle(t, forwardV2Lifecycle{})
 }
 
+// The bridge retains completions and echoes each exchange, so the three
+// exchanges whose response streams ended skip the completion wait; only the
+// canceled one waits.
 func TestForwardHTTPStreamV2_CanceledRPCPreservesConcurrentRequest(t *testing.T) {
-	testForwardV2BridgeLifecycle(t, true)
+	testForwardV2BridgeLifecycle(t, forwardV2Lifecycle{cancelConcurrent: true, wantWaits: 1})
 }
 
 func TestPublicForwardStreamV2RoutesCapturedOwner(t *testing.T) {
-	testForwardV2BridgeLifecycle(t, false, true)
+	testForwardV2BridgeLifecycle(t, forwardV2Lifecycle{public: true})
 }
 
-func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool, public ...bool) {
+// A bridge from before completion retention never echoes the exchange, so
+// every exchange keeps its completion wait.
+func TestForwardHTTPStreamV2_OlderBridgeKeepsTheCompletionWait(t *testing.T) {
+	testForwardV2BridgeLifecycle(t, forwardV2Lifecycle{olderBridge: true, wantWaits: 2})
+}
+
+type forwardV2Lifecycle struct {
+	cancelConcurrent bool
+	public           bool
+	// olderBridge drops the retain request, as a bridge built before
+	// completion retention ignores it.
+	olderBridge bool
+	// wantWaits, when non-zero, is the number of completion waits vmmd sends.
+	wantWaits int32
+}
+
+func testForwardV2BridgeLifecycle(t *testing.T, lifecycle forwardV2Lifecycle) {
 	t.Helper()
+	cancelConcurrent := lifecycle.cancelConcurrent
 	cancelStarted := make(chan struct{})
 	siblingStarted := make(chan struct{})
 	releaseSibling := make(chan struct{})
@@ -74,8 +99,8 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool, public ..
 	var starts atomic.Int32
 	bridgeContextDone := make(chan struct{})
 	var bridgeContextOnce sync.Once
-	streamBridgeSpawn = func(ctx context.Context, _, namespace, _, guestIP string, _ uint32, _ string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
-		if len(public) > 0 && public[0] && (namespace != "" || guestIP != "127.0.0.1" || !strings.Contains(strings.Join(env, "\n"), "FAAS_PUBLIC_FORWARD_TARGET=")) {
+	streamBridgeSpawn = func(ctx context.Context, _, namespace string, id bridgeIdentity, _, guestIP string, _ uint32, _ string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
+		if lifecycle.public && (namespace != "" || guestIP != "127.0.0.1" || id.unprivileged() || !strings.Contains(strings.Join(env, "\n"), "FAAS_PUBLIC_FORWARD_TARGET=")) {
 			return nil, nil, errors.New("public RPC lost captured owner routing authority")
 		}
 		go func() {
@@ -92,14 +117,14 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool, public ..
 	t.Cleanup(func() { streamBridgeSpawn = savedSpawn })
 
 	var vmm VmmdAPI = forwardV2IntegrationVMM{}
-	if len(public) > 0 && public[0] {
+	if lifecycle.public {
 		vmm = publicForwardFakeVMM{target: testPublicForwardTarget(t)}
 	}
 	server := New(vmm, nil, "test", nil)
 	server.streamBridges.waitSocket = func(string, time.Duration) error { return nil }
 	server.streamBridges.reapInterval = time.Hour
 
-	var bridgeRequests atomic.Int32
+	var bridgeRequests, completionWaits atomic.Int32
 	var persistentHeadersOK atomic.Bool
 	persistentHeadersOK.Store(true)
 	var bodiesMu sync.Mutex
@@ -107,14 +132,14 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool, public ..
 	var serverConnsMu sync.Mutex
 	var serverConns []net.Conn
 	h2Server := &http2.Server{}
-	server.streamBridges.newTransport = func(string) *http2.Transport {
+	server.streamBridges.newTransport = func(string, bridgeIdentity) *http2.Transport {
 		clientConn, serverConn := net.Pipe()
 		serverConnsMu.Lock()
 		serverConns = append(serverConns, serverConn)
 		serverConnsMu.Unlock()
 		go func() {
 			h2Server.ServeConn(serverConn, &http2.ServeConnOpts{
-				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Handler: forwardV2BridgeVersion(lifecycle.olderBridge, &completionWaits, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Header.Get("X-Faas-Bridge-Persistent") != "1" ||
 						r.Header.Get("X-Faas-Bridge-Port") != "8080" {
 						persistentHeadersOK.Store(false)
@@ -145,7 +170,7 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool, public ..
 					w.Header().Set("Content-Type", "text/plain")
 					w.WriteHeader(http.StatusOK)
 					_, _ = fmt.Fprintf(w, "bridge-request-%d:%s", n, body)
-				}),
+				})),
 			})
 			_ = serverConn.Close()
 		}()
@@ -281,6 +306,11 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool, public ..
 		}
 	}
 
+	if lifecycle.wantWaits != 0 {
+		if got := completionWaits.Load(); got != lifecycle.wantWaits {
+			t.Fatalf("completion waits = %d, want %d", got, lifecycle.wantWaits)
+		}
+	}
 	if err := server.Close(context.Background()); err != nil {
 		t.Fatalf("server.Close: %v", err)
 	}
@@ -336,9 +366,30 @@ func forwardV2LifecycleRoundTrip(
 		}
 		if init := frame.GetInit(); init != nil {
 			status = init.GetStatus()
+			for _, header := range init.GetHeaders() {
+				if strings.HasPrefix(strings.ToLower(header.GetName()), "x-faas-bridge-") {
+					return 0, "", fmt.Errorf("bridge-private response header %s reached the gateway", header.GetName())
+				}
+			}
 		}
 		if chunk := frame.GetBodyChunk(); len(chunk) != 0 {
 			response = append(response, chunk...)
 		}
 	}
+}
+
+// forwardV2BridgeVersion serves a test bridge handler behind the completion
+// tracker and counts the completion waits vmmd sends. An older bridge
+// predates retention and ignores the retain request.
+func forwardV2BridgeVersion(older bool, waits *atomic.Int32, handler http.Handler) http.Handler {
+	tracked := bridgecompletion.Wrap(handler)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(bridgecompletion.WaitHeader) != "" {
+			waits.Add(1)
+		}
+		if older {
+			r.Header.Del(bridgecompletion.RetainRequestHeader)
+		}
+		tracked.ServeHTTP(w, r)
+	})
 }

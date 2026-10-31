@@ -149,6 +149,28 @@ type telemetryCapturingEngine struct {
 	telemetryMu sync.Mutex
 	nodeID      string
 	rows        []sched.NodeTelemetry
+	bridgeNode  string
+	bridgeBytes int64
+	pressure    map[string]sched.NodeCPUPressure
+}
+
+func (c *telemetryCapturingEngine) CPUPressureSink() sched.CPUPressureSink {
+	return func(nodeID string, _ time.Time, reading sched.NodeCPUPressure) {
+		c.telemetryMu.Lock()
+		defer c.telemetryMu.Unlock()
+		if c.pressure == nil {
+			c.pressure = map[string]sched.NodeCPUPressure{}
+		}
+		c.pressure[nodeID] = reading
+	}
+}
+
+func (c *telemetryCapturingEngine) InstanceBridgeSink() sched.InstanceBridgeSink {
+	return func(nodeID string, _ time.Time, bytes int64) {
+		c.telemetryMu.Lock()
+		defer c.telemetryMu.Unlock()
+		c.bridgeNode, c.bridgeBytes = nodeID, bytes
+	}
 }
 
 func (c *telemetryCapturingEngine) TelemetrySink() sched.TelemetrySink {
@@ -603,5 +625,62 @@ func TestReportCapacity_BadSignatureIncrementsCounter(t *testing.T) {
 	defer mu.Unlock()
 	if len(received) != 0 {
 		t.Errorf("received %d reports; handler must have rejected before sink", len(received))
+	}
+}
+
+// A node's instance bridge memory reaches the engine with its telemetry
+// (connection-survival ADR §2); a report without it records nothing.
+func TestReportCapacity_InstanceBridgeMemoryReachesTheEngine(t *testing.T) {
+	mu := sync.Mutex{}
+	engine := &telemetryCapturingEngine{capturingEngine: &capturingEngine{mu: &mu}, bridgeBytes: -1}
+	cli := newServer(t, engine)
+	stream, err := cli.ReportCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("ReportCapacity: %v", err)
+	}
+	if err := stream.Send(&scheddpb.CapacityReport{NodeId: "node-a", SampledAtUnixMs: 1730000000000}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if err := stream.Send(&scheddpb.CapacityReport{NodeId: "node-a", SampledAtUnixMs: 1730000001000,
+		InstanceBridgeResidentBytes: wrapperspb.Int64(48 << 20)}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if _, err := stream.CloseAndRecv(); err != nil {
+		t.Fatalf("CloseAndRecv: %v", err)
+	}
+	engine.telemetryMu.Lock()
+	defer engine.telemetryMu.Unlock()
+	if engine.bridgeNode != "node-a" || engine.bridgeBytes != 48<<20 {
+		t.Fatalf("bridge memory = %s/%d, want node-a/48 MiB", engine.bridgeNode, engine.bridgeBytes)
+	}
+}
+
+// adr: 20261030100950 — a node's CPU pressure readings reach the engine with
+// its telemetry, only when vmmd sent both.
+func TestReportCapacity_CPUPressureReadingsReachTheEngine(t *testing.T) {
+	mu := sync.Mutex{}
+	engine := &telemetryCapturingEngine{capturingEngine: &capturingEngine{mu: &mu}}
+	cli := newServer(t, engine)
+	stream, err := cli.ReportCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("ReportCapacity: %v", err)
+	}
+	for _, report := range []*scheddpb.CapacityReport{
+		{NodeId: "node-a", SampledAtUnixMs: 1730000000000, TenantCpuPressureSomeAvg10: wrapperspb.Double(40)},
+		{NodeId: "node-b", SampledAtUnixMs: 1730000000000, TenantCpuPressureSomeAvg10: wrapperspb.Double(25.5),
+			HostCpuBusyPercent: wrapperspb.Double(97)},
+	} {
+		if err := stream.Send(report); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+	}
+	if _, err := stream.CloseAndRecv(); err != nil {
+		t.Fatalf("CloseAndRecv: %v", err)
+	}
+	engine.telemetryMu.Lock()
+	defer engine.telemetryMu.Unlock()
+	want := map[string]sched.NodeCPUPressure{"node-b": {SomeAvg10: 25.5, BusyPercent: 97}}
+	if len(engine.pressure) != len(want) || engine.pressure["node-b"] != want["node-b"] {
+		t.Fatalf("pressure readings = %v, want %v (node-a sent no busy share)", engine.pressure, want)
 	}
 }

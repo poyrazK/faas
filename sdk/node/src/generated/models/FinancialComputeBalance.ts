@@ -12,11 +12,11 @@ export type FinancialComputeBalance = {
   app_id?: string;
   job_id?: string;
   /**
-   * The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in the project. Jobs are not covered.
+   * The capped project of a strict project budget (amendment 1): one gross book shared by every app in the project. Jobs are not covered.
    */
   project_id?: string;
   /**
-   * The capped environment of a strict environment budget (ADR-1750, amendment 2): one gross book shared by every deployment that runs in the environment. Capacity floors and jobs are not covered.
+   * The capped environment of a strict environment budget (amendment 2): one gross book shared by every deployment that runs in the environment. Capacity floors and jobs are not covered.
    */
   environment_id?: string;
   account_id?: string;

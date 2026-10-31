@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 type jobTaskAttachTargets interface {
@@ -27,6 +28,9 @@ type JobTaskAttachHandler struct {
 	Targets jobTaskAttachTargets
 	Nodes   appTaskAttachNodes
 	Log     *slog.Logger
+	// Traffic enrolls the session under the account's security scope
+	// (admitPlatformTraffic); nil only in legacy fixtures.
+	Traffic *trafficrevocation.Registry
 	// PingInterval keeps idle sessions alive through proxies; tests shorten it.
 	PingInterval time.Duration
 }
@@ -72,6 +76,6 @@ func (h *JobTaskAttachHandler) attach(w http.ResponseWriter, r *http.Request, ac
 		writeAttachNotReady(w)
 		return
 	}
-	session := &AppTaskAttachHandler{Nodes: h.Nodes, Log: h.Log, PingInterval: h.PingInterval}
-	session.open(w, r, target.NodeID, target.InstanceID, token)
+	session := &AppTaskAttachHandler{Nodes: h.Nodes, Log: h.Log, Traffic: h.Traffic, PingInterval: h.PingInterval}
+	session.open(w, r, target.NodeID, target.InstanceID, token, acct.ID, "")
 }

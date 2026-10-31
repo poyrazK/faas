@@ -56,14 +56,14 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, problem)
 		return
 	}
-	current, next, problem := canaryStagesForAdvance(d, req.ExpectedStep)
+	current, next, problem := s.canaryStagesForAdvance(d, req.ExpectedStep)
 	if problem != nil {
-		if problem.Status >= http.StatusInternalServerError {
-			logCustomerFailure(s.log, "read persisted canary configuration", fmt.Errorf("%s", problem.Detail))
-			problem.Detail = "Gregale could not read this rollout's configuration."
-			problem.Hint = "Retry the request in a moment; if it continues, contact support."
-		}
 		api.WriteProblem(w, problem)
+		return
+	}
+	// ADR-20261020085706: the release waits in its stage until approved.
+	if p := s.releaseApprovalAdvanceProblem(r, app, d, req.ExpectedStep, requireWorkerLease); p != nil {
+		api.WriteProblem(w, p)
 		return
 	}
 	advancer, ok := s.store.(state.CanaryAdvancer)
@@ -90,9 +90,14 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, problem)
 		return
 	}
+	// Route guards run only where their capability is released
+	// (ADR-20261028110044).
+	guards := s.routeGuardRelease(acct, app)
 	// Best-effort and report-only: an unconfigured app gets observed critical
 	// routes before its first stage advances (ADR-844).
-	s.seedDefaultRouteHealthGate(r.Context(), acct, app, d)
+	if guards.Health {
+		s.seedDefaultRouteHealthGate(r.Context(), acct, app, d)
+	}
 	var profileDecision api.ProfileCanaryGateDecision
 	if !requireWorkerLease {
 		audit.Actor = "account:" + acct.ID
@@ -103,7 +108,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 	var auditID int64
 	gateProblem, err := s.withBindingReleaseTraffic(r, acct, app, d, profileIntent, func(ctx context.Context) error {
 		var writeErr error
-		updated, auditID, writeErr = advancer.AdvanceCanary(ctx, d.ID, state.CanaryAdvanceParams{
+		updated, auditID, writeErr = advancer.AdvanceCanary(state.WithRouteGuardRelease(ctx, guards), d.ID, state.CanaryAdvanceParams{
 			ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
 			ProfileGateDecision: &profileDecision, ProfileGateOverride: req.ProfileGateOverride, ProfileGateRollback: profileIntent == 0,
 			RequireSafeReleaseLease:   requireWorkerLease,
@@ -121,13 +126,24 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, gateProblem)
 		return
 	}
+	if requireWorkerLease && err != nil {
+		s.abortRouteHealthHoldPastDeadline(r.Context(), err, app, d)
+	}
 	if !s.writeCanaryAdvanceError(r.Context(), w, err, d.ID, req.ExpectedStep, d.CanaryStep) {
 		return
 	}
 	s.notifyCanaryTraffic(r, app, updated)
-	writeJSON(w, http.StatusOK, api.CanaryAdvanceResponse{
+	response := api.CanaryAdvanceResponse{
 		Deployment: s.deploymentResponse(r.Context(), updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision, ProfileGate: &profileDecision,
-	})
+	}
+	// An unreleased guard made no decision; the response does not name it.
+	if !guards.Requirements {
+		response.RouteGate = nil
+	}
+	if !guards.Health {
+		response.RouteHealth = nil
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // advanceDecision is the ADR-1447 record for an advance: meterd's validated
@@ -161,13 +177,16 @@ func (s *server) loadCanaryDeployment(w http.ResponseWriter, r *http.Request, ac
 	return d, app, true
 }
 
-func canaryStagesForAdvance(d state.Deployment, expected int) (canarycatalog.Stage, canarycatalog.Stage, *api.Problem) {
+func (s *server) canaryStagesForAdvance(d state.Deployment, expected int) (canarycatalog.Stage, canarycatalog.Stage, *api.Problem) {
 	if expected < 0 || d.CanaryStep != expected {
 		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.ErrCanaryStepConflict(expected, d.CanaryStep)
 	}
 	preset, err := persistedCanaryPreset(d)
 	if err != nil {
-		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "invalid persisted canary", err.Error())
+		logCustomerFailure(s.log, "read persisted canary configuration", err)
+		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "invalid persisted canary",
+			"Gregale could not read this rollout's configuration.").
+			WithHint("Retry the request in a moment; if it continues, contact support.")
 	}
 	if d.CanaryTotalSteps != preset.TotalSteps() || expected >= preset.TotalSteps()-1 {
 		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.ErrRolloutStateInvalid(d.RolloutState)

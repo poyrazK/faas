@@ -59,7 +59,7 @@ func standardOperationCLIHelp() []cliSub {
 	return []cliSub{
 		{Name: "pause", Short: "Pause outstanding rollout targets; admin only, release gated", Flags: standardRolloutCLIHelp("operation UUID", "expected_updated_at JSON file")},
 		{Name: "resume", Short: "Resume a paused rollout; admin only, release gated", Flags: standardRolloutCLIHelp("operation UUID", "expected_updated_at JSON file")},
-		{Name: "abort", Short: "Stop outstanding targets and retain installed settings; admin only, release gated", Flags: standardRolloutCLIHelp("operation UUID", "expected_updated_at JSON file")},
+		{Name: "abort", Short: "Stop outstanding targets and keep installed settings", Notes: []string{"Admin only; release gated."}, Flags: standardRolloutCLIHelp("operation UUID", "expected_updated_at JSON file")},
 	}
 }
 

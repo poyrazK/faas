@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/statelessshape"
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
@@ -72,6 +73,13 @@ func spoolRoot() string {
 	return "/var/spool/faas/builds"
 }
 
+// multipartOverridesProblem rejects an `overrides` field on a source upload.
+// Only JSON image deployments take the overrides object (ADR-053); a source
+// tree declares its run contract in gregale.yaml.
+func multipartOverridesProblem() *api.Problem {
+	return api.ErrValidation("overrides is accepted only on JSON image deployments; a source deployment declares hosting.port, hosting.start and hosting.health in gregale.yaml, and the multipart healthcheck and override_env fields set its startup probe and environment")
+}
+
 // createDeploymentMultipart handles source tarball + dockerfile + function
 // source uploads (spec §4.2, §9). Multipart form fields:
 //
@@ -83,6 +91,8 @@ func spoolRoot() string {
 //	source_url string — optional informational repository provenance URL.
 //	commit_sha string — optional lowercase hexadecimal Git commit identifier.
 //	override_env string — optional JSON object of per-deployment plaintext env values.
+//
+// An `overrides` field is rejected (multipartOverridesProblem).
 //
 // DeployedApps is enforced at app-create time via
 // store.CreateAppIfUnderQuota — the deploy path cannot bypass it because
@@ -143,6 +153,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		disableStartupCPUBoost   *bool
 		mcpTaskMigrationOverride bool
 		overrideFreeze           string
+		releaseAt                string
+		releaseNotify            []string
 		healthcheck              *api.DeploymentHealthcheck
 		overrideEnv              map[string]string
 		overrideEnvSeen          bool
@@ -253,7 +265,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, api.ErrValidation("workflows must be a JSON array of definitions"))
 				return
 			}
-			if prob := validateWorkflowDefinitionsAgainstPlan(workflows, acct.Plan); prob != nil {
+			if prob := validateWorkflowDefinitionsAgainstPlan(workflows, acct.Plan, s.agentStepsAllowed(acct)); prob != nil {
 				api.WriteProblem(w, prob)
 				return
 			}
@@ -314,6 +326,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			overrideFreeze = strings.TrimSpace(string(b))
+		case "release_at":
+			b, readErr := io.ReadAll(io.LimitReader(part, 65))
+			if readErr != nil || len(b) > 64 {
+				api.WriteProblem(w, api.ErrValidation("release_at must be an RFC 3339 time"))
+				return
+			}
+			releaseAt = strings.TrimSpace(string(b))
+		case "release_notify":
+			b, readErr := io.ReadAll(io.LimitReader(part, 257))
+			if readErr != nil || len(b) > 256 || len(releaseNotify) >= api.ScheduledReleaseNotifyChannelsMax {
+				api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("release_notify names at most %d channels of at most 256 characters", api.ScheduledReleaseNotifyChannelsMax)))
+				return
+			}
+			releaseNotify = append(releaseNotify, strings.TrimSpace(string(b)))
 		case "healthcheck":
 			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
 			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &healthcheck) != nil {
@@ -359,6 +385,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, prob)
 				return
 			}
+		case "overrides":
+			// The JSON deployment field is not a multipart field (ADR-053):
+			// silently dropping it deployed without the caller's port or
+			// healthcheck.
+			api.WriteProblem(w, multipartOverridesProblem())
+			return
 		default:
 			// Ignore unknown fields so clients can ship extra metadata.
 			_, _ = io.Copy(io.Discard, part)
@@ -375,7 +407,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, ReleaseAt: releaseAt, ReleaseNotify: releaseNotify, Sidecars: sidecars}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
 	if len(overrideEnv) > 0 {
 		if rolloutReq.Overrides == nil {
@@ -398,11 +430,16 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
+		api.WriteProblem(w, ap)
+		return
+	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -419,6 +456,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	sched.park(rolloutReq)
 	rollout, prob := buildDeploymentForInsert(app, rolloutReq, deploymentOverrides, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -465,14 +503,14 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	//     inside a RUN. Only when the customer marked dockerfile=true
 	//     OR a Dockerfile exists at the selected source root (Railpack detect
 	//     handles the latter case, but we surface the violation here).
-	//   - Source root: a `data/` or `db/` directory at the selected root
-	//     is the canonical "this is a database" signal.
+	//   - Source root: a database file under a `data/` or `db/` directory
+	//     at the selected root (pkg/statelessshape).
 	// Both pass the same spooled tarball — no extra I/O.
 	if prob := scanForStatefulShapeAtRoot(sourcePath, dockerfile, sourceRoot); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := scanSourceTarballSecrets(sourcePath, limits); prob != nil {
+	if prob := s.scanSourceTarballSecrets(sourcePath, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -480,10 +518,18 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if sourceRoot != "" {
 		manifestApp.RootDir = sourceRoot
 	}
-	manifest, manifestProblem := loadSourceRefManifest(sourcePath, manifestApp, acct.Plan)
+	manifest, manifestProblem := loadSourceRefManifest(sourcePath, manifestApp, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
+	}
+	sourceBuild, hasSourceBuild, buildProblem := resolveSourceDockerfileBuild(sourcePath, manifestApp.RootDir, app, manifest)
+	if buildProblem != nil {
+		api.WriteProblem(w, buildProblem)
+		return
+	}
+	if hasSourceBuild {
+		kind, dockerfile = state.DeploymentKindDockerfile, true
 	}
 	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest)
 	if releaseProblem != nil {
@@ -555,6 +601,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			SourcePath:                sourcePath,
 			SourceBytes:               sourceBytes,
 			SourceRoot:                sourceRoot,
+			DockerfilePath:            sourceBuild.path,
+			DockerfileBuild:           sourceBuild.options,
 			SourceURL:                 sourceURL,
 			CommitSHA:                 commitSHA,
 			Scope:                     rollout.Scope,
@@ -611,6 +659,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		}
 		if developerSource {
 			s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
+		}
+		if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
+			api.WriteProblem(w, prob)
+			return
 		}
 		response := s.deploymentResponse(r.Context(), d, app)
 		response.DevPatch = devPatch.preview
@@ -729,7 +781,7 @@ func validateSourceProvenance(sourceURL, commitSHA string) *api.Problem {
 //
 //nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Tarball-shape validation re-reads the bytes to enforce spec §9.
 func validateTarballShape(path string) *api.Problem {
-	err := tarball.ValidateShape(path, maxSourceFiles)
+	err := tarball.ValidateShape(path, maxSourceFiles, api.SourceArchiveMaxExpandedBytes)
 	if err == nil {
 		return nil
 	}
@@ -759,18 +811,6 @@ func escapesArchiveRoot(p string) bool {
 	return tarball.EscapesRoot(p)
 }
 
-// statefulTopLevelDirs is the set of top-level directory names that
-// flag the deploy as stateful. Empty directories are fine — the tar
-// entry exists either way, so a zero-byte `data/` is caught the same
-// as a populated one. Both names are the canonical "I'm trying to
-// persist" signal that bypasses Dockerfile detection entirely.
-var statefulTopLevelDirs = map[string]string{} //nolint:gochecknoglobals // constant lookup table
-
-func init() {
-	statefulTopLevelDirs["data"] = "top-level data/ directory — this platform is stateless"
-	statefulTopLevelDirs["db"] = "top-level db/ directory — this platform is stateless"
-}
-
 // scanForStatefulShape is the Wave 0 stateless-only accept-time check.
 // Reads the spooled tarball once and rejects with CodeStatelessOnlyViolation
 // when the selected source root has a persistent shape. Three checks, all in one pass:
@@ -779,11 +819,12 @@ func init() {
 //     sent), reject any VOLUME instruction or mkfs/mount -t ext4|xfs call
 //     inside a RUN directive. Bounded: we only read up to dockerfileMaxBytes
 //     of the Dockerfile so a multi-MB heredoc can't pin apid.
-//  2. Reject a source-root-level data/ or db/ directory — the canonical
-//     "this is a database" signal that bypasses Dockerfile detection.
-//     Short-circuits the scan: as soon as the offending entry is
-//     observed, the loop returns without reading the rest of the
-//     tarball (customer pays for one entry, not the whole archive).
+//  2. Reject a database-store file (by name or SQLite signature) under a
+//     source-root-level data/ or db/ directory (pkg/statelessshape,
+//     ADR-20261026152731). Migrations, schemas and seed files in those
+//     directories are ordinary source. Short-circuits the scan: as soon
+//     as the offending entry is observed, the loop returns without
+//     reading the rest of the tarball.
 //  3. The base-image deny-list runs in pkg/imaged, not here — apid only
 //     sees a tarball or an image: ref; the image: branch is enforced
 //     where the image is pulled (pkg/imaged/handler.go buildImageLayer).
@@ -839,13 +880,14 @@ func scanForStatefulShapeWithDockerfileAtRoot(path string, dockerfileFlag bool, 
 		if !inRoot {
 			continue
 		}
-		parts := strings.SplitN(rel, "/", 2)
-		if len(parts) >= 1 {
-			if reason, denied := statefulTopLevelDirs[parts[0]]; denied {
-				// Short-circuit: we don't need to read the rest of
-				// the tarball now that we've found the violation.
-				return api.ErrStatelessOnlyViolation("tarball", reason)
+		if rel != dockerfilePath && hdr.Typeflag == tar.TypeReg && statelessshape.StateDirOf(rel) != "" {
+			header := make([]byte, statelessshape.HeaderBytes)
+			n, _ := io.ReadFull(tr, header)
+			if statelessshape.DatabaseFile(rel, header[:n]) {
+				// Short-circuit: the rest of the archive is not needed.
+				return api.ErrStatelessOnlyViolation("tarball", statelessshape.Reason(rel))
 			}
+			continue
 		}
 		// Only read the selected Dockerfile within the source root. We do this
 		// lazily — dockerfileMaxBytes caps the read so a hostile

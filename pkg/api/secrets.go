@@ -47,6 +47,14 @@ type SecretRuntimeReloadObservation struct {
 	ApplicationAckErrorCode string `json:"application_ack_error_code,omitempty"`
 }
 
+// errEmptySecretValue refuses an empty secret value. The seal path cannot
+// fingerprint an empty plaintext, so without this check an empty value
+// reached it and came back as a 503 "Secret storage temporarily
+// unavailable" (Hunt 11 H11-39): a validation case reported as an outage.
+func errEmptySecretValue() *Problem {
+	return ErrValidation("secret value must not be empty; to remove a secret, run `gregale secrets unset`")
+}
+
 // Validate enforces the byte cap against maxBytes. Used by apid's PUT
 // handler so the cap is checked before pkg/secretbox ever sees the value
 // (defense in depth — secretbox.SealOne also checks).
@@ -54,6 +62,9 @@ type SecretRuntimeReloadObservation struct {
 // Returns *Problem directly (not error) so the call site can pass it
 // straight to api.WriteProblem without an AsProblem unwrap.
 func (r PutAppSecretRequest) Validate(maxBytes int) *Problem {
+	if r.Value == "" {
+		return errEmptySecretValue()
+	}
 	if maxBytes > 0 && len(r.Value) > maxBytes {
 		return ErrSecretValueTooLarge(Limits{SecretValueMaxBytes: maxBytes}, len(r.Value))
 	}
@@ -308,6 +319,9 @@ type RotateAppSecretRequest struct {
 // PutAppSecretRequest.Validate so the rotate and PUT paths share the
 // pre-seal cap enforcement.
 func (r RotateAppSecretRequest) Validate(maxBytes int) *Problem {
+	if r.Value == "" {
+		return errEmptySecretValue()
+	}
 	if maxBytes > 0 && len(r.Value) > maxBytes {
 		return ErrSecretValueTooLarge(Limits{SecretValueMaxBytes: maxBytes}, len(r.Value))
 	}
@@ -326,4 +340,48 @@ type RotateAppSecretResponse struct {
 	Key       string `json:"key"`
 	RotatedAt string `json:"rotated_at"`
 	Kid       string `json:"kid,omitempty"`
+}
+
+// Secret entry lets an agent ask the account owner for a secret without the
+// value passing through the agent (ADR-20261026174727). The owner types it on
+// a one-time page in a signed-in Gregale session; the requester learns only
+// whether it was set.
+const (
+	SecretEntryPending = "pending"
+	SecretEntrySet     = "set"
+)
+
+// SecretEntryRequest names the secret to collect and why.
+type SecretEntryRequest struct {
+	Key string `json:"key"`
+	// Scope is the env scope; empty means the default scope.
+	Scope string `json:"scope,omitempty"`
+	// Reason is shown to the owner on the entry page; at most 280 characters.
+	Reason string `json:"reason"`
+}
+
+// SecretEntryResponse is private to the requesting bridge. Ticket and
+// ExchangeCode check the request's status; they must never reach a model.
+// EntryURL is safe to show: it works only in the owner's signed-in session.
+type SecretEntryResponse struct {
+	EntryURL     string `json:"entry_url"`
+	Ticket       string `json:"ticket"`
+	ExchangeCode string `json:"exchange_code"`
+	ExpiresAt    string `json:"expires_at"`
+}
+
+// SecretEntryStatusRequest carries the private material from the response.
+type SecretEntryStatusRequest struct {
+	Ticket       string `json:"ticket"`
+	ExchangeCode string `json:"exchange_code"`
+}
+
+// SecretEntryStatus never includes the value.
+type SecretEntryStatus struct {
+	// Status is pending or set. An expired or unknown request is 410.
+	Status    string `json:"status"`
+	App       string `json:"app"`
+	Key       string `json:"key"`
+	Scope     string `json:"scope"`
+	ExpiresAt string `json:"expires_at"`
 }

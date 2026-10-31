@@ -61,6 +61,13 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			}
 			continue
 		}
+		// A draining node keeps no resident work (ADR-20261024085817).
+		if e.nodeLeavingByID(ins.NodeID) {
+			if e.discardWarmPromotion(ctx, ins, parkReasonNodeDraining) {
+				warmCount--
+			}
+			continue
+		}
 		candidates = append(candidates, ins)
 	}
 	defer func() { e.setWarmPoolSizeGauge(acct.Plan, warmCount) }()

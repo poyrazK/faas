@@ -112,7 +112,7 @@ func TestObsOverview_HappyPath_ReturnsKPIBundle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, "GET", "/v1/admin/obs/overview", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/overview", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("overview: got status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -145,7 +145,7 @@ func TestObsOverview_HappyPath_ReturnsKPIBundle(t *testing.T) {
 // is the value the wire advertises in the WithLimit field.
 func TestObsListTenants_PaginationCap(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants?limit=1000", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants?limit=1000", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("tenants: got status %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -170,7 +170,7 @@ func TestObsListTenants_PaginationCap(t *testing.T) {
 // "page 1 of N" without a second round-trip.
 func TestObsListTenants_DefaultLimit(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tenants: got status %d, want 200", rec.Code)
 	}
@@ -191,7 +191,7 @@ func TestObsListTenants_DefaultLimit(t *testing.T) {
 // from every row so a frontend can branch on presence.
 func TestObsListTenants_PIIRedactedByDefault(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tenants: got status %d, want 200", rec.Code)
 	}
@@ -212,7 +212,7 @@ func TestObsListTenants_PIIRedactedByDefault(t *testing.T) {
 // assertion).
 func TestObsListTenants_IncludePII_SurfacesEmail(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants?include_pii=1", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants?include_pii=1", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tenants include_pii: got status %d, want 200", rec.Code)
 	}
@@ -234,7 +234,7 @@ func TestObsListTenants_IncludePII_SurfacesEmail(t *testing.T) {
 // is a typo-tolerant filter, not a validator.
 func TestObsListTenants_OrgFilter(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants?plan=scale", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants?plan=scale", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tenants plan filter: got status %d, want 200", rec.Code)
 	}
@@ -253,7 +253,7 @@ func TestObsListTenants_OrgFilter(t *testing.T) {
 // unknown UUID.
 func TestObsGetTenant_NotFound(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants/00000000-0000-0000-0000-000000000000", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants/00000000-0000-0000-0000-000000000000", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("tenants detail unknown: got status %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -264,7 +264,7 @@ func TestObsGetTenant_NotFound(t *testing.T) {
 // non-UUID path parameter.
 func TestObsGetTenant_BadID(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants/not-a-uuid", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants/not-a-uuid", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("tenants detail bad uuid: got status %d, want 400", rec.Code)
 	}

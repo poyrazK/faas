@@ -67,7 +67,7 @@ func TestObsAuditLogSearch_ActorEmail_FiltersByCapturedEmail(t *testing.T) {
 	apidserver.SeedAuditLogRow(t, (*e.Store()), "operator.action.view", &acctID, "alice@example.com", "alice@example.com", nil)
 	apidserver.SeedAuditLogRow(t, (*e.Store()), "operator.action.view", &acctID, "bob@example.com", "bob@example.com", nil)
 
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?actor_email=alice@example.com", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?actor_email=alice@example.com", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search actor_email: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -92,7 +92,7 @@ func TestObsAuditLogSearch_ActorEmail_NoMatchReturnsEmpty(t *testing.T) {
 	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
 	apidserver.SeedAuditLogRow(t, (*e.Store()), "operator.action.view", nil, "alice@example.com", "alice@example.com", nil)
 
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?actor_email=nobody@example.com", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?actor_email=nobody@example.com", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search no-match actor_email: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -120,7 +120,7 @@ func TestObsAuditLogSearch_TargetAccountID_JSONBContainment(t *testing.T) {
 	seedAuditOperatorActionRow(t, (*e.Store()), "operator.action.view", "ops@faas.local", "ops@faas.local", &acctID,
 		[]byte(`{"target_account_id":"`+decoyID.String()+`","endpoint":"/v1/admin/apps/bar/metrics"}`))
 
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?target_account_id="+targetID.String(), nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?target_account_id="+targetID.String(), nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search target_account_id: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -144,7 +144,7 @@ func TestObsAuditLogSearch_OperatorOnly_FiltersToOperatorActionFamily(t *testing
 	apidserver.SeedAuditLogRow(t, (*e.Store()), "audit.account.deleted", &acctID, "ops@faas.local", "", nil)
 	apidserver.SeedAuditLogRow(t, (*e.Store()), "pii.accessed", &acctID, "ops@faas.local", "ops@faas.local", nil)
 
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?operator_only=true", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?operator_only=true", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search operator_only: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -170,7 +170,7 @@ func TestObsAuditLogSearch_OperatorOnly_FiltersToOperatorActionFamily(t *testing
 
 func TestObsAuditLogSearch_OperatorOnly_KindPrefix_MutuallyExclusive(t *testing.T) {
 	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?operator_only=true&kind_prefix=auth.", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?operator_only=true&kind_prefix=auth.", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("operator_only + kind_prefix: got %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -179,7 +179,7 @@ func TestObsAuditLogSearch_OperatorOnly_KindPrefix_MutuallyExclusive(t *testing.
 
 func TestObsAuditLogSearch_OperatorOnly_BadBool_400(t *testing.T) {
 	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?operator_only=notabool", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?operator_only=notabool", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("audit-log/search bad operator_only: got %d, want 400", rec.Code)
 	}
@@ -187,7 +187,7 @@ func TestObsAuditLogSearch_OperatorOnly_BadBool_400(t *testing.T) {
 
 func TestObsAuditLogSearch_TargetAccountID_BadUUID_400(t *testing.T) {
 	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?target_account_id=not-a-uuid", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?target_account_id=not-a-uuid", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("audit-log/search bad target_account_id: got %d, want 400", rec.Code)
 	}
@@ -201,7 +201,7 @@ func TestObsAuditLogSearch_RowIsOperatorActionField_DerivesTrueOnOperatorRows(t 
 	apidserver.SeedAuditLogRow(t, (*e.Store()), "audit.account.deleted", &acctID, "ops@faas.local", "", nil)
 	apidserver.SeedAuditLogRow(t, (*e.Store()), "pii.accessed", &acctID, "ops@faas.local", "ops@faas.local", nil)
 
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search echo: got %d, body=%s", rec.Code, rec.Body.String())
 	}

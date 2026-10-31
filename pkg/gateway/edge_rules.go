@@ -460,20 +460,31 @@ type EdgeRuleCache struct {
 // loadHost builds the entry. PR 5 widens with CORS / JWT / IP slots.
 type HostEntry struct {
 	expiresAt time.Time
+	// owner is the account whose rules the set holds (ADR-091 amendment
+	// 2026-10-26), or "" for a set read with every account's rules.
+	// InvalidateAccountHosts drops an owned set only for its own account's
+	// mutations. Cache metadata, like expiresAt: not part of the sealed policy.
+	owner string
+	// inheritedApp is the production app whose app-wide rules a PR preview's
+	// set also holds (ADR-091 amendment 2026-10-30), so a mutation of that
+	// app's "@app" rules drops the preview's set too. Cache metadata.
+	inheritedApp string
 	// NotAfter is the earliest expires_at among the loaded rules (zero when
 	// none expire). The entry is neither served as current nor used as the
 	// last-known fallback past it, so a time-boxed rule stops applying on
 	// schedule even while cached or while Postgres is unreachable.
-	NotAfter time.Time
-	Host     string
-	Route    []EdgeRuleResolved
-	Rewrite  []EdgeRuleRewriteResolved
-	Redirect []EdgeRuleRedirectResolved
-	Headers  []EdgeRuleHeadersResolved
-	CORS     []EdgeRuleCORSResolved
-	JWT      []EdgeRuleJWTResolved
-	IP       []EdgeRuleIPResolved
-	Validate []EdgeRuleValidateResolved
+	NotAfter             time.Time
+	snapshot             *edgePolicySnapshot
+	Host                 string
+	PublicSourceRevision string `json:",omitempty"`
+	Route                []EdgeRuleResolved
+	Rewrite              []EdgeRuleRewriteResolved
+	Redirect             []EdgeRuleRedirectResolved
+	Headers              []EdgeRuleHeadersResolved
+	CORS                 []EdgeRuleCORSResolved
+	JWT                  []EdgeRuleJWTResolved
+	IP                   []EdgeRuleIPResolved
+	Validate             []EdgeRuleValidateResolved
 	// Limit carries the kind=limit subset (ADR-091 D24). Same
 	// shape as Validate above; the applier
 	// (handler.go::applyEdgeRuleLimit) installs MaxBytesReader on
@@ -540,7 +551,11 @@ type HostEntry struct {
 	Async          []EdgeRuleAsyncResolved
 	WAF            []EdgeRuleWAFResolved
 	Challenge      []EdgeRuleChallengeResolved
-	PathGlobErrs   []PathGlobError
+	// Penalties maps each enforced rule with a penalty box to it
+	// (ADR-20261022105846), whatever its kind.
+	Penalties        map[string]api.EdgeRulePenalty
+	PathGlobErrs     []PathGlobError
+	PolicyRuleOwners map[string]string
 }
 
 // NewEdgeRuleCache returns a cache holding up to `capacity` host
@@ -568,6 +583,20 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 		return nil, false
 	}
 	return cloneHostEntry(entry), true
+}
+
+// HostRules returns a copy of one kind's compiled rules for a current host,
+// without copying the rest of the host's set as GetHost does. A request asks
+// for each kind separately, so copying the whole set per kind cost about
+// 1.4 MB per request at 500 rules (ADR-091 amendment 2026-10-27, GA
+// hardening). Cached entries are never modified after Put, so reading one
+// after getEntry releases the lock is safe, as it is for GetHost.
+func HostRules[T any](c *EdgeRuleCache, host string, selectRules func(*HostEntry) []T) ([]T, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	return slices.Clone(selectRules(entry)), true
 }
 
 // GetLastKnownHost returns the host's most recent compiled rule set even when
@@ -977,6 +1006,17 @@ func (c *EdgeRuleCache) GetWAF(host string) ([]EdgeRuleWAFResolved, bool) {
 }
 
 // GetChallenge returns a defensive copy of the compiled kind=challenge rules.
+// GetPenalty returns ruleID's penalty box for host. hit reports a cached
+// entry; found reports that the rule has an enforced penalty there.
+func (c *EdgeRuleCache) GetPenalty(host, ruleID string) (p api.EdgeRulePenalty, found, hit bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return api.EdgeRulePenalty{}, false, false
+	}
+	p, found = entry.Penalties[ruleID]
+	return p, found, true
+}
+
 func (c *EdgeRuleCache) GetChallenge(host string) ([]EdgeRuleChallengeResolved, bool) {
 	entry, ok := c.getEntry(host)
 	if !ok {
@@ -1121,6 +1161,59 @@ func EdgeRuleHostPatternMatches(pattern, host string) bool {
 	return api.EdgeRuleHostMatches(pattern, host)
 }
 
+// HasHost reports whether a current (unexpired) set is cached for key,
+// without copying it.
+func (c *EdgeRuleCache) HasHost(key string) bool {
+	_, ok := c.getEntry(key)
+	return ok
+}
+
+// SetOwner records the account whose rules the set holds; the loader calls it
+// when it read only that account's rules.
+func (e *HostEntry) SetOwner(accountID string) { e.owner = accountID }
+
+// SetInheritedApp records the production app whose app-wide rules a preview's
+// set holds; the loader calls it for a preview.
+func (e *HostEntry) SetInheritedApp(appID string) { e.inheritedApp = appID }
+
+// InvalidateAccountHosts drops the cached entries (current and last-known)
+// that one account's rule mutation can have changed: entries holding that
+// account's rules, or every account's, whose host one of patterns covers.
+// The app-wide pattern ("@app") covers only appID's entries. Another
+// account's owned entries cannot hold the mutated rule and are kept, so one
+// tenant's edit of a "*" or "@app" rule no longer flushes the fleet's
+// compiled rules. An empty account falls back to InvalidateHosts.
+func (c *EdgeRuleCache) InvalidateAccountHosts(accountID, appID string, patterns []string) {
+	if accountID == "" {
+		c.InvalidateHosts(patterns)
+		return
+	}
+	if len(patterns) == 0 {
+		c.Reset()
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.generation++
+	for key, el := range c.byID {
+		entry := el.Value.(*HostEntry)
+		if entry.owner != "" && entry.owner != accountID {
+			continue
+		}
+		host, entryApp := EdgeRuleCacheKeyHost(key), edgeRuleCacheKeyApp(key)
+		for _, pattern := range patterns {
+			covered := EdgeRuleHostPatternMatches(pattern, host)
+			if api.IsEdgeRuleAppHosts(pattern) {
+				covered = appID == "" || entryApp == "" || entryApp == appID || entry.inheritedApp == appID
+			}
+			if covered {
+				c.removeElement(el)
+				break
+			}
+		}
+	}
+}
+
 // Len returns the number of cached host entries.
 func (c *EdgeRuleCache) Len() int {
 	c.mu.Lock()
@@ -1172,8 +1265,9 @@ type EdgeRuleMatcher interface {
 	// Converging reports whether the hostname is inside the short fail-closed
 	// window of a two-phase fleet policy mutation by ownerAccountID (the
 	// account owning the app the host resolves to; "" when none claims it).
-	// Another account's mutation never fences an owned host.
-	Converging(host, ownerAccountID string) bool
+	// Another account's mutation never fences an owned host, and an app-wide
+	// (@app) mutation fences only ownerAppID's hosts.
+	Converging(host, ownerAccountID, ownerAppID string) bool
 	MatchRoute(ctx context.Context, host, path, method string) *EdgeRuleResolved
 	MatchRewrite(ctx context.Context, host, path, method string) *EdgeRuleRewriteResolved
 	MatchRedirect(ctx context.Context, host, path, method string) *EdgeRuleRedirectResolved
@@ -1381,7 +1475,7 @@ var (
 // embed it and only override the kinds it ships.
 type noOpEdgeRuleMatcher struct{}
 
-func (noOpEdgeRuleMatcher) Converging(string, string) bool { return false }
+func (noOpEdgeRuleMatcher) Converging(string, string, string) bool { return false }
 
 func (noOpEdgeRuleMatcher) MatchRetry(context.Context, string, string, string) *EdgeRuleRetryResolved {
 	return nil
@@ -1446,6 +1540,9 @@ func (noOpEdgeRuleMatcher) Reset() {}
 // time same-account guarantee at
 // `cmd/apid/handlers_edge_rules.go:184-201`).
 type ResolveTargetApp func(ctx context.Context, slug string) (App, bool)
+
+// ResolveTargetAppPolicy retains authoritative read failures for production.
+type ResolveTargetAppPolicy func(ctx context.Context, slug string) (App, bool, error)
 
 // PickFirstRouteMatch is the pure-Go filter used by
 // cmd/gatewayd-internal/edge_rules.go::gatewaydEdgeRules.MatchRoute
@@ -1577,7 +1674,7 @@ func PickFirstJWTMatch(rules []EdgeRuleJWTResolved, path, method string, request
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if r.Methods != nil && !r.Methods[method] {
+		if !protectiveMethodMatch(r.Methods, method) {
 			continue
 		}
 		if r.PathGlob != "" {
@@ -1597,7 +1694,7 @@ func PickFirstIPMatch(rules []EdgeRuleIPResolved, path, method string, requestHe
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if r.Methods != nil && !r.Methods[method] {
+		if !protectiveMethodMatch(r.Methods, method) {
 			continue
 		}
 		if r.PathGlob != "" {
@@ -1621,7 +1718,7 @@ func PickFirstValidateMatch(rules []EdgeRuleValidateResolved, path, method strin
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if r.Methods != nil && !r.Methods[method] {
+		if !protectiveMethodMatch(r.Methods, method) {
 			continue
 		}
 		if r.PathGlob != "" {
@@ -1648,7 +1745,7 @@ func PickFirstGeoMatch(rules []EdgeRuleGeoResolved, path, method string, request
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if r.Methods != nil && !r.Methods[method] {
+		if !protectiveMethodMatch(r.Methods, method) {
 			continue
 		}
 		if r.PathGlob != "" {
@@ -1704,6 +1801,16 @@ func pickFirstMatch(rules []EdgeRuleResolved, path, method string, requestHeader
 // The implementation lives in pkg/api so the trace simulator shares it.
 func protectivePathMatch(glob, p string) (bool, error) {
 	return api.MatchProtectiveEdgeRulePath(glob, p)
+}
+
+// protectiveMethodMatch is the method selector for the same gates: a rule
+// that lists GET also covers HEAD, because servers answer HEAD with the GET
+// handler (Go's net/http, Express, Rails and most others), so a HEAD request
+// reached the app past a GET-only jwt or ip rule (ADR-091 amendment
+// 2026-10-28). nil methods match every method. The trace simulator mirrors it
+// (edgeruletrace.ruleMethodMatches).
+func protectiveMethodMatch(methods map[string]bool, method string) bool {
+	return methods == nil || methods[method] || method == http.MethodHead && methods[http.MethodGet]
 }
 
 // pathGlobMatch is a tiny adapter over stdlib path.Match that

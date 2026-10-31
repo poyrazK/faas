@@ -437,9 +437,10 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 }
 
 // TestMetalEgressCapEnforced is the #31 acceptance gate. After a cold
-// boot, Manager.setupNetwork applies a tbf qdisc on the host-side veth
-// with the plan's EgressMbit (spec §7: 10/25/100/250 Mbit). The test
-// runs `tc -s qdisc show dev <vethHost>` and asserts the live qdisc
+// boot, Manager.setupNetwork applies a tbf qdisc with the plan's
+// EgressMbit (spec §7: 10/25/100/250 Mbit) on both veth ends: VethPeer
+// inside the namespace shapes guest egress, VethHost shapes inbound.
+// The test reads `tc -s qdisc show` for each and asserts the live qdisc
 // carries the requested rate. Mirrors TestMetalDNATPublishedToGuestPort's
 // external-probe design: any code path that swallows a tc error and
 // returns success still gets caught here, because the live kernel
@@ -489,6 +490,17 @@ func TestMetalEgressCapEnforced(t *testing.T) {
 	wantRate := fmt.Sprintf("rate %dMbit", rateMbit)
 	if !strings.Contains(text, wantRate) {
 		t.Errorf("tbf rate not %q on %s; got:\n%s", wantRate, vethHost, text)
+	}
+	// The VethHost qdisc shapes traffic toward the guest. Guest egress
+	// leaves the namespace through VethPeer, so the cap the spec and the
+	// abuse desk depend on is the qdisc there (#4382).
+	peer := inst.Net.VethPeer
+	out, err = exec.Command("ip", "netns", "exec", inst.Net.Netns, "tc", "-s", "qdisc", "show", "dev", peer).CombinedOutput()
+	if err != nil {
+		t.Fatalf("tc qdisc show dev %s in %s: %v\n%s", peer, inst.Net.Netns, err, out)
+	}
+	if text := string(out); !strings.Contains(text, "tbf") || !strings.Contains(text, wantRate) {
+		t.Errorf("guest egress on %s not shaped to %q; got:\n%s", peer, wantRate, text)
 	}
 
 	if err := m.Destroy(ctx, "egress"); err != nil {

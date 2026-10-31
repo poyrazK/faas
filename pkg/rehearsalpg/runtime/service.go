@@ -17,7 +17,7 @@ import (
 
 // Service is apid-owned. Owner loss cannot be adopted into complete evidence.
 type Service struct {
-	faultMu  sync.Mutex
+	runs     runLocks
 	Catalog  rehearsalpg.Catalog
 	Backend  Backend
 	OwnerID  string
@@ -30,6 +30,43 @@ type session struct {
 	done             chan struct{}
 	samples, maxWait int64
 	failed           bool
+}
+
+// runLocks serializes fault transitions with Seal and Delete for one run. A
+// service-wide lock let one run's capture and drop (tens of seconds) hold
+// another run's scheduled restore past its recovery budget
+// (ADR-20261019120000).
+type runLocks struct {
+	mu    sync.Mutex
+	locks map[string]*runLock
+}
+type runLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (l *runLocks) lock(account, run string) (unlock func()) {
+	key := account + "/" + run
+	l.mu.Lock()
+	if l.locks == nil {
+		l.locks = map[string]*runLock{}
+	}
+	e := l.locks[key]
+	if e == nil {
+		e = &runLock{}
+		l.locks[key] = e
+	}
+	e.refs++
+	l.mu.Unlock()
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		l.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(l.locks, key)
+		}
+		l.mu.Unlock()
+	}
 }
 
 func NewService(c rehearsalpg.Catalog, b Backend) *Service {
@@ -133,8 +170,7 @@ func (s *Service) stop(id string) *session {
 }
 
 func (s *Service) Seal(ctx context.Context, account, run, deployment string) (rehearsalpg.Evidence, error) {
-	s.faultMu.Lock()
-	defer s.faultMu.Unlock()
+	defer s.runs.lock(account, run)()
 	if s.settlePostgresFault(ctx, account, run, false) != nil {
 		return rehearsalpg.Evidence{}, ErrFixture
 	}
@@ -155,7 +191,12 @@ func (s *Service) Seal(ctx context.Context, account, run, deployment string) (re
 	}
 	w := s.stop(r.ID)
 	result := rehearsalpg.Evidence{Receipt: receipt(r), Status: "incomplete", Provenance: rehearsalpg.Provenance, DeploymentID: deployment, Spec: r.Spec, Before: r.Initial}
-	result.After, e = s.Backend.FenceAndCapture(ctx, r)
+	if schemas, ok := s.Backend.(SchemaBackend); ok {
+		result.After, result.Schema, e = schemas.FenceAndCaptureSchema(ctx, r)
+		result.SchemaInventoryVersion = rehearsalpg.SchemaInventoryVersion
+	} else {
+		result.After, e = s.Backend.FenceAndCapture(ctx, r)
+	}
 	if e != nil {
 		result.Reason = "database collection failed or SQL was unfinished"
 	}
@@ -224,8 +265,7 @@ func (s *Service) failedCleanup(ctx context.Context, r rehearsalpg.Resource) {
 }
 
 func (s *Service) Delete(ctx context.Context, account, run string) error {
-	s.faultMu.Lock()
-	defer s.faultMu.Unlock()
+	defer s.runs.lock(account, run)()
 	if s.settlePostgresFault(ctx, account, run, true) != nil {
 		return ErrFixture
 	}

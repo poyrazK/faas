@@ -12,6 +12,12 @@ import (
 // plan's ProjectSecretCountMax for one project environment.
 const CodePlanLimitProjectSecrets = "plan_limit_project_secrets"
 
+// ProjectSecretsRevisionKey is the qualification secret revision entry that
+// covers an environment's shared secrets. Workload slugs cannot contain a
+// colon, so it never collides with one. The server records it; clients never
+// send it.
+const ProjectSecretsRevisionKey = "project:secrets"
+
 // ProjectEnvironmentSharedSecret describes one secret shared by every service
 // of a project environment (ADR-1139). Values are write-only: no response
 // carries plaintext or ciphertext. ValueHash is the HMAC fingerprint app

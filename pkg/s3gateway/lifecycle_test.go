@@ -36,11 +36,18 @@ func TestGatewayLifecycleValidationAndPermissions(t *testing.T) {
 				f.handler.ServeHTTP(w, r)
 				return w
 			}
-			if permission == state.ObjectBucketPermissionRead {
+			if permission != state.ObjectBucketPermissionReadWrite {
+				// Only a customer-created read_write key changes bucket settings.
 				for _, method := range []string{"PUT", "DELETE"} {
 					if w := send(method, "?lifecycle", body, false); w.Code != 403 {
 						t.Fatal(w.Code, w.Body.String())
 					}
+				}
+				if permission == state.ObjectBucketPermissionWrite {
+					if w := send("GET", "?lifecycle", "", false); w.Code != 403 {
+						t.Fatal(w.Code, w.Body.String())
+					}
+					return
 				}
 				if w := send("GET", "?lifecycle", "", false); w.Code != 404 || !strings.Contains(w.Body.String(), "NoSuchLifecycleConfiguration") {
 					t.Fatal(w.Code, w.Body.String())

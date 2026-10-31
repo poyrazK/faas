@@ -488,6 +488,49 @@ func TestApidProxy_DoesNotSetXForwardedForWhenNoRemoteAddr(t *testing.T) {
 	}
 }
 
+// TestApidProxy_UsesTheClientGatewaydPublicPinned is issue #2316:
+// gatewayd-public reaches this daemon over a unix socket (RemoteAddr "@") or,
+// from a peer node's edge, over TCP, and pins the customer in a single
+// X-Forwarded-For entry. That entry, not the peer address, is the client
+// apid records in auth.session.created and key.created.
+func TestApidProxy_UsesTheClientGatewaydPublicPinned(t *testing.T) {
+	for name, tc := range map[string]struct {
+		remoteAddr string
+		xff        []string
+		want       []string
+	}{
+		"unix socket handoff":     {"@", []string{"198.51.100.7"}, []string{"198.51.100.7"}},
+		"peer edge over TCP":      {"10.42.0.3:41000", []string{"2001:db8::7"}, []string{"2001:db8::7"}},
+		"ambiguous chain on unix": {"@", []string{"198.51.100.7", "203.0.113.9"}, nil},
+		"ambiguous chain on TCP":  {"10.42.0.3:41000", []string{"198.51.100.7, 203.0.113.9"}, []string{"10.42.0.3"}},
+		"no forwarded entry":      {"203.0.113.10:55555", nil, []string{"203.0.113.10"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var seen []string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = r.Header.Values("X-Forwarded-For")
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(upstream.Close)
+			handler := newApidProxy(upstream.URL, http.NotFoundHandler(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", nil)
+			req.RemoteAddr = tc.remoteAddr
+			for _, v := range tc.xff {
+				req.Header.Add("X-Forwarded-For", v)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d", rec.Code)
+			}
+			if strings.Join(seen, "|") != strings.Join(tc.want, "|") {
+				t.Fatalf("upstream X-Forwarded-For = %q, want %q", seen, tc.want)
+			}
+		})
+	}
+}
+
 // TestIsApidLogsPath pins the AppLogsHandler carve-out matcher
 // (issue #254 / Move 4 PR-2). The handler claims the
 // `/v1/apps/{slug}/logs` family; the apidProxy short-circuits

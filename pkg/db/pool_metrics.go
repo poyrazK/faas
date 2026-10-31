@@ -73,7 +73,7 @@ func NewPoolCollector(prefix string, pool *pgxpool.Pool) *PoolCollector {
 		),
 		emptyAcquires: prometheus.NewDesc(
 			prefix+"_db_pool_empty_acquires_total",
-			"Cumulative acquisitions that found no idle connection and therefore had to construct one or wait for a release. NOT a pure saturation signal: pools are configured MinConns=0, so the first acquisitions after boot necessarily count here while the pool warms up. Read it warm and as a rate — a sustained rate once <prefix>_db_pool_conns has plateaued means callers routinely find the pool empty. For unambiguous saturation use canceled_acquires_total and acquire_wait_seconds_total below.",
+			"Cumulative acquisitions that found no idle connection and therefore had to construct one or wait for a release. NOT a pure saturation signal: pools start empty (MinConns=0, or a warm floor opened in the background), so the first acquisitions after boot necessarily count here while the pool warms up. Read it warm and as a rate — a sustained rate once <prefix>_db_pool_conns has plateaued means callers routinely find the pool empty. For unambiguous saturation use canceled_acquires_total and acquire_wait_seconds_total below.",
 			nil, nil,
 		),
 		canceled: prometheus.NewDesc(

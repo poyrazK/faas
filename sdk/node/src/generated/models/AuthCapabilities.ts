@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { AuthProviders } from './AuthProviders.js';
 /**
- * Boot-resolved OAuth provider state for this apid host.
+ * Boot-resolved OAuth provider state for this API host.
  * `enabled=true` means the consent route (`/v1/auth/<name>`)
  * will issue a 302 to the upstream consent screen;
  * `enabled=false` means the consent route returns 503

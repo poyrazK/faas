@@ -66,6 +66,9 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 
 		// Rehearsal authority, admission policies and evidence belong to the
 		// original run; cloning must never enroll or resume its execution.
+		"scenario_captured_events":            state.CloneSchemaOperational,
+		"scenario_captured_platform_calls":    state.CloneSchemaOperational,
+		"scenario_captured_queue_messages":    state.CloneSchemaOperational,
 		"scenario_cold_preparations":          state.CloneSchemaOperational,
 		"scenario_command_networks":           state.CloneSchemaOperational,
 		"scenario_managed_work":               state.CloneSchemaOperational,
@@ -173,6 +176,11 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"profile_route_alert_state":                state.CloneSchemaOperational,
 		"profile_canary_checks":                    state.CloneSchemaOperational,
 		"profile_periodic_monitors":                state.CloneSchemaOperational,
+		"gateway_traffic_policy_observations":      state.CloneSchemaOperational,
+		"gateway_traffic_runtime_observations":     state.CloneSchemaOperational,
+		"traffic_retry_counters":                   state.CloneSchemaOperational,
+		"traffic_security_epochs":                  state.CloneSchemaOperational,
+		"app_egress_circuits":                      state.CloneSchemaConfiguration,
 		"app_binding_release_policies":             state.CloneSchemaConfiguration,
 		"app_binding_release_policy_history":       state.CloneSchemaConfiguration,
 		"alert_rollback_actions":                   state.CloneSchemaOperational,
@@ -553,5 +561,76 @@ func TestCloneSchemaCoverageCanonicalOrderAndNoInputMutation(t *testing.T) {
 	duplicate := append(policies, policies[0])
 	if _, err := state.CloneSchemaCoverage(duplicate); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate table accepted: %v", err)
+	}
+}
+
+// Every configuration and customer-data table declares its clone capabilities
+// explicitly; other kinds declare none. A table is a blocker until it has all
+// the capabilities its kind requires, and capabilities never enter the hash.
+func TestCloneSchemaCapabilitiesDeclaredAndMeasured(t *testing.T) {
+	policies, err := state.ProjectEnvironmentCloneSchemaPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, policy := range policies {
+		needs := policy.Kind == state.CloneSchemaConfiguration || policy.Kind == state.CloneSchemaData
+		if needs != (policy.Capabilities != nil) {
+			t.Fatalf("%s (%s) capabilities declared=%v", policy.TableName, policy.Kind, policy.Capabilities != nil)
+		}
+	}
+	all := []string{"capture", "materialize", "diff", "qualify", "promote", "rollback"}
+	for _, tc := range []struct {
+		kind         string
+		capabilities []string
+		missing      []string
+	}{
+		{state.CloneSchemaConfiguration, nil, all},
+		{state.CloneSchemaConfiguration, []string{"rollback", "capture", "materialize"}, []string{"diff", "qualify", "promote"}},
+		{state.CloneSchemaConfiguration, all, nil},
+		{state.CloneSchemaData, []string{"capture"}, []string{"materialize"}},
+		{state.CloneSchemaData, []string{"materialize", "capture"}, nil},
+		{state.CloneSchemaOperational, nil, nil},
+	} {
+		policy := state.ProjectEnvironmentCloneSchemaPolicy{TableName: "t", Kind: tc.kind, Columns: []string{"c"}}
+		if tc.capabilities != nil {
+			policy.Capabilities = &tc.capabilities
+		}
+		if missing := state.MissingCloneCapabilities(policy); !reflect.DeepEqual(missing, tc.missing) {
+			t.Fatalf("%s %v missing = %v, want %v", tc.kind, tc.capabilities, missing, tc.missing)
+		}
+	}
+	coverage, err := state.CloneSchemaCoverage(policies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockers := map[string]bool{}
+	for _, blocker := range coverage.Blockers {
+		if blocker.Code == "isolated_strategy_unavailable" || blocker.Code == "isolated_data_strategy_unavailable" {
+			blockers[blocker.Table] = true
+		}
+	}
+	for _, table := range coverage.Tables {
+		if table.Capabilities != nil {
+			t.Fatalf("observed table %s carries registry capabilities into the schema hash", table.TableName)
+		}
+	}
+	progress, err := state.ProjectEnvironmentCloneCapabilityProgress()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range progress {
+		incomplete := 0
+		for _, policy := range policies {
+			if policy.Kind == p.Kind && len(state.MissingCloneCapabilities(policy)) > 0 {
+				incomplete++
+				if !blockers[policy.TableName] {
+					t.Fatalf("incomplete %s table %s reports no strategy blocker", p.Kind, policy.TableName)
+				}
+			}
+		}
+		if p.Tables-p.Complete != incomplete {
+			t.Fatalf("%s progress %+v disagrees with %d incomplete tables", p.Kind, p, incomplete)
+		}
+		t.Logf("%s: %d/%d tables complete; per capability %v", p.Kind, p.Complete, p.Tables, p.Capabilities)
 	}
 }

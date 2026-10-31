@@ -36,6 +36,37 @@ func EdgeRuleApp(ctx context.Context) string {
 	return app
 }
 
+type edgeRuleInheritedAppKey struct{}
+
+// WithEdgeRuleInheritedApp records the production app of a PR preview the
+// request resolved to. The preview applies that app's app-wide rules as well
+// as its own (ADR-091 amendment 2026-10-30), so a gate such as a kind=jwt
+// rule on /admin/** covers the preview's guessable hosts too.
+func WithEdgeRuleInheritedApp(ctx context.Context, appID string) context.Context {
+	if appID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, edgeRuleInheritedAppKey{}, appID)
+}
+
+// EdgeRuleInheritedApp returns the app recorded by WithEdgeRuleInheritedApp,
+// or "".
+func EdgeRuleInheritedApp(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	app, _ := ctx.Value(edgeRuleInheritedAppKey{}).(string)
+	return app
+}
+
+// WithEdgeRuleScope records whose rules apply to a request app serves: its
+// account's, its app-wide rules and, for a preview, its production app's
+// app-wide rules. Every loader call for app's hosts must see the same scope,
+// because the compiled set is cached per host and app.
+func WithEdgeRuleScope(ctx context.Context, app App) context.Context {
+	return WithEdgeRuleInheritedApp(WithEdgeRuleApp(WithEdgeRuleOwner(ctx, app.AccountID), app.ID), app.ProductionAppID)
+}
+
 // EdgeRuleCacheKey is the edge-rule cache key for host as served by appID.
 // A host's compiled rules include its app's app-wide rules, so the key
 // carries the app: a host moved to another app never reuses the old app's
@@ -51,6 +82,12 @@ func EdgeRuleCacheKey(host, appID string) string {
 func EdgeRuleCacheKeyHost(key string) string {
 	host, _, _ := strings.Cut(key, "\x00")
 	return host
+}
+
+// edgeRuleCacheKeyApp returns the app part of an EdgeRuleCacheKey, or "".
+func edgeRuleCacheKeyApp(key string) string {
+	_, app, _ := strings.Cut(key, "\x00")
+	return app
 }
 
 // EdgeRuleOwner returns the account recorded by WithEdgeRuleOwner, or "".

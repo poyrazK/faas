@@ -30,7 +30,7 @@ func (s *server) projectEnvironmentClonePostgresInventory(ctx context.Context, l
 	if err != nil {
 		return copyinventory.Inventory{}, err
 	}
-	identities := mfaIdentities()
+	identities := accountIdentities()
 	receipt, err := store.ProjectEnvironmentClonePostgresInventoryForLease(ctx, lease, sourceID)
 	if err == nil {
 		return copyinventory.OpenInventory(identities, scope, receipt.Sealed)
@@ -41,7 +41,7 @@ func (s *server) projectEnvironmentClonePostgresInventory(ctx context.Context, l
 	if lease.Operation.Status != state.CloneOperationCapturing || read == nil || setSecretRecipient == nil {
 		return copyinventory.Inventory{}, managedpostgres.ErrUnavailable
 	}
-	recipient := hostSecretRecipient()
+	recipient := cloneSealRecipient()
 	if !cloneInventoryCanOpen(recipient, identities) {
 		return copyinventory.Inventory{}, managedpostgres.ErrUnavailable
 	}

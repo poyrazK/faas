@@ -7,13 +7,13 @@ import httpx
 import pytest
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.projects import (
+from faas_sdk.preview.api.projects import (
     approve_environment_git_revision,
     get_environment_git_ops,
     preview_environment_git_revision,
     remove_environment_git_ops_override,
 )
-from faas_sdk.models import (
+from faas_sdk.preview.models import (
     AppManifest,
     ApproveEnvironmentGitRevisionRequest,
     ApproveEnvironmentGitRevisionResponse,
@@ -25,7 +25,7 @@ from faas_sdk.models import (
     PreviewEnvironmentGitRevisionResponse,
     RemoveEnvironmentGitOpsOverrideRequest,
 )
-from faas_sdk.models.service_binding_transport import ServiceBindingTransport
+from faas_sdk.preview.models.service_binding_transport import ServiceBindingTransport
 
 
 def test_gitops_evidence_commit_is_optional_and_independent_of_ref() -> None:
@@ -319,7 +319,7 @@ def test_reviewed_authority_and_override_identity() -> None:
 
 
 def test_gitlab_review_policy_has_no_github_installation_identity():
-    from faas_sdk.models.environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
+    from faas_sdk.preview.models.environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
 
     body = {
         "qualified": True,
@@ -338,7 +338,7 @@ def test_gitlab_review_policy_has_no_github_installation_identity():
 
 
 def test_unchanged_build_context_and_cache_progress_round_trip() -> None:
-    from faas_sdk.models import EnvironmentWorkloadProgress, EnvironmentWorkloadSource
+    from faas_sdk.preview.models import EnvironmentWorkloadProgress, EnvironmentWorkloadSource
 
     source = {
         "kind": "source",
@@ -364,7 +364,7 @@ def test_unchanged_build_context_and_cache_progress_round_trip() -> None:
 
 
 def test_rollout_notification_preserves_exact_approval_and_diagnostics() -> None:
-    from faas_sdk.models import EnvironmentGitOpsChangedWebhookPayload
+    from faas_sdk.preview.models import EnvironmentGitOpsChangedWebhookPayload
 
     for status in ("serving", "failed", "superseded"):
         body = {

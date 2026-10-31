@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,8 +17,7 @@ func TestFinancialFundingCurrencyRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := f.balance(t)
-	_, file, _, _ := runtime.Caller(0)
-	paths, err := filepath.Glob(filepath.Join(filepath.Dir(file), "../../../migrations/*_financial_funding_usd.sql"))
+	paths, err := filepath.Glob("../../../migrations/*_financial_funding_usd.sql")
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("USD funding migration: %v, %v", paths, err)
 	}

@@ -122,6 +122,35 @@ func TestQueueLeaseWorkloadTokenRecordsInstance(t *testing.T) {
 	rec = e.Do(t, http.MethodPost, "/v1/apps/other-worker/queues/jobs/leases", nil, bearer(workloadidentity.QueuesAudience))
 	apidserver.AssertProblem(t, rec, http.StatusUnauthorized, api.CodeUnauthorized)
 
+	// Leases serve the production binding: a staging deployment of the same
+	// app cannot lease production messages, whether its token names the
+	// environment or not, and a production instance's token cannot claim one
+	// (ADR-1141 amendment 2026-10-27).
+	stagingDep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:lease-staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagingInstance, err := store.CreateInstanceWithMode(ctx, app.ID, stagingDep.ID, string(state.StateRunning), 128, "default-local", "",
+		string(state.InstanceModeWorker))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, claim := range map[string]struct{ instance, environment string }{
+		"staging instance, staging token":    {stagingInstance.ID, "staging"},
+		"staging instance, untagged token":   {stagingInstance.ID, ""},
+		"production instance, staging token": {instance.ID, "staging"},
+	} {
+		token, err := signer.MintEnvironment(time.Now(), (*e.Acct()).ID, app.ID, claim.instance, claim.environment, workloadidentity.QueuesAudience)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec = e.Do(t, http.MethodPost, "/v1/apps/token-worker/queues/jobs/leases", nil, map[string]string{"Authorization": "Bearer " + token.AccessToken})
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s leased production messages: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+
 	rec = e.Do(t, http.MethodPost, "/v1/apps/token-worker/queues/jobs/leases", nil, bearer(workloadidentity.QueuesAudience))
 	var leased api.QueueLeaseResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &leased) != nil || len(leased.Messages) != 1 {

@@ -43,8 +43,9 @@ WITH owned AS (
  SELECT b.id,jsonb_build_object('app_id',b.app_id,'scope',b.scope,'access',b.access,'state',b.state,'plan',b.plan,
   'max_concurrency',b.max_concurrency,'rotation',b.rotation_previous_generation IS NOT NULL,
   'residents',inventory.residents,'parked',inventory.parked,'auxiliary',inventory.auxiliary,
-  'observed_residents',inventory.observed_residents,'observed_connections',inventory.observed_connections,
+  'observed_residents',inventory.observed_residents,'observed_connections',inventory.observed_connections,'observed_max_connections',inventory.observed_max_connections,
   'observations_checked_at',inventory.observations_checked_at,'observations_expires_at',inventory.observations_expires_at,
+  'pool_configured',EXISTS(SELECT 1 FROM app_secrets s WHERE s.app_id=b.app_id AND s.scope=b.scope AND s.key='DATA_API_POOL'),
   'stale_nodes',inventory.stale_nodes,'deployments',inventory.deployments,'sidecars',inventory.sidecars,'migrating',inventory.migrating,
   'tasks',(SELECT count(*) FROM app_tasks t WHERE t.app_id=b.app_id AND t.account_id=sqlc.arg(account_id)::text::uuid
     AND coalesce(nullif(t.deployment_scope,''),'default')=b.scope AND t.status NOT IN ('succeeded','failed','cancelled','skipped'))) AS item
@@ -58,6 +59,7 @@ WITH owned AS (
    coalesce(bool_or(jsonb_array_length(coalesce(dep.sidecars,'[]'::jsonb))>0),false) AS sidecars,
    count(*) FILTER(WHERE i.kind='wake' AND i.mode='normal' AND i.state<>'parked' AND o.state='observed') AS observed_residents,
    coalesce(sum(o.engine_connections+o.refresh_connections) FILTER(WHERE i.kind='wake' AND i.mode='normal' AND i.state<>'parked' AND o.state='observed'),0) AS observed_connections,
+   coalesce(max(o.engine_connections+o.refresh_connections) FILTER(WHERE i.kind='wake' AND i.mode='normal' AND i.state<>'parked' AND o.state='observed'),0) AS observed_max_connections,
    min(o.observed_at) FILTER(WHERE i.state<>'parked' AND o.state='observed') AS observations_checked_at,
    min(o.expires_at) FILTER(WHERE i.state<>'parked' AND o.state='observed') AS observations_expires_at,
    coalesce(bool_or(i.state='migrating' OR i.migrated_from_node_id IS NOT NULL),false) AS migrating

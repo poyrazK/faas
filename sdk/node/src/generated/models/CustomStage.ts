@@ -5,7 +5,7 @@
 import type { MirrorCleanCondition } from './MirrorCleanCondition.js';
 /**
  * One stage of a customer-supplied canary ladder
- * (issue #976 / ADR-122 / SAFE-RELEASES production-leveling
+ * (production-leveling
  * Stream F). Percent is the traffic share this stage moves
  * to (0..100, terminal stage must be 100). Duration is the
  * wall-clock dwell time at this stage in time.ParseDuration

@@ -55,25 +55,29 @@ func (c *ConnectionBudgetCapacityEvidence) valid(databaseID, fingerprint string,
 }
 
 type connectionBudgetBinding struct {
-	AppID                 string    `json:"app_id"`
-	Scope                 string    `json:"scope"`
-	Access                string    `json:"access"`
-	State                 string    `json:"state"`
-	Plan                  api.Plan  `json:"plan"`
-	MaxConcurrency        int64     `json:"max_concurrency"`
-	Rotation              bool      `json:"rotation"`
-	Residents             int64     `json:"residents"`
-	Parked                int64     `json:"parked"`
-	Auxiliary             int64     `json:"auxiliary"`
-	Tasks                 int64     `json:"tasks"`
-	StaleNodes            int64     `json:"stale_nodes"`
-	Deployments           int64     `json:"deployments"`
-	Sidecars              bool      `json:"sidecars"`
-	Migrating             bool      `json:"migrating"`
-	ObservedResidents     int64     `json:"observed_residents"`
-	ObservedConnections   int64     `json:"observed_connections"`
-	ObservationsCheckedAt time.Time `json:"observations_checked_at"`
-	ObservationsExpiresAt time.Time `json:"observations_expires_at"`
+	AppID               string   `json:"app_id"`
+	Scope               string   `json:"scope"`
+	Access              string   `json:"access"`
+	State               string   `json:"state"`
+	Plan                api.Plan `json:"plan"`
+	MaxConcurrency      int64    `json:"max_concurrency"`
+	Rotation            bool     `json:"rotation"`
+	Residents           int64    `json:"residents"`
+	Parked              int64    `json:"parked"`
+	Auxiliary           int64    `json:"auxiliary"`
+	Tasks               int64    `json:"tasks"`
+	StaleNodes          int64    `json:"stale_nodes"`
+	Deployments         int64    `json:"deployments"`
+	Sidecars            bool     `json:"sidecars"`
+	Migrating           bool     `json:"migrating"`
+	ObservedResidents   int64    `json:"observed_residents"`
+	ObservedConnections int64    `json:"observed_connections"`
+	// The largest pool one observed instance of the binding reports.
+	ObservedMaxConnections int64     `json:"observed_max_connections"`
+	ObservationsCheckedAt  time.Time `json:"observations_checked_at"`
+	ObservationsExpiresAt  time.Time `json:"observations_expires_at"`
+	// Whether the binding's app and scope set DATA_API_POOL; its value is sealed.
+	PoolConfigured bool `json:"pool_configured"`
 }
 
 type ConnectionBudgetStore interface {
@@ -320,7 +324,7 @@ func accountConnectionBudgetGroup(out *api.ManagedPostgresConnectionBudget, bind
 	}
 	planned := max(b.Residents+b.Parked, concurrency)
 	if b.Access == string(CredentialDataAPI) {
-		out.Demand.DataAPIWakeEstimate += planned * api.DataAPIMaxPoolConnections
+		out.Demand.DataAPIWakeEstimate += planned * dataAPIInstanceConnections(b)
 	} else {
 		out.Demand.AuthWakeEstimate += planned * api.AuthMaxPoolConnections
 	}

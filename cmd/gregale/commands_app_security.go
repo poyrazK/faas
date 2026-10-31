@@ -145,7 +145,7 @@ func cmdAppSecurity(slug string, args []string) int {
 	}
 	resp, err := client.UpdateAppSecurity(context.Background(), slug, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update app security", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

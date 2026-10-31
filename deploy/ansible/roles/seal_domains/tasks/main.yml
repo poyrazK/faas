@@ -1,0 +1,60 @@
+---
+# Seal domains (ADR 20261022111812). Each wired domain is staged where its
+# reader runs and proved there before a writer seals to the domain alone.
+- name: seal_domains — create the domain identity directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets/domains
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: seal_domains — outbound domain
+  ansible.builtin.include_tasks: outbound.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_outbound_identity_src | length > 0 or faas_seal_domain_outbound_recipient_src | length > 0
+
+- name: seal_domains — source domain
+  ansible.builtin.include_tasks: source.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_source_identity_src | length > 0 or faas_seal_domain_source_recipient_src | length > 0
+
+- name: seal_domains — alerting domain
+  ansible.builtin.include_tasks: alerting.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_alerting_identity_src | length > 0 or faas_seal_domain_alerting_recipient_src | length > 0
+
+- name: seal_domains — storage domain
+  ansible.builtin.include_tasks: storage.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_storage_identity_src | length > 0 or faas_seal_domain_storage_recipient_src | length > 0
+
+- name: seal_domains — control domain
+  ansible.builtin.include_tasks: control.yml
+  when: faas_seal_domain_control_identity_src | length > 0
+
+- name: seal_domains — account domain
+  ansible.builtin.include_tasks: account.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_account_identity_src | length > 0
+
+- name: seal_domains — delivery domain
+  ansible.builtin.include_tasks: delivery.yml
+  when: faas_seal_domain_delivery_identity_src | length > 0 or faas_seal_domain_delivery_recipient_src | length > 0
+
+- name: seal_domains — build domain
+  ansible.builtin.include_tasks: build.yml
+  when: faas_seal_domain_build_identity_src | length > 0 or faas_seal_domain_build_recipient_src | length > 0
+
+- name: seal_domains — edge domain
+  ansible.builtin.include_tasks: edge.yml
+  when: faas_seal_domain_edge_identity_src | length > 0 or faas_seal_domain_edge_recipient_src | length > 0
+
+- name: seal_domains — runtime domain
+  ansible.builtin.include_tasks: runtime.yml
+  when: faas_seal_domain_runtime_identity_src | length > 0 or faas_seal_domain_runtime_recipient_src | length > 0

@@ -10,6 +10,7 @@
 package apidserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -27,16 +28,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
+	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	"github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
+	"github.com/onebox-faas/faas/pkg/apid/logerasure"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
@@ -46,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -57,12 +64,17 @@ import (
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
+	"net/url"
 )
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
+
+var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
+var DashboardDebugStatusView = dashboardDebugStatusView
 
 // Package-level types
 type AffectedPartition = affectedPartition
@@ -148,6 +160,7 @@ const CsrfActionSessionsRevokeAll = csrfActionSessionsRevokeAll
 const DashboardAsyncInvocationPath = dashboardAsyncInvocationPath
 const DashboardDataAPICookie = dashboardDataAPICookie
 const DashboardAuthSettingsCookie = dashboardAuthSettingsCookie
+const DashboardPreviewDestroyCSRFCookie = dashboardPreviewDestroyCSRFCookie
 const DashboardDebugReplayCSRFCookie = dashboardDebugReplayCSRFCookie
 const DashboardDevBridgeAction = dashboardDevBridgeAction
 const DashboardDevBridgeCSRFCookie = dashboardDevBridgeCSRFCookie
@@ -228,12 +241,18 @@ const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
 const RuntimeConfigHSTS = runtimeConfigHSTS
 const RuntimeConfigS3 = runtimeConfigS3
+const RuntimeConfigPlatformReleasePause = runtimeConfigPlatformReleasePause
 const SafeReleaseEmergencyGrace = safeReleaseEmergencyGrace
 const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
 const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
 const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
+
+// sessionCookie is the legacy session cookie name test fixtures send; the
+// handlers read both names through pkg/sessioncookie (ADR-20261026112500).
+const sessionCookie = sessioncookie.LegacyName
+
 const SessionCookie = sessionCookie
 const SessionCookieLifetime = sessionCookieLifetime
 const SourceSpoolRootEnv = sourceSpoolRootEnv
@@ -249,6 +268,8 @@ var CapsDecl = &capsDecl
 var CertDialContextFunc = &certDialContextFunc
 var CertLookupIPFunc = &certLookupIPFunc
 var ChannelSender = &channelSender
+var TestRelayPoll = &testRelayPoll
+var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
@@ -269,6 +290,17 @@ var MfaRecipient = &mfaRecipient
 var ObsJailInternalMarkers = &obsJailInternalMarkers
 var ObsSealedBlobMarkers = &obsSealedBlobMarkers
 var OutboundCredentialRecipient = &outboundCredentialRecipient
+var OutboundDomainRecipient = &outboundDomainRecipient
+var OutboundWriteMode = &outboundWriteMode
+var RuntimeDomainRecipient = &runtimeDomainRecipient
+var RuntimeWriteMode = &runtimeWriteMode
+var RuntimeSecretRecipient = runtimeSecretRecipient
+var RuntimeSealDomainBlocksRekey = runtimeSealDomainBlocksRekey
+var RuntimeSecretsBound = &runtimeSecretsBound
+var LoadRuntimeSecretBinding = loadRuntimeSecretBinding
+var LoadCloneWorkerSealing = loadCloneWorkerSealing
+var RuntimeSecretBinding = runtimeSecretBinding
+var InstallRuntimeSigner = installRuntimeSigner
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -277,11 +309,61 @@ var PlanCacheRootOnce = &planCacheRootOnce
 var PlanSourceCache = &planSourceCache
 var RouteProbeChallengeDelay = &routeProbeChallengeDelay
 var SetSecretRecipient = &setSecretRecipient
+var SourceDomainRecipient = &sourceDomainRecipient
+var HostHMACKeyBytes = hostHMACKeyBytes
+var BuildDomainRecipient = &buildDomainRecipient
+var BuildWriteMode = &buildWriteMode
+var EdgeDomainRecipient = &edgeDomainRecipient
+var EdgeWriteMode = &edgeWriteMode
+var AlertingDomainRecipient = &alertingDomainRecipient
+var AlertingWriteMode = &alertingWriteMode
+var StorageDomainRecipient = &storageDomainRecipient
+var StorageWriteMode = &storageWriteMode
+var StorageCredentialRecipients = storageCredentialRecipients
+var DeliveryDomainRecipient = &deliveryDomainRecipient
+var DeliveryWriteMode = &deliveryWriteMode
+var CommitConnectionRecipients = commitConnectionRecipients
+var ExecutionPayloadRecipients = executionPayloadRecipients
+var SealAppWebhookSecret = sealAppWebhookSecret
+var AccountDomainIdentities = &accountDomainIdentities
+var AccountWriteMode = &accountWriteMode
+var AccountRecipients = accountRecipients
+var AccountIdentities = accountIdentities
+var WorkflowPlanRecipients = workflowPlanRecipients
+var CloneSealRecipient = cloneSealRecipient
+var HoldsIdentityFor = holdsIdentityFor
+var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
+var SealGitLabTokens = sealGitLabTokens
+var OpenGitLabTokens = openGitLabTokens
+var OpenIssueSlackToken = openIssueSlackToken
+
+// RealtimeHostKeys exposes the keys apid gives managed realtime.
+func RealtimeHostKeys() (func() ([]*age.X25519Recipient, error), func(context.Context) []*age.X25519Identity) {
+	h := realtimeHost{}
+	return h.SecretRecipients, h.HostIdentitiesForUnseal
+}
+
+var VerifyInboundWebhook = verifyInboundWebhook
+var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
+
+// StatementInvoicesHostSecrets exposes the billing-key seal and open apid
+// gives statement invoices.
+func StatementInvoicesHostSecrets() (func(string, []byte, int) ([]byte, error), func([]byte) (string, []byte, error)) {
+	return statementInvoicesHost{}.SealSecret, statementInvoicesHost{}.OpenSecret
+}
+
+var SealPresetWebhookSecret = sealPresetWebhookSecret
+var SealMCPFallbackSecret = sealMCPFallbackSecret
+var SealMCPPagerDutyKey = sealMCPPagerDutyKey
+var SealAppLogDrainAuthHeader = sealAppLogDrainAuthHeader
+var SourceWriteMode = &sourceWriteMode
 var SseChannels = &sseChannels
 var TimeNow = &timeNow
 var TxtLookupFunc = &txtLookupFunc
 
 // Package-level funcs
+var LoadSealDomains = loadSealDomains
+var SealOutboundCredential = sealOutboundCredential
 var AccountAbuseHoldView = accountAbuseHoldView
 var ActivatedAPIDListener = activatedAPIDListener
 var AggregateWakeTimeline = aggregateWakeTimeline
@@ -341,6 +423,23 @@ var Contains = contains
 var CookieDo = cookieDo
 var CountAffectedRequests = countAffectedRequests
 var CreateApp = createApp
+
+// CustomHistoryEnv is setup with custom metric history (and so OTLP ingest) on.
+var CustomHistoryEnv = customHistoryEnv
+
+// PostOTLPEncoded sends one OTLP metrics export to app shop with a
+// Content-Encoding (ADR-20261029203000).
+func PostOTLPEncoded(t *testing.T, e testEnv, contentType, encoding string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/v1/apps/shop/otlp/v1/metrics", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+e.key)
+	r.Header.Set("Content-Type", contentType)
+	r.Header.Set("Content-Encoding", encoding)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, r)
+	return rec
+}
+
 var CreateAppTaskForTest = createAppTaskForTest
 var CreateExecutionAs = createExecutionAs
 var CreateProjectEnvironmentConfigFixture = createProjectEnvironmentConfigFixture
@@ -447,6 +546,7 @@ var MakeFeatureFlagOutcomesResponse = makeFeatureFlagOutcomesResponse
 var ManagedExecutionWorkflowStepLabel = managedExecutionWorkflowStepLabel
 var ManagedPostgresAccountingDiagnosticsView = managedPostgresAccountingDiagnosticsView
 var ManagedPostgresCapabilitiesView = managedPostgresCapabilitiesView
+var ProjectManagedPostgresDashboard = projectManagedPostgresDashboard
 var ManagedPostgresConnectionURL = managedPostgresConnectionURL
 var ManagedPostgresNotConfiguredProblem = managedPostgresNotConfiguredProblem
 var ManagedPostgresPlanAllows = managedPostgresPlanAllows
@@ -472,6 +572,13 @@ var NewAuditor = newAuditor
 var NewAuthedDashboardServer = newAuthedDashboardServer
 var NewAuthedDashboardServerFull = newAuthedDashboardServerFull
 var NewCloneCoordinatorFixture = newCloneCoordinatorFixture
+
+// NewCloneSourceFixture builds a clone source with no configuration write
+// fence; postgres binds a point-in-time-restorable managed database.
+func NewCloneSourceFixture(t *testing.T, postgres bool) cloneCoordinatorFixture {
+	return newCloneSourceFixture(t, cloneSourceData{postgres: postgres}, false)
+}
+
 var NewForceHarness = newForceHarness
 var NewGithubdClient = newGithubdClient
 var NewGoogleIDTokenVerifier = newGoogleIDTokenVerifier
@@ -488,6 +595,13 @@ var NewRuntimeConfigManager = newRuntimeConfigManager
 func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
 	return s.configureHosting(getenv)
 }
+
+func (s *server) InboundWebhookURLForTest(token string) string { return s.inboundWebhookURL(token) }
+func (s *server) IsWebDashboardOriginForTest(origin *url.URL) bool {
+	return s.isWebDashboardOrigin(origin)
+}
+
+var PlatformDomainFromConfig = platformDomainFromConfig
 
 var NewSafeReleaseLeaseMetrics = newSafeReleaseLeaseMetrics
 var NewServer = newServer
@@ -591,7 +705,11 @@ var SafeReleasesAlertMetric = safeReleasesAlertMetric
 var SafeReleasesAuditKind = safeReleasesAuditKind
 var SanContains = sanContains
 var ScanExtractedTreeSecrets = scanExtractedTreeSecrets
-var ScanSourceTarballSecrets = scanSourceTarballSecrets
+
+func ScanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
+	return (&server{log: slog.New(slog.DiscardHandler)}).scanSourceTarballSecrets(sourcePath, limits)
+}
+
 var ScopeGenericRootWorkload = scopeGenericRootWorkload
 var ScrapeOpsMetrics = scrapeOpsMetrics
 var SeedActivityPersonalOrg = seedActivityPersonalOrg
@@ -632,8 +750,10 @@ var StoreAsSessionLookup = storeAsSessionLookup
 var StorePlanCache = storePlanCache
 var StripeWebhookHarness = stripeWebhookHarness
 var SummarizeDevSyncHistory = summarizeDevSyncHistory
+var SummarizeRuntimePolicyComponent = summarizeRuntimePolicyComponent
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
+var SummarizeTrafficRuntime = summarizeTrafficRuntime
 var SuspectedDependency = suspectedDependency
 var SuspectedDependencyFor = suspectedDependencyFor
 var SweepExpiredCacheEntries = sweepExpiredCacheEntries
@@ -759,9 +879,13 @@ func (r *cloneCheckpointClosureProvider) Roles() *int { return &r.roles }
 func (r *cloneCoordinatorFailureStore) LoseCaptureAck() *bool { return &r.loseCaptureAck }
 
 // Members of cloneCoordinatorFixture
+func (r *cloneCoordinatorFixture) Account() *state.Account                    { return &r.account }
 func (r *cloneCoordinatorFixture) Apps() *[]state.App                         { return &r.apps }
 func (r *cloneCoordinatorFixture) Lease() *state.ProjectEnvironmentCloneLease { return &r.lease }
 func (r *cloneCoordinatorFixture) Pool() **pgxpool.Pool                       { return &r.pool }
+func (r *cloneCoordinatorFixture) Postgres() **managedpostgres.Service        { return &r.postgres }
+func (r *cloneCoordinatorFixture) Database() **cloneDatabaseDeadlineProvider  { return &r.database }
+func (r *cloneCoordinatorFixture) Project() *state.Project                    { return &r.project }
 func (r *cloneCoordinatorFixture) Srv() **server                              { return &r.srv }
 func (r *cloneCoordinatorFixture) Store() **cloneCoordinatorFailureStore      { return &r.store }
 func (r cloneCoordinatorFixture) Targets(p0 *testing.T) []state.ProjectEnvironmentCloneWorkload {
@@ -799,10 +923,43 @@ func (r *googleJWKSVerifier) JwksURL() *string { return &r.jwksURL }
 
 // Members of invocationCompletionWaiter
 func (r *invocationCompletionWaiter) Mu() *sync.Mutex { return &r.mu }
-func (r *invocationCompletionWaiter) Waiters() *map[string]map[chan struct{}]struct{} {
+func (r *invocationCompletionWaiter) Waiters() *map[string]map[*completionWait]struct{} {
 	return &r.waiters
 }
 func (r *invocationCompletionWaiter) CompleteFromPayload(p0 string) { r.completeFromPayload(p0) }
+func (r *invocationCompletionWaiter) WakeAll()                      { r.wakeAll() }
+func (r *invocationCompletionWaiter) RecentCount() int              { return len(r.recent) }
+func (r *invocationCompletionWaiter) AppWaiterCount(appID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.appWaiters[appID])
+}
+
+const InvocationCompletionRecentCap = invocationCompletionRecentCap
+
+var NextExecutionEventsPoll = nextExecutionEventsPoll
+
+// StatusJSONHandler serves GET /status/slo.json from a server over store
+// whose status cache reads prometheusURL.
+func StatusJSONHandler(store state.Store, prometheusURL string) http.HandlerFunc {
+	return newServer(store, slog.Default(), "gregale.dev", nil).WithStatusCache(prometheusURL, "").statusJSONHandler
+}
+
+func NewAPIRequestBudgetAt(now func() time.Time) *apiRequestBudget {
+	b := newAPIRequestBudget()
+	b.now = now
+	return b
+}
+
+func (b *apiRequestBudget) Take(accountID string, capacity int) (time.Duration, bool) {
+	return b.take(accountID, capacity)
+}
+
+type QueueReceiveSlots = queueReceiveSlots
+
+func (q *queueReceiveSlots) Acquire(accountID string) (func(), int, int, bool) {
+	return q.acquire(accountID)
+}
 
 // Members of mfaTestEnv
 func (r *mfaTestEnv) Acct() *state.Account    { return &r.acct }
@@ -888,6 +1045,10 @@ func (r *server) Mailer() *Mailer                                    { return &r
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
 func (r *server) PostgresUpgrades() *managedpg.Rollout               { return &r.postgresUpgrades }
 func (r *server) PostgresStorage() *managedpg.Rollout                { return &r.postgresStorage }
+func (r *server) LogArchive() *logerasure.Objects                    { return &r.logArchive }
+func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
+	return r.beforeAccountDelete(ctx, acct)
+}
 func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 	return &r.managedPostgresBindings
 }
@@ -909,12 +1070,15 @@ func (r *server) PromqlClient() **promql.Client                 { return &r.prom
 func (r *server) Realtime() *managedrealtime.Service            { return &r.realtime }
 func (r *server) ResendWebhookSecret() *string                  { return &r.resendWebhookSecret }
 func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runtimeConfig }
+func (r *server) CloneDataPointSettle() *time.Duration          { return &r.cloneDataPointSettle }
 func (r *server) Sessions() **session.Manager                   { return &r.sessions }
 func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
 func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
+func (r *server) BillingSync() *billingsync.Service             { return &r.billingSync }
 func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
 func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
+func (r *server) ConsumerSignup() *consumersignup.Service       { return &r.consumerSignup }
 func (r *server) TenantPlans() *tenantplans.Service             { return &r.tenantPlans }
 func (r *server) Store() *state.Store                           { return &r.store }
 func (r *server) StripeWebhookSecret() *string                  { return &r.stripeWebhookSecret }
@@ -981,12 +1145,6 @@ func (r *server) ConfigureOperations(p0 Config, p1 func(string) string) error {
 }
 func (r *server) ConfigureQueueWorkload(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.configureQueueWorkload(p0, p1, p2)
-}
-func (r *server) CountAccountConsumerKeys(p0 context.Context, p1 string) (int, error) {
-	return r.countAccountConsumerKeys(p0, p1)
-}
-func (r *server) CountConsumerKeys(p0 context.Context, p1 string, p2 string) (int, error) {
-	return r.countConsumerKeys(p0, p1, p2)
 }
 func (r *server) CreateFinancialBudget(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createFinancialBudget(p0, p1, p2)
@@ -1064,6 +1222,15 @@ func (r *server) GetDevBridgeActivity(p0 http.ResponseWriter, p1 *http.Request, 
 func (r *server) GetManagedPostgresDatabase(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getManagedPostgresDatabase(p0, p1, p2)
 }
+func (r *server) GetProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.getProject(p0, p1, p2)
+}
+
+var ProjectServiceCalls = projectServiceCalls
+
+func (r *server) RenderProjectDetail(w http.ResponseWriter, req *http.Request, acct state.Account, slug string) {
+	r.renderProjectDetail(w, req, r.log, acct, slug)
+}
 func (r *server) GetProjectEnvironmentApprovalStatus(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProjectEnvironmentApprovalStatus(p0, p1, p2)
 }
@@ -1116,7 +1283,9 @@ func (r *server) GitOpsPreviewArchiveForTest(t *testing.T, definition, resolvedS
 	r.githubd = &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}},
 		archive: environmentGitOpsArchiveDefinition(t, definition), resolvedSHA: resolvedSHA}
 }
-func (r *server) Idempotent(p0 accountHandler) accountHandler { return r.idempotent(p0) }
+func (r *server) Idempotent(p0 accountHandler) accountHandler       { return r.idempotent(p0) }
+func (r *server) IdempotentDeploy(p0 accountHandler) accountHandler { return r.idempotentDeploy(p0) }
+func (r *server) IdempotentIntent(p0 accountHandler) accountHandler { return r.idempotentIntent(p0) }
 func (r *server) ImagedMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.imagedMetricsDiscovery(p0, p1)
 }
@@ -1226,6 +1395,9 @@ func (r *server) RenderDeveloperEnvironments(p0 http.ResponseWriter, p1 *http.Re
 func (r *server) RenderPreviewsList(p0 http.ResponseWriter, p1 *http.Request, p2 *slog.Logger, p3 state.Account) {
 	r.renderPreviewsList(p0, p1, p2, p3)
 }
+func (r *server) RenderReleaseApprovalPage(p0 http.ResponseWriter, p1 *http.Request) {
+	r.renderReleaseApprovalPage(p0, p1)
+}
 func (r *server) ReplaceProjectEnvironmentQueueBindings(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.replaceProjectEnvironmentQueueBindings(p0, p1, p2)
 }
@@ -1265,6 +1437,12 @@ func (r *server) SetPostReleaseTelemetry(t PostReleaseTelemetry) {
 func (r *server) SetReleaseGateEvidence(e state.ReleaseGateEvidenceStore) {
 	r.releaseGateEvidence = e
 }
+
+// StartDueScheduledReleases runs one pass of the scheduled release worker
+// (ADR-20261021152201) at now.
+func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
+	r.startDueScheduledReleases(ctx, now)
+}
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }
@@ -1277,6 +1455,7 @@ func (r *server) RotateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.R
 func (r *server) RuleDestinations(p0 context.Context, p1 state.AlertRule) string {
 	return r.ruleDestinations(p0, p1)
 }
+func (r *server) RunVerifyOnce(p0 context.Context, p1 *slog.Logger) { r.runVerifyOnce(p0, p1) }
 func (r *server) CreateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createManagedPostgresBinding(p0, p1, p2)
 }
@@ -1406,8 +1585,14 @@ func (r testEnv) Do(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]s
 func (r testEnv) DoAdmin(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doAdmin(p0, p1, p2, p3, p4)
 }
+func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
+	return r.doOperator(p0, p1, p2, p3, p4)
+}
 func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string, p5 string) *httptest.ResponseRecorder {
 	return r.doAs(p0, p1, p2, p3, p4, p5)
+}
+func (r testEnv) FreezeAfterAutomaticRollback(ctx context.Context, app state.App, rolledBackID, cause string) {
+	r.s.freezeAfterAutomaticRollback(ctx, app, rolledBackID, cause)
 }
 
 // Issues acceptance tests share the original PostgreSQL fixture and evidence setup.
@@ -1557,8 +1742,206 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 	return s.configureLiveQueries(nil, getenv)
 }
 
+// ConfigureAgentsForTest wires the agent API without Postgres: the agents
+// capability decides who sees it, and released accounts meet
+// capacity_unavailable.
+func (s *server) ConfigureAgentsForTest() { s.configureAgents(nil) }
+
 // LiveRoutesForTest lists an app's live routes; accounts outside the rollout
 // get none before the store is read.
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// NewGithubdBridgeForTest builds apid's githubd bridge on store; agentSteps
+// decides the agents capability for an account.
+func NewGithubdBridgeForTest(store githubdBridgeStore, notif githubdBridgeNotifier, agentSteps func(state.Account) bool) githubdpb.GithubdServer {
+	return &githubdBridge{store: store, notif: notif, log: slog.New(slog.DiscardHandler), agentSteps: agentSteps}
+}
+
+// SetAgentStoreForTest gives the configured agent API a store; call it
+// after ConfigureAgentsForTest.
+func (s *server) SetAgentStoreForTest(store agents.Store) { s.agentAPI.Store = store }
+
+// RealtimePreviewEveryone shows realtime preview features to every account
+// (ADR-20261019102657).
+func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
+	r, err := managedrealtime.ParsePreviewRollout("*")
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+// AppWebhookEventsForTest is the app webhook vocabulary accountID may choose.
+func (s *server) AppWebhookEventsForTest(accountID string) []string {
+	return s.appWebhookEvents(accountID)
+}
+
+// ConfigureRealtimePreviewForTest reads FAAS_REALTIME_PREVIEW_ACCOUNTS from
+// getenv, seeding the realtime_preview platform flag.
+func (s *server) ConfigureRealtimePreviewForTest(getenv func(string) string) error {
+	return s.configureRealtimePreview(getenv)
+}
+
+// RealtimePreviewGateForTest is the gate the realtime handlers consult.
+func (s *server) RealtimePreviewGateForTest() managedrealtime.PreviewGate {
+	return s.realtime.Preview
+}
+
+// RealtimePreviewPublishedForTest reports whether the served spec lists the
+// realtime preview.
+func (s *server) RealtimePreviewPublishedForTest() bool { return s.realtimePreviewPublished() }
+
+// GatewayControlURL exposes gatewayControlURL (ADR-20261022004500).
+func (s *server) GatewayControlURL(ctx context.Context) string { return s.gatewayControlURL(ctx) }
+
+// ApplyManifestPathRoutesForTest reconciles manifest routes on app
+// (ADR-20261021223225). rollback undoes the changes it recorded.
+func (s *server) ApplyManifestPathRoutesForTest(ctx context.Context, acct state.Account, app state.App, routes []gregalemanifest.PathRoute) (rollback func() error, problem *api.Problem) {
+	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	problem = s.applySourceRefManifestPathRoutes(ctx, acct, app, routes, &staged)
+	return func() error { return s.rollbackSourceRefManifest(ctx, staged) }, problem
+}
+
+var ManifestPathRouteKeyPrefix = manifestPathRouteKeyPrefix
+var ProjectPathRoutesForApp = projectPathRoutesForApp
+var ProjectPathRoutePlanWarning = projectPathRoutePlanWarning
+var ValidateProjectManifestPathRoutes = validateProjectManifestPathRoutes
+
+// VerifyCandidatePostgresCredentialsForTest runs the GitOps backend's
+// pre-activation credential step (ADR-20261019072523) with an injected verifier.
+func VerifyCandidatePostgresCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationPostgresCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidatePostgresVerifier: verify}, intent: intent}
+	return b.verifyCandidatePostgresCredentials(ctx, graphID)
+}
+
+// VerifyCandidatePostgresCredentialForTest runs the production verifier's
+// sealed-credential checks with explicit host material and probe.
+func VerifyCandidatePostgresCredentialForTest(ctx context.Context, c state.EnvironmentQualificationPostgresCheck, identities []*age.X25519Identity,
+	hmacKey []byte, probe func(context.Context, string, managedpostgres.CredentialAccess, int) error) error {
+	sink := &appSecretCredentialSink{hmacKey: func() []byte { return hmacKey }, identities: func() []*age.X25519Identity { return identities }, probe: probe}
+	return verifyCandidatePostgresCredentialWith(ctx, sink, c)
+}
+
+// VerifyCandidateObjectStorageCredentialsForTest runs the GitOps backend's
+// pre-activation bucket credential step (ADR-20261019121546) with an injected verifier.
+func VerifyCandidateObjectStorageCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationObjectStorageCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidateObjectStorageVerifier: verify}, intent: intent}
+	return b.verifyCandidateObjectStorageCredentials(ctx, graphID)
+}
+
+// VerifyCandidateObjectStorageCredentialForTest runs the production verifier
+// with explicit host material and an injected bucket canary.
+func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.EnvironmentQualificationObjectStorageCheck, identities []*age.X25519Identity,
+	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
+	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
+}
+
+// Members of cloneDatabaseDeadlineProvider
+func (r *cloneDatabaseDeadlineProvider) Restores() []managedpostgres.RestoreRequest {
+	return r.restores
+}
+func (r *cloneDatabaseDeadlineProvider) OnRestore() *func() error { return &r.onRestore }
+
+// SetDatabaseSwitchDrain gives a test server's database switch worker drain
+// evidence the in-memory store lacks (ADR-20261023181931).
+func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrainStore) {
+	e.srv.databaseSwitchDrainOverride = drain
+	e.srv.rollbackArtifactVerifier = stubRollbackArtifactVerifier{}
+}
+
+// DatabaseSwitchWorkerConfigured reports whether the server can run database
+// switches.
+func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool {
+	return e.srv.databaseSwitchWorker() != nil
+}
+
+// PrepareGitOpsWorkloadCandidatesForTest runs the GitOps backend's candidate
+// preparation against s's runtime configuration (ADR 20261022140000).
+func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore,
+	lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
+	b := &environmentGitOpsBackend{server: s, intent: intent}
+	return b.prepareWorkloadCandidates(ctx, lease, plan)
+}
+
+// DashboardWidgetAppForTest resolves a dashboard widget's app as the
+// dashboards host does (ADR-20261022173833).
+func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Account, slug string) (state.App, bool) {
+	return dashboardsHost{s}.AppForAccount(ctx, acct, slug)
+}
+
+// IncidentAppVisibleForTest reports whether the incidents host serves an
+// app's incidents (ADR-20261022193512).
+func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
+	return incidentsHost{s}.AppVisible(ctx, acct, app)
+}
+
+// ServiceMapAppsForTest lists the apps the service map draws (ADR-1131).
+func (s *server) ServiceMapAppsForTest(ctx context.Context, accountID string) ([]state.App, error) {
+	return serviceMapHost{s}.Apps(ctx, accountID)
+}
+
+// EventsAppScopeForTest returns the /v1/events stream's owned and hidden
+// app sets for a caller.
+func (s *server) EventsAppScopeForTest(ctx context.Context, acct state.Account, key *state.APIKey) (owned, hidden map[string]struct{}) {
+	return s.buildOwnedAppCache(ctx, acct, key)
+}
+
+var ValidateAndPlanSidecars = validateAndPlanSidecars
+
+// StatusPageFromStore evaluates the public status page against a Prometheus
+// URL and a store with the durable deployment-outcome aggregate.
+func StatusPageFromStore(ctx context.Context, promURL string, store state.Store) (StatusPage, error) {
+	return newStatusCacheWithStore(promURL, store, slog.Default()).Get(ctx)
+}
+
+// WriteExclusiveError maps a managed operation store error to its problem.
+var WriteExclusiveError = writeExclusiveError
+
+// ResolveAndCheckEgress is the create-time egress check every outbound URL
+// (alert, log drain, webhook, channel) passes.
+var ResolveAndCheckEgress = resolveAndCheckEgress
+
+// PlanDowngradeProblemForTest runs the pre-downgrade quota check (Hunt 17
+// H17-4) for a subject the HTTP route would resolve, such as an organization.
+func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.Account, target api.Plan) *api.Problem {
+	return r.planDowngradeProblem(ctx, subject, target)
+}
+
+// RequestBillingMailOutboxesForTest selects the three webhook billing-mail
+// outboxes without configuring one, so a delivery that reaches an outbox
+// fails closed with 503 (Hunt 17 H17-3).
+func (r *server) RequestBillingMailOutboxesForTest() {
+	on := func() bool { return true }
+	r.paymentFailedOutboxRequested, r.accountRestoredOutboxRequested, r.subscriptionEndedOutboxRequested = on, on, on
+}
+
+var AppRestartRefusal = appRestartRefusal
+
+// SecurityMailAllow is a fresh per-account sign-in mail limiter on clock now.
+func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
+	l := newSecurityMailLimiter()
+	l.now = now
+	return l.allow
+}
+
+// AdvanceSecurityMailClockForTest moves the per-account sign-in mail
+// limiter's clock d ahead, as if the next request came that much later.
+func (r *server) AdvanceSecurityMailClockForTest(d time.Duration) {
+	r.securityMail.mu.Lock()
+	defer r.securityMail.mu.Unlock()
+	r.securityMail.now = func() time.Time { return time.Now().Add(d) }
+}
+
+// SealOAuthCodeState mints a Connect GitHub state for accountID (H64).
+var SealOAuthCodeState = sealOAuthCodeState
+
+// ProjectReadinessOverrides exposes projectReadinessOverrides to the
+// external test package.
+var ProjectReadinessOverrides = projectReadinessOverrides
+
+// SetEventPublishClock pins the event publish rate limiter's clock.
+func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }

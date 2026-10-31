@@ -53,3 +53,30 @@
   a delayed old ACK restore success. Stamping the newest generation in the proxy
   misattributes old callers. Timestamps do not provide execution identity or
   atomic ordering. Guessing coverage for older guests weakens strict promotion.
+
+## Amendment 1 (2026-10-21): a replacement process attempt may replace a dead attempt's registration
+
+A restore that fails after the guest reconciled its process (an `after_restore`
+or userspace-reseed refusal) is killed and the same instance cold boots in a new
+guest process attempt. The dead guest never retires its generation, and the new
+guest starts with no previous generation, so the ordering rule refused every
+start with `secret_generation_stale`: the app crash-looped, guest-init exited and
+the wake failed. Any app that opts into secret reload lost the cold-boot fallback
+that ADR-005 requires.
+
+- **Change:** vmmd passes the start time of the instance's current guest process
+  attempt (the fcvm manager stamps one per attempt, including the cold boot after
+  a failed restore). A start may replace a registration whose `started_at`
+  precedes that attempt even without naming its generation. Within one attempt
+  the original rule is unchanged: a start still needs the previous generation,
+  retirement is still exact, and a retired generation still cannot be reactivated.
+- **Why this keeps the fence:** a registration older than the current attempt
+  belongs to a process that no longer exists in this VM, so its evidence is dead
+  either way; replacing it clears its receipts atomically like any transition. A
+  start from an earlier attempt (a delayed message) still cannot replace a newer
+  registration. Both times come from vmmd's clock and are compared at the
+  database's microsecond precision.
+- **Validation:** MemStore/PostgreSQL conformance: an earlier attempt is fenced,
+  a later attempt replaces the stale registration and the stale process's ACK is
+  refused. Native metal: a reload-enabled starter whose restore fails falls back
+  to a cold boot that serves.

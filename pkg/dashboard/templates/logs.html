@@ -34,7 +34,7 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/developers">Developer environments</a>
+      {{if $.On "developer-environments"}}<a href="/dashboard/developers">Developer environments</a>{{end}}
       <a href="/dashboard/usage">Usage</a>
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/pricing">Pricing</a>

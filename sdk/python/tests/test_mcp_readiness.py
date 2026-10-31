@@ -1,4 +1,4 @@
-from faas_sdk.models.mcp_readiness_snapshot import MCPReadinessSnapshot
+from faas_sdk.preview.models.mcp_readiness_snapshot import MCPReadinessSnapshot
 
 
 def test_durable_readiness_round_trip():
@@ -64,8 +64,8 @@ def test_durable_readiness_round_trip():
 
 
 def test_managed_oauth_readiness_round_trip():
-    from faas_sdk.models.mcp_readiness_monitor_config import MCPReadinessMonitorConfig
-    from faas_sdk.models.mcp_readiness_monitor_status import MCPReadinessMonitorStatus
+    from faas_sdk.preview.models.mcp_readiness_monitor_config import MCPReadinessMonitorConfig
+    from faas_sdk.preview.models.mcp_readiness_monitor_status import MCPReadinessMonitorStatus
 
     connection = {"role": "reader", "revision": "7e53717e-9b82-4ea4-a594-4a1d8aa2a8bb"}
     config = {
@@ -93,7 +93,7 @@ def test_managed_oauth_readiness_round_trip():
 
 
 def test_environment_oauth_binding_round_trip():
-    from faas_sdk.models.mcp_readiness_monitor_config import MCPReadinessMonitorConfig
+    from faas_sdk.preview.models.mcp_readiness_monitor_config import MCPReadinessMonitorConfig
 
     payload = {
         "enabled": True,
@@ -114,8 +114,8 @@ def test_environment_oauth_binding_round_trip():
 
 
 def test_environment_readiness_policy_round_trip():
-    from faas_sdk.models.mcp_readiness_policy import MCPReadinessPolicy
-    from faas_sdk.models.set_mcp_readiness_policy_request import SetMCPReadinessPolicyRequest
+    from faas_sdk.preview.models.mcp_readiness_policy import MCPReadinessPolicy
+    from faas_sdk.preview.models.set_mcp_readiness_policy_request import SetMCPReadinessPolicyRequest
 
     payload = {
         "scope": "staging",

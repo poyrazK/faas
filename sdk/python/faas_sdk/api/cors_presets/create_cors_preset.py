@@ -106,7 +106,7 @@ def sync_detailed(
     app-scoped). The body validation mirrors the storage-
     side CHECK constraints: name 1..64, max_age 0..86400,
     at-least-one allow_origin + allow_method. The
-    *+credentials footgun (ADR-091 D12) returns 422
+    *+credentials footgun returns 422
     cors_wildcard_with_credentials when the create body
     combines AllowCredentials: true with AllowOrigins:
     [\"*\"].
@@ -128,7 +128,7 @@ def sync_detailed(
             non-nil = "app-scoped"); the handler maps the
             pointer-nil case to a SQL NULL on insert. Name length
             is 1..64 characters (cors_presets_name_check). The
-            *+credentials footgun (ADR-091 D12) is enforced at
+            *+credentials footgun is enforced at
             validate-time.
 
     Raises:
@@ -164,7 +164,7 @@ def sync(
     app-scoped). The body validation mirrors the storage-
     side CHECK constraints: name 1..64, max_age 0..86400,
     at-least-one allow_origin + allow_method. The
-    *+credentials footgun (ADR-091 D12) returns 422
+    *+credentials footgun returns 422
     cors_wildcard_with_credentials when the create body
     combines AllowCredentials: true with AllowOrigins:
     [\"*\"].
@@ -186,7 +186,7 @@ def sync(
             non-nil = "app-scoped"); the handler maps the
             pointer-nil case to a SQL NULL on insert. Name length
             is 1..64 characters (cors_presets_name_check). The
-            *+credentials footgun (ADR-091 D12) is enforced at
+            *+credentials footgun is enforced at
             validate-time.
 
     Raises:
@@ -217,7 +217,7 @@ async def asyncio_detailed(
     app-scoped). The body validation mirrors the storage-
     side CHECK constraints: name 1..64, max_age 0..86400,
     at-least-one allow_origin + allow_method. The
-    *+credentials footgun (ADR-091 D12) returns 422
+    *+credentials footgun returns 422
     cors_wildcard_with_credentials when the create body
     combines AllowCredentials: true with AllowOrigins:
     [\"*\"].
@@ -239,7 +239,7 @@ async def asyncio_detailed(
             non-nil = "app-scoped"); the handler maps the
             pointer-nil case to a SQL NULL on insert. Name length
             is 1..64 characters (cors_presets_name_check). The
-            *+credentials footgun (ADR-091 D12) is enforced at
+            *+credentials footgun is enforced at
             validate-time.
 
     Raises:
@@ -273,7 +273,7 @@ async def asyncio(
     app-scoped). The body validation mirrors the storage-
     side CHECK constraints: name 1..64, max_age 0..86400,
     at-least-one allow_origin + allow_method. The
-    *+credentials footgun (ADR-091 D12) returns 422
+    *+credentials footgun returns 422
     cors_wildcard_with_credentials when the create body
     combines AllowCredentials: true with AllowOrigins:
     [\"*\"].
@@ -295,7 +295,7 @@ async def asyncio(
             non-nil = "app-scoped"); the handler maps the
             pointer-nil case to a SQL NULL on insert. Name length
             is 1..64 characters (cors_presets_name_check). The
-            *+credentials footgun (ADR-091 D12) is enforced at
+            *+credentials footgun is enforced at
             validate-time.
 
     Raises:

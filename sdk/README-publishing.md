@@ -1,14 +1,14 @@
 # SDK publishing
 
-Status as of the packaging-metadata fix: **no Gregale SDK is published to any
-public registry.** All three are now *publishable* — the metadata is valid and
-the artifacts build — but the actual release is gated on the licensing decision
-in [Blocker: licensing](#blocker-licensing).
+Status: **no Gregale SDK is published to any public registry yet.** The
+metadata is valid, the artifacts build, and the license is decided (Apache-2.0,
+2026-10-29; see [Licensing](#licensing)). What remains is registering the
+package names and wiring the publish jobs, below.
 
 | Language | Install name | Import as | Registry state |
 |---|---|---|---|
 | Go | `github.com/poyrazK/faas/sdk/go` | `faas` | needs a `sdk/go/vX.Y.Z` tag |
-| Node | `@gregale/sdk-node` | `@gregale/sdk-node` | npm scope `@gregale` unregistered |
+| Node | `@gregale/sdk-node` | `@gregale/sdk-node` | not published; npm scope `@gregale` exists |
 | Data API | `@gregale/data` | `@gregale/data` | not published; release job ready, off (see [Data API SDK](#data-api-sdk)) |
 | Application Auth | `@gregale/auth` | `@gregale/auth` | source package in `sdk/auth`; not published |
 | Python | `gregale-sdk` | `faas_sdk` | PyPI project unregistered |
@@ -32,26 +32,19 @@ Every documented install path failed:
   by Sonra Intelligence Ltd. A customer following the SDK's own name would
   have installed another company's code.
 
-## Blocker: licensing
+## Licensing
 
-`LICENSE` at the repo root reads *"PROPRIETARY SOFTWARE — NOT OPEN SOURCE"*,
-and both SDK `LICENSE` files are `LicenseRef-onebox-internal`.
+Decided 2026-10-29: the client SDKs are licensed under the **Apache License
+2.0**, while the platform stays proprietary (the root `LICENSE` names the
+exception). `sdk/node`, `sdk/python`, `sdk/go`, `sdk/data` and `sdk/auth` each
+carry the license text in `LICENSE`; the npm packages declare `Apache-2.0` with
+`publishConfig.access: "public"`, and the Python project declares `Apache-2.0`.
+The Kotlin and Swift sources are not packaged and keep the root license.
 
-Publishing a client SDK to a public registry under a non-redistributable
-license is a legal question, not an engineering one. The conventional pattern
-for a closed-source platform is to license the **client SDK** permissively
-(Apache-2.0 or MIT) while the service stays proprietary — that is what
-customers need in order to vendor, audit, and redistribute the client inside
-their own applications.
-
-Until that is decided:
-
-- `sdk/node/package.json` keeps `publishConfig.access: "restricted"`.
-- No publish workflow is wired into CI.
-
-**Decide first, then publish.** A public npm/PyPI publish is effectively
-irreversible: npm's unpublish window is 72 hours and PyPI does not allow
-re-uploading a version at all. Name squatting is permanent.
+No publish workflow publishes the Node, Python or Go SDKs yet. A public
+npm/PyPI publish is effectively irreversible: npm's unpublish window is 72
+hours and PyPI does not allow re-uploading a version at all. Name squatting is
+permanent.
 
 ## Go
 
@@ -77,12 +70,10 @@ GOPROXY=proxy.golang.org go list -m github.com/poyrazK/faas/sdk/go@v0.1.0
 
 Manual, one-time, and not automatable from CI:
 
-1. Register the `@gregale` npm organization (currently unregistered).
+1. The `@gregale` npm organization exists (it holds the CLI's
+   `@gregale/cli-*` packages).
 2. Create an automation access token and add it as the `NPM_TOKEN` repository
    secret.
-3. Flip `publishConfig.access` to `"public"` **only** once licensing allows,
-   and align `"license"` with the decision (it is `SEE LICENSE IN LICENSE`
-   today).
 
 Then:
 
@@ -97,7 +88,7 @@ npm publish
 ## Data API SDK
 
 `release.yml` has a `publish-data-sdk` job for `@gregale/data`. It stays off
-until the licensing decision above; set the repository variable
+until you turn it on: set the repository variable
 `PUBLISH_DATA_SDK=true` to turn it on. On each release tag it then:
 
 1. installs the locked dependencies without lifecycle scripts and runs
@@ -107,10 +98,9 @@ until the licensing decision above; set the repository variable
 3. publishes the version in `sdk/data/package.json` unless the registry already
    has it, so a CLI release that does not bump the SDK publishes nothing.
 
-`publishConfig.access` is `restricted` today, which publishes a private
-package only members of the `@gregale` npm organization can install. Change it
-to `public` together with the license decision. The `@gregale` scope already
-holds the CLI's `@gregale/cli-*` packages, so no registration step remains.
+`publishConfig.access` is `public` (Apache-2.0, see [Licensing](#licensing)).
+The `@gregale` scope already holds the CLI's `@gregale/cli-*` packages, so no
+registration step remains.
 
 The generated Python and Go clients (`gregale data-api types --language`) are
 not packages: the CLI renders them into each project.
@@ -130,9 +120,17 @@ Do **not** publish as `faas-sdk` or `faas_sdk`. That name resolves to Sonra
 Intelligence Ltd's package and shipping under it would be a supply-chain
 confusion hazard for customers.
 
+#4262 (2026-10-06) put the distribution name back to `faas_sdk`, and the
+customer docs then told users to `pip install 'faas_sdk[auth]'`, which
+installs Sonra's package (Hunt 13 H13-4). `tests/test_packaging.py` now pins
+`gregale-sdk`. Until `gregale-sdk` is registered on PyPI, anyone can claim
+that name too, so customer docs install only from the repository
+([docs/sdks.md](../docs/sdks.md)), never by bare name.
+
 ## Local install (works today, no registry)
 
-The paths customers can use right now are documented in each SDK's README:
+The customer-facing install page is [docs/sdks.md](../docs/sdks.md). The
+paths customers can use right now:
 
 - Node — `npm pack` a tarball, then `npm install /path/to/tarball.tgz`
 - Python — `poetry build -f wheel`, then `pip install dist/*.whl`

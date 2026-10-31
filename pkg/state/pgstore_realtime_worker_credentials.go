@@ -149,16 +149,25 @@ func (s *PgStore) AuthenticateRealtimeWorkerCredential(ctx context.Context, grou
 	if err != nil {
 		return grant, err
 	}
-	err = s.pool.QueryRow(ctx, `select c.id,c.group_id,c.name,c.permissions,c.generation::text,c.issued_at,c.expires_at,c.revoked_at,c.last_used_at,c.last_operation,c.use_count::text,
+	// ADR 20261029202403: the stored hash may be keyed; later checks in the
+	// same request compare the value that matched.
+	grant, stored, err := firstCredentialMatch(ctx, credentialLookups(credTagRealtimeWorker, hash), func(ctx context.Context, value []byte) (RealtimeWorkerGrant, error) {
+		var grant RealtimeWorkerGrant
+		err := s.pool.QueryRow(ctx, `select c.id,c.group_id,c.name,c.permissions,c.generation::text,c.issued_at,c.expires_at,c.revoked_at,c.last_used_at,c.last_operation,c.use_count::text,
  e.account_id,e.app_id,e.id,g.channel,g.name
  from managed_realtime_worker_credentials c join managed_realtime_consumer_groups g on g.id=c.group_id
  join managed_realtime_endpoints e on e.id=g.endpoint_id join accounts a on a.id=e.account_id join apps app on app.id=e.app_id
  where c.token_hash=$1 and g.id=$2 and c.revoked_at is null and c.expires_at>clock_timestamp() and e.enabled
- and a.status in ('active','past_due') and app.status<>'deleted'`, hash, groupID).Scan(&grant.Info.ID, &grant.Info.GroupID, &grant.Info.Name, &grant.Info.Permissions, &grant.Info.Generation, &grant.Info.IssuedAt, &grant.Info.ExpiresAt, &grant.Info.RevokedAt, &grant.Info.LastUsedAt, &grant.Info.LastOperation, &grant.Info.UseCount, &grant.AccountID, &grant.AppID, &grant.EndpointID, &grant.Channel, &grant.Group)
-	if errors.Is(err, pgx.ErrNoRows) {
+ and a.status in ('active','past_due') and app.status<>'deleted'`, value, groupID).Scan(&grant.Info.ID, &grant.Info.GroupID, &grant.Info.Name, &grant.Info.Permissions, &grant.Info.Generation, &grant.Info.IssuedAt, &grant.Info.ExpiresAt, &grant.Info.RevokedAt, &grant.Info.LastUsedAt, &grant.Info.LastOperation, &grant.Info.UseCount, &grant.AccountID, &grant.AppID, &grant.EndpointID, &grant.Channel, &grant.Group)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return grant, ErrNotFound
+		}
+		return grant, err
+	})
+	if errors.Is(err, ErrNotFound) {
 		err = ErrRealtimeWorkerCredentialDenied
 	}
-	grant.hash = hash
+	grant.hash = stored
 	return grant, err
 }
 

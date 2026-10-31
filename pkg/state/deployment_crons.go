@@ -141,16 +141,13 @@ func (m *MemStore) applyDeploymentCronStagingLocked(appID string, p DeploymentCr
 		if r.Operation == "restore" {
 			target = r.Before
 		}
-		appCount, accountCount := 0, 0
+		appCount := 0
 		for _, c := range m.crons {
 			if c.AppID == appID {
 				appCount++
 			}
-			a := m.apps[c.AppID]
-			if a.AccountID == p.AccountID && a.Status != AppDeleted {
-				accountCount++
-			}
 		}
+		accountCount := m.quotaSubjectCronsLocked(m.appBillingSubjectLocked(app.AccountID, appID))
 		if err := checkCronReplacementQuota(appCount, accountCount, len(current), len(target), p); err != nil {
 			return DeploymentCronStagingResult{}, err
 		}
@@ -185,7 +182,11 @@ func (m *MemStore) applyDeploymentCronStagingLocked(appID string, p DeploymentCr
 			if exists && (c.Schedule != desired.Schedule || c.Timezone != desired.Timezone) {
 				c.ScheduleRevision++
 			}
+			before := c
 			c.Schedule, c.Path, c.Enabled, c.Timezone, c.SkipIfRunning = desired.Schedule, desired.Path, desired.Enabled, desired.Timezone, desired.SkipIfRunning
+			if exists {
+				c = anchorCronSchedule(before, c, time.Now())
+			}
 			m.crons[c.ID] = c
 		}
 		for _, c := range current {
@@ -237,9 +238,9 @@ func (s *PgStore) ApplyDeploymentCronStaging(ctx context.Context, appID string, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	accountID, err := q.LockCronAccountForApp(ctx, tx, appID)
+	accountID, subject, err := lockCronQuotaSubjectTx(ctx, tx, appID)
 	if err != nil {
-		return DeploymentCronStagingResult{}, mapErr(err)
+		return DeploymentCronStagingResult{}, err
 	}
 	row, err := q.ReadDeploymentCronState(ctx, tx, appID)
 	if err != nil {
@@ -275,7 +276,7 @@ func (s *PgStore) ApplyDeploymentCronStaging(ctx context.Context, appID string, 
 			before = snapshot.Crons
 		}
 		if changed {
-			if err = s.writeCronSet(ctx, tx, appID, p, len(current), before); err != nil {
+			if err = s.writeCronSet(ctx, tx, appID, subject, p, len(current), before); err != nil {
 				return DeploymentCronStagingResult{}, err
 			}
 		}
@@ -294,13 +295,17 @@ func (s *PgStore) ApplyDeploymentCronStaging(ctx context.Context, appID string, 
 	}
 	return DeploymentCronStagingResult{Receipt: cronStagingReceipt(appID, r, next.Revision), Changed: changed}, nil
 }
-func (s *PgStore) writeCronSet(ctx context.Context, tx pgx.Tx, appID string, p DeploymentCronStagingParams, oldCount int, before []byte) error {
+
+// writeCronSet replaces the app's HTTP crons within its plan's caps; subject
+// is the app's billing subject, whose cron quota lock the caller holds
+// (lockCronQuotaSubjectTx).
+func (s *PgStore) writeCronSet(ctx context.Context, tx pgx.Tx, appID, subject string, p DeploymentCronStagingParams, oldCount int, before []byte) error {
 	q := sqlc.New()
 	target := p.Request.Desired
 	if p.Request.Operation == "restore" {
 		target = p.Request.Before
 	}
-	counts, err := q.CountDeploymentCrons(ctx, tx, sqlc.CountDeploymentCronsParams{AppID: appID, AccountID: p.AccountID})
+	counts, err := q.CountDeploymentCrons(ctx, tx, sqlc.CountDeploymentCronsParams{AppID: appID, SubjectID: subject})
 	if err != nil {
 		return err
 	}

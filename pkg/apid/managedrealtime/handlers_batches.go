@@ -11,8 +11,7 @@ import (
 )
 
 func (s *Service) PublishManagedRealtimeChannelBatch(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "atomic batch publishing preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "atomic batch publishing preview unavailable") {
 		return
 	}
 	ep, owner, ok := s.managedRealtimeEndpointAction(w, r, acct)

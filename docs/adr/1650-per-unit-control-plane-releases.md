@@ -1,8 +1,8 @@
 # ADR-1650 · Per-unit control-plane releases
 
 - **Status:** proposed
-- **Date:** 2026-10-17 (slice 2: 2026-10-18; selection by code: 2026-10-21)
-- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-1736 (zero-downtime restarts), ADR 202610171900 (release compatibility gates), ADR 20261018084150 (expand-only migrations in per-unit releases), ADR 20261018133100 (host-configuration lane), ADR 20261020160744 (daemon blast radius)
+- **Date:** 2026-10-17 (slice 2: 2026-10-18; selection by code: 2026-10-21; deploy/ path classes: 2026-10-27)
+- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-1736 (zero-downtime restarts), ADR 202610171900 (release compatibility gates), ADR 20261018084150 (expand-only migrations in per-unit releases), ADR 20261018133100 (host-configuration lane), ADR 20261020160744 (daemon blast radius), ADR 20261027151755 (one class per deploy/ path)
 
 ## Context
 
@@ -52,7 +52,8 @@ A range is eligible when at least one control-plane daemon changed and none of
 these did since the base: migrations (since ADR 20261018084150, only those
 that are not lane-eligible), `deploy/` (units, roles, rules,
 manifests; since ADR 20261018133100, only paths no control-plane host role
-reads, and the release's own unit files), go.mod/go.sum, the files
+reads, and the release's own unit files; since ADR 20261027151755, only
+the release's unit files and the paths of the `blocking` class), go.mod/go.sum, the files
 cd-controlplane copies into its bundle, and the release tarball's own
 contents. Paths only compute roles read wait instead of blocking. Blocking go.mod also means a unit release never changes a
 third-party dependency, so the release SBOM and its KGV baseline still
@@ -567,7 +568,10 @@ every package cached.
   `-- migration-compat: expand|contract`. The control-plane lane applies a
   range of expand migrations ahead of restarts, and contract migrations
   still need a full release. After that change, `deploy/` changes are what
-  most often close the lane.
+  most often close the lane. ADR 20261018133100 moved control-plane role
+  changes onto the lane, and ADR 20261027151755 gives every `deploy/` path
+  one class, so documentation, samples, mirrors and compute playbooks no
+  longer close it.
 - **Compute daemons beyond the gateways.** schedd and realtimed restart
   without touching VMs and could join the edge lane once their restarts are
   covered (ADR-1736). vmmd needs the restart-adoption work.

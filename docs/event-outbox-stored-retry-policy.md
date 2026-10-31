@@ -8,14 +8,14 @@ Existing unbound rows retain their prior behavior until explicitly adopted.
 ## Stage a bound publication
 
 ```go
-status, err := faas.SaveEventOutboxWithRetryPolicy(ctx, tx,
+status, err := preview.SaveEventOutboxWithRetryPolicy(ctx, tx,
     accountID, appID, slug,
-    faas.AppPublishEventRequest{
+    preview.AppPublishEventRequest{
         Key: producerKey,
         Type: "order.created",
         Data: eventJSON,
     }, 7 * 24 * time.Hour,
-    faas.EventOutboxRetryPolicy{
+    preview.EventOutboxRetryPolicy{
         InitialBackoff: time.Second,
         MaxBackoff: 5 * time.Minute,
         MaxAttempts: 20,
@@ -66,9 +66,9 @@ cumulative, and no policy revision extends the original retry deadline.
 ## Adopt or revise with an audited command
 
 ```go
-status, err := faas.GetEventOutboxStatus(ctx, db, accountID, appID, producerKey)
+status, err := preview.GetEventOutboxStatus(ctx, db, accountID, appID, producerKey)
 if err != nil { return err }
-current, err := faas.GetEventOutboxRetryPolicy(ctx, db, accountID, appID, producerKey)
+current, err := preview.GetEventOutboxRetryPolicy(ctx, db, accountID, appID, producerKey)
 revision := int64(0) // Zero explicitly expects an unbound row.
 if err == nil {
     revision = current.Revision
@@ -76,13 +76,13 @@ if err == nil {
     return err
 }
 
-result, err := faas.SetEventOutboxRetryPolicy(ctx, db, accountID, appID, producerKey,
-    faas.EventOutboxSetRetryPolicyOptions{
+result, err := preview.SetEventOutboxRetryPolicy(ctx, db, accountID, appID, producerKey,
+    preview.EventOutboxSetRetryPolicyOptions{
         CommandID: commandID, // Persist a fresh nonzero UUID and these parameters.
         ExpectedUpdatedAt: status.UpdatedAt,
         ExpectedAttempts: status.Attempts,
         ExpectedRevision: revision,
-        Policy: faas.EventOutboxRetryPolicy{
+        Policy: preview.EventOutboxRetryPolicy{
             InitialBackoff: time.Second,
             MaxBackoff: 5 * time.Minute,
             MaxAttempts: 40,

@@ -3,3 +3,9 @@
 # rendered control-plane CIDRs in nftables. Empty/off preserves same-box
 # unix-only operation.
 Environment=FAAS_GATEWAY_LISTEN={{ faas_gateway_listen | default('off') }}
+{% if faas_gateway_listen | default('off') not in ['off', ''] %}
+# ADR-20261022004500: the private control listener apid on the control plane
+# calls for MCP replica probes, route observations, streaming caps and
+# response checks. nftables admits only the control-plane CIDRs to it.
+Environment=FAAS_GATEWAY_PRIVATE_CONTROL_LISTEN={{ faas_gateway_private_control_listen | default('0.0.0.0:9097') }}
+{% endif %}

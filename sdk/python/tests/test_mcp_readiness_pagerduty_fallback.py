@@ -2,20 +2,20 @@ from uuid import UUID
 
 
 def test_native_fallback_and_acknowledgement_contracts():
-    from faas_sdk.api.mcp import (
+    from faas_sdk.preview.api.mcp import (
         get_mcp_readiness_fallback,
         set_mcp_readiness_fallback,
         set_mcp_readiness_pager_duty_acknowledgements,
     )
-    from faas_sdk.models.mcp_readiness_fallback_policy import MCPReadinessFallbackPolicy
-    from faas_sdk.models.mcp_readiness_pager_duty_acknowledgement_events import (
+    from faas_sdk.preview.models.mcp_readiness_fallback_policy import MCPReadinessFallbackPolicy
+    from faas_sdk.preview.models.mcp_readiness_pager_duty_acknowledgement_events import (
         MCPReadinessPagerDutyAcknowledgementEvents,
     )
-    from faas_sdk.models.mcp_readiness_pager_duty_acknowledgement_policy import (
+    from faas_sdk.preview.models.mcp_readiness_pager_duty_acknowledgement_policy import (
         MCPReadinessPagerDutyAcknowledgementPolicy,
     )
-    from faas_sdk.models.set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
-    from faas_sdk.models.set_mcp_readiness_pager_duty_acknowledgements_request import (
+    from faas_sdk.preview.models.set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
+    from faas_sdk.preview.models.set_mcp_readiness_pager_duty_acknowledgements_request import (
         SetMCPReadinessPagerDutyAcknowledgementsRequest,
     )
 

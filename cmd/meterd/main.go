@@ -53,17 +53,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/reconciler"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssocket"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -1043,6 +1047,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Mailer:                      mailer,
 		Notif:                       pn,
 		Log:                         log,
+		Registerer:                  ops.Registry(),
 	})
 
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
@@ -1173,12 +1178,43 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if appsDomain == "" {
 		appsDomain = "gregale.dev" // apid's default for unset deployments
 	}
-	go runSyntheticChecks(ctx, store, appsDomain, log)
-	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
+	loops := newObservabilityLoops(ops.Registry()) // ADR-20261024222102
+	// Capability flags (ADR-20261023115741), kept current by the
+	// runtime-config watcher below; until its first reconcile, tier defaults
+	// decide. observeRelease stops alert and synthetic work an account's plan
+	// or flags no longer cover (ADR-20261028101615).
+	capabilityFlags := platformflags.NewSet(capflags.Bootstrap(deps.getenv))
+	release, err := newObserveRelease(capabilityFlags, store)
+	if err != nil {
+		return err
+	}
+	// ADR 20261022111812: once the seal_domains role stages the alerting
+	// domain, its identity opens alert secrets, channel destinations and MCP
+	// readiness provider keys ahead of the fleet and host identities.
+	alertingIdentities, err := loadAlertingSealDomain(deps.getenv)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Alerting, len(alertingIdentities) > 0)
+	log.Info("alerting seal domain", "domain_identity", len(alertingIdentities) > 0, "fleet_identity", deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH") != "")
+	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient, alertingIdentities...)
 	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
 	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	// ADR 20261022111812: apid relays the test sends it cannot open here;
+	// meterd holds the alerting key.
+	go runAlertTestSends(ctx, evaluator, log)
+	evaluator.SetRuleRelease(release.ForAccount)
+	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
+	// ADR-20261022172052: firing app alerts carry what the log ledger shows,
+	// for the accounts the log-search capability flag releases it to
+	// (ADR-20261024222102).
+	logSearch, err := newLogSearchRelease(deps.getenv, capabilityFlags, store)
+	if err != nil {
+		return err
+	}
+	evaluator.SetLogContext(logSearch.Released)
 	// ADR-747: record customer SLO budget hours from Prometheus.
-	go runSLORollup(ctx, store, promClient, log)
+	go runSLORollup(ctx, store, promClient, release.SLO, loops, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can
@@ -1199,7 +1235,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// a hot enable is picked up on the next interval.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
-	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
+	keys, apply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
@@ -1210,7 +1246,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				probe.SetEnabled(enabled)
 			}
 			return nil
-		}, log)
+		}, capabilityFlags)
+	watcher := runtimeconfig.New(store, pool, keys, apply, log)
 	watcher.Daemon = "meterd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("meterd: initial runtime config reconcile failed", "err", err)
@@ -1220,6 +1257,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("meterd: runtime config watcher exited", "err", err)
 		}
 	}()
+	// ADR-748: probe customer synthetic checks against their public
+	// hostnames, after the first reconcile so capability flags an operator
+	// wrote decide from the first pass.
+	go runSyntheticChecks(ctx, store, appsDomain, release.Synthetic, loops, log)
 	canaryProg, canaryAPID := buildCanaryProgression(deps, store, ops, log, promClient)
 	safeDeployOrch := buildSafeDeployOrchestrator(deps, store, ops, log, canaryAPID, evaluator)
 	// ADR-099 / issue #1184 Workstream A: 7 job-task Prometheus
@@ -1239,7 +1280,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithProbe(probe).
 		WithPartitionCreate(gatedPartitionCreate).
 		WithCanaryProgression(canaryProg).
-		WithSafeDeploy(safeDeployOrch)
+		WithSafeDeploy(safeDeployOrch).
+		// ADR-20261023171905: quiet_pause_unbilled = "on" subtracts paused
+		// seconds only for the accounts the quiet_pause_unbilled platform
+		// flag releases; the runtime-config watcher keeps it current.
+		WithQuietPauseRelease(func(subject platformflags.Subject) bool {
+			return capabilityFlags.Enabled(platformflags.QuietPauseUnbilled, subject)
+		})
 	if canaryProg != nil && safeDeployOrch != nil {
 		go safeReleaseWorkerLeaseLoop(ctx, loop, store, canaryAPID, log)
 	}
@@ -1288,6 +1335,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-049 §B.4: 13-month retention DELETE cron. The pool
 	// satisfies the retentionExecer contract.
 	go meter.RetentionLoop(ctx, poolAdapter{pool}, mc.RetentionInterval, log)
+	// ADR-20261023171905: the quiet pause ledger keeps
+	// api.QuietPauseLedgerRetentionDays.
+	go meter.QuietPauseRetentionLoop(ctx, store, mc.RetentionInterval, log)
 	// ADR-371: egress flow log rows are kept api.EgressFlowLogRetentionDays.
 	go meter.RetentionLoopEgressFlowLog(ctx, poolAdapter{pool}, time.Hour, log)
 
@@ -1378,6 +1428,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same mux as /healthz + /metrics. defer stop so the
 	// SIGTERM drain window surfaces in daemon_ready as 0.
 	meterdProbe := BuildReadinessProbe(loop)
+	if pool != nil {
+		registerDatabaseReadiness(ctx, meterdProbe, pool)
+	}
 	meterdProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("meterd", ready, reason)
 	})
@@ -1496,6 +1549,26 @@ func stuckAfterFromEnvMeterd(getenv func(string) string, log *slog.Logger) time.
 	return d
 }
 
+// runAlertTestSends sends the test sends apid relays (ADR 20261022111812,
+// section 3), checking for new ones every second; apid waits for the result.
+func runAlertTestSends(ctx context.Context, e *alerts.Evaluator, log *slog.Logger) {
+	if e == nil {
+		return
+	}
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		if _, err := e.RunTestSendsOnce(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("meterd: alert test sends", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
 // buildAlertEvaluator wires the alert-evaluator (issue #396 /
 // ADR-045 PR 4). Returns nil if neither FAAS_PROMETHEUS_URL nor
 // FAAS_HOST_AGE_IDENTITY_PATH is configured — the dev loop runs
@@ -1523,9 +1596,9 @@ func buildPromQLClient(deps runDeps) appmetrics.PromQL {
 	return promql.NewClient(promURL, nil)
 }
 
-func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics, promClient appmetrics.PromQL) *alerts.Evaluator {
+func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics, promClient appmetrics.PromQL, alerting ...*age.X25519Identity) *alerts.Evaluator {
 	identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
-	if promClient == nil && identityPath == "" {
+	if promClient == nil && identityPath == "" && len(alerting) == 0 {
 		log.Warn("meterd: alert evaluator disabled — both FAAS_PROMETHEUS_URL and FAAS_HOST_AGE_IDENTITY_PATH unset; running with five ticks")
 		return nil
 	}
@@ -1566,6 +1639,25 @@ func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Lo
 		}
 	}
 
+	if len(alerting) > 0 {
+		var legacy []*age.X25519Identity
+		switch {
+		case identitiesLoader != nil:
+			legacy = identitiesLoader()
+		case identityLoader != nil:
+			legacy = []*age.X25519Identity{identityLoader()}
+		}
+		readers := alertingReaders(alerting, legacy)
+		identitiesLoader = func() []*age.X25519Identity { return readers }
+		// ADR 20261022111812: a contracted meterd has no fleet or host
+		// identity; the alerting domain is the identity the evaluator
+		// opens with.
+		if identityLoader == nil {
+			domain := alerting[0]
+			identityLoader = func() *age.X25519Identity { return domain }
+		}
+	}
+
 	dispatcher := webhookout.NewDispatcher(webhookout.DispatcherOptions{})
 	auditor := audit.New(store, log, ops, "meterd")
 	return alerts.NewEvaluator(alerts.EvaluatorOptions{
@@ -1577,7 +1669,18 @@ func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Lo
 		Dispatcher: dispatcher,
 		Log:        log,
 		Ops:        ops,
+		// A nil ops (unit wiring) leaves release metrics off.
+		ReleaseMetrics: releaseMetricsFor(ops),
 	})
+}
+
+// releaseMetricsFor registers the release guard metrics on meterd's
+// registry (ADR-20261020085706 amendment 1).
+func releaseMetricsFor(ops *wire.OpsMetrics) *releasemetrics.Metrics {
+	if ops == nil {
+		return nil
+	}
+	return releasemetrics.New(ops.Registry())
 }
 
 // buildUpstreamProbe (ADR-098 PR-C) wires the connection-aware
@@ -1725,6 +1828,16 @@ func (a *safedeployStoreAdapter) SafedeployStampRollout(ctx context.Context, id 
 
 func (a *safedeployStoreAdapter) AppendDeploymentAudit(ctx context.Context, entry state.DeploymentAudit) (int64, error) {
 	return a.store.AppendDeploymentAudit(ctx, entry)
+}
+
+// LatestRolloutHold lets the orchestrator tell a release waiting for
+// approval from a stuck one (ADR-20261020085706).
+func (a *safedeployStoreAdapter) LatestRolloutHold(ctx context.Context, deploymentID string) (json.RawMessage, error) {
+	holds, ok := a.store.(state.RolloutDecisionStore)
+	if !ok {
+		return nil, nil
+	}
+	return holds.LatestRolloutHold(ctx, deploymentID)
 }
 
 // func(ctx context.Context) signature so Loop.WithPartitionCreate

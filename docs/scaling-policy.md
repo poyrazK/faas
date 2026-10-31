@@ -136,9 +136,9 @@ you push is recorded for 15 days, so you can watch the number over time as
 well as scale on it:
 
 ```sh
-gregale metrics my-api --custom orders_pending            # last 24 hours
-gregale metrics my-api --custom orders_pending --range 7d
-gregale metrics my-api --custom orders_pending --json     # every point
+gregale metric my-api --custom orders_pending            # last 24 hours
+gregale metric my-api --custom orders_pending --range 7d
+gregale metric my-api --custom orders_pending --json     # every point
 ```
 
 `--range` is `1h`, `6h`, `24h`, `7d`, or `15d`. The dashboard's **Custom
@@ -161,7 +161,9 @@ OTEL_EXPORTER_OTLP_METRICS_HEADERS="Authorization=Bearer $GREGALE_METRICS_KEY"
 OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
 ```
 
-Both `http/protobuf` and `http/json` work; bodies are limited to 1 MiB.
+Both `http/protobuf` and `http/json` work, uncompressed or with gzip
+(`Content-Encoding: gzip`, the OpenTelemetry Collector's default); bodies
+are limited to 1 MiB, also once decompressed.
 Each data point becomes a custom metric under the same per-app name cap:
 
 - **Gauges** are stored like a pushed value and can drive scaling.

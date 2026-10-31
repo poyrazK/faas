@@ -144,6 +144,33 @@ func TestRehearsalTwoCommitsUseTrustedInputsAndFreshSources(t *testing.T) {
 	}
 }
 
+// macOS's default TMPDIR is below the /var -> /private/var symlink. The
+// session root must resolve like the checkout does, or every extracted source
+// appears to escape it (ADR-20261019120000).
+func TestRehearsalPreparesBelowSymlinkedTempDir(t *testing.T) {
+	captureSuiteTestOutput(t)
+	o, _ := rehearsalTestRepo(t)
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "tmp-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", link)
+	o.Validate = true
+	session, err := prepareTestRehearsal(context.Background(), o)
+	if err != nil {
+		t.Fatalf("prepare below symlinked TMPDIR: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(session.root) })
+	resolvedReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(session.root, resolvedReal+string(filepath.Separator)) {
+		t.Fatalf("session root %s is not resolved below %s", session.root, resolvedReal)
+	}
+}
+
 func TestRehearsalEquivalentRevisionsAndInterruptedRuns(t *testing.T) {
 	captureSuiteTestOutput(t)
 	for _, interrupt := range []bool{false, true} {

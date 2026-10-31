@@ -415,7 +415,7 @@ export class OperatorService {
   }
   /**
    * List platform flags
-   * Returns every catalogued platform flag (ADR-1700) with apid's live
+   * Returns every catalogued platform flag with the API's live
    * definition, the per-daemon apply receipts and convergence, and the
    * shared account groups. Change a flag with
    * PATCH /v1/admin/config/{config_key}. Operator-only.
@@ -462,7 +462,7 @@ export class OperatorService {
   }
   /**
    * Explain a platform flag for an account
-   * Evaluates the flag for one account against apid's live definition
+   * Evaluates the flag for one account against the API's live definition
    * and reports the matching rule, the reason, and whether the account's
    * plan is entitled to the capability the flag releases. Records
    * nothing. Operator-only.
@@ -473,6 +473,8 @@ export class OperatorService {
   public static inspectOperatorPlatformFlag({
     key,
     accountId,
+    orgId,
+    at,
   }: {
     /**
      * Platform flag key.
@@ -482,6 +484,14 @@ export class OperatorService {
      * Account to evaluate.
      */
     accountId: string,
+    /**
+     * Organization the request would act under; omit to evaluate outside any organization.
+     */
+    orgId?: string,
+    /**
+     * Decide as of this moment instead of now, to check scheduled rules.
+     */
+    at?: string,
   }): CancelablePromise<OperatorPlatformFlagDecision> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -491,6 +501,8 @@ export class OperatorService {
       },
       query: {
         'account_id': accountId,
+        'org_id': orgId,
+        'at': at,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

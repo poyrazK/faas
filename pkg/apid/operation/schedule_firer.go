@@ -6,7 +6,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -83,7 +82,7 @@ func (s *Service) FireDueOperationSchedules(ctx context.Context, now time.Time) 
 // (plan limits, a suspended customer, a deleted definition) are recorded by
 // the store.
 func (s *Service) scheduleFireRefusal(ctx context.Context, schedule state.OperationSchedule) string {
-	if !api.OperationSchedulesEnabled(schedule.AccountID) {
+	if !s.schedulesOpen(schedule.AccountID) {
 		return scheduleRefusalClosed
 	}
 	store, ok := s.Host.Store().(state.OperationStore)

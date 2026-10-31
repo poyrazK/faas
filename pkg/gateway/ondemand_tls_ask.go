@@ -23,10 +23,12 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +59,7 @@ const (
 	OnDemandTLSAllowWildcard  = "allow_wildcard"
 	OnDemandTLSDenyUnverified = "deny_unverified"
 	OnDemandTLSDenyBudget     = "deny_wildcard_budget"
+	OnDemandTLSDenyPlan       = "deny_wildcard_plan"
 	OnDemandTLSDenyUnknown    = "deny_unknown"
 	OnDemandTLSDenyPlatform   = "deny_platform"
 	OnDemandTLSDenyInvalid    = "deny_invalid"
@@ -75,29 +78,32 @@ type OnDemandTLSStore interface {
 // OnDemandTLSPolicy decides whether the edge may hold a certificate for a
 // hostname.
 type OnDemandTLSPolicy struct {
-	store      OnDemandTLSStore
-	appsDomain string
-	now        func() time.Time
-	log        *slog.Logger
-	decisions  *prometheus.CounterVec
+	store OnDemandTLSStore
+	// owned are the deployment's own domains: none of them, and no name
+	// below them, is a customer's domain.
+	owned     []string
+	now       func() time.Time
+	log       *slog.Logger
+	decisions *prometheus.CounterVec
 
 	mu       sync.Mutex
 	tokens   float64
 	refilled time.Time
 	unknown  map[string]time.Time // host → negative-cache expiry
+	known    map[string]time.Time // recently allowed host → bucket-bypass expiry
 }
 
 // NewOnDemandTLSPolicy builds the policy. appsDomain is the platform zone
-// (FAAS_APPS_DOMAIN); it and every name below it are refused. reg may be nil.
+// (FAAS_APPS_DOMAIN); it and every name below it are refused, as are the
+// domains passed to RefuseOwned. reg may be nil.
 func NewOnDemandTLSPolicy(store OnDemandTLSStore, appsDomain string, reg prometheus.Registerer, log *slog.Logger) *OnDemandTLSPolicy {
 	if log == nil {
 		log = slog.Default()
 	}
 	p := &OnDemandTLSPolicy{
-		store:      store,
-		appsDomain: normalizeTLSHost(appsDomain),
-		now:        time.Now,
-		log:        log,
+		store: store,
+		now:   time.Now,
+		log:   log,
 		decisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_tls_on_demand_ask_total",
 			Help: "On-demand TLS permission checks from the public edge, by decision (ADR-520).",
@@ -106,7 +112,28 @@ func NewOnDemandTLSPolicy(store OnDemandTLSStore, appsDomain string, reg prometh
 	if reg != nil {
 		reg.MustRegister(p.decisions)
 	}
+	return p.RefuseOwned([]string{appsDomain})
+}
+
+// RefuseOwned adds domains the deployment owns (ADR-20261026100000: the
+// platform domain, the apps domain and its aliases, the deployment-preview
+// domain). A certificate is never issued for them or a name below them.
+func (p *OnDemandTLSPolicy) RefuseOwned(domains []string) *OnDemandTLSPolicy {
+	for _, d := range domains {
+		if d = normalizeTLSHost(d); d != "" && !slices.Contains(p.owned, d) {
+			p.owned = append(p.owned, d)
+		}
+	}
 	return p
+}
+
+func (p *OnDemandTLSPolicy) ownsHost(host string) bool {
+	for _, d := range p.owned {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 // SetNow overrides the clock for tests.
@@ -119,7 +146,7 @@ func (p *OnDemandTLSPolicy) Decide(ctx context.Context, rawHost string) (bool, s
 	if host == "" || strings.Contains(host, "*") || state.ValidateCustomDomainName(host) != nil {
 		return false, OnDemandTLSDenyInvalid
 	}
-	if p.appsDomain != "" && (host == p.appsDomain || strings.HasSuffix(host, "."+p.appsDomain)) {
+	if p.ownsHost(host) {
 		return false, OnDemandTLSDenyPlatform
 	}
 	if p.store == nil {
@@ -128,13 +155,18 @@ func (p *OnDemandTLSPolicy) Decide(ctx context.Context, rawHost string) (bool, s
 	if decision, ok := p.admitLookup(host); !ok {
 		return false, decision
 	}
-	// An exact row wins over any wildcard, verified or not: an unverified
-	// exact reservation shadows the broader wildcard in routing too.
+	// A live exact row wins over any wildcard, verified or not: an unverified
+	// exact reservation shadows the broader wildcard in routing too. An
+	// expired claim reserves nothing and falls through, as it does in routing.
 	lookupCtx, cancel := context.WithTimeout(ctx, onDemandTLSLookupTimeout)
 	exact, err := p.store.DomainByName(lookupCtx, host)
 	cancel()
+	if err == nil && !exact.ClaimLive(p.now()) {
+		err = state.ErrNotFound
+	}
 	switch {
 	case err == nil && exact.Verified():
+		p.rememberKnown(host)
 		return true, OnDemandTLSAllowExact
 	case err == nil:
 		return false, OnDemandTLSDenyUnverified
@@ -163,6 +195,13 @@ func (p *OnDemandTLSPolicy) decideWildcard(ctx context.Context, host string) (bo
 	case !wildcard.Verified():
 		return false, OnDemandTLSDenyUnverified
 	}
+	if allowed, err := p.wildcardPlanAllows(lookupCtx, wildcard); err != nil {
+		// codeql[go/log-injection] false-positive: host passed state.ValidateCustomDomainName (letters, digits, hyphens, dots only) before any lookup, and CodeQL does not recognise logsanitize.Field as a sanitizer.
+		p.log.Warn("gateway: on-demand tls wildcard plan lookup failed; denying", "host", logsanitize.Field(host), "err", err)
+		return false, OnDemandTLSDenyError
+	} else if !allowed {
+		return false, OnDemandTLSDenyPlan
+	}
 	admitted, err := p.store.AdmitCustomDomainTLSHost(lookupCtx, wildcard.Domain, host, p.now(),
 		onDemandTLSWildcardWindow, api.OnDemandTLSWildcardNewHostsPerWeek)
 	switch {
@@ -178,7 +217,37 @@ func (p *OnDemandTLSPolicy) decideWildcard(ctx context.Context, host string) (bo
 			"wildcard", wildcard.Domain, "limit", api.OnDemandTLSWildcardNewHostsPerWeek)
 		return false, OnDemandTLSDenyBudget
 	}
+	p.rememberKnown(host)
 	return true, OnDemandTLSAllowWildcard
+}
+
+// onDemandTLSPlanStore resolves the plan a wildcard domain is held under. A
+// store without it skips the plan check.
+type onDemandTLSPlanStore interface {
+	AppByID(ctx context.Context, id string) (state.App, error)
+	state.AppOwnerReader
+}
+
+// wildcardPlanAllows reports whether the wildcard's owner is still on a plan
+// with wildcard domains. The plan is checked only when the domain is
+// created, so after a downgrade a wildcard kept drawing new certificates.
+// The owner is the app's billing subject: a company wildcard stopped getting
+// certificates when its creator's personal plan had no wildcards, and for
+// good once the creator's account was erased (bug hunt 2026-10-28 B37).
+func (p *OnDemandTLSPolicy) wildcardPlanAllows(ctx context.Context, wildcard state.CustomDomain) (bool, error) {
+	plans, ok := p.store.(onDemandTLSPlanStore)
+	if !ok || wildcard.AppID == "" {
+		return true, nil
+	}
+	app, err := plans.AppByID(ctx, wildcard.AppID)
+	if err != nil {
+		return false, fmt.Errorf("wildcard app: %w", err)
+	}
+	acct, err := state.AppResourceAccount(ctx, plans, app)
+	if err != nil {
+		return false, fmt.Errorf("wildcard owner: %w", err)
+	}
+	return acct.Plan.WildcardDomainsAllowed(), nil
 }
 
 // Handler serves the edge's ask URL. Only loopback peers are answered: the
@@ -207,8 +276,11 @@ func (p *OnDemandTLSPolicy) Handler() http.Handler {
 }
 
 // admitLookup decides whether host may cost store lookups: a recently
-// unknown host is denied from the negative cache, otherwise a token bucket
-// bounds lookups per second.
+// unknown host is denied from the negative cache, a recently allowed host
+// is admitted outside the bucket, and a token bucket bounds every other
+// lookup per second. The bucket is shared by every server name a client can
+// send, so without the known-host bypass a flood of random names denied
+// real domains their renewals and post-reload certificate loads.
 func (p *OnDemandTLSPolicy) admitLookup(host string) (string, bool) {
 	now := p.now()
 	p.mu.Lock()
@@ -218,6 +290,12 @@ func (p *OnDemandTLSPolicy) admitLookup(host string) (string, bool) {
 			return OnDemandTLSDenyUnknown, false
 		}
 		delete(p.unknown, host)
+	}
+	if until, ok := p.known[host]; ok {
+		if now.Before(until) {
+			return "", true
+		}
+		delete(p.known, host)
 	}
 	burst := float64(api.OnDemandTLSAskLookupBurst)
 	if p.refilled.IsZero() {
@@ -243,6 +321,19 @@ func (p *OnDemandTLSPolicy) rememberUnknown(host string) {
 		p.unknown = make(map[string]time.Time)
 	}
 	p.unknown[host] = p.now().Add(time.Duration(api.OnDemandTLSAskNegativeCacheSeconds) * time.Second)
+}
+
+// rememberKnown records a host the policy just allowed so its next lookups
+// skip the shared bucket. Only an allow decision adds a host, so a client
+// choosing server names cannot grow the set. Like the negative cache it is
+// dropped wholesale when full.
+func (p *OnDemandTLSPolicy) rememberKnown(host string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.known == nil || len(p.known) >= api.OnDemandTLSAskKnownHostEntries {
+		p.known = make(map[string]time.Time)
+	}
+	p.known[host] = p.now().Add(time.Duration(api.OnDemandTLSAskKnownHostSeconds) * time.Second)
 }
 
 func normalizeTLSHost(host string) string {

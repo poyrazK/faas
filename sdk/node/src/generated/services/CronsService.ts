@@ -8,6 +8,8 @@ import type { CronResponse } from '../models/CronResponse.js';
 import type { FireCronResponse } from '../models/FireCronResponse.js';
 import type { ListCronRunsResponse } from '../models/ListCronRunsResponse.js';
 import type { ListScheduleOccurrencesResponse } from '../models/ListScheduleOccurrencesResponse.js';
+import type { Problem } from '../models/Problem.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { UpdateCronRequest } from '../models/UpdateCronRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -15,15 +17,26 @@ import { request as __request } from '../core/request.js';
 export class CronsService {
   /**
    * List cron triggers.
-   * @returns CronResponse Cron triggers on the account.
+   * @returns CronResponse Cron triggers on the account, or on the app named by slug.
    * @throws ApiError
    */
-  public static listCrons(): CancelablePromise<Array<CronResponse>> {
+  public static listCrons({
+    slug,
+  }: {
+    /**
+     * App slug or id. Lists only that app's crons; without it, every cron on the account's apps.
+     */
+    slug?: string,
+  }): CancelablePromise<Array<CronResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/crons',
+      query: {
+        'slug': slug,
+      },
       errors: {
         401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -77,8 +90,7 @@ export class CronsService {
   }
   /**
    * Get one cron trigger.
-   * Single-row read for one cron (issue #791 PR-E / ADR-090
-   * closure). Backs `gregale crons info <id>` and any dashboard
+   * Single-row read for one cron (closure). Backs `gregale crons info <id>` and any dashboard
    * drill-down. The wire shape matches `CronResponse` so SDK
    * clients decode it with the existing struct.
    *
@@ -175,6 +187,35 @@ export class CronsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a cron's conditions.
+   * Preview (resource-conditions capability). The cron's Ready and
+   * LastRunSucceeded conditions, from the cron and its newest run as
+   * GET /v1/crons/{id}/runs reports it, and never stored. A disabled cron
+   * is terminally not ready; a suspended one is not ready until the
+   * suspension clears. LastRunSucceeded describes the newest run, so it
+   * is never terminal. Cache-Control no-store.
+   *
+   * @returns ResourceStatus The cron's conditions.
+   * @returns Problem Missing sign-in, read scope or MFA, a cron this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getCronStatus({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/crons/{id}/status',
+      path: {
+        'id': id,
       },
     });
   }
@@ -380,7 +421,7 @@ export class CronsService {
    * Manually fire a cron now (bypasses the schedule boundary).
    * Inserts a pending row into
    * `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-   * schedd claims the row on the next LISTEN delivery. HTTP crons
+   * the scheduler claims the row on the next LISTEN delivery. HTTP crons
    * dispatch through `RunCronNow`; command crons enqueue a task
    * pinned to the current live deployment. Poll the request to
    * obtain its invocation id or command task id.
@@ -389,7 +430,7 @@ export class CronsService {
    * the stored 202 without enqueuing a second fire.
    *
    * Scoped to `deploy:write` (or `admin`); no new `cron:write`
-   * scope is added (ADR-090 §Sub-decisions 1). The fire does
+   * scope is added (decisions 1). The fire does
    * NOT shift `last_fired_at` — the next scheduled boundary is
    * unaffected. For a command cron, its saved command, timeout,
    * output limit, retry policy, skip_if_running behavior, and

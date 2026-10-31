@@ -10,21 +10,9 @@ var _ EnvironmentQualificationServiceReceiptStore = (*MemStore)(nil)
 
 func (m *MemStore) candidateBindingCatalogSupportedLocked(request EnvironmentWorkloadQualificationRequest) bool {
 	appID, scope := request.AppID, request.FrozenInputs.Scope
-	for key, s := range m.secrets {
-		if key.AppID == appID && s.Scope == scope && (s.ManagedPostgresBindingID != "" || s.ManagedObjectStorageCredentialID != "") {
-			return false
-		}
-	}
-	for _, c := range m.objectS3Credentials {
-		if c.ManagedAppID == appID && c.ManagedScope == scope && c.Status == ObjectS3CredentialStatusActive {
-			return false
-		}
-	}
-	for _, b := range m.outboundAppBindings {
-		if b.AppID == appID {
-			return false
-		}
-	}
+	// Managed PostgreSQL, object storage and outbound bindings are qualified
+	// by receipts (ADR-20261019072523, ADR-20261019121546, ADR-20261019152416).
+	// MemStore has no operator app attachments.
 	for _, binding := range m.queueBindings {
 		if binding.AppID == appID && (normalizedDeploymentScope(binding.DeploymentScope) == scope || binding.DeploymentScope == "") && binding.RetiredAt == nil {
 			found := false
@@ -120,6 +108,38 @@ func (m *MemStore) environmentBindingGraphDeadlineLocked(memory *environmentGitO
 		end, err := candidateBindingEvidenceDeadline(r, smoke, memory.bindingServices, requests, time.Now())
 		if err != nil {
 			return time.Time{}, fmt.Errorf("candidate binding evidence is missing or expired: %w", err)
+		}
+		age, err := time.ParseDuration(r.BindingContext.Policy.MaxVerificationAge)
+		if err != nil {
+			return time.Time{}, ErrBindingReleaseRequired
+		}
+		restore := m.qualificationRestoreReceipts[qualificationRestoreReceiptKey(r.ID, r.Attempt)]
+		postgresEnd, err := candidatePostgresEvidenceDeadline(r, m.candidatePostgresDeliveriesLocked(r.AppID, r.FrozenInputs.Scope),
+			memory.bindingPostgres, m.qualificationSnapshots[r.ReservedInstanceID].Inputs, restore.Inputs, age, time.Now())
+		if err != nil {
+			return time.Time{}, fmt.Errorf("candidate PostgreSQL credential evidence is missing or changed: %w", err)
+		}
+		if !postgresEnd.IsZero() && postgresEnd.Before(end) {
+			end = postgresEnd
+		}
+		storageEnd, err := candidateObjectStorageEvidenceDeadline(r, m.candidateObjectStorageDeliveriesLocked(r.AppID, r.FrozenInputs.Scope),
+			r.BindingContext.Policy.ObjectStorageRequirements, memory.bindingObjectStorage, m.qualificationSnapshots[r.ReservedInstanceID].Inputs,
+			restore.Inputs, age, time.Now())
+		if err != nil {
+			return time.Time{}, fmt.Errorf("candidate object storage credential evidence is missing or changed: %w", err)
+		}
+		if !storageEnd.IsZero() && storageEnd.Before(end) {
+			end = storageEnd
+		}
+		outboundEnd, err := candidateOutboundEvidenceDeadline(r, m.candidateOutboundBindingsLocked(r.AppID), memory.bindingOutbound, age, time.Now())
+		if err != nil {
+			return time.Time{}, fmt.Errorf("candidate outbound probe evidence is missing or changed: %w", err)
+		}
+		if !outboundEnd.IsZero() && outboundEnd.Before(end) {
+			end = outboundEnd
+		}
+		if !time.Now().Before(end) {
+			return time.Time{}, ErrBindingPromotionExpired
 		}
 		if deadline.IsZero() || end.Before(deadline) {
 			deadline = end

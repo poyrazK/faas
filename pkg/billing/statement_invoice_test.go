@@ -176,4 +176,13 @@ func TestProductControlStatementInvoiceFeesAndIncludedStarts(t *testing.T) {
 	if inv, err := ProductControlStatementInvoice(doc); err != nil || len(inv.Lines) != 2 || inv.TotalMinor != 2900 {
 		t.Fatalf("fee-only month = %+v %v", inv, err)
 	}
+	// adr: 20261021195901 — a fee that excludes a trial says so.
+	trialStart, trialEnd := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	fee.AmountMillicents, fee.TrialStartsAt, fee.TrialEndsAt = 2610000, &trialStart, &trialEnd
+	doc.AmountMillicents, doc.Snapshot.Fees = 2610000, []api.ProductBillingFee{fee}
+	inv, err = ProductControlStatementInvoice(doc)
+	trialFee := StatementInvoiceLine{Label: "Monthly fee for plan starter, excluding the free trial from 2026-11-01 to 2026-11-04", Fee: state.StatementFeeBase, AmountMillicents: 2610000, AmountMinor: 2610}
+	if err != nil || !slices.Contains(inv.Lines, trialFee) {
+		t.Fatalf("trial fee invoice = %+v %v", inv, err)
+	}
 }

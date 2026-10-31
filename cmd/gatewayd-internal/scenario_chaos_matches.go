@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -14,21 +16,31 @@ type scenarioChaosMatchKey struct {
 	runID, callerAppID, generation, ruleID string
 }
 
+// scenarioChaosMatchWriter persists match counters. Each call is atomic: it
+// either records the whole batch or nothing.
+type scenarioChaosMatchWriter interface {
+	RecordScenarioTestChaosInjections(context.Context, []chaos.InjectionBatch) error
+}
+
 // scenarioChaosMatchRecorder keeps per-event persistence off the request
 // path. The map aggregates repeated HTTP matches and remains bounded by the
-// number of active runs, callers, and rules rather than traffic volume.
+// number of active runs, callers, and rules rather than traffic volume. Guests
+// choose request correlation IDs, so the node also caps the map at
+// api.ScenarioChaosMatchMaxPendingKeys; matches for new counters past the cap
+// are dropped and logged.
 type scenarioChaosMatchRecorder struct {
-	store state.Store
+	store scenarioChaosMatchWriter
 	log   *slog.Logger
 
 	mu      sync.Mutex
 	pending map[scenarioChaosMatchKey]int64
+	dropped int64
 	stop    chan struct{}
 	done    chan struct{}
 	once    sync.Once
 }
 
-func newScenarioChaosMatchRecorder(ctx context.Context, store state.Store, log *slog.Logger) *scenarioChaosMatchRecorder {
+func newScenarioChaosMatchRecorder(ctx context.Context, store scenarioChaosMatchWriter, log *slog.Logger) *scenarioChaosMatchRecorder {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -68,8 +80,18 @@ func (r *scenarioChaosMatchRecorder) observeID(runID, callerAppID, generation, r
 		runID: runID, callerAppID: callerAppID, generation: generation, ruleID: ruleID,
 	}
 	r.mu.Lock()
-	r.pending[key]++
+	r.addLocked(key, 1)
 	r.mu.Unlock()
+}
+
+// addLocked counts into an existing counter, or into a new one while the node
+// is under its pending-counter cap.
+func (r *scenarioChaosMatchRecorder) addLocked(key scenarioChaosMatchKey, count int64) {
+	if _, ok := r.pending[key]; !ok && len(r.pending) >= api.ScenarioChaosMatchMaxPendingKeys {
+		r.dropped += count
+		return
+	}
+	r.pending[key] += count
 }
 
 func (r *scenarioChaosMatchRecorder) run(ctx context.Context) {
@@ -90,15 +112,23 @@ func (r *scenarioChaosMatchRecorder) run(ctx context.Context) {
 	}
 }
 
+// flush writes pending counters in bounded atomic chunks. A failed chunk and
+// the chunks after it return to pending; committed chunks never do, so a retry
+// cannot count a match twice.
 func (r *scenarioChaosMatchRecorder) flush(ctx context.Context) {
 	r.mu.Lock()
-	if len(r.pending) == 0 {
+	pending, dropped := r.pending, r.dropped
+	if len(pending) == 0 && dropped == 0 {
 		r.mu.Unlock()
 		return
 	}
-	pending := r.pending
 	r.pending = make(map[scenarioChaosMatchKey]int64)
+	r.dropped = 0
 	r.mu.Unlock()
+	if dropped > 0 {
+		r.log.Warn("gateway: scenario chaos matches dropped over the node counter cap",
+			"matches", dropped, "cap", api.ScenarioChaosMatchMaxPendingKeys)
+	}
 
 	batch := make([]chaos.InjectionBatch, 0, len(pending))
 	for key, count := range pending {
@@ -107,18 +137,35 @@ func (r *scenarioChaosMatchRecorder) flush(ctx context.Context) {
 			RuleID: key.ruleID, Count: count,
 		})
 	}
-	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	err := r.store.RecordScenarioTestChaosInjections(writeCtx, batch)
-	cancel()
-	if err == nil {
+	for start := 0; start < len(batch); start += api.ScenarioChaosMatchWriteBatch {
+		chunk := batch[start:min(start+api.ScenarioChaosMatchWriteBatch, len(batch))]
+		writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := r.store.RecordScenarioTestChaosInjections(writeCtx, chunk)
+		cancel()
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, state.ErrConflict) {
+			// An invalid counter can never persist; retrying it would hold
+			// back every later chunk.
+			r.log.Error("gateway: discard invalid scenario chaos matches", "err", err, "keys", len(chunk))
+			continue
+		}
+		r.requeue(batch[start:])
+		r.log.Warn("gateway: persist scenario chaos matches", "err", err, "keys", len(batch)-start)
 		return
 	}
+}
+
+func (r *scenarioChaosMatchRecorder) requeue(batch []chaos.InjectionBatch) {
 	r.mu.Lock()
-	for key, count := range pending {
-		r.pending[key] += count
+	defer r.mu.Unlock()
+	for _, injection := range batch {
+		r.addLocked(scenarioChaosMatchKey{
+			runID: injection.RunID, callerAppID: injection.CallerApp,
+			generation: injection.Generation, ruleID: injection.RuleID,
+		}, injection.Count)
 	}
-	r.mu.Unlock()
-	r.log.Warn("gateway: persist scenario chaos matches", "err", err, "keys", len(batch))
 }
 
 func (r *scenarioChaosMatchRecorder) Close() {

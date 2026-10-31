@@ -21,6 +21,22 @@ VALUES ($1,$2,$3,$4,$5,$6,$7)`, account, app, tenant, revision, plan, first, at)
 	})
 }
 
+// adr: 20261021195901
+func TestProductTrialsPostgres(t *testing.T) {
+	s := newPgStore(t)
+	productTrialsContract(t, s, func(account, app, tenant, revision, plan string, first bool, at time.Time) {
+		if _, err := s.pool.Exec(t.Context(), `INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment,effective_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7)`, account, app, tenant, revision, plan, first, at); err != nil {
+			t.Fatal(err)
+		}
+	}, func(app, tenant string, start, end time.Time) {
+		if _, err := s.pool.Exec(t.Context(), `UPDATE product_control_customers SET trial_starts_at=$3, trial_ends_at=$4 WHERE app_id=$1 AND tenant_id=$2`,
+			app, tenant, start, end); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func productBillingPGFixture(t *testing.T, s *PgStore) productBillingFixture {
 	t.Helper()
 	insert, settle := productBillingPGWriters(t, s)

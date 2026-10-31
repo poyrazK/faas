@@ -375,7 +375,7 @@ func (m *MemStore) ApplyEnvironmentGitOpsWithEffects(ctx context.Context, lease 
 	return m.applyEnvironmentGitOps(ctx, lease, reviewed, effects, true)
 }
 
-func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, effects []EnvironmentGitOpsEffectSpec, requireEffects bool) ([]EnvironmentGitOpsStep, error) {
+func (m *MemStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, effects []EnvironmentGitOpsEffectSpec, requireEffects bool) ([]EnvironmentGitOpsStep, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	memory, err := m.gitOpsLeaseLocked(lease, time.Now())
@@ -484,6 +484,26 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 		configValues, configHash, err = api.NormalizeProjectEnvironmentConfig(raw)
 		if err != nil {
 			return nil, ErrInvalidArgument
+		}
+	}
+	// Environment edge policies are part of every bound hostname's policy
+	// projection (ADR-570); analyze them before changing any in-memory rows.
+	stagedPolicies := map[string]ProjectEnvironmentEdgePolicy{}
+	for _, change := range plan.Changes {
+		if change.Path != "policies" || change.Action == "keep" || change.Action == "retain_unmanaged" || change.Action == "overridden" {
+			continue
+		}
+		appID := observed.State.ResourceIDs[change.Resource]
+		key := projectEnvironmentRoutePolicyKey(appID, memory.source.EnvironmentSlug)
+		if change.Action == "remove" {
+			stagedPolicies[key] = ProjectEnvironmentEdgePolicy{}
+		} else {
+			stagedPolicies[key] = ProjectEnvironmentEdgePolicy{AccountID: memory.source.AccountID, ProjectID: memory.source.ProjectID, AppID: appID, EnvironmentSlug: memory.source.EnvironmentSlug, Rules: policies[change.Resource]}
+		}
+	}
+	if len(stagedPolicies) > 0 {
+		if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, memory.source.AccountID, nil, "", memTrafficPolicyChange{Policies: stagedPolicies})); err != nil {
+			return nil, err
 		}
 	}
 	oldJobs := m.jobs

@@ -95,7 +95,7 @@ func readDataRepairRecord(path string) (dataRepairRecord, error) {
 		return r, core.ErrConflict
 	}
 	_, producerPresent := fields["native_producer"]
-	if producerPresent != (r.Version == 2) || r.Version == 2 && (r.NativeProducer.validate() != nil || r.NativeGeneration == "") {
+	if producerPresent != (r.Version == 2) || r.Version == 2 && (r.NativeProducer.Protocol != nativeRepairProducerProtocol || r.NativeProducer.validate() != nil || r.NativeGeneration == "") {
 		return r, core.ErrConflict
 	}
 	if r.NativeGeneration != "" && (!canonicalNativeHelperID(r.NativeGeneration) || !canonicalNativeHelperID(r.NativeBootID) || r.NativeLease.Instance != r.Frame.TaskID || !r.NativeLease.Networkless) {

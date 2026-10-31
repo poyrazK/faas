@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A billing provider statements export to (ADR-1507).
+ * A billing provider statements export to.
  */
 export type BillingProvider = 'stripe' | 'paddle' | 'lago';

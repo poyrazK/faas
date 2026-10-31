@@ -43,7 +43,7 @@ type EventDeadlineInvestigation struct {
 // InvestigateEventDeadlineAlert performs one read-only triage request and, with
 // Explain, at most one blocker batch within the same read budget. It never
 // automatically paginates, fetches payloads, acknowledges alerts or retries work.
-func (c *Client) InvestigateEventDeadlineAlert(ctx context.Context, app string, alert EventDeliveryHealthAlert, options EventDeadlineInvestigationOptions) (EventDeadlineInvestigation, error) {
+func (c *PreviewClient) InvestigateEventDeadlineAlert(ctx context.Context, app string, alert EventDeliveryHealthAlert, options EventDeadlineInvestigationOptions) (EventDeadlineInvestigation, error) {
 	var out EventDeadlineInvestigation
 	if strings.TrimSpace(app) == "" || validateDeadlineAlertReference(alert) != nil {
 		return out, ErrValidation("deadline investigation requires an app and a valid Go deadline alert reference")

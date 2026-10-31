@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -83,14 +84,15 @@ func (r *Replayer) resealEnvelope(e state.SecretRekeyEnvelope) (state.SecretReke
 	if e.Kid == r.currentKid {
 		return e, nil
 	}
-	values, err := secretbox.OpenMulti(r.identities, e.Ciphertext)
+	values, binding, err := secretbox.OpenMultiBound(r.identities, e.Ciphertext)
 	if err != nil {
 		return e, fmt.Errorf("rekey: cannot open sealed envelope")
 	}
 	if values[e.Key] == "" {
 		return e, fmt.Errorf("rekey: sealed envelope has no matching secret")
 	}
-	sealed, err := secretbox.Seal(r.active, values)
+	// Keep the envelope's account binding (ADR-20261023173624).
+	sealed, err := secretbox.SealBound([]*age.X25519Recipient{r.active}, binding, values)
 	if err != nil {
 		return e, fmt.Errorf("rekey: cannot reseal envelope")
 	}

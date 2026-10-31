@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ProjectsService, OpenAPI } from '../src/index.js';
-import type { CheckedProjectReleaseManifest } from '../src/index.js';
+import { ProjectsService, OpenAPI } from '../src/preview.js';
+import type { CheckedProjectReleaseManifest } from '../src/preview.js';
 
 test('checked graph activation preserves empty CAS and fails closed on an older server', async () => {
   const oldFetch = globalThis.fetch;

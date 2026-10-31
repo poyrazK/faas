@@ -57,7 +57,7 @@ func TestDataAPIAdmissionDiagnosticsRejectMalformedMetadata(t *testing.T) {
 		`{}`, `{"outcome":"private-sentinel","wait_ms":0,"active":1,"queued":0}`,
 		`{"outcome":"admitted","active":1,"queued":0}`,
 		`{"outcome":"admitted","wait_ms":-1,"active":1,"queued":0}`,
-		`{"outcome":"admitted","wait_ms":0,"active":3,"queued":0}`,
+		`{"outcome":"admitted","wait_ms":0,"active":9,"queued":0}`,
 		`{"outcome":"admitted","wait_ms":0,"active":1,"queued":9}`,
 		`{"outcome":"admitted","wait_ms":0,"active":null,"queued":0}`,
 		`{"outcome":"admitted","wait_ms":0,"active":1,"queued":-1}`,

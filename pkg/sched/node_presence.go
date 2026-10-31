@@ -209,86 +209,17 @@ func (e *Engine) ObserveNodeInventory(ctx context.Context, inventory NodeInstanc
 			e.log.Warn("sched: missing VM inventory (report-only)", "instance_id", ins.ID, "node_id", nodeID)
 			continue
 		}
-		// Serialize with local lifecycle changes and reread before cleanup.
-		release := e.lockApp(ins.AppID)
-		app, appErr := e.store.AppByID(checkCtx, ins.AppID)
-		if appErr != nil || !e.ownsApp(app) {
-			release()
-			if appErr != nil && !errors.Is(appErr, state.ErrNotFound) {
-				retry = true
-			}
-			continue
-		}
-		fresh, readErr := e.store.InstanceByID(checkCtx, ins.ID)
-		freshNow := e.now()
-		if readErr != nil || fresh.State != string(state.StateRunning) || fresh.NodeID != nodeID ||
-			fresh.StartedAt.After(inventory.SampledAt) ||
-			(!fresh.StartedAt.IsZero() && freshNow.Sub(fresh.StartedAt) < time.Duration(api.InstanceDivergenceGraceSeconds)*time.Second) ||
-			!e.nodePresence.current(nodeID, observation.fingerprint, freshNow) {
-			release()
-			if (readErr != nil && !errors.Is(readErr, state.ErrNotFound)) ||
-				(readErr == nil && fresh.State == string(state.StateRunning) && fresh.NodeID == nodeID) {
-				retry = true
-			}
-			continue
-		}
-		// A dead process may retain its Manager entry, netns and allocator
-		// lease after a lost exit relay. Clean those before admitting a replacement.
-		if e.vmm == nil {
-			release()
-			retry = true
-			e.log.Warn("sched: missing VM cleanup unavailable", "instance_id", ins.ID)
-			continue
-		}
-		if err := e.timedDestroy(checkCtx, nodeID, ins.ID, DestroyTimeout); err != nil {
-			release()
-			retry = true
-			e.log.Warn("sched: missing VM cleanup failed", "instance_id", ins.ID, "err", err)
-			continue
-		}
-		err := reconciler.FailRunningInstanceIfOwnedByNode(
-			checkCtx, ins.ID, nodeID, terminalAt)
-		release()
-		if err == nil {
-			if e.ledger != nil {
-				e.ledger.Release(ins.ID)
-			}
-			subject := ins.ID
-			data, _ := json.Marshal(map[string]any{
-				"from": "running", "to": "failed",
-				"reason":  "missing_from_vmmd_presence",
-				"node_id": nodeID, "ts": terminalAt,
+		fingerprint, sampledAt := observation.fingerprint, inventory.SampledAt
+		failed, again := e.failMissingRunning(checkCtx, reconciler, ins, nodeID, "missing_from_vmmd_presence", terminalAt,
+			func(fresh state.Instance, freshNow time.Time) bool {
+				return !fresh.StartedAt.After(sampledAt) &&
+					(fresh.StartedAt.IsZero() || freshNow.Sub(fresh.StartedAt) >= time.Duration(api.InstanceDivergenceGraceSeconds)*time.Second) &&
+					e.nodePresence.current(nodeID, fingerprint, freshNow)
 			})
-			if eventErr := e.store.AppendEvent(
-				checkCtx, "schedd", "stale_instance_reconciled", &subject, data); eventErr != nil {
-				e.log.Warn("sched: stale-instance reconciliation audit failed",
-					"instance_id", ins.ID, "err", eventErr)
-			}
-			e.emitInstanceChanged(checkCtx, ins.ID, ins.AppID,
-				state.StateFailed, ins.WakeID)
-			if ins.Mode == string(state.InstanceModeService) {
-				e.scheduleServiceReconcile(checkCtx, ins.DeploymentID)
-			} else if ins.Mode == string(state.InstanceModeWorker) {
-				e.scheduleWorkerReconcile(checkCtx, ins.DeploymentID)
-			}
-			e.log.Warn("sched: failed stale running instance",
-				"instance_id", ins.ID, "app_id", ins.AppID,
-				"node_id", nodeID)
-			if e.ops != nil {
-				e.ops.InstanceDivergence("failed").Inc()
-			}
+		if failed {
 			reconciled++
-			continue
 		}
-		if errors.Is(err, state.ErrConflict) {
-			// A concurrent lifecycle writer already moved the row.
-			e.log.Debug("sched: stale-instance reconciliation race",
-				"instance_id", ins.ID, "node_id", nodeID)
-			continue
-		}
-		retry = true
-		e.log.Warn("sched: stale-instance reconciliation update failed",
-			"instance_id", ins.ID, "node_id", nodeID, "err", err)
+		retry = retry || again
 	}
 	for _, id := range frozenGone {
 		if err := e.ParkFrozen(checkCtx, id, "node_restart"); err != nil {
@@ -303,4 +234,79 @@ func (e *Engine) ObserveNodeInventory(ctx context.Context, inventory NodeInstanc
 		e.log.Warn("sched: stale-instance reconciliation complete",
 			"node_id", nodeID, "reconciled", reconciled)
 	}
+}
+
+// failMissingRunning cleans up and fails one RUNNING row whose node's vmmd
+// no longer holds its VM (ADR-419's inventory, or the vmmd restart adoption
+// report). stillMissing re-checks the evidence against the row reread under
+// the app lock. It returns whether the row was failed, and whether a later
+// pass must look at it again.
+func (e *Engine) failMissingRunning(ctx context.Context, reconciler staleInstanceStore, ins state.Instance, nodeID, reason string, terminalAt time.Time, stillMissing func(fresh state.Instance, now time.Time) bool) (failed, retry bool) {
+	// Serialize with local lifecycle changes and reread before cleanup.
+	release := e.lockApp(ins.AppID)
+	app, appErr := e.store.AppByID(ctx, ins.AppID)
+	if appErr != nil || !e.ownsApp(app) {
+		release()
+		return false, appErr != nil && !errors.Is(appErr, state.ErrNotFound)
+	}
+	fresh, readErr := e.store.InstanceByID(ctx, ins.ID)
+	if readErr != nil || fresh.State != string(state.StateRunning) || fresh.NodeID != nodeID ||
+		!stillMissing(fresh, e.now()) {
+		release()
+		return false, (readErr != nil && !errors.Is(readErr, state.ErrNotFound)) ||
+			(readErr == nil && fresh.State == string(state.StateRunning) && fresh.NodeID == nodeID)
+	}
+	// A dead process may retain its Manager entry, netns and allocator
+	// lease after a lost exit relay. Clean those before admitting a replacement.
+	if e.vmm == nil {
+		release()
+		e.log.Warn("sched: missing VM cleanup unavailable", "instance_id", ins.ID)
+		return false, true
+	}
+	if err := e.timedDestroy(ctx, nodeID, ins.ID, DestroyTimeout); err != nil {
+		release()
+		e.log.Warn("sched: missing VM cleanup failed", "instance_id", ins.ID, "err", err)
+		return false, true
+	}
+	err := reconciler.FailRunningInstanceIfOwnedByNode(ctx, ins.ID, nodeID, terminalAt)
+	release()
+	if errors.Is(err, state.ErrConflict) {
+		// A concurrent lifecycle writer already moved the row.
+		e.log.Debug("sched: stale-instance reconciliation race",
+			"instance_id", ins.ID, "node_id", nodeID)
+		return false, false
+	}
+	if err != nil {
+		e.log.Warn("sched: stale-instance reconciliation update failed",
+			"instance_id", ins.ID, "node_id", nodeID, "err", err)
+		return false, true
+	}
+	if e.ledger != nil {
+		e.ledger.Release(ins.ID)
+	}
+	subject := ins.ID
+	data, _ := json.Marshal(map[string]any{
+		"from": "running", "to": "failed",
+		"reason":  reason,
+		"node_id": nodeID, "ts": terminalAt,
+	})
+	if eventErr := e.store.AppendEvent(
+		ctx, "schedd", "stale_instance_reconciled", &subject, data); eventErr != nil {
+		e.log.Warn("sched: stale-instance reconciliation audit failed",
+			"instance_id", ins.ID, "err", eventErr)
+	}
+	e.emitInstanceChanged(ctx, ins.ID, ins.AppID,
+		state.StateFailed, ins.WakeID)
+	if ins.Mode == string(state.InstanceModeService) {
+		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	} else if ins.Mode == string(state.InstanceModeWorker) {
+		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
+	}
+	e.log.Warn("sched: failed stale running instance",
+		"instance_id", ins.ID, "app_id", ins.AppID,
+		"node_id", nodeID, "reason", reason)
+	if e.ops != nil {
+		e.ops.InstanceDivergence("failed").Inc()
+	}
+	return true, false
 }

@@ -27,6 +27,7 @@ func newAppSecretCredentialSink(store managedPostgresSecretStore, recipient func
 	if err != nil {
 		return nil, err
 	}
+	delivery.BindAccounts(runtimeSecretBinding)
 	return &appSecretCredentialSink{delivery: delivery, recipient: recipient, hmacKey: hmacKey}, nil
 }
 func (s *appSecretCredentialSink) Put(ctx context.Context, binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (string, error) {
@@ -39,7 +40,10 @@ func (s *appSecretCredentialSink) SealCredential(ctx context.Context, binding ma
 	if s.recipient == nil || s.hmacKey == nil {
 		return managedpostgres.SealedCredential{}, managedpostgres.ErrUnavailable
 	}
-	return credentialdelivery.Seal(binding, material, s.recipient(), s.hmacKey())
+	return credentialdelivery.SealBound(binding, material, s.recipient(), runtimeSecretBinding(binding.AccountID), s.hmacKey())
+}
+func (s *appSecretCredentialSink) PublishSealed(ctx context.Context, binding managedpostgres.Binding, sealed managedpostgres.SealedCredential) error {
+	return s.delivery.PublishSealed(ctx, binding, sealed)
 }
 func (s *appSecretCredentialSink) Delete(ctx context.Context, binding managedpostgres.Binding) error {
 	return s.delivery.Delete(ctx, binding)

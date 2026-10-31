@@ -8,7 +8,7 @@ import type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
- * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
+ * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
  */
 export type CreateDeploymentRequest = {
   /**
@@ -28,7 +28,7 @@ export type CreateDeploymentRequest = {
    */
   overrides?: (CreateDeploymentOverrides | null);
   /**
-   * Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit the app's effective signature policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid when apps.require_signed is on or security_policy=enforce (operator policy wins).
+   * Per-deploy signature-enforcement opt-in. nil = inherit the app's effective signature policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid when apps.require_signed is on or security_policy=enforce (operator policy wins).
    */
   require_signed?: boolean | null;
   /**
@@ -45,11 +45,11 @@ export type CreateDeploymentRequest = {
    */
   workflows?: Array<WorkflowSpec>;
   /**
-   * Per-deployment traffic-split weight (issue #556 PR-A). nil = server default 100; explicit 0..100 = opt into canary (Pro/Scale only).
+   * Per-deployment traffic-split weight. nil = server default 100; explicit 0..100 = opt into canary (Pro/Scale only).
    */
   traffic_percent?: number | null;
   /**
-   * Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`.
+   * Top-level per-deployment env scope. Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`.
    */
   scope?: string | null;
   /**
@@ -57,7 +57,7 @@ export type CreateDeploymentRequest = {
    */
   environment?: string;
   /**
-   * Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280.
+   * Free-form operator note. DB CHECK enforces length(reason) <= 280.
    */
   reason?: string | null;
   /**
@@ -65,7 +65,7 @@ export type CreateDeploymentRequest = {
    */
   tag?: 'incident_recovery' | 'hotfix' | 'scheduled_maintenance' | 'compliance_hold' | 'partner_request';
   /**
-   * Operator label. CLI auto-captures from `git config user.name`; githubd stamps pusher.name; Action defaults to ${{ github.actor }}.
+   * Operator label. CLI auto-captures from `git config user.name`; the GitHub integration stamps pusher.name; Action defaults to ${{ github.actor }}.
    */
   deployed_by?: string | null;
   /**
@@ -73,7 +73,7 @@ export type CreateDeploymentRequest = {
    */
   pr_number?: number | null;
   /**
-   * Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder.
+   * Per-deployment canary ladder. nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder.
    */
   canary?: (CanaryPresetSpec | null);
   /**
@@ -85,9 +85,17 @@ export type CreateDeploymentRequest = {
    */
   mcp_task_migration_override?: boolean;
   /**
-   * Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733).
+   * Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode.
    */
   override_freeze?: string;
+  /**
+   * Build this deployment now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time.
+   */
+  release_at?: string;
+  /**
+   * Slack or email notification channels told when this deployment, scheduled with release_at, starts or cannot start.
+   */
+  release_notify?: Array<string>;
   /**
    * Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */

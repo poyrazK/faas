@@ -34,6 +34,11 @@ func (s *server) promoteDeploymentWithBindingPolicy(w http.ResponseWriter, r *ht
 		api.WriteProblem(w, problem)
 		return
 	}
+	// ADR-20261020085706: promoting cannot skip an approval wait.
+	if p := s.releaseApprovalTrafficProblem(r, app, deployment); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	req, age, problem := bindingPromotionPolicy(r, acct, deployment)
 	if problem != nil {
 		api.WriteProblem(w, problem)

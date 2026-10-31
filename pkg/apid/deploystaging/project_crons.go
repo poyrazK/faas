@@ -16,7 +16,9 @@ type ProjectCronPlan struct {
 }
 
 // PlanProjectCrons replaces only HTTP schedules. Stable identities and operator
-// options survive declarations that still name the same schedule and path.
+// options survive declarations that still name the same schedule and path. A
+// timezone the source declares wins over the cron's current one; without one
+// the cron keeps its zone, and a new cron runs in UTC.
 func PlanProjectCrons(ctx context.Context, store state.DeploymentCronStagingStore, accountID, appID string, desired []api.DeploymentCronConfig) (ProjectCronPlan, error) {
 	snapshot, err := store.DeploymentCronStagingSnapshot(ctx, accountID, appID)
 	if err != nil {
@@ -24,12 +26,16 @@ func PlanProjectCrons(ctx context.Context, store state.DeploymentCronStagingStor
 	}
 	next := make([]api.DeploymentCronConfig, 0, len(desired))
 	for _, want := range desired {
+		declared := want.Timezone
 		want.ID, want.Timezone = uuid.NewString(), "UTC"
 		for _, old := range snapshot.Crons {
 			if old.Schedule == want.Schedule && old.Path == want.Path {
 				want.ID, want.Timezone, want.SkipIfRunning = old.ID, old.Timezone, old.SkipIfRunning
 				break
 			}
+		}
+		if declared != "" {
+			want.Timezone = declared
 		}
 		next = append(next, want)
 	}

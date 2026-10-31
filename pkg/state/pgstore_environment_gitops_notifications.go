@@ -55,5 +55,5 @@ func pgEnvironmentGitNotification(ctx context.Context, tx pgx.Tx, sourceID, axis
 		return nil
 	}
 	return mapErr(q.EnqueueEnvironmentGitNotification(ctx, tx, sqlc.EnqueueEnvironmentGitNotificationParams{
-		AccountID: row.AccountID, EventID: mustPgUUID(eventID), Payload: payload, NowAt: gitOpsTime(now)}))
+		AccountID: row.AccountID, SourceID: row.ID, EventID: mustPgUUID(eventID), Payload: payload, NowAt: gitOpsTime(now)}))
 }

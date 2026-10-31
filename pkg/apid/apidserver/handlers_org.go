@@ -21,7 +21,9 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -249,7 +251,38 @@ func (s *server) softDeleteOrg(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	if problem := postgresaccess.DeleteOrganization(r.Context(), s.store, s.managedPostgres, org); problem != nil {
+	// Organizations are never purged, so deleting one with apps left them,
+	// their deployments, secrets and artifacts, in place forever, and blocked
+	// their creators' own account erasure (bug hunt 2026-10-28 B20).
+	if lister, ok := s.store.(state.OrgAppLister); ok {
+		apps, err := lister.ListAppsByOrg(r.Context(), org.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not check the organization's apps; try again"))
+			return
+		}
+		if len(apps) > 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization has apps",
+				fmt.Sprintf("delete the organization's %d apps before deleting the organization", len(apps))))
+			return
+		}
+	}
+	// A deleted organization must not keep paying (Hunt 17 H17-2), and
+	// organizations are never hard-deleted, so this is the only chance.
+	endBilling := func(ctx context.Context) *api.Problem {
+		subject, err := state.BillingResourceAccount(ctx, s.store, org.ID)
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		if err == nil {
+			err = s.endSubscriptionForDeletion(ctx, subject)
+		}
+		if err != nil {
+			s.log.Error("org deletion: end billing subscription", "org", org.ID, "err", err)
+			return api.ErrCapacity("could not cancel the organization's billing subscription; try again")
+		}
+		return nil
+	}
+	if problem := postgresaccess.DeleteOrganization(r.Context(), s.store, s.managedPostgres, org, endBilling); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

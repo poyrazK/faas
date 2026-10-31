@@ -26,6 +26,9 @@ func matchSourceValue(file string, line int, key string, value []byte, inPEMBloc
 	}
 	value = bytes.TrimSpace(value)
 	if sourceEntropyToken(value) {
+		if isSRIToken(value) {
+			return nil
+		}
 		return matchValue(file, line, key, value, false)
 	}
 	for pos := 0; pos < len(value); pos++ {
@@ -43,7 +46,7 @@ func matchSourceValue(file string, line int, key string, value []byte, inPEMBloc
 				continue
 			}
 			literal := value[start:pos]
-			if sourceEntropyToken(literal) {
+			if sourceEntropyToken(literal) && !isSRIToken(literal) {
 				if f := matchValue(file, line, key, literal, false); f != nil {
 					return f
 				}

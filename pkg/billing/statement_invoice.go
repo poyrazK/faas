@@ -249,6 +249,10 @@ func ProductControlStatementInvoice(doc api.ProductBillingDocument) (StatementIn
 		if fee.ProratedFrom != nil {
 			label += ", prorated from " + fee.ProratedFrom.UTC().Format(time.DateOnly)
 		}
+		// The trial's minutes owe no fee (ADR-20261021195901).
+		if fee.TrialStartsAt != nil && fee.TrialEndsAt != nil {
+			label += ", excluding the free trial from " + fee.TrialStartsAt.UTC().Format(time.DateOnly) + " to " + fee.TrialEndsAt.UTC().Format(time.DateOnly)
+		}
 		key := invoiceLineKey{fee: state.StatementFeeBase, label: label}
 		if lines[key] != nil || fee.AmountMillicents <= 0 {
 			continue

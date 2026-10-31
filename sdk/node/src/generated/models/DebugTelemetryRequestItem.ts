@@ -40,7 +40,7 @@ export type DebugTelemetryRequestItem = {
    */
   trace_id?: string | null;
   /**
-   * True when Gregale linked this service call to its caller's trace because the caller sent no traceparent and was serving exactly one request (ADR-1138): the trace id is inferred, not propagated.
+   * True when Gregale linked this service call to its caller's trace because the caller sent no traceparent and was serving exactly one request: the trace id is inferred, not propagated.
    */
   trace_inferred?: boolean;
   received_at: string;
@@ -81,5 +81,9 @@ export type DebugTelemetryRequestItem = {
    */
   image_digest?: string;
   guest?: DebugGuestExecutionEvidence;
+  /**
+   * Stack snapshot taken while this request was in flight (slow_request capture), when one exists.
+   */
+  profile_capture_id?: string;
 };
 

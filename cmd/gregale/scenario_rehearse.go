@@ -10,7 +10,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Version 1 rehearses local Git commits using one trusted, fixture-based recipe.
@@ -113,6 +116,9 @@ func cmdTestRehearse(args []string) int {
 	if err := reserveTestRehearsalOutputs(o.Report, o.HTML, o.Markdown); err != nil {
 		return printErr("Invalid rehearsal output", err)
 	}
+	if local := testRehearsalLocalExecution(session.scenario, o.Engine); local != "" {
+		_, _ = fmt.Fprintf(osStderr, "Warning: %s, inside each checked-out revision and with your environment (FAAS_TOKEN removed). Rehearse only revisions you trust.\n", local)
+	}
 	report := runTestRehearsal(ctx, client, session, o)
 	if err := saveTestRehearsalReport(o, report); err != nil {
 		return printErr("Could not save rehearsal", err)
@@ -189,16 +195,47 @@ func reserveTestRehearsalOutputs(paths ...string) error {
 	return nil
 }
 
+// testRehearsalLocalExecution says what a rehearsal runs on the invoking
+// machine, or "" when nothing does. Recipe commands run inside each extracted
+// revision with the caller's environment, so a candidate's scripts run here
+// even when its app runs in microVMs.
+func testRehearsalLocalExecution(scenario testScenario, engine string) string {
+	if engine != "real-vm" {
+		return "both revisions and the scenario's commands run on this machine"
+	}
+	local := len(scenario.Simulation) > 0 || scenario.CommandExecution == nil &&
+		(len(scenario.Setup) > 0 || len(scenario.Trigger) > 0 || len(scenario.Command) > 0 || len(scenario.Cleanup) > 0)
+	for _, step := range scenario.Steps {
+		local = local || len(step.Command) > 0
+	}
+	if !local {
+		return ""
+	}
+	return "the scenario's setup, trigger, step and cleanup commands run on this machine"
+}
+
 func runTestRehearsal(ctx context.Context, client *Client, session *testRehearsalSession, o testRehearsalOptions) testRehearsalReport {
 	report := testRehearsalReport{testRehearsalIdentity: session.identity, StartedAt: time.Now().UTC()}
 	profiles := []string{o.Engine}
 	if o.Engine == "real-vm" {
 		profiles, _ = selectedTestProfiles(o.Profile)
 	}
+	// A capability the platform has not enabled refuses every slot the same
+	// way, so the first refusal skips the rest instead of creating and
+	// destroying sessions for each.
+	ctx, refuse := context.WithCancelCause(ctx)
+	defer refuse(nil)
+	run := func(side int, profile string, attempt int) testRunReceipt {
+		receipt := session.run(ctx, client, o, side, profile, attempt)
+		if strings.Contains(receipt.Error, api.CodeRehearsalNotEnabled) {
+			refuse(errors.New("the platform has not enabled a rehearsal capability this scenario needs"))
+		}
+		return receipt
+	}
 	for attempt := 1; attempt <= o.Repeat; attempt++ {
 		for _, profile := range profiles {
-			report.BaselineRuns = append(report.BaselineRuns, session.run(ctx, client, o, 0, profile, attempt))
-			report.CandidateRuns = append(report.CandidateRuns, session.run(ctx, client, o, 1, profile, attempt))
+			report.BaselineRuns = append(report.BaselineRuns, run(0, profile, attempt))
+			report.CandidateRuns = append(report.CandidateRuns, run(1, profile, attempt))
 		}
 	}
 	// Remove all extracted application and trusted input files before deciding
@@ -249,7 +286,7 @@ func (s *testRehearsalSession) run(ctx context.Context, client *Client, o testRe
 		printTestRunResult(receipt, o.Repeat)
 	}()
 	if ctx.Err() != nil {
-		receipt.Status, receipt.SkipReason = "skipped", "rehearsal interrupted: "+ctx.Err().Error()
+		receipt.Status, receipt.SkipReason = "skipped", "rehearsal interrupted: "+context.Cause(ctx).Error()
 		return receipt
 	}
 	if !jsonOutput {
@@ -311,6 +348,15 @@ func prepareTestRehearsal(ctx context.Context, o testRehearsalOptions) (*testReh
 	if err != nil {
 		return nil, err
 	}
+	// rehearsalRelativePath compares symlink-resolved paths, so the session
+	// root must be resolved too: macOS's default TMPDIR is below the /var
+	// symlink, which made every extracted source look outside the checkout.
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return nil, err
+	}
+	root = resolved
 	s := &testRehearsalSession{root: root, trusted: filepath.Join(root, "trusted")}
 	if err := s.prepare(ctx, o); err != nil {
 		_ = os.RemoveAll(root)

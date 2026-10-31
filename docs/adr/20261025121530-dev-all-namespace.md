@@ -1,0 +1,21 @@
+# ADR-20261025121530: `gregale dev --all` runs its apps in one developer namespace
+
+- **Status:** accepted
+- **Date:** 2026-10-25
+- **Amends:** the `gregale dev --all` contract in [gregale dev](../gregale-dev.md#run-every-app-in-a-workspace), which said developer environments are not wired to each other.
+- **Decision:** `gregale dev --all` puts every app's developer environment in one group workspace and registers each environment in one namespace, the run-scoped namespace `gregale test` already uses (`scenario_test_members`, plain mode: no webhook capture, no network containment).
+  - **Workspace:** the supervisor derives one workspace ID from the local developer ID and the `--all` root, the same derivation `gregale dev` uses for a source directory. It checks the developer-environment budget against that workspace and hands it to each child loop in `GREGALE_DEV_GROUP_WORKSPACE`.
+  - **Registration:** each child creates or refreshes its environment, then registers `{workload: <project name>, app: <session slug>}` under run ID = the workspace (`PUT /v1/dev/test-runs/{run_id}`, the same scope as creating the session). A 409 means the member is already registered. A stopped developer session revives with the same app ID, so that row stays valid. A project name the namespace cannot hold (outside 3 to 40 lowercase letters, digits and hyphens) is reported, and that app runs outside the group. Any other registration failure stops that app's loop, so a member never silently reaches production.
+  - **Resolution:** the service proxy already resolves `<name>.svc.gregale` for a registered caller inside its run and never falls back to production. The authorizer already requires caller and target in the same live run. `servicebinding.NewAliasAllowed` gains the matching rule, so `http://<name>.internal:10081` works as well.
+  - **Compose services:** `dev --all` and the `gregale start` picker now include Compose services that build from a source directory. Image-only services (`postgres`, `redis`, `nginx`) have no source to run and are skipped.
+- **Why:** Before this, a developer environment that called a sibling by name reached the account's deployed app of that name. Development code then talked to production data, and a change spanning two services could not be tried before deploying. The `gregale test` namespace already gives the isolation needed: run-scoped names, no production fallback, and both sides checked live.
+- **Consequences:**
+  - A group member reaches only the group by name. A name that is not in the group fails instead of reaching production. To call a deployed service from development, use its public URL.
+  - `dev --all` environments now live in the group workspace, not one workspace per directory. Environments from earlier `dev --all` runs are not reused and expire with their lease. `gregale dev --path apps/api` on its own is a separate environment from the group's `api`.
+  - Developer sessions have no `depends_on` bindings, so they get no `GREGALE_SERVICE_<NAME>_URL` variables. Code reaches siblings through the `.internal` names.
+  - A service that needs a database in development uses `--postgres`. The Compose `postgres` service is not started.
+  - Rolling upgrades: there is no API, schema or wire change. A new CLI against an older gateway gets `.svc.gregale` resolution inside the group, while `.internal` names stay denied for developer sessions until the gateway updates, as they were before. An older CLI registers nothing and keeps the previous behaviour.
+- **Rejected alternatives:**
+  - **Make developer sessions project members.** Project resolution falls back to production for names without a sibling, which is the behaviour this replaces. It would also count developer sessions as project apps.
+  - **A new developer-namespace table.** The test-run namespace already has the lookup, authorization and cleanup (members of fully deleted runs are pruned). A second copy would drift.
+  - **Register from the supervisor before the children start.** The session request that creates the environment carries per-app settings (watch command, buckets) that only the child resolves. Creating it from the supervisor with partial settings would briefly clear them.

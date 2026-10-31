@@ -43,6 +43,114 @@ func (q *Queries) InsertScenarioActionPolicy(ctx context.Context, db DBTX, arg I
 	return err
 }
 
+const insertScenarioCapturedEvent = `-- name: InsertScenarioCapturedEvent :exec
+INSERT INTO scenario_captured_events(account_id,run_id,app_id,source,type,schema_version,data,oversized,event_id)
+VALUES($1::text::uuid,$2::text,$3::text::uuid,$4::text,
+ $5::text,$6::text,$7::jsonb,$8::boolean,nullif($9::text,''))
+`
+
+type InsertScenarioCapturedEventParams struct {
+	AccountID     string
+	RunID         string
+	AppID         string
+	Source        string
+	Type          string
+	SchemaVersion string
+	Data          []byte
+	Oversized     bool
+	EventID       string
+}
+
+func (q *Queries) InsertScenarioCapturedEvent(ctx context.Context, db DBTX, arg InsertScenarioCapturedEventParams) error {
+	_, err := db.Exec(ctx, insertScenarioCapturedEvent,
+		arg.AccountID,
+		arg.RunID,
+		arg.AppID,
+		arg.Source,
+		arg.Type,
+		arg.SchemaVersion,
+		arg.Data,
+		arg.Oversized,
+		arg.EventID,
+	)
+	return err
+}
+
+const insertScenarioCapturedPlatformCall = `-- name: InsertScenarioCapturedPlatformCall :one
+INSERT INTO scenario_captured_platform_calls(account_id,run_id,app_id,kind,target,name,idempotency_key,message,oversized)
+VALUES($1::text::uuid,$2::text,$3::text::uuid,$4::text,$5::text,
+ $6::text,nullif($7::text,''),$8::jsonb,$9::boolean)
+RETURNING id::text AS id
+`
+
+type InsertScenarioCapturedPlatformCallParams struct {
+	AccountID      string
+	RunID          string
+	AppID          string
+	Kind           string
+	Target         string
+	Name           string
+	IdempotencyKey string
+	Message        []byte
+	Oversized      bool
+}
+
+func (q *Queries) InsertScenarioCapturedPlatformCall(ctx context.Context, db DBTX, arg InsertScenarioCapturedPlatformCallParams) (string, error) {
+	row := db.QueryRow(ctx, insertScenarioCapturedPlatformCall,
+		arg.AccountID,
+		arg.RunID,
+		arg.AppID,
+		arg.Kind,
+		arg.Target,
+		arg.Name,
+		arg.IdempotencyKey,
+		arg.Message,
+		arg.Oversized,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertScenarioCapturedQueueMessage = `-- name: InsertScenarioCapturedQueueMessage :one
+INSERT INTO scenario_captured_queue_messages(account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized,scheduled_at)
+VALUES($1::text::uuid,$2::text,$3::text::uuid,$4::text,
+ $5::text,$6::text,$7::text,$8::jsonb,$9::boolean,
+ $10::timestamptz)
+RETURNING id::text AS id
+`
+
+type InsertScenarioCapturedQueueMessageParams struct {
+	AccountID   string
+	RunID       string
+	AppID       string
+	Kind        string
+	Target      string
+	QueueName   string
+	Schedule    string
+	Message     []byte
+	Oversized   bool
+	ScheduledAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertScenarioCapturedQueueMessage(ctx context.Context, db DBTX, arg InsertScenarioCapturedQueueMessageParams) (string, error) {
+	row := db.QueryRow(ctx, insertScenarioCapturedQueueMessage,
+		arg.AccountID,
+		arg.RunID,
+		arg.AppID,
+		arg.Kind,
+		arg.Target,
+		arg.QueueName,
+		arg.Schedule,
+		arg.Message,
+		arg.Oversized,
+		arg.ScheduledAt,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertScenarioTestMember = `-- name: InsertScenarioTestMember :exec
 INSERT INTO scenario_test_members(account_id,run_id,workload_name,app_id)
 VALUES($1::text::uuid,$2::text,$3::text,$4::text::uuid)
@@ -96,6 +204,20 @@ type LockScenarioActionRunParams struct {
 func (q *Queries) LockScenarioActionRun(ctx context.Context, db DBTX, arg LockScenarioActionRunParams) error {
 	_, err := db.Exec(ctx, lockScenarioActionRun, arg.AccountID, arg.RunID)
 	return err
+}
+
+const scenarioActionAppHasManagedBindings = `-- name: ScenarioActionAppHasManagedBindings :one
+SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=$1::text::uuid
+ AND (managed_postgres_binding_id IS NOT NULL OR managed_object_storage_credential_id IS NOT NULL)) AS bound
+`
+
+// A contained member cannot reach real managed PostgreSQL or object storage;
+// refuse it at enrollment instead of failing later (ADR-20261019180000).
+func (q *Queries) ScenarioActionAppHasManagedBindings(ctx context.Context, db DBTX, appID string) (bool, error) {
+	row := db.QueryRow(ctx, scenarioActionAppHasManagedBindings, appID)
+	var bound bool
+	err := row.Scan(&bound)
+	return bound, err
 }
 
 const scenarioActionAppUnstarted = `-- name: ScenarioActionAppUnstarted :one
@@ -360,6 +482,561 @@ func (q *Queries) ScenarioCapturedActions(ctx context.Context, db DBTX, arg Scen
 	return items, nil
 }
 
+const scenarioCapturedEventByIdentity = `-- name: ScenarioCapturedEventByIdentity :one
+SELECT type,schema_version,created_at FROM scenario_captured_events
+WHERE account_id=$1::text::uuid AND run_id=$2::text
+ AND source=$3::text AND event_id=$4::text
+ORDER BY created_at,id LIMIT 1
+`
+
+type ScenarioCapturedEventByIdentityParams struct {
+	AccountID string
+	RunID     string
+	Source    string
+	EventID   string
+}
+
+type ScenarioCapturedEventByIdentityRow struct {
+	Type          string
+	SchemaVersion string
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ScenarioCapturedEventByIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventByIdentityParams) (ScenarioCapturedEventByIdentityRow, error) {
+	row := db.QueryRow(ctx, scenarioCapturedEventByIdentity,
+		arg.AccountID,
+		arg.RunID,
+		arg.Source,
+		arg.EventID,
+	)
+	var i ScenarioCapturedEventByIdentityRow
+	err := row.Scan(&i.Type, &i.SchemaVersion, &i.CreatedAt)
+	return i, err
+}
+
+const scenarioCapturedEventIdentity = `-- name: ScenarioCapturedEventIdentity :one
+SELECT (type=$1::text AND schema_version=$2::text
+  AND data IS NOT DISTINCT FROM $3::jsonb AND oversized=$4::boolean)::boolean AS same
+FROM scenario_captured_events
+WHERE account_id=$5::text::uuid AND run_id=$6::text
+ AND source=$7::text AND event_id=$8::text
+ORDER BY created_at,id LIMIT 1
+`
+
+type ScenarioCapturedEventIdentityParams struct {
+	Type          string
+	SchemaVersion string
+	Data          []byte
+	Oversized     bool
+	AccountID     string
+	RunID         string
+	Source        string
+	EventID       string
+}
+
+// Whether a captured event with this source and ID carries the same type,
+// schema version and data. A run's events are few and read under the run
+// lock, so the run index bounds this lookup (ADR-20261021120000).
+func (q *Queries) ScenarioCapturedEventIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventIdentityParams) (bool, error) {
+	row := db.QueryRow(ctx, scenarioCapturedEventIdentity,
+		arg.Type,
+		arg.SchemaVersion,
+		arg.Data,
+		arg.Oversized,
+		arg.AccountID,
+		arg.RunID,
+		arg.Source,
+		arg.EventID,
+	)
+	var same bool
+	err := row.Scan(&same)
+	return same, err
+}
+
+const scenarioCapturedEvents = `-- name: ScenarioCapturedEvents :many
+SELECT e.id::text AS id,p.workload_name AS workload,e.source,e.type,e.schema_version,e.data,e.oversized
+FROM scenario_captured_events e JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=e.run_id
+WHERE e.account_id=$1::text::uuid AND e.run_id=$2::text
+ORDER BY e.created_at,e.id LIMIT 257
+`
+
+type ScenarioCapturedEventsParams struct {
+	AccountID string
+	RunID     string
+}
+
+type ScenarioCapturedEventsRow struct {
+	ID            string
+	Workload      string
+	Source        string
+	Type          string
+	SchemaVersion string
+	Data          []byte
+	Oversized     bool
+}
+
+func (q *Queries) ScenarioCapturedEvents(ctx context.Context, db DBTX, arg ScenarioCapturedEventsParams) ([]ScenarioCapturedEventsRow, error) {
+	rows, err := db.Query(ctx, scenarioCapturedEvents, arg.AccountID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScenarioCapturedEventsRow{}
+	for rows.Next() {
+		var i ScenarioCapturedEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Workload,
+			&i.Source,
+			&i.Type,
+			&i.SchemaVersion,
+			&i.Data,
+			&i.Oversized,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const scenarioCapturedPlatformCallByID = `-- name: ScenarioCapturedPlatformCallByID :one
+SELECT kind,target,name,message,oversized,created_at FROM scenario_captured_platform_calls
+WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND run_id=$3::text
+`
+
+type ScenarioCapturedPlatformCallByIDParams struct {
+	ID        string
+	AccountID string
+	RunID     string
+}
+
+type ScenarioCapturedPlatformCallByIDRow struct {
+	Kind      string
+	Target    string
+	Name      string
+	Message   []byte
+	Oversized bool
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ScenarioCapturedPlatformCallByID(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallByIDParams) (ScenarioCapturedPlatformCallByIDRow, error) {
+	row := db.QueryRow(ctx, scenarioCapturedPlatformCallByID, arg.ID, arg.AccountID, arg.RunID)
+	var i ScenarioCapturedPlatformCallByIDRow
+	err := row.Scan(
+		&i.Kind,
+		&i.Target,
+		&i.Name,
+		&i.Message,
+		&i.Oversized,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const scenarioCapturedPlatformCalls = `-- name: ScenarioCapturedPlatformCalls :many
+SELECT c.id::text AS id,p.workload_name AS workload,c.kind,c.target,c.name,c.message,c.oversized
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id AND p.account_id=c.account_id AND p.run_id=c.run_id
+WHERE c.account_id=$1::text::uuid AND c.run_id=$2::text
+ORDER BY c.created_at,c.id LIMIT 257
+`
+
+type ScenarioCapturedPlatformCallsParams struct {
+	AccountID string
+	RunID     string
+}
+
+type ScenarioCapturedPlatformCallsRow struct {
+	ID        string
+	Workload  string
+	Kind      string
+	Target    string
+	Name      string
+	Message   []byte
+	Oversized bool
+}
+
+func (q *Queries) ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallsParams) ([]ScenarioCapturedPlatformCallsRow, error) {
+	rows, err := db.Query(ctx, scenarioCapturedPlatformCalls, arg.AccountID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScenarioCapturedPlatformCallsRow{}
+	for rows.Next() {
+		var i ScenarioCapturedPlatformCallsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Workload,
+			&i.Kind,
+			&i.Target,
+			&i.Name,
+			&i.Message,
+			&i.Oversized,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const scenarioCapturedQueueMessageByID = `-- name: ScenarioCapturedQueueMessageByID :one
+SELECT kind,target,queue_name,schedule,message,oversized,scheduled_at,created_at
+FROM scenario_captured_queue_messages
+WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND run_id=$3::text
+`
+
+type ScenarioCapturedQueueMessageByIDParams struct {
+	ID        string
+	AccountID string
+	RunID     string
+}
+
+type ScenarioCapturedQueueMessageByIDRow struct {
+	Kind        string
+	Target      string
+	QueueName   string
+	Schedule    string
+	Message     []byte
+	Oversized   bool
+	ScheduledAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
+// A capture is read back only inside its own run (ADR-20261022082721).
+func (q *Queries) ScenarioCapturedQueueMessageByID(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessageByIDParams) (ScenarioCapturedQueueMessageByIDRow, error) {
+	row := db.QueryRow(ctx, scenarioCapturedQueueMessageByID, arg.ID, arg.AccountID, arg.RunID)
+	var i ScenarioCapturedQueueMessageByIDRow
+	err := row.Scan(
+		&i.Kind,
+		&i.Target,
+		&i.QueueName,
+		&i.Schedule,
+		&i.Message,
+		&i.Oversized,
+		&i.ScheduledAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const scenarioCapturedQueueMessages = `-- name: ScenarioCapturedQueueMessages :many
+SELECT m.id::text AS id,p.workload_name AS workload,m.kind,m.target,m.queue_name,m.schedule,m.message,m.oversized
+FROM scenario_captured_queue_messages m JOIN scenario_test_action_policies p ON p.app_id=m.app_id AND p.account_id=m.account_id AND p.run_id=m.run_id
+WHERE m.account_id=$1::text::uuid AND m.run_id=$2::text
+ORDER BY m.created_at,m.id LIMIT 257
+`
+
+type ScenarioCapturedQueueMessagesParams struct {
+	AccountID string
+	RunID     string
+}
+
+type ScenarioCapturedQueueMessagesRow struct {
+	ID        string
+	Workload  string
+	Kind      string
+	Target    string
+	QueueName string
+	Schedule  string
+	Message   []byte
+	Oversized bool
+}
+
+func (q *Queries) ScenarioCapturedQueueMessages(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessagesParams) ([]ScenarioCapturedQueueMessagesRow, error) {
+	rows, err := db.Query(ctx, scenarioCapturedQueueMessages, arg.AccountID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScenarioCapturedQueueMessagesRow{}
+	for rows.Next() {
+		var i ScenarioCapturedQueueMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Workload,
+			&i.Kind,
+			&i.Target,
+			&i.QueueName,
+			&i.Schedule,
+			&i.Message,
+			&i.Oversized,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const scenarioCapturedWorkflowRunReference = `-- name: ScenarioCapturedWorkflowRunReference :one
+SELECT ('run:' || p.workload_name || '/' || c.target || '/' || c.name || '#' ||
+ (SELECT count(*) FROM scenario_captured_platform_calls x WHERE x.account_id=c.account_id AND x.run_id=c.run_id AND x.app_id=c.app_id
+   AND x.kind='workflow_run' AND x.target=c.target AND x.name=c.name AND (x.created_at,x.id)<=(c.created_at,c.id))::text)::text AS reference
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id
+WHERE c.id=$1::text::uuid AND c.account_id=$2::text::uuid AND c.run_id=$3::text AND c.kind='workflow_run'
+`
+
+type ScenarioCapturedWorkflowRunReferenceParams struct {
+	ID        string
+	AccountID string
+	RunID     string
+}
+
+// A captured workflow run is named by its starter, target, workflow and
+// start ordinal, so a later event to it compares across sibling runs.
+func (q *Queries) ScenarioCapturedWorkflowRunReference(ctx context.Context, db DBTX, arg ScenarioCapturedWorkflowRunReferenceParams) (string, error) {
+	row := db.QueryRow(ctx, scenarioCapturedWorkflowRunReference, arg.ID, arg.AccountID, arg.RunID)
+	var reference string
+	err := row.Scan(&reference)
+	return reference, err
+}
+
+const scenarioEventCapturePolicy = `-- name: ScenarioEventCapturePolicy :one
+SELECT account_id::text AS account_id,run_id,workload_name FROM scenario_test_action_policies
+WHERE app_id=$1::text::uuid
+`
+
+type ScenarioEventCapturePolicyRow struct {
+	AccountID    string
+	RunID        string
+	WorkloadName string
+}
+
+// Any enrolled app, contained or capture-only, publishes into its run's
+// evidence instead of the account's event bus (ADR-20261020090000).
+func (q *Queries) ScenarioEventCapturePolicy(ctx context.Context, db DBTX, appID string) (ScenarioEventCapturePolicyRow, error) {
+	row := db.QueryRow(ctx, scenarioEventCapturePolicy, appID)
+	var i ScenarioEventCapturePolicyRow
+	err := row.Scan(&i.AccountID, &i.RunID, &i.WorkloadName)
+	return i, err
+}
+
+const scenarioEventCaptureState = `-- name: ScenarioEventCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=$1::text::uuid
+  AND run_id=$2::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_events WHERE account_id=$1::text::uuid AND run_id=$2::text)::bigint AS captured
+`
+
+type ScenarioEventCaptureStateParams struct {
+	AccountID string
+	RunID     string
+}
+
+type ScenarioEventCaptureStateRow struct {
+	Sealed   bool
+	Captured int64
+}
+
+func (q *Queries) ScenarioEventCaptureState(ctx context.Context, db DBTX, arg ScenarioEventCaptureStateParams) (ScenarioEventCaptureStateRow, error) {
+	row := db.QueryRow(ctx, scenarioEventCaptureState, arg.AccountID, arg.RunID)
+	var i ScenarioEventCaptureStateRow
+	err := row.Scan(&i.Sealed, &i.Captured)
+	return i, err
+}
+
+const scenarioExternalWorkflowRunInAccount = `-- name: ScenarioExternalWorkflowRunInAccount :one
+SELECT EXISTS(SELECT 1 FROM workflow_runs wr JOIN apps a ON a.id=wr.app_id
+ WHERE wr.id=$1::text::uuid AND a.account_id=$2::text::uuid)::boolean AS present
+`
+
+type ScenarioExternalWorkflowRunInAccountParams struct {
+	ID        string
+	AccountID string
+}
+
+func (q *Queries) ScenarioExternalWorkflowRunInAccount(ctx context.Context, db DBTX, arg ScenarioExternalWorkflowRunInAccountParams) (bool, error) {
+	row := db.QueryRow(ctx, scenarioExternalWorkflowRunInAccount, arg.ID, arg.AccountID)
+	var present bool
+	err := row.Scan(&present)
+	return present, err
+}
+
+const scenarioPlatformCallsByIdempotencyKey = `-- name: ScenarioPlatformCallsByIdempotencyKey :many
+SELECT id::text AS id,name,(message IS NOT DISTINCT FROM $1::jsonb AND oversized=$2::boolean)::boolean AS same
+FROM scenario_captured_platform_calls
+WHERE account_id=$3::text::uuid AND run_id=$4::text AND app_id=$5::text::uuid
+ AND kind=$6::text AND target=$7::text AND idempotency_key=$8::text
+ORDER BY created_at,id LIMIT 257
+`
+
+type ScenarioPlatformCallsByIdempotencyKeyParams struct {
+	Message        []byte
+	Oversized      bool
+	AccountID      string
+	RunID          string
+	AppID          string
+	Kind           string
+	Target         string
+	IdempotencyKey string
+}
+
+type ScenarioPlatformCallsByIdempotencyKeyRow struct {
+	ID   string
+	Name string
+	Same bool
+}
+
+// Earlier captures under the same key; each kind applies the production
+// replay rule to them (ADR-20261021150000).
+func (q *Queries) ScenarioPlatformCallsByIdempotencyKey(ctx context.Context, db DBTX, arg ScenarioPlatformCallsByIdempotencyKeyParams) ([]ScenarioPlatformCallsByIdempotencyKeyRow, error) {
+	rows, err := db.Query(ctx, scenarioPlatformCallsByIdempotencyKey,
+		arg.Message,
+		arg.Oversized,
+		arg.AccountID,
+		arg.RunID,
+		arg.AppID,
+		arg.Kind,
+		arg.Target,
+		arg.IdempotencyKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScenarioPlatformCallsByIdempotencyKeyRow{}
+	for rows.Next() {
+		var i ScenarioPlatformCallsByIdempotencyKeyRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Same); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const scenarioPlatformCaptureState = `-- name: ScenarioPlatformCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=$1::text::uuid
+  AND run_id=$2::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_platform_calls WHERE account_id=$1::text::uuid AND run_id=$2::text)::bigint AS captured
+`
+
+type ScenarioPlatformCaptureStateParams struct {
+	AccountID string
+	RunID     string
+}
+
+type ScenarioPlatformCaptureStateRow struct {
+	Sealed   bool
+	Captured int64
+}
+
+func (q *Queries) ScenarioPlatformCaptureState(ctx context.Context, db DBTX, arg ScenarioPlatformCaptureStateParams) (ScenarioPlatformCaptureStateRow, error) {
+	row := db.QueryRow(ctx, scenarioPlatformCaptureState, arg.AccountID, arg.RunID)
+	var i ScenarioPlatformCaptureStateRow
+	err := row.Scan(&i.Sealed, &i.Captured)
+	return i, err
+}
+
+const scenarioQueueCaptureState = `-- name: ScenarioQueueCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=$1::text::uuid
+  AND run_id=$2::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_queue_messages WHERE account_id=$1::text::uuid AND run_id=$2::text)::bigint AS captured
+`
+
+type ScenarioQueueCaptureStateParams struct {
+	AccountID string
+	RunID     string
+}
+
+type ScenarioQueueCaptureStateRow struct {
+	Sealed   bool
+	Captured int64
+}
+
+func (q *Queries) ScenarioQueueCaptureState(ctx context.Context, db DBTX, arg ScenarioQueueCaptureStateParams) (ScenarioQueueCaptureStateRow, error) {
+	row := db.QueryRow(ctx, scenarioQueueCaptureState, arg.AccountID, arg.RunID)
+	var i ScenarioQueueCaptureStateRow
+	err := row.Scan(&i.Sealed, &i.Captured)
+	return i, err
+}
+
+const scenarioQueueCaptureTarget = `-- name: ScenarioQueueCaptureTarget :one
+SELECT coalesce((SELECT 'workload:' || p.workload_name FROM scenario_test_action_policies p JOIN apps a ON a.id=p.app_id
+  WHERE p.account_id=$1::text::uuid AND p.run_id=$2::text AND p.workload_name<>''
+  AND (p.workload_name=$3::text OR a.slug=$3::text) ORDER BY p.workload_name LIMIT 1),
+ (SELECT 'app:' || a.slug FROM apps a WHERE a.slug=$3::text AND a.account_id=$1::text::uuid),
+ '')::text AS target
+`
+
+type ScenarioQueueCaptureTargetParams struct {
+	AccountID string
+	RunID     string
+	Slug      string
+}
+
+// A member of the same run is named by its workload, so sibling runs compare;
+// any other app must exist in the caller's account, as for a real send.
+func (q *Queries) ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg ScenarioQueueCaptureTargetParams) (string, error) {
+	row := db.QueryRow(ctx, scenarioQueueCaptureTarget, arg.AccountID, arg.RunID, arg.Slug)
+	var target string
+	err := row.Scan(&target)
+	return target, err
+}
+
+const scenarioRealtimeEndpointTarget = `-- name: ScenarioRealtimeEndpointTarget :one
+SELECT coalesce((SELECT CASE WHEN p.app_id IS NOT NULL THEN 'workload:' || p.workload_name || '/endpoint#' ||
+   (SELECT count(*) FROM managed_realtime_endpoints x WHERE x.app_id=e.app_id AND (x.created_at,x.id)<=(e.created_at,e.id))::text
+  ELSE 'app:' || a.slug || '/endpoint:' || e.id::text END
+ FROM managed_realtime_endpoints e JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id
+ LEFT JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=$1::text AND p.workload_name<>''
+ WHERE e.id=$2::text::uuid AND e.account_id=$3::text::uuid
+  AND (a.slug=$4::text OR p.workload_name=$4::text)),'')::text AS target
+`
+
+type ScenarioRealtimeEndpointTargetParams struct {
+	RunID      string
+	EndpointID string
+	AccountID  string
+	Slug       string
+}
+
+// A run member's endpoint is named by its workload and creation order, so
+// sibling runs compare; another account app's endpoint keeps its ID. The
+// endpoint must belong to the addressed app, as in production
+// (ADR-20261021180000).
+func (q *Queries) ScenarioRealtimeEndpointTarget(ctx context.Context, db DBTX, arg ScenarioRealtimeEndpointTargetParams) (string, error) {
+	row := db.QueryRow(ctx, scenarioRealtimeEndpointTarget,
+		arg.RunID,
+		arg.EndpointID,
+		arg.AccountID,
+		arg.Slug,
+	)
+	var target string
+	err := row.Scan(&target)
+	return target, err
+}
+
+const scenarioRehearsalNetworkPolicy = `-- name: ScenarioRehearsalNetworkPolicy :one
+SELECT run_id,account_id::text AS account_id FROM scenario_test_action_policies
+WHERE app_id=$1::text::uuid AND network_mode='contained'
+`
+
+type ScenarioRehearsalNetworkPolicyRow struct {
+	RunID     string
+	AccountID string
+}
+
+func (q *Queries) ScenarioRehearsalNetworkPolicy(ctx context.Context, db DBTX, appID string) (ScenarioRehearsalNetworkPolicyRow, error) {
+	row := db.QueryRow(ctx, scenarioRehearsalNetworkPolicy, appID)
+	var i ScenarioRehearsalNetworkPolicyRow
+	err := row.Scan(&i.RunID, &i.AccountID)
+	return i, err
+}
+
 const scenarioRehearsalNetworkRun = `-- name: ScenarioRehearsalNetworkRun :one
 SELECT run_id FROM scenario_test_action_policies
 WHERE app_id=$1::text::uuid AND network_mode='contained'
@@ -370,6 +1047,51 @@ func (q *Queries) ScenarioRehearsalNetworkRun(ctx context.Context, db DBTX, appI
 	var run_id string
 	err := row.Scan(&run_id)
 	return run_id, err
+}
+
+const scenarioSuppressedWebhookEvents = `-- name: ScenarioSuppressedWebhookEvents :many
+SELECT p.workload_name AS workload,d.event,count(*)::bigint AS count
+FROM app_webhook_deliveries d LEFT JOIN app_webhooks h ON h.id=d.webhook_id
+JOIN scenario_test_action_policies p ON p.account_id=d.account_id AND p.run_id=$1::text
+ AND p.app_id=CASE WHEN EXISTS(SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id=d.app_id
+  AND x.account_id=d.account_id AND x.run_id=$1::text) THEN d.app_id ELSE h.app_id END
+WHERE d.account_id=$2::text::uuid
+ AND d.last_error='rehearsal: unsupported webhook delivery suppressed' AND d.event<>'operation.effect'
+GROUP BY p.workload_name,d.event ORDER BY p.workload_name,d.event LIMIT 257
+`
+
+type ScenarioSuppressedWebhookEventsParams struct {
+	RunID     string
+	AccountID string
+}
+
+type ScenarioSuppressedWebhookEventsRow struct {
+	Workload string
+	Event    string
+	Count    int64
+}
+
+// Ordinary webhook deliveries the capture fence suppressed, attributed like
+// the snapshot summary: the delivery's app first, then the receiver's app.
+// Managed operation effects are accounted separately as captured intent.
+func (q *Queries) ScenarioSuppressedWebhookEvents(ctx context.Context, db DBTX, arg ScenarioSuppressedWebhookEventsParams) ([]ScenarioSuppressedWebhookEventsRow, error) {
+	rows, err := db.Query(ctx, scenarioSuppressedWebhookEvents, arg.RunID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScenarioSuppressedWebhookEventsRow{}
+	for rows.Next() {
+		var i ScenarioSuppressedWebhookEventsRow
+		if err := rows.Scan(&i.Workload, &i.Event, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const scenarioTestMemberWithPolicy = `-- name: ScenarioTestMemberWithPolicy :one

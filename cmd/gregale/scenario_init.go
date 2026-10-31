@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,7 +21,7 @@ func cmdTestInit(args []string) int {
 	fs := newFlagSet("test init", flag.ContinueOnError)
 	from := fs.String("from", "", "local OpenAPI 3.0 or 3.1 document")
 	project := fs.String("project", "", "Gregale project slug")
-	source := fs.String("source", ".", "application source directory")
+	source := fs.String("source", "", "application source directory, relative to the manifest (default: the workload holding --from, else .)")
 	scenario := fs.String("scenario", "api-smoke", "scenario name")
 	output := fs.String("output", "gregale-test.yaml", "output manifest path; must not exist")
 	if err := fs.Parse(args); err != nil {
@@ -32,6 +33,10 @@ func cmdTestInit(args []string) int {
 	}
 	if !api.ValidAppSlug(*project) || len(*scenario) < 3 || !testHTTPNamePattern.MatchString(*scenario) || *output == "" {
 		return printErr("Invalid test scaffold options", errors.New("project, scenario, or output is invalid"))
+	}
+	inferredSource := *source == ""
+	if inferredSource {
+		*source = scaffoldTestSource(*from, *output)
 	}
 	data, err := os.ReadFile(*from)
 	if err != nil {
@@ -48,7 +53,39 @@ func cmdTestInit(args []string) int {
 		return printErr("Could not create test manifest", err)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created %s with %d public GET smoke checks (%d operations skipped). Add auth, input fixtures, and business assertions for the remaining routes.\n", *output, len(steps), skipped)
+	if inferredSource && *source != "." {
+		_, _ = fmt.Fprintf(osStdout, "Scenario source: %s, the workload holding the OpenAPI document (override with --source).\n", *source)
+	}
 	return 0
+}
+
+// scaffoldTestSource defaults --source to the workload that holds the OpenAPI
+// document. In a monorepo the document usually sits in its service directory
+// (services/gateway/openapi.json), where "." names a repository root holding
+// several workloads, so `gregale test --validate` failed until the manifest was
+// edited by hand. The path is relative to the manifest, as the runner reads it.
+func scaffoldTestSource(from, output string) string {
+	dir := filepath.Dir(from)
+	if detectShape(dir) == shapeUnknown {
+		return "."
+	}
+	workload, err := filepath.Abs(dir)
+	if err != nil {
+		return "."
+	}
+	manifestDir, err := filepath.Abs(filepath.Dir(output))
+	if err != nil {
+		return "."
+	}
+	rel, err := filepath.Rel(manifestDir, workload)
+	if err != nil || rel == "." {
+		return "."
+	}
+	rel = filepath.ToSlash(rel)
+	if !strings.HasPrefix(rel, "../") {
+		rel = "./" + rel
+	}
+	return rel
 }
 
 func writeTestHTTPManifest(path, project, source, scenario string, steps []testHTTPRequest) error {

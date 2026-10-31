@@ -35,26 +35,25 @@ func (s *PgStore) SetDeploymentAlias(ctx context.Context, appID, name, deploymen
 	if !api.ValidDeploymentAliasName(name) {
 		return DeploymentAlias{}, ErrInvalidArgument
 	}
-	app, err := s.AppByID(ctx, appID)
+	account, err := sqlc.New().ReadAppTrafficAccount(ctx, s.pool, mustPgUUID(appID))
 	if err != nil {
-		return DeploymentAlias{}, err
+		return DeploymentAlias{}, mapErr(err)
 	}
-	hostLabel, ok := api.DeploymentAliasHostLabel(app.ID, name)
+	hostLabel, ok := api.DeploymentAliasHostLabel(appID, name)
 	if !ok {
 		return DeploymentAlias{}, ErrInvalidArgument
 	}
-	if _, err := s.AppBySlug(ctx, hostLabel); err == nil {
-		return DeploymentAlias{}, ErrConflict
-	} else if !errors.Is(err, ErrNotFound) {
-		return DeploymentAlias{}, err
-	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAccountAppTrafficMutation(ctx, account.String(), appID)
 	if err != nil {
 		return DeploymentAlias{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	if _, err := sqlc.New().LockLayerArtifactApp(ctx, tx, mustPgUUID(appID)); err != nil {
+	conflict, err := sqlc.New().ReadTrafficAliasHostnameConflict(ctx, tx, hostLabel)
+	if err != nil {
 		return DeploymentAlias{}, mapErr(err)
+	}
+	if conflict {
+		return DeploymentAlias{}, ErrConflict
 	}
 	if _, err := sqlc.New().LockLayerArtifactDeployment(ctx, tx, mustPgUUID(deploymentID)); err != nil {
 		return DeploymentAlias{}, mapErr(err)
@@ -110,7 +109,12 @@ func (s *PgStore) DeleteDeploymentAlias(ctx context.Context, appID, name string)
 	if !api.ValidDeploymentAliasName(name) {
 		return ErrInvalidArgument
 	}
-	count, err := sqlc.New().DeleteDeploymentAlias(ctx, s.pool, sqlc.DeleteDeploymentAliasParams{
+	tx, err := s.beginAppTrafficMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	count, err := sqlc.New().DeleteDeploymentAlias(ctx, tx, sqlc.DeleteDeploymentAliasParams{
 		AppID: mustPgUUID(appID), Name: name,
 	})
 	if err != nil {
@@ -119,5 +123,10 @@ func (s *PgStore) DeleteDeploymentAlias(ctx context.Context, appID, name string)
 	if count == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
+}
+
+func (s *PgStore) DeploymentAliasReserved(ctx context.Context, label string) (bool, error) {
+	reserved, err := sqlc.New().ReadPublicAliasHostReserved(ctx, s.pool, label)
+	return reserved, mapErr(err)
 }

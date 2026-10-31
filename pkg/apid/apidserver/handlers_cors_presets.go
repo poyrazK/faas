@@ -45,6 +45,8 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -76,7 +78,11 @@ func (s *server) createCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.gateCorsPresetApp(r.Context(), acct, req.AppID); prob != nil {
+	if prob := edgerules.SharedDomainCORSOriginProblem(req.AllowOrigins, req.AllowCredentials); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.gateCorsPresetApp(r, acct, req.AppID); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -103,7 +109,7 @@ func (s *server) listCorsPresets(w http.ResponseWriter, r *http.Request, acct st
 		filter.AppID = &id
 	}
 	if filter.AppID != nil {
-		if prob := s.gateCorsPresetApp(r.Context(), acct, filter.AppID); prob != nil {
+		if prob := s.gateCorsPresetApp(r, acct, filter.AppID); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -191,34 +197,44 @@ func (s *server) patchCorsPreset(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.gateCorsPresetApp(r.Context(), acct, appIDPtr(merged.AppID)); prob != nil {
+	if prob := edgerules.SharedDomainCORSOriginProblem(merged.AllowOrigins, merged.AllowCredentials); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	row, err := s.store.UpdateCorsPreset(r.Context(), acct.ID, id, merged)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such cors preset", "no cors preset with that id is visible to this account"))
-			return
-		}
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Name already in use", "a cors preset with this name already exists for the (account, app) tuple"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not update cors preset"))
+	if prob := s.gateCorsPresetApp(r, acct, appIDPtr(merged.AppID)); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
-	s.audit.Emit(r.Context(), "cors_preset.updated", &acct.ID, map[string]any{
-		"preset_id":  row.ID,
-		"account_id": row.AccountID,
-		"app_id":     row.AppID,
-		"name":       row.Name,
-	})
-	s.log.Info("cors preset updated",
-		"preset", logsanitize.Field(row.ID),
-		"account", acct.ID,
-		"name", logsanitize.Field(row.Name),
-	)
+	var row state.CorsPreset
+	if !s.corsPresetMutation(w, r, acct, id, "cors_preset_updated", func(ctx context.Context) bool {
+		var err error
+		row, err = s.store.UpdateCorsPreset(ctx, acct.ID, id, merged)
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such cors preset", "no cors preset with that id is visible to this account"))
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Name already in use", "a cors preset with this name already exists for the (account, app) tuple"))
+		case err != nil:
+			api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not update cors preset")))
+		}
+		if err != nil {
+			return false
+		}
+		s.audit.Emit(ctx, "cors_preset.updated", &acct.ID, map[string]any{
+			"preset_id":  row.ID,
+			"account_id": row.AccountID,
+			"app_id":     row.AppID,
+			"name":       row.Name,
+		})
+		s.log.Info("cors preset updated",
+			"preset", logsanitize.Field(row.ID),
+			"account", acct.ID,
+			"name", logsanitize.Field(row.Name),
+		)
+		return true
+	}) {
+		return
+	}
 	writeJSON(w, http.StatusOK, corsPresetResponseFromRow(row))
 }
 
@@ -243,26 +259,62 @@ func (s *server) deleteCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrCapacity("could not load cors preset"))
 		return
 	}
-	if err := s.store.DeleteCorsPreset(r.Context(), acct.ID, id); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
+	if !s.corsPresetMutation(w, r, acct, id, "cors_preset_deleted", func(ctx context.Context) bool {
+		err := s.store.DeleteCorsPreset(ctx, acct.ID, id)
+		switch {
+		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such cors preset", "no cors preset with that id is visible to this account"))
-			return
+		case err != nil:
+			api.WriteProblem(w, api.ErrCapacity("could not delete cors preset"))
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not delete cors preset"))
+		if err != nil {
+			return false
+		}
+		s.audit.Emit(ctx, "cors_preset.deleted", &acct.ID, map[string]any{
+			"preset_id":  existing.ID,
+			"account_id": existing.AccountID,
+			"app_id":     existing.AppID,
+			"name":       existing.Name,
+		})
+		s.log.Info("cors preset deleted",
+			"preset", logsanitize.Field(existing.ID),
+			"account", acct.ID,
+			"name", logsanitize.Field(existing.Name),
+		)
+		return true
+	}) {
 		return
 	}
-	s.audit.Emit(r.Context(), "cors_preset.deleted", &acct.ID, map[string]any{
-		"preset_id":  existing.ID,
-		"account_id": existing.AccountID,
-		"app_id":     existing.AppID,
-		"name":       existing.Name,
-	})
-	s.log.Info("cors preset deleted",
-		"preset", logsanitize.Field(existing.ID),
-		"account", acct.ID,
-		"name", logsanitize.Field(existing.Name),
-	)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// corsPresetMutation runs a preset write inside the edge-rule generation
+// barrier (issue #2683): every serving gateway fences the hosts of the rules
+// using the preset before write runs, and is released after it. write writes
+// its own problem, audits a successful change, and reports success; on
+// success the response is labelled with the barrier state, and false means a
+// problem was written.
+func (s *server) corsPresetMutation(w http.ResponseWriter, r *http.Request, acct state.Account, id, operation string, write func(context.Context) bool) bool {
+	edit := s.edgeRules.CorsPresetEdit(acct.ID, id, operation)
+	if prob := s.edgeRules.AuthorizeReferencedEdit(r, acct, edit); prob != nil {
+		api.WriteProblem(w, prob)
+		return false
+	}
+	convergences, release, prob := s.edgeRules.PrepareReferencedEdit(r.Context(), edit)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return false
+	}
+	defer release(context.WithoutCancel(r.Context()))
+	if !write(r.Context()) {
+		edgerules.AbortEdgeRuleConvergences(r.Context(), convergences)
+		return false
+	}
+	if prob := s.edgeRules.ApplyReferencedEdit(r.Context(), w, edit, id, convergences); prob != nil {
+		api.WriteProblem(w, prob)
+		return false
+	}
+	return true
 }
 
 // gateCorsPresetApp enforces the cross-tenant IDOR guard on
@@ -270,15 +322,15 @@ func (s *server) deleteCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 // the caller's account. A nil AppID (account-wide) skips the
 // check. The 404 on miss matches the convention at
 // handlers_alerts.go:243-247 (no slug-leak).
-func (s *server) gateCorsPresetApp(ctx context.Context, acct state.Account, appID *string) *api.Problem {
+func (s *server) gateCorsPresetApp(r *http.Request, acct state.Account, appID *string) *api.Problem {
 	if appID == nil {
 		return nil
 	}
-	app, err := s.store.AppByID(ctx, *appID)
+	app, err := s.store.AppByID(r.Context(), *appID)
 	if err != nil || app.AccountID != acct.ID {
 		return api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such app", "no app with that id is visible to this account")
 	}
-	return nil
+	return s.authorizeNamedApp(r, acct, app)
 }
 
 // appIDPtr is a small helper to convert a state.CorsPreset.AppID
@@ -324,7 +376,7 @@ func (s *server) persistCreateCorsPreset(ctx context.Context, acct state.Account
 		case errors.Is(err, state.ErrConflict):
 			return state.CorsPreset{}, api.NewProblem(http.StatusConflict, api.CodeValidation, "Name already in use", "a cors preset with this name already exists for the (account, app) tuple")
 		default:
-			return state.CorsPreset{}, api.ErrCapacity("could not create cors preset")
+			return state.CorsPreset{}, trafficproblem.Policy(err, api.ErrCapacity("could not create cors preset"))
 		}
 	}
 	s.audit.Emit(ctx, "cors_preset.created", &acct.ID, map[string]any{

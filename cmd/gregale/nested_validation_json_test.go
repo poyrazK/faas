@@ -102,7 +102,8 @@ func TestNestedCommandValidationHumanMode(t *testing.T) {
 	errOut, restore := main.CaptureStderr(t)
 	code := main.Run([]string{"debug", "requests", "audit-not-a-verb"})
 	restore()
-	if code != 1 || errOut.String() != "unknown debug requests subcommand \"audit-not-a-verb\"\n" {
+	// The verb list follows the diagnostic (Hunt 14 H14-42).
+	if code != 1 || !strings.HasPrefix(errOut.String(), "gregale debug requests: unknown subcommand \"audit-not-a-verb\"\n  Subcommands: list,") {
 		t.Fatalf("human diagnostic changed: exit=%d: %s", code, errOut.String())
 	}
 }

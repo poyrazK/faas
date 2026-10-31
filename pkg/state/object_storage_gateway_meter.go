@@ -19,8 +19,8 @@ func checkGatewayEgress(s ObjectUsageSnapshot, bucket string, bytes int64, at ti
 		return ErrObjectUsageStale
 	}
 	p = s.planPolicy(p)
-	u := SummarizeObjectUsage(s, p, now)
-	if !u.Fresh {
+	u, stale := summarizeObjectUsage(s, p, now)
+	if !u.Fresh || stale[bucket] {
 		return ErrObjectUsageStale
 	}
 	matched := false

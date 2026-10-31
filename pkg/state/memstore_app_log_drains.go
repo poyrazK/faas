@@ -28,15 +28,14 @@ func (m *MemStore) CreateAppLogDrainIfUnderQuota(_ context.Context, in AppLogDra
 	if !ok || app.Status == AppDeleted {
 		return AppLogDrain{}, ErrNotFound
 	}
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	appCount, accountCount := 0, 0
 	for _, drain := range m.appLogDrains {
 		if drain.AppID == in.AppID {
 			appCount++
 		}
-		if drain.AccountID == in.AccountID {
-			if owner, exists := m.apps[drain.AppID]; !exists || owner.Status != AppDeleted {
-				accountCount++
-			}
+		if m.countsTowardQuotaSubjectLocked(drain.AccountID, drain.AppID, subject) {
+			accountCount++
 		}
 	}
 	if appCount >= limits.LogDrainPerApp {
@@ -144,7 +143,10 @@ func (m *MemStore) ListAppLogDrainsForApp(_ context.Context, appID string) ([]Ap
 func (m *MemStore) ListEnabledAppLogDrains(_ context.Context) ([]AppLogDrain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	rows := listAppLogDrains(func(d AppLogDrain) bool { return d.Enabled }, m.appLogDrains)
+	rows := listAppLogDrains(func(d AppLogDrain) bool {
+		_, enrolled := m.scenarioActionPolicies[d.AppID] // mirrors PgStore (ADR-20261019180000)
+		return d.Enabled && !enrolled
+	}, m.appLogDrains)
 	for i := range rows {
 		rows[i].StandardBinding = m.standardLogBindingLocked(rows[i])
 	}

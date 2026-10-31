@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPlatformTenantCredentialApplyNeverHandlesPlaintext(t *testing.T) {
@@ -54,7 +55,7 @@ func TestPlatformTenantCredentialApplyNeverHandlesPlaintext(t *testing.T) {
 
 func TestLegacyConsumerKeyResponseNotStoredByIdempotency(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	appID := apidserver.MustSeedApp(t, e, "legacy-key-app")
+	_ = apidserver.MustSeedApp(t, e, "legacy-key-app")
 	created := e.Do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
 		ExternalRef: "customer-42", Name: "Customer 42"}, nil)
 	var tenant api.PlatformTenantResponse
@@ -80,10 +81,13 @@ func TestLegacyConsumerKeyResponseNotStoredByIdempotency(t *testing.T) {
 	if _, err := (*e.Store()).RevokeConsumerKey(context.Background(), (*e.Acct()).ID, key.ID); err != nil {
 		t.Fatal(err)
 	}
-	if count, err := (*e.S()).CountConsumerKeys(context.Background(), (*e.Acct()).ID, appID); err != nil || count != 0 {
-		t.Fatalf("revoked app quota = %d, %v", count, err)
+	// The revoked key spends neither quota: one more fits a cap of one.
+	_, prefix, hash, err := api.GenerateConsumerKey()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if count, err := (*e.S()).CountAccountConsumerKeys(context.Background(), (*e.Acct()).ID); err != nil || count != 0 {
-		t.Fatalf("revoked account quota = %d, %v", count, err)
+	if _, err := (*e.Store()).CreateConsumerKeyForConsumerIfUnderQuota(context.Background(), (*e.Acct()).ID, consumerID, "replacement", prefix, hash,
+		[]string{"read"}, nil, state.ConsumerKeyQuota{PerApp: 1, PerAccount: 1}); err != nil {
+		t.Fatalf("key under a cap of one after the only key was revoked: %v", err)
 	}
 }

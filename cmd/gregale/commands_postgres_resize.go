@@ -53,7 +53,7 @@ func cmdPostgresResize(args []string) int {
 func cmdPostgresResizeStatus(args []string) int {
 	fs := newFlagSet("postgres resize-status", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 2 {
-		PrintUsage(os.Stderr, "usage: gregale postgres resize-status DATABASE REQUEST_UUID", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres resize status DATABASE REQUEST_UUID", "postgres")
 		return 1
 	}
 	client, err := authedClient()

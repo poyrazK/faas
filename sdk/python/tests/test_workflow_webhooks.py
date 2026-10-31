@@ -4,18 +4,18 @@ import httpx
 import pytest
 
 from faas_sdk import AuthenticatedClient
-from faas_sdk.api.inbound_webhooks import (
+from faas_sdk.preview.api.inbound_webhooks import (
     delete_webhook_automation_binding,
     get_webhook_automation_binding,
     get_webhook_automation_receipt,
     put_webhook_automation_binding,
     receive_inbound_webhook,
 )
-from faas_sdk.models.create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
-from faas_sdk.models.inbound_webhook_receipt_response import InboundWebhookReceiptResponse
-from faas_sdk.models.put_webhook_automation_binding_request import PutWebhookAutomationBindingRequest
-from faas_sdk.models.webhook_automation_receipt_response import WebhookAutomationReceiptResponse
-from faas_sdk.models.workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
+from faas_sdk.preview.models.create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
+from faas_sdk.preview.models.inbound_webhook_receipt_response import InboundWebhookReceiptResponse
+from faas_sdk.preview.models.put_webhook_automation_binding_request import PutWebhookAutomationBindingRequest
+from faas_sdk.preview.models.webhook_automation_receipt_response import WebhookAutomationReceiptResponse
+from faas_sdk.preview.models.workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 
 
 def test_inbound_webhook_sdk_accepts_generic_hmac_provider():

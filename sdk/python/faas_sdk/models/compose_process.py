@@ -14,8 +14,8 @@ T = TypeVar("T", bound="ComposeProcess")
 
 @_attrs_define
 class ComposeProcess:
-    """Compose process overrides for a prebuilt image (ADR-1337). Omitted fields inherit the image's ENTRYPOINT, USER,
-    WORKDIR and stop settings.
+    """Compose process overrides for a prebuilt image. Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR and
+    stop settings.
 
     """
 

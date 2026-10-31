@@ -46,13 +46,11 @@ func (h *Handler) copyMultipartPart(w http.ResponseWriter, r *http.Request, req 
 			return
 		}
 	}
-	select {
-	case h.putSlots <- struct{}{}:
-		defer func() { <-h.putSlots }()
-	default:
+	if !h.acquirePutSlot(req.bucket.AccountID) {
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
 		return
 	}
+	defer h.releasePutSlot(req.bucket.AccountID)
 	h.forwardMultipartCopy(w, r, req, upload, c, copier, transfers)
 }
 

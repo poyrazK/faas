@@ -2,7 +2,7 @@ import {
   EventAcknowledgmentIntentRecoveryWorkerMetrics, recoverEventAcknowledgmentIntentsWithMetrics,
   formatEventAcknowledgmentIntentHealthMetrics, formatEventAcknowledgmentIntentRecoveryWorkerMetrics,
   EVENT_ACKNOWLEDGMENT_INTENT_HEALTH_PROMETHEUS_CONTENT_TYPE,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 import { createRecoveryHealthMetricsHost } from './recovery-metrics.mjs';
 
 /** One explicit same-loop pass observer, health poller and unbound scrape server.

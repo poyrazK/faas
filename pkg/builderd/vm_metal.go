@@ -77,6 +77,41 @@ type VMMDriver struct {
 	// atomic publication. The immutable hard links remain valid after unlock,
 	// so source staging and mke2fs do not serialize the two builder slots.
 	dependencyCacheMu sync.Mutex
+
+	// dockerHubMirrors go into every build manifest; the builder's BuildKit
+	// daemon tries them before Docker Hub (ADR-20261025114554).
+	dockerHubMirrors []string
+
+	// reclaimDriveSpace frees space on the drive filesystem before a build
+	// would be refused for it (ADR-20261027173012); nil reclaims nothing.
+	reclaimDriveSpace BuildDriveSpaceReclaimer
+
+	// platformLayers, when set, are shared between published dependency
+	// caches (ADR-20261031103801); nil keeps every blob per cache.
+	platformLayers map[string]struct{}
+}
+
+// WithSharedPlatformBlobs makes published dependency caches share one copy of
+// each platform image layer (SharedPlatformBlobsEnv). Call before serving.
+func (d *VMMDriver) WithSharedPlatformBlobs(on bool) *VMMDriver {
+	d.platformLayers = nil
+	if on {
+		d.platformLayers = platformLayers
+	}
+	return d
+}
+
+// WithDriveSpaceReclaimer sets how Spawn frees space for a build drive on a
+// full node. Call before serving.
+func (d *VMMDriver) WithDriveSpaceReclaimer(reclaim BuildDriveSpaceReclaimer) *VMMDriver {
+	d.reclaimDriveSpace = reclaim
+	return d
+}
+
+// WithDockerHubMirrors sets the Docker Hub mirrors every builder VM uses.
+func (d *VMMDriver) WithDockerHubMirrors(mirrors []string) *VMMDriver {
+	d.dockerHubMirrors = append([]string(nil), mirrors...)
+	return d
 }
 
 // NewVMMDriver opens a lazy gRPC connection to vmmd's socket.
@@ -180,6 +215,7 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 	return api.BuildManifest{
 		PublicBuildURLs:       req.PublicBuildURLs,
 		DockerfileBuild:       req.DockerfileBuild.Clone(),
+		GoCommand:             req.GoCommand,
 		BuildDependencyDigest: req.BuildDependencyDigest,
 		SchemaVersion:         1,
 		BuildID:               req.BuildID,
@@ -200,6 +236,9 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 		DevWatchCommand:       req.DevWatchCommand,
 		DevWatchHost:          req.DevWatchHost,
 		DependencyCache:       req.DependencyCacheKey != "",
+		LayerCompression:      req.LayerCompression,
+		BuildKitSnapshotter:   req.BuildKitSnapshotter,
+		DeferCacheExport:      req.DeferCacheExport && req.DependencyCacheKey != "" && !req.KeepWarm,
 		KeepWarm:              req.KeepWarm,
 		TimeoutSec:            timeoutSec,
 		LogTailBytes:          64 * 1024,
@@ -224,6 +263,19 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	}
 
 	instance := "build-" + req.BuildID
+	// An alias or project secret needs a vmmd that opens an envelope under
+	// another key (ADR-423, ADR-20261024140000). Check before staging, as
+	// schedd does for a wake.
+	aliases := buildSecretsNeedAliasSupport(req.BuildSecrets)
+	if aliases {
+		ping, err := d.cli.Ping(ctx, &vmmdpb.PingRequest{})
+		if err != nil {
+			return BuildHandle{}, fmt.Errorf("builderd: verify vmmd secret alias support: %w", err)
+		}
+		if !ping.GetSupportsSecretAliases() {
+			return BuildHandle{}, errors.New("builderd: vmmd does not support secret aliases, which this build's secrets need")
+		}
+	}
 
 	// 1. Materialise drive1 with BuildManifest.
 	if err := os.MkdirAll(d.driveDir, 0o755); err != nil {
@@ -236,6 +288,10 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	// can't clean up. (The only thing we ever want gone is a >1h old *.ext4
 	// that wasn't WaitForCompletion'd.)
 	d.runJanitor()
+	// A full node evicts its oldest cached artifacts before the drive's
+	// capacity check refuses the build. Best effort: the reclaimer logs its
+	// own failures, and that check still decides.
+	_ = reclaimBuildDriveSpace(ctx, d.driveDir, d.reclaimDriveSpace, driveFilesystemAvailable)
 
 	drive1Path := filepath.Join(d.driveDir, instance+".ext4")
 	hostDrive1, err := os.CreateTemp(d.driveDir, instance+"-*.ext4")
@@ -257,6 +313,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		os.Remove(drive1Path)
 		return BuildHandle{}, err
 	}
+	bManifest.DockerHubMirrors = d.dockerHubMirrors
 	cachePath := ""
 	if req.DependencyCacheKey != "" {
 		var cachePathErr error
@@ -301,6 +358,9 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
 		BuilderSliceOOMCounterValid: oomCounterErr == nil,
 	}
+	if bManifest.DeferCacheExport {
+		handle.DeferredCache = &DeferredCacheSpec{Manifest: bManifest, Plan: req.Plan}
+	}
 	resp, err := d.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
 		Instance: instance,
 		App: &vmmdpb.AppSpec{
@@ -312,10 +372,17 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			LayerKey:   drive1Path,                 // absolute host path; vmmd treats as direct path (abs path bypass)
 			VcpuCount:  api.BuildVMVCPU,
 			MemSizeMib: int32(api.BuildVMRAMMB),
+			// ADR-20261022185329: vmmd opens build secrets into this VM's
+			// /etc/faas/secrets.env, as it does for an app VM's secrets.
+			SealedEnv: sealedBuildSecretsToProto(req.BuildSecrets),
 		},
 		Build: &vmmdpb.BuildSpec{
 			ExportDir:  buildExportDir,
 			TimeoutSec: int32(timeoutSec),
+			// ADR-20261026091500: vmmd opens these into the builder's
+			// Docker config for its base-image pulls. A build that has
+			// them never uses a warm builder.
+			RegistryCredentials: registryCredentialsToProto(req.RegistryCredentials),
 		},
 		// Issue #301 / ADR-043: vmmd validates Plan on every cold
 		// boot and routes the VM into the per-plan cgroup slice.
@@ -336,6 +403,13 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			return handle, &builderSliceOOMError{Delta: delta}
 		}
 		return BuildHandle{}, fmt.Errorf("builderd: nil wake outcome")
+	}
+	// A vmmd replaced between Ping and boot cannot acknowledge the field; its
+	// builder never runs the build.
+	if aliases && !resp.GetSupportsSecretAliases() {
+		cleanupErr := d.stopAndDestroy(ctx, instance)
+		os.Remove(drive1Path)
+		return BuildHandle{}, errors.Join(errors.New("builderd: vmmd boot did not acknowledge secret alias support"), cleanupErr)
 	}
 
 	return handle, nil
@@ -371,6 +445,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 	if err != nil {
 		return BuildHandle{}, err
 	}
+	manifest.DockerHubMirrors = d.dockerHubMirrors
 	if err := refreshWarmBuilderDrive(ctx, snapshot.LayerPath, manifest, req.SourcePath); err != nil {
 		return BuildHandle{}, fmt.Errorf("builderd: refresh warm drive: %w", err)
 	}
@@ -621,8 +696,10 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 	if d == nil || d.cli == nil {
 		return BuildOutcome{}, fmt.Errorf("builderd: VMMDriver not wired")
 	}
+	// A deferred cache export keeps the drive for ExportDeferredCache.
+	deferred := false
 	defer func() {
-		if h.HostDrive1 != "" && !retainDrive {
+		if h.HostDrive1 != "" && !retainDrive && !deferred {
 			_ = os.Remove(h.HostDrive1)
 		}
 	}()
@@ -677,6 +754,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.ExitCode = exitCode
 		res.PublicBuildURLsSHA256 = done.PublicBuildURLsSHA256
 		res.DockerfileBuildSHA256 = done.DockerfileBuildSHA256
+		res.GoCommand = done.GoCommand
 		res.BuildDependencyDigest = done.BuildDependencyDigest
 		res.LogTailBytes = int64(len(done.LogTail))
 		res.LogTail = done.LogTail
@@ -688,6 +766,10 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.DevPatch = done.DevPatch
 		res.SharedRuntime = done.SharedRuntime
 		res.DependencyCacheUnchanged = done.DependencyCacheUnchanged
+		res.Timings = done.Timings
+		// Only a build whose manifest asked for it may leave the cache owed.
+		deferred = done.DependencyCacheDeferred && h.DeferredCache != nil && !retainDrive && exitCode == 0
+		res.DependencyCacheDeferred = deferred
 	} else if exitCode == 0 {
 		// A clean host exit alone does not prove that a customer build ran.
 		exitCode = -1
@@ -700,6 +782,9 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 			switch {
 			case pathErr != nil:
 				res.DependencyCacheStoreError = pathErr.Error()
+				deferred, res.DependencyCacheDeferred = false, false
+			case res.DependencyCacheDeferred:
+				// ExportDeferredCache exports and publishes it.
 			case res.DependencyCacheUnchanged:
 				// The guest kept the imported cache: nothing was exported, and
 				// the stored generation is still the right one. Refresh its
@@ -714,7 +799,8 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 				}
 			default:
 				d.dependencyCacheMu.Lock()
-				cacheErr := publishDependencyCache(cacheSource, cachePath, dependencyCacheMaxBytes)
+				shared, cacheErr := publishDependencyCache(cacheSource, cachePath, dependencyCacheMaxBytes, d.platformLayers)
+				res.DependencyCacheSharedBytes = shared
 				if cacheErr == nil {
 					cacheErr = sweepDependencyCaches(d.driveDir, time.Now())
 				}
@@ -736,6 +822,137 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.FailureClass, res.FailureCode, res.FailurePkg = classifyBuildFailure(exitCode, h.ExportDir)
 	}
 	return res, nil
+}
+
+// The orchestrator finds the capability by type assertion; keep it compiled.
+var _ DeferredCacheVM = (*VMMDriver)(nil)
+
+// ExportDeferredCache implements DeferredCacheVM (ADR-20261029171525). The
+// second VM boots on the drive the build left, with its BuildKit state and
+// plan, and its solve hits that state at every step. It therefore spends its
+// time on the cache export the build skipped.
+func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (BuildOutcome, error) {
+	if d == nil || d.cli == nil {
+		return BuildOutcome{}, fmt.Errorf("builderd: VMMDriver not wired")
+	}
+	if h.DeferredCache == nil || h.HostDrive1 == "" || h.DependencyCacheKey == "" {
+		d.DiscardDeferredCache(h)
+		return BuildOutcome{}, errors.New("builderd: build did not defer its dependency cache export")
+	}
+	manifest := h.DeferredCache.Manifest
+	manifest.DeferCacheExport = false
+	manifest.CacheExportOnly = true
+	manifest.DependencyCacheImport = h.DependencyCacheRestored
+	manifest.TimeoutSec = api.BuildCacheExportTimeoutSeconds
+	exportDir := filepath.Join(d.exportDir, h.BuildID+DeferredCacheInstanceSuffix)
+	defer func() { _ = os.RemoveAll(exportDir) }()
+	if err := prepareCacheExportDrive(ctx, h.HostDrive1, manifest); err != nil {
+		d.DiscardDeferredCache(h)
+		return BuildOutcome{}, fmt.Errorf("builderd: prepare cache export drive: %w", err)
+	}
+	oomKillsAtStart, oomCounterErr := readCgroupOOMKills(builderSliceMemoryEventsPath)
+	cacheHandle := BuildHandle{
+		Instance:                    h.Instance + DeferredCacheInstanceSuffix,
+		HostDrive1:                  h.HostDrive1,
+		ExportDir:                   exportDir,
+		BuildID:                     h.BuildID,
+		TimeoutSec:                  manifest.TimeoutSec,
+		StartedAt:                   time.Now(),
+		DependencyCacheKey:          h.DependencyCacheKey,
+		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
+		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+	}
+	// The second VM gets no build secrets or registry credentials: builderd
+	// defers only builds that have neither.
+	resp, err := d.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
+		Instance: cacheHandle.Instance,
+		App: &vmmdpb.AppSpec{
+			BaseKey:    storagekey.Base("builder"),
+			LayerKey:   h.HostDrive1,
+			VcpuCount:  api.BuildVMVCPU,
+			MemSizeMib: int32(api.BuildVMRAMMB),
+		},
+		Build: &vmmdpb.BuildSpec{
+			ExportDir:  exportDir,
+			TimeoutSec: int32(manifest.TimeoutSec),
+		},
+		Plan:      h.DeferredCache.Plan,
+		AccountId: manifest.TenantID,
+	})
+	if err == nil && resp == nil {
+		err = errors.New("nil wake outcome")
+	}
+	if err != nil {
+		d.DiscardDeferredCache(h)
+		return BuildOutcome{}, fmt.Errorf("builderd: cold boot cache export: %w", err)
+	}
+	out, err := d.waitForCompletion(ctx, cacheHandle, false)
+	switch {
+	case err != nil:
+		return out, fmt.Errorf("builderd: wait for cache export: %w", err)
+	case out.ExitCode != 0:
+		return out, fmt.Errorf("builderd: cache export exited %d (%s)", out.ExitCode, out.FailureClass)
+	case out.DependencyCacheStoreError != "":
+		return out, fmt.Errorf("builderd: store exported dependency cache: %s", out.DependencyCacheStoreError)
+	case !out.DependencyCacheStored:
+		return out, errors.New("builderd: cache export stored nothing")
+	}
+	return out, nil
+}
+
+// DiscardDeferredCache implements DeferredCacheVM.
+func (d *VMMDriver) DiscardDeferredCache(h BuildHandle) {
+	if h.HostDrive1 != "" {
+		_ = os.Remove(h.HostDrive1)
+	}
+}
+
+// prepareCacheExportDrive turns a deferred build's offline drive into a cache
+// export run's: the CacheExportOnly manifest and a fresh one-shot entropy
+// seed. It also drops the build's result. A second VM that dies before
+// writing its own result still publishes nothing, because only that run
+// writes /build/out/cache. The edits use debugfs, as refreshWarmBuilderDrive's
+// do.
+func prepareCacheExportDrive(ctx context.Context, drivePath string, manifest api.BuildManifest) error {
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+	if err := replaceDriveFileData(ctx, drivePath, manifestData, "/upper/etc/faas/build.json", true); err != nil {
+		return fmt.Errorf("replace build manifest: %w", err)
+	}
+	seed := make([]byte, 256)
+	if _, err := rand.Read(seed); err != nil {
+		return fmt.Errorf("generate entropy seed: %w", err)
+	}
+	if err := replaceDriveFileData(ctx, drivePath, seed, "/upper/etc/faas/entropy.seed", false); err != nil {
+		return fmt.Errorf("replace entropy seed: %w", err)
+	}
+	_ = runDebugfs(ctx, drivePath, "rm /upper/etc/faas/build-done.json")
+	return nil
+}
+
+// replaceDriveFileData stages data in a private temporary file and writes it
+// to guestPath in an offline drive image.
+func replaceDriveFileData(ctx context.Context, image string, data []byte, guestPath string, requireRemove bool) error {
+	f, err := os.CreateTemp("", "faas-drive-file-")
+	if err != nil {
+		return fmt.Errorf("create staging file: %w", err)
+	}
+	path := f.Name()
+	defer func() { _ = os.Remove(path) }()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("stage file: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync staging file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close staging file: %w", err)
+	}
+	return replaceWarmFile(ctx, image, path, guestPath, requireRemove)
 }
 
 // refreshWarmBuilderDrive updates the manifest, source archive, and one-shot

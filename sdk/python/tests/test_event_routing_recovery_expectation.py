@@ -1,7 +1,7 @@
 from uuid import UUID
 
-from faas_sdk.models.event_routing_recovery_expectation import EventRoutingRecoveryExpectation
-from faas_sdk.models.replay_event_fanout_failure_request import ReplayEventFanoutFailureRequest
+from faas_sdk.preview.models.event_routing_recovery_expectation import EventRoutingRecoveryExpectation
+from faas_sdk.preview.models.replay_event_fanout_failure_request import ReplayEventFanoutFailureRequest
 
 
 def test_guarded_routing_replay_round_trip():

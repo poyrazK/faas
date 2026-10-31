@@ -83,7 +83,7 @@ def sync_detailed(
 ) -> Response[ClearObsoleteReport | Problem]:
     """Bulk soft-delete terminal-but-not-current deployments.
 
-     ADR-124 deployment queue controls — bulk soft-delete rows
+     Deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
     (default 168h). Plan-gated (Free returns 402
     `plan_reorder_disabled`). Retention
@@ -121,7 +121,7 @@ def sync(
 ) -> ClearObsoleteReport | Problem | None:
     """Bulk soft-delete terminal-but-not-current deployments.
 
-     ADR-124 deployment queue controls — bulk soft-delete rows
+     Deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
     (default 168h). Plan-gated (Free returns 402
     `plan_reorder_disabled`). Retention
@@ -154,7 +154,7 @@ async def asyncio_detailed(
 ) -> Response[ClearObsoleteReport | Problem]:
     """Bulk soft-delete terminal-but-not-current deployments.
 
-     ADR-124 deployment queue controls — bulk soft-delete rows
+     Deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
     (default 168h). Plan-gated (Free returns 402
     `plan_reorder_disabled`). Retention
@@ -190,7 +190,7 @@ async def asyncio(
 ) -> ClearObsoleteReport | Problem | None:
     """Bulk soft-delete terminal-but-not-current deployments.
 
-     ADR-124 deployment queue controls — bulk soft-delete rows
+     Deployment queue controls — bulk soft-delete rows
     in {superseded, failed, cancelled} older than the cutoff
     (default 168h). Plan-gated (Free returns 402
     `plan_reorder_disabled`). Retention

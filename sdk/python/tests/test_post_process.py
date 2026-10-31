@@ -120,6 +120,7 @@ def test_regen_is_deterministic(_regen_skip_reason: None, tmp_path: Path) -> Non
     fixture = tmp_path / "repo"
     subprocess.run(["git", "clone", "--quiet", "--shared", "--no-checkout", str(repo_root), str(fixture)], check=True)
     subprocess.run(["git", "-C", str(fixture), "checkout", "HEAD", "--", "sdk/python", "api/openapi.yaml"], check=True)
+    shutil.copy2(repo_root / "sdk" / "openapi.yaml", fixture / "sdk" / "openapi.yaml")
     copied_sdk = fixture / "sdk" / "python"
     shutil.copytree(
         sdk_root,
@@ -130,14 +131,14 @@ def test_regen_is_deterministic(_regen_skip_reason: None, tmp_path: Path) -> Non
     helpers = {
         name: (copied_sdk / "faas_sdk" / name).read_bytes()
         for name in (
-            "object_storage_runtime.py",
+            "preview/object_storage_runtime.py",
             "secret_reload_runtime.py",
             "_binding_client_runtime.py",
-            "postgres_pool_runtime.py",
-            "async_postgres_pool_runtime.py",
+            "preview/postgres_pool_runtime.py",
+            "preview/async_postgres_pool_runtime.py",
             "async_secret_reload_runtime.py",
             "_async_binding_client_runtime.py",
-            "async_object_storage_runtime.py",
+            "preview/async_object_storage_runtime.py",
         )
     }
     script = copied_sdk / "scripts" / "gen.py"
@@ -160,25 +161,26 @@ def _fixture_generator(tmp_path, monkeypatch):
     package.mkdir(parents=True)
     originals = {
         "faas_sdk/_wrapper.py": b"# existing custom wrapper\n",
-        "faas_sdk/_binding_runner.py": b"# uncommitted verification runner\n",
-        "faas_sdk/_binding_runner_diagnostics.py": b"# uncommitted automatic diagnostics\n",
-        "faas_sdk/_binding_creation.py": b"# uncommitted reviewed creation\n",
-        "faas_sdk/_binding_qualification.py": b"# uncommitted qualification waiting\n",
-        "faas_sdk/operations_runtime.py": b"# uncommitted runtime authority\n",
+        "faas_sdk/preview/_binding_runner.py": b"# uncommitted verification runner\n",
+        "faas_sdk/preview/_binding_runner_diagnostics.py": b"# uncommitted automatic diagnostics\n",
+        "faas_sdk/preview/_binding_creation.py": b"# uncommitted reviewed creation\n",
+        "faas_sdk/preview/_binding_qualification.py": b"# uncommitted qualification waiting\n",
+        "faas_sdk/preview/operations_runtime.py": b"# uncommitted runtime authority\n",
         "faas_sdk/secret_reload_runtime.py": b"# uncommitted secret reload authority\n",
         "faas_sdk/_binding_client_runtime.py": b"# shared owned-resource lifecycle\n",
-        "faas_sdk/postgres_pool_runtime.py": b"# PostgreSQL pool adoption\n",
-        "faas_sdk/async_postgres_pool_runtime.py": b"# async PostgreSQL pool adoption\n",
+        "faas_sdk/preview/postgres_pool_runtime.py": b"# PostgreSQL pool adoption\n",
+        "faas_sdk/preview/async_postgres_pool_runtime.py": b"# async PostgreSQL pool adoption\n",
         "faas_sdk/_async_binding_client_runtime.py": b"# async owned resource lifecycle\n",
-        "faas_sdk/async_object_storage_runtime.py": b"# async object storage adoption\n",
+        "faas_sdk/preview/async_object_storage_runtime.py": b"# async object storage adoption\n",
         "faas_sdk/async_secret_reload_runtime.py": b"# async secret adoption\n",
-        "faas_sdk/operations.py": b"# managed operation transaction helper\n",
-        "faas_sdk/_operation_contract.py": b"# managed operation wire contract\n",
-        "faas_sdk/operation_schema.sql": b"-- managed operation receipt schema\n",
+        "faas_sdk/preview/operations.py": b"# managed operation transaction helper\n",
+        "faas_sdk/preview/_operation_contract.py": b"# managed operation wire contract\n",
+        "faas_sdk/preview/operation_schema.sql": b"-- managed operation receipt schema\n",
         "pyproject.toml": b"# curated project configuration\n",
         "README.md": b"curated SDK documentation\n",
     }
     for relative, body in originals.items():
+        (output / relative).parent.mkdir(parents=True, exist_ok=True)
         (output / relative).write_bytes(body)
     (package / "obsolete_generated.py").write_text("# obsolete generated model\n")
     source, config = tmp_path / "spec.json", tmp_path / "config.yaml"
@@ -186,6 +188,7 @@ def _fixture_generator(tmp_path, monkeypatch):
     config.write_text("project_name_override: faas_sdk\n")
     monkeypatch.setattr(generator, "OUT", output)
     monkeypatch.setattr(generator, "SPEC", source)
+    monkeypatch.setattr(generator, "PUBLIC_SPEC", source)
     monkeypatch.setattr(generator, "CONFIG", config)
     return generator, output, originals
 
@@ -219,7 +222,7 @@ def test_failed_regeneration_preserves_handwritten_source(tmp_path, monkeypatch,
 
         def partial_cleanup(path, *args, **kwargs):
             if path == output / "faas_sdk":
-                (path / "operations_runtime.py").unlink()
+                (path / "preview" / "operations_runtime.py").unlink()
                 raise OSError("cleanup interrupted")
             return original_rmtree(path, *args, **kwargs)
 
@@ -236,7 +239,7 @@ def test_backup_failure_leaves_original_tree_untouched(tmp_path, monkeypatch):
     original_copy = generator.shutil.copy2
 
     def interrupted_copy(source, destination, *args, **kwargs):
-        if source == output / "faas_sdk" / "operations_runtime.py":
+        if source == output / "faas_sdk" / "preview" / "operations_runtime.py":
             raise OSError("backup unavailable")
         return original_copy(source, destination, *args, **kwargs)
 
@@ -253,7 +256,7 @@ def test_postprocessing_cannot_modify_preserved_handwritten_source(tmp_path, mon
     with generator._preserve_handwritten_sdk(output) as restore:
         generator.shutil.rmtree(output / "faas_sdk")
         restore()
-        (output / "faas_sdk" / "operations_runtime.py").write_text("# modified by formatter\n")
+        (output / "faas_sdk" / "preview" / "operations_runtime.py").write_text("# modified by formatter\n")
         (output / "pyproject.toml").write_text("# overwritten metadata\n")
     assert {name: (output / name).read_bytes() for name in originals} == originals
 
@@ -279,7 +282,7 @@ def test_restore_failure_retains_recoverable_source_backup(tmp_path, monkeypatch
     original_copy = generator.shutil.copy2
 
     def failed_restore(source, destination, *args, **kwargs):
-        if source == stash / "faas_sdk" / "operations_runtime.py":
+        if source == stash / "faas_sdk" / "preview" / "operations_runtime.py":
             raise OSError("destination unavailable")
         return original_copy(source, destination, *args, **kwargs)
 
@@ -298,7 +301,9 @@ def test_regenerated_barrel_exports_binding_runner(tmp_path):
     spec = importlib.util.spec_from_file_location("sdk_generator_runner_exports", script)
     generator = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(generator)
+    # ADR-20261023115741: binding verification runs are a preview capability.
+    assert "from ._binding_runner import" in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert '"BindingVerificationRecoveryError"' in generator._PREVIEW_INIT_PY_TEMPLATE
     barrel = tmp_path / "__init__.py"
     generator._rewrite_init_py(barrel)
-    assert "from ._binding_runner import" in barrel.read_text()
-    assert '"BindingVerificationRecoveryError"' in barrel.read_text()
+    assert "_binding_runner" not in barrel.read_text()

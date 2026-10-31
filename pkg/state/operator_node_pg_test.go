@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -122,8 +121,7 @@ func TestOperatorNodePostgresLegacyAndReceiptGuards(t *testing.T) {
 
 func nodeMigrationParts(t *testing.T) (string, string) {
 	t.Helper()
-	_, file, _, _ := runtime.Caller(0)
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "migrations", "20261017130000001_operator_node_execution.sql"))
+	body, err := os.ReadFile(filepath.Join("..", "..", "migrations", "20261017130000001_operator_node_execution.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,8 +1,8 @@
 import httpx
 
-from faas_sdk.api.events import evaluate_workflow_recovery_policy
-from faas_sdk.models.workflow_recovery_policy_evaluation import WorkflowRecoveryPolicyEvaluation
-from faas_sdk.models.workflow_recovery_policy_evaluation_request import WorkflowRecoveryPolicyEvaluationRequest
+from faas_sdk.preview.api.events import evaluate_workflow_recovery_policy
+from faas_sdk.preview.models.workflow_recovery_policy_evaluation import WorkflowRecoveryPolicyEvaluation
+from faas_sdk.preview.models.workflow_recovery_policy_evaluation_request import WorkflowRecoveryPolicyEvaluationRequest
 
 
 def policy(statuses=None):

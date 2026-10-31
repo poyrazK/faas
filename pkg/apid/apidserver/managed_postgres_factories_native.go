@@ -14,5 +14,5 @@ import (
 // Only the isolated acceptance binary can speak to the disposable SQL fixture.
 // Production apid binaries contain no sqlfixture driver or configuration path.
 func managedPostgresFactories(pool *pgxpool.Pool) map[string]managedpostgres.Factory {
-	return map[string]managedpostgres.Factory{"neon": neon.New, "sqlfixture": postgresfixture.NewRemote, firecracker.Driver: firecracker.Factory(pool)}
+	return map[string]managedpostgres.Factory{"neon": neon.New, "sqlfixture": postgresfixture.NewRemote, firecracker.Driver: firecracker.GatedFactory(pool)}
 }

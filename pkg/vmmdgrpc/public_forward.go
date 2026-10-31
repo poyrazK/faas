@@ -65,16 +65,20 @@ func (s *Server) publicForwardContext(ctx context.Context, instance string) (con
 	return withPublicTarget(ctx, target), nil
 }
 
-func namespaceOrPublicCommand(ctx context.Context, pid int, bridgePath string, port uint32) *exec.Cmd {
+// namespaceOrPublicCommand launches a raw, TCP or UDP bridge. A namespace
+// bridge runs as id (connection-survival ADR, slice 1a); a public-target
+// bridge always has the root identity (forwardBridgeIdentity).
+func namespaceOrPublicCommand(ctx context.Context, id bridgeIdentity, pid int, bridgePath string, port uint32) *exec.Cmd {
 	if target := publicTarget(ctx); target != nil {
 		cmd := exec.CommandContext(ctx, bridgePath, target.HostIP.String(), strconv.FormatUint(uint64(port), 10))
 		cmd.Env = netns.PublicForwardEnv(os.Environ(), target)
 		cmd.SysProcAttr = streamBridgeSysProcAttr()
 		return cmd
 	}
-	cmd := exec.CommandContext(ctx, "nsenter", "--target", strconv.Itoa(pid), "--net", "--",
+	args := append(id.nsenterArgs("--target", strconv.Itoa(pid), "--net"),
 		bridgePath, netns.GuestIP, strconv.FormatUint(uint64(port), 10))
-	cmd.Env = netns.PublicForwardEnv(os.Environ(), nil)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Env = netns.PublicForwardEnv(id.env(), nil)
 	return cmd
 }
 

@@ -16,6 +16,19 @@ import (
 type Promotion struct {
 	Binding Binding `json:"binding"`
 	Parent  Receipt `json:"parent"`
+	// heldFrom is set by Held and never serialized.
+	heldFrom string
+}
+
+// Held marks a promotion of an admission that a later vmmd process holds
+// through a restart (ADR-595 extension, docs/adr/20261018-runtime-admission-rebind.md):
+// the parent was issued under incarnation issuer, and the fresh grant may
+// name another incarnation, which the caller must check is its current one.
+// The caller vouches for the hold: vmmd from its adoption of this exact
+// receipt, the stores from the instance's re-binds. Held("") is no hold.
+func (p Promotion) Held(issuer string) Promotion {
+	p.heldFrom = issuer
+	return p
 }
 
 func (p Promotion) Equal(other Promotion) bool {
@@ -60,6 +73,9 @@ func (p Promotion) checkFreshPromotionBinding() error {
 		return ErrReplay
 	}
 	old.Token, old.PayloadHash, old.IssuedAtUnixNano, old.ExpiresAtUnixNano = fresh.Token, fresh.PayloadHash, fresh.IssuedAtUnixNano, fresh.ExpiresAtUnixNano
+	if p.heldFrom != "" && old.Incarnation == p.heldFrom {
+		old.Incarnation = fresh.Incarnation
+	}
 	if old != fresh {
 		return ErrStale
 	}

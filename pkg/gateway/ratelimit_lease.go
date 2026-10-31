@@ -150,11 +150,20 @@ func (l *Limiter) EnableLeasing(cfg LeaseConfig, observer LeaseObserver) *Limite
 // means the request is decided locally, as before leasing: the breaker is
 // open and no lease is held, a lease statement failed, or a lease did not
 // arrive in time.
-func (l *Limiter) leaseConsume(ctx context.Context, batch CentralBatchBackend, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
+// leaseConsume returns verified=true only when the decision reflects a real
+// shared-counter result (a token fetched from central, a central-reported empty
+// window, or an allowance admit on a counter this gateway has already fetched).
+// An allowance admit on a never-fetched counter (st.remaining < 0) returns
+// verified=false so the caller does not arm the central outage grace from a
+// decision Postgres never saw (ADR-20261027173012 contract: the grace follows a
+// successful shared-counter decision).
+func (l *Limiter) leaseConsume(ctx context.Context, batch CentralBatchBackend, scope, subjectID, plan string, rps, burst float64) (int, bool, bool, error) {
 	t := l.lease
 	key := centralBatchKey{scope: scope, subjectID: subjectID, plan: plan}
 	now := l.now()
-	deadline := now.Add(centralConsultTimeout)
+	// A waiting request may need the statement in flight and then its own,
+	// each bounded by centralConsumeTimeout (ADR-20261027173012 amendment 2).
+	deadline := now.Add(centralBatchWait)
 	waited, waits := false, 0
 
 	t.mu.Lock()
@@ -171,23 +180,24 @@ func (l *Limiter) leaseConsume(ctx context.Context, batch CentralBatchBackend, s
 			}
 			balance := st.balance()
 			t.mu.Unlock()
-			return balance, true, nil
+			return balance, true, true, nil
 		}
 		if now.Before(st.emptyUntil) {
 			t.mu.Unlock()
-			return 0, false, nil
+			return 0, false, true, nil
 		}
 		if l.centralBreakerOpen(now) {
 			t.mu.Unlock()
-			return 0, false, errCentralBreakerOpen
+			return 0, false, false, errCentralBreakerOpen
 		}
 		if !waited && st.owed < t.allowance(burst) && (st.remaining < 0 || st.remaining >= t.allowance(burst)) {
 			st.owed++
 			t.count(scope, LeaseTokensAllowance, 1)
 			t.startLocked(l, ctx, batch, key, st)
 			balance := st.balance()
+			verified := st.remaining >= 0
 			t.mu.Unlock()
-			return balance, true, nil
+			return balance, true, verified, nil
 		}
 		if !waited {
 			waited = true
@@ -203,7 +213,7 @@ func (l *Limiter) leaseConsume(ctx context.Context, batch CentralBatchBackend, s
 		st.waiters--
 		if err != nil {
 			t.mu.Unlock()
-			return 0, false, err
+			return 0, false, false, err
 		}
 		now = l.now()
 		t.expireLocked(ctx, l, key, st, now)
@@ -212,7 +222,7 @@ func (l *Limiter) leaseConsume(ctx context.Context, batch CentralBatchBackend, s
 		waits++
 		if st.tokens == 0 && (waits >= leaseMaxWaits || !now.Before(deadline)) {
 			t.mu.Unlock()
-			return 0, false, errCentralBatchWait
+			return 0, false, false, errCentralBatchWait
 		}
 	}
 }
@@ -260,7 +270,10 @@ func (t *leaseTable) startLocked(l *Limiter, ctx context.Context, batch CentralB
 // it, so it keeps the triggering request's values but not its cancellation.
 func (t *leaseTable) run(l *Limiter, ctx context.Context, batch CentralBatchBackend, key centralBatchKey, st *leaseState, call *leaseCall, size, owed int, rps, burst float64) {
 	defer t.calls.Done()
-	leaseCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+	// A lease is an authoritative consume, so it gets the consume bound: a
+	// counter commit past 250 ms (a checkpoint or fsync stall) failed the
+	// lease, opened the breaker and refused requests within their limit.
+	leaseCtx, cancel := context.WithTimeout(ctx, centralConsumeTimeout)
 	granted, remaining, err := batch.ConsumeTokens(leaseCtx, key.scope, key.subjectID, key.plan, rps, burst, size+owed)
 	cancel()
 	now := l.now()

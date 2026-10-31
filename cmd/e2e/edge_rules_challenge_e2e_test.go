@@ -63,7 +63,7 @@ func TestEdgeRulesChallenge_E2E(t *testing.T) {
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
-	host := "edgectl-challenge.apps.test.example"
+	host := "edgectl-challenge.edge-e2e.example"
 	seedRouteSubstitute(t, ctx, pool, accountID, app.ID, host, slug)
 	ruleID := seedEdgeRuleDirect(t, ctx, pool, accountID, app.ID, host, state.EdgeRuleKindChallenge,
 		map[string]any{"kind": "challenge", "challenge": map[string]any{"difficulty": 10, "pass_ttl_seconds": 300}})
@@ -75,8 +75,17 @@ func TestEdgeRulesChallenge_E2E(t *testing.T) {
 		"Sec-Fetch-Mode": "navigate",
 	}
 
-	// A script never sees the page: 403 challenge_required.
+	// Until the edge_challenge platform flag releases challenge rules to the
+	// account, the rule is inert (ADR-20261023113721).
 	_, body, status := doReqHeaders(t, h, host, http.MethodGet, "/account", nil,
+		map[string]string{"User-Agent": "python-requests/2.32", "Accept": "application/json"})
+	if status == http.StatusForbidden || problemCode(body) == api.CodeChallengeRequired {
+		t.Fatalf("unreleased challenge rule enforced: status=%d code=%q", status, problemCode(body))
+	}
+	releaseEdgeFeatures(t, pool)
+
+	// A script never sees the page: 403 challenge_required.
+	_, body, status = doReqHeaders(t, h, host, http.MethodGet, "/account", nil,
 		map[string]string{"User-Agent": "python-requests/2.32", "Accept": "application/json"})
 	if status != http.StatusForbidden || problemCode(body) != api.CodeChallengeRequired {
 		t.Fatalf("script: status=%d code=%q, want 403 %s", status, problemCode(body), api.CodeChallengeRequired)

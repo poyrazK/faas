@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { formatIssueSlackMessage, issueSlackMessageFromWebhook, WebhookVerificationError } from '../src/index.js';
+import { formatIssueSlackMessage, issueSlackMessageFromWebhook, WebhookVerificationError } from '../src/preview.js';
 
 const app='11111111-1111-4111-8111-111111111111';
 const team='22222222-2222-4222-8222-222222222222';

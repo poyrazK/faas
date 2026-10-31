@@ -57,6 +57,51 @@ type Claims struct {
 	AccountID  string `json:"account_id"`
 	AppID      string `json:"app_id"`
 	InstanceID string `json:"instance_id"`
+	// Environment is the deployment scope the instance runs (ADR-1141
+	// amendment 2026-10-25). Host-internal relay tokens and tokens minted
+	// before the amendment omit it.
+	Environment string `json:"environment,omitempty"`
+}
+
+// DefaultEnvironment is the deployment scope a deploy uses unless it names
+// another; its tokens keep the original subject.
+const DefaultEnvironment = "default"
+
+// Subject is the sub claim for appID running in environment: app:<app_id> in
+// the default environment, app:<app_id>:env:<environment> in any other.
+// Cloud trust policies match sub (AWS IAM conditions on nothing else for a
+// generic OIDC provider), so a staging deployment must not present the
+// subject a production role trusts.
+func Subject(appID, environment string) string {
+	if environment == "" || environment == DefaultEnvironment {
+		return "app:" + appID
+	}
+	return "app:" + appID + ":env:" + environment
+}
+
+// SubjectMatches reports whether c's subject is the one its app and
+// environment claims name.
+func (c Claims) SubjectMatches() bool {
+	return c.AppID != "" && c.Subject == Subject(c.AppID, c.Environment)
+}
+
+// validEnvironment mirrors deployments_scope_shape, so an environment can
+// never smuggle a ':' into the subject.
+func validEnvironment(environment string) bool {
+	if environment == "" {
+		return true
+	}
+	if len(environment) < 3 || len(environment) > 40 {
+		return false
+	}
+	for i, r := range environment {
+		edge := i == 0 || i == len(environment)-1
+		alnum := r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
+		if !alnum && (r != '-' || edge) {
+			return false
+		}
+	}
+	return true
 }
 
 // ExecutionClaims is the host-to-host identity for a claimed disposable Run.
@@ -68,6 +113,22 @@ type ExecutionClaims struct {
 	ExecutionID string `json:"execution_id"`
 	LeaseToken  string `json:"lease_token"`
 }
+
+// AgentRunClaims is the host-to-host identity of an agent run's relay
+// connection (ADR-20261027090010 §7, ADR-20261027090016). vmmd mints it from placement data
+// only; LeaseToken fences it to agentd's current lease, like ExecutionClaims.
+type AgentRunClaims struct {
+	jwt.Claims
+	AccountID    string `json:"account_id"`
+	RunID        string `json:"run_id"`
+	LeaseToken   string `json:"lease_token"`
+	TenantID     string `json:"platform_tenant_id,omitempty"`
+	AgentID      string `json:"agent_id"`
+	AgentVersion int    `json:"agent_version"`
+}
+
+// AgentRunSubjectPrefix starts an agent run assertion's subject.
+const AgentRunSubjectPrefix = "agent_run:"
 
 // Token is the response returned to the guest metadata proxy.
 type Token struct {
@@ -111,7 +172,11 @@ func NewSigner(private *rsa.PrivateKey, issuer, keyID string, ttl time.Duration)
 	if keyID == "" {
 		keyID = DefaultKeyID
 	}
-	if ttl <= 0 {
+	// Gregale's own verifiers refuse tokens that live longer than
+	// DefaultTokenTTL, but a cloud trusting the issuer accepts whatever the
+	// token says, so a longer configured lifetime only widens the replay
+	// window of a copied token. It is capped here for every token minted.
+	if ttl <= 0 || ttl > DefaultTokenTTL {
 		ttl = DefaultTokenTTL
 	}
 	signer, err := jose.NewSigner(
@@ -124,13 +189,24 @@ func NewSigner(private *rsa.PrivateKey, issuer, keyID string, ttl time.Duration)
 	return &Signer{private: private, issuer: issuer, kid: keyID, ttl: ttl, signer: signer}, nil
 }
 
-// Mint creates a short-lived assertion for one running app instance.
+// Mint creates a short-lived assertion for one running app instance with no
+// environment claim. vmmd uses it for host-internal relay audiences; guest
+// tokens come from MintEnvironment.
 func (s *Signer) Mint(now time.Time, accountID, appID, instanceID, audience string) (Token, error) {
+	return s.MintEnvironment(now, accountID, appID, instanceID, "", audience)
+}
+
+// MintEnvironment creates a short-lived assertion for one running app
+// instance in environment (its deployment scope).
+func (s *Signer) MintEnvironment(now time.Time, accountID, appID, instanceID, environment, audience string) (Token, error) {
 	if s == nil || s.signer == nil {
 		return Token{}, errors.New("workload identity: signer is not configured")
 	}
 	if accountID == "" || appID == "" || instanceID == "" {
 		return Token{}, errors.New("workload identity: account_id, app_id, and instance_id are required")
+	}
+	if !validEnvironment(environment) {
+		return Token{}, errors.New("workload identity: environment is not a deployment scope")
 	}
 	if err := validateAudience(audience); err != nil {
 		return Token{}, err
@@ -146,16 +222,17 @@ func (s *Signer) Mint(now time.Time, accountID, appID, instanceID, audience stri
 	claims := Claims{
 		Claims: jwt.Claims{
 			Issuer:    s.issuer,
-			Subject:   "app:" + appID,
+			Subject:   Subject(appID, environment),
 			Audience:  jwt.Audience{audience},
 			IssuedAt:  jwt.NewNumericDate(now),
 			Expiry:    jwt.NewNumericDate(expires),
 			NotBefore: jwt.NewNumericDate(now.Add(-time.Second)),
 			ID:        hex.EncodeToString(jtiBytes[:]),
 		},
-		AccountID:  accountID,
-		AppID:      appID,
-		InstanceID: instanceID,
+		AccountID:   accountID,
+		AppID:       appID,
+		InstanceID:  instanceID,
+		Environment: environment,
 	}
 	raw, err := jwt.Signed(s.signer).Claims(claims).Serialize()
 	if err != nil {
@@ -184,38 +261,72 @@ func (s *Signer) MintExecution(now time.Time, accountID, executionID, leaseToken
 	if _, err := uuid.Parse(leaseToken); err != nil {
 		return ExecutionToken{}, errors.New("workload identity: lease_token is invalid")
 	}
-	if err := validateAudience(audience); err != nil {
+	base, err := s.hostClaims(now, "execution:"+executionID, audience)
+	if err != nil {
 		return ExecutionToken{}, err
 	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	ttl := s.ttl
-	if ttl > DefaultTokenTTL {
-		ttl = DefaultTokenTTL
-	}
-	expires := now.Add(ttl)
-	var jtiBytes [16]byte
-	if _, err := rand.Read(jtiBytes[:]); err != nil {
-		return ExecutionToken{}, fmt.Errorf("workload identity: generate jti: %w", err)
-	}
-	claims := ExecutionClaims{
-		Claims: jwt.Claims{
-			Issuer:    s.issuer,
-			Subject:   "execution:" + executionID,
-			Audience:  jwt.Audience{audience},
-			IssuedAt:  jwt.NewNumericDate(now),
-			Expiry:    jwt.NewNumericDate(expires),
-			NotBefore: jwt.NewNumericDate(now.Add(-time.Second)),
-			ID:        hex.EncodeToString(jtiBytes[:]),
-		},
-		AccountID: accountID, ExecutionID: executionID, LeaseToken: leaseToken,
-	}
+	claims := ExecutionClaims{Claims: base, AccountID: accountID, ExecutionID: executionID, LeaseToken: leaseToken}
 	raw, err := jwt.Signed(s.signer).Claims(claims).Serialize()
 	if err != nil {
 		return ExecutionToken{}, fmt.Errorf("workload identity: serialize execution token: %w", err)
 	}
 	return ExecutionToken{jwt: raw}, nil
+}
+
+// MintAgentRun creates the short-lived relay assertion of an agent run. Like
+// MintExecution it is host-to-host material and never guest-facing.
+func (s *Signer) MintAgentRun(now time.Time, c AgentRunClaims, audience string) (ExecutionToken, error) {
+	if s == nil || s.signer == nil {
+		return ExecutionToken{}, errors.New("workload identity: signer is not configured")
+	}
+	for name, id := range map[string]string{"account_id": c.AccountID, "run_id": c.RunID, "lease_token": c.LeaseToken, "agent_id": c.AgentID} {
+		if _, err := uuid.Parse(id); err != nil {
+			return ExecutionToken{}, fmt.Errorf("workload identity: %s is invalid", name)
+		}
+	}
+	if c.TenantID != "" {
+		if _, err := uuid.Parse(c.TenantID); err != nil {
+			return ExecutionToken{}, errors.New("workload identity: platform_tenant_id is invalid")
+		}
+	}
+	if c.AgentVersion < 1 {
+		return ExecutionToken{}, errors.New("workload identity: agent_version is invalid")
+	}
+	base, err := s.hostClaims(now, AgentRunSubjectPrefix+c.RunID, audience)
+	if err != nil {
+		return ExecutionToken{}, err
+	}
+	c.Claims = base
+	raw, err := jwt.Signed(s.signer).Claims(c).Serialize()
+	if err != nil {
+		return ExecutionToken{}, fmt.Errorf("workload identity: serialize agent run token: %w", err)
+	}
+	return ExecutionToken{jwt: raw}, nil
+}
+
+// hostClaims are the standard claims of a host-to-host assertion: at most
+// DefaultTokenTTL long, with a fresh ID.
+func (s *Signer) hostClaims(now time.Time, subject, audience string) (jwt.Claims, error) {
+	if err := validateAudience(audience); err != nil {
+		return jwt.Claims{}, err
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	ttl := min(s.ttl, DefaultTokenTTL)
+	var jtiBytes [16]byte
+	if _, err := rand.Read(jtiBytes[:]); err != nil {
+		return jwt.Claims{}, fmt.Errorf("workload identity: generate jti: %w", err)
+	}
+	return jwt.Claims{
+		Issuer:    s.issuer,
+		Subject:   subject,
+		Audience:  jwt.Audience{audience},
+		IssuedAt:  jwt.NewNumericDate(now),
+		Expiry:    jwt.NewNumericDate(now.Add(ttl)),
+		NotBefore: jwt.NewNumericDate(now.Add(-time.Second)),
+		ID:        hex.EncodeToString(jtiBytes[:]),
+	}, nil
 }
 
 // JWKS returns the public key set suitable for an OIDC discovery endpoint.

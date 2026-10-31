@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/BurntSushi/toml"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -18,6 +19,9 @@ import (
 // File reads use BurntSushi/toml (already a transitive dep of many
 // tools; pinning it here makes the daemon's config story explicit).
 type Config struct {
+	// AppsDomain is the same primary URL namespace used by apid and routing.
+	AppsDomain string `toml:"apps_domain"`
+
 	// HTTPAddr is the loopback bind address the plain HTTP webhook
 	// listener uses. Defaults to 127.0.0.1:8083 (spec §11: githubd
 	// is loopback-only, gatewayd-public reverse-proxies /webhooks/github).
@@ -88,6 +92,7 @@ func (c *Config) LoadServerTLS() (*tls.Config, error) {
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
 		HTTPAddr:   "127.0.0.1:8083",
+		AppsDomain: hostidentity.DefaultAppsDomain,
 		SocketPath: "/run/faas/githubd.sock",
 	}
 	b, err := os.ReadFile(path)
@@ -121,6 +126,9 @@ func LoadConfig(path string) (*Config, error) {
 // development keeps the TOML defaults, while split-box Ansible sets the TCP
 // listener and mTLS leaves through the systemd drop-in.
 func (c *Config) applyEnvironment() {
+	if v := os.Getenv("FAAS_APPS_DOMAIN"); v != "" {
+		c.AppsDomain = v
+	}
 	if v := os.Getenv("FAAS_GITHUBD_LISTEN_ADDR"); v != "" {
 		c.ListenAddr = v
 	}

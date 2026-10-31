@@ -60,7 +60,7 @@ func evaluateCutoverPreflight(c Cutover, source, target Database, bindings []Bin
 	p := CutoverPreflight{CutoverID: c.ID, State: "blocked", CheckedAt: now, ExpiresAt: now.Add(CutoverVerificationMaxAge), CutoverUpdatedAt: c.UpdatedAt,
 		Blockers:   []string{"activation_disabled", "runtime_safety_unproven", "source_sessions_unfenced", "routes_unconverged", "snapshot_invalidation_unproven", "resume_plan_missing"},
 		BindingIDs: []string{}}
-	if c.State == CutoverCancelling || c.State == CutoverCancelled {
+	if c.State == CutoverCancelling || c.State.Closed() {
 		p.Blockers = append(p.Blockers, "cutover_inactive")
 	}
 	p.SourceMatches = preflightDatabaseMatches(c.Source, source)

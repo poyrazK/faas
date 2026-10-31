@@ -14,10 +14,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const projectSecretsUsage = "usage: gregale projects environments secrets <project-slug> <environment-slug>\n" +
-	"       gregale projects environments secrets set <project-slug> <environment-slug> (KEY=VALUE ...|--from-stdin|--file PATH)\n" +
-	"       gregale projects environments secrets rotate <project-slug> <environment-slug> (KEY=VALUE ...|--from-stdin|--file PATH)\n" +
-	"       gregale projects environments secrets unset <project-slug> <environment-slug> KEY ..."
+const projectSecretsUsage = "usage: gregale environment secrets <project-slug> <environment-slug>\n" +
+	"       gregale environment secrets set <project-slug> <environment-slug> (KEY=VALUE ...|--from-stdin|--file PATH)\n" +
+	"       gregale environment secrets rotate <project-slug> <environment-slug> (KEY=VALUE ...|--from-stdin|--file PATH)\n" +
+	"       gregale environment secrets unset <project-slug> <environment-slug> KEY ..."
 
 // cmdProjectsEnvironmentSecrets manages the secrets a project environment
 // shares with every service (ADR-1139). Values are write-only.
@@ -63,6 +63,9 @@ func cmdProjectsEnvironmentSecretsWrite(args []string, rotate bool) int {
 	file := fs.String("file", "", "read KEY=VALUE pairs from a private file")
 	if err := fs.Parse(flags); err != nil || len(positional) < 2 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
 		PrintUsage(os.Stderr, projectSecretsUsage, "projects environments")
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	pairs, err := projectSecretPairs(positional[2:], *fromStdin, *file)

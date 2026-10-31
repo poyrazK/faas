@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -219,6 +220,45 @@ func TestBuildServers_PublicListenerPinsKnobs(t *testing.T) {
 	}
 	if pub.IdleTimeout != 120*time.Second {
 		t.Errorf("public IT = %v, want 120s (matches apid customer-facing listener)", pub.IdleTimeout)
+	}
+}
+
+// gRPC reached gatewayd-public over HTTP/1.1 only, so bidirectional streams
+// could not work from the internet. The public listener now also accepts
+// HTTP/2 with prior knowledge (what Caddy's h2c:// upstream speaks) while
+// HTTP/1.1 keeps working on the same port; the control listener is unchanged.
+func TestBuildServers_PublicListenerAcceptsH2C(t *testing.T) {
+	protos := make(chan int, 2)
+	pub, ctrl := buildServers("127.0.0.1:0", "127.0.0.1:0", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protos <- r.ProtoMajor
+		w.WriteHeader(http.StatusNoContent)
+	}), http.NewServeMux())
+	if ctrl.Protocols != nil && ctrl.Protocols.UnencryptedHTTP2() {
+		t.Error("control listener accepts h2c")
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = pub.Serve(ln) }()
+	t.Cleanup(func() { _ = pub.Close() })
+	url := "http://" + ln.Addr().String() + "/"
+
+	h2c := &http.Transport{Protocols: new(http.Protocols)}
+	h2c.Protocols.SetUnencryptedHTTP2(true)
+	for name, client := range map[string]*http.Client{
+		"h2c":      {Transport: h2c},
+		"HTTP/1.1": {Transport: &http.Transport{}},
+	} {
+		response, err := client.Get(url)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		_ = response.Body.Close()
+		got := <-protos
+		if want := map[string]int{"h2c": 2, "HTTP/1.1": 1}[name]; got != want || response.ProtoMajor != want {
+			t.Errorf("%s request served as HTTP/%d (response HTTP/%d), want HTTP/%d", name, got, response.ProtoMajor, want)
+		}
 	}
 }
 

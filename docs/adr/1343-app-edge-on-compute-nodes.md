@@ -83,8 +83,10 @@ On every compute node with the edge enabled:
   send `*.<apps domain>` to `http://127.0.0.1:8090` and return 404 for
   anything else. It runs in `faas-cp.slice`.
 - **gatewayd-public** listens on `127.0.0.1:8090` (8080 is gatewayd-internal's
-  TCP listener on compute nodes). Its control listener binds port 9092,
-  which nftables already limits to the control plane. Its compute unit drops
+  TCP listener on compute nodes). Its control listener binds port 9109,
+  which nftables admits from the control plane only. (Amended 2026-10-26:
+  this said 9092, but gatewayd-internal's egress listener holds 9092 on a
+  compute node, and the edge failed to start there on rc.296.) Its compute unit drops
   `Requires=postgresql.service` and `Wants=faas-apid.service`, and uses
   `/etc/faas/compute-db.env`.
 - The compute unit is a separate optional unit, `faas-gatewayd-public-edge`
@@ -111,7 +113,10 @@ domains still enter there.
 
 - **Node-local routing.** A hybrid dialer uses the local gatewayd-internal
   socket and falls back to the compute pool only while the local gateway is
-  unready or draining. Readiness follows the hybrid dialer.
+  unready or draining. Readiness follows the hybrid dialer. (Amended by
+  ADR-20261031105055: Cloudflare does not spread requests across a tunnel's
+  connectors, so with `FAAS_EDGE_PLACEMENT_ROUTING` the edge sends each host
+  to the gatewayd-internal of the node that last served it.)
 - **Host check.** Only `*.<apps domain>` is served. Platform hosts (per
   `apid.IsPlatformHost`, including IP literals) and unknown hosts get
   `421 Misdirected Request` with a metric. The DNS split keeps them away; the
@@ -139,7 +144,9 @@ domains still enter there.
   `operations.` and `s3.` keep the control-plane origin. The split list is
   derived from `apid.IsPlatformHost` plus `s3.`, and checked in CI.
 - The public-timeout Worker gets two origins: platform hosts to the control
-  plane, the app wildcard to the tunnel.
+  plane, the app wildcard to the tunnel. (Amended by ADR-20261030115139: no
+  Worker on the request path; DNS chooses the origin, as the bullet above
+  says, and platform 502/504 errors become 503 at the public edge.)
 - Tunnel credentials are sealed like other node secrets; each node holds the
   connector token, never an account API token.
 
@@ -227,6 +234,26 @@ Every step is dark until the manifest turns it on:
    traffic. WebSocket and SSE connections drop when DNS flips. Keep the
    control-plane edge serving the wildcard until the pilot passes.
 
+   Found when preparing the pilot (2026-10-25): production's public-timeout
+   Worker runs on `*.<apps domain>/*` and picks the origin itself with
+   `cf.resolveOverride`, so an app host's DNS record does not decide where
+   its requests go. The Worker therefore chooses the origin per host:
+   `APP_EDGE_HOSTS` (exact hostnames) resolve to `APP_EDGE_ORIGIN_HOSTNAME`,
+   a proxied in-zone CNAME to the tunnel, and every other host keeps the
+   control-plane origin. The pilot is that list with one test app; rollback
+   is removing it. `APP_EDGE_HOSTS = "*"` then moves every app host: the
+   §3 split is the app-name rule itself (one label that `pkg/api` accepts as
+   a valid, unreserved app slug), mirrored in the Worker's `app-hosts.json`
+   and kept equal to Go by a test, rather than a list of platform hosts. A
+   reserved name can never be an app, so every platform host, including ones
+   added later, stays on the control plane once it is reserved. The cutover
+   steps are in `docs/runbooks/AppEdgeCutover.md`.
+
+   Amended 2026-10-30 (ADR-20261030115139): the Worker is removed, because it
+   is billed per request. A per-host move is an explicit DNS record, plus a
+   route with no Worker for that host while the wildcard route still has
+   one.
+
 The OVH launch (ADR-1344 §8) turns it on from day one. Whether the GCP beta
 moves first is decided after the pilot.
 
@@ -261,6 +288,10 @@ draining one compute node fails no request.
 
 ## Open questions
 
-- Cloudflare Tunnel limits on our plan: connectors per tunnel, request body
-  size (uploads), and WebSocket idle timeouts.
+- Cloudflare Tunnel limits on our plan. Answered 2026-10-25 from
+  Cloudflare's documentation: a tunnel takes up to 25 replicas (100
+  connections), so one connector per compute node fits a cell of up to 25
+  nodes. Request body size and WebSocket idle timeouts are the zone's proxy
+  limits, which already apply today because app traffic is proxied and runs
+  through the Worker; the tunnel does not change them.
 - The edge CPU hold-back value, from the cutover load test.

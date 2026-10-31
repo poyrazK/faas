@@ -29,12 +29,15 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
+	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -219,14 +222,56 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)
 	}
+	// ADR-20261025114554: every builder's BuildKit daemon tries the
+	// operator's Docker Hub mirrors before Docker Hub.
+	mirrors, err := api.ParseDockerHubMirrors(os.Getenv(api.DockerHubMirrorsEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
+	// ADR-20261031103801: dependency caches share platform image layers,
+	// off by default.
+	sharePlatformBlobs, err := builderdpkg.ParseSharedPlatformBlobs(os.Getenv(builderdpkg.SharedPlatformBlobsEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
 	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
 		d.WithBuilderBaseDigest(builderBaseDigestPath)
+		d.WithDockerHubMirrors(mirrors)
+		d.WithSharedPlatformBlobs(sharePlatformBlobs)
+		// The node artifact cache shares the build drive filesystem and keeps
+		// less free than one build needs (#5709, ADR-20261027173012).
+		if sourceStorage != nil {
+			d.WithDriveSpaceReclaimer(func(_ context.Context, need int64) error {
+				if err := storage.ReclaimFreeBytes(sourceStorage, need); err != nil {
+					log.Warn("builderd: could not reclaim artifact cache space for a build drive", "need_bytes", need, "err", err)
+					return err
+				}
+				return nil
+			})
+		}
+	}
+	// ADR-20261028084018: zstd build layers, off until this node's imaged
+	// reads them.
+	layerCompression, err := builderdpkg.ParseLayerZstd(os.Getenv(builderdpkg.LayerZstdEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
+	// ADR-20261029105325: kernel overlayfs for builder BuildKit, off by default.
+	buildkitSnapshotter, err := builderdpkg.ParseKernelOverlay(os.Getenv(builderdpkg.KernelOverlayEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
+	// ADR-20261029171525: export the dependency cache after the image
+	// handoff, off by default.
+	deferCacheExport, err := builderdpkg.ParseDeferCacheExport(os.Getenv(builderdpkg.DeferCacheExportEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
 	}
 	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
 		defer func() { _ = c.Close() }()
 	}
 
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
 	notif := dbNotifier{pool: pool}
 	resid := deps.newResidentProbe(ctx, cfg.ScheddMetricsURL)
 	// Single OpsMetrics for the daemon: builderd both records build
@@ -274,6 +319,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		CacheAffinityGrace:  cfg.CacheAffinityGrace,
 		WarmIdle:            cfg.WarmIdle,
 		DisableWarmBuilders: !cfg.WarmBuilders,
+		LayerCompression:    layerCompression,
+		BuildKitSnapshotter: buildkitSnapshotter,
+		DeferCacheExport:    deferCacheExport,
 		// ADR-038: BuilderNodeID is stamped onto every
 		// build_provenance row builderd writes. Defaulted to
 		// "default-local" in LoadConfig; multi-node deployments
@@ -285,6 +333,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	b.WithBuildPublisher(publisher)
+	startReleasePauseWatcher(ctx, store, pool, b, log)
 	notifCh, err := db.SubscribeWithReconnect(ctx, pool, builderNotificationChannels(), log)
 	if err != nil {
 		return err
@@ -427,6 +476,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			sourceMaxAge = 24 * time.Hour
 		}
 		go builderdpkg.SourceGCSweepLoop(runCtx, sourceStorage, store, sourceGCInterval, sourceMaxAge, log)
+	}
+	// ADR-20261026152731: materialized source archives and build logs in the
+	// local spool. On a single box this is also apid's spool; both sweepers
+	// keep whatever an in-flight deployment names, so running both is safe.
+	if cfg.SourceSpoolDir != "" {
+		go sourcespool.Sweeper{Root: cfg.SourceSpoolDir, Layout: sourcespool.BuildSpool, Store: store,
+			MaxAge: api.SourceSpoolRetention, Log: log}.Run(runCtx, api.SourceSpoolSweepInterval)
 	}
 
 	var shutdownOnce sync.Once
@@ -740,4 +796,33 @@ type dbNotifier struct{ pool *pgxpool.Pool }
 
 func (d dbNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, d.pool, channel, payload)
+}
+
+// startReleasePauseWatcher follows the break-glass release pause (ADR
+// 20261022140000): while it is on, builderd claims no queued build. A failed
+// first read leaves builds flowing; the watcher keeps retrying.
+func startReleasePauseWatcher(ctx context.Context, store *state.PgStore, pool *pgxpool.Pool, b *builderdpkg.Builderd, log *slog.Logger) {
+	paused := runtimeconfig.NewBoolFlag(false)
+	b.WithReleasePause(paused.Load)
+	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyPlatformReleasePause},
+		func(_ context.Context, _ string, value json.RawMessage, _ int64) error {
+			on, err := runtimeconfig.Bool(value)
+			if err != nil {
+				return err
+			}
+			if on != paused.Load() {
+				log.Warn("builderd: break-glass release pause changed", "paused", on)
+			}
+			paused.Store(on)
+			return nil
+		}, log)
+	watcher.Daemon = "builderd"
+	if err := watcher.Reconcile(ctx); err != nil {
+		log.Warn("builderd: initial release pause read failed; claiming builds", "err", err)
+	}
+	go func() {
+		if err := watcher.Run(ctx); err != nil && !runtimeconfig.IsContextDone(err) {
+			log.Error("builderd: release pause watcher exited", "err", err)
+		}
+	}()
 }

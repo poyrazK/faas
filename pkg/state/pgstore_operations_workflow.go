@@ -21,7 +21,11 @@ func (s *PgStore) OperationForWorkflowRun(ctx context.Context, runID string) (Op
 		// handle them just as MemStore does.
 		return Operation{}, false, nil
 	}
-	raw, err := sqlc.New().GetCustomerOperationForWorkflow(ctx, s.pool, id)
+	return readOperationForWorkflowRun(ctx, s.pool, id)
+}
+
+func readOperationForWorkflowRun(ctx context.Context, db sqlc.DBTX, id pgtype.UUID) (Operation, bool, error) {
+	raw, err := sqlc.New().GetCustomerOperationForWorkflow(ctx, db, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, false, nil
 	}
@@ -61,7 +65,7 @@ func admitOperationWorkflowTx(ctx context.Context, tx pgx.Tx, op *Operation, inv
 	if err != nil {
 		return err
 	}
-	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(op.AppID)})
+	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(op.AppID), ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
 	if err != nil {
 		return err
 	}

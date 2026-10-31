@@ -24,9 +24,9 @@ class RotateKeyResponse:
 
     key: APIKeyResponse
     """API key metadata: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, request count.
-    **Plaintext is returned only on POST**. `org_id` (PR 6 / issue #190 / IAM-6 / ADR-061) is the org the key was
-    minted against; legacy account-scoped responses stamp `org_id = caller's personal org`. See `org.create_api_key`
-    / `org.revoke_api_key` for the new org-scoped verbs."""
+    **Plaintext is returned only on POST**. `org_id` is the org the key was minted against; legacy account-scoped
+    responses stamp `org_id = caller's personal org`. See `org.create_api_key` / `org.revoke_api_key` for the new
+    org-scoped verbs."""
     key_plaintext: str
     """New plaintext (PRESENT ONLY on this response). Capture immediately; the API never returns it again."""
     old_key_id: str

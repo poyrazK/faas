@@ -124,15 +124,20 @@ func TestDeployHealthcheckMetal(t *testing.T) {
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != 201 {
 		t.Fatalf("create app %q: status=%d", slug, got)
 	}
+	// require_authn=false leaves public_auth_mode=bearer on: open it too.
+	if body, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug,
+		api.UpdateAppRequest{PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		t.Fatalf("open public auth: status=%d body=%s", status, body)
+	}
 	appID := mustGetAppID(t, h, key, slug)
 
 	// Multipart deploy via builderd (same path build_metal_test uses)
 	// — the fixture's source tarball carries index.js with the
-	// /healthz handler, and the multipart form carries
-	// Overrides.Healthcheck.Path="/healthz".
+	// /healthz handler, and the multipart `healthcheck` field sets
+	// the startup probe path to /healthz.
 	src := NodeFixtureHealthcheck(t)
-	raw, status := postMultipartDeploymentWithOverrides(t, h, key, slug, src, false, &api.CreateDeploymentOverrides{
-		Healthcheck: &api.DeploymentHealthcheck{Path: "/healthz"},
+	raw, status := postMultipartDeploymentWithFields(t, h, key, slug, src, false, map[string]string{
+		"healthcheck": `{"path":"/healthz"}`,
 	}, "")
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)

@@ -67,6 +67,9 @@ func TestConsoleFileDiscardBeforeStartJailer(t *testing.T) {
 	v := newConsoleTestVMM(t)
 	path := v.consoleLogPath("i1")
 	discard := v.preopenConsoleFile("i1")
+	v.mu.Lock()
+	open := v.consoleOpens["i1"]
+	v.mu.Unlock()
 	discard()
 	v.mu.Lock()
 	pending := len(v.consoleOpens)
@@ -74,6 +77,9 @@ func TestConsoleFileDiscardBeforeStartJailer(t *testing.T) {
 	if pending != 0 {
 		t.Fatalf("discard left %d pending console opens", pending)
 	}
+	// Discard does not wait for the open; this test must, or the O_CREATE can
+	// land after TempDir's cleanup has started ("directory not empty").
+	<-open.done
 	writeConsole(t, path, "restore attempt\n")
 	f := v.takeConsoleFile("i1")
 	if f == nil {

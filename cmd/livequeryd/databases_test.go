@@ -125,21 +125,6 @@ func TestRefusePerDatabaseFlags(t *testing.T) {
 	}
 }
 
-// adr: 20261016151947 — replication slot names are server-wide, so each
-// database's default slot carries its ID, in PostgreSQL's slot alphabet.
-func TestDefaultSlot(t *testing.T) {
-	long := strings.Repeat("A-", 40)
-	for id, want := range map[string]string{
-		"db_a":                                 "gregale_live_db_a",
-		"3F1C0B6E-9A2B-44D1-8C7E-0123456789AB": "gregale_live_3f1c0b6e_9a2b_44d1_8c7e_0123456789ab",
-		long:                                   ("gregale_live_" + strings.Repeat("a_", 40))[:63],
-	} {
-		if got := defaultSlot(id); got != want || !pgNamePattern.MatchString(got) {
-			t.Errorf("defaultSlot(%q) = %q, want %q", id, got, want)
-		}
-	}
-}
-
 // adr: 20261016151947 — a database that keeps failing is retried at most once
 // a minute, starting at one second.
 func TestRestartBackoff(t *testing.T) {

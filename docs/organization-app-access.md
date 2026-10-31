@@ -13,9 +13,28 @@ query parameter cannot change that ownership.
 | Secret writes/rotation | yes | yes | yes | no | no |
 | Security policy and trusted publishers | yes | yes | no | no | no |
 | Delete/restore an app | yes | yes | no | no | no |
+| Alert rules, log drains, webhooks and outbound bindings: read | yes | yes | yes | yes | no |
+| Alert rules, log drains and webhooks: create, change, delete; unbind an outbound integration | yes | yes | no | no | no |
+| App credentials (consumer keys, inbound-webhook secrets, issue ingest tokens, realtime endpoint auth and publisher/worker credentials, AI access tokens): list, rotate, revoke | yes | yes | no | no | no |
 
 Secret reads return metadata, never values. Billing members can use the safe
 organization app inventory and existing billing surfaces.
+
+A company app's alert rules, log drains and webhooks send company data out of
+Gregale, so owners and admins govern them, whoever created the app; each one
+records the member who created it. The app creator's own account-wide alert
+rules and notification channels stay the creator's: other members neither
+see them through the app nor bind them to its rules. Binding an outbound
+integration stays with the app's creator, whose provider credential it uses.
+See ADR-20261026151103.
+
+A company app's credentials keep working after the member who minted them
+leaves, so owners and admins list, rotate and revoke them whoever created the
+app: API consumer keys, inbound-webhook signing secrets, issue ingest tokens,
+the realtime endpoint's client authentication and its publisher and worker
+credentials, and AI gateway access tokens (issuing an AI access token stays
+with the creator, whose provider credential it spends). See
+ADR-20261026151103 amendment 1.
 
 Use an organization-bound API key when working on a teammate's app. Its scope
 must also permit the operation: a read key cannot deploy, even for an admin.
@@ -40,6 +59,20 @@ separate pools. Deleted apps release slots; restoring an app must fit the same
 pool as creation. Company apps do not consume their creator's personal app slots.
 An organization plan downgrade blocks further admission when the pool is full;
 it does not delete existing applications.
+
+Other per-account plan allowances follow the app's billing subject
+(ADR-202610171904): API consumer keys, log drains, realtime endpoints, inbound
+and outbound webhooks, alert rules, CORS presets, triggers, pending custom domain
+claims, captured and imported OpenAPI
+documents, crons (created
+singly, by a deploy or by a project apply) and reserved
+(`eviction_priority: reserved`) apps. Once an
+organization has adopted billing, a company app's resources count toward the
+organization's allowance, whoever created the app, and never toward the
+creator's personal one. Until then a company keeps its existing policy: its
+creator's company resources share the creator's allowance, with the
+creator's personal apps and account-wide resources. Public consumer sign-up
+on a company app issues keys under the plan the app runs on.
 
 Core app resources keep stable storage UUIDs and sealed bytes. After organization
 billing adoption, the organization supplies runtime entitlements, abuse controls,
@@ -69,11 +102,23 @@ Organization financial APIs are scoped by URL:
 - `GET /v1/orgs/{slug}/billing/status` and `GET /v1/orgs/{slug}/usage` require organization view permission.
 - `GET /v1/orgs/{slug}/invoices` requires billing permission.
 - `GET /v1/orgs/{slug}/billing/portal` and `PATCH /v1/orgs/{slug}/plan` require the owner, admin credential scope and the existing verification/step-up posture.
+- `GET /v1/orgs/{slug}/overage-cap` requires organization view permission; `POST /v1/orgs/{slug}/overage-cap` sets or clears the organization's monthly spend cap and requires the owner like a plan change. The organization's apps stop at its cap, not at a member's (ADR-20261030093512).
 
 The Go client exposes `GetOrgBillingStatus`, `GetOrgUsage`, `ListOrgInvoices`,
-`GetOrgBillingPortal` and `ChangeOrgPlan`. The OpenAPI contract and generated Node
+`GetOrgBillingPortal`, `ChangeOrgPlan`, `GetOrgOverageCap` and `SetOrgOverageCap`. The OpenAPI contract and generated Node
 and Python clients include these operations. Paid plan changes remain pending
 until the provider confirms them.
+
+## Billing status
+
+An organization follows the account dunning ladder (spec §4.7). While it is
+past due its apps keep serving and members keep their roles: they read,
+configure, rotate secrets, and revoke or remove credentials and integrations
+as usual, across apps, projects and managed PostgreSQL. As for a past-due
+personal account, deploys are refused with 402 `billing_past_due` and dev
+bridges do not relay. Once
+suspended, its apps park and the organization's resources answer 402 until
+billing is resolved.
 
 ## Organization projects and environments
 
@@ -186,6 +231,19 @@ organization's apps, and outstanding invitations to their email in the org, in
 one transaction. Personal sessions/credentials and other organizations' keys
 remain valid. Company applications and already accepted workloads keep running.
 
+The same transaction stops what the member set up on the company's apps
+(ADR-20261026151103): their webhook alert rules, log drains and app webhooks
+are paused; their alert rules that roll back, demote or promote keep doing so
+without their webhook; and their notification channels are unbound from the
+company apps' rules. An integration that predates authorship counts as the app
+creator's. Drains an application standard manages are left alone. The removal's
+activity entry says how many were paused, and an owner or admin re-points and
+re-enables them. Their account-scope release webhooks stop receiving the
+company's deployment, rollout and GitOps events. Company apps they created stop
+billing customers through their account: their billing runs skip those
+customers, sign-up closes and the customer portal is unavailable (see
+[API monetization](api-monetization.md#company-apps)).
+
 An in-flight shared-app or organization mutation must still hold its original
 membership revision when its database transaction begins. A change that already
 holds that lock finishes before removal; if removal commits first, the stale
@@ -201,9 +259,18 @@ or revoked org key.
 The filtered app, deployment, build, domain, cron, instance, secret, invocation
 and app-metrics inventories hide company resources after departure. Pagination
 keeps older personal resources reachable and does not expose hidden company
-resource IDs or secret names in its cursors. Domain, cron, edge-rule and
-invocation ID URLs also enforce current membership, while their legacy
-operations still require the creator to be owner/admin.
+resource IDs or secret names in its cursors. Domain, cron, edge-rule,
+invocation, delayed-task, workflow-run, release-freeze, managed operation,
+commit-source, preview-status and deleted-app ID URLs also enforce current
+membership, while their legacy operations still require the creator to be
+owner/admin. So do routes that name a company app in the request body or query
+string, such as creating a cron, custom domain, release freeze, CORS preset,
+dev bridge or managed PostgreSQL cutover. An open dev bridge keeps enforcing
+it: the relay rechecks its creator's organization access on every request and
+on open connections, so leaving the company ends the bridge at once. Trigger
+URLs enforce membership too;
+legacy `/v1/triggers` administration covers personal apps only, as described
+in [organization queues](organization-queues.md).
 
 Account-owned jobs, object storage, queues, GitHub/GitOps bindings and unreviewed
 project integrations still need separate organization coverage. Offboarding

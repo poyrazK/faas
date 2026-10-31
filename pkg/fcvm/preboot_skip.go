@@ -1,18 +1,12 @@
 package fcvm
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"hash"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -20,27 +14,28 @@ import (
 
 // Skipping unchanged pre-boot writes on restore.
 //
-// Every restore used to loop-mount the instance's writable drive to rewrite
-// secrets.env, env.json, the resolver and workload files (~15-20 ms, about a
-// fifth of a warm restore). On a v2 restore that drive is a clone of the drive
+// Every restore opens the instance's writable drive to rewrite secrets.env,
+// env.json, the resolver and workload files: a loop mount before
+// ADR-20261025090100 (~15-20 ms, about a fifth of a warm restore), sandboxed
+// e2fsprogs runs since. On a v2 restore that drive is a clone of the drive
 // captured at park, which already holds whatever this vmmd wrote for the
 // instance the capture came from. vmmd remembers a digest of those writes per
 // instance and carries it onto each capture; a restore whose writes hash the
-// same skips the mount. Nothing is skipped on a guess: an unknown capture
+// same skips the drive session. Nothing is skipped on a guess: an unknown capture
 // (another node, a legacy key) or any changed input — a rotated secret, new
 // env, a different resolver — writes exactly as before.
 //
 // Parks reuse a healthy snapshot instead of capturing again, so after a vmmd
 // restart the capture-time record alone would never return: production went
-// on mounting every restore. The first restore of a v2 capture this vmmd has
-// no record for therefore mounts as before and reads what the staged drive
+// on opening the drive on every restore. The first restore of a v2 capture
+// this vmmd has no record for therefore opens it as before and reads what it
 // already holds. When every file it would write is already there, exactly as
 // its own write would leave it, it writes nothing and records the capture, so
-// later restores of it skip the mount.
+// later restores of it skip the session.
 //
 // env.json carries the placement identity schedd appends on every wake
 // (FAAS_INSTANCE_ID, FAAS_NODE_ID). Every restore is a new instance, so a
-// byte-exact comparison never matched: production mounted on 100% of
+// byte-exact comparison never matched: production staged on 100% of
 // restores. The digest and the on-drive check therefore ignore those keys.
 // A skipped restore keeps the captured instance's identity on the drive,
 // which is the environment the restored processes already hold; guest-init
@@ -102,7 +97,7 @@ func (p *preBootLedger) learnable(storageKey string) bool {
 }
 
 // learned records that storageKey's captured drive was found to already hold
-// the pre-boot files digest describes (see preBootFilesPresent).
+// the pre-boot files digest describes (see driveFilesPresent).
 func (p *preBootLedger) learned(storageKey, digest string) {
 	if !p.learnable(storageKey) || digest == "" {
 		return
@@ -150,66 +145,6 @@ func (d *preBootDigest) add(label string, payload []byte) {
 
 func (d *preBootDigest) sum() string { return hex.EncodeToString(d.h.Sum(nil)) }
 
-// preBootFilesPresent reports whether every writer's file is already on the
-// mounted drive exactly as its write would leave it: a regular file owned by
-// this process, with the writer's permission bits and byte-identical
-// contents. Only then is skipping the writes indistinguishable from doing
-// them. The drive is tenant-writable, so paths resolve through os.Root and
-// any symlink on the way counts as absent — a restore never reads outside
-// the mount, and a planted link only costs the write it would have had.
-func preBootFilesPresent(mountRoot string, writers []preBootFileWriter) bool {
-	if len(writers) == 0 {
-		return false
-	}
-	root, err := os.OpenRoot(mountRoot)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = root.Close() }()
-	for _, w := range writers {
-		if w.path == "" {
-			return false
-		}
-		target, err := stagedDrivePath(mountRoot, w.path)
-		if err != nil {
-			return false
-		}
-		rel, err := filepath.Rel(mountRoot, target)
-		if err != nil || !preBootFilePresent(root, rel, w.want, w.mode, w.same) {
-			return false
-		}
-	}
-	return true
-}
-
-func preBootFilePresent(root *os.Root, rel string, want []byte, mode os.FileMode, same func([]byte) bool) bool {
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	for i := range parts {
-		info, err := root.Lstat(filepath.Join(parts[:i+1]...))
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
-			return false
-		}
-		if i < len(parts)-1 && !info.IsDir() {
-			return false
-		}
-		if i == len(parts)-1 && (!info.Mode().IsRegular() || info.Mode().Perm() != mode.Perm() ||
-			(same == nil && info.Size() != int64(len(want))) || !ownedBySelf(info)) {
-			return false
-		}
-	}
-	f, err := root.Open(rel)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = f.Close() }()
-	if same != nil {
-		got, err := io.ReadAll(io.LimitReader(f, preBootSameMaxBytes+1))
-		return err == nil && len(got) <= preBootSameMaxBytes && same(got)
-	}
-	got, err := io.ReadAll(io.LimitReader(f, int64(len(want))+1))
-	return err == nil && bytes.Equal(got, want)
-}
-
 // preBootSameMaxBytes bounds how much of a tenant-writable file a custom
 // comparison reads.
 const preBootSameMaxBytes = 4 << 20
@@ -229,13 +164,4 @@ func placementStableAPIEnv(blob []byte) ([]byte, error) {
 		delete(env, key)
 	}
 	return json.Marshal(env)
-}
-
-// ownedBySelf: a file this process creates is owned by its effective uid,
-// root in production. A file the guest re-owned would keep its owner through
-// a truncating write but not through the resolver's replace, so it counts as
-// absent.
-func ownedBySelf(info os.FileInfo) bool {
-	st, ok := info.Sys().(*syscall.Stat_t)
-	return ok && int(st.Uid) == os.Geteuid()
 }

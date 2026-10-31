@@ -75,7 +75,7 @@ func commitSubscriberStatus(raw json.RawMessage, subscription string) (string, b
 // WaitCommitSubscriber polls guarded evidence for one original application subscriber.
 // Only completed proves original execution success. It never requests replay or cancellation.
 // On cancellation/deadline it returns the last observation and the context error.
-func (c *Client) WaitCommitSubscriber(ctx context.Context, publication CommitEventPublication, subscription string, interval time.Duration) (CommitSubscriberWaitResult, error) {
+func (c *PreviewClient) WaitCommitSubscriber(ctx context.Context, publication CommitEventPublication, subscription string, interval time.Duration) (CommitSubscriberWaitResult, error) {
 	out := CommitSubscriberWaitResult{Publication: publication, SubscriptionID: subscription, Status: "pending"}
 	if !commitSubscriberUUID.MatchString(subscription) || subscription == "00000000-0000-0000-0000-000000000000" || interval < 100*time.Millisecond || interval > time.Minute {
 		return out, ErrValidation("invalid subscriber wait options")

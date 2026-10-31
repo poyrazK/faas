@@ -3,8 +3,8 @@ from datetime import datetime
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.deployments import get_deployment_runtime, preview_runtime_upgrade
-from faas_sdk.models import DeploymentRuntimeResponse, RuntimeUpgradePreviewResponse
+from faas_sdk.preview.api.deployments import get_deployment_runtime, preview_runtime_upgrade
+from faas_sdk.preview.models import DeploymentRuntimeResponse, RuntimeUpgradePreviewResponse
 
 
 def test_runtime_reads_preserve_unknown_identity_and_preview_without_mutation():

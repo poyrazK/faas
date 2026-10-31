@@ -14,6 +14,7 @@ import (
 type MemoryStore struct {
 	resizes                   map[string]ResizeOperation
 	cutovers                  map[string]Cutover
+	fences                    map[string]CutoverAdmissionFence
 	preflights                map[string]CutoverPreflight
 	health                    map[string]memoryHealthEntry
 	mu                        sync.Mutex
@@ -29,12 +30,17 @@ type MemoryStore struct {
 	usageProgress             map[usageProgressKey]UsageProgress
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
+	overage                   map[string]bool
+	capEvents                 map[memoryCapEventKey]CapEvent
+	capEventsMailed           map[memoryCapEventKey]bool
+	usageWaivers              map[string][]usageWaiver
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		resizes:                   map[string]ResizeOperation{},
 		cutovers:                  map[string]Cutover{},
+		fences:                    map[string]CutoverAdmissionFence{},
 		preflights:                map[string]CutoverPreflight{},
 		health:                    map[string]memoryHealthEntry{},
 		databases:                 map[string]Database{},
@@ -49,6 +55,10 @@ func NewMemoryStore() *MemoryStore {
 		usageProgress:             map[usageProgressKey]UsageProgress{},
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
+		overage:                   map[string]bool{},
+		capEvents:                 map[memoryCapEventKey]CapEvent{},
+		capEventsMailed:           map[memoryCapEventKey]bool{},
+		usageWaivers:              map[string][]usageWaiver{},
 	}
 }
 
@@ -262,12 +272,16 @@ func (s *MemoryStore) ClaimDelete(ctx context.Context, accountID, databaseID, le
 	if database.AttemptCount < 30 {
 		database.AttemptCount++
 	}
+	before := database
 	database.State = StateDeleting
+	// An immediate delete ends any scheduled window (ADR-20261029174950).
+	database.PurgeAfter = time.Time{}
 	database.LeaseToken = leaseToken
 	database.LeaseUntil = leaseUntil
 	database.UpdatedAt = now
 	database.RetryAt = now
 	s.databases[databaseID] = database
+	s.trackUsageWaiverLocked(before, database)
 	return cloneDatabase(database), nil
 }
 

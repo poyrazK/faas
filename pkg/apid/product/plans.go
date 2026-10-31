@@ -90,6 +90,9 @@ func planRespond(w http.ResponseWriter, value any, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "product_plan_review_changed", "Plan review changed", "your plan, offered choices, prices, month or usage changed; review the current terms before confirming again"))
 	case errors.Is(err, state.ErrProductPlanNotOffered):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "product_plan_not_offered", "Plan change unavailable", "this plan change is not currently offered for your workspace; contact your product team"))
+	case errors.Is(err, state.ErrProductPaymentMethodRequired):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProductPaymentMethodRequired, "Payment method required",
+			"this plan needs a payment method on file; a billing manager can add one on the payment method page"))
 	default:
 		respond(w, value, err)
 	}

@@ -6,7 +6,10 @@
   default: vmmd `quiet_pause`, schedd `quiet_pause_admission` and schedd
   `frozen_tier` (2026-10-13). Step 3 is built for request-mode apps behind
   schedd `frozen_tier_apps`, also off by default (2026-10-15). The canaries
-  are pending.
+  are pending. Amended 2026-10-27: vmmd `quiet_pause` and schedd
+  `frozen_tier_apps` are on by default (see "Amendment 2026-10-27").
+  Amended 2026-10-31: schedd `quiet_pause_admission` is on by default (see
+  "Amendment 2026-10-31").
 - Date: 2026-10-12
 - Builds on: ADR-906 (frozen instances: prototype, measurements,
   economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
@@ -84,6 +87,11 @@ Two tiers built on the same Firecracker pause, with different owners.
 - The row stays `running`. There is no database write and no schedd round
   trip, and billing is unchanged: a quiet-paused instance is a running
   instance that is not using its vCPUs.
+  (Amended 2026-10-23 by ADR-20261023171905: with meterd's
+  `quiet_pause_unbilled = "on"`, a quiet-paused second is no longer billed.
+  schedd records the pauses in a ledger and meterd subtracts the ones it can
+  prove; the row still stays `running` and nothing changes on the request
+  path.)
 - vmmd reports `quiet_paused` and `quiet_paused_since` in `InstanceStats`;
   schedd uses them for admission (section 3).
 - schedd decides eligibility at wake and sends it in the app spec
@@ -249,6 +257,16 @@ Step 1, quiet pause for function apps:
 5. Canary on one production node with the flag on, comparing resume
    latency, errors and CPU pressure against the other nodes; then on for
    every node.
+   (Amended 2026-10-26: before the canary, run the node with vmmd's
+   `quiet_pause_observe` instead. Observe mode runs the same pause pass,
+   pauses nothing, and records the pauses quiet pause would make:
+   `vmmd_quiet_pause_observed_total`, `vmmd_quiet_pause_observed_pause_seconds`,
+   `vmmd_quiet_pause_observed_mb_seconds_total{plan}` and
+   `vmmd_quiet_pause_observed_instances`. They measure the canary's
+   expected pauses and resumes, and the billable MB-seconds unbilled quiet
+   pause (ADR-20261023171905) would not bill, on real traffic instead of the
+   simulated trace. Probes, admission and the pause ledger see an observed
+   instance as running.)
 
 Step 2, frozen for function apps. Built behind schedd's `frozen_tier`
 switch, off by default (owner decision, 2026-10-13: build before the step 1
@@ -302,3 +320,65 @@ amendment under "Decision".)
 2. Is a soft CPU guarantee for quiet resumes acceptable, or should resumes
    wait for a vCPU token? The step 1 canary measures how far active vCPU
    exceeds the budget in practice.
+
+## Amendment 2026-10-27: quiet pause and frozen apps on by default
+
+Production measurements on rc.297, 2026-10-27, with the switches on in
+compute-1's (fsn-2) `vmmd.toml` and `schedd.toml` (frozen tier itself on
+since 2026-10-22 through a schedd drop-in on both compute nodes):
+
+- `quiet_pause`: `h10-fn-go` (a function, so `between_requests`) at one
+  request per 5 s paused 27 times in 120 s, resume mean 1.1 ms and p90
+  2.4 ms, no resume errors; client p50 196 ms against a 250 ms baseline.
+  Apps default to `pause: when_idle` and were not paused. Quiet pause was
+  then turned on on compute-2 (fsn-3) as well.
+- `frozen_tier_apps`: request-mode apps thawed in 6-12 ms on the vmmd side;
+  platform wake mean 108 ms for thaws against 539 ms for snapshot restores
+  (vmmd restore 225-241 ms). Across a vmmd restart a freeze fails and the
+  instance parks instead, as designed.
+
+vmmd `quiet_pause` and schedd `frozen_tier_apps` now default to on
+(`cmd/vmmd/config.go`, `cmd/schedd/config.go`). `frozen_tier_apps` still does
+nothing unless `frozen_tier` is on, and `frozen_tier` stays off by default.
+`quiet_pause_admission`, `frozen_tier_workers` and early freeze
+(ADR-20261021215353) stay off. Because quiet pause wins over
+`quiet_pause_observe`, observing a node now needs `quiet_pause = false`.
+
+Billing is unchanged: a quiet-paused instance stays RUNNING and billed.
+schedd `quiet_pause_ledger` and meterd `quiet_pause_unbilled`
+(ADR-20261023171905) stay off by default; turning them on changes what a
+billed second is and remains a separate decision after the financial-model
+re-check that ADR names.
+
+Why the binary and not the node: release rollouts run `gregalectl manifest
+render` on every compute node (`deploy/ansible/node_join.yml`), which rewrites
+`/etc/faas/vmmd.toml` and `/etc/faas/schedd.toml` from the manifest. A
+switch set by hand in those files is lost at the next rollout and is never
+present on a new node; a default in the binary reaches both the same way.
+
+## Amendment 2026-10-31: quiet pause admission on by default
+
+The owner turned `quiet_pause_admission`, `measured_cpu_admission` and
+`cpu_pressure_backstop` on in production on 2026-10-31, 09:13-09:16 UTC, by
+hand in `/etc/faas/schedd.toml` on fsn-3, fsn-2 and the control plane
+(rc.311), one node at a time. Every schedd restarted cleanly, logged each
+switch enabled and raised no new warnings. The nodes were about 3% busy with
+no CPU pressure, and no node was held. vmmd's `quiet_pause` has been on by
+default since 2026-10-27.
+
+schedd `quiet_pause_admission` now defaults to on (`cmd/schedd/config.go`),
+together with measured CPU admission (ADR 20261029151111) and the CPU pressure
+backstop (ADR 20261030100950), which bounds the overcommit when paused
+instances resume together. `quiet_pause_admission = false` in `schedd.toml`
+turns it off; because a manifest render rewrites that file, the lasting
+per-node opt-out is `FAAS_QUIET_PAUSE_ADMISSION=false` in an environment
+drop-in, which overrides the file either way. `frozen_tier`, `frozen_tier_workers`, early freeze and the
+billing switches (`quiet_pause_ledger`, meterd `quiet_pause_unbilled`) are
+unchanged.
+
+Release rollouts run `gregalectl manifest render` on every node, which
+rewrites `/etc/faas/schedd.toml` from the manifest, so the hand edit would be
+lost at the next rollout and would never reach a new node. The production
+manifest cannot carry a new key until every node's `gregalectl` and `imaged`
+parse it, as ADR-1151's 2026-10-27 amendment found. A default in the binary
+reaches every node with the release itself.

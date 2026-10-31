@@ -50,7 +50,7 @@ func TestCmdAppsDispatch_QuietDeleteSpellings(t *testing.T) {
 }
 
 func TestCmdAppsDispatch_RejectsUnknownPositionals(t *testing.T) {
-	for _, args := range [][]string{{"delete", "--help"}, {"typo"}, {"ls", "extra"}} {
+	for _, args := range [][]string{{"typo"}, {"ls", "extra"}} {
 		t.Run(strings.Join(args, "-"), func(t *testing.T) {
 			main.ResetJSONOut(t)
 			f := main.AuthedFakeAPI(t, `[]`, http.StatusOK)
@@ -103,7 +103,7 @@ func TestKeysAddHelpNeverCreatesCredential(t *testing.T) {
 			if calls != 0 {
 				t.Fatalf("keys add %s made %d API request(s)", help, calls)
 			}
-			if !strings.Contains(stdout.String(), "gregale keys add <label>") {
+			if !strings.Contains(stdout.String(), "gregale key create <label>") {
 				t.Fatalf("help output = %q", stdout.String())
 			}
 		})
@@ -147,7 +147,7 @@ func TestGeneratedHelpUsesDispatcherArgumentOrder(t *testing.T) {
 		reject  string
 	}{
 		{command: "github", want: "gregale github <status|sync|repos|bind|setup|disconnect> <slug>", reject: "gregale github <slug> <"},
-		{command: "debug", want: "gregale debug <requests|profiles|dependencies|coverage|running|regressions|compare|bundle> [flags] <slug> [<request-id>]", reject: "gregale debug <slug> <"},
+		{command: "debug", want: "gregale debug <status|rollout|requests|profiles|capture|captures|capture-diff|dependencies|coverage|running|regressions|compare|bundle> [flags] <slug> [<request-id>]", reject: "gregale debug <slug> <"},
 		{command: "audit-events", want: "gregale audit-events <list|get> [<id>]", reject: "gregale audit-events <id> <"},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
@@ -155,7 +155,9 @@ func TestGeneratedHelpUsesDispatcherArgumentOrder(t *testing.T) {
 			oldOut := (*main.OsStdout)
 			(*main.OsStdout) = &stdout
 			t.Cleanup(func() { (*main.OsStdout) = oldOut })
-			if code := main.Run([]string{tc.command, "--help"}); code != 0 {
+			// Plain --help on a tree noun lists the tree's verbs; --all asks
+			// for the command's full manifest help.
+			if code := main.Run([]string{tc.command, "--help", "--all"}); code != 0 {
 				t.Fatalf("%s --help = %d", tc.command, code)
 			}
 			if got := stdout.String(); !strings.Contains(got, tc.want) || strings.Contains(got, tc.reject) {
@@ -172,6 +174,16 @@ func TestLogsHelpDocumentsOptionalSlugAndFilters(t *testing.T) {
 	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	if code := main.Run([]string{"logs", "--help"}); code != 0 {
 		t.Fatalf("logs --help = %d", code)
+	}
+	// Compact help leads with the everyday flags and points at the rest.
+	for _, want := range []string{"gregale logs [<slug>]", "--follow", "--since", "--level", "--source", "gregale logs --help --all"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("logs compact help missing %q:\n%s", want, stdout.String())
+		}
+	}
+	stdout.Reset()
+	if code := main.Run([]string{"logs", "--help", "--all"}); code != 0 {
+		t.Fatalf("logs --help --all = %d", code)
 	}
 	for _, want := range []string{
 		"gregale logs [<slug>]", "--deployment", "--release", "--source", "--grep", "--since",
@@ -246,5 +258,25 @@ func TestCmdAppsDispatch_RmSubcommand(t *testing.T) {
 	}
 	if code := main.Run([]string{"apps", "rm"}); code != 1 {
 		t.Errorf("run(apps rm) = %d, want 1 (usage)", code)
+	}
+}
+
+// `apps delete` is the dispatcher's alias for `apps rm`; asking for its help
+// shows help and never deletes.
+func TestCmdAppsDeleteHelpShowsHelpWithoutRequest(t *testing.T) {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `[]`, http.StatusOK)
+	var stdout bytes.Buffer
+	oldOut := *main.OsStdout
+	*main.OsStdout = &stdout
+	t.Cleanup(func() { *main.OsStdout = oldOut })
+	if code := main.Run([]string{"apps", "delete", "--help"}); code != 0 {
+		t.Fatalf("apps delete --help = %d, want 0", code)
+	}
+	if (*f.SawMethod()) != "" {
+		t.Fatalf("help made %s %s request", (*f.SawMethod()), (*f.SawPath()))
+	}
+	if !strings.Contains(stdout.String(), "--yes") {
+		t.Fatalf("help lacks the delete flags:\n%s", stdout.String())
 	}
 }

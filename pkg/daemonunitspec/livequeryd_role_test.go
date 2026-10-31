@@ -124,6 +124,14 @@ func TestLivequerydDropInIsOneCommandLine(t *testing.T) {
 			creds: []string{"keys_dsn", "keys_identity", "database_url.3f1c", "database_url.9a2b", "neon_api_key.9a2b", "tls_key"},
 			want:  []string{"-tls-key=%d/tls_key", "-client-ca=/etc/faas/tls/ca/ca.crt", "-client-name=realtimed.faas", "-listen=0.0.0.0:9480"},
 		},
+		"discovery only": {
+			vars: map[string]any{
+				"faas_livequeryd_databases": []map[string]any{}, "faas_livequeryd_discover_backends": []string{"neon-us-1", "neon-eu-1"},
+				"faas_livequeryd_discover_release_after": "5m", "faas_livequeryd_neon_api_key_src": "secrets/neon",
+			},
+			creds: []string{"keys_dsn", "keys_identity", "neon_api_key", "tls_key"},
+			want:  []string{"-discover-backends=neon-us-1,neon-eu-1", "-discover-release-after=5m", "-neon-api-key-file=%d/neon_api_key"},
+		},
 		"shared neon key, loopback": {
 			vars: map[string]any{
 				"faas_livequeryd_databases": livequerydDatabases[:1], "faas_livequeryd_tls_cert": "", "faas_livequeryd_listen": "127.0.0.1:9480",
@@ -158,8 +166,14 @@ func TestLivequerydDropInIsOneCommandLine(t *testing.T) {
 					t.Errorf("ExecStart names a secret file directly: %q", arg)
 				}
 			}
-			for _, w := range append(tc.want, "-databases-file=/etc/faas/livequeryd/databases.json", "-checkpoint-dir=/var/lib/faas/livequeryd",
-				"-keys-dsn-file=%d/keys_dsn", "-keys-identity=%d/keys_identity") {
+			want := append(tc.want, "-checkpoint-dir=/var/lib/faas/livequeryd", "-keys-dsn-file=%d/keys_dsn", "-keys-identity=%d/keys_identity")
+			listed := len(tc.vars["faas_livequeryd_databases"].([]map[string]any)) > 0
+			if listed {
+				want = append(want, "-databases-file=/etc/faas/livequeryd/databases.json")
+			} else if strings.Contains(d.exec, "-databases-file") {
+				t.Errorf("ExecStart names a databases file with no database listed:\n%s", d.exec)
+			}
+			for _, w := range want {
 				if !strings.Contains(d.exec, " "+w) {
 					t.Errorf("ExecStart lacks %s:\n%s", w, d.exec)
 				}

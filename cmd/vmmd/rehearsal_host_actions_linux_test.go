@@ -27,6 +27,25 @@ func (rehearsalHostPolicy) ScenarioRehearsalNetworkRun(context.Context, string) 
 	return strings.Repeat("a", 32), nil
 }
 
+// A contained guest's published event is captured into its installed run and
+// never reaches the account publisher (ADR-20261020090000).
+func TestContainedGuestEventsAreCapturedNotPublished(t *testing.T) {
+	run := strings.Repeat("a", 32)
+	mgr := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterContainedInstanceForTest("instance", "deployment", "app", "account", run)
+	published := false
+	var captured []string
+	r := &FrameworkReadyReceiver{ctx: t.Context(), log: slog.New(slog.NewTextHandler(io.Discard, nil)), mgr: mgr,
+		eventPublisher: func(context.Context, string, []byte) error { published = true; return nil },
+		eventCapturer: func(_ context.Context, instance, app, account, runID string, body []byte) error {
+			captured = append(captured, strings.Join([]string{instance, app, account, runID, string(body)}, "|"))
+			return nil
+		}}
+	r.dispatchEventPublish("instance", []byte(`{"id":"event"}`))
+	if published || len(captured) != 1 || captured[0] != "instance|app|account|"+run+`|{"id":"event"}` {
+		t.Fatalf("published=%v captured=%v", published, captured)
+	}
+}
+
 func TestRehearsalNetworkHostBrokersRefuseBeforeExternalActions(t *testing.T) {
 	mgr := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).
 		RegisterInstanceForTest("instance", "deployment", "app", "account").WithRehearsalNetworkPolicies(rehearsalHostPolicy{})

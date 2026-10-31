@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 )
 
@@ -83,17 +84,22 @@ func (spendCappedTenantStore) AdmitTenantRequest(context.Context, string, string
 	return TenantRequestBudgetDecision{Scope: TenantBudgetScopeSpendCap, Limit: 0, Observed: 25000, SpendCurrency: "EUR"}, nil
 }
 
-// adr: 20261019100331 — a tenant past its spend cap gets 402
+// adr: 20261019100331, 20261020170649 — a tenant past its spend cap gets 402
 // tenant_spend_cap_reached with the cap and amount due, before the upstream;
-// while API monetization is off it is served.
+// while API monetization is off for its account it is served. The
+// api_monetization flag releases it to one account with the switch off.
 func TestTenantSpendCap(t *testing.T) {
+	accountID := uuid.NewString()
 	for _, tc := range []struct {
 		name       string
-		monetized  bool
+		switchOn   bool
+		flagged    []string
 		wantStatus int
 	}{
-		{"monetization on", true, http.StatusPaymentRequired},
-		{"monetization off", false, http.StatusOK},
+		{"monetization on", true, nil, http.StatusPaymentRequired},
+		{"monetization off", false, nil, http.StatusOK},
+		{"flag releases the account", false, []string{accountID}, http.StatusPaymentRequired},
+		{"flag releases another account", false, []string{uuid.NewString()}, http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var forwarded atomic.Int64
@@ -102,19 +108,21 @@ func TestTenantSpendCap(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}))
 			t.Cleanup(upstream.Close)
-			backend := &fakeBackend{app: App{ID: uuid.NewString(), AccountID: uuid.NewString(), Plan: api.PlanPro,
+			backend := &fakeBackend{app: App{ID: uuid.NewString(), AccountID: accountID, Plan: api.PlanPro,
 				ConsumerAuthMode: api.ConsumerAuthModeOptional, RoutedSurfaceID: uuid.NewString(), PlatformTenantID: uuid.NewString()},
 				host: "capped-customer.example", upstream: upstream.Listener.Addr().String()}
 			backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString()})
-			h := NewHandlerWith(backend, NewMetrics(), nil).WithAPIMonetization(func() bool { return tc.monetized }).
-				WithTenantRequestBudgetStore(spendCappedTenantStore{})
+			flags := platformflags.NewSet(map[string]platformflags.Definition{
+				platformflags.APIMonetization: platformflags.FromAccountList(len(tc.flagged) > 0, false, tc.flagged)})
+			h := NewHandlerWith(backend, NewMetrics(), nil).WithAPIMonetization(func() bool { return tc.switchOn }).
+				WithAPIMonetizationFlags(flags).WithTenantRequestBudgetStore(spendCappedTenantStore{})
 			h.requestTelemetry = makeTestRecorder()
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://capped-customer.example/generate", nil))
 			if w.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", w.Code, tc.wantStatus, w.Body.String())
 			}
-			if !tc.monetized {
+			if tc.wantStatus != http.StatusPaymentRequired {
 				return
 			}
 			var problem api.Problem

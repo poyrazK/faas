@@ -44,7 +44,7 @@ func TestKafkaConfigSealOpenRoundTripPreservesUnknownFields(t *testing.T) {
 	identity := newIdentity(t)
 	raw := json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g","future_field":{"kept":true},"sasl":{"mechanism":"PLAIN","username":"svc","password":"sasl-secret"},"tls":{"client_cert":"cert","client_key":"PRIVATE KEY"}}`)
 
-	sealed, err := Seal(api.TriggerKindKafka, raw, identity.Recipient())
+	sealed, err := Seal(api.TriggerKindKafka, raw, []*age.X25519Recipient{identity.Recipient()})
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -167,39 +167,109 @@ func TestMergeForUpdatePreservesRotatesAndDeletesSecretBlocks(t *testing.T) {
 	newIdentity := newIdentity(t)
 	stored, err := Seal(api.TriggerKindKafka,
 		json.RawMessage(`{"brokers":["old:9092"],"sasl":{"username":"old","password":"old-secret"},"tls":{"client_key":"old-key"}}`),
-		oldIdentity.Recipient())
+		[]*age.X25519Recipient{oldIdentity.Recipient()})
 	if err != nil {
 		t.Fatalf("Seal stored: %v", err)
 	}
+	storedObject := decodeMap(t, stored)
 
+	// The merge needs no identity: an omitted credential keeps its stored
+	// ciphertext, byte for byte (ADR 20261022111812).
 	preserved, err := MergeForUpdate(api.TriggerKindKafka, stored,
-		json.RawMessage(`{"brokers":["new:9092"],"sasl":{"username":"new","password_set":true},"tls":{"client_cert":"cert"},"future":1}`),
-		[]*age.X25519Identity{newIdentity, oldIdentity})
+		json.RawMessage(`{"brokers":["old:9092"],"sasl":{"username":"new","password_set":true},"tls":{"client_cert":"cert"},"future":1}`))
 	if err != nil {
 		t.Fatalf("MergeForUpdate preserve: %v", err)
 	}
-	if !bytes.Contains(preserved, []byte("old-secret")) || !bytes.Contains(preserved, []byte("old-key")) ||
+	// A stored credential never follows the trigger to other brokers: anyone
+	// who could edit it could otherwise read the password off their own
+	// broker (bug hunt 2026-10-28 H107).
+	if _, err := MergeForUpdate(api.TriggerKindKafka, stored,
+		json.RawMessage(`{"brokers":["attacker:9092"],"sasl":{"username":"old","password_set":true}}`)); !errors.Is(err, ErrCredentialMove) {
+		t.Fatalf("MergeForUpdate to other brokers = %v, want ErrCredentialMove", err)
+	}
+	preservedObject := decodeMap(t, preserved)
+	if preservedObject["sasl"].(map[string]any)["password_sealed"] != storedObject["sasl"].(map[string]any)["password_sealed"] ||
+		preservedObject["tls"].(map[string]any)["client_key_sealed"] != storedObject["tls"].(map[string]any)["client_key_sealed"] ||
 		bytes.Contains(preserved, []byte("password_set")) || !bytes.Contains(preserved, []byte(`"future":1`)) {
 		t.Fatalf("preserve merge = %s", preserved)
 	}
+	resealed, err := SealMerged(api.TriggerKindKafka, preserved, []*age.X25519Recipient{newIdentity.Recipient()})
+	if err != nil {
+		t.Fatalf("SealMerged preserve: %v", err)
+	}
+	opened, err := Open(api.TriggerKindKafka, resealed, []*age.X25519Identity{oldIdentity})
+	if err != nil || !bytes.Contains(opened, []byte("old-secret")) || !bytes.Contains(opened, []byte("old-key")) {
+		t.Fatalf("kept credentials open = %s, %v; want them under the key they were sealed to", opened, err)
+	}
 
 	rotated, err := MergeForUpdate(api.TriggerKindKafka, stored,
-		json.RawMessage(`{"sasl":{"password":"new-secret"},"tls":{"client_key":"new-key"}}`),
-		[]*age.X25519Identity{oldIdentity})
+		json.RawMessage(`{"sasl":{"password":"new-secret"},"tls":{"client_key":"new-key"}}`))
 	if err != nil {
 		t.Fatalf("MergeForUpdate rotate: %v", err)
 	}
-	if bytes.Contains(rotated, []byte("old-secret")) || !bytes.Contains(rotated, []byte("new-secret")) || !bytes.Contains(rotated, []byte("new-key")) {
+	if bytes.Contains(rotated, []byte("_sealed")) || !bytes.Contains(rotated, []byte("new-secret")) || !bytes.Contains(rotated, []byte("new-key")) {
 		t.Fatalf("rotate merge = %s", rotated)
 	}
 
 	removed, err := MergeForUpdate(api.TriggerKindKafka, stored,
-		json.RawMessage(`{"brokers":["new:9092"],"topic":"t","group":"g"}`),
-		[]*age.X25519Identity{oldIdentity})
+		json.RawMessage(`{"brokers":["new:9092"],"topic":"t","group":"g"}`))
 	if err != nil {
 		t.Fatalf("MergeForUpdate remove: %v", err)
 	}
 	if bytes.Contains(removed, []byte("sasl")) || bytes.Contains(removed, []byte("tls")) || bytes.Contains(removed, []byte("old-secret")) {
 		t.Fatalf("whole block removal retained secrets: %s", removed)
+	}
+}
+
+// TestUpdateKeepsCredentialsWithoutOpening pins the update path apid runs
+// (ADR 20261022111812): merge, validate the view, SealMerged. The client
+// cannot smuggle ciphertext in, a credential stored in plaintext before
+// sealing is sealed on the way out, and a kept credential reads as set to
+// the validator.
+func TestUpdateKeepsCredentialsWithoutOpening(t *testing.T) {
+	domain, fleet := newIdentity(t), newIdentity(t)
+	both := []*age.X25519Recipient{domain.Recipient(), fleet.Recipient()}
+	stored, err := Seal(api.TriggerKindKafka,
+		json.RawMessage(`{"brokers":["b:9092"],"sasl":{"mechanism":"PLAIN","username":"svc","password":"stored-secret"}}`), both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []*age.X25519Identity{domain, fleet} {
+		if opened, err := Open(api.TriggerKindKafka, stored, []*age.X25519Identity{id}); err != nil || !bytes.Contains(opened, []byte("stored-secret")) {
+			t.Fatalf("a credential sealed to both recipients does not open with each: %s, %v", opened, err)
+		}
+	}
+
+	smuggled := json.RawMessage(`{"brokers":["b:9092"],"sasl":{"mechanism":"PLAIN","username":"svc","password_sealed":"QUFBQQ=="}}`)
+	merged, err := MergeForUpdate(api.TriggerKindKafka, stored, smuggled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decodeMap(t, merged)["sasl"].(map[string]any)["password_sealed"] != decodeMap(t, stored)["sasl"].(map[string]any)["password_sealed"] {
+		t.Fatalf("client ciphertext replaced the stored one: %s", merged)
+	}
+	view := decodeMap(t, ValidationView(api.TriggerKindKafka, merged))["sasl"].(map[string]any)
+	if view["password"] != validationPlaceholder || view["password_sealed"] != nil {
+		t.Fatalf("validation view = %v; want the kept password set", view)
+	}
+	resealed, err := SealMerged(api.TriggerKindKafka, merged, both)
+	if err != nil || !bytes.Equal(resealed, merged) {
+		t.Fatalf("SealMerged of a kept credential = %s, %v; want it unchanged", resealed, err)
+	}
+	if dropped, err := Seal(api.TriggerKindKafka, merged, both); err != nil || bytes.Contains(dropped, []byte("password_sealed")) {
+		t.Fatalf("Seal kept supplied ciphertext: %s, %v", dropped, err)
+	}
+
+	legacy := json.RawMessage(`{"brokers":["b:9092"],"sasl":{"mechanism":"PLAIN","username":"svc","password":"legacy-secret"}}`)
+	merged, err = MergeForUpdate(api.TriggerKindKafka, legacy, json.RawMessage(`{"brokers":["b:9092"],"sasl":{"mechanism":"PLAIN","username":"svc"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := SealMerged(api.TriggerKindKafka, merged, both)
+	if err != nil || bytes.Contains(sealed, []byte("legacy-secret")) {
+		t.Fatalf("a legacy plaintext password left the update unsealed: %s, %v", sealed, err)
+	}
+	if opened, err := Open(api.TriggerKindKafka, sealed, []*age.X25519Identity{domain}); err != nil || !bytes.Contains(opened, []byte("legacy-secret")) {
+		t.Fatalf("legacy password after the update = %s, %v", opened, err)
 	}
 }

@@ -341,8 +341,19 @@ func TestMutationAuditRetirementAndExpiryDuringCoverage(t *testing.T) {
 			if status := cleanupStep(t, s, 1); status.UploadsRemoved != 1 {
 				t.Fatal(status)
 			}
-			if count, err := s.ExpireMultipartStep(t.Context(), active.ExpiresAt.Add(time.Second), expiryTestOptions(8, 1)); err != nil || count != 1 {
-				t.Fatal(count, err)
+			// The step's wall-time budget is soft: on a slow runner it can end
+			// after examining the retired upload's tombstone, before the active
+			// upload. Later steps continue from there.
+			expired := 0
+			for step := 0; step < 8 && expired == 0; step++ {
+				count, err := s.ExpireMultipartStep(t.Context(), active.ExpiresAt.Add(time.Second), expiryTestOptions(8, 1))
+				if err != nil {
+					t.Fatal(count, err)
+				}
+				expired += count
+			}
+			if expired != 1 {
+				t.Fatal("expired uploads", expired)
 			}
 			result := finishIncrementalAudit(t, s, DefaultInventoryAuditOptions())
 			if !result.Usage.CatalogHealthy || result.Restarts != 0 || !result.Usage.StartedAt.Equal(before.Usage.StartedAt) || result.Usage.Sessions != 1 || result.Usage.MultipartParts != 0 || result.Usage.MultipartUploads != 0 {

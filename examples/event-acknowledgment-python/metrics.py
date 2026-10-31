@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from faas_sdk import (
+from faas_sdk.preview import (
     EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
     EventAcknowledgmentPreparationMetrics,
     format_event_acknowledgment_preparation_metrics,

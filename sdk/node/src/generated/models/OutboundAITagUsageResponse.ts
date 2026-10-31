@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundAITagUsageItem } from './OutboundAITagUsageItem.js';
 /**
- * One UTC day of AI usage by tag, most expensive first (ADR-1436).
+ * One UTC day of AI usage by tag, most expensive first.
  */
 export type OutboundAITagUsageResponse = {
   usage_date: string;

@@ -49,12 +49,8 @@ func (s *server) createManagedExecutionWorkflow(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrCapacity("this store cannot persist managed execution workflows"))
 		return
 	}
-	if setSecretRecipient == nil || mfaIdentities == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient and identity are required for managed workflows"))
-		return
-	}
-	identities := mfaIdentities()
-	if len(identities) == 0 {
+	recipients, kid, err := workflowPlanRecipients()
+	if err != nil || len(accountIdentities()) == 0 {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient and identity are required for managed workflows"))
 		return
 	}
@@ -63,23 +59,13 @@ func (s *server) createManagedExecutionWorkflow(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrValidation("managed workflow plan exceeds the maximum encoded size"))
 		return
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient and identity are required for managed workflows"))
-		return
-	}
-	keyPairReady := false
-	for _, identity := range identities {
-		if identity != nil && identity.Recipient().String() == recipient.String() {
-			keyPairReady = true
-			break
-		}
-	}
-	if !keyPairReady {
+	// The workflow worker opens the plan only with the identity its key id
+	// names, so apid must hold that identity.
+	if !holdsIdentityFor(accountIdentities(), kid) {
 		api.WriteProblem(w, api.ErrCapacity("the host age recipient has no matching identity for managed workflows"))
 		return
 	}
-	sealed, err := executionpayload.SealWorkflowPlan(recipient, canonical)
+	sealed, err := executionpayload.SealWorkflowPlanTo(recipients, canonical)
 	if err != nil {
 		if s.log != nil {
 			s.log.Error("managed execution workflow sealing failed", "account_id", acct.ID, "err", err)
@@ -100,7 +86,7 @@ func (s *server) createManagedExecutionWorkflow(w http.ResponseWriter, r *http.R
 	row, err := store.CreateExecutionWorkflowJob(r.Context(), state.CreateExecutionWorkflowJobParams{
 		AccountID: acct.ID, RunsPrincipalID: ownerPrincipal,
 		WorkflowID: request.WorkflowID, PlanID: planID,
-		StepCount: len(request.Steps), SealedPlan: sealed, PayloadKID: recipient.String(), CreatedAt: now,
+		StepCount: len(request.Steps), SealedPlan: sealed, PayloadKID: kid, CreatedAt: now,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrExecutionWorkflowQueueFull) {

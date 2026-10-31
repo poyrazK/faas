@@ -117,6 +117,10 @@ type Machine struct {
 	VcpuCount  int  `json:"vcpu_count"`
 	MemSizeMib int  `json:"mem_size_mib"`
 	Smt        bool `json:"smt"`
+	// CPUTemplate is the static Firecracker CPU template, e.g. "T2CL"
+	// (ADR-20261024225612). Empty omits the field: the guest sees the
+	// host's CPUID. JailerVMM.WithCPUTemplate sets it at boot.
+	CPUTemplate string `json:"cpu_template,omitempty"`
 }
 
 type NetIface struct {
@@ -141,6 +145,10 @@ const (
 	DriveLayer         = "layer"      // legacy alias for DriveLayerMain
 	DriveLayerMain     = "layer-main" // PR-B canonical main workload drive id
 	DriveSidecarPrefix = "layer-sidecar-"
+	// DriveAgentInput is an agent run's read-only input drive (ADR-20261027090010
+	// §3). It follows the base and the agent layer, so the guest sees it as
+	// drive 2.
+	DriveAgentInput = "agent-input"
 	// WorkloadNameMain is the reserved name on WorkloadSpec.Name / .Type
 	// for the main workload. Sidecar names must not collide with it
 	// (buildWorkloadsForColdBoot rejects "main" with a host-side
@@ -296,6 +304,13 @@ type ColdBootSpec struct {
 	// so guest-init reports it after api.ProvenWorkerCharacterizationWindow
 	// (ADR-20261018101500).
 	ProvenWorker bool
+	// FunctionRunner boots a function's runner (WakeRequest.Runtime is set
+	// only for functions) with api.FunctionRunnerBootArg so guest-init skips
+	// characterization's L7 probes, which would run the customer's handler.
+	FunctionRunner bool
+	// WorkerPushDelivery lets a worker-mode app with a push queue binding
+	// bind its private delivery port at startup (WakeRequest field).
+	WorkerPushDelivery bool
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
 	// Networkless execution guests use the vsock execution protocol instead of
@@ -328,6 +343,11 @@ type ColdBootSpec struct {
 	// one command on the app-task vsock channel instead of starting the app.
 	// Unlike Networkless, it retains the deployment's normal network policy.
 	AppTask bool
+	// AgentInput attaches an agent run's read-only input drive (ADR-20261027090010
+	// §3), always agentrunproto.InputDriveBytes long. InputKey is the
+	// StorageBackend key of the image it holds; empty: zeros.
+	AgentInput bool
+	InputKey   string
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -467,9 +487,14 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 			})
 		}
 	}
+	if s.AgentInput {
+		drives = append(drives, Drive{DriveID: DriveAgentInput, PathOnHost: s.InputKey, IsReadOnly: true})
+	}
 	network := []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}}
 	if s.Networkless {
-		network = nil
+		// An empty list, not nil: Firecracker's --config-file parser rejects
+		// "network-interfaces": null ("expected a sequence").
+		network = []NetIface{}
 	}
 	bootArgs := withGuestTimer(coldBootArgs)
 	if s.Networkless {
@@ -477,6 +502,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	}
 	if s.ProvenWorker && s.ExecutionMode == api.ExecutionModeWorker {
 		bootArgs = strings.TrimSpace(bootArgs) + " " + api.ProvenWorkerBootArg
+	}
+	if s.FunctionRunner && !s.Networkless {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.FunctionRunnerBootArg
 	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},
@@ -538,6 +566,10 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
 	case !validCharacterizationExecutionMode(s.ExecutionMode):
 		return fmt.Errorf("fcvm: cold boot: invalid execution_mode %q", s.ExecutionMode)
+	case s.InputKey != "" && !s.AgentInput:
+		return fmt.Errorf("fcvm: cold boot: an input image needs the agent input drive")
+	case s.AgentInput && (!s.Networkless || len(s.Workloads) > 0):
+		return fmt.Errorf("fcvm: cold boot: an input drive needs a networkless single-layer guest")
 	}
 	return nil
 }

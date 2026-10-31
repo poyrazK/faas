@@ -17,7 +17,7 @@ func (h *Handler) deleteSnapshotPair(ctx context.Context, snap state.Snapshot) {
 		if key == "" {
 			continue
 		}
-		if err := be.Delete(ctx, key); err != nil {
+		if err := h.deleteSnapshotObject(ctx, be, key); err != nil {
 			h.log.Warn("imaged: remove unused snapshot", "key", key, "err", err)
 		}
 	}
@@ -34,6 +34,16 @@ func (h *Handler) cleanupSnapshotCaptures(ctx context.Context, be storage.Storag
 					h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: key})
 				}
 			}
+		}
+	}
+	// Native runtime captures live in vmmd's private tree; vmmd removes them.
+	nativeKeys, err := h.nativeRuntimeSnapshotKeys(depID)
+	if err != nil {
+		h.log.Warn("imaged: list native runtime snapshot captures", "deployment", depID, "err", err)
+	}
+	for _, key := range nativeKeys {
+		if err := h.retireNativeRuntimeSnapshotObject(ctx, key); err != nil {
+			h.log.Warn("imaged: retire native runtime snapshot capture", "key", key, "err", err)
 		}
 	}
 	lister, ok := be.(storage.LocalArtifactLister)

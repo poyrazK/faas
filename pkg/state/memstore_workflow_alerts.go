@@ -14,7 +14,7 @@ func (m *MemStore) WorkflowAlertSnapshot(ctx context.Context, accountID, appID s
 	result := WorkflowAlertSnapshot{}
 	owned := func(id string) bool {
 		app, ok := m.apps[id]
-		return ok && app.AccountID == accountID && (appID == "" || appID == id)
+		return ok && app.AccountID == accountID && (appID == "" || appID == id) && !m.rehearsalAlertExcludedLocked(appID, id)
 	}
 	for _, run := range m.workflowRuns {
 		if !owned(run.AppID) {

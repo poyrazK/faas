@@ -209,7 +209,7 @@ func TestEventWorkflowAdmission(t *testing.T) {
 			var manual *WorkflowRun
 			for range max {
 				manual = &WorkflowRun{AppID: app.ID, WorkflowName: "manual", DefinitionSnapshot: json.RawMessage(`{}`)}
-				if _, err := store.CreateWorkflowRunAdmitted(context.Background(), manual, max); err != nil {
+				if _, err := store.CreateWorkflowRunAdmitted(context.Background(), manual, max, 0); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -246,5 +246,44 @@ func TestEventWorkflowAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	})
+}
+
+// An event automation is a recipient even when the app's live deployment
+// declares no workflows, and an app with neither adds none: acceptance reads
+// workflow definitions only for apps that have some.
+func TestEventWorkflowRecipientsFromPublishedAutomation(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		ctx := context.Background()
+		account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
+		if err != nil {
+			t.Fatal(err)
+		}
+		live := func(slug string) App {
+			t.Helper()
+			app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: slug + "-" + uuid.NewString(), Type: AppTypeApp, RAMMB: 256})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deployment, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage,
+				ImageDigest: "sha256:abc", Status: DeployPending, Workflows: json.RawMessage(`[]`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+				t.Fatal(err)
+			}
+			return app
+		}
+		automated := live("automated")
+		live("plain")
+		author := store.(AutomationStore)
+		saved := mutateForTest(t, author, automated.ID, "paid", "save", 0,
+			automationDraft("paid", "/paid", `{"type":"event","source":"billing.*","event_type":"invoice.paid"}`), false)
+		mutateForTest(t, author, automated.ID, "paid", "publish", saved.Version, nil, false)
+		work := publishWorkflowEvent(t, store, automated, uuid.NewString())
+		if len(work.RecipientSnapshot) != 1 || work.RecipientSnapshot[0].AppID != automated.ID || len(work.RecipientSnapshot[0].Workflow) == 0 {
+			t.Fatalf("snapshot=%+v", work.RecipientSnapshot)
+		}
 	})
 }

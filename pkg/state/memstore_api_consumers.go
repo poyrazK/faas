@@ -146,8 +146,13 @@ func (m *MemStore) CreateConsumerKeyForConsumer(_ context.Context, accountID, co
 	if err := validateConsumerKeyForConsumer("CreateConsumerKeyForConsumer", accountID, consumerID, name, prefix, hash, scopes, expiresAt); err != nil {
 		return ConsumerKey{}, err
 	}
+	hash = storedCredential(CredentialColumnConsumerKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createConsumerKeyForConsumerLocked(accountID, consumerID, name, prefix, hash, scopes, expiresAt)
+}
+
+func (m *MemStore) createConsumerKeyForConsumerLocked(accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
 	c, ok := m.apiConsumers[consumerID]
 	if !ok || c.AccountID != accountID {
 		return ConsumerKey{}, ErrNotFound

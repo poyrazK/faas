@@ -1,0 +1,53 @@
+-- Deployment watchdog (ADR-20261024140100). An in-flight deployment that can
+-- no longer finish on its own: a build queued since before queued_before, or
+-- no queued or running build and no stage progress since stalled_before.
+-- Deployments that are in flight by design are never candidates: a prepared
+-- rollback target, a deployment under an MCP task promotion hold, a parked
+-- deployment, an environment workload runtime, or one waiting on a
+-- dependency, build-dependency or hosting-verification gate. A running build
+-- belongs to builderd's reaper.
+
+-- name: ListStuckDeployments :many
+WITH candidate AS (
+    SELECT d.id, d.app_id, d.status, d.created_at,
+        NULLIF(d.stage_state ->> 'current_started_at', '')::timestamptz AS stage_started_at,
+        (SELECT min(b.enqueued_at) FROM builds b WHERE b.deployment_id = d.id AND b.status = 'queued') AS oldest_queued,
+        EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id = d.id AND b.status = 'running') AS build_running,
+        (SELECT max(b.finished_at) FROM builds b WHERE b.deployment_id = d.id) AS build_finished_at
+    FROM deployments d
+    WHERE d.status IN ('pending', 'building', 'imaging', 'snapshotting')
+        AND d.deleted_at IS NULL
+        AND d.rollback_prepared_at IS NULL
+        AND d.parked_reason IS NULL
+        AND d.environment_workload_runtime IS NULL
+        AND NOT (d.stage_state ? 'dependency_gate')
+        AND NOT (d.stage_state ? 'build_dependency_gate')
+        AND NOT (d.stage_state ? 'hosting_verification')
+        AND NOT EXISTS (SELECT 1 FROM deployment_mcp_task_holds h WHERE h.deployment_id = d.id)
+        AND (sqlc.arg(only_id)::text = '' OR d.id::text = sqlc.arg(only_id)::text)
+), judged AS (
+    SELECT c.id, c.app_id, c.status,
+        CASE
+            WHEN c.oldest_queued IS NOT NULL AND c.oldest_queued < sqlc.arg(queued_before)::timestamptz THEN 'queue'
+            WHEN c.oldest_queued IS NULL AND NOT c.build_running
+                AND GREATEST(c.created_at, COALESCE(c.stage_started_at, c.created_at), COALESCE(c.build_finished_at, c.created_at))
+                    < sqlc.arg(stalled_before)::timestamptz THEN 'stall'
+            ELSE ''
+        END::text AS reason,
+        COALESCE(c.oldest_queued,
+            GREATEST(c.created_at, COALESCE(c.stage_started_at, c.created_at), COALESCE(c.build_finished_at, c.created_at)))::timestamptz AS since
+    FROM candidate c
+)
+SELECT j.id, j.app_id, j.status, j.reason, j.since
+FROM judged j
+WHERE j.reason <> ''
+ORDER BY j.since, j.id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: LockDeploymentForWatchdog :one
+SELECT status FROM deployments WHERE id = sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: CancelQueuedBuildsForDeployment :execrows
+UPDATE builds
+SET status = 'cancelled', cancelled_at = now(), cancelled_by_deployment_cascade = true
+WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND status = 'queued';

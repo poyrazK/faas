@@ -39,6 +39,7 @@ permissions:
   id-token: write
   actions: read
   packages: read
+  attestations: write # SLSA build provenance (issue #295)
 
 jobs:
   # No full-CI gate (docs/adr/20261018104452-release-decoupled-from-full-ci.md).
@@ -52,7 +53,7 @@ jobs:
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: resolve
         name: Resolve current v0 commit
         run: |
@@ -76,9 +77,9 @@ jobs:
           - goos: darwin
             goarch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
@@ -86,7 +87,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -118,7 +119,7 @@ jobs:
             --mtime "@$(git log -1 --format=%ct)"
 
       - name: Upload target
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-cli-target-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.sha }}
           path: /tmp/gregale-build/
@@ -129,7 +130,7 @@ jobs:
     needs: [cli-targets]
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The fan-in job only creates the release branch and moving tag.
           # One commit is enough; target builds already captured the source
@@ -189,11 +190,48 @@ jobs:
           sha256sum gregale gregale-darwin-arm64 gregale_*.tar.gz > CLI-SHA256SUMS
           cat CLI-SHA256SUMS
 
+      # SLSA build provenance (issue #295): a signed statement of the
+      # workflow, commit and inputs that produced each CLI archive, kept in
+      # the repository's attestations; verify with
+      # `gh attestation verify <archive> -R poyrazK/faas`.
+      - name: Attest CLI build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: /tmp/gregale-build/gregale_*.tar.gz
+
+      # Issue #295: one SPDX SBOM over the binaries of every CLI archive,
+      # attested to each archive; verify with `gh attestation verify <archive>
+      # -R poyrazK/faas --predicate-type https://spdx.dev/Document/v2.3`.
+      - name: Install pinned Syft
+        env:
+          SYFT_VERSION: "1.49.0"
+          SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
+        run: bash scripts/ci/install-syft.sh "$RUNNER_TEMP/syft"
+
+      - name: Generate CLI SBOM
+        run: |
+          set -euo pipefail
+          # One directory per archive, so the SBOM records which archive's
+          # binary each package was found in.
+          for archive in /tmp/gregale-build/gregale_*.tar.gz; do
+            dir="$RUNNER_TEMP/cli-sbom/$(basename "$archive" .tar.gz)"
+            mkdir -p "$dir"
+            tar -xzf "$archive" -C "$dir"
+          done
+          "$RUNNER_TEMP/syft" scan "dir:$RUNNER_TEMP/cli-sbom" -q \
+            -o "spdx-json=$RUNNER_TEMP/cli.spdx.json"
+
+      - name: Attest CLI SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: /tmp/gregale-build/gregale_*.tar.gz
+          sbom-path: ${{ runner.temp }}/cli.spdx.json
+
       # Handed to publish-npm, which stages the five npm packages from
       # these exact archives rather than rebuilding the CLI. One build per
       # release, consumed by every channel.
       - name: Upload CLI archives for the npm channel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-cli-archives-${{ github.sha }}
           path: /tmp/gregale-build/archives/
@@ -423,13 +461,33 @@ jobs:
           done < <(printf '%s\n' "$CLI_RELEASE_ASSETS")
           scripts/ci/upload-release-assets.sh "${assets[@]}"
 
+  # ADR-20261025092617: the curl installer's version pointers. Moves
+  # CLI-LATEST (and CLI-STABLE for a stable tag) on the cli-channel release
+  # once this tag's CLI assets are attached, only forward. The installer
+  # reads them through releases/download, which GitHub does not count
+  # against the anonymous API limit. A separate job, so a failure here cannot
+  # hold up publish-npm; the pointers then stay on the previous release,
+  # which still installs and verifies.
+  advance-cli-channel:
+    name: Advance the curl installer channel
+    needs: [build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    concurrency:
+      group: gregale-cli-channel
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Move CLI-LATEST, and CLI-STABLE for a stable tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/ci/advance-cli-channel.sh
+
   # ADR-172: the npm channel. Consumes the archives built above rather than
   # rebuilding the CLI, so npm and the curl installer can never ship
   # different bytes for the same tag.
-  #
-  # The curl installer has no counterpart job on purpose — it resolves the
-  # release from the GitHub API at run time, so attaching the assets above
-  # is the entire publish step for that channel.
   publish-npm:
     name: Publish the npm channel
     needs: [build]
@@ -439,9 +497,9 @@ jobs:
       group: gregale-npm-publish
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -503,9 +561,9 @@ jobs:
       group: gregale-npm-publish-data-sdk
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -552,11 +610,11 @@ jobs:
     # for that hand-off plus bundle creation and signing.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
@@ -564,7 +622,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -836,6 +894,59 @@ jobs:
           echo "RUNTIME_SOURCE_SHA=$RUNTIME_SOURCE_SHA" >> "$GITHUB_ENV"
           echo "materialized release runtime-base contract from source $RUNTIME_SOURCE_SHA"
 
+      # Issue #295: every platform image this release pins must carry the
+      # provenance images.yml attests on main (#5835): signed for this
+      # repository by images.yml, from refs/heads/main, on a GitHub-hosted
+      # runner. Both source commits above follow images.yml, so a release cut
+      # after #5835 pins only images built with that attestation. imaged
+      # verifies the same attestation again when it pulls a base.
+      - name: Verify platform image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKER_CONFIG: ${{ runner.temp }}/crane-config
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+        run: |
+          set -euo pipefail
+          refs=("ghcr.io/poyrazk/builder-base@sha256:${BUILDER_BASE_DIGEST}")
+          while IFS='=' read -r _ ref; do
+            refs+=("$ref")
+          done < "$OUT_DIR/runtime-bases.env"
+          for ref in "${refs[@]}"; do
+            [[ "$ref" =~ ^ghcr\.io/poyrazk/[a-z0-9-]+@sha256:[0-9a-f]{64}$ ]] || {
+              echo "::error::pinned image $ref is not a ghcr.io/poyrazk digest reference" >&2
+              exit 1
+            }
+            if ! gh attestation verify "oci://${ref}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/images.yml" \
+              --source-ref refs/heads/main \
+              --deny-self-hosted-runners > /dev/null; then
+              echo "::error::$ref has no valid provenance attestation from images.yml on main" >&2
+              exit 1
+            fi
+            echo "provenance verified: $ref"
+          done
+
+      # ADR-20261029155852: imaged verifies base provenance offline against a
+      # Sigstore root shipped in this signed release. Attestations of this
+      # public repository are signed by public-good Sigstore, so keep only
+      # that root (gh fetches it through Sigstore's TUF repository).
+      - name: Fetch the Sigstore trusted root for imaged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$SIGSTORE_TRUSTED_ROOT_FILE")"
+          gh attestation trusted-root > "$RUNNER_TEMP/sigstore/trusted-roots.jsonl"
+          jq -c 'select(any(.certificateAuthorities[]?; .uri == "https://fulcio.sigstore.dev"))' \
+            "$RUNNER_TEMP/sigstore/trusted-roots.jsonl" > "$SIGSTORE_TRUSTED_ROOT_FILE"
+          [[ "$(wc -l < "$SIGSTORE_TRUSTED_ROOT_FILE")" -eq 1 ]] || {
+            echo "::error::gh attestation trusted-root did not return exactly one public-good Sigstore root" >&2
+            exit 1
+          }
+          jq -e '.tlogs | length > 0' "$SIGSTORE_TRUSTED_ROOT_FILE" > /dev/null
+
       - name: Reuse a prior signed Firecracker kernel
         id: reuse_kernel
         env:
@@ -888,6 +999,7 @@ jobs:
           OUT_DIR: ${{ runner.temp }}/gregale-release
           SYFT_BIN: syft
           KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+          SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
         run: |
           set -euo pipefail
           MANIFEST_FILE="$OUT_DIR/production-manifest.yaml"
@@ -905,6 +1017,27 @@ jobs:
             SYFT_BIN="$SYFT_BIN" \
             scripts/build-canonical-tarball.sh
 
+      # ADR-20261029155852: run the imaged this release ships, with its own
+      # trusted root and the pinned cosign, on every digest the release pins.
+      # A release cannot ship a root, bundle location or policy its own imaged
+      # would reject. No --legacy: every pin must verify.
+      - name: Verify pinned bases with the release's imaged
+        env:
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/base-provenance"
+          mkdir -p "$work"
+          tar -xzf "$OUT_DIR/release.tar.gz" -C "$work" imaged sigstore-trusted-root.json
+          args=(--ref "ghcr.io/poyrazk/builder-base@sha256:${BUILDER_BASE_DIGEST}")
+          while IFS='=' read -r _ ref; do
+            args+=(--ref "$ref")
+          done < "$OUT_DIR/runtime-bases.env"
+          "$work/imaged" verify-base-provenance \
+            --cosign "$RUNNER_TEMP/release-tools/cosign" \
+            --trusted-root "$work/sigstore-trusted-root.json" \
+            "${args[@]}"
+
       - name: Sign canonical tarball with GitHub OIDC
         env:
           OUT_DIR: ${{ runner.temp }}/gregale-release
@@ -920,8 +1053,47 @@ jobs:
             "$OUT_DIR/release.tar.gz"
           (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env > SHA256SUMS)
 
+      # ADR-20261030140000: cd-controlplane's two controller tools ride the
+      # release, signed like release.tar.gz, as the unit lane's do (ADR-1650).
+      # The deploy job used to compile them on the fleet runner, which on
+      # production-us is the saturated 2-vCPU control plane (8.5-12 min a
+      # release). They stay out of release.tar.gz: older hosts' releaseinstall
+      # refuses a tool_hashes entry it does not know.
+      - name: Build and sign controller tools
+        env:
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/controller-tools"
+          rm -rf -- "$tools"
+          mkdir -p "$tools"
+          # The flags cd-controlplane built them with, version included.
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
+            -o "$tools/" ./cmd/deployctl ./cmd/migrate
+          tar --create --gzip --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime="@$(git log -1 --format=%ct)" \
+            --file "$OUT_DIR/controller-tools.tar.gz" -C "$tools" deployctl migrate
+          cosign sign-blob --yes \
+            --bundle "$OUT_DIR/controller-tools.cosign.bundle" \
+            "$OUT_DIR/controller-tools.tar.gz"
+          cosign verify-blob \
+            --bundle "$OUT_DIR/controller-tools.cosign.bundle" \
+            --certificate-identity-regexp '^https://github\.com/poyrazK/faas/\.github/workflows/release\.yml@refs/tags/.+$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$OUT_DIR/controller-tools.tar.gz"
+
+      # SLSA build provenance (issue #295) for the daemon bundle, beside the
+      # cosign signature hosts already verify; verify with
+      # `gh attestation verify release.tar.gz -R poyrazK/faas`.
+      - name: Attest daemon bundle build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/gregale-release/release.tar.gz
+
       - name: Upload canonical release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-daemon-release-${{ github.sha }}
           path: ${{ runner.temp }}/gregale-release/
@@ -935,7 +1107,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out release upload helper
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -957,6 +1129,8 @@ jobs:
             ${{ runner.temp }}/gregale-release/production-manifest.yaml
             ${{ runner.temp }}/gregale-release/runtime-bases.env
             ${{ runner.temp }}/gregale-release/SHA256SUMS
+            ${{ runner.temp }}/gregale-release/controller-tools.tar.gz
+            ${{ runner.temp }}/gregale-release/controller-tools.cosign.bundle
         run: |
           set -euo pipefail
           mapfile -t assets < <(printf '%s\n' "$CANONICAL_RELEASE_ASSETS" | sed '/^[[:space:]]*$/d')

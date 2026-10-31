@@ -101,27 +101,40 @@ func financialMeterCosts(account string, start, end, asOf, now, retained time.Ti
 		out.Coverage.Reasons = append(out.Coverage.Reasons, "stale_evidence")
 	}
 	byVersion := map[string]state.FinancialPriceSnapshot{}
+	// Snapshots recorded before the USD switch stay valid history (ADR-1430),
+	// but their amounts are in another currency: summing them into this USD
+	// report would invent an exchange rate, and pricing them failed the whole
+	// report. Their usage is reported as unpriced under its own reason.
+	legacyCurrency := map[string]bool{}
 	var prices []financial.Price
 	out.PriceContracts = []api.FinancialPriceContract{}
 	for _, p := range snapshots {
 		if p.Price.Meter != meter || p.EffectiveFrom.After(asOf) {
 			continue
 		}
-		byVersion[p.Price.Version] = p
 		out.PriceContracts = append(out.PriceContracts, api.FinancialPriceContract{Price: p.Price, Plan: p.Plan, EffectiveFrom: p.EffectiveFrom, DeliveryMode: p.DeliveryMode})
+		if p.Price.Currency != api.BillingCurrency {
+			legacyCurrency[p.Price.Version] = true
+			continue
+		}
+		byVersion[p.Price.Version] = p
 		if p.DeliveryMode == "live" {
 			prices = append(prices, p.Price)
 		}
 	}
 	var entries []financial.VersionedEvidence
-	unpriced, nonBillable := new(big.Int), new(big.Int)
+	missing, legacy, nonBillable := new(big.Int), new(big.Int), new(big.Int)
 	for i, row := range rows {
 		if row.Meter != meter {
 			continue
 		}
 		p, ok := byVersion[row.PriceVersion]
 		if !ok {
-			unpriced.Add(unpriced, big.NewInt(row.Quantity))
+			if legacyCurrency[row.PriceVersion] {
+				legacy.Add(legacy, big.NewInt(row.Quantity))
+			} else {
+				missing.Add(missing, big.NewInt(row.Quantity))
+			}
 			continue
 		}
 		if p.Plan != row.Plan || p.Price.Unit != row.Unit {
@@ -133,16 +146,37 @@ func financialMeterCosts(account string, start, end, asOf, now, retained time.Ti
 		}
 		entries = append(entries, financial.VersionedEvidence{PriceVersion: row.PriceVersion, Evidence: financial.Evidence{AccountID: account, SourceID: fmt.Sprintf("aggregate:%d", i), Meter: meter, Quantity: row.Quantity, Start: start, End: asOf, Attribution: row.Attribution}})
 	}
+	unpriced := new(big.Int).Add(missing, legacy)
 	if !unpriced.IsInt64() || !nonBillable.IsInt64() {
 		return out, financial.ErrOverflow
 	}
 	out.Coverage.UnpricedQuantity, out.Coverage.NonBillableQuantity = unpriced.Int64(), nonBillable.Int64()
-	if unpriced.Sign() != 0 || len(byVersion) == 0 {
+	pricesMissing := missing.Sign() != 0 || len(byVersion) == 0 && len(legacyCurrency) == 0
+	if pricesMissing {
 		out.Coverage.Complete = false
 		out.Coverage.Reasons = append(out.Coverage.Reasons, "missing_historical_prices")
 	}
+	if legacy.Sign() != 0 {
+		out.Coverage.Complete = false
+		out.Coverage.Reasons = append(out.Coverage.Reasons, "legacy_currency_prices")
+	}
 	if len(prices) > 0 {
-		cost, err := financial.CostContracts(account, start, end, prices, entries)
+		var cost financial.ContractCosts
+		var err error
+		if meter == string(state.BillingMeterCompute) {
+			// The allowance the provider pusher bills against
+			// (ADR-20261030093512): each plan's for its share of the month.
+			var live []state.FinancialPriceSnapshot
+			for _, p := range byVersion {
+				if p.DeliveryMode == "live" {
+					live = append(live, p)
+				}
+			}
+			grant := state.MonthComputeIncludedMBSeconds("", live, asOf)
+			cost, err = financial.CostContractsWithGrant(account, start, end, prices, entries, grant)
+		} else {
+			cost, err = financial.CostContracts(account, start, end, prices, entries)
+		}
 		if err != nil {
 			return out, err
 		}
@@ -152,8 +186,12 @@ func financialMeterCosts(account string, start, end, asOf, now, retained time.Ti
 		out.Forecast.Reason = "period_closed"
 		return out, nil
 	}
-	if len(byVersion) == 0 || unpriced.Sign() != 0 {
+	if pricesMissing {
 		out.Forecast.Reason = "missing_historical_prices"
+		return out, nil
+	}
+	if legacy.Sign() != 0 || len(byVersion) == 0 {
+		out.Forecast.Reason = "legacy_currency_prices"
 		return out, nil
 	}
 	if len(prices) == 0 {

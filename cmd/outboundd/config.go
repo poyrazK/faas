@@ -16,8 +16,12 @@ import (
 )
 
 type Config struct {
-	WorkflowOutboundEnabled bool   `toml:"workflow_outbound_enabled"`
-	ListenAddr              string `toml:"listen_addr"`
+	WorkflowOutboundEnabled bool `toml:"workflow_outbound_enabled"`
+	// AgentRunsEnabled serves agent run relay calls (ADR-20261027090010 §7): the run's
+	// lease, its version's integrations and its spend cap are checked on
+	// every request. Off by default; agent run calls are then refused.
+	AgentRunsEnabled bool   `toml:"agent_runs_enabled"`
+	ListenAddr       string `toml:"listen_addr"`
 	// MetricsAddr is the private bind address for the operator-only
 	// Prometheus endpoint. Keep it loopback unless a firewall explicitly
 	// restricts the scrape network.
@@ -64,6 +68,31 @@ func (c *Config) validatePublicListen() error {
 		return fmt.Errorf("outboundd: public_listen_addr %q must be a loopback IP address behind the TLS proxy", c.PublicListenAddr)
 	}
 	return nil
+}
+
+// relayEnv maps the relay's environment overrides to the settings they
+// replace. control_plane_service sets them in a drop-in when an operator turns
+// the relay on (ADR-989), so the relay needs no edit to the operator-owned
+// outboundd.toml.
+var relayEnv = []struct {
+	name    string
+	setting func(*Config) *string
+}{
+	{"FAAS_OUTBOUNDD_RELAY_LISTEN", func(c *Config) *string { return &c.RelayListen }},
+	{"FAAS_OUTBOUNDD_RELAY_TLS_CERT_PATH", func(c *Config) *string { return &c.RelayTLSCertPath }},
+	{"FAAS_OUTBOUNDD_RELAY_TLS_KEY_PATH", func(c *Config) *string { return &c.RelayTLSKeyPath }},
+	{"FAAS_OUTBOUNDD_RELAY_TLS_CA_PATH", func(c *Config) *string { return &c.RelayTLSCAPath }},
+	{"FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH", func(c *Config) *string { return &c.WorkloadIdentityJWKSPath }},
+}
+
+// ApplyRelayEnv replaces each relay setting whose environment override is
+// set; an unset or empty variable keeps the TOML value.
+func (c *Config) ApplyRelayEnv(getenv func(string) string) {
+	for _, env := range relayEnv {
+		if value := strings.TrimSpace(getenv(env.name)); value != "" {
+			*env.setting(c) = value
+		}
+	}
 }
 
 // AIGatewayRollout resolves the staged rollout from the TOML setting and the

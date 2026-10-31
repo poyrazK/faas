@@ -5,7 +5,7 @@
 import type { OutboundAIRouteCanary } from './OutboundAIRouteCanary.js';
 import type { OutboundAIRouteTarget } from './OutboundAIRouteTarget.js';
 /**
- * An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider (ADR-991, ADR-995).
+ * An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}. An openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider.
  */
 export type OutboundAIRoute = {
   id: string;
@@ -15,7 +15,7 @@ export type OutboundAIRoute = {
   created_at: string;
   updated_at: string;
   /**
-   * How a call picks its first target (ADR-1434).
+   * How a call picks its first target.
    */
   strategy: 'ordered' | 'weighted' | 'latency' | 'cost';
   /**
@@ -23,7 +23,7 @@ export type OutboundAIRoute = {
    */
   max_ttfb_ms?: number | null;
   /**
-   * The route's model canary, or null (ADR-1340).
+   * The route's model canary, or null.
    */
   canary?: (OutboundAIRouteCanary | null);
 };

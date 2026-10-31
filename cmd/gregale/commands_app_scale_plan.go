@@ -352,10 +352,9 @@ func applyAppScaleSavedPlan(slug string, plan appScaleSavedPlan) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	// The read pins the current revision; the plan applies only if it is
+	// still the one the plan was built on.
 	revision := int64(-1)
-	if plan.BaseWorkloadRevision != nil {
-		revision = *plan.BaseWorkloadRevision
-	}
 	appClient := environmentAppClient{Client: client, environment: plan.Environment, revision: &revision}
 	current, err := appClient.GetApp(context.Background(), slug)
 	if err != nil {
@@ -473,6 +472,9 @@ func appScalePlanWarnings(app api.AppResponse, request api.UpdateAppRequest, pla
 		}
 		if policy.WakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
 			warnings = append(warnings, fmt.Sprintf("Cold-wake queue wait exceeds the limit of %d seconds.", api.WakeQueueMaxWaitSeconds))
+		}
+		if policy.PerInstanceConcurrency > limits.ConcurrencyPerVMBound {
+			warnings = append(warnings, fmt.Sprintf("Requests per instance %d exceeds this plan's concurrency per VM of %d.", policy.PerInstanceConcurrency, limits.ConcurrencyPerVMBound))
 		}
 	}
 	if minInstances > 0 && !limits.MinInstancesAllowed {

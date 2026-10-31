@@ -4,7 +4,7 @@
 /* eslint-disable */
 /**
  * One log entry attached to a `Problem` (error-explanations
- * cluster, spec §6.4 amendment 1) or persisted on
+ * cluster) or persisted on
  * `deployments.error_relevant_logs`. The shape mirrors the
  * cluster's per-line log wire: `ts` is RFC3339 (apids
  * stamp format), `level` is one of `info|warn|error`,

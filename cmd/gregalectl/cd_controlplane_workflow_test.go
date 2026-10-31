@@ -521,3 +521,117 @@ func TestCDControlPlaneConvergesControlPlaneRolesBeforeActivation(t *testing.T) 
 		t.Error("control-plane convergence must use the verified fleet known_hosts, not trust-on-first-use")
 	}
 }
+
+// TestCDControlPlaneHostedRunnerRefusesSilentRoleSkip: a GitHub-hosted runner
+// cannot reach the fleet's private names, so it cannot converge the
+// control-plane roles (ADR-580). It used to activate anyway with only a
+// warning, shipping a release whose role changes never landed. It now
+// refuses before touching the host unless the operator sets
+// skip_role_convergence, and cd-platform passes that choice through.
+func TestCDControlPlaneHostedRunnerRefusesSilentRoleSkip(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	if got := strings.Count(workflow, "      skip_role_convergence:\n"); got != 2 {
+		t.Errorf("cd-controlplane declares skip_role_convergence on %d triggers, want workflow_call and workflow_dispatch", got)
+	}
+	refuse := strings.Index(workflow, "- name: Require role convergence or an explicit skip")
+	firstMutation := strings.Index(workflow, "- name: Converge APID lifecycle storage credential")
+	if refuse < 0 || firstMutation < 0 || refuse > firstMutation {
+		t.Fatalf("the hosted-runner refusal must run before the first host change: refuse=%d first=%d", refuse, firstMutation)
+	}
+	step := workflow[refuse:firstMutation]
+	for _, required := range []string{
+		"if: ${{ inputs.hosted_runner && !inputs.skip_role_convergence }}",
+		"exit 1",
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("hosted-runner refusal is missing %q", required)
+		}
+	}
+
+	platform := readWorkflow(t, "cd-platform.yml")
+	for _, required := range []string{
+		"      skip_role_convergence:\n",
+		"skip_role_convergence: ${{ inputs.skip_role_convergence }}",
+	} {
+		if !strings.Contains(platform, required) {
+			t.Errorf("cd-platform does not pass the role-convergence skip: missing %q", required)
+		}
+	}
+}
+
+// TestCDControlPlaneConvergesOnlyChangedRoles: a full release converges the
+// roles whose content hash differs from the host's record, through the
+// host-configuration lane's planner and --roles, and records them only
+// after the play succeeded (ADR-20261030150000). A tag without the
+// planner's full-release mode runs the whole play.
+func TestCDControlPlaneConvergesOnlyChangedRoles(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	start := strings.Index(workflow, "- name: Converge control-plane roles")
+	end := strings.Index(workflow, "- name: Report skipped control-plane convergence")
+	if start < 0 || end < start {
+		t.Fatal("control-plane convergence step missing")
+	}
+	step := workflow[start:end]
+	order := []string{
+		`if ! grep -q -- '--full-release' scripts/ci/plan_host_config.py; then`,
+		`"${converge[@]}"` + "\n            exit 0",
+		"scripts/ci/unit_deploy.sh host-state > \"$work/host-state.json\"",
+		`python3 scripts/ci/plan_host_config.py --full-release "$RELEASE_ID"`,
+		`if [[ "$action" != contract ]]; then`,
+		`converge+=(--roles "$(jq -r '.roles | join(",")' "$work/plan.json")" --full-release)`,
+		`"${converge[@]}" --json > "$work/converge.json"`,
+		`scripts/ci/unit_deploy.sh host-record "$work/record-final.json"`,
+	}
+	last := -1
+	for _, want := range order {
+		at := strings.Index(step, want)
+		if at < 0 {
+			t.Fatalf("control-plane convergence step is missing %q", want)
+		}
+		if at < last {
+			t.Fatalf("control-plane convergence step runs %q out of order", want)
+		}
+		last = at
+	}
+}
+
+// TestCDControlPlaneUsesSignedControllerTools: deployctl and migrate ride
+// the release signed by release.yml (ADR-20261030140000). The deploy job
+// verifies them against the tag's identity before it uses them and builds
+// them on the runner only for a release that predates the asset.
+func TestCDControlPlaneUsesSignedControllerTools(t *testing.T) {
+	release := readWorkflow(t, "release.yml")
+	build := strings.Index(release, "- name: Build and sign controller tools")
+	attach := strings.Index(release, "- name: Attach canonical release artifacts sequentially")
+	if build < 0 || attach < 0 {
+		t.Fatalf("release workflow is missing the controller tools: build=%d attach=%d", build, attach)
+	}
+	for _, want := range []string{
+		"-o \"$tools/\" ./cmd/deployctl ./cmd/migrate",
+		`--bundle "$OUT_DIR/controller-tools.cosign.bundle"`,
+	} {
+		if !strings.Contains(release[build:attach], want) {
+			t.Errorf("controller tools step is missing %q", want)
+		}
+	}
+	for _, asset := range []string{"controller-tools.tar.gz\n", "controller-tools.cosign.bundle\n"} {
+		if !strings.Contains(release[attach:], "/gregale-release/"+asset) {
+			t.Errorf("release does not publish %s", strings.TrimSpace(asset))
+		}
+	}
+
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	verify := strings.Index(workflow, `--bundle "$CANONICAL_ROOT/controller-tools.cosign.bundle"`)
+	identity := strings.Index(workflow, `--certificate-identity "https://github.com/poyrazK/faas/.github/workflows/release.yml@refs/tags/${RELEASE_TAG}"`)
+	use := strings.Index(workflow, `install -m 0755 "${CONTROLLER_TOOLS}/deployctl" "${BUNDLE_ROOT}/bin/deployctl"`)
+	fallback := strings.Index(workflow, "predates signed controller tools")
+	if verify < 0 || identity < 0 || use < 0 || fallback < 0 {
+		t.Fatalf("control-plane deploy does not use verified controller tools: verify=%d identity=%d use=%d fallback=%d", verify, identity, use, fallback)
+	}
+	if !(verify < use && use < fallback) {
+		t.Fatalf("controller tools must be verified before use, with the runner build only as the fallback: verify=%d use=%d fallback=%d", verify, use, fallback)
+	}
+	if builds := strings.Count(workflow, "go build"); builds != 2 || strings.Index(workflow, "go build") < fallback {
+		t.Errorf("cd-controlplane runs go build %d times, or outside the pre-controller-tools fallback", builds)
+	}
+}

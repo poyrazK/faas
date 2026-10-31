@@ -189,8 +189,14 @@ func preSeedHostKey(t *testing.T, keyPath, pubPath string) {
 	if err != nil {
 		t.Fatalf("GenerateX25519Identity: %v", err)
 	}
-	if err := os.WriteFile(keyPath, []byte(id.String()), 0o600); err != nil {
+	// vmmd's LoadHostKey refuses anything but owner-read (0400), as on a host.
+	if err := os.WriteFile(keyPath, []byte(id.String()), 0o400); err != nil {
 		t.Fatalf("write key: %v", err)
+	}
+	// vmmd also requires the fleet identity beside host.age. apid seals to the
+	// recipient at pubPath, so the fleet identity is the same key.
+	if err := os.WriteFile(filepath.Join(filepath.Dir(keyPath), "fleet.age"), []byte(id.String()), 0o400); err != nil {
+		t.Fatalf("write fleet key: %v", err)
 	}
 	if err := os.WriteFile(pubPath, []byte(id.Recipient().String()), 0o444); err != nil {
 		t.Fatalf("write pub: %v", err)

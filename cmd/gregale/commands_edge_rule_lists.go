@@ -18,7 +18,7 @@ import (
 func cmdEdgeRuleLists(args []string) int {
 	parent, _ := lookupCliCommand("edge-rule-lists")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists <list|get|create|update|rm> [args]", "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list <list|get|create|update|rm> [args]", "edge-rule-lists")
 		return 1
 	}
 	switch args[0] {
@@ -34,10 +34,7 @@ func cmdEdgeRuleLists(args []string) int {
 		return cmdEdgeRuleListsRm(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown edge-rule-lists subcommand %q\n", args[0])
-	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
-		maybeSuggestSub(sug)
-	}
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "edge-rule-lists", parent, args[0])
 }
 
 func cmdEdgeRuleListsList(args []string) int {
@@ -58,14 +55,14 @@ func cmdEdgeRuleListsList(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "%-32s %-8s %7s %5s  %s\n", "NAME", "KIND", "ITEMS", "RULES", "DESCRIPTION")
 	for _, l := range out.Lists {
-		_, _ = fmt.Fprintf(osStdout, "%-32s %-8s %7d %5d  %s\n", l.Name, l.Kind, l.ItemCount, len(l.ReferencedBy), truncate(l.Description, 40))
+		_, _ = fmt.Fprintf(osStdout, "%-32s %-8s %7d %5d  %s\n", terminalSafe(l.Name), l.Kind, l.ItemCount, len(l.ReferencedBy), terminalSafe(truncate(l.Description, 40)))
 	}
 	return 0
 }
 
 func edgeRuleListNameArg(fs *flag.FlagSet, sub, usage string) (string, bool) {
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists "+sub+" "+usage, "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list "+sub+" "+usage, "edge-rule-lists")
 		return "", false
 	}
 	return fs.Arg(0), true
@@ -75,9 +72,9 @@ func printEdgeRuleList(l api.EdgeRuleListResponse) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(l))
 	}
-	_, _ = fmt.Fprintf(osStdout, "%s (%s, %d items)\n", l.Name, l.Kind, l.ItemCount)
+	_, _ = fmt.Fprintf(osStdout, "%s (%s, %d items)\n", terminalSafe(l.Name), l.Kind, l.ItemCount)
 	if l.Description != "" {
-		_, _ = fmt.Fprintf(osStdout, "  %s\n", l.Description)
+		_, _ = fmt.Fprintf(osStdout, "  %s\n", terminalSafe(l.Description))
 	}
 	if len(l.ReferencedBy) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  used by: %s\n", strings.Join(l.ReferencedBy, ", "))
@@ -143,12 +140,12 @@ func cmdEdgeRuleListsCreate(args []string) int {
 	}
 	const usage = "<name> --kind ip|country|host|string|asn [--item V]... [--items-file path|-] [--description D]"
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists create "+usage, "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list create "+usage, "edge-rule-lists")
 		return 1
 	}
 	name := fs.Arg(0)
 	if *kind == "" {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists create "+usage, "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list create "+usage, "edge-rule-lists")
 		return 1
 	}
 	req := api.CreateEdgeRuleListRequest{Name: name, Kind: *kind, Description: *description, Items: []string(items)}
@@ -165,7 +162,7 @@ func cmdEdgeRuleListsCreate(args []string) int {
 	}
 	l, err := client.CreateEdgeRuleList(context.Background(), req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create edge rule list", err)
 	}
 	return printEdgeRuleList(l)
 }
@@ -181,7 +178,7 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists update <name> [--add V]... [--remove V]... [--replace-file path|-] [--description D]", "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list update <name> [--add V]... [--remove V]... [--replace-file path|-] [--description D]", "edge-rule-lists")
 		return 1
 	}
 	name := fs.Arg(0)
@@ -202,7 +199,7 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 	}
 	l, err := client.UpdateEdgeRuleList(context.Background(), name, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update edge rule list", err)
 	}
 	return printEdgeRuleList(l)
 }
@@ -213,7 +210,7 @@ func cmdEdgeRuleListsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists rm <name>", "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list delete <name>", "edge-rule-lists")
 		return 1
 	}
 	name := fs.Arg(0)
@@ -222,7 +219,7 @@ func cmdEdgeRuleListsRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteEdgeRuleList(context.Background(), name); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete edge rule list", err)
 	}
 	if !jsonOutput {
 		_, _ = fmt.Fprintf(osStdout, "Deleted edge rule list %s\n", name)

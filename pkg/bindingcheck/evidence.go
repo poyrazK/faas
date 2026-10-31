@@ -25,7 +25,7 @@ func (r *Report) checkVerification(item api.AppBindingInventoryItem, maxAge time
 		r.bindingBlock(item, "verification_unknown", "The reported pass has incomplete or contradictory evidence.")
 		return
 	}
-	if !validVerificationChecks(item.Type, v.ObjectStorageMode, v.Checks) {
+	if !validVerificationChecks(item.Type, v.ObjectStorageMode, v.Checks) && !validHTTPServiceChecks(item, v.Checks) {
 		r.bindingBlock(item, "verification_unknown", "The reported pass has missing, duplicated or unsuccessful probe stages.")
 		return
 	}
@@ -71,6 +71,17 @@ func validVerificationChecks(kind, mode string, checks []api.BindingVerification
 	default:
 		return false
 	}
+	return passedChecks(names, checks)
+}
+
+// validHTTPServiceChecks accepts the probe of a caller on the plain HTTP
+// service transport, which has no TLS stage (ADR-20261019200059).
+func validHTTPServiceChecks(item api.AppBindingInventoryItem, checks []api.BindingVerificationCheck) bool {
+	return item.Type == api.BindingTypeService && item.Transport == string(api.ServiceBindingTransportHTTP) &&
+		passedChecks([]string{"dns", "authorization", "routing"}, checks)
+}
+
+func passedChecks(names []string, checks []api.BindingVerificationCheck) bool {
 	if len(checks) != len(names) {
 		return false
 	}

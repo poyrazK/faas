@@ -135,3 +135,40 @@ no token for anonymous reads.
 - **A private `gregale_storage` schema.** The Data API login would need grants
   outside the schema that migration owners already grant to it, and file
   lists would lose REST and live reads.
+
+## Amendment 1 (2026-10-27): every upload writes a new object key
+
+**Context.** Uploads wrote their bytes at the object's name, between an
+authorizing dry run and the committed row. Two users could both pass the dry
+run for a name nobody had created yet; if the second user's bytes landed after
+the first user's commit, they replaced the first user's file, and only then
+did the second commit fail the update policy. The row then pointed at bytes
+its owner never wrote.
+
+**Decision.**
+
+1. `storage_objects` gains `object_key text`, constrained to
+   `_gregale/objects/<32 hex>`. Every upload stores its bytes under a fresh key
+   and records it in its row; downloads, signed links and removal follow the
+   row's key. A row without one (one the owner inserts, or one written before
+   this amendment) names its bytes by its name.
+2. Keys are 128 bits read from `/dev/urandom`: the restore hook reseeds the
+   kernel generator, while instances restored from one snapshot share Node's
+   in-process generator until it reseeds itself.
+3. Old bytes go only after the new row commits: an overwrite deletes the
+   version it replaced (the one the caller could see before uploading), a
+   refused or failed upload deletes only its own bytes, and a removal also
+   deletes a version a concurrent upload committed. Deletion is best effort;
+   a failure leaves unreferenced bytes, never a row without its bytes.
+4. The runtime refuses storage (`503 storage_unavailable`, REST keeps serving)
+   for a table without `object_key`. `gregale data-api storage sql --upgrade`
+   prints the column for an existing table; new tables get it from
+   `data-api storage sql`.
+5. Upload responses and the SDK do not expose `object_key`; REST reads of
+   `storage_objects` do, as they expose every column.
+
+**Consequences.** Concurrent overwrites by authorized users, or a version the
+caller could not see, can leave unreferenced bytes in the bucket; they are
+unreachable through the Data API and visible to the owner. Existing storage
+tables need the upgrade migration before a runtime with this amendment serves
+files.

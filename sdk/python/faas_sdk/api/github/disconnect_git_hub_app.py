@@ -77,13 +77,13 @@ def _build_response(
 def sync_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> Response[GitHubInstallStatus | Problem]:
     """Disconnect an app from its GitHub repository.
 
      Cookie-session-authenticated and CSRF-protected. Idempotently removes
-    the app's repository binding and invalidates githubd's binding cache.
+    the app's repository binding and invalidates the GitHub integration's binding cache.
     The GitHub App installation remains connected to the account so it can
     be rebound to another repository.
 
@@ -118,13 +118,13 @@ def sync_detailed(
 def sync(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> GitHubInstallStatus | Problem | None:
     """Disconnect an app from its GitHub repository.
 
      Cookie-session-authenticated and CSRF-protected. Idempotently removes
-    the app's repository binding and invalidates githubd's binding cache.
+    the app's repository binding and invalidates the GitHub integration's binding cache.
     The GitHub App installation remains connected to the account so it can
     be rebound to another repository.
 
@@ -154,13 +154,13 @@ def sync(
 async def asyncio_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> Response[GitHubInstallStatus | Problem]:
     """Disconnect an app from its GitHub repository.
 
      Cookie-session-authenticated and CSRF-protected. Idempotently removes
-    the app's repository binding and invalidates githubd's binding cache.
+    the app's repository binding and invalidates the GitHub integration's binding cache.
     The GitHub App installation remains connected to the account so it can
     be rebound to another repository.
 
@@ -193,13 +193,13 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> GitHubInstallStatus | Problem | None:
     """Disconnect an app from its GitHub repository.
 
      Cookie-session-authenticated and CSRF-protected. Idempotently removes
-    the app's repository binding and invalidates githubd's binding cache.
+    the app's repository binding and invalidates the GitHub integration's binding cache.
     The GitHub App installation remains connected to the account so it can
     be rebound to another repository.
 

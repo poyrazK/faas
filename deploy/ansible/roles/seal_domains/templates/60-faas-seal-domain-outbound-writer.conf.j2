@@ -1,0 +1,7 @@
+# Managed by the seal_domains role (ADR 20261022111812): apid seals customer
+# outbound credentials to the outbound seal domain. It holds the public
+# recipient only and cannot open what it seals.
+[Service]
+LoadCredential=faas_seal_domain_outbound_recipient:/etc/faas/secrets/domains/outbound.age.pub
+Environment=FAAS_SEAL_DOMAIN_OUTBOUND_RECIPIENT_PATH=%d/faas_seal_domain_outbound_recipient
+Environment=FAAS_SEAL_DOMAIN_OUTBOUND_WRITES={{ faas_seal_domain_outbound_writes }}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -199,10 +200,12 @@ func TestWorkPolicyQueueReplacementAtDepthCap(t *testing.T) {
 	if policy.Code != http.StatusOK {
 		t.Fatalf("policy = %d %s", policy.Code, policy.Body.String())
 	}
-	for i := 0; i < 4; i++ {
-		response := e.Do(t, http.MethodPost, "/v1/apps/queue-cap/queues/send", api.QueueSendRequest{}, nil)
-		if response.Code != http.StatusCreated {
-			t.Fatalf("fill queue %d = %d %s", i, response.Code, response.Body.String())
+	// Fill all but one slot of Hobby's MaxQueueDepth through the store
+	// (ADR-20261022105723 raised it to 10,000); the first keyed send takes
+	// the last slot.
+	for range api.MustLimitsFor(api.PlanHobby).MaxQueueDepth - 1 {
+		if _, err := (*e.Store()).EnqueueInvocation(t.Context(), state.Invocation{AppID: appID, AccountID: (*e.Acct()).ID, Source: state.InvocationQueue, Payload: json.RawMessage(`{}`), DueAt: time.Now()}); err != nil {
+			t.Fatal(err)
 		}
 	}
 	send := func(key string) (int, string) {

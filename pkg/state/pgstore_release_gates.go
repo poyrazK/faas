@@ -33,6 +33,8 @@ func (s *PgStore) CreateReleaseGate(ctx context.Context, g ReleaseGate, maxGates
 	slo := g.Kind == ReleaseGateSLO
 	newErrors := g.Kind == ReleaseGateNewErrors
 	metric := g.Kind == ReleaseGateCustomMetric
+	// An ai gate keeps its largest increase in threshold (ADR 20261022153155).
+	threshold := metric || g.Kind == ReleaseGateAI
 	sloID := pgtype.UUID{}
 	if slo {
 		sloID = mustPgUUID(g.SLOID)
@@ -42,7 +44,7 @@ func (s *PgStore) CreateReleaseGate(ctx context.Context, g ReleaseGate, maxGates
 		SloID: sloID, MaxBurnRate: optionalPgInt4(g.MaxBurnRate, slo),
 		MaxNewGroups: optionalPgInt4(g.MaxNewGroups, newErrors), MinEvents: optionalPgInt4(g.MinEvents, newErrors),
 		MetricName: optionalPgText(g.MetricName), Comparison: optionalPgText(g.Comparison),
-		Threshold: pgtype.Float8{Float64: g.Threshold, Valid: metric}, MinSamples: int32(g.MinSamples),
+		Threshold: pgtype.Float8{Float64: g.Threshold, Valid: threshold}, MinSamples: int32(g.MinSamples),
 		CreatedBy: g.CreatedBy, Now: pgTimestamptzUTC(now), MaxGates: int64(maxGates),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -114,6 +116,22 @@ func (s *PgStore) ReleaseGateNewErrorGroups(ctx context.Context, appID, deployme
 		out = append(out, ReleaseGateErrorGroup{ErrorClass: r.ErrorClass, Events: r.Events})
 	}
 	return out, nil
+}
+
+// ReleaseGateDeploymentAI sums a deployment's AI minute rows in [since,
+// until) for an ai gate (ADR 20261022153155).
+func (s *PgStore) ReleaseGateDeploymentAI(ctx context.Context, appID, deploymentID string, since, until time.Time) (ReleaseGateAIWindow, error) {
+	if !validUUID(deploymentID) {
+		return ReleaseGateAIWindow{}, nil
+	}
+	row, err := sqlc.New().ReleaseGateDeploymentAI(ctx, s.pool, sqlc.ReleaseGateDeploymentAIParams{
+		DeploymentID: mustPgUUID(deploymentID), AppID: mustPgUUID(appID), Since: pgTimestamptzUTC(since), Until: pgTimestamptzUTC(until),
+	})
+	if err != nil {
+		return ReleaseGateAIWindow{}, mapErr(err)
+	}
+	return ReleaseGateAIWindow{Calls: row.Calls, ErrorCalls: row.ErrorCalls, FlaggedCalls: row.FlaggedCalls,
+		CostMillicents: row.CostMillicents, TTFBCalls: row.TtfbCalls, TTFBMSTotal: row.TtfbMsTotal}, nil
 }
 
 func (s *PgStore) ReleaseGateCustomMetricWindow(ctx context.Context, appID, name string, since, until time.Time) (int64, float64, error) {

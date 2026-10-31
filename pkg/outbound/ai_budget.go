@@ -37,6 +37,13 @@ func validateAIAdmissionSpec(spec AdmissionSpec) error {
 		(spec.UserDailyAICostLimit != nil && (*spec.UserDailyAICostLimit < 1 || *spec.UserDailyAICostLimit > api.MaxOutboundAICostMillicents)) {
 		return fmt.Errorf("%w: per-end-user AI limit is invalid", ErrInvalidIntegration)
 	}
+	if spec.AITraceID != "" && !api.ValidOutboundAITraceID(spec.AITraceID) {
+		return fmt.Errorf("%w: AI trace is invalid", ErrInvalidIntegration)
+	}
+	if limits := spec.AITraceLimits; limits.calls < 0 || limits.calls > api.MaxOutboundAITraceCalls || limits.cost < 0 ||
+		limits.cost > api.MaxOutboundAICostMillicents || limits.repeats < 0 || limits.repeats > api.MaxOutboundAITraceRepeatedToolCalls {
+		return fmt.Errorf("%w: AI trace limit is invalid", ErrInvalidIntegration)
+	}
 	return nil
 }
 

@@ -1,7 +1,9 @@
 // vmmd — the only root component, owns firecracker+jailer (spec §4.4, ADR-013,
 // ADR-014, ADR-016). RPCs map 1:1 to spec §4.4 line 138. Wire shape
 // stays narrow: the caller resolves `(app)` into AppSpec. vmmd never calls
-// apid directly; it reads durable rehearsal network authority before app boot.
+// apid directly; it reads durable rehearsal network authority before app boot,
+// and ADR-570 additionally reads schedd-owned durable circuit policy before
+// boot. It never writes customer intent or scheduler instance state.
 
 syntax = "proto3";
 
@@ -89,6 +91,18 @@ service Vmmd {
   // source and input cross the boundary later through ExecuteExecution.
   rpc RestoreExecution(RestoreExecutionRequest) returns (RestoreExecutionResponse);
 
+  // RunAgent boots one agent run VM (ADR-20261027090010 §6), sends it the run, and
+  // streams the run's output. The first client frame must be start; a later
+  // cancel frame asks the guest to stop the harness. The run payload reaches
+  // the guest only after the VM is up. vmmd destroys the VM before the
+  // result frame, and also when the stream ends early, so a run never
+  // outlives its call.
+  rpc RunAgent(stream RunAgentRequest) returns (stream RunAgentEvent);
+  // CaptureAgentSnapshot cold-boots an agent run VM that carries no run,
+  // waits for guest-init, and captures a preset snapshot for its machine
+  // shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
+  rpc CaptureAgentSnapshot(CaptureAgentSnapshotRequest) returns (CaptureAgentSnapshotResponse);
+
   // RestoreAppTask creates a fresh deployment-attached VM without carrying
   // command data. The command crosses the trust boundary only after schedd
   // has committed the durable running fence.
@@ -99,6 +113,12 @@ service Vmmd {
   // ExecuteAppTask dispatches exactly one command to a restored app-task VM.
   // vmmd tears the disposable VM down before returning the terminal result.
   rpc ExecuteAppTask(ExecuteAppTaskRequest) returns (ExecuteAppTaskResponse);
+
+  // ExecForkCommand (ADR-732) runs one command inside a running quarantined
+  // fork instance over the guest's host-only fork exec port. task_id carries
+  // the fork exec id. Any instance that is not a live quarantined fork is
+  // refused with FailedPrecondition; the VM is never torn down.
+  rpc ExecForkCommand(ExecuteAppTaskRequest) returns (ExecuteAppTaskResponse);
 
   // ExecuteAppTaskStream is the live-output variant. The terminal frame is
   // metadata-only because stdout/stderr have already arrived as chunks.
@@ -194,6 +214,12 @@ service Vmmd {
   // warm capture. Missing objects are treated as an idempotent success.
   rpc DeleteWarmSnapshot(DeleteWarmSnapshotRequest) returns (DeleteWarmSnapshotResponse);
 
+  // RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+  // capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
+  // imaged decides what to collect; vmmd accepts only a v2 capture object key
+  // and treats a missing object as success, like storage Delete.
+  rpc RetireNativeRuntimeSnapshotObject(RetireNativeRuntimeSnapshotObjectRequest) returns (RetireNativeRuntimeSnapshotObjectResponse);
+
   // FrameworkReady is the vmmd-side receipt of the guest-init
   // "framework ready" vsock DGRAM (port 1027, msg=4) signal
   // (issue #470, PR #470-FU-B). vmmd's host-side DGRAM listener
@@ -220,6 +246,17 @@ service Vmmd {
   rpc ExecuteOperatorRestartDestroy(ExecuteOperatorRestartDestroyRequest) returns (ExecuteOperatorRestartDestroyResponse);
   // ADR-1525: one journal-authorized capture/stop of the original VM generation.
   rpc ExecuteOperatorPark(ExecuteOperatorParkRequest) returns (ExecuteOperatorParkResponse);
+
+  // AdoptionReport is the node inventory this vmmd took over at startup
+  // (vmmd restart adoption ADR §3). UNIMPLEMENTED when adopt_running_vms is
+  // off; UNAVAILABLE when this start claimed no ownership epoch.
+  rpc AdoptionReport(AdoptionReportRequest) returns (AdoptionReportResponse);
+  // AdoptionInventory hands a candidate vmmd binary this vmmd's journal
+  // records and the live adoption proof for each, so the candidate can say
+  // before a release restarts vmmd whether it would adopt every guest (vmmd
+  // restart adoption ADR §4). Served on vmmd's root-only admin socket;
+  // PERMISSION_DENIED elsewhere.
+  rpc AdoptionInventory(AdoptionInventoryRequest) returns (AdoptionInventoryResponse);
 
   // StopInstance is the M-2 / ADR-138 graceful stop sequence: send
   // `signal` to the guest's PID 1, wait up to `grace_period_s`
@@ -318,6 +355,13 @@ service Vmmd {
   // without rebooting the guest or creating a deployment. RAM/vCPU topology
   // remain boot-time settings.
   rpc UpdateAppCPULimit(UpdateAppCPULimitRequest) returns (UpdateAppCPULimitAck);
+
+  // CaptureProfile (ADR-1155) arms one live instance's dormant guest profile
+  // collectors for a bounded window and returns the pprof profiles they
+  // report. vmmd bounds the reply and never parses the profiles. The call
+  // counts as in-flight activity so the idle reaper does not park the
+  // instance mid-capture. Additive per ADR-016.
+  rpc CaptureProfile(CaptureProfileRequest) returns (CaptureProfileResponse);
 
   // UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
   // per-app static egress IP into every live netns the vmmd
@@ -822,6 +866,11 @@ message AppSpec {
   // characterization class. Empty preserves legacy inference for rolling
   // upgrades and older callers.
   string execution_mode = 18;
+  // worker_push_delivery marks a worker-mode app with a push queue binding.
+  // Push deliveries reach it over private HTTP, so vmmd accepts a bound
+  // server from it at startup instead of an execution_mode_conflict. False
+  // (and older schedd) keeps the no-bind worker contract.
+  bool worker_push_delivery = 34;
   // readiness_probe_json is the optional recurring primary-app traffic probe
   // (distinct from the startup healthcheck and liveness probe). Empty keeps
   // legacy routing behavior; otherwise vmmd decodes the deployment's validated
@@ -870,6 +919,11 @@ message AppSpec {
   // app-task and qualification instances, and when quiet pause is
   // disabled in vmmd.toml.
   int64 quiet_pause_after_ms = 32;
+  // quarantine (ADR-732) wakes a production fork: vmmd renders the netns
+  // quarantine chains (no guest-originated flow, inbound only from the
+  // platform veth) and ignores the allowlist, private network, static
+  // egress IP and operator bundle. Only schedd's fork coordinator sets it.
+  bool quarantine = 35;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1036,6 +1090,12 @@ message SnapshotRef {
   // from the requested guest memory; without it every companion wake fell
   // back to cold boot. 0 means unknown (older schedd).
   int64 mem_bytes = 8;
+  // ADR-733 sealed crash capture: the capture's objects are stored only as
+  // encrypted twins. vmmd opens sealed_key with its fleet identity (bound to
+  // capture_id), decrypts the objects into this instance's staging and
+  // restores from there. Empty for every ordinary snapshot.
+  string capture_id = 9;
+  bytes sealed_key = 10;
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and
@@ -1096,9 +1156,11 @@ message WakeResponse {
   // host (restore / netns) or in the guest (init handshake).
   int64  guest_ready_ms = 13;
   // Set only when an attempted snapshot restore falls back to a successful
-  // cold boot because the configured application after_restore hook failed.
-  // Closed value: after_restore_failed. No callback URL or error text crosses
-  // the customer telemetry boundary; empty on other wake paths.
+  // cold boot. Closed values: after_restore_failed when the configured
+  // application after_restore hook failed, and node_local when the failure
+  // was this node's (disk, jail, unreadable backing images), so schedd keeps
+  // the snapshot. No callback URL or error text crosses the customer
+  // telemetry boundary; empty on other wake paths.
   string restore_fallback_reason = 14;
   // ADR-423: the serving handler understands source_key alias delivery.
   bool supports_secret_aliases = 15;
@@ -1404,6 +1466,20 @@ message BuildSpec {
   // headroom for a configured timeout rather than falling back to the
   // compile-time platform default.
   int32 timeout_sec = 2;
+  // The private-registry credentials of the app being built
+  // (ADR-20261026091500). vmmd opens each password with the build seal
+  // domain and gives the builder a Docker config, so a Dockerfile can build
+  // FROM a private base image. Empty for every other build.
+  repeated BuildRegistryCredential registry_credentials = 3;
+}
+
+// BuildRegistryCredential is one app_registry_credentials row: the registry
+// host, the username and the sealed password, which builderd forwards
+// without opening.
+message BuildRegistryCredential {
+  string registry        = 1;
+  string username        = 2;
+  bytes  password_sealed = 3;
 }
 
 message PauseAndSnapshotRequest {
@@ -1443,6 +1519,10 @@ message SnapshotResponse {
   // Versioned native byte evidence. This is neither current publisher/scan
   // approval nor a restore grant. Legacy captures leave it absent.
   RuntimeSnapshotCapture capture = 5;
+  // ADR-733: set by WarmSnapshot when seal_capture_id was requested — the
+  // capture's per-capture key sealed to the fleet recipient. Only encrypted
+  // twins were published.
+  bytes sealed_key = 6;
 }
 
 message RuntimeCapturedArtifact {
@@ -1507,6 +1587,12 @@ message WarmSnapshotRequest {
   // under. Required, mirroring PauseAndSnapshot's vmstate path
   // contract (PRD-025 axis 2 slice 4).
   string vmstate_storage_key = 3;
+  // ADR-733: encrypt this capture at the source. vmmd generates a fresh key,
+  // publishes only encrypted twins (key + ".age") of memory, vmstate,
+  // private drive and backing identity, and returns the key sealed to the
+  // fleet recipient bound to this capture id. A vmmd without a fleet
+  // identity refuses (FailedPrecondition) rather than publish plaintext.
+  string seal_capture_id = 4;
 }
 
 // FrameworkReady is the vmmd-side receipt of the guest-init "framework
@@ -1619,6 +1705,19 @@ message StatsResponse {
   // Optional so unset != 0 (Int64Value = 0 vs absent differs in prom metrics).
   google.protobuf.Int64Value total_resident_bytes = 3;
   repeated InstanceStats instances = 4;
+  // Memory of faas-tenant-ibridge.slice: every instance bridge unit on the
+  // node (connection-survival ADR §2, ADR-909 amendment). Absent when bridge
+  // units are off or on an older vmmd. Measured admission adds it to the
+  // node's charge; it is platform overhead and never billed.
+  google.protobuf.Int64Value instance_bridge_resident_bytes = 5;
+  // ADR 20261030100950: the "some avg10" value of faas-tenant.slice's
+  // cpu.pressure, in percent: the share of the last 10 s in which a tenant
+  // task waited for a CPU. Absent on a host without the file.
+  google.protobuf.DoubleValue tenant_cpu_pressure_some_avg10 = 6;
+  // ADR 20261030100950: the host's busy share of all CPUs over the last
+  // api.NodeCPUBusyWindowSeconds, in percent, from /proc/stat. Absent until
+  // vmmd has sampled half the window, and on a host without the file.
+  google.protobuf.DoubleValue host_cpu_busy_percent = 7;
 }
 
 message InstanceStats {
@@ -1729,6 +1828,40 @@ message InstanceStats {
   bool frozen = 23;
   // ADR-1151: when the current freeze took effect; absent unless frozen.
   google.protobuf.Timestamp frozen_since = 24;
+  // ADR-20261023171905: this incarnation's most recent completed quiet
+  // pause, from the moment the VM stopped to the moment it ran again.
+  // Absent until the first resume. schedd records it in the pause ledger
+  // that meterd subtracts from billed seconds; a pause that ends and is
+  // replaced before schedd reads it is billed.
+  google.protobuf.Timestamp quiet_last_pause_started_at = 25;
+  google.protobuf.Timestamp quiet_last_pause_ended_at = 26;
+  // ADR-20261023171905: total time this incarnation spent in completed
+  // quiet pauses, measured on vmmd's monotonic clock. It restarts at zero
+  // with each new VM. It cross-checks the ledger; billing reads the ledger.
+  google.protobuf.Int64Value quiet_paused_ns_total = 27;
+  // ADR-570: absent on older nodes; present even when disabled. Actual nft
+  // completion is distinct from the scheduler's logical probe-health state.
+  EgressCircuitEnforcement egress_circuit_enforcement = 28;
+  // ADR-570: authoritative node-owned HTTP/Upgrade admission. Absent means
+  // the node does not report this guarantee; the plan cap is for this VM.
+  HTTPAdmissionEnforcement http_admission_enforcement = 29;
+}
+
+message HTTPAdmissionEnforcement {
+  bool enabled = 1;
+  int64 limit = 2;
+  int64 inflight = 3;
+  string generation = 4;
+  bool retiring = 5;
+  string plan = 6;
+}
+
+message EgressCircuitEnforcement {
+  bool enabled = 1;
+  bool applied = 2;
+  int64 desired_revision = 3;
+  int64 applied_revision = 4;
+  int32 target_count = 5;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
@@ -1749,7 +1882,13 @@ message PingResponse {
   bool supports_secret_aliases = 3;
   bool supports_image_healthcheck = 4;
   bool supports_image_healthcheck_monitoring = 5;
+  // base_generations reports, for each runtime base this vmmd is configured
+  // with, whether it can adopt the configured generation
+  // (ADR-20261022184531). schedd marks a node degraded while one cannot.
+  // An older vmmd sends none, which schedd reads as no evidence.
+  repeated BaseGenerationReadiness base_generations = 6;
 }
+
 
 // ForwardHTTPRequest and ForwardHTTPResponse were removed in PR-D
 // (ADR-047). The legacy unary RPC was the original issue #98 /
@@ -1826,6 +1965,46 @@ message UpdateAppCPULimitRequest {
 
 message UpdateAppCPULimitAck {}
 
+// CaptureProfileRequest names one live instance and the capture window.
+// capture_id is 32 lowercase hex characters; kinds are "cpu" and/or "heap";
+// duration_ms is bounded by pkg/api ProfileCaptureMin/MaxDuration.
+message CaptureProfileRequest {
+  string instance = 1;
+  string capture_id = 2;
+  repeated string kinds = 3;
+  int64 duration_ms = 4;
+  // checkpoint_ms asks heap collectors for interim profiles so an OOM kill
+  // mid-window still returns the last heap before it; zero disables them.
+  int64 checkpoint_ms = 5;
+}
+
+// CapturedProfile is one guest collector's contribution: an unparsed gzip
+// or raw pprof protobuf for one process and kind.
+message CapturedProfile {
+  string kind = 1;
+  string process_id = 2;
+  bytes profile = 3;
+  int64 from_unix_nano = 4;
+  int64 until_unix_nano = 5;
+}
+
+// CaptureProfileResponse reports what the guest observed. processes counts
+// collectors that polled during the window; zero means nothing in the VM is
+// instrumented. dropped counts profiles discarded by the reply bounds.
+message CaptureProfileResponse {
+  repeated CapturedProfile profiles = 1;
+  int32 processes = 2;
+  int32 dropped = 3;
+  string reason = 4;
+  // partial marks a window that ended early (the workload was OOM-killed);
+  // heap profiles from processes that could not flush are checkpoints.
+  bool partial = 5;
+  // oom_killed reports that the workload was OOM-killed during the window;
+  // oom_peak_mb is the memory in use at the kill.
+  bool oom_killed = 6;
+  int32 oom_peak_mb = 7;
+}
+
 // UpdateEgressCircuitRequest (ADR-201 §3) is the input to
 // UpdateEgressCircuit. app_id is the apps.id UUID whose live instances need
 // the new circuit set. circuits is the COMPLETE desired set — an empty list
@@ -1843,28 +2022,32 @@ message UpdateAppCPULimitAck {}
 message UpdateEgressCircuitRequest {
   string app_id = 1;
   repeated EgressCircuitTarget circuits = 2;
+  // ADR-570: committed desired-policy revision; required on nodes configured
+  // for durable enforcement. Delayed pushes cannot overwrite newer state.
+  int64 revision = 3;
 }
 
 // EgressCircuitTarget is one open circuit: a resolved upstream address and
 // port whose new connections must fail fast.
 message EgressCircuitTarget {
   // addr is a resolved IPv4 or IPv6 address in its textual form. vmmd
-  // renders it into an nftables set element; a value that does not parse is
-  // skipped rather than emitted, because one malformed element fails the
-  // whole nft batch and would leave the tenant's firewall in whatever state
-  // the partial batch produced.
+  // renders it into an nftables set element. A malformed complete-set update
+  // is rejected without altering current policy.
   string addr = 1;
   // port is the upstream TCP port (1..65535).
   uint32 port = 2;
 }
 
-// UpdateEgressCircuitAck is the empty success response. On failure vmmd
+// UpdateEgressCircuitAck reports the enforced revision. On failure vmmd
 // returns a gRPC status: Internal when the nft batch failed for a live
 // instance. Unlike UpdateEgressAllowlist there is no partial-revert path —
 // the operation is a flush plus adds against a set that is re-derived on
 // every reconcile, so a failure is corrected by the next push rather than by
 // unwinding this one.
-message UpdateEgressCircuitAck {}
+message UpdateEgressCircuitAck {
+  // Revision enforced on all matching live and pending tenant networks.
+  int64 revision = 1;
+}
 
 // UpdateStaticEgressIPRequest (ADR-119) is the input to
 // UpdateStaticEgressIP. app_id is the apps.id UUID whose live
@@ -2518,6 +2701,13 @@ message DeleteWarmSnapshotResponse {
   bool deleted = 1;
 }
 
+message RetireNativeRuntimeSnapshotObjectRequest {
+  // One of a v2 capture's memory, device state, drive or backing keys.
+  string storage_key = 1;
+}
+
+message RetireNativeRuntimeSnapshotObjectResponse {}
+
 // ExecuteExecution is the post-restore host/guest execution envelope. The
 // request is validated again at vmmd even though apid/schedd already admitted
 // it: vmmd is the last trust boundary before untrusted bytes enter a guest.
@@ -2586,6 +2776,107 @@ message ExecuteExecutionOutputChunk {
   // stream is one of "stdout" or "stderr".
   string stream = 1;
   bytes chunk = 2;
+}
+
+// RunAgentRequest is a client frame on the RunAgent stream. Start occurs
+// exactly once, first.
+message RunAgentRequest {
+  oneof frame {
+    RunAgentStart start = 1;
+    RunAgentCancel cancel = 2;
+  }
+}
+
+// RunAgentStart names the machine and carries the run. run is an
+// agentrunproto.Request in JSON; vmmd validates it and sends it to the guest
+// only after the boot.
+message RunAgentStart {
+  string instance = 1;
+  string account_id = 2;
+  string plan = 3;
+  string base_key = 4;
+  string layer_key = 5;
+  int32 vcpu_count = 6;
+  int32 mem_size_mib = 7;
+  int32 cpu_millicores = 8;
+  bytes run = 9;
+  // relay binds the run's ADR-989 relay to the agent run principal. Without
+  // it vmmd closes the run's relay connections.
+  RunAgentRelay relay = 10;
+  // input_key is the storage key of the run's read-only input drive
+  // (ADR-20261027090010 §3). Empty: no input drive.
+  string input_key = 11;
+  // snapshot is the preset snapshot to restore. Absent, stale or failing:
+  // a cold boot of the same image (ADR-005).
+  AgentRunSnapshot snapshot = 12;
+  // model_wait_pause_after_ms is the run's model-wait pause delay
+  // (ADR-20261027090012): with vmmd's agent_wait_pause on, the VM is paused
+  // once it has waited this long on the relay and nothing else. 0 (an older
+  // schedd) keeps it running.
+  int32 model_wait_pause_after_ms = 13;
+}
+
+// AgentRunSnapshot locates a preset snapshot CaptureAgentSnapshot made.
+message AgentRunSnapshot {
+  string storage_key = 1;
+  string vmstate_storage_key = 2;
+  string fc_version = 3;
+  int64 mem_bytes = 4;
+}
+
+// CaptureAgentSnapshotRequest is the machine to capture; namespace and
+// capture_id name its storage keys.
+message CaptureAgentSnapshotRequest {
+  string instance = 1;
+  string account_id = 2;
+  string plan = 3;
+  string base_key = 4;
+  string layer_key = 5;
+  int32 vcpu_count = 6;
+  int32 mem_size_mib = 7;
+  int32 cpu_millicores = 8;
+  string namespace = 9;
+  string capture_id = 10;
+}
+
+message CaptureAgentSnapshotResponse {
+  AgentRunSnapshot snapshot = 1;
+  int64 vmstate_bytes = 2;
+}
+
+// RunAgentRelay is the agent run principal vmmd mints the relay assertion
+// for (ADR-20261027090010 §7, ADR-20261027090016), from placement data only.
+message RunAgentRelay {
+  string run_id = 1;
+  string lease_token = 2;
+  string tenant_id = 3;
+  string agent_id = 4;
+  int32 agent_version = 5;
+}
+
+// RunAgentCancel asks the guest to stop the harness: SIGTERM, then SIGKILL
+// after the grace period. The result frame still follows.
+message RunAgentCancel {}
+
+// RunAgentEvent is a server frame on the RunAgent stream: booted once, then
+// output chunks, then exactly one result.
+message RunAgentEvent {
+  oneof frame {
+    RunAgentBooted booted = 1;
+    ExecuteExecutionOutputChunk output = 2;
+    RunAgentResult result = 3;
+  }
+}
+
+message RunAgentBooted {
+  WakeMethod method = 1;
+  int64 boot_ms = 2;
+}
+
+// RunAgentResult is the guest's agentrunproto.Result in JSON, without the
+// stdout and stderr the output frames already carried.
+message RunAgentResult {
+  bytes result = 1;
 }
 
 // ExecuteExecutionBrokerRequest is a client frame on the full-duplex Runs
@@ -2916,6 +3207,10 @@ message AllowResolvedEgressRequest {
   string source_ip = 1;
   repeated string addresses = 2;
   uint32 ttl_seconds = 3;
+  // database_port is non-zero when the answered name is one of the caller
+  // app's bound managed databases (ADR 20261026150000): vmmd also opens that
+  // TCP port to the addresses. An older resolver leaves it zero.
+  uint32 database_port = 4;
 }
 
 message AllowResolvedEgressAck {
@@ -2932,6 +3227,72 @@ message UpdateAppEgressPolicyRequest {
 }
 
 message UpdateAppEgressPolicyAck { int64 revision = 1; }
+
+message AdoptionReportRequest {}
+message AdoptionReportResponse {
+  string node_id = 1;
+  // epoch is the ownership epoch this vmmd claimed; schedd ignores a report
+  // below the compute_nodes row's epoch.
+  uint64 epoch = 2;
+  string incarnation = 3;
+  string predecessor_incarnation = 4;
+  // fenced: the epoch was advanced outside this node's claims, so nothing
+  // was adopted and every survivor stayed quarantined.
+  bool fenced = 5;
+  repeated AdoptionReportInstance adopted = 6;
+  repeated AdoptionReportInstance refused = 7;
+  // leased_since_start is every instance this vmmd gave a slot after
+  // startup. A live row on this node in neither it nor adopted ran under the
+  // predecessor and is gone.
+  repeated string leased_since_start = 8;
+  // complete is false once leased_since_start overflowed; schedd then acts
+  // on nothing in the report.
+  bool complete = 9;
+}
+message AdoptionInventoryRequest {}
+message AdoptionInventoryResponse {
+  repeated AdoptionInventoryRecord records = 1;
+}
+message AdoptionInventoryRecord {
+  // record is the journal record's JSON, as the running vmmd holds it.
+  bytes record = 1;
+  // proof_ok reports that proof steps 2-6 (boot, process, cgroup, network,
+  // Firecracker API) hold for the live guest; otherwise reason and detail
+  // name the first failure.
+  bool proof_ok = 2;
+  string proof_reason = 3;
+  string proof_detail = 4;
+}
+message AdoptionReportInstance {
+  string instance = 1;
+  string app_id = 2;
+  // reason and detail name the first failed proof step of a refused guest.
+  string reason = 3;
+  string detail = 4;
+  // resolved is the outcome of the operation in flight at the restart,
+  // settled before the report. "thawed" (adopted): a freeze or thaw was cut
+  // short and the guest now runs. "resumed" (adopted): a migration prepare
+  // was cut short before it answered, so the source runs again. "stopped" (in
+  // refused, with no reason): a stop, destroy, park or warm snapshot was cut
+  // short and the successor finished the teardown.
+  string resolved = 5;
+  // admission is set for an adopted guest booted under an ADR-595 receipt:
+  // what the successor holds, for schedd's re-bind of that admission.
+  AdoptionReportAdmission admission = 6;
+}
+
+// AdoptionReportAdmission is the serving receipt an adopted guest carries
+// and the residency the successor observed (ADR-595 extension). It must
+// equal the instance's stored receipt for schedd's re-bind to be accepted.
+message AdoptionReportAdmission {
+  string token = 1;
+  string issuing_incarnation = 2;
+  int64 completed_at_unix_nano = 3;
+  string netns = 4;
+  string host_ip = 5;
+  int32 lease_uid = 6;
+  bool paused = 7;
+}
 
 // Process identity is produced by the native manager, not echoed from callers.
 message RuntimeAdmissionIdentityRequest {}
@@ -3476,4 +3837,19 @@ message InflightRequestTraceRequest {
 // traceparent, or nothing.
 message InflightRequestTraceResponse {
   string traceparent = 1;
+}
+
+// BaseGenerationReadiness is one configured runtime base and whether this
+// node can boot it.
+message BaseGenerationReadiness {
+  string base_key = 1;
+  // generation is the configured immutable reference (an OCI digest).
+  string generation = 2;
+  // adoptable is false only when vmmd proved it cannot adopt generation:
+  // its cache does not hold it and the canonical scan sidecar names
+  // another generation. A sidecar vmmd could not read reports adoptable;
+  // the wake path still refuses on its own evidence.
+  bool adoptable = 3;
+  // reason explains a false adoptable; empty otherwise.
+  string reason = 4;
 }

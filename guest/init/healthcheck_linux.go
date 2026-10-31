@@ -640,11 +640,13 @@ func runSidecarExecProbe(ctx context.Context, argv []string, timeout time.Durati
 // healthcheckPollOptions carries the main workload's runtime context. The
 // environment callback is evaluated on each poll so rotated secrets are not
 // captured permanently at boot. Started gates probes while init/dependencies
-// delay main launch; CgroupLeaf is empty for host-enforced single workloads.
+// delay main launch. Probes join CgroupLeaf, or the leaf WorkloadLeaf reports
+// once the workload started (empty means the root cgroup).
 type healthcheckPollOptions struct {
-	Environment func() []string
-	Started     <-chan struct{}
-	CgroupLeaf  string
+	Environment  func() []string
+	Started      <-chan struct{}
+	CgroupLeaf   string
+	WorkloadLeaf func() string
 }
 
 func runHealthcheckPoll(ctx context.Context, manifest api.AppManifest, log *slog.Logger, options ...healthcheckPollOptions) error {
@@ -720,7 +722,11 @@ func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manife
 	}
 	launch := exec.Command("/unused")
 	launch.SysProcAttr = &syscall.SysProcAttr{Credential: execProcessCredential(credential)}
-	cgroupFile, err := attachWorkloadCgroup(launch, runtime.CgroupLeaf)
+	leaf := runtime.CgroupLeaf
+	if runtime.WorkloadLeaf != nil {
+		leaf = runtime.WorkloadLeaf()
+	}
+	cgroupFile, err := attachWorkloadCgroup(launch, leaf)
 	if err != nil {
 		log.Error("healthcheck cgroup placement unavailable", "err", err)
 		return

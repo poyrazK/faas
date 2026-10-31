@@ -93,10 +93,10 @@ def sync_detailed(
      Verifies state, exchanges the code, fetches `/user` and
     `/user/emails`, filters the primary && verified email,
     enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
-    `oauth_links` enforces the §11 anti-takeover invariant.
+    `oauth_links` enforces the anti-takeover invariant.
 
-    On success, `auth.login` is appended to the events table
-    (ADR-035) with `method=github`, `email=<verified email>`,
+    On success, `auth.login` is appended to the events table with `method=github`, `email=<verified
+    email>`,
     and `login=<GitHub username>` so the audit dashboard and
     the corroborating slog line reference one identifier.
 
@@ -135,10 +135,10 @@ def sync(
      Verifies state, exchanges the code, fetches `/user` and
     `/user/emails`, filters the primary && verified email,
     enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
-    `oauth_links` enforces the §11 anti-takeover invariant.
+    `oauth_links` enforces the anti-takeover invariant.
 
-    On success, `auth.login` is appended to the events table
-    (ADR-035) with `method=github`, `email=<verified email>`,
+    On success, `auth.login` is appended to the events table with `method=github`, `email=<verified
+    email>`,
     and `login=<GitHub username>` so the audit dashboard and
     the corroborating slog line reference one identifier.
 
@@ -172,10 +172,10 @@ async def asyncio_detailed(
      Verifies state, exchanges the code, fetches `/user` and
     `/user/emails`, filters the primary && verified email,
     enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
-    `oauth_links` enforces the §11 anti-takeover invariant.
+    `oauth_links` enforces the anti-takeover invariant.
 
-    On success, `auth.login` is appended to the events table
-    (ADR-035) with `method=github`, `email=<verified email>`,
+    On success, `auth.login` is appended to the events table with `method=github`, `email=<verified
+    email>`,
     and `login=<GitHub username>` so the audit dashboard and
     the corroborating slog line reference one identifier.
 
@@ -212,10 +212,10 @@ async def asyncio(
      Verifies state, exchanges the code, fetches `/user` and
     `/user/emails`, filters the primary && verified email,
     enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
-    `oauth_links` enforces the §11 anti-takeover invariant.
+    `oauth_links` enforces the anti-takeover invariant.
 
-    On success, `auth.login` is appended to the events table
-    (ADR-035) with `method=github`, `email=<verified email>`,
+    On success, `auth.login` is appended to the events table with `method=github`, `email=<verified
+    email>`,
     and `login=<GitHub username>` so the audit dashboard and
     the corroborating slog line reference one identifier.
 

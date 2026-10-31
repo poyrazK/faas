@@ -178,7 +178,7 @@ func bindingPolicyPlanBlocker(code string) bool {
 	switch code {
 	case api.ManagedServiceVerificationUnsupported:
 		return true
-	case "queue_canary_context_unavailable", "queue_handler_unsupported", "queue_canary_scope_unsupported", "queue_canary_unsupported", "binding_not_ready", "binding_type_unknown", "verification_unsupported", "rotation_unknown", "rotation_pending", "object_storage_permission_insufficient", "object_storage_binding_missing", "object_storage_binding_ambiguous", "queue_binding_missing", "queue_binding_ambiguous", "queue_scope_unconfirmed", "queue_readiness_unsupported", "queue_consumer_missing", "queue_consumer_paused", "queue_consumer_degraded", "queue_consumer_unknown", "queue_consumer_time_future":
+	case "queue_canary_context_unavailable", "queue_handler_unsupported", "queue_canary_scope_unsupported", "queue_canary_unsupported", "binding_not_ready", "binding_type_unknown", "verification_unsupported", "verification_unavailable", "rotation_unknown", "rotation_pending", "object_storage_permission_insufficient", "object_storage_binding_missing", "object_storage_binding_ambiguous", "queue_binding_missing", "queue_binding_ambiguous", "queue_scope_unconfirmed", "queue_readiness_unsupported", "queue_consumer_missing", "queue_consumer_paused", "queue_consumer_degraded", "queue_consumer_unknown", "queue_consumer_time_future":
 		return true
 	}
 	return false

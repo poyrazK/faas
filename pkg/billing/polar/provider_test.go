@@ -11,6 +11,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -147,7 +149,7 @@ func TestObjectStorageBillingRequiresUTCMonthActivation(t *testing.T) {
 	}
 }
 
-func TestPublishObjectStorageLineItemUsesExactMillicentQuantity(t *testing.T) {
+func TestPublishObjectStorageChargeUsesExactMillicentQuantity(t *testing.T) {
 	var got usageEvent
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/events/ingest" {
@@ -183,18 +185,37 @@ func TestPublishObjectStorageLineItemUsesExactMillicentQuantity(t *testing.T) {
 		StorageMillicents: 1200, RequestsMillicents: 34, EgressMillicents: 5, TotalMillicents: 1239,
 		FinalizedAt: period.AddDate(0, 1, 0).Add(time.Minute),
 	}
-	if err := p.PublishObjectStorageLineItem(context.Background(), record, record.TotalMillicents+1); err == nil {
-		t.Fatal("a charge above the record total was published")
+	at := period.AddDate(0, 1, 0).Add(time.Hour)
+	step := billing.ObjectStorageChargeStep{AccountID: "acct-1", PeriodStart: period, DeliveredMillicents: 400, TargetMillicents: 1000, At: at, Record: &record}
+	for _, bad := range []billing.ObjectStorageChargeStep{
+		{AccountID: "acct-1", PeriodStart: period, DeliveredMillicents: 400, TargetMillicents: 400, At: at},
+		{AccountID: "acct-1", PeriodStart: period.Add(time.Hour), DeliveredMillicents: 0, TargetMillicents: 1, At: at},
+		{AccountID: "acct-2", PeriodStart: period, DeliveredMillicents: 0, TargetMillicents: 1, At: at, Record: &record},
+	} {
+		if err := p.PublishObjectStorageCharge(context.Background(), bad); err == nil {
+			t.Fatalf("invalid step %+v was published", bad)
+		}
 	}
-	// ADR-1320: the overage cap held the charge to 1000 of 1239 millicents.
-	if err := p.PublishObjectStorageLineItem(context.Background(), record, 1000); err != nil {
+	// ADR-1320 and ADR-20261027093220: the overage cap held the month to 1000
+	// of 1239 millicents, and 400 were billed in daily steps, so the
+	// month-close step bills 600.
+	if err := p.PublishObjectStorageCharge(context.Background(), step); err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "object_storage_usage" || got.ExternalID != "faas-object-storage-record-1" || got.ExternalCustomerID != "acct-1" {
+	if got.Name != "object_storage_usage" || got.ExternalID != "faas-object-storage-acct-1-2026-09-1000" || got.ExternalCustomerID != "acct-1" || got.Timestamp != at.Format(time.RFC3339) {
 		t.Fatalf("object storage event = %+v", got)
 	}
-	if got.Metadata["charge_millicents"] != float64(1000) || got.Metadata["uncapped_millicents"] != float64(1239) || got.Metadata["storage_millicents"] != float64(1200) {
+	if got.Metadata["charge_millicents"] != float64(600) || got.Metadata["cumulative_millicents"] != float64(1000) || got.Metadata["previous_millicents"] != float64(400) ||
+		got.Metadata["uncapped_millicents"] != float64(1239) || got.Metadata["storage_millicents"] != float64(1200) || got.Metadata["billing_record_id"] != "record-1" {
 		t.Fatalf("object storage event metadata = %+v", got.Metadata)
+	}
+	// A daily step carries no record.
+	step.Record, step.DeliveredMillicents, step.TargetMillicents = nil, 0, 400
+	if err := p.PublishObjectStorageCharge(context.Background(), step); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Metadata["billing_record_id"]; ok || got.ExternalID != "faas-object-storage-acct-1-2026-09-400" || got.Metadata["charge_millicents"] != float64(400) {
+		t.Fatalf("daily object storage event = %+v", got)
 	}
 }
 
@@ -203,7 +224,7 @@ func TestObjectStorageShadowCannotPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.PublishObjectStorageLineItem(context.Background(), state.ObjectStorageBillingRecord{}, 0); err == nil || !strings.Contains(err.Error(), "not live") {
+	if err := p.PublishObjectStorageCharge(context.Background(), billing.ObjectStorageChargeStep{}); err == nil || !strings.Contains(err.Error(), "not live") {
 		t.Fatalf("shadow publish error = %v", err)
 	}
 }
@@ -244,22 +265,69 @@ func TestPushMeterUsageRecordRequiresLiveAndUsesDistinctEvent(t *testing.T) {
 	}
 	acct := state.Account{ID: "acct-1", ProviderCustomerID: "polar-customer"}
 	hour := time.Date(2026, 9, 11, 10, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return hour.Add(65 * time.Minute) }
 	if err := p.PushMeterUsageRecord(context.Background(), acct, hour, state.BillingMeterEgress, 3*(1<<30)); err != nil {
 		t.Fatal(err)
 	}
 	if handlerErr != nil {
 		t.Fatal(handlerErr)
 	}
-	if got.Name != "egress_usage" || got.ExternalID != "faas-egress-acct-1-2026-09-11T10:00:00Z" {
-		t.Fatalf("egress event = %+v", got)
+	if got.Name != "egress_usage" || got.ExternalID != "faas-egress-acct-1-2026-09-11T10:00:00Z" || got.Timestamp != "2026-09-11T11:05:00Z" {
+		t.Fatalf("egress event = %+v, want the hourly id stamped at delivery", got)
 	}
 	if got.Metadata["egress_gib"] != float64(3) {
 		t.Fatalf("egress_gib = %#v, want 3", got.Metadata["egress_gib"])
 	}
 }
 
+// withOrganization serves the access token's organization, which the catalog
+// preflight reads first, with multiple subscriptions disallowed.
+func withOrganization(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/organizations/" {
+			_, _ = io.WriteString(w, `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false}}],"pagination":{"total_count":1,"max_page":1}}`)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// The preflight refuses an organization that lets a customer hold several
+// subscriptions, or a token that does not name exactly one organization.
+// adr: 20261029180000
+func TestEnsurePlanProductsRequiresSingleSubscriptionOrganization(t *testing.T) {
+	for name, body := range map[string]string{
+		"multiple allowed": `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":true}}]}`,
+		"setting missing":  `{"items":[{"id":"org-1","subscription_settings":{}}]}`,
+		"no organization":  `{"items":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var catalogReads int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/organizations/" {
+					_, _ = io.WriteString(w, body)
+					return
+				}
+				catalogReads++
+				http.NotFound(w, r)
+			}))
+			defer server.Close()
+			p, err := NewProvider(testConfig(server.URL), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := p.EnsurePlanProducts(context.Background()); err == nil || !strings.Contains(err.Error(), "organization") {
+				t.Fatalf("EnsurePlanProducts error = %v, want an organization refusal", err)
+			}
+			if catalogReads != 0 {
+				t.Fatalf("catalog read %d times after the organization refusal", catalogReads)
+			}
+		})
+	}
+}
+
 func TestEnsurePlanProductsValidatesSeparateEgressCatalog(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withOrganization(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/meters/meter-1":
 			_, _ = io.WriteString(w, catalogMeterJSON())
@@ -300,7 +368,7 @@ func TestEnsurePlanProductsValidatesSeparateEgressCatalog(t *testing.T) {
 }
 
 func TestEnsurePlanProductsValidatesObjectStorageCatalog(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withOrganization(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/meters/meter-1":
 			_, _ = io.WriteString(w, catalogMeterJSON())
@@ -353,7 +421,7 @@ func TestEnsurePlanProductsRequiresConfiguredIDs(t *testing.T) {
 
 func TestEnsurePlanProductsValidatesConfiguredCatalog(t *testing.T) {
 	var productRequests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withOrganization(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.NotFound(w, r)
 			return
@@ -403,7 +471,7 @@ func TestEnsurePlanProductsValidatesConfiguredCatalog(t *testing.T) {
 }
 
 func TestEnsurePlanProductsRejectsWrongPriceBeforeStartup(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withOrganization(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/meters/meter-1" {
 			_, _ = io.WriteString(w, catalogMeterJSON())
 			return
@@ -426,7 +494,7 @@ func TestEnsurePlanProductsRejectsWrongPriceBeforeStartup(t *testing.T) {
 }
 
 func TestEnsurePlanProductsRejectsPolarMeterCredits(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withOrganization(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/meters/meter-1" {
 			_, _ = io.WriteString(w, catalogMeterJSON())
 			return
@@ -692,6 +760,46 @@ func TestChangeSubscriptionPlanSchedulesNextPeriodUpdate(t *testing.T) {
 	}
 }
 
+// apid compares a webhook delivery with the subscription's current state
+// (Hunt 17 H17-1), so the read must report the live status and plan.
+func TestSubscriptionStateReadsCurrentStatusAndPlan(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/subscriptions/sub-1":
+			_, _ = io.WriteString(w, `{"id":"sub-1","status":"Active","product_id":"pro-product"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/subscriptions/sub-other":
+			_, _ = io.WriteString(w, `{"id":"sub-other","status":"past_due","product_id":"unknown-product"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	p, err := NewProvider(testConfig(server.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.SubscriptionState(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("SubscriptionState: %v", err)
+	}
+	if got.Status != billing.SubscriptionStatusActive || got.PlanID != string(api.PlanPro) {
+		t.Fatalf("state = %+v, want active pro", got)
+	}
+	got, err = p.SubscriptionState(context.Background(), "sub-other")
+	if err != nil {
+		t.Fatalf("SubscriptionState: %v", err)
+	}
+	if got.Status != billing.SubscriptionStatusPastDue || got.PlanID != "" {
+		t.Fatalf("state = %+v, want past_due with no plan", got)
+	}
+	if _, err := p.SubscriptionState(context.Background(), "sub-missing"); !errors.Is(err, billing.ErrSubscriptionGone) {
+		t.Fatalf("missing subscription error = %v, want ErrSubscriptionGone", err)
+	}
+	if _, err := p.SubscriptionState(context.Background(), ""); err == nil {
+		t.Fatal("an empty subscription id must be an error")
+	}
+}
+
 func TestReconcileUsageReadsMeterTotal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/meters/meter-1/quantities" {
@@ -809,6 +917,8 @@ func TestPushUsageRecordUsesGBRamHoursAndDedupe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sentAt := time.Date(2026, 8, 31, 8, 3, 27, 500, time.UTC)
+	p.now = func() time.Time { return sentAt }
 	hour := time.Date(2026, 8, 31, 10, 37, 0, 0, time.FixedZone("TRT", 3*60*60))
 	acct := state.Account{ID: "acct-1", ProviderCustomerID: "customer-1"}
 	mbSeconds := int64(1024 * 3600)
@@ -829,6 +939,14 @@ func TestPushUsageRecordUsesGBRamHoursAndDedupe(t *testing.T) {
 	}
 	if received.ExternalID != "faas-usage-acct-1-2026-08-31T07:00:00Z" {
 		t.Errorf("external_id = %q, want stable hourly id", received.ExternalID)
+	}
+	// ADR-20261028101500: a Polar meter counts events stamped after its last
+	// reset, so the event is stamped when sent; the window stays in metadata.
+	if received.Timestamp != "2026-08-31T08:03:27Z" {
+		t.Errorf("timestamp = %q, want the delivery time", received.Timestamp)
+	}
+	if got := received.Metadata["window_start"]; got != "2026-08-31T07:00:00Z" {
+		t.Errorf("window_start = %v, want the usage hour", got)
 	}
 }
 
@@ -884,6 +1002,78 @@ func TestVerifyWebhookNormalizesSubscriptionAndScheduledCancel(t *testing.T) {
 	}
 	if cancelEvent.Type != billing.EventSubscriptionUpdated {
 		t.Fatalf("scheduled cancellation mapped to %v, want subscription_updated", cancelEvent.Type)
+	}
+}
+
+func TestCustomerSubscriptionsListsEveryStatus(t *testing.T) {
+	var query url.Values
+	maxPage := 1
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/subscriptions/" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		query = r.URL.Query()
+		_, _ = io.WriteString(w, `{"items":[`+
+			`{"id":"sub-2","status":"past_due","product_id":"scale-product"},`+
+			`{"id":"sub-1","status":"canceled","product_id":"unknown-product"}],`+
+			`"pagination":{"total_count":2,"max_page":`+strconv.Itoa(maxPage)+`}}`)
+	}))
+	defer srv.Close()
+	p, err := NewProvider(testConfig(srv.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subs, err := p.CustomerSubscriptions(t.Context(), "customer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Polar's active filter leaves out past_due subscriptions.
+	if query.Get("customer_id") != "customer-1" || query.Has("active") || query.Get("sorting") != "-started_at" {
+		t.Fatalf("query = %v, want the customer's unfiltered listing, newest first", query)
+	}
+	want := []billing.Subscription{
+		{ID: "sub-2", SubscriptionState: billing.SubscriptionState{Status: billing.SubscriptionStatusPastDue, PlanID: string(api.PlanScale)}},
+		{ID: "sub-1", SubscriptionState: billing.SubscriptionState{Status: "canceled"}},
+	}
+	if !reflect.DeepEqual(subs, want) {
+		t.Fatalf("subscriptions = %+v, want %+v", subs, want)
+	}
+	maxPage = 2
+	if _, err := p.CustomerSubscriptions(t.Context(), "customer-1"); err == nil {
+		t.Fatal("a partial listing was reported as complete")
+	}
+}
+
+// subscription.cycled opens a period whose renewal order may still fail, so
+// it must never end dunning the way a payment does.
+func TestVerifyWebhookCycledIsNotAPayment(t *testing.T) {
+	p, err := NewProvider(testConfig("http://example.test"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		status string
+		want   billing.EventType
+	}{
+		{status: "active", want: billing.EventSubscriptionUpdated},
+		{status: "past_due", want: billing.EventUnknown},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			when := time.Now().UTC()
+			body := []byte(`{"type":"subscription.cycled","data":{"id":"sub-1","customer_id":"customer-1","product_id":"pro-product","status":"` + tc.status + `"}}`)
+			id := "cycled-" + tc.status
+			ev, err := p.VerifyWebhook(body, map[string]string{
+				"webhook-id":        id,
+				"webhook-timestamp": strconv.FormatInt(when.Unix(), 10),
+				"webhook-signature": SignForTest(body, "webhook-secret", id, when),
+			}, 5*time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ev.Type != tc.want {
+				t.Fatalf("subscription.cycled (%s) mapped to %v, want %v", tc.status, ev.Type, tc.want)
+			}
+		})
 	}
 }
 

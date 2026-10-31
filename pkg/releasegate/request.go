@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -43,9 +45,10 @@ func FromRequest(req api.CreateReleaseGateRequest) (Spec, *api.Problem) {
 	sloFields := req.SLO != "" || req.MaxBurnRate != 0
 	errorFields := req.MaxNewGroups != nil || req.MinEvents != 0
 	metricFields := req.Metric != "" || req.Comparison != "" || req.Threshold != nil
+	aiFields := req.MaxIncreasePercent != 0
 	switch req.Kind {
 	case KindSLO:
-		if errorFields || metricFields {
+		if errorFields || metricFields || aiFields {
 			return Spec{}, api.ErrValidation("an slo gate takes only slo, max_burn_rate and min_samples")
 		}
 		if req.SLO == "" {
@@ -59,7 +62,7 @@ func FromRequest(req api.CreateReleaseGateRequest) (Spec, *api.Problem) {
 			return Spec{}, api.ErrValidation("max_burn_rate must be 1-1000")
 		}
 	case KindNewErrors:
-		if sloFields || metricFields {
+		if sloFields || metricFields || aiFields {
 			return Spec{}, api.ErrValidation("a new_errors gate takes only max_new_groups, min_events and min_samples")
 		}
 		s.MaxNewGroups = api.ReleaseGateDefaultMaxNewGroups
@@ -77,7 +80,7 @@ func FromRequest(req api.CreateReleaseGateRequest) (Spec, *api.Problem) {
 			return Spec{}, api.ErrValidation("min_events must be 1-100000")
 		}
 	case KindCustomMetric:
-		if sloFields || errorFields {
+		if sloFields || errorFields || aiFields {
 			return Spec{}, api.ErrValidation("a custom_metric gate takes only metric, comparison, threshold and min_samples")
 		}
 		if !metricNamePattern.MatchString(req.Metric) {
@@ -90,8 +93,23 @@ func FromRequest(req api.CreateReleaseGateRequest) (Spec, *api.Problem) {
 			return Spec{}, api.ErrValidation("a custom_metric gate needs a finite threshold")
 		}
 		s.MetricName, s.Comparison, s.Threshold = req.Metric, req.Comparison, *req.Threshold
+	case KindAI:
+		if sloFields || errorFields || req.Comparison != "" || req.Threshold != nil {
+			return Spec{}, api.ErrValidation("an ai gate takes only metric, max_increase_percent and min_samples")
+		}
+		if !slices.Contains(AIMetrics, req.Metric) {
+			return Spec{}, api.ErrValidation("an ai gate's metric must be " + strings.Join(AIMetrics, ", "))
+		}
+		increase := req.MaxIncreasePercent
+		if increase == 0 {
+			increase = api.ReleaseGateAIDefaultMaxIncrease
+		}
+		if increase < api.ReleaseGateAIMaxIncreaseMin || increase > api.ReleaseGateAIMaxIncreaseMax {
+			return Spec{}, api.ErrValidation(fmt.Sprintf("max_increase_percent must be %d-%d", api.ReleaseGateAIMaxIncreaseMin, api.ReleaseGateAIMaxIncreaseMax))
+		}
+		s.MetricName, s.Threshold = req.Metric, float64(increase)
 	default:
-		return Spec{}, api.ErrValidation(fmt.Sprintf("kind must be %s, %s or %s", KindSLO, KindNewErrors, KindCustomMetric))
+		return Spec{}, api.ErrValidation(fmt.Sprintf("kind must be %s, %s, %s or %s", KindSLO, KindNewErrors, KindCustomMetric, KindAI))
 	}
 	return s, nil
 }

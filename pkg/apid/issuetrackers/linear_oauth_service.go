@@ -11,25 +11,28 @@ import (
 )
 
 type LinearOAuthService struct {
-	Store      state.LinearOAuthStore
-	Provider   issuetracker.LinearOAuthProvider
-	Verifier   LinearConnectionVerifier
-	Config     issuetracker.LinearOAuthConfig
-	Recipient  *age.X25519Recipient
+	Store    state.LinearOAuthStore
+	Provider issuetracker.LinearOAuthProvider
+	Verifier LinearConnectionVerifier
+	Config   issuetracker.LinearOAuthConfig
+	// Recipients seal OAuth credentials and consent flows: the account seal
+	// domain and the fleet recipient while the domain rolls out (ADR
+	// 20261022111812). Identities open them, the domain first.
+	Recipients []*age.X25519Recipient
 	Identities []*age.X25519Identity
 }
 
 func (s LinearOAuthService) Start(ctx context.Context, app, account, issue string, revision int64) (string, string, error) {
-	if !s.Config.Enabled() || s.Recipient == nil {
+	if !s.Config.Enabled() || len(s.Recipients) == 0 {
 		return "", "", api.ErrCapacity("Linear OAuth is not configured")
 	}
 	nonce, verifier, challenge, err := NewLinearOAuthProof()
 	if err != nil {
 		return "", "", err
 	}
-	hash := LinearOAuthStateHash(nonce)
+	hash := state.StoredCredentialHex(state.CredentialColumnLinearOAuthState, LinearOAuthStateHash(nonce))
 	secret := LinearOAuthFlowSecret{AppID: app, AccountID: account, IssueID: issue, Hash: hash, ExpectedRevision: revision, Verifier: verifier, ClientID: s.Config.ClientID, RedirectURI: s.Config.RedirectURI}
-	sealed, err := SealLinearOAuthFlow(s.Recipient, secret)
+	sealed, err := SealLinearOAuthFlowTo(s.Recipients, secret)
 	if err != nil {
 		return "", "", err
 	}
@@ -40,7 +43,9 @@ func (s LinearOAuthService) Exchange(ctx context.Context, nonce, account, code s
 	if !s.Config.Enabled() || !validLinearToken(code) {
 		return api.ErrValidation("restart Linear authorization")
 	}
-	row, err := s.Store.ClaimLinearOAuthFlow(ctx, LinearOAuthStateHash(nonce), account, "authorizing", "exchanging")
+	row, err := state.FirstCredentialHex(ctx, state.CredentialColumnLinearOAuthState, LinearOAuthStateHash(nonce), func(ctx context.Context, hash string) (state.LinearOAuthFlow, error) {
+		return s.Store.ClaimLinearOAuthFlow(ctx, hash, account, "authorizing", "exchanging")
+	})
 	if err != nil {
 		return api.ErrValidation("Linear authorization expired or was already used; restart it")
 	}
@@ -58,14 +63,27 @@ func (s LinearOAuthService) Exchange(ctx context.Context, nonce, account, code s
 	}
 	secret.Tokens, secret.Workspace = tokens, workspace
 	secret.Verifier = ""
-	sealed, err := SealLinearOAuthFlow(s.Recipient, secret)
+	sealed, err := SealLinearOAuthFlowTo(s.Recipients, secret)
 	if err != nil {
 		return err
 	}
 	return s.Store.SaveLinearOAuthFlow(ctx, row, sealed)
 }
+
+// Decline drops the consent flow nonce started for account, whose state
+// hash may be stored plain or keyed (ADR 20261029202403).
+func (s LinearOAuthService) Decline(ctx context.Context, nonce, account string) {
+	row, err := state.FirstCredentialHex(ctx, state.CredentialColumnLinearOAuthState, LinearOAuthStateHash(nonce), func(ctx context.Context, hash string) (state.LinearOAuthFlow, error) {
+		return s.Store.GetLinearOAuthFlow(ctx, hash, account)
+	})
+	if err == nil {
+		_ = s.Store.DeleteLinearOAuthFlow(ctx, row.Hash, account)
+	}
+}
 func (s LinearOAuthService) Pending(ctx context.Context, nonce, account string) (state.LinearOAuthFlow, LinearOAuthFlowSecret, error) {
-	row, err := s.Store.GetLinearOAuthFlow(ctx, LinearOAuthStateHash(nonce), account)
+	row, err := state.FirstCredentialHex(ctx, state.CredentialColumnLinearOAuthState, LinearOAuthStateHash(nonce), func(ctx context.Context, hash string) (state.LinearOAuthFlow, error) {
+		return s.Store.GetLinearOAuthFlow(ctx, hash, account)
+	})
 	if err != nil || row.Phase != "choosing" {
 		return row, LinearOAuthFlowSecret{}, api.ErrValidation("Linear authorization expired or incomplete; restart it")
 	}
@@ -97,7 +115,7 @@ func (s LinearOAuthService) Finish(ctx context.Context, nonce, app, account, iss
 		return api.IssueTrackerLinearConnection{}, api.ErrValidation("Linear workspace or selected team changed; restart consent")
 	}
 	scope := LinearCredentialScope{AccountID: account, AppID: app, Identity: identity}
-	sealed, err := SealLinearOAuthCredential(s.Recipient, LinearOAuthCredential{Scope: scope, ClientID: s.Config.ClientID, Tokens: secret.Tokens, WebhookSecret: webhook})
+	sealed, err := SealLinearOAuthCredentialTo(s.Recipients, LinearOAuthCredential{Scope: scope, ClientID: s.Config.ClientID, Tokens: secret.Tokens, WebhookSecret: webhook})
 	if err != nil {
 		return api.IssueTrackerLinearConnection{}, api.ErrValidation("check the Linear signing secret and restart consent")
 	}
@@ -155,7 +173,7 @@ func (s LinearOAuthService) Resolve(ctx context.Context, r state.IssueTrackerLin
 		return "", r, LinearConnectionRequired()
 	}
 	c.Tokens = tokens
-	sealed, err := SealLinearOAuthCredential(s.Recipient, c)
+	sealed, err := SealLinearOAuthCredentialTo(s.Recipients, c)
 	if err != nil {
 		return "", r, api.ErrCapacity("Linear refreshed credential could not be sealed; retry shortly")
 	}

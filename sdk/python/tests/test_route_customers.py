@@ -4,7 +4,7 @@ from uuid import UUID
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.apps import get_app_route_customer_usage
+from faas_sdk.preview.api.apps import get_app_route_customer_usage
 
 
 def test_route_customer_usage_preserves_scope_identity_and_incomplete_coverage():
@@ -72,7 +72,7 @@ def test_route_customer_usage_preserves_scope_identity_and_incomplete_coverage()
 
 
 def test_route_customer_usage_tenant_only_observations_do_not_invent_consumers():
-    from faas_sdk.models import RouteCustomerObservation
+    from faas_sdk.preview.models import RouteCustomerObservation
     from faas_sdk.types import Unset
 
     payload = {

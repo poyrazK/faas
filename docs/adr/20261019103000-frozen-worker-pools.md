@@ -57,12 +57,11 @@
   the thaw. A workload token minted before the freeze may have expired by
   the thaw; the SDK fetches a new one. The switch is off by default, and
   turning it off drains frozen workers through thaws and FrozenTTL.
-  An app's first pool worker usually cannot freeze: its cold boot records
-  the workload class it observed (ADR-051) after publishing that worker's
-  config proof, and the class is part of the configuration the proof
-  covers, so the worker stops at scale-in and the next one freezes. The
-  same ordering leaves that first instance's proof stale for every check of
-  it (warm-pool promotion, the ADR-1740 fast path); it is not changed here.
+  An app's first pool worker used to be unable to freeze: its cold boot
+  recorded the workload class it observed (ADR-051) after publishing that
+  worker's config proof, and the class is part of the configuration the
+  proof covers. ADR-051's 2026-10-22 amendment moves the proof with the
+  class, so that worker freezes like any other.
 - **Rejected alternatives:** *Keeping surplus workers RUNNING longer* (a
   longer scale-in stabilization window) keeps paying for an idle VM's vCPU
   and billing. *Excluding frozen workers from the account worker cap*
@@ -72,13 +71,17 @@
 - **Validation:** `pkg/sched` tests cover a surplus worker freezing, staying
   frozen through idle reconciles and thawing for demand without a cold
   boot; a surplus worker stopping with the switch off; and a frozen worker
-  giving its slot to another environment's demand; and a worker whose boot
-  changed the observed class stopping instead of freezing. The metal test
+  giving its slot to another environment's demand; a worker whose boot
+  changed the observed class freezing and thawing; and a worker whose
+  deployment's configuration changed after its boot stopping instead of
+  freezing. The metal test
   `TestWorkerFrozenThawMetal` runs a real worker through freeze and thaw.
   It boots its own pool worker rather than waiting on the deployment's prime
   worker: on n2 a pool reconcile ran between Prime publishing the prime
   RUNNING and apid marking the deployment live, saw the prime as a retired
-  generation and stopped it (a race on main, not changed here).
+  generation and stopped it. That race is fixed: the pool reconcile now
+  leaves a worker of a deployment that is still being deployed alone
+  (`TestWorkerPoolLeavesAnInFlightDeploymentsWorker`).
   On n2 (2026-10-21, revision 7eec5ca845) the test's first worker stopped
   at scale-in as above, the second froze, and three thaws took 685, 714
   and 815 ms from the send to the worker's RUNNING row and 792–850 ms to

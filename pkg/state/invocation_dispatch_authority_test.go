@@ -39,6 +39,42 @@ func (s *countedDispatchStore) GetQueueBindingCanary(ctx context.Context, accoun
 	return s.MemStore.GetQueueBindingCanary(ctx, account, app, id)
 }
 
+// ADR-570 resolves through the invocation version snapshot; count the reads
+// made inside that committed view.
+func (s *countedDispatchStore) WithInvocationVersionSnapshot(ctx context.Context, read func(InvocationVersionReader) error) error {
+	return s.MemStore.WithInvocationVersionSnapshot(ctx, func(r InvocationVersionReader) error {
+		return read(countedDispatchReader{memInvocationVersionReader: r.(memInvocationVersionReader), s: s})
+	})
+}
+
+type countedDispatchReader struct {
+	memInvocationVersionReader
+	s *countedDispatchStore
+}
+
+func (r countedDispatchReader) AppByID(ctx context.Context, id string) (App, error) {
+	r.s.apps++
+	return r.memInvocationVersionReader.AppByID(ctx, id)
+}
+func (r countedDispatchReader) invocationDispatchAuthority(ctx context.Context, id string) (invocationDispatchAuthority, error) {
+	r.s.authorities++
+	if r.s.authorityErr != nil {
+		return invocationDispatchAuthority{}, r.s.authorityErr
+	}
+	return r.memInvocationVersionReader.invocationDispatchAuthority(ctx, id)
+}
+func (r countedDispatchReader) InvocationEnvironmentID(ctx context.Context, id string) (string, error) {
+	r.s.owners++
+	return r.memInvocationVersionReader.InvocationEnvironmentID(ctx, id)
+}
+func (r countedDispatchReader) GetQueueBindingCanary(ctx context.Context, account, app, id string) (api.QueueBindingCanary, error) {
+	r.s.canaries++
+	if r.s.canaryErr != nil {
+		return api.QueueBindingCanary{}, r.s.canaryErr
+	}
+	return r.memInvocationVersionReader.GetQueueBindingCanary(ctx, account, app, id)
+}
+
 func TestDispatchAuthorityOrdinaryReadBudget(t *testing.T) {
 	for _, source := range []InvocationSource{InvocationAsyncInvoke, InvocationInboundWebhook, InvocationQueue, InvocationDelayedTask, InvocationCron, InvocationReplay} {
 		t.Run(string(source), func(t *testing.T) {

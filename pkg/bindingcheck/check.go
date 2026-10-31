@@ -64,8 +64,9 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 		a, b := bindings[i], bindings[j]
 		return a.Type+"\x00"+a.Name+"\x00"+a.Binding+"\x00"+a.Scope < b.Type+"\x00"+b.Name+"\x00"+b.Binding+"\x00"+b.Scope
 	})
+	probesUnavailable := inventory.VerificationProbesAvailable != nil && !*inventory.VerificationProbesAvailable
 	for _, item := range bindings {
-		report.checkBinding(item, policy)
+		report.checkBinding(item, policy, probesUnavailable)
 	}
 	report.checkRuntime(inventory.RuntimeFreshness)
 	active := 0
@@ -135,7 +136,7 @@ func bindingFinding(item api.AppBindingInventoryItem, code, message string) Find
 	return Finding{Code: code, Type: item.Type, Name: item.Name, Binding: item.Binding, Scope: item.Scope, Message: message}
 }
 
-func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
+func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy, probesUnavailable bool) {
 	result := BindingResult{Type: item.Type, Name: item.Name, Binding: item.Binding, Scope: item.Scope,
 		Status: "passed", VerificationStatus: item.VerificationStatus}
 	if item.Verification != nil {
@@ -161,7 +162,7 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
 		if item.State != "declared" && item.State != "enforced" {
 			r.bindingBlock(item, "binding_not_ready", "Service binding configuration is unknown.")
 		}
-		r.checkVerification(item, policy.MaxVerificationAge)
+		r.checkProbeEvidence(item, policy, probesUnavailable, &result)
 	case api.BindingTypePostgres, api.BindingTypeObjectStorage:
 		if item.Scope != r.Scope {
 			result.Status, result.Reason = "skipped", "outside_scope"
@@ -182,7 +183,7 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
 			}
 			r.checkObjectStorageOperations(item, result.RequiredObjectStorageMode)
 		}
-		r.checkVerification(item, policy.MaxVerificationAge)
+		r.checkProbeEvidence(item, policy, probesUnavailable, &result)
 		r.checkRotation(item)
 		if policy.RequireApplicationAck {
 			result.ApplicationAdoption = r.checkApplicationAdoption(item)
@@ -196,7 +197,7 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
 			if item.State != "enabled" || item.CredentialConfigured == nil || !*item.CredentialConfigured || !item.OutboundProbe.Valid() {
 				r.bindingBlock(item, "binding_not_ready", "Outbound probe configuration and managed credential must be ready.")
 			}
-			r.checkVerification(item, policy.MaxVerificationAge)
+			r.checkProbeEvidence(item, policy, probesUnavailable, &result)
 			break
 		}
 		r.checkUnsupported(item, policy, &result)
@@ -240,6 +241,24 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
 		result.Status = "blocked"
 	}
 	r.Bindings = append(r.Bindings, result)
+}
+
+// checkProbeEvidence requires probe evidence unless this control-plane host
+// cannot produce it. There, a missing or stale pass is a coverage gap that
+// `bindings verify` cannot close, reported as such and waivable like an
+// unsupported probe; a recorded failure still blocks.
+func (r *Report) checkProbeEvidence(item api.AppBindingInventoryItem, policy Policy, probesUnavailable bool, result *BindingResult) {
+	if !probesUnavailable || item.VerificationStatus == "passed" || item.VerificationStatus == "failed" {
+		r.checkVerification(item, policy.MaxVerificationAge)
+		return
+	}
+	result.Status, result.Reason, r.Coverage = "unsupported", "verification_unavailable", "partial"
+	finding := bindingFinding(item, "verification_unavailable", "This control-plane host does not run binding probes (deployment-attached app tasks are disabled), so bindings verify cannot produce evidence here; --allow-unsupported explicitly waives this coverage gap.")
+	if policy.AllowUnsupported {
+		r.Warnings = append(r.Warnings, finding)
+	} else {
+		r.Blockers = append(r.Blockers, finding)
+	}
 }
 
 func (r *Report) checkUnsupported(item api.AppBindingInventoryItem, policy Policy, result *BindingResult) {

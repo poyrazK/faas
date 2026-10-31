@@ -196,24 +196,46 @@ func TestCentralCoalescer_BatchErrorReachesEveryFollower(t *testing.T) {
 	}
 }
 
-// TestCentralCoalescer_FollowerWaitIsBounded keeps a stalled statement from
-// holding requests longer than one consult timeout after they join.
+// TestCentralCoalescer_FollowerWaitIsBounded keeps stalled statements from
+// holding requests longer than centralBatchWait after they join.
 func TestCentralCoalescer_FollowerWaitIsBounded(t *testing.T) {
 	// The leader has its own timeout. Its expiry starts the follower batch,
-	// which must also remain stalled while the follower's timer expires.
+	// which stays stalled until its own timeout or the follower's timer,
+	// whichever fires first; either refuses the follower in bounded time.
 	backend := &batchingCentral{tokens: 10, batchHold: make(chan struct{})}
 	t.Cleanup(func() { close(backend.batchHold) })
 	var c centralCoalescer
 	_, followers := joinBehindLeader(t, &c, backend, 1)
 	start := time.Now()
 	got := <-followers
-	if !errors.Is(got.err, errCentralBatchWait) {
-		t.Fatalf("follower err = %v, want errCentralBatchWait", got.err)
+	if !errors.Is(got.err, errCentralBatchWait) && !errors.Is(got.err, context.DeadlineExceeded) {
+		t.Fatalf("follower err = %v, want errCentralBatchWait or the batch deadline", got.err)
 	}
-	if waited := time.Since(start); waited > 2*centralConsultTimeout {
-		t.Fatalf("follower waited %s, want about %s", waited, centralConsultTimeout)
+	if waited := time.Since(start); waited > centralBatchWait+centralConsumeTimeout/2 {
+		t.Fatalf("follower waited %s, want about %s", waited, centralBatchWait)
 	}
 	close(backend.hold)
+}
+
+// TestCentralCoalescer_FollowerWaitsForLeaderAndOwnBatch: a follower's batch
+// starts only when the leader's statement ends. Two statements that each stay
+// within centralConsumeTimeout must answer the follower, not refuse it as
+// unverified (ADR-20261027173012 amendment 1).
+func TestCentralCoalescer_FollowerWaitsForLeaderAndOwnBatch(t *testing.T) {
+	backend := &batchingCentral{tokens: 10, batchHold: make(chan struct{})}
+	var c centralCoalescer
+	leader, followers := joinBehindLeader(t, &c, backend, 1)
+	slow := centralConsumeTimeout * 7 / 10
+	time.Sleep(slow)
+	close(backend.hold)
+	if !<-leader {
+		t.Fatal("leader refused")
+	}
+	time.Sleep(slow)
+	close(backend.batchHold)
+	if got := <-followers; got.err != nil || !got.admitted {
+		t.Fatalf("follower = %+v, want admitted by its batch", got)
+	}
 }
 
 // TestLimiter_CoalescedConsultsStillCountCentrally drives the Limiter: a

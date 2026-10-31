@@ -11,6 +11,7 @@ units=(
   "control_plane_service/files/faas-schedd.service"
   "control_plane_service/files/faas-meterd.service"
   "control_plane_service/files/faas-bridged.service"
+  "control_plane_service/files/faas-mcp-bridge.service"
   "gatewayd_public_service/files/faas-gatewayd-public.service"
   "gatewayd_internal_service/files/faas-gatewayd-internal.service"
   "githubd_service/files/faas-githubd.service"
@@ -19,6 +20,9 @@ units=(
   "vmmd_service/files/faas-vmmd.service"
   "loki/templates/loki.service.j2"
   "promtail/templates/promtail.service.j2"
+  "alloy/templates/alloy.service.j2"
+  "serving_probe/templates/faas-serving-probe.service.j2"
+  "cgroup_metrics/templates/faas-cgroup-metrics.service.j2"
 )
 
 required=(NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes ProtectKernelModules=yes)
@@ -259,6 +263,7 @@ has_directive_value() {
 control_plane_db_units=(
 	"deploy/ansible/roles/control_plane_service/files/faas-apid.service"
 	"deploy/ansible/roles/control_plane_service/files/faas-meterd.service"
+	"deploy/ansible/roles/control_plane_service/files/faas-mcp-bridge.service"
 	"deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.service"
 	"deploy/ansible/roles/githubd_service/files/faas-githubd.service"
 	"deploy/systemd/faas-apid.service"

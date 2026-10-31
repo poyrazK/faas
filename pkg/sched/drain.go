@@ -17,8 +17,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -37,6 +39,32 @@ var _ dispatch.JobKind = dispatch.JobKindInvocation
 // (retryAfter=0) instead of bouncing the row back to pending; a
 // retried bad payload just keeps failing.
 var ErrPermanentInvoke = errors.New("sched: permanent invoke error")
+
+// applicationStatusError is a failure the app's own code returned: a 4xx,
+// or a 500 the runner marked handler_error. It wraps ErrPermanentInvoke and
+// keeps the status, so an event delivery can tell a handler that threw from
+// one that refused its input (ADR-20261031100000).
+type applicationStatusError struct {
+	status int
+	err    error
+}
+
+func (e applicationStatusError) Error() string { return e.err.Error() }
+func (e applicationStatusError) Unwrap() error { return e.err }
+
+// ErrDispatchRefused marks a 5xx answer from gatewayd-internal's dispatch
+// endpoint. The endpoint answers 200 with the app's response whenever the
+// app received the request, so a 5xx means the gateway refused or failed
+// the dispatch before the app saw it.
+var ErrDispatchRefused = errors.New("sched: gateway refused the dispatch")
+
+// dispatchRefusedError keeps the gateway's own message as the error text
+// while matching ErrDispatchRefused.
+type dispatchRefusedError struct{ err error }
+
+func (e dispatchRefusedError) Error() string        { return e.err.Error() }
+func (e dispatchRefusedError) Unwrap() error        { return e.err }
+func (e dispatchRefusedError) Is(target error) bool { return target == ErrDispatchRefused }
 
 // ErrPermanentWake is the sentinel for wake errors that the drain
 // will never recover from (no such app, app PARKED, account deleted).
@@ -99,16 +127,19 @@ func failOutcome(err error) state.FailOption {
 //   - No new daemon: drains live inside cmd/schedd. The schedd main
 //     goroutine subscribes to invocation_due + runDrainTick (1s).
 type Drain struct {
-	store     state.Store
-	engine    *Engine
-	gateway   GatewaySynth
-	notifier  Notifier
-	log       *slog.Logger
-	now       func() time.Time
-	batchSize int
-	audit     *audit.Auditor
-	ops       *wire.OpsMetrics
-	appTasks  *AppTaskCoordinator
+	store    state.Store
+	engine   *Engine
+	gateway  GatewaySynth
+	notifier Notifier
+	log      *slog.Logger
+	now      func() time.Time
+	// financialAdmission is state.CheckFinancialBudgetAdmissionForScope; a
+	// test holds an app through it without a funded compute ledger.
+	financialAdmission func(context.Context, state.Store, state.App, string, string, time.Time) error
+	batchSize          int
+	audit              *audit.Auditor
+	ops                *wire.OpsMetrics
+	appTasks           *AppTaskCoordinator
 	// wakeLeaseSeconds is the lease a claimed invocation holds. The
 	// drain races claim → wake → invoke → complete inside this window.
 	// 60s is generous (the Wake+Invoke flow normally completes in well
@@ -132,11 +163,18 @@ type Drain struct {
 	// delivered in the background; their next message waits for it.
 	longMu        sync.Mutex
 	longQueueApps map[string]bool
+	// slots is the inline dispatch pool every tick shares
+	// (ADR-20261027160930), sized from dispatchConcurrency on first use;
+	// inline tracks the dispatches it runs.
+	slotsOnce sync.Once
+	slots     *drainSlots
+	inline    sync.WaitGroup
 	// accts caches Active(account_id) lookups for the suspended-skip
 	// check (Move 2). One entry per account; the 5s TTL collapses the
 	// 64-row batch's per-row AccountByID into ≤0.2 RPS at Meta's
 	// "everyone suspends at once" worst case.
-	accts *acctCache
+	accts              *acctCache
+	trafficRevocations *trafficrevocation.Registry
 }
 
 // DefaultDrainDispatchConcurrency is deliberately small: it removes the
@@ -229,6 +267,7 @@ func NewDrain(store state.Store, engine *Engine, opts ...DrainOption) *Drain {
 		longSlots:           make(chan struct{}, DefaultDrainLongDispatches),
 		longQueueApps:       map[string]bool{},
 		log:                 slog.Default(),
+		financialAdmission:  state.CheckFinancialBudgetAdmissionForScope,
 	}
 	for _, o := range opts {
 		o(d)
@@ -335,10 +374,20 @@ func (d *Drain) Tick(ctx context.Context) {
 	// cap — stay pending with an unchanged due_at. Re-listing from the head
 	// returned the same full page forever: the tick spun on the database
 	// and every row behind that page, for every other tenant, starved.
+	// The walk is bounded (maxDuePagesPerTick), so it also lists only apps
+	// this node may claim: otherwise more than a walk's worth of other
+	// nodes' rows at the head hid this node's own work for good.
 	pager, paged := d.store.(dueInvocationPager)
 	now := d.now()
-	var after state.InvocationDueCursor
+	after := state.InvocationDueCursor{OwnerNodeID: d.engine.claimNodeID()}
 	var prevPage string
+	// Tenant fairness (ADR-20261027160930): rows go round-robin across their
+	// apps onto the shared pool, and the walk lists the next page without
+	// waiting for this one. A row whose app is past its share waits for the
+	// end of the walk, so it cannot hold the pages behind it.
+	var tick sync.WaitGroup
+	var extra []state.Invocation
+walk:
 	for page := 0; ; page++ {
 		var (
 			rows []state.Invocation
@@ -351,24 +400,20 @@ func (d *Drain) Tick(ctx context.Context) {
 		}
 		if err != nil {
 			d.log.Warn("drain: list-due", "err", err)
-			return
+			break
 		}
 		if len(rows) == 0 {
-			return
+			break
 		}
 		if !paged {
 			// A store without a cursor can only re-list from the head;
 			// an identical page means nothing in it could be claimed.
 			key := invocationPageKey(rows)
 			if key == prevPage {
-				return
+				break
 			}
 			prevPage = key
 		}
-		// Tenant-fairness: bucket by app so a 1,000-row queue for
-		// one app doesn't starve a 1-row queue for another (the
-		// batch is bounded at 64 so contention is small, but the
-		// round-robin protects long-tail apps even within one tick).
 		byApp := map[string][]state.Invocation{}
 		order := []string{}
 		for _, r := range rows {
@@ -377,51 +422,51 @@ func (d *Drain) Tick(ctx context.Context) {
 			}
 			byApp[r.AppID] = append(byApp[r.AppID], r)
 		}
-		parallelRows := make([]state.Invocation, 0, len(rows))
 		queueRowsByApp := make(map[string][]state.Invocation)
 		queueTriggers := make(map[string][]sqlc.Trigger)
 		queueTriggerSkipped := false
-		for _, appID := range order {
-			for _, inv := range byApp[appID] {
-				if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
-					if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, inv, queueTriggers) {
-						queueTriggerSkipped = true
-						continue
-					}
-					if inv.Source == state.InvocationQueue && inv.WorkPolicyName == "" {
-						queueRowsByApp[appID] = append(queueRowsByApp[appID], inv)
-						continue
-					}
+		for _, inv := range interleaveByApp(order, byApp) {
+			if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
+				if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, inv, queueTriggers) {
+					queueTriggerSkipped = true
+					continue
 				}
-				parallelRows = append(parallelRows, inv)
+				// Each app's FIFO queue messages run in order on its lane.
+				if inv.Source == state.InvocationQueue && inv.WorkPolicyName == "" {
+					queueRowsByApp[inv.AppID] = append(queueRowsByApp[inv.AppID], inv)
+					continue
+				}
+			}
+			if !d.handOff(ctx, inv, false, time.Time{}, &tick) {
+				extra = append(extra, inv)
 			}
 		}
-		d.dispatchParallel(ctx, parallelRows)
-		// Queue rows remain serial per app so the FIFO contract is
-		// preserved. Other event sources use the bounded pool above.
 		for _, appID := range order {
-			for _, inv := range queueRowsByApp[appID] {
-				d.dispatchOne(ctx, inv)
-			}
+			d.handOffLane(ctx, appID, queueRowsByApp[appID], &tick)
 		}
 		// A bound queue trigger owns its source rows; the trigger poller
-		// will claim them on its event-driven tick. Returning here prevents
+		// will claim them on its event-driven tick. Stopping here prevents
 		// the generic drain from repeatedly selecting the same pending rows
 		// while the push consumer is processing them.
-		if queueTriggerSkipped {
-			return
-		}
-		if len(rows) < d.batchSize {
-			return
+		if queueTriggerSkipped || len(rows) < d.batchSize {
+			break
 		}
 		if paged {
 			if page+1 >= maxDuePagesPerTick {
-				return
+				break walk
 			}
 			last := rows[len(rows)-1]
-			after = state.InvocationDueCursor{DueAt: last.DueAt, ID: last.ID}
+			after = state.InvocationDueCursor{DueAt: last.DueAt, ID: last.ID, OwnerNodeID: after.OwnerNodeID}
 		}
 	}
+	// Rows past their app's share take the slots left free beyond the others'
+	// share, until the tick's wait ends; the rest stay pending for a later
+	// tick. Dispatches still running then finish in the background.
+	until := time.Now().Add(drainTickWait)
+	for _, inv := range extra {
+		d.handOff(ctx, inv, true, until, &tick)
+	}
+	waitTick(ctx, &tick, until)
 }
 
 func (d *Drain) tickExclusiveOperations(ctx context.Context) {
@@ -458,6 +503,12 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 			d.ops.ObserveExclusiveOperationDispatch(dispatchOutcome)
 		}
 	}()
+	// ADR-20261023115741: exclusive operations switched off for the account
+	// stay queued; the next tick decides again.
+	if !d.engine.appIDCapabilityAllowed(ctx, op.AppID, "managed-exclusive-operations") {
+		dispatchOutcome = "capability_held"
+		return
+	}
 	if op.JobID != "" {
 		dispatchOutcome = d.dispatchExclusiveJobOperation(ctx, owners, op)
 		return
@@ -722,42 +773,6 @@ func queueInvocationHasBoundTrigger(inv state.Invocation, triggers []sqlc.Trigge
 		inv.WorkPolicyName == "" && sharedQueueTriggers == 1
 }
 
-// dispatchParallel runs non-FIFO invocation sources through a bounded worker
-// pool. ClaimInvocationWithCap is the concurrency gate at the database layer,
-// while the pool prevents one schedd from creating an unbounded goroutine
-// storm when a large due batch is released at once.
-func (d *Drain) dispatchParallel(ctx context.Context, rows []state.Invocation) {
-	if len(rows) == 0 {
-		return
-	}
-	workers := d.dispatchConcurrency
-	if workers <= 1 {
-		for _, inv := range rows {
-			d.dispatchOne(ctx, inv)
-		}
-		return
-	}
-	if workers > len(rows) {
-		workers = len(rows)
-	}
-	jobs := make(chan state.Invocation)
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for i := 0; i < workers; i++ {
-		go func() {
-			defer wg.Done()
-			for inv := range jobs {
-				d.dispatchOne(ctx, inv)
-			}
-		}()
-	}
-	for _, inv := range rows {
-		jobs <- inv
-	}
-	close(jobs)
-	wg.Wait()
-}
-
 // dispatchOne is per-row. The lifecycle:
 //
 //  1. ClaimInvocation (pending → dispatching, lease, attempts++).
@@ -784,10 +799,22 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if !d.engine.ownsApp(app) {
 		return
 	}
-	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
+	if err := d.financialAdmission(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
 		// Keep pending work and its attempt count intact. A held budget is
-		// an admission decision, not a failed customer execution.
+		// an admission decision, not a failed customer execution. The row
+		// moves back by a minute (ADR-20261031100000): left due, a held
+		// app's rows stayed at the head of every walk, and a walk's 2,048
+		// rows of them hid other tenants' work behind them.
+		_ = d.store.FailInvocation(ctx, inv.ID, "held by the app's compute budget", financialHoldDeferral, 0)
 		d.log.Debug("drain: preview budget admission deferred", "inv", inv.ID, "app_id", app.ID)
+		return
+	}
+	// ADR-20261023115741: a capability switched off for the account holds
+	// its work. The row is deferred without spending its delivery budget, so
+	// it resumes intact when the flag is on again.
+	if capability := invocationCapability(inv.Source); !d.engine.appCapabilityAllowed(ctx, app, capability) {
+		_ = d.store.FailInvocation(ctx, inv.ID, "capability "+capability+" is not released", capabilityDeferral, 0)
+		d.log.Debug("drain: capability off; deferred", "inv", inv.ID, "app_id", app.ID, "capability", capability)
 		return
 	}
 	// /invoke is an HTTP/request primitive. Worker and job apps have no
@@ -811,14 +838,16 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// every due task forever, so the backlog could never fall below the
 	// limit that is blocking it.
 	//
-	// 2. Account Active gate. The cron path has this (loop.go:580);
+	// 2. Legacy/mirror account gate. Production normal delivery enrolls fresh
+	// security generations after claim instead of trusting this cache.
+	// The cron path has this (loop.go:580);
 	// the drain needs it too because rows queued while the account was
 	// Active may sit in 'pending' across a suspension (Free goes past
 	// due → suspended). Cap+Activeness = the complete per-app gate.
 	// 5-minute backoff is short enough that a reactivation lands within
 	// a SLO; long enough that we don't churn cycles on a suspended
 	// account.
-	if !d.isAccountActive(ctx, inv.AppID) {
+	if (d.trafficRevocations == nil || isDebugMirrorReplay(inv)) && !d.isAccountActive(ctx, inv.AppID) {
 		// budget=0: account-suspended deferral does not consume the row's
 		// delivery budget because no app delivery was attempted.
 		_ = d.store.FailInvocation(ctx, inv.ID, "account suspended", 5*time.Minute, 0)
@@ -846,14 +875,9 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 	}
 	cap := d.accountAsyncCap(ctx, inv)
-	if faults, ok := d.store.(interface {
-		ScenarioWorkerDispatchBlocked(context.Context, string) (bool, error)
-	}); ok {
-		blocked, faultErr := faults.ScenarioWorkerDispatchBlocked(ctx, inv.AppID)
-		if faultErr != nil || blocked {
-			release()
-			return
-		}
+	if rehearsalDispatchBlocked(ctx, d.store, inv, d.log) {
+		release()
+		return
 	}
 	claimed, err := d.store.ClaimInvocationWithCap(ctx, inv.ID, "", leaseSeconds, cap)
 	if err != nil {
@@ -924,7 +948,6 @@ func (d *Drain) acquireLongDispatch(inv state.Invocation) (func(), bool) {
 // deliverClaimed wakes the app, delivers a claimed invocation and records
 // its outcome. timeout is how long the invocation may run (ADR-1180).
 func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeout time.Duration) {
-	stopLease := func() {}
 	claimCtx, stopClaim := d.operationClaimContext(ctx, inv)
 	defer stopClaim()
 	if timeout > api.AsyncInvocationTimeoutFloor {
@@ -934,11 +957,14 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		var cancelDispatch context.CancelFunc
 		claimCtx, cancelDispatch = context.WithTimeout(withLongDispatch(claimCtx), api.AsyncInvocationDispatchTimeout(timeout))
 		defer cancelDispatch()
-		claimCtx, stopLease = d.keepInvocationLease(claimCtx, inv)
-		defer stopLease()
 	}
+	// Every delivery renews its claim while it runs (ADR-1180,
+	// ADR-20261027160930): an inline one can outlast the tick that started it
+	// and, with a slow wake, its first lease.
+	claimCtx, stopLease := d.keepInvocationLease(claimCtx, inv)
+	defer stopLease()
 	var err error
-	d.observeDelayedTaskClaim(inv)
+	d.observeScheduledClaim(inv)
 	// Debug replays are mirror-only work. They carry a small set of
 	// platform-owned metadata headers (the request body and credentials are
 	// intentionally absent from request_telemetry), so let gatewayd-internal
@@ -948,7 +974,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 	if isDebugMirrorReplay(inv) {
 		if d.gateway == nil {
 			err := errors.New("sched: debug replay gateway is not configured")
-			retryAfter := d.invocationRetryDelay(inv)
+			retryAfter := d.invocationRetryDelay(ctx, inv)
 			budget := d.invocationAttemptBudget(ctx, inv)
 			if failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv)); failErr != nil {
 				d.log.Warn("drain: fail debug replay without gateway", "inv", inv.ID, "err", failErr)
@@ -957,7 +983,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		}
 		dispatched, err := d.gateway.Invoke(claimCtx, inv.AppID, inv)
 		if err != nil {
-			retryAfter := d.invocationRetryDelay(inv)
+			retryAfter := d.invocationRetryDelay(ctx, inv)
 			if errors.Is(err, ErrPermanentInvoke) {
 				retryAfter = 0
 			}
@@ -986,30 +1012,36 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 	}
 
 	var version state.InvocationVersion
-	inv, version, err = state.ResolveInvocationVersion(ctx, d.store, inv)
+	var traffic *invocationTraffic
+	var deliveryCtx context.Context
+	deliveryCtx, inv, version, traffic, err = d.prepareInvocationTraffic(claimCtx, inv)
 	if err != nil {
-		retryAfter := d.invocationRetryDelay(inv)
+		retryAfter := d.invocationRetryDelay(ctx, inv)
 		if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrConflict) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
+		if retryAfter == 0 && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrInvalidArgument) && !errors.Is(err, state.ErrConflict) {
+			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
+		}
 		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted()); failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
 		return
 	}
+	defer traffic.close()
 	// 3. EnsureWake coalesces same-app wake attempts while the bounded
 	// dispatch pool lets different apps progress concurrently. Returns
 	// the live instance handle on success; the drain stamps it onto the
 	// row so the meter's per-instance count is non-zero for this minute.
 	var wakeRes WakeResult
 	if version.DeploymentID != "" {
-		wakeRes, err = d.engine.Wake(claimCtx, inv.AppID, version.DeploymentID, version.Scope, TriggerInvocation)
+		wakeRes, err = d.engine.Wake(deliveryCtx, inv.AppID, version.DeploymentID, version.Scope, TriggerInvocation)
 		if err == nil && (wakeRes.AtCapacity || wakeRes.InstanceID == "" || wakeRes.DeploymentID != version.DeploymentID) {
 			err = fmt.Errorf("%w: selected deployment is no longer wakeable", ErrPermanentWake)
 		}
 	} else {
-		coord, wakeErr := d.engine.EnsureWake(WithScope(claimCtx, version.Scope), inv.AppID, TriggerInvocation)
+		coord, wakeErr := d.awaitInvocationWake(WithScope(deliveryCtx, version.Scope), inv.AppID)
 		err = wakeErr
 		if err == nil && coord.Err != nil {
 			err = coord.Err
@@ -1022,49 +1054,60 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 				DeploymentID: coord.Instance.DeploymentID, WakeID: coord.Instance.WakeID, Port: int(coord.Instance.Port)}
 		}
 	}
+	if cause := context.Cause(deliveryCtx); cause != nil {
+		err = cause
+	}
+	if err == nil {
+		inv, err = d.verifyInvocationWake(deliveryCtx, inv, wakeRes, traffic)
+	}
+	if err == nil && traffic != nil {
+		deliveryCtx, err = traffic.handoff(deliveryCtx)
+	}
 	if err != nil {
-		retryAfter := d.invocationRetryDelay(inv)
+		retryAfter := d.invocationRetryDelay(ctx, inv)
 		// Permanent wake errors short-circuit to state='failed' — a
 		// missing app, a deleted account, or a PARKED app will not
 		// recover by waiting 5s. The engine
 		// wraps the cause; we use errors.Is so the sentinels survive
 		// any future fmt.Errorf wrapping.
+		budget := d.invocationAttemptBudget(ctx, inv)
 		if errors.Is(err, ErrPermanentWake) {
 			retryAfter = 0
+		} else {
+			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
-		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted())
-		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
-		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
+		d.log.Warn("drain: wake", "inv", logsanitize.Field(inv.ID), "err", logsanitize.FieldAny(err), "permanent", retryAfter == 0)
 		return
 	}
 	// Operation progress authority must be bound before customer code runs.
 	// Ordinary invocation stamps retain their metering-only behavior.
-	if err := d.stampInvocationInstance(claimCtx, inv, wakeRes.InstanceID); err != nil {
-		d.log.Warn("drain: stamp instance", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err)
+	if err := d.stampInvocationInstance(deliveryCtx, inv, wakeRes.InstanceID); err != nil {
+		d.log.Warn("drain: stamp instance", "inv", logsanitize.Field(inv.ID), "inst", wakeRes.InstanceID, "err", dispatchErrorClass(err))
 		if state.InvocationHasOperation(inv) {
-			if failErr := d.store.FailInvocation(ctx, inv.ID, "bind operation instance: "+err.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(err), state.WithClaimAttempt(inv.Attempts), state.WithDispatchNotStarted()); failErr != nil {
-				d.log.Warn("drain: settle operation binding failure", "inv", inv.ID, "err", failErr)
+			if failErr := d.store.FailInvocation(ctx, inv.ID, "bind operation instance: "+err.Error(), d.invocationRetryDelay(ctx, inv), d.invocationAttemptBudget(ctx, inv), failOutcome(err), state.WithClaimAttempt(inv.Attempts), state.WithDispatchNotStarted()); failErr != nil {
+				d.log.Warn("drain: settle operation binding failure", "inv", logsanitize.Field(inv.ID), "err", dispatchErrorClass(failErr))
 			}
 			return
 		}
 	}
 	// 5. Invoke (deliver envelope).
-	if d.gateway == nil {
+	if d.gateway == nil && traffic == nil {
 		// No gateway (test seam): the drain still completes the
 		// row so the meter gets its tick.
 		if err := completeClaimedInvocation(ctx, d.store, inv, nil); err == nil {
-			d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
+			d.observeScheduledDispatch(inv, wire.DelayedTaskDispatchSuccess)
 		}
 		d.emitDone(ctx, inv)
 		return
 	}
 	acknowledgmentToken, ackErr := d.prepareEventAcknowledgment(ctx, inv)
 	if ackErr != nil {
-		if failErr := d.store.FailInvocation(ctx, inv.ID, "prepare event acknowledgment: "+ackErr.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(ackErr), state.WithInvocationClaim(inv)); failErr != nil {
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "prepare event acknowledgment: "+ackErr.Error(), d.invocationRetryDelay(ctx, inv), d.invocationAttemptBudget(ctx, inv), failOutcome(ackErr), state.WithInvocationClaim(inv)); failErr != nil {
 			d.log.Warn("drain: event acknowledgment preparation failed", "inv", inv.ID, "err", failErr)
 		}
 		return
@@ -1077,10 +1120,18 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		}
 	}
 	var dispatched state.Invocation
-	if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
-		dispatched, err = prewoken.InvokeWithWake(claimCtx, inv.AppID, inv, wakeRes)
+	if d.gateway == nil {
+		err = fmt.Errorf("%w: invocation gateway is not configured", trafficrevocation.ErrUnavailable)
+	} else if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
+		dispatched, err = prewoken.InvokeWithWake(deliveryCtx, inv.AppID, inv, wakeRes)
 	} else {
-		dispatched, err = d.gateway.Invoke(claimCtx, inv.AppID, inv)
+		dispatched, err = d.gateway.Invoke(deliveryCtx, inv.AppID, inv)
+	}
+	if cause := context.Cause(deliveryCtx); cause != nil {
+		err = cause
+	}
+	if err == nil {
+		err = traffic.verify()
 	}
 	if inv.Source == state.InvocationCron && inv.FailureRules != nil {
 		if err == nil && dispatched.ResponseStatusCode == 0 {
@@ -1099,20 +1150,24 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		// Permanent invoke errors (4xx) terminal-fail; transient
 		// (network / 5xx) retry. The gateway is the source of
 		// truth — it knows whether the failure is recoverable.
-		retryAfter := d.invocationRetryDelay(inv)
+		retryAfter := d.invocationRetryDelay(ctx, inv)
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
+		retryAfter, budget = d.eventDeliveryFailure(ctx, inv, err, retryAfter, budget)
+		if errors.Is(err, ErrDispatchRefused) {
+			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
+		}
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
-		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
-		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
+		d.log.Warn("drain: invoke", "inv", logsanitize.Field(inv.ID), "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
 		return
 	}
 	if acknowledgmentToken != "" && dispatched.ResponseStatusCode == http.StatusAccepted {
@@ -1128,10 +1183,10 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		// pgstore.ErrNotFound would mean someone else completed
 		// first; drain does NOT have to retry — the row is in a
 		// terminal state and the meter join will see it.
-		d.log.Warn("drain: complete", "inv", inv.ID, "err", err)
+		d.log.Warn("drain: complete", "inv", logsanitize.Field(inv.ID), "err", err)
 		return
 	}
-	d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
+	d.observeScheduledDispatch(inv, wire.DelayedTaskDispatchSuccess)
 	d.emitDone(ctx, inv)
 }
 
@@ -1145,17 +1200,18 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 	if decision.Action == "complete" {
 		store, ok := d.store.(state.ClassifiedInvocationCompletionStore)
 		if !ok {
-			d.log.Error("drain: classified cron completion is unsupported by store", "inv", inv.ID)
+			d.log.Error("drain: classified cron completion is unsupported by store", "inv", logsanitize.Field(inv.ID))
 			if err := d.store.CompleteInvocation(ctx, inv.ID, response.Result); err != nil {
-				d.log.Warn("drain: complete classified cron invocation fallback", "inv", inv.ID, "err", err)
+				d.log.Warn("drain: complete classified cron invocation fallback", "inv", logsanitize.Field(inv.ID), "err", err)
 			}
 			d.emitDone(ctx, inv)
 			return
 		}
 		if err := store.CompleteInvocationWithWorkClassification(ctx, inv.ID, response.Result, decision, response.OutcomeCode); err != nil {
-			d.log.Warn("drain: complete classified cron invocation", "inv", inv.ID, "err", err)
+			d.log.Warn("drain: complete classified cron invocation", "inv", logsanitize.Field(inv.ID), "err", err)
 			return
 		}
+		d.observeScheduledDispatch(inv, wire.CronDeliverySuccess)
 		d.emitDone(ctx, inv)
 		return
 	}
@@ -1169,7 +1225,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		message = fmt.Sprintf("scheduled outcome %q classified as %s", response.OutcomeCode, decision.Action)
 	}
 	if decision.Action == "retry" {
-		retryAfter = d.invocationRetryDelay(inv)
+		retryAfter = d.invocationRetryDelay(ctx, inv)
 		budget = d.invocationAttemptBudget(ctx, inv)
 	}
 	options := []state.FailOption{
@@ -1177,9 +1233,10 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		state.WithWorkClassification(decision, response.OutcomeCode),
 	}
 	if err := d.store.FailInvocation(ctx, inv.ID, message, retryAfter, budget, options...); err != nil {
-		d.log.Warn("drain: fail classified cron invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+		d.log.Warn("drain: fail classified cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
+	d.observeScheduledFailure(inv, retryAfter, budget, nil)
 	if retryAfter == 0 {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1191,7 +1248,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 	decision := workpolicy.Evaluate(inv.FailureRules, workpolicy.Evidence{Uncertain: true})
 	retryAfter, budget := time.Duration(0), 0
 	if decision.Action == "retry" {
-		retryAfter = d.invocationRetryDelay(inv)
+		retryAfter = d.invocationRetryDelay(ctx, inv)
 		budget = d.invocationAttemptBudget(ctx, inv)
 	}
 	options := []state.FailOption{
@@ -1202,9 +1259,10 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 		options = append(options, state.WithOutcome(state.OutcomeUncertain))
 	}
 	if err := d.store.FailInvocation(ctx, inv.ID, "invoke receipt uncertain: "+dispatchErr.Error(), retryAfter, budget, options...); err != nil {
-		d.log.Warn("drain: settle uncertain cron invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+		d.log.Warn("drain: settle uncertain cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
+	d.observeScheduledFailure(inv, retryAfter, budget, nil)
 	if decision.Action == "hold" {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1234,18 +1292,25 @@ func completeDispatchedInvocation(ctx context.Context, store state.Store, inv st
 	return completeClaimedInvocation(ctx, store, inv, result)
 }
 
-func (d *Drain) observeDelayedTaskClaim(inv state.Invocation) {
-	if inv.Source != state.InvocationDelayedTask || inv.Attempts != 1 {
+// observeScheduledClaim records first-claim lag for delayed tasks and HTTP
+// cron runs, measured from the requested or scheduled time. A manual cron
+// run is measured from its request.
+func (d *Drain) observeScheduledClaim(inv state.Invocation) {
+	if inv.Attempts != 1 || (inv.Source != state.InvocationDelayedTask && inv.Source != state.InvocationCron) {
 		return
 	}
 	scheduledAt := inv.DueAt
 	if inv.ScheduledAt != nil {
 		scheduledAt = *inv.ScheduledAt
 	}
+	if inv.Source == state.InvocationCron {
+		d.ops.ObserveCronScheduleLag(d.now().Sub(scheduledAt))
+		return
+	}
 	d.ops.ObserveDelayedTaskScheduleLag(d.now().Sub(scheduledAt))
 }
 
-func (d *Drain) observeDelayedTaskFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr error) {
+func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr error) {
 	if failErr != nil {
 		return
 	}
@@ -1255,12 +1320,17 @@ func (d *Drain) observeDelayedTaskFailure(inv state.Invocation, retryAfter time.
 	} else if budget > 0 && inv.Attempts >= budget {
 		outcome = wire.DelayedTaskDispatchDeadLetter
 	}
-	d.observeDelayedTaskDispatch(inv, outcome)
+	d.observeScheduledDispatch(inv, outcome)
 }
 
-func (d *Drain) observeDelayedTaskDispatch(inv state.Invocation, outcome string) {
-	if inv.Source == state.InvocationDelayedTask {
+// observeScheduledDispatch counts a settled delivery attempt. Delayed tasks
+// and HTTP crons share the outcome vocabulary (wire.CronDelivery*).
+func (d *Drain) observeScheduledDispatch(inv state.Invocation, outcome string) {
+	switch inv.Source {
+	case state.InvocationDelayedTask:
 		d.ops.ObserveDelayedTaskDispatch(outcome)
+	case state.InvocationCron:
+		d.ops.ObserveCronDelivery(outcome)
 	}
 }
 
@@ -1303,11 +1373,11 @@ func (d *Drain) emitDone(ctx context.Context, inv state.Invocation, terminalStat
 		"state":         string(finalState),
 	})
 	if err != nil {
-		d.log.Warn("drain: marshal invocation_done", "inv", inv.ID, "err", err)
+		d.log.Warn("drain: marshal invocation_done", "inv", logsanitize.Field(inv.ID), "err", err)
 		return
 	}
 	if err := d.notifier.Notify(ctx, db.NotifyInvocationDone, string(body)); err != nil && !errors.Is(err, context.Canceled) {
-		d.log.Warn("drain: notify invocation_done", "inv", inv.ID, "err", err)
+		d.log.Warn("drain: notify invocation_done", "inv", logsanitize.Field(inv.ID), "err", err)
 	}
 }
 
@@ -1361,13 +1431,14 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 	app, err := d.engine.Store().AppByID(ctx, inv.AppID)
 	if err != nil {
 		d.log.WarnContext(ctx, "invocationAttemptBudget: AppByID failed; using finite safety ceiling",
-			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
+			"inv_id", logsanitize.Field(inv.ID), "app_id", logsanitize.Field(inv.AppID), "err", err)
 		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
+	requested = invocationRetryPolicy(inv, &app).MaxAttempts
 	acct, err := state.AppResourceAccount(ctx, d.engine.Store(), app)
 	if err != nil {
 		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; using finite safety ceiling",
-			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)
+			"inv_id", logsanitize.Field(inv.ID), "app_id", logsanitize.Field(inv.AppID), "account_id", app.AccountID, "err", err)
 		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
 	return api.EffectiveRetryMaxAttempts(requested, api.MustLimitsFor(acct.Plan).MaxQueueAttempts)
@@ -1375,18 +1446,106 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 
 // invocationRetryDelay applies the per-row exponential backoff curve when
 // supplied and preserves the drain's configured fixed delay as the producer
-// default for rows without an override.
-func (d *Drain) invocationRetryDelay(inv state.Invocation) time.Duration {
-	if delay := inv.RetryPolicy().Backoff(inv.Attempts); delay > 0 {
+// default for rows without an override. A plain HTTP cron fire makes one
+// delivery attempt (ADR-20261026201726): zero ends it as failed rather than
+// dead-lettered, and the next schedule boundary is its retry. The exception
+// is a run Gregale refused before the app saw it; see cronPlatformRetry.
+func (d *Drain) invocationRetryDelay(ctx context.Context, inv state.Invocation) time.Duration {
+	if cronSingleAttempt(inv) {
+		return 0
+	}
+	policy := inv.RetryPolicy()
+	if policy.Zero() && state.IsEventDelivery(inv) {
+		// Only a failed event delivery reads its app: the hot path never does.
+		var app *state.App
+		if found, err := d.engine.Store().AppByID(ctx, inv.AppID); err == nil {
+			app = &found
+		}
+		policy = invocationRetryPolicy(inv, app)
+	}
+	if delay := policy.Backoff(inv.Attempts); delay > 0 {
 		return delay
 	}
 	return time.Duration(d.retryAfterSeconds) * time.Second
 }
 
+// cronPlatformRetry lets a plain HTTP cron run that Gregale refused before
+// the app received the request try again: the app has not seen it, so a
+// retry cannot repeat its side effects (ADR-20261026201726 amendment
+// 2026-10-29). Any other invocation, or a run on its last attempt, keeps
+// the caller's retry decision.
+func cronPlatformRetry(inv state.Invocation, retryAfter time.Duration, budget int) (time.Duration, int) {
+	if !cronSingleAttempt(inv) || inv.Attempts >= api.CronPlatformAttempts {
+		return retryAfter, budget
+	}
+	return time.Duration(inv.Attempts) * api.CronPlatformRetryDelay, api.CronPlatformAttempts
+}
+
+// invocationRetryPolicy is the policy that paces an invocation's retries
+// (ADR-20261029190000). Event routing creates a delivery without one, so a
+// delivery takes its app's retry policy (gregale.yaml retry_policy) when the
+// app sets one, else the default event delivery backoff; with neither it
+// retried every 5 s and was dead-lettered within two minutes. Every other
+// row keeps its own policy, or the producer default when it has none.
+func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryPolicy {
+	policy := inv.RetryPolicy()
+	if !policy.Zero() || !state.IsEventDelivery(inv) {
+		return policy
+	}
+	maxSeconds := float64(api.EventDeliveryRetryMaxSeconds)
+	if inv.WorkPolicyName != "" {
+		// A pending delivery holds every younger one of its key, so a
+		// keyed delivery backs off only to 30 s.
+		maxSeconds = api.EventDeliveryKeyedRetryMaxSeconds
+	}
+	if app != nil {
+		if appPolicy := app.RetryPolicy(); !appPolicy.Zero() {
+			// The app's curve applies within bounds (ADR-20261031100000): an
+			// app policy with no cap took the default event cap, and none may
+			// wait past 5 minutes between attempts, or a keyed delivery could
+			// hold its key for days.
+			if appPolicy.MaxSeconds <= 0 {
+				appPolicy.MaxSeconds = maxSeconds
+			}
+			appPolicy.MaxSeconds = min(appPolicy.MaxSeconds, float64(api.EventDeliveryRetryMaxSeconds))
+			return appPolicy
+		}
+	}
+	return dispatch.RetryPolicy{BaseSeconds: api.EventDeliveryRetryBaseSeconds,
+		MaxSeconds: maxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
+}
+
+// financialHoldDeferral is how far a row of an app held by its compute
+// budget moves back: out of the head of the walk, attempts untouched.
+const financialHoldDeferral = time.Minute
+
+// eventDeliveryFailure applies ADR-20261031100000 to a failed event
+// delivery. A handler that threw (the runner's 500) or asked to be retried
+// (408, 429) retries with the event backoff and is dead-lettered when its
+// attempts run out; any other 4xx is final but dead-lettered at once, so it
+// can be replayed after a fix. Every other invocation keeps the gateway's
+// verdict, as does a failure the app's code did not return.
+func (d *Drain) eventDeliveryFailure(ctx context.Context, inv state.Invocation, err error, retryAfter time.Duration, budget int) (time.Duration, int) {
+	var appErr applicationStatusError
+	if !state.IsEventDelivery(inv) || !errors.As(err, &appErr) {
+		return retryAfter, budget
+	}
+	delay := d.invocationRetryDelay(ctx, inv)
+	if delay <= 0 {
+		delay = time.Second
+	}
+	if appErr.status >= http.StatusInternalServerError || appErr.status == http.StatusRequestTimeout || appErr.status == http.StatusTooManyRequests {
+		return delay, budget
+	}
+	// A budget the attempt has already reached makes FailInvocation
+	// dead-letter the row instead of failing it.
+	return delay, max(inv.Attempts, 1)
+}
+
 // retryAfterFor is retained as a compatibility wrapper for drain callers
 // that predate the unified invocation retry policy helper.
 func (d *Drain) retryAfterFor(inv state.Invocation) time.Duration {
-	return d.invocationRetryDelay(inv)
+	return d.invocationRetryDelay(context.Background(), inv)
 }
 
 // accountAsyncCap (ADR-134 PR-B) returns the per-plan cap on

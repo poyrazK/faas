@@ -77,9 +77,12 @@ type installTokenProvider interface {
 type installationSourceFetcher struct {
 	installs installsLookup
 	fetcher  gitfetch.Fetcher
-	identity *age.X25519Identity
-	tokens   installTokenProvider
-	log      *slog.Logger
+	// identities open a stored install token on the store-only fallback
+	// path: the source seal-domain identity first once it is staged
+	// (ADR 20261022111812), then the host identity.
+	identities []*age.X25519Identity
+	tokens     installTokenProvider
+	log        *slog.Logger
 }
 
 func (s *installationSourceFetcher) WithTokenProvider(tokens installTokenProvider) *installationSourceFetcher {
@@ -97,11 +100,17 @@ func newInstallationSourceFetcher(installs installsLookup, fetcher gitfetch.Fetc
 		log = slog.Default()
 	}
 	return &installationSourceFetcher{
-		installs: installs,
-		fetcher:  fetcher,
-		identity: identity,
-		log:      log,
+		installs:   installs,
+		fetcher:    fetcher,
+		identities: []*age.X25519Identity{identity},
+		log:        log,
 	}
+}
+
+// WithIdentities replaces the identities that open stored install tokens.
+func (s *installationSourceFetcher) WithIdentities(identities []*age.X25519Identity) *installationSourceFetcher {
+	s.identities = identities
+	return s
 }
 
 // Fetch resolves the install row for the given account, unseals
@@ -168,7 +177,7 @@ func (s *installationSourceFetcher) Fetch(ctx context.Context, accountID string,
 			return nil, fmt.Errorf("githubd: source fetcher: refresh install token: %w", err)
 		}
 	} else {
-		env, openErr := secretbox.Open(s.identity, inst.SealedToken)
+		env, openErr := secretbox.OpenMulti(s.identities, inst.SealedToken)
 		if openErr != nil {
 			return nil, fmt.Errorf("githubd: source fetcher: unseal install token: %w", openErr)
 		}

@@ -26,6 +26,7 @@
 package alerts
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,12 +39,14 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/pagerduty"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
@@ -119,8 +122,8 @@ type Dispatcher interface {
 // that crosses the boundary, and Execute is the only method — the
 // evaluator never calls pkg/safedeploy.Orchestrator directly.
 //
-// Concurrency: the evaluator serialises Execute behind the same
-// dispatchMu that guards Dispatch. pkg/safedeploy.ActionDispatcher
+// Concurrency: the evaluator serialises Execute behind dispatchMu,
+// across the accounts it evaluates in parallel. pkg/safedeploy.ActionDispatcher
 // is concurrency-safe today (its only side-effect is a single HTTP
 // call into apid), but the lock keeps the contract honest if a
 // future fan-out becomes multi-goroutine.
@@ -166,7 +169,7 @@ type Evaluator struct {
 	identity   func() *age.X25519Identity // nil = meterd can't unseal; skip with warn
 	identities func() []*age.X25519Identity
 	dispatch   Dispatcher
-	dispatchMu *sync.Mutex // serialises the concurrency-unsafe Dispatcher
+	dispatchMu *sync.Mutex // serialises ActionExecutor calls (see ActionExecutor)
 	// actionExec (issue #976 / ADR-122 / SAFE-RELEASES-B) is the
 	// in-process action fan-out surface. Nil-coerced at
 	// construction so the evaluator's behaviour is the same on
@@ -185,11 +188,32 @@ type Evaluator struct {
 	now          func() time.Time
 	log          *slog.Logger
 	ops          Ops
+
+	// testSendsPrunedAt is when RunTestSendsOnce last pruned abandoned test
+	// sends (ADR 20261022111812).
+	testSendsPrunedAt time.Time
+
 	// channels and its companions deliver to ADR-749 notification
 	// channels; nil disables channel delivery.
 	channels         ChannelSender
 	channelOutcome   func(kind, outcome string)
 	dashboardBaseURL string
+	// logContextReleased decides, per account, whether fires carry the
+	// ADR-20261022172052 log context; nil means never.
+	logContextReleased func(ctx context.Context, accountID, appID string) bool
+	// releaseMetrics counts release notice deliveries; nil records nothing.
+	releaseMetrics *releasemetrics.Metrics
+
+	// Per-account evaluation (ADR-20261028101615); see accounts.go.
+	release       func(ctx context.Context, accountID string) RuleRelease
+	ruleOutcome   func(reason string, n int)
+	workers       int
+	accountBudget time.Duration
+	resumeMu      sync.Mutex
+	resume        map[string]string // account → rule its next tick starts with
+	// lastPurge is when RunOnce last purged expired deliveries
+	// (ADR-20261029203000); RunOnce runs on one goroutine.
+	lastPurge time.Time
 
 	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
 	anomaly anomalyState
@@ -264,6 +288,13 @@ type EvaluatorOptions struct {
 	// DashboardBaseURL ("https://gregale.dev") links notifications to the
 	// app dashboard; empty omits the link.
 	DashboardBaseURL string
+	// ReleaseMetrics counts release approval and schedule notice
+	// deliveries; nil records nothing.
+	ReleaseMetrics *releasemetrics.Metrics
+	// Workers and AccountTickBudget override AlertEvaluationWorkers and
+	// AlertAccountTickBudget (ADR-20261028101615); zero keeps the default.
+	Workers           int
+	AccountTickBudget time.Duration
 }
 
 // NewEvaluator returns a wired Evaluator. nil-coerced dependencies
@@ -300,6 +331,9 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		channels:         o.Channels,
 		channelOutcome:   o.ChannelOutcome,
 		dashboardBaseURL: o.DashboardBaseURL,
+		releaseMetrics:   o.ReleaseMetrics,
+		workers:          cmp.Or(o.Workers, api.AlertEvaluationWorkers),
+		accountBudget:    cmp.Or(o.AccountTickBudget, api.AlertAccountTickBudget),
 	}
 	if o.ActionExec != nil {
 		e.actionExec = o.ActionExec
@@ -346,6 +380,38 @@ type Stats struct {
 	// by cmd/meterd). The webhook fan-out still fires; the side-
 	// effect just doesn't happen.
 	ActionSkipped int
+	// ReleaseApprovalNotices counts release approval events delivered to at
+	// least one channel this tick (ADR-20261020085706).
+	ReleaseApprovalNotices int
+	// Deferred counts rules left for the next tick because their account
+	// spent its AlertAccountTickBudget (ADR-20261028101615).
+	Deferred int
+	// SkippedNotReleased counts rules not evaluated because the account's
+	// plan or capability flags no longer cover them (ADR-20261028101615).
+	SkippedNotReleased int
+	// ResolvesDelivered and ResolvesFailed count resolve events sent to the
+	// webhooks of rules that asked for them (ADR-20261029203000).
+	ResolvesDelivered, ResolvesFailed int
+	// DeliveriesPurged counts deliveries deleted past their retention.
+	DeliveriesPurged int64
+}
+
+// add sums the per-rule counters of an account's tick into s; Evaluated and
+// ReleaseApprovalNotices are set once per tick by RunOnce.
+func (s *Stats) add(o Stats) {
+	s.Fired += o.Fired
+	s.Delivered += o.Delivered
+	s.Failed += o.Failed
+	s.SkippedDegraded += o.SkippedDegraded
+	s.SkippedInsufficient += o.SkippedInsufficient
+	s.SkippedNoIdentity += o.SkippedNoIdentity
+	s.ActionExecuted += o.ActionExecuted
+	s.ActionFailed += o.ActionFailed
+	s.ActionSkipped += o.ActionSkipped
+	s.Deferred += o.Deferred
+	s.SkippedNotReleased += o.SkippedNotReleased
+	s.ResolvesDelivered += o.ResolvesDelivered
+	s.ResolvesFailed += o.ResolvesFailed
 }
 
 // RunOnce walks the enabled alert-rule list once and applies the
@@ -355,7 +421,8 @@ type Stats struct {
 // a transient backend hiccup must not kill meterd).
 //
 // The function is safe to call from a single goroutine. cmd/meterd
-// wires one Evaluator per daemon.
+// wires one Evaluator per daemon. Within a tick, accounts are evaluated
+// in parallel and each account's rules in order (accounts.go).
 func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 	var stats Stats
 	now := e.now()
@@ -370,12 +437,12 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 	}
 	stats.Evaluated = len(rules)
 
-	for i := range rules {
-		rule := rules[i]
-		if err := ctx.Err(); err != nil {
-			return stats, err
-		}
-		e.evalRule(ctx, rule, now, &stats)
+	for _, account := range e.evalAccounts(ctx, groupByAccount(rules), now) {
+		stats.add(account)
+	}
+	e.recordRuleOutcomes(stats)
+	if err := ctx.Err(); err != nil {
+		return stats, err
 	}
 	// Record every readiness observation before any readiness transport wait.
 	// Other evaluators can continue recording while this worker owns a lease.
@@ -387,7 +454,54 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 			e.retryMCPReadinessIncident(ctx, rule, e.now(), &stats)
 		}
 	}
+	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
+	stats.DeliveriesPurged = e.purgeDeliveries(ctx, e.now())
 	return stats, nil
+}
+
+// purgeDeliveries deletes deliveries past AlertDeliveryRetentionDays, once
+// per AlertDeliveryPurgeInterval and in bounded batches (ADR-20261029203000).
+// A failure is logged and retried at the next interval.
+func (e *Evaluator) purgeDeliveries(ctx context.Context, now time.Time) int64 {
+	purger, ok := e.store.(state.AlertDeliveryPurger)
+	if !ok || now.Sub(e.lastPurge) < api.AlertDeliveryPurgeInterval {
+		return 0
+	}
+	e.lastPurge = now
+	cutoff := now.Add(-api.AlertDeliveryRetentionDays * 24 * time.Hour)
+	var purged int64
+	for range api.AlertDeliveryPurgeBatches {
+		n, err := purger.PurgeAlertDeliveriesBefore(ctx, cutoff, api.AlertDeliveryPurgeBatch)
+		if err != nil {
+			e.log.Warn("alerts: purge expired deliveries", "err", err)
+			return purged
+		}
+		purged += n
+		if n < api.AlertDeliveryPurgeBatch {
+			break
+		}
+	}
+	e.purgeDeletedRuleEpisodes(ctx, cutoff)
+	return purged
+}
+
+// purgeDeletedRuleEpisodes deletes deleted rules' episodes resolved before
+// cutoff, and their notes, in the same bounded batches (ADR-20261030214500).
+func (e *Evaluator) purgeDeletedRuleEpisodes(ctx context.Context, cutoff time.Time) {
+	purger, ok := e.store.(state.AlertEpisodePurger)
+	if !ok {
+		return
+	}
+	for range api.AlertDeliveryPurgeBatches {
+		n, err := purger.PurgeDeletedRuleEpisodesBefore(ctx, cutoff, api.AlertDeliveryPurgeBatch)
+		if err != nil {
+			e.log.Warn("alerts: purge deleted rules' episodes", "err", err)
+			return
+		}
+		if n < api.AlertDeliveryPurgeBatch {
+			return
+		}
+	}
 }
 
 // evalRule evaluates a single rule. The body is split out so the
@@ -415,7 +529,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if api.IsMCPPolicyConvergenceMetric(string(rule.Metric)) {
 		ctx, convergence = withMCPPolicyConvergenceSnapshot(ctx, e.store, rule)
 	}
-	observed, comparisonResult, skipReason := e.observe(ctx, rule)
+	// Reading the value gets AlertObserveBudget (ADR-20261028101615); a
+	// read cut short is degraded like any other failed read.
+	octx, cancel := context.WithTimeout(ctx, api.AlertObserveBudget)
+	observed, comparisonResult, skipReason := e.observe(octx, rule)
+	cancel()
 	if skipReason != "" {
 		switch skipReason {
 		case skipDegraded:
@@ -473,6 +591,9 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				// ADR-749: channels hear the recovery so PagerDuty can
 				// close the incident the fire opened.
 				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now)
+				if rule.NotifyResolved && rule.WebhookURL != "" {
+					e.deliverResolve(ctx, rule, observed, now, stats)
+				}
 			}
 		}
 		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
@@ -548,7 +669,14 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if convergence != nil {
 		paths.mcpConvergence = convergence
 	}
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths, e.anomalyPayload(rule, observed))
+	extra := e.anomalyPayload(rule, observed)
+	if lc, ok := e.readLogContext(ctx, rule, e.appSlug(ctx, rule.AppID), e.now()); ok {
+		if extra == nil {
+			extra = map[string]any{}
+		}
+		extra["log_context"] = lc.payload()
+	}
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths, extra)
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -625,28 +753,9 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 	// ADR-057) over the single identity accessor when both are
 	// wired. The fallback to identity preserves the pre-rotation
 	// contract for callers that haven't migrated to LoadHostKeys.
-	if e.identity == nil && e.identities == nil {
-		e.log.Warn("alerts: no host age identity; skipping dispatch",
-			"rule", rule.ID, "name", rule.Name)
-		stats.SkippedNoIdentity++
-		return
-	}
-	var openIdents []*age.X25519Identity
-	if e.identities != nil {
-		openIdents = e.identities()
-	}
-	if len(openIdents) == 0 && e.identity != nil {
-		// identity is a loader closure (issue #316); invoke it to
-		// surface the actual identity, not the closure pointer.
-		// A loader that returns nil means "no identity at boot" —
-		// the canonical degraded mode (FAAS_HOST_AGE_IDENTITY_PATH
-		// unset). Skip rather than dispatch a half-built envelope.
-		if single := e.identity(); single != nil {
-			openIdents = []*age.X25519Identity{single}
-		}
-	}
+	openIdents := e.openIdentities()
 	if len(openIdents) == 0 {
-		e.log.Warn("alerts: identity loader returned nil; skipping dispatch",
+		e.log.Warn("alerts: no host age identity; skipping dispatch",
 			"rule", rule.ID, "name", rule.Name)
 		stats.SkippedNoIdentity++
 		return
@@ -685,18 +794,19 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 		}
 	}
 
-	// Serialise Dispatch calls. pkg/webhookout.Dispatcher is
-	// concurrency-unsafe; today the evaluator is single-goroutine,
-	// but the mutex keeps the contract for future parallelism
-	// honest (the dispatcher holds opts.HTTPClient + opts.Logger +
-	// the retry loop's backoff state — all of which would race on
-	// parallel Dispatch).
-	e.dispatchMu.Lock()
-	result := e.dispatch.Dispatch(ctx, webhookout.Target{
+	// The delivery, retries included, gets AlertWebhookBudget
+	// (ADR-20261028101615): an unresponsive receiver costs its own
+	// account's evaluation that long, never every account's. Accounts are
+	// evaluated in parallel, so deliveries are not serialised;
+	// webhookout.Dispatcher only reads its options while dispatching.
+	// Recording the result uses the tick's context, so a delivery cut
+	// short is still recorded as failed.
+	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+	result := e.dispatch.Dispatch(dctx, webhookout.Target{
 		URL:    rule.WebhookURL,
 		Signer: e.newSigner(plaintext),
 	}, evt)
-	e.dispatchMu.Unlock()
+	cancel()
 
 	e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
 
@@ -719,6 +829,62 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 	e.dispatchMu.Lock()
 	e.runAction(ctx, rule, deliveryID, observed, now, stats)
 	e.dispatchMu.Unlock()
+}
+
+// openIdentities returns the host identities that open webhook secrets,
+// preferring the rotation-aware slice (issue #316 / ADR-057) over the single
+// identity loader. Empty means none is loaded (FAAS_HOST_AGE_IDENTITY_PATH
+// unset): never dispatch without a valid signature.
+func (e *Evaluator) openIdentities() []*age.X25519Identity {
+	var idents []*age.X25519Identity
+	if e.identities != nil {
+		idents = e.identities()
+	}
+	if len(idents) == 0 && e.identity != nil {
+		if single := e.identity(); single != nil {
+			idents = []*age.X25519Identity{single}
+		}
+	}
+	return idents
+}
+
+// deliverResolve sends a recovered rule's webhook a signed resolve event, for
+// rules that asked for one (ADR-20261029203000). A resolve is not a fire: it
+// takes no delivery-ledger row and runs no action, and a failure is logged and
+// counted, never retried on a later tick.
+func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, observed float64, now time.Time, stats *Stats) {
+	idents := e.openIdentities()
+	if len(idents) == 0 {
+		stats.SkippedNoIdentity++
+		return
+	}
+	ns, plaintext, err := secretbox.OpenBytesMulti(idents, rule.WebhookSecretSealed)
+	if err != nil || ns != AlertSecretNamespace && ns != legacyAlertSecretNamespace {
+		e.log.Warn("alerts: open webhook secret for a resolve; skipping it", "rule", rule.ID, "namespace", ns, "err", err)
+		stats.ResolvesFailed++
+		return
+	}
+	evt := webhookout.Event{
+		ID:         uuid.NewString(),
+		OccurredAt: now,
+		Rule:       rule.Name,
+		RuleName:   rule.Name,
+		AppID:      rule.AppID,
+		Payload: map[string]any{
+			"event": eventResolve, "rule_id": rule.ID, "rule_name": rule.Name,
+			"metric": string(rule.Metric), "comparison": string(rule.Comparison), "threshold": rule.Threshold,
+			"observed": observed, "window": string(rule.WindowSpec), "resolved_at": now.UTC().Format(time.RFC3339Nano),
+		},
+	}
+	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+	result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
+	cancel()
+	if result.Err != nil {
+		e.log.Warn("alerts: resolve webhook not delivered", "rule", rule.ID, "status", result.StatusCode, "attempts", result.Attempts, "err", result.Err)
+		stats.ResolvesFailed++
+		return
+	}
+	stats.ResolvesDelivered++
 }
 
 // runAction is the SAFE-RELEASES-B fan-out (issue #976 / ADR-122).
@@ -887,6 +1053,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return e.observeEdgeRuleHits(ctx, rule)
 	case state.AlertMetricRouteInsightsDetected:
 		return e.observeRouteInsights(ctx, rule)
+	case state.AlertMetricRouteMonitorIncidents, state.AlertMetricRouteHealthHolds:
+		return e.observeRouteAlert(ctx, rule)
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable
@@ -1093,6 +1261,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricCustomMetric:
 		return e.observeCustomMetric(ctx, rule)
+	case state.AlertMetricLogSearchMatches:
+		return e.observeLogSearch(ctx, rule)
 	case state.AlertMetricSLOBudgetBurn, state.AlertMetricSLOBudgetRemaining:
 		return e.observeCustomSLO(ctx, rule)
 	case state.AlertMetricSyntheticConsecutiveFailures, state.AlertMetricSyntheticLatencyP95:
@@ -1286,8 +1456,17 @@ func preAuthObservationMetric(metric state.AlertMetric) bool {
 	return false
 }
 
+// The webhook payload's event names, shared with the MCP connection-health
+// payloads: every fire says alert.fired, and a rule with notify_resolved also
+// sends alert.resolved when it recovers (ADR-20261029203000).
+const (
+	eventFire    = "alert.fired"
+	eventResolve = "alert.resolved"
+)
+
 func buildPayload(rule state.AlertRule, observed float64, paths investigationPaths, extra map[string]any) ([]byte, map[string]any, error) {
 	m := map[string]any{
+		"event":      eventFire,
 		"rule_id":    rule.ID,
 		"rule_name":  rule.Name,
 		"metric":     string(rule.Metric),
@@ -1309,6 +1488,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	}
 	if rule.CustomMetricName != "" {
 		m["custom_metric_name"] = rule.CustomMetricName
+	}
+	if rule.LogQuery != "" {
+		m["log_query"] = rule.LogQuery
 	}
 	if rule.SLOID != "" {
 		m["slo_id"] = rule.SLOID

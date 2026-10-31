@@ -61,7 +61,7 @@ func (s *server) dashboardDelete(w http.ResponseWriter, r *http.Request) {
 			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
-	if _, prob := s.scheduleDeletion(r.Context(), acct, "dashboard"); prob != nil {
+	if _, prob := s.scheduleDeletion(r.Context(), acct, "dashboard", r.FormValue(includeManagedPostgresParam) == "true"); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}

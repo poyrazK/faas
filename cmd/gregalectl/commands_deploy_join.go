@@ -92,6 +92,10 @@ type deployJoinReport struct {
 	Applied        bool         `json:"applied"`
 	Steps          []string     `json:"steps"`
 	Timings        []joinTiming `json:"timings,omitempty"`
+	// RolesConverged is true when an --activate-prepared run found the node's
+	// bootstrap contract stale and converged roles before the drain instead
+	// of starting at the prepared marker (ADR-20261025095348).
+	RolesConverged bool `json:"roles_converged,omitempty"`
 }
 
 type joinTiming struct {
@@ -121,6 +125,25 @@ func openNodeJoinStore() (nodejoin.Store, func(), error) {
 // ansiblePlaybookRunner is a process seam for CLI tests. The production path
 // streams Ansible's output so the operator sees exactly which phase failed.
 var ansiblePlaybookRunner = defaultAnsiblePlaybookRunner
+
+// joinBootstrapContractProbe reports whether node last converged to the
+// bootstrap contract want. Activation of a prepared rollout uses it to choose
+// between starting at the prepared marker and converging roles first. It is a
+// seam for CLI tests.
+var joinBootstrapContractProbe = probeJoinBootstrapContract
+
+func probeJoinBootstrapContract(ctx context.Context, ansibleDir string, common []string, node, want, tempRoot string) (bool, error) {
+	out := filepath.Join(tempRoot, "bootstrap-contract.probe")
+	args := append(append([]string{}, common...), "--limit", node, "-e", "faas_join_contract_probe_out="+out, filepath.Join(ansibleDir, "node_join_contract_probe.yml"))
+	if err := ansiblePlaybookRunner(ctx, ansibleDir, args); err != nil {
+		return false, fmt.Errorf("probe managed-host bootstrap contract: %w", err)
+	}
+	body, err := os.ReadFile(out)
+	if err != nil {
+		return false, fmt.Errorf("read managed-host bootstrap contract probe: %w", err)
+	}
+	return strings.TrimSpace(string(body)) == want, nil
+}
 
 // joinReleaseBundleRegistrar is a seam for CLI tests. Production joins
 // register the signed bundle metadata before Ansible can install it, so the
@@ -626,6 +649,13 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	if info, err := os.Stat(opts.CosignBinary); err == nil && info.Mode()&0o111 == 0 {
 		return report, fmt.Errorf("--cosign-binary is not executable: %s", opts.CosignBinary)
 	}
+	// Node join stages this binary as the host's /usr/local/bin/cosign, which
+	// verifies releases and platform base provenance.
+	if _, err := os.Stat(opts.CosignBinary); err == nil {
+		if err := releaseinstall.CheckCosignBinary(opts.CosignBinary, pinnedCosignSHA256); err != nil {
+			return report, fmt.Errorf("--cosign-binary: %w", err)
+		}
+	}
 	// A PKI source may be either a ready trust bundle or the operator-side
 	// issuance root. Do not reject missing leaves here: the latter is allowed
 	// to issue/refresh the compute-only leaves in copyTrustBundle below. The
@@ -926,7 +956,19 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	}
 	joinArgs := append(append([]string{}, common...), "--limit", opts.Node)
 	if rolloutPhase == joinRolloutActivate {
-		joinArgs = append(joinArgs, "--start-at-task", "Verify the prepared rollout marker")
+		// A prepare run never converges roles (ADR-20261025095348). With a current
+		// contract there is nothing to converge, so activation starts at the
+		// prepared marker; with a stale one it runs the playbook from the top,
+		// converging roles before the drain and skipping the finished pre-stage.
+		current, err := joinBootstrapContractProbe(ctx, ansibleDir, common, opts.Node, bootstrapContractSHA256, tempRoot)
+		if err != nil {
+			return 3, err
+		}
+		if current {
+			joinArgs = append(joinArgs, "--start-at-task", "Verify the prepared rollout marker")
+		} else {
+			report.RolesConverged = true
+		}
 	}
 	joinArgs = append(joinArgs, filepath.Join(ansibleDir, "node_join.yml"))
 	phaseStarted := time.Now()

@@ -53,7 +53,7 @@ func TestPlatformTenantOffboardingApplyIsAtomicAndRecoverable(t *testing.T) {
 	}
 	credentialStore := state.PlatformTenantCredentialStore((*e.Store()))
 	keyResult, err := credentialStore.ApplyPlatformTenantCredentials(ctx, state.ApplyPlatformTenantCredentialsParams{
-		AccountID: (*e.Acct()).ID, TenantID: created.TenantID, AppLimit: 100, AccountLimit: 100,
+		AccountID: (*e.Acct()).ID, TenantID: created.TenantID,
 		Keys: []state.PlatformTenantCredentialIntent{{ConsumerID: created.Consumers[0].ID, Name: "customer-key",
 			Prefix: keyPrefix, Hash: keyHash, Scopes: []string{"read"}}},
 	})

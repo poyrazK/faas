@@ -35,12 +35,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	"filippo.io/age"
@@ -98,7 +101,19 @@ type Handler struct {
 	notif                  Notifier
 	oci                    oci.Puller
 	builder                LayerBuilder
-	log                    *slog.Logger
+	// layerDigests remembers the digest of each layer this process just
+	// published, so the deploy scan does not hash the same bytes again.
+	layerDigests *publishedLayerDigests
+	log          *slog.Logger
+	// profilingOnDemand stamps dormant guest collectors into manifests for
+	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
+	profilingOnDemand bool
+	// continuousProfiling lets an app's profiling.enabled reach its guest
+	// (ADR-819, FAAS_PROFILING_ENABLED).
+	continuousProfiling bool
+	// profileCapturesReleased decides the profile-captures capability for a
+	// deployment's account (ADR-20261023115741); nil releases it.
+	profileCapturesReleased func(platformflags.Subject) bool
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -118,6 +133,9 @@ type Handler struct {
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
 	// still dark-launched in schedd.
 	releasePhaseEnabled bool
+	// rehearsalCommandsEnabled mirrors apid's FAAS_REHEARSAL_COMMAND_EXECUTION
+	// gate for the release commands imaged pins in contained rehearsals.
+	rehearsalCommandsEnabled bool
 	// deferLegacyParentBases lets the rolling pre-stage skip child bases the
 	// serving vmmd cannot materialize; the post-switch imaged stages them.
 	deferLegacyParentBases bool
@@ -211,10 +229,27 @@ type Handler struct {
 	// sidecar write at base_stage.go::writeScanSidecar reads the
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
+	// baseProvenance checks a platform base digest's SLSA provenance before
+	// ensureVerifiedBaseExt4 builds it (ADR-20261029155852); nil checks none.
+	baseProvenance *BaseProvenanceVerifier
+	// lastDeployScanner is the scanner and database the last per-deploy
+	// Grype run used; a redeploy of an unchanged artifact reuses a result
+	// only from that same scanner (scan_reuse.go).
+	lastDeployScanner scannerMemo
+	// lchown sets ownership in platform layer staging trees; nil is
+	// os.Lchown. Tests inject one because they run without CAP_CHOWN.
+	lchown func(path string, uid, gid int) error
 
 	// runtimeGrypeRun scans the native composed directory without treating a
 	// customer file named rootfs.ext4 as a nested image.
 	runtimeGrypeRun func(context.Context, string) (*ScanResult, error)
+	// scannerIdentityProbe reads the installed scanner and vulnerability
+	// database without scanning (ADR-20261028102540). Nil disables scan
+	// reuse, so every renewal scans.
+	scannerIdentityProbe func(context.Context) (installedScanner, error)
+	scannerIdentityCache scannerIdentityCache
+	// scannerDBUpdater refreshes the vulnerability database outside any scan.
+	scannerDBUpdater func(context.Context) error
 	// Active entries live only for a job; restart reconstructs work from durable
 	// producer selections and scan leases. Storage/native fences remain authoritative.
 	runtimeScanMu     sync.Mutex
@@ -262,6 +297,10 @@ type Handler struct {
 	// Interface (not concrete *VMMClient) so tests can inject a
 	// fakeVMMClient (defined in vmmclient.go) without dialing.
 	vmmClient VMMClientIface
+	// nativeSnapshotRoot is vmmd's private tree for native runtime
+	// snapshots (ADR 20261022184951 amendment 1). imaged reads it to learn
+	// which objects vmmd must remove; "" keeps every delete on the backend.
+	nativeSnapshotRoot string
 	// runtimeBaseMu serializes on-demand runtime-base staging. Multiple
 	// deployments can arrive together after a cold start; without this
 	// guard they could concurrently rebuild the same ext4 and race the
@@ -288,6 +327,10 @@ type Handler struct {
 	// stay anonymous (matches the Free plan / no-credential case).
 	secretboxIdentity   *age.X25519Identity
 	secretboxIdentities []*age.X25519Identity
+	// registryIdentities, when set, open private-registry passwords in
+	// place of the secretbox identities: the build seal-domain identity
+	// first, then the fleet and host identities (ADR 20261022111812).
+	registryIdentities []*age.X25519Identity
 	// baseConvergence (ADR-567) tracks the bases this daemon staged so the
 	// convergence loop can keep each local copy byte-identical to the
 	// shared publication.
@@ -305,7 +348,7 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 		puller = oci.DefaultPuller{}
 	}
 	return &Handler{
-		store: store, notif: notif, oci: puller, builder: b,
+		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{},
 		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log,
 	}
 }
@@ -496,6 +539,52 @@ func (h *Handler) WithFunctionRunnerNode22(p string) *Handler {
 	return h
 }
 
+// WithProfilingOnDemand enables dormant on-demand profile collectors in new
+// deployments (ADR-1155). Existing deployments gain them on their next deploy.
+func (h *Handler) WithProfilingOnDemand(enabled bool) *Handler {
+	h.profilingOnDemand = enabled
+	return h
+}
+
+// WithContinuousProfiling lets apps that set profiling.enabled run continuous
+// guest collectors in new deployments (ADR-819). Without it imaged turns the
+// setting off in the guest manifest, so no profiling code runs in a guest
+// unless an installation flag allows it: apid refuses the setting on most
+// paths, but deploys from a source ref copy it from gregale.yaml as is.
+func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
+	h.continuousProfiling = enabled
+	return h
+}
+
+// WithProfileCapturesRelease installs the per-account decision of the
+// profile-captures capability: a preview released to selected accounts, so
+// collectors reach only their deployments (ADR-20261023115741).
+func (h *Handler) WithProfileCapturesRelease(released func(platformflags.Subject) bool) *Handler {
+	h.profileCapturesReleased = released
+	return h
+}
+
+// stampProfiling applies the installation's profiling flags to the guest
+// manifest. Dormant on-demand collectors are stamped when the account's plan
+// includes profiling and on-demand captures are released to the account; the
+// control plane enforces both again at capture time. Unreleased accounts'
+// runtimes keep no collector preload. The rest of the app's profiling
+// settings stay, as pprof_port also serves on-demand captures.
+func (h *Handler) stampProfiling(manifest api.AppManifest, app state.App, acct state.Account) api.AppManifest {
+	limits, ok := api.LimitsFor(acct.Plan)
+	released := h.profileCapturesReleased == nil || h.profileCapturesReleased(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: app.OrgID})
+	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled && released
+	if manifest.Profiling != nil && (manifest.Profiling.Enabled && !h.continuousProfiling || manifest.Profiling.AutomaticCaptures != nil) {
+		cfg := *manifest.Profiling
+		cfg.Enabled = cfg.Enabled && h.continuousProfiling
+		// Automatic captures are the control plane's decision; the guest
+		// manifest stays what guests of every release understand.
+		cfg.AutomaticCaptures = nil
+		manifest.Profiling = &cfg
+	}
+	return manifest
+}
+
 // WithNodeName pins the handler to a compute node identity for split-box
 // event routing. cmd/imaged wires this from FAAS_NODE_NAME, which is also
 // the identity used by builderd when it emits snapshot_boot.
@@ -515,6 +604,14 @@ func (h *Handler) WithHostingSmoke(fn func(context.Context, state.App, state.Dep
 // public-beta compute nodes enable this alongside WithHostingSmoke.
 func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
 	h.hostingSmokeRequired = required
+	return h
+}
+
+// WithRehearsalCommandsEnabled lets a contained rehearsal's release command run
+// as a pinned contained command (ADR-20261020150000). Disabled, such a
+// deployment fails closed with an actionable reason instead of stalling.
+func (h *Handler) WithRehearsalCommandsEnabled(enabled bool) *Handler {
+	h.rehearsalCommandsEnabled = enabled
 	return h
 }
 
@@ -699,6 +796,13 @@ func (h *Handler) WithGrypeRun(fn func(ctx context.Context, dir string) (*ScanRe
 	return h
 }
 
+// WithBaseProvenance wires the platform base provenance check
+// (ADR-20261029155852).
+func (h *Handler) WithBaseProvenance(v *BaseProvenanceVerifier) *Handler {
+	h.baseProvenance = v
+	return h
+}
+
 // WithSyftRun injects the post-build SBOM generator (issue #299 /
 // ADR-038 Phase 3). Mirrors WithGrypeRun's fluent setter shape.
 // Tests wire a stub returning canned CycloneDX bytes; production
@@ -796,6 +900,27 @@ func (h *Handler) WithSecretboxIdentity(ident *age.X25519Identity) *Handler {
 	return h
 }
 
+// WithRegistryIdentities sets the identities that open private-registry
+// passwords. Crash captures keep the secretbox identities.
+func (h *Handler) WithRegistryIdentities(identities []*age.X25519Identity) *Handler {
+	h.registryIdentities = identities
+	return h
+}
+
+// registryCredentialIdentities returns the identities that open a
+// private-registry password; nil leaves pulls anonymous.
+func (h *Handler) registryCredentialIdentities() []*age.X25519Identity {
+	switch {
+	case len(h.registryIdentities) > 0:
+		return h.registryIdentities
+	case len(h.secretboxIdentities) > 0:
+		return h.secretboxIdentities
+	case h.secretboxIdentity != nil:
+		return []*age.X25519Identity{h.secretboxIdentity}
+	}
+	return nil
+}
+
 // WithSecretboxIdentities wires the fleet-first identity set while retaining
 // host identities for legacy ciphertext migration.
 func (h *Handler) WithSecretboxIdentities(identities []*age.X25519Identity) *Handler {
@@ -826,10 +951,21 @@ func (h *Handler) CloseVMMClient() error {
 // placeholder). Production wires the default; tests wire a stub
 // via WithGrypeRun.
 func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error) {
+	var (
+		result *ScanResult
+		err    error
+	)
 	if h.grypeRun != nil {
-		return h.grypeRun(ctx, dir)
+		result, err = h.grypeRun(ctx, dir)
+	} else {
+		result, err = defaultGrypeRun(ctx, dir)
 	}
-	return defaultGrypeRun(ctx, dir)
+	if err == nil && result != nil {
+		// A real scan may have updated the database; reuse decisions must not
+		// compare against an identity read before it.
+		h.scannerIdentityCache.observe(result.ScannerVersion, result.ScannerDBVersion, result.ScannerDBBuiltAt, time.Now())
+	}
+	return result, err
 }
 
 // runDeployScan runs the per-deploy grype scan and stamps the
@@ -875,12 +1011,12 @@ func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error)
 // backend. The grype runner is NOT called in that case; the
 // caller stamps scan_status='failed' with the error string.
 func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, app state.App, dep state.Deployment) (string, func(), error) {
-	layerID := scanLayerDeploymentID(app.Slug, dep)
+	layerSlug, layerID := scanLayer(app.Slug, dep)
 	// Local backend short-circuit. The legacy appsRootPath stays
 	// because SetDeploymentRootfs (handler.go:1334+1380+1697)
 	// stamps it onto the deployment row as a diagnostic column.
 	if _, isLocal := be.(*storage.LocalStorageBackend); isLocal {
-		p := h.appsRootPath(app.Slug, layerID)
+		p := h.appsRootPath(layerSlug, layerID)
 		if p == "" {
 			return "", func() {}, errors.New("slug/path-traversal guard rejected")
 		}
@@ -891,7 +1027,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	// the ext4 bytes to a local tempdir so grype dir:<path> can
 	// scan a filesystem path regardless of where the canonical
 	// bytes live.
-	appsKey := storagekey.AppLayer(app.Slug, layerID)
+	appsKey := storagekey.AppLayer(layerSlug, layerID)
 	rc, err := be.Get(ctx, appsKey)
 	if err != nil {
 		return "", func() {}, fmt.Errorf("imaged: scan stage backend.Get(%q): %w", appsKey, err)
@@ -941,23 +1077,43 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	return stageDir, cleanup, nil
 }
 
-// scanLayerDeploymentID names the deployment whose layer holds this
-// deployment's rootfs. A promoted deployment reuses its source's artifact
-// (rootfs_key apps/<slug>/<source-id>.ext4); keying the scan by the new ID
-// read a missing object, so every promotion skipped its scan, and an
-// enforcing security policy would refuse it (hunt #10). Anything other than
-// this app's own layer key falls back to the deployment's ID.
-func scanLayerDeploymentID(slug string, dep state.Deployment) string {
-	prefix := "apps/" + slug + "/"
-	key := dep.RootfsKey
-	if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, ".ext4") {
-		return dep.ID
+// scanLayer names the layer that holds this deployment's rootfs: the slug and
+// deployment ID in its rootfs_key, as wakes read it. A promoted deployment
+// reuses its source's artifact (rootfs_key apps/<slug>/<source-id>.ext4);
+// keying the scan by the new ID read a missing object, so every promotion
+// skipped its scan (hunt #10). The key also keeps the slug the app had when
+// the layer was written: a rename moves no objects, so rebuilding the key from
+// the current slug failed every scan of a deployment built before the rename,
+// and the live rescan parked enforce apps (bug hunt 2026-10-28 B31). Anything
+// other than a well-formed apps/ key falls back to the current slug and the
+// deployment's ID.
+func scanLayer(slug string, dep state.Deployment) (string, string) {
+	if rest, ok := strings.CutPrefix(dep.RootfsKey, "apps/"); ok {
+		if keySlug, file, ok := strings.Cut(rest, "/"); ok && isSlugSafe(keySlug) && strings.HasSuffix(file, ".ext4") {
+			if id := strings.TrimSuffix(file, ".ext4"); isDeploymentIDSafe(id) {
+				return keySlug, id
+			}
+		}
 	}
-	id := strings.TrimSuffix(strings.TrimPrefix(key, prefix), ".ext4")
-	if !isDeploymentIDSafe(id) {
-		return dep.ID
+	return slug, dep.ID
+}
+
+// liveRescanKey marks a scan that re-checks a live deployment's evidence
+// rather than admitting a new deployment.
+type liveRescanKey struct{}
+
+// stampScanFailure records a scan that could not run. A live rescan of a
+// deployment with complete evidence leaves that evidence in place: the failed
+// stamp replaced it, and the evidence lease then parked the enforce app
+// within a minute although its image and findings had not changed (bug hunt
+// 2026-10-28 H84). New deployments still record the failure.
+func (h *Handler) stampScanFailure(ctx context.Context, dep state.Deployment, result []byte) {
+	if ctx.Value(liveRescanKey{}) != nil && dep.ScanStatus == "complete" {
+		return
 	}
-	return id
+	if err := h.store.UpsertDeploymentScanResult(ctx, dep.ID, result, "failed"); err != nil {
+		h.log.Warn("imaged: stamp scan_status=failed", "deployment", dep.ID, "err", err)
+	}
 }
 
 // Marshal contract: *ScanResult + Error field are plain Go
@@ -985,6 +1141,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		return verifiedScanFailure(app.SecurityPolicy, "scan handler is not wired")
 	}
 	start := time.Now()
+	ctx, timing := withScanTiming(ctx)
 	be, err := h.storageFor()
 	if err != nil {
 		// storageFor only errors when h.appsRoot is empty /
@@ -998,10 +1155,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		if mErr != nil {
 			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
-		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
-			h.log.Warn("imaged: stamp scan_status=failed",
-				"deployment", dep.ID, "err", writeErr)
-		}
+		h.stampScanFailure(ctx, dep, b)
 		h.ops.ObserveDeployScanDuration(app.Slug, "skipped", time.Since(start))
 		h.ops.ObserveDeployScanTotal(app.Slug, "skipped")
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
@@ -1020,23 +1174,31 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		if mErr != nil {
 			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
-		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
-			h.log.Warn("imaged: stamp scan_status=failed",
-				"deployment", dep.ID, "err", writeErr)
-		}
+		h.stampScanFailure(ctx, dep, b)
 		h.ops.ObserveDeployScanDuration(app.Slug, "skipped", time.Since(start))
 		h.ops.ObserveDeployScanTotal(app.Slug, "skipped")
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
 	}
 	defer cleanup()
-	artifactDigest, artifactErr := digestScanArtifact(scanDir)
+	markScanPhase(ctx, "stage")
+	artifactDigest, artifactErr := h.scanArtifactDigest(be, storagekey.AppLayer(scanLayer(app.Slug, dep)), scanDir)
+	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
 		h.log.Warn("imaged: hash scan artifact", "deployment", dep.ID, "app", app.Slug, "err", artifactErr)
 		if app.SecurityPolicy == api.AppSecurityPolicyEnforce {
 			return verifiedScanFailure(app.SecurityPolicy, "hash scan artifact failed: "+artifactErr.Error())
 		}
 	}
-	result, err := h.runGrype(ctx, scanDir)
+	var result *ScanResult
+	if artifactErr == nil {
+		result = h.reusableDeployScan(ctx, app, dep, artifactDigest)
+	}
+	if result != nil {
+		markScanPhase(ctx, "reuse")
+	} else {
+		result, err = h.runGrype(ctx, scanDir)
+		h.lastDeployScanner.record(result, err, time.Now())
+	}
 	if err != nil {
 		// Fail the scan, not the deploy. Log the grype error
 		// so the operator sees the underlying cause.
@@ -1049,10 +1211,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 				"deployment", dep.ID, "err", mErr)
 			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
-		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
-			h.log.Warn("imaged: stamp scan_status=failed",
-				"deployment", dep.ID, "err", writeErr)
-		}
+		h.stampScanFailure(ctx, dep, b)
 		// ADR-075: surface the failure as a metric increment so
 		// the §12 dashboard panel can render a 5-min red rate.
 		// Duration histogram is observed on the failed branch too
@@ -1079,7 +1238,10 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	// stale or cross-deployment results instead of trusting severity counts.
 	result.ImageDigest = dep.ImageDigest
 	result.ArtifactDigest = artifactDigest
-	result.ScannedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if result.ReusedFrom == "" {
+		// A reused result keeps the time its scan ran.
+		result.ScannedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	b, mErr := json.Marshal(result)
 	if mErr != nil {
 		h.log.Warn("imaged: marshal scan result",
@@ -1105,10 +1267,13 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	} {
 		h.ops.ObserveDeployScanVulns(app.Slug, sev, n)
 	}
-	h.log.Info("imaged: per-deploy scan stamped",
+	markScanPhase(ctx, "record")
+	h.log.Info("imaged: per-deploy scan stamped", append([]any{
 		"deployment", dep.ID, "app", app.Slug,
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
-		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown)
+		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
+		"reused_from", result.ReusedFrom,
+	}, timing.attrs()...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
 
@@ -1742,6 +1907,11 @@ type snapshotWrittenPayload struct {
 	StoredBytes      int64  `json:"stored_bytes"`
 	FCVersion        string `json:"fc_version"`
 	BaseImageVersion string `json:"base_image_version,omitempty"`
+	// CPUTemplate and CPUModel are the capturing node's CPU identity
+	// (ADR-20261024225612); absent on payloads from an older schedd or an
+	// unregistered node, which leaves a legacy row.
+	CPUTemplate string `json:"cpu_template,omitempty"`
+	CPUModel    string `json:"cpu_model,omitempty"`
 	// Tier (issue #470 / PR #470-FU-B) is the snapshot tier this
 	// row belongs to: "init" (taken right after guest-init binds
 	// :8080; restore pays framework warmup) or "warm" (taken
@@ -1940,6 +2110,9 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 			return h.failReleasePhaseUnavailable(ctx, dep)
 		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
+		if errors.Is(err, errReleaseDeploymentClosed) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -1970,11 +2143,19 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	if !errors.Is(err, state.ErrNotFound) {
 		return state.AppTask{}, fmt.Errorf("imaged: load deployment release task: %w", err)
 	}
-	task, err = h.store.CreateAppTask(ctx, state.CreateAppTaskParams{
+	params := state.CreateAppTaskParams{
 		AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID,
 		Kind: state.AppTaskKindRelease, Command: append([]string(nil), dep.ReleaseCommand...),
 		CommandShell: dep.ReleaseCommandShell,
-	})
+	}
+	contained, err := h.prepareContainedRelease(ctx, app, dep, &params)
+	if err != nil {
+		return state.AppTask{}, err
+	}
+	task, err = h.store.CreateAppTask(ctx, params)
+	if contained && err != nil && !errors.Is(err, state.ErrConflict) && state.IsScenarioCommandAdmissionRefused(err) {
+		return state.AppTask{}, h.failContainedRelease(ctx, dep, "the rehearsal run refused the release command: "+err.Error())
+	}
 	if errors.Is(err, state.ErrConflict) {
 		// A duplicate snapshot/build notification can race another imaged
 		// process. The partial unique index is the admission fence; re-read the
@@ -1986,6 +2167,49 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	}
 	h.log.Info("imaged: release task admitted", "deployment_id", dep.ID, "task_id", task.ID)
 	return task, nil
+}
+
+// errReleaseDeploymentClosed reports that release admission already failed the
+// deployment durably; there is nothing left to wait for or prime.
+var errReleaseDeploymentClosed = errors.New("imaged: release admission closed the deployment")
+
+// prepareContainedRelease pins the release of an app enrolled in a contained
+// rehearsal as that run's contained command (ADR-20261020150000): it executes
+// in a fenced command VM against the run's isolated fixtures, with a durable
+// receipt, instead of being refused by containment admission.
+func (h *Handler) prepareContainedRelease(ctx context.Context, app state.App, dep state.Deployment, params *state.CreateAppTaskParams) (bool, error) {
+	policies, ok := h.store.(interface {
+		ScenarioRehearsalNetworkRun(context.Context, string) (string, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	runID, err := policies.ScenarioRehearsalNetworkRun(ctx, app.ID)
+	if err != nil {
+		return false, fmt.Errorf("imaged: read rehearsal containment for release: %w", err)
+	}
+	if runID == "" {
+		return false, nil
+	}
+	if !h.rehearsalCommandsEnabled {
+		return true, h.failContainedRelease(ctx, dep, "release commands in contained rehearsals require FAAS_REHEARSAL_COMMAND_EXECUTION=1 on imaged and apid")
+	}
+	envelope, err := rehearsalcommand.ContainedRelease(runID, dep.ID, dep.ReleaseCommand, dep.ReleaseCommandShell)
+	if err != nil {
+		return true, h.failContainedRelease(ctx, dep, "the release command cannot be pinned as a contained rehearsal command: "+err.Error())
+	}
+	params.Command, params.CommandShell, params.MaxOutputBytes = envelope, false, rehearsalcommand.MaxReceiptBytes
+	return true, nil
+}
+
+func (h *Handler) failContainedRelease(ctx context.Context, dep state.Deployment, detail string) error {
+	failed, err := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleasePhaseUnavailable, detail)
+	if err != nil {
+		return fmt.Errorf("imaged: fail contained rehearsal release: %w", err)
+	}
+	h.log.Warn("imaged: contained rehearsal release cannot run; failing candidate", "deployment_id", dep.ID, "reason", detail)
+	h.notifyDeploymentState(ctx, failed.AppID, failed.ID, state.DeployFailed)
+	return errReleaseDeploymentClosed
 }
 
 // applyReleaseTaskOutcome returns wait=true when deployment priming must not
@@ -2100,7 +2324,8 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 // parsed ref ensures a customer can never accidentally widen the
 // credential to a different registry by manipulating a request body.
 func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host string) (*oci.BasicAuth, error) {
-	if h.secretboxIdentity == nil {
+	identities := h.registryCredentialIdentities()
+	if len(identities) == 0 {
 		return nil, nil
 	}
 	if host == "" {
@@ -2120,10 +2345,6 @@ func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host s
 	// app_secret namespace check). A namespace mismatch
 	// means the envelope was sealed for a different
 	// secretbox slot — refuse rather than passing through.
-	identities := h.secretboxIdentities
-	if len(identities) == 0 && h.secretboxIdentity != nil {
-		identities = []*age.X25519Identity{h.secretboxIdentity}
-	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(identities, cred.PasswordEncrypted)
 	if err != nil {
 		// Don't echo the unseal error verbatim — it can include
@@ -2289,7 +2510,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), app, acct)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -2297,6 +2518,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
+	}
+	if err := checkCompanionPorts(manifest, dep); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "workload ports")
+		return fmt.Errorf("imaged: workload ports: %w", err)
 	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
@@ -2421,7 +2646,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 					_ = c.Close()
 				}
 			}()
-			result, err := h.builder.Build(ctx, rootfs.BuildInput{
+			result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 				Layers:        above.readers,
 				Manifest:      manifest,
 				GuestInitPath: h.guestInitPath,
@@ -2492,7 +2717,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			_ = h.markDeployFailed(ctx, dep.ID, err, "verify app image chain")
 			return err
 		}
-		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 			Layers:        layersAsReaders(pulled.Layers),
 			Manifest:      manifest,
 			GuestInitPath: h.guestInitPath,
@@ -2566,6 +2791,14 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	upsertDeploymentSecretFindings(ctx, h.store, dep.ID,
 		allFindings, layerSecretScanStatusCompleteWithRedactions,
 		dep.ImageDigest, scannedAt, h.log)
+	// Every finding is recorded for `gregale deployment ID
+	// --show-secret-scan`; only credential formats fail the deploy
+	// (ADR-20261026152731). Heuristic findings stay advisory.
+	if len(secretscan.Blocking(allFindings)) == 0 {
+		h.log.Info("imaged: layer secret scan advisory findings",
+			"deployment", dep.ID, "app", app.Slug, "findings", len(allFindings))
+		return nil
+	}
 	if markErr := h.markDeployFailed(ctx, dep.ID, errImageSecretDetected, "image-layer secret detected"); markErr != nil {
 		h.log.Warn("imaged: mark deploy failed on layer secret",
 			"deployment", dep.ID, "app", app.Slug, "err", markErr)
@@ -2690,7 +2923,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q manifest", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q manifest: %w", sc.Name, err)
 		}
-		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 			Layers:           layersAsReaders(pulled.Layers),
 			Manifest:         api.SidecarBuildManifest(),
 			WorkloadName:     sc.Name,
@@ -2962,7 +3195,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyFunctionConcurrency(applyAppLifecycle(manifest, app), app)
+	manifest = applyFunctionConcurrency(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3056,7 +3289,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		buildInput.Layers = builtLayers
 		buildInput.TarballPath = dep.SourcePath
 	}
-	result, err := h.builder.Build(ctx, buildInput)
+	result, err := h.buildAppLayer(ctx, buildInput)
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "build function layer")
 		return fmt.Errorf("imaged: build function layer: %w", err)
@@ -3452,7 +3685,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			DeploymentID:                    snapshot.DeploymentID,
 			FCVersion:                       snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
 			BaseImageVersion:                snapshot.BaseImageVersion, // pins H2C runner/base compatibility
-			StorageKey:                      snapshot.StorageKey,       // see snapshotWrittenPayload.StorageKey
+			CPUTemplate:                     snapshot.CPUTemplate,      // pins CPU restore compatibility (ADR-20261024225612)
+			CPUModel:                        snapshot.CPUModel,
+			StorageKey:                      snapshot.StorageKey, // see snapshotWrittenPayload.StorageKey
 			MemBytes:                        snapshot.MemBytes,
 			DiskBytes:                       snapshot.VMStateBytes,
 			StoredBytes:                     snapshot.StoredBytes,
@@ -3478,7 +3713,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 				return fmt.Errorf("imaged: create snapshot: %w", createErr)
 			}
-			stored, createErr = h.store.LatestSnapshotForTier(ctx, snapshot.DeploymentID, snap.Tier)
+			// The conflicting row is this capture's CPU platform's live row
+			// (ADR-20261024225612 amendment 1): other platforms keep theirs.
+			stored, createErr = liveSnapshotOnPlatform(ctx, h.store, snapshot.DeploymentID, snap.Tier, snap.CPUPlatform())
 			if createErr != nil {
 				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 				return fmt.Errorf("imaged: load existing snapshot: %w", createErr)
@@ -3684,13 +3921,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// deliberately activates an older revision. Like a checked rollback it
 	// must skip the latest-revision fence and the source-branch freshness
 	// check, which would otherwise supersede every rollback target.
+	preparedRollback := false
 	if !checkedRollback {
 		if prepared, ok := h.store.(state.RollbackPreparedStore); ok {
 			isPrepared, err := prepared.DeploymentRollbackPrepared(ctx, dep.ID)
 			if err != nil && !errors.Is(err, state.ErrNotFound) {
 				return fmt.Errorf("imaged: read rollback marker: %w", err)
 			}
-			checkedRollback = isPrepared
+			checkedRollback, preparedRollback = isPrepared, isPrepared
 		}
 	}
 
@@ -3729,6 +3967,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		promoteErr = h.store.MarkMCPTaskRecoveryDeploymentLive(ctx, dep.ID, !checkedRollback && dep.Kind.RequiresLatestRevision())
 	} else if !checkedRollback && dep.Kind.RequiresLatestRevision() {
 		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
+	} else if preparedRollback {
+		// The store rechecks the marker under its lock: a rollback withdrawn
+		// since the read above (its receipt failed) must not cut over.
+		promoteErr = h.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(ctx), dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}
@@ -3875,15 +4117,32 @@ func (h *Handler) discardStaleSnapshotCapture(ctx context.Context, snap state.Sn
 	if !state.IsSnapshotCaptureKey(snap.StorageKey) {
 		return nil
 	}
-	live, err := h.store.LatestSnapshotForTier(ctx, snap.DeploymentID, snap.Tier)
-	if err != nil && !errors.Is(err, state.ErrNotFound) {
+	live, err := state.LiveSnapshotsForTier(ctx, h.store, snap.DeploymentID, snap.Tier)
+	if err != nil {
 		return fmt.Errorf("imaged: inspect stale capture before cleanup: %w", err)
 	}
-	if err == nil && live.StorageKey == snap.StorageKey {
-		return nil
+	for _, row := range live {
+		if row.StorageKey == snap.StorageKey {
+			return nil
+		}
 	}
 	h.deleteSnapshotPair(ctx, snap)
 	return nil
+}
+
+// liveSnapshotOnPlatform is the deployment's live row of tier on one CPU
+// platform (ADR-20261024225612 amendment 1); ErrNotFound when there is none.
+func liveSnapshotOnPlatform(ctx context.Context, store state.Store, deploymentID, tier, platform string) (state.Snapshot, error) {
+	rows, err := state.LiveSnapshotsForTier(ctx, store, deploymentID, tier)
+	if err != nil {
+		return state.Snapshot{}, err
+	}
+	for _, row := range rows {
+		if row.CPUPlatform() == platform {
+			return row, nil
+		}
+	}
+	return state.Snapshot{}, state.ErrNotFound
 }
 
 func (h *Handler) notifyDeploymentState(ctx context.Context, appID, deploymentID string, status state.DeploymentStatus) {
@@ -4245,14 +4504,33 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
 	}
-	if code == "" {
-		code = api.CodeDeployFailed
-	}
 	detail := err.Error()
 	if prefix != "" {
 		detail = prefix + ": " + detail
 	}
-	row, err := h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	// A typed problem (an app layer over the plan cap) keeps its stable code
+	// and customer-safe detail; before, it reached the customer as
+	// deploy_failed with imaged's wrapping (ADR-20261029103512 amendment 1).
+	var hint, why, fix string
+	if p := api.AsProblem(err); code == "" && p != nil && p.Code != "" {
+		code, detail = p.Code, p.Detail
+		explained := whycopy.Decorate(&api.Problem{Code: p.Code, Hint: p.Hint, Why: p.Why, Fix: p.Fix}, p.Code, nil)
+		hint, why, fix = explained.Hint, explained.Why, explained.Fix
+		if code == api.CodeAppLayerTooBig {
+			if versionFix := h.layerTooLargeVersionFix(ctx, depID); versionFix != "" {
+				fix = strings.TrimSpace(versionFix + "\n" + fix)
+			}
+		}
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
+	}
+	var row state.Deployment
+	if hint != "" || why != "" || fix != "" {
+		row, err = h.store.SetDeploymentFailedEx(ctx, depID, code, detail, hint, why, fix, nil)
+	} else {
+		row, err = h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	}
 	if err != nil {
 		return fmt.Errorf("imaged: mark failed: %w", err)
 	}
@@ -4581,8 +4859,10 @@ func pullBlobWithAuth(ctx context.Context, mp oci.ManifestPuller, repo, digest s
 //
 // App soft-delete cleanup drops the ext4 AND the snap blobs for every
 // deployment of the app. Superseded deployments are intentionally left
-// intact here; the imaged GC owns the bounded rollback window and removes
-// both artifacts together once no restoreable snapshot remains.
+// intact here; the imaged GC owns the bounded rollback window. A rollback
+// target inside it keeps its cold-boot layers whatever state its snapshots
+// are in (Hunt 21 H21-1); outside it, a deployment's layers go once no
+// restoreable snapshot remains.
 
 // cleanupDeploymentFiles removes the on-disk artifacts for a single deployment.
 // It remains available for explicit destructive cleanup paths and tests;

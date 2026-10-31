@@ -357,7 +357,7 @@ func TestRawBridgePathEnv_TakesEffect(t *testing.T) {
 }
 
 func TestRawBridgeCommandUsesLiveInstancePIDNamespace(t *testing.T) {
-	cmd := rawBridgeCommand(context.Background(), 4242, "/opt/faas/current/bin/vmmd-raw-bridge", 8080)
+	cmd := rawBridgeCommand(context.Background(), bridgeIdentity{}, 4242, "/opt/faas/current/bin/vmmd-raw-bridge", 8080)
 	want := []string{
 		"nsenter", "--target", "4242", "--net", "--",
 		"/opt/faas/current/bin/vmmd-raw-bridge", netns.GuestIP, "8080",

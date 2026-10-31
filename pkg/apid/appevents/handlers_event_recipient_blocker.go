@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -23,7 +24,7 @@ func (s *Service) GetEventRecipientBlocker(w http.ResponseWriter, r *http.Reques
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.EventRecipientBlockerReadTimeout)
 	defer cancel()
-	out, err := store.EventRecipientBlocker(ctx, acct.ID, query)
+	out, err := s.eventRecipientBlocker(ctx, store, acct, nil, query)
 	if err != nil {
 		s.Host.Logger().ErrorContext(ctx, "read event recipient blocker", "err", err)
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
@@ -72,20 +73,26 @@ func (s *Service) GetEventRecipientBlockers(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.EventRecipientBlockerReadTimeout)
 	defer cancel()
+	access, err := s.eventAccess(ctx, acct)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("event company access"))
+		return
+	}
 	out := api.EventRecipientBlockerBatchResponse{Items: make([]api.EventRecipientBlockerBatchItem, len(request.Queries))}
 	for i, query := range request.Queries {
-		out.Items[i] = s.readEventRecipientBlockerBatchItem(ctx, store, acct.ID, query)
+		out.Items[i] = s.readEventRecipientBlockerBatchItem(ctx, store, acct, access, query)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
-func (s *Service) readEventRecipientBlockerBatchItem(ctx context.Context, store state.EventRecipientBlockerStore, accountID string, query api.EventRecipientBlockerQuery) api.EventRecipientBlockerBatchItem {
+func (s *Service) readEventRecipientBlockerBatchItem(ctx context.Context, store state.EventRecipientBlockerStore, acct state.Account, access *eventAccess, query api.EventRecipientBlockerQuery) api.EventRecipientBlockerBatchItem {
+	accountID := acct.ID
 	item := api.EventRecipientBlockerBatchItem{Query: query}
 	if ctx.Err() != nil {
 		item.Error = "read_timeout"
 		return item
 	}
-	result, err := store.EventRecipientBlocker(ctx, accountID, query)
+	result, err := s.eventRecipientBlocker(ctx, store, acct, access, query)
 	if err != nil {
 		item.Error = "read_error"
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
@@ -100,4 +107,23 @@ func (s *Service) readEventRecipientBlockerBatchItem(ctx context.Context, store 
 	}
 	item.Result = &result
 	return item
+}
+
+// eventRecipientBlocker answers for an event or recipient the caller may not
+// see (ADR-20261025211616) exactly as for a receipt that is not retained.
+func (s *Service) eventRecipientBlocker(ctx context.Context, store state.EventRecipientBlockerStore, acct state.Account, access *eventAccess, query api.EventRecipientBlockerQuery) (api.EventRecipientBlockerResponse, error) {
+	var err error
+	if access == nil {
+		if access, err = s.eventAccess(ctx, acct); err != nil {
+			return api.EventRecipientBlockerResponse{}, err
+		}
+	}
+	_, err = access.event(acct.ID, query.Source, query.ID, query.SubscriptionID)
+	if errors.Is(err, state.ErrNotFound) {
+		return api.EventRecipientBlockerResponse{Query: query, ObservedAt: time.Now().UTC(), Status: "unavailable", Reason: "receipt_unavailable"}, nil
+	}
+	if err != nil {
+		return api.EventRecipientBlockerResponse{}, err
+	}
+	return store.EventRecipientBlocker(ctx, acct.ID, query)
 }

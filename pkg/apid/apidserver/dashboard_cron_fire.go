@@ -182,7 +182,7 @@ func (s *server) fireCronFromDashboard(ctx context.Context, acct state.Account, 
 	if !ok || limits.CronLimitPerApp == 0 {
 		return ErrDashboardCronPlanBlocked
 	}
-	requestID, err := s.store.InsertFireNowRequest(ctx, c.ID, acct.ID)
+	requestID, err := s.insertCronFireNowRequest(ctx, c.ID, acct.ID)
 	if err != nil {
 		return fmt.Errorf("insert fire-now: %w", err)
 	}

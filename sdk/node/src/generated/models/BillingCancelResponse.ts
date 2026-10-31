@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Returned by POST /v1/billing/cancel (issue #242). The CLI
+ * Returned by POST /v1/billing/cancel. The CLI
  * renders effective_at as "your apps will stop on <date>".
  * cancel_scheduled is always true on 200; the 409 path returns
  * a Problem with a friendly "already cancelled" hint so a

@@ -37,7 +37,7 @@ import (
 // row, seals the cookie envelope with the same sid, and emits
 // auth.session.created. Caller has already authenticated the
 // account — the caller's job is to pass the right accountID and
-// the mfaPending derived from mfaSessionPending(acct).
+// the mfaPending derived from s.sessionMFAPending(acct).
 //
 // audit failure is non-fatal: it's a best-effort observability
 // row, same shape as every other audit.Emit call in the auth

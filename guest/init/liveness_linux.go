@@ -230,6 +230,10 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 		handleImageHealthcheckMonitorConn(f, msgType, binary.BigEndian.Uint32(hdr[4:]), log)
 		return
 	}
+	if msgType == VsockJobCancelMsgType {
+		handleWorkloadStopConn(f, binary.BigEndian.Uint32(hdr[4:]), log)
+		return
+	}
 	if msgType != VsockLivenessMsgProbe {
 		log.Warn("vsock liveness unknown msg type", "type", msgType)
 		// Fail-closed: a wrong msg-type (the host-side message

@@ -453,3 +453,27 @@ func hasChangeField(d Diff, field string, kind ChangeKind) bool {
 	}
 	return false
 }
+
+// A Dockerfile deploy preview defers its entrypoint, port and health contract
+// to the image. Those empty values are unknown, not cleared: the preview used
+// to report "deployment.port 8080 → 0" for every unchanged Dockerfile app.
+func TestCompute_DeferredBuildPlanFieldsAreNotReported(t *testing.T) {
+	deployed := &api.BuildPlan{Class: "app", Framework: "docker", Entrypoint: "node server.js", Port: 8080, HealthPath: "/healthz", ConfigFile: "gregale.yaml"}
+	baseline := Baseline{App: &api.AppResponse{Slug: "gateway", Type: "app"}, LatestDeployment: &api.DeploymentResponse{BuildPlan: deployed}}
+	fields := []string{"deployment.entrypoint", "deployment.port", "deployment.health_path", "deployment.config_file"}
+
+	deferred := Compute("gateway", "", baseline, Pending{BuildPlan: &api.BuildPlan{Class: "app", Framework: "docker"}})
+	for _, field := range fields {
+		if hasChangeField(deferred, field, ChangeModify) {
+			t.Errorf("deferred %s reported as a change: %+v", field, deferred.Changes)
+		}
+	}
+
+	changed := Compute("gateway", "", baseline, Pending{BuildPlan: &api.BuildPlan{Class: "app", Framework: "docker",
+		Entrypoint: "node dist/server.js", Port: 9090, HealthPath: "/ready", ConfigFile: "gregale.prod.yaml"}})
+	for _, field := range fields {
+		if !hasChangeField(changed, field, ChangeModify) {
+			t.Errorf("a real %s change was hidden: %+v", field, changed.Changes)
+		}
+	}
+}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 )
@@ -97,7 +98,7 @@ func (h *Handler) usageEvent(r *http.Request, in usageEventInput) usageoutbox.Ev
 			}
 		}
 	}
-	if h.requestAuditEnabled || h.apiDiscoveryEnabled {
+	if (h.requestAuditEnabled || h.apiDiscoveryEnabled) && api.RouteDiscoverableStatus(in.status) {
 		event.DiscoveredRoute = auditRouteFrom(r)
 		if event.DiscoveredRoute == otherRouteLabel {
 			event.DiscoveredRoute = ""
@@ -259,10 +260,11 @@ func usageCommitFrom(ctx context.Context) *usageCommit {
 // is off (ADR-20261018090210), keeps the observe-time append.
 func (h *Handler) armUsageCommit(r *http.Request, target Target) {
 	holder, _ := r.Context().Value(usageCommitKey{}).(*usageCommitHolder)
-	if holder == nil || h.usageOutbox == nil || !h.apiMonetizationEnabled() || isRouteProbe(r.Context()) || r.Context().Value(suppressFinancialUsageKey{}) == true {
+	accountID, appID := accountIDFromContext(r.Context()), appIDFromContext(r.Context())
+	if holder == nil || h.usageOutbox == nil || !h.APIMonetizationEnabledFor(accountID.String()) || isRouteProbe(r.Context()) ||
+		r.Context().Value(suppressFinancialUsageKey{}) == true {
 		return
 	}
-	accountID, appID := accountIDFromContext(r.Context()), appIDFromContext(r.Context())
 	attr := requestUsageAttribution(r)
 	if accountID == uuid.Nil || appID == uuid.Nil || !attr.financial() {
 		return

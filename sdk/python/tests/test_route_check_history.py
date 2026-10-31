@@ -3,8 +3,8 @@ from uuid import UUID
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.apps import get_route_check_history_entry, list_route_check_history
-from faas_sdk.models import RouteCheckHistoryEntry, RouteCheckHistoryPage
+from faas_sdk.preview.api.apps import get_route_check_history_entry, list_route_check_history
+from faas_sdk.preview.models import RouteCheckHistoryEntry, RouteCheckHistoryPage
 
 
 def test_history_round_trip_and_requests():

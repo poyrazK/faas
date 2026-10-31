@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -101,7 +102,7 @@ func (n *rolloutHeldNotice) maybeWarn(w io.Writer, d api.DeploymentResponse, now
 		if key != n.held {
 			n.held, n.notified = key, true
 			_, _ = fmt.Fprintf(w, "Rollout held at %d%% traffic (step %d/%d): %s\n",
-				d.TrafficPercent, d.CanaryStep+1, d.CanaryTotalSteps, describeRolloutDecision(d.RolloutHold))
+				d.TrafficPercent, d.CanaryStep+1, d.CanaryTotalSteps, strings.ReplaceAll(describeRolloutDecision(d.RolloutHold), "<deployment>", d.ID))
 		}
 		return
 	}
@@ -112,7 +113,7 @@ func (n *rolloutHeldNotice) maybeWarn(w io.Writer, d api.DeploymentResponse, now
 	n.notified = true
 	_, _ = fmt.Fprintf(w, "Rollout held at %d%% traffic (step %d/%d) for %s. Promotion waits for conclusive health:\n"+
 		"  both this deployment and the stable one need request samples in the step window, with no 5xx or latency regression.\n"+
-		"  Send traffic to the app, or inspect it with: gregale deployment summary %s --app <slug>\n",
+		"  Send traffic to the app, or inspect it with: gregale release summary %s --app <slug>\n",
 		d.TrafficPercent, d.CanaryStep+1, d.CanaryTotalSteps, held.Truncate(time.Second), d.ID)
 }
 

@@ -18,7 +18,7 @@ import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 /**
- * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
+ * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets.
  */
 export type AppResponse = {
   /**
@@ -29,7 +29,7 @@ export type AppResponse = {
   slug: string;
   type: 'app' | 'function';
   /**
-   * Parent project (ADR-050) as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app create and update requests do not accept it.
+   * Parent project as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app create and update requests do not accept it.
    */
   project_id?: string;
   /**
@@ -64,7 +64,7 @@ export type AppResponse = {
    */
   request_timeout_s?: number;
   /**
-   * Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
+   * Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
    */
   function_concurrency?: number;
   min_instances: number;
@@ -129,35 +129,35 @@ export type AppResponse = {
    */
   preview_service_calls_policy?: PreviewServiceCallsPolicy;
   /**
-   * Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
+   * Target-side service allowlist of logical app slugs. Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
    */
   allowed_service_callers?: Array<string>;
   /**
-   * Per-caller HTTP grants for requests reaching this app through a service binding (ADR-278). A missing caller entry denies that caller; any allowed_service_callers entry must also match.
+   * Per-caller HTTP grants for requests reaching this app through a service binding. A missing caller entry denies that caller; any allowed_service_callers entry must also match.
    */
   allowed_service_call_scopes?: ServiceCallerScopes;
   /**
-   * Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.
+   * Per-app outbound CIDR allowlist. Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.
    */
   egress_allowlist?: Array<string>;
   /**
-   * Extra TCP destination ports the app's guests may reach on top of 80 and 443 (ADR-361). All other guest-originated traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are declared.
+   * Extra TCP destination ports the app's guests may reach on top of 80 and 443. All other guest-originated traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are declared.
    */
   egress_ports?: Array<number>;
   /**
-   * Per-instance RPS target for the reactive scale-up trigger. 0 = disabled. Hobby/Pro/Scale only. When measured per-instance RPS exceeds this value, schedd admits another instance (up to max_concurrency). See ADR-037.
+   * Per-instance RPS target for the reactive scale-up trigger. 0 = disabled. Hobby/Pro/Scale only. When measured per-instance RPS exceeds this value, the scheduler admits another instance (up to max_concurrency).
    */
   autoscale_target_rps: number;
   /**
-   * Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When measured per-instance CPU% exceeds this value, schedd admits another instance (up to max_concurrency). See ADR-037.
+   * Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When measured per-instance CPU% exceeds this value, the scheduler admits another instance (up to max_concurrency).
    */
   autoscale_target_cpu_pct: number;
   /**
-   * Per-app streaming flag (issue #471). Free customers always see this as false; Hobby/Pro/Scale can PATCH it. PR-B activates the streamed response path; PR-A only persists the flag.
+   * Per-app streaming flag. Free customers always see this as false; Hobby/Pro/Scale can PATCH it. activates the streamed response path; only persists the flag.
    */
   streaming_enabled?: boolean;
   /**
-   * Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_websocket_not_allowed.
+   * Per-app raw-bytes Upgrade bridge flag. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by the API with 403 plan_websocket_not_allowed.
    */
   websocket_enabled?: boolean;
   /**
@@ -177,19 +177,19 @@ export type AppResponse = {
    */
   revision_pin_ttl_seconds?: number;
   /**
-   * Default rollout for production releases that name no rollout policy (ADR-1446). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1450); immediate moves all traffic at once.
+   * Default rollout for production releases that name no rollout policy. safe (or unset) uses the adaptive health-gated canary (each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback; immediate moves all traffic at once.
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**
-   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449). No queries, fragments, wildcards or parameters.
+   * Up to 3 concrete GET paths the default rollout probe checks instead of /. No queries, fragments, wildcards or parameters.
    */
   release_probe_paths?: Array<string>;
   /**
-   * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
+   * Per-app per-route observability flag. When true, the gateway emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by the API with 403 plan_route_metrics_not_allowed.
    */
   route_metrics_enabled?: boolean;
   /**
-   * When true, gatewayd rejects paths not present in declared_routes or the imported OpenAPI document before waking an app.
+   * When true, the gateway rejects paths not present in declared_routes or the imported OpenAPI document before waking an app.
    */
   only_allow_declared_routes?: boolean;
   /**
@@ -197,11 +197,11 @@ export type AppResponse = {
    */
   declared_routes?: Array<DeclaredRoute>;
   /**
-   * Coarse per-app maintenance toggle (ADR-091 amendment). When true the gatewayd-internal hot-path short-circuits every request to this app with 503 + Retry-After (default 60 s) BEFORE auth, BEFORE wake, BEFORE any kind=maintenance edge rule. Free-tier allowed. Surfaced in the GET /v1/apps/{slug} response so dashboards can show 'maintenance on / off' alongside the streaming/WS pills.
+   * Coarse per-app maintenance toggle. When true the gateway hot-path short-circuits every request to this app with 503 + Retry-After (default 60 s) BEFORE auth, BEFORE wake, BEFORE any kind=maintenance edge rule. Free-tier allowed. Surfaced in the GET /v1/apps/{slug} response so dashboards can show 'maintenance on / off' alongside the streaming/WS pills.
    */
   maintenance_mode?: boolean;
   /**
-   * Per-app scaling policy (issue #462 / ADR-058). null = legacy row, project the empty-policy shape from min_instances / max_concurrency. Non-null = customer-authored policy persisted to the jsonb column `apps.scaling_policy`.
+   * Per-app scaling policy. null = legacy row, project the empty-policy shape from min_instances / max_concurrency. Non-null = customer-authored policy persisted to the jsonb column `apps.scaling_policy`.
    */
   scaling_policy?: (null | ScalingPolicy);
   /**
@@ -209,43 +209,43 @@ export type AppResponse = {
    */
   retry_policy?: (null | RetryPolicyDTO);
   /**
-   * RFC 3339 timestamp of the most recent scale-out event schedd admitted for this app, or null if the app has never scaled out.
+   * RFC 3339 timestamp of the most recent scale-out event the scheduler admitted for this app, or null if the app has never scaled out.
    */
   last_scale_out_at?: string | null;
   /**
-   * RFC 3339 timestamp of the most recent scale-in event schedd reaped for this app, or null if the app has never scaled in.
+   * RFC 3339 timestamp of the most recent scale-in event the scheduler reaped for this app, or null if the app has never scaled in.
    */
   last_scale_in_at?: string | null;
   /**
-   * Per-app cosign signature-enforcement flag (issue #472 / ADR-054). When true, OCI image deploys must carry a valid signature from a publisher in the per-app trusted_signers list. Default false.
+   * Per-app cosign signature-enforcement flag. When true, OCI image deploys must carry a valid signature from a publisher in the per-app trusted_signers list. Default false.
    */
   require_signed?: boolean;
   /**
-   * Per-app two-tier snapshot flag (issue #470 / ADR-055). True on Pro/Scale by default; Free/Hobby always false.
+   * Per-app two-tier snapshot flag. True on Pro/Scale by default; Free/Hobby always false.
    */
   warm_snapshot_enabled?: boolean;
   /**
-   * Effective per-app request-count threshold for warm-tier capture on this app (issue #470 / ADR-055). Range [1, 100].
+   * Effective per-app request-count threshold for warm-tier capture on this app. Range [1, 100].
    */
   warm_snapshot_min_requests?: number;
   /**
-   * Per-app time-since-first-ready threshold for warm-tier capture, milliseconds (issue #470 / ADR-055). Range [100, 60000].
+   * Per-app time-since-first-ready threshold for warm-tier capture, milliseconds. Range [100, 60000].
    */
   warm_snapshot_min_ms?: number;
   /**
-   * Desired paused warm-pool size (issue #1056 / ADR-074). Zero disables the pool; bounded by max_concurrency and available on Hobby+ plans.
+   * Desired paused warm-pool size. Zero disables the pool; bounded by max_concurrency and available on Hobby+ plans.
    */
   warm_pool_size?: number;
   /**
-   * Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction.
+   * Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction.
    */
   eviction_priority?: 'best_effort' | 'reserved';
   /**
-   * Per-deployment token-gate flag (issue #560). When true, gatewayd-internal demands `Authorization: Bearer <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected with 403 plan_require_authn_not_allowed.
+   * Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected with 403 plan_require_authn_not_allowed.
    */
   require_authn?: boolean;
   /**
-   * End-customer credential policy (ADR-120). optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key.
+   * End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key.
    */
   consumer_auth_mode?: 'optional' | 'required';
   /**
@@ -253,11 +253,11 @@ export type AppResponse = {
    */
   platform_tenant_required?: boolean;
   /**
-   * Most-recently parked deployment for this app, or null if never parked (issue #554 / ADR-079 follow-up). The reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why is my app evicted_cold?' without grepping the audit log.
+   * Most-recently parked deployment for this app, or null if never parked. The reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why is my app evicted_cold?' without grepping the audit log.
    */
   parked_deployment?: (ParkedDeploymentRef | null);
   /**
-   * Per-app preferred spill target for cross-node pressure rebalance (Tier A10 / ADR-088). Resolved UUID from the customer's named compute_nodes.name preference (null when unset). Consulted by Engine.RebalancePressuredApps before the A9 fallback; falls through to A9 when the target is inactive or full.
+   * Per-app preferred spill target for cross-node pressure rebalance. Resolved UUID from the customer's named compute_nodes.name preference (null when unset). Consulted by Engine.RebalancePressuredApps before the A9 fallback; falls through to A9 when the target is inactive or full.
    */
   overflow_node?: string | null;
   cors_default_enabled?: boolean | null;
@@ -265,7 +265,7 @@ export type AppResponse = {
   public_auth?: PublicAuthStatus;
   auth_default_flipped_at?: string | null;
   /**
-   * Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'.
+   * Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'.
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
 };

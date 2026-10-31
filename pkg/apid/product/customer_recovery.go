@@ -30,12 +30,21 @@ func (s *Service) CustomerRecovery(w http.ResponseWriter, r *http.Request) {
 }
 
 func customerRecoveryURL(realm customerRealm) (string, error) {
-	u, err := url.Parse(realm.origin)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || realm.authApp.ID == "" || realm.authApp.AccountID != realm.account.ID || realm.authApp.Slug != realm.catalog.Spec.AuthApp {
-		return "", state.ErrProductAccess
+	u, err := customerAuthPage(realm, "/ui/forgot-password")
+	if err != nil {
+		return "", err
 	}
-	u.Path = "/ui/forgot-password"
 	// An explicit empty fragment prevents browsers from carrying a caller's
 	// fragment across the redirect to the Auth app.
 	return u.String() + "#", nil
+}
+
+// customerAuthPage is a page of the product's own Auth app UI.
+func customerAuthPage(realm customerRealm, path string) (*url.URL, error) {
+	u, err := url.Parse(realm.origin)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || realm.authApp.ID == "" || realm.authApp.AccountID != realm.account.ID || realm.authApp.Slug != realm.catalog.Spec.AuthApp {
+		return nil, state.ErrProductAccess
+	}
+	u.Path = path
+	return u, nil
 }

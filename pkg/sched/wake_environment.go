@@ -19,13 +19,30 @@ type wakeEnvironment struct {
 	owner      state.RuntimeScalingState
 	account    state.Account
 	limits     api.Limits
+	// fromTicket marks a selection taken from a thaw ticket instead of
+	// fresh reads (ADR-1740 amendment 2026-10-22). Only the guarded thaw may
+	// decide from it; every other step reads afresh.
+	fromTicket bool
+	// admissionChecked records that EnsureWake ran the application-standards
+	// and financial-budget checks for this selection's deployment. The fast
+	// path runs them itself for a wake that carries no such selection.
+	admissionChecked bool
 }
 
 // reusableFor reports whether admission may reuse this selection's app,
 // account and owner reads. The live deployment is still re-resolved at
 // admission, so a cutover between selection and admission stays detected.
 func (w wakeEnvironment) reusableFor(appID string) bool {
-	return w.app.ID == appID && w.account.ID != "" && w.deployment.ID != ""
+	return !w.fromTicket && w.app.ID == appID && w.account.ID != "" && w.deployment.ID != ""
+}
+
+// droppedWakeEnvironment shadows a selection a wake may no longer use.
+type droppedWakeEnvironment struct{}
+
+// withoutWakeEnvironment makes the rest of a wake resolve its deployment
+// itself, as an uncoordinated production wake does.
+func withoutWakeEnvironment(ctx context.Context) context.Context {
+	return context.WithValue(ctx, wakeEnvironmentKey{}, droppedWakeEnvironment{})
 }
 
 type wakeEnvironmentKey struct{}
@@ -89,6 +106,9 @@ func (e *Engine) resolveWakeEnvironmentForDeployment(ctx context.Context, appID 
 		selected.deployment, err = e.store.LiveDeploymentForScope(ctx, appID, ScopeFrom(ctx))
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrNotFound) && deploymentID == "" && ScopeFrom(ctx) == "" {
+			return selected, noProductionDeploymentErr(ctx, e.store, appID)
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			return selected, errors.Join(ErrPermanentWake, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "No live deployment", "the app has no live deployment to wake"))
 		}
@@ -123,7 +143,7 @@ func wakeEnvironmentChanged() error {
 }
 
 func (e *Engine) wakeFanoutForEnvironment(selected wakeEnvironment) WakeFanout {
-	fanout := WakeFanout{MaxInFlight: effectiveMaxConcurrency(selected.app, selected.limits), PerVM: selected.limits.ConcurrencyPerVMBound}
+	fanout := WakeFanout{MaxInFlight: effectiveMaxConcurrency(selected.app, selected.limits), PerVM: effectivePerInstanceConcurrency(selected.app, selected.limits)}
 	if e.ledger != nil {
 		fanout.Existing = selected.concurrency(e.ledger)
 	}

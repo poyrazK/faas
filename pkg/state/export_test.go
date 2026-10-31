@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -111,6 +112,7 @@ const ScanSourceRankWorkspace = scanSourceRankWorkspace
 const StageHistoryStatusCancelled = stageHistoryStatusCancelled
 
 // Package-level vars
+var SnapshotGCPageRows = &snapshotGCPageRows
 var ErrAutomaticPollingData = &errAutomaticPollingData
 var ErrMemStoreAppErrors = &errMemStoreAppErrors
 var ErrMemStoreB3AlertMetrics = &errMemStoreB3AlertMetrics
@@ -227,6 +229,7 @@ var CronAppTaskRetryAt = cronAppTaskRetryAt
 var CrossedUsageAlertThresholds = crossedUsageAlertThresholds
 var DecidePlanAdmission = decidePlanAdmission
 var DecideProfileCanaryGate = decideProfileCanaryGate
+var DecideRouteMonitorRollback = decideRouteMonitorRollback
 var DecodeInitialReview = decodeInitialReview
 var DecodeProfileCanaryHistoryCursor = decodeProfileCanaryHistoryCursor
 var DecodeRouteMonitorDeploymentBaseline = decodeRouteMonitorDeploymentBaseline
@@ -920,7 +923,8 @@ func (r *MemStore) RouteHealthHistory() *map[string][]routeHealthStoredDecision 
 func (r *MemStore) RouteLifecycleApprovals() *map[string]api.RouteLifecycleApproval {
 	return &r.routeLifecycleApprovals
 }
-func (r *MemStore) SafeReleaseWorkerLeaseUntil() *time.Time { return &r.safeReleaseWorkerLeaseUntil }
+func (r *MemStore) SafeReleaseWorkerLeaseUntil() *time.Time            { return &r.safeReleaseWorkerLeaseUntil }
+func (r *MemStore) ScenarioPostgres() *map[string]rehearsalpg.Resource { return &r.scenarioPostgres }
 func (r *MemStore) ScheduleOccurrences() *map[string]ScheduleOccurrence {
 	return &r.scheduleOccurrences
 }
@@ -1137,3 +1141,8 @@ func (r *standardLocalIntentFixture) Rotated() *ApplicationStandardLogDestinatio
 // Members of workflowOperationWindow
 func (r *workflowOperationWindow) Deadline() *time.Time { return &r.deadline }
 func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
+
+var LiveServiceProxyIdentities = liveServiceProxyIdentities
+
+// OperatorIntents exposes the MemStore's operator intents to tests.
+func (r *MemStore) OperatorIntents() map[string]OperatorIntent { return r.operatorIntents }

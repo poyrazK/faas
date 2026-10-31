@@ -12,9 +12,11 @@ import (
 )
 
 const expired = `-- name: Expired :many
-SELECT id, account_id, run_id, app_id, owner_id, database_name, role_name, status, spec, initial_snapshot, evidence, expires_at, backend_sha256 FROM scenario_postgres_fixtures WHERE expires_at<now() AND status NOT IN ('complete','deleted') ORDER BY expires_at LIMIT 16
+SELECT id, account_id, run_id, app_id, owner_id, database_name, role_name, status, spec, initial_snapshot, evidence, expires_at, backend_sha256 FROM scenario_postgres_fixtures WHERE expires_at<now() AND status NOT IN ('complete','deleted') ORDER BY random() LIMIT 16
 `
 
+// Random order: rows whose drop keeps failing must not occupy every batch and
+// starve newer expiries (ADR-20261019120000).
 func (q *Queries) Expired(ctx context.Context, db DBTX) ([]ScenarioPostgresFixture, error) {
 	rows, err := db.Query(ctx, expired)
 	if err != nil {

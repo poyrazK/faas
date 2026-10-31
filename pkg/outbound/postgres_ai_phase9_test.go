@@ -360,3 +360,50 @@ func TestPostgresAIEvaluationLifecycle(t *testing.T) {
 		t.Fatalf("an evaluation past retention = %v", err)
 	}
 }
+
+// A company app's access token acts as the app only while the creator who
+// minted it is still the company's owner or admin and the company is active
+// (security audit 2026-10-27; fork tokens do the same, #5589).
+func TestPostgresAIAccessTokenFollowsTheCreatorsStanding(t *testing.T) {
+	f := newAIPreviewFixture(t, okChatCompletion, state.OutboundAIPolicy{})
+	ctx := context.Background()
+	backend, err := NewPostgresBackend(f.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orgID := uuid.NewString()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := f.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO orgs (id, slug, name) VALUES ($1, $2, 'Company')`, orgID, "co-"+orgID[:8])
+	exec(`INSERT INTO org_memberships (org_id, account_id, role, access_revision) VALUES ($1, $2, 'owner', 1)`, orgID, f.account.ID)
+	exec(`UPDATE apps SET org_id = $1 WHERE id = $2`, orgID, f.app.ID)
+	secret := api.OutboundAIAccessTokenPrefix + uuid.NewString() + "0123456"
+	hash := sha256.Sum256([]byte(secret))
+	if _, err := f.store.CreateOutboundAIAccessToken(ctx, state.OutboundAIAccessToken{ID: uuid.NewString(), AccountID: f.account.ID,
+		AppID: f.app.ID, Name: "ci", Prefix: secret[:12], TokenHash: hash[:], IntegrationIDs: []string{f.offer.ID}, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	works := func(want bool, when string) {
+		t.Helper()
+		_, err := backend.AIAccessToken(ctx, hash)
+		if got := err == nil; got != want {
+			t.Fatalf("%s: token works = %v (%v), want %v", when, got, err, want)
+		}
+	}
+	works(true, "creator is the company's owner")
+	exec(`UPDATE org_memberships SET role = 'admin' WHERE org_id = $1 AND account_id = $2`, orgID, f.account.ID)
+	works(true, "creator is an admin")
+	exec(`UPDATE org_memberships SET role = 'developer' WHERE org_id = $1 AND account_id = $2`, orgID, f.account.ID)
+	works(false, "creator demoted to developer")
+	exec(`UPDATE org_memberships SET role = 'admin' WHERE org_id = $1 AND account_id = $2`, orgID, f.account.ID)
+	exec(`UPDATE orgs SET status = 'suspended' WHERE id = $1`, orgID)
+	works(false, "company suspended")
+	exec(`UPDATE orgs SET status = 'active' WHERE id = $1`, orgID)
+	works(true, "company active again")
+	exec(`UPDATE org_memberships SET removed_at = now() WHERE org_id = $1 AND account_id = $2`, orgID, f.account.ID)
+	works(false, "creator left the company")
+}

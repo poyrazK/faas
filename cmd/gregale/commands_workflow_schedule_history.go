@@ -37,7 +37,7 @@ func cmdWorkflowScheduleHistory(args []string) int {
 	}
 	response, err := client.ListWorkflowScheduleOccurrences(context.Background(), *app, api.ListWorkflowScheduleOccurrencesOptions{PlatformTenantID: *tenant, Cursor: *cursor, Limit: *limit})
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list workflow schedule occurrences", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(response))
@@ -102,7 +102,7 @@ func cmdWorkflowScheduleReplay(args []string, execute bool) int {
 		response, err = client.PreviewWorkflowScheduleReplays(context.Background(), *app, request)
 	}
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not preview workflow schedule replays", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(response))

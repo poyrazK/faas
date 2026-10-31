@@ -33,6 +33,17 @@ const (
 	KeyS3             = "s3_enabled"
 	// KeyAPIMonetization releases API monetization (ADR-20261018090210).
 	KeyAPIMonetization = "api_monetization_enabled"
+	// KeyPlatformReleasePause is the break-glass release pause (ADR
+	// 20261022140000): while true, apid refuses new deployments and starts no
+	// scheduled release, and builderd claims no queued build. Rollbacks and
+	// running workloads are unaffected.
+	KeyPlatformReleasePause = "platform_release_pause_enabled"
+	// KeyFullEnvironmentClones turns on the machinery only full environment
+	// clones use (ADR-590): schedd's wake and migration ownership recorders,
+	// gatewayd's clone readiness read for stage URLs and apid's clone
+	// coordinator. Daemons start with it on and apply the durable value at
+	// their first reconcile; turn it on fleet-wide before admitting clones.
+	KeyFullEnvironmentClones = "full_environment_clones_enabled"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.

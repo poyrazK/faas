@@ -23,13 +23,16 @@ func validateDataAPIConcurrencyLimit(record dataAPIRequestRecord) error {
 		}
 		return nil
 	}
-	if record.Code == nil || *record.Code != "data_api_concurrency_limited" || !dataAPIDiagnosticAllowed(record.Outcome, "rejected", "aborted") || (record.Status != nil && *record.Status != 429) || !dataAPIDiagnosticAllowed(record.Route, "rest", "rpc", "schema", "openapi") || !dataAPIDiagnosticAllowed(r.Reason, "subject", "tracking_capacity") {
+	if record.Code == nil || *record.Code != "data_api_concurrency_limited" || !dataAPIDiagnosticAllowed(record.Outcome, "rejected", "aborted") || (record.Status != nil && *record.Status != 429) || !dataAPIDiagnosticAllowed(record.Route, "rest", "rpc", "schema", "openapi") || !dataAPIDiagnosticAllowed(r.Reason, "subject", "tracking_capacity", "server_key") {
 		return errors.New("inconsistent concurrency-limit metadata")
 	}
 	if r.MaxConcurrent == nil || *r.MaxConcurrent < 1 || *r.MaxConcurrent > api.DataAPIMaxPoolConnections || r.Active == nil || *r.Active < 0 || *r.Active > *r.MaxConcurrent || r.CoolingDown == nil || *r.CoolingDown < 0 || *r.CoolingDown > *r.MaxConcurrent || r.RetryAfterSeconds == nil || *r.RetryAfterSeconds < api.DataAPIOverloadRetrySeconds || *r.RetryAfterSeconds > (api.DataAPIUserConcurrencyCooldownMS+999)/1000 {
 		return errors.New("invalid concurrency-limit policy metadata")
 	}
-	if (r.Reason == "subject" && *r.Active+*r.CoolingDown != *r.MaxConcurrent) || (r.Reason == "tracking_capacity" && (*r.Active != 0 || *r.CoolingDown != 0)) || ((*r.Active > 0 || r.Reason == "tracking_capacity") && *r.RetryAfterSeconds != api.DataAPIOverloadRetrySeconds) {
+	// Server keys (ADR-20261021180534) share one budget whose slots cool down
+	// like a user's, so they are refused only when every slot is held.
+	if (dataAPIDiagnosticAllowed(r.Reason, "subject", "server_key") && *r.Active+*r.CoolingDown != *r.MaxConcurrent) || (r.Reason == "tracking_capacity" && (*r.Active != 0 || *r.CoolingDown != 0)) ||
+		((*r.Active > 0 || r.Reason == "tracking_capacity") && *r.RetryAfterSeconds != api.DataAPIOverloadRetrySeconds) {
 		return errors.New("invalid concurrency-limit accounting metadata")
 	}
 	return nil

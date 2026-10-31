@@ -1,0 +1,34 @@
+---
+# audit_anchor — seal audit_log into a MAC-chained anchor every 15 minutes
+# and verify the whole chain daily (ADR-20261026163015,
+# docs/runbooks/AuditLogAnchors.md). Each run logs its anchor and any
+# finding to the journal, which the log shipper takes off the host.
+
+- name: audit_anchor — install the anchor and verify units and timers
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-audit-anchor.service
+    - faas-audit-anchor.timer
+    - faas-audit-verify.service
+    - faas-audit-verify.timer
+  register: audit_anchor_units
+
+- name: audit_anchor — reload systemd for changed units  # noqa: no-handler (the timer state below needs the new units)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: audit_anchor_units.changed
+
+- name: audit_anchor — enable the timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: "{{ faas_audit_anchor_enabled | bool }}"
+    state: "{{ 'started' if faas_audit_anchor_enabled | bool else 'stopped' }}"
+  loop:
+    - faas-audit-anchor.timer
+    - faas-audit-verify.timer
+  failed_when: false  # chroot/CI has no systemd

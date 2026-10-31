@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,6 +21,10 @@ func (s *server) listLatestDeploymentsByApp(w http.ResponseWriter, r *http.Reque
 	}
 
 	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	var visible []state.App
+	if err == nil {
+		visible, err = appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load apps for latest deployments"))
 		return
@@ -28,10 +33,21 @@ func (s *server) listLatestDeploymentsByApp(w http.ResponseWriter, r *http.Reque
 	for _, app := range apps {
 		appByID[app.ID] = app
 	}
+	// The URL names no app, so appaccess.Wrap never decided: a company
+	// app's deployment leaves the list once its creator left the company.
+	hidden := make(map[string]bool, len(apps)-len(visible))
+	for _, app := range apps {
+		hidden[app.ID] = true
+	}
+	for _, app := range visible {
+		delete(hidden, app.ID)
+	}
 
 	deployments := make([]state.Deployment, 0, len(latestByApp))
 	for _, deployment := range latestByApp {
-		deployments = append(deployments, deployment)
+		if !hidden[deployment.AppID] {
+			deployments = append(deployments, deployment)
+		}
 	}
 	sort.Slice(deployments, func(i, j int) bool {
 		if deployments[i].CreatedAt.Equal(deployments[j].CreatedAt) {

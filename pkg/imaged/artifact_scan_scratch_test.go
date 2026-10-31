@@ -3,6 +3,8 @@ package imaged
 import (
 	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,5 +44,36 @@ func TestProducedScanStagesUnderTempDirNotAppsRoot(t *testing.T) {
 	}
 	if !strings.HasPrefix(scanned, tmp) {
 		t.Fatalf("scan staged at %q, want under TMPDIR %q", scanned, tmp)
+	}
+}
+
+// A produced scan that fails stores only its failure reason; imaged logs the
+// reason and the cause, so a fail-closed base says why.
+func TestProducedScanFailureIsLoggedWithItsCause(t *testing.T) {
+	be := mustLocalStorage(t, t.TempDir())
+	body := bytes.Repeat([]byte{7}, 4096)
+	const key = "base/scan-failure.ext4"
+	if err := be.Put(t.Context(), key, bytes.NewReader(body)); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := rootfs.ReadArtifactIdentity(t.Context(), bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	var logs bytes.Buffer
+	h := &Handler{
+		log: slog.New(slog.NewTextHandler(&logs, nil)),
+		grypeRun: func(context.Context, string) (*ScanResult, error) {
+			return nil, errors.New("scan command grype failed: output exceeds 16777216 bytes")
+		},
+	}
+	if _, failure := h.readProducedArtifactScan(t.Context(), be, scanArtifactTarget{StorageKey: key, ArtifactIdentity: identity}); failure != "scanner_unavailable" {
+		t.Fatalf("failure = %q, want scanner_unavailable", failure)
+	}
+	for _, want := range []string{"produced artifact scan failed", key, "scanner_unavailable", "output exceeds 16777216 bytes"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log %q lacks %q", logs.String(), want)
+		}
 	}
 }

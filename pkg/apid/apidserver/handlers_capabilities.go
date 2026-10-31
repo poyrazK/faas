@@ -2,9 +2,11 @@ package apidserver
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/productcap"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -50,12 +52,60 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			// ADR-998, ADR-1700: a capability released by a platform flag
 			// is available only to the accounts the flag includes.
 			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
-				available = s.platformFlagEnabled(flagKey, acct)
+				available = s.platformFlagFor(flagKey, flagSubject(r, acct))
 			}
+		}
+		// ADR-20261023115741: with the capability gate installed, every
+		// capability's flag also decides availability for this account.
+		if s.capGate != nil && !s.capGate.Enabled(capabilities.Capabilities[i].Key, flagSubject(r, acct)) {
+			available = false
 		}
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 	}
+	capabilities.HiddenCapabilities = s.hiddenCapabilities(flagSubject(r, acct))
 	writeJSON(w, http.StatusOK, capabilities)
+}
+
+// openAPIHidden leaves the operator routes and the capabilities off by
+// default (off for an account no rule names) out of the anonymous spec and
+// /docs, so they document what every account gets (ADR-20261023115741).
+func (s *server) openAPIHidden() (string, func(path string) bool) {
+	if s.capGate == nil {
+		return "", nil
+	}
+	catalog, err := productcap.Load()
+	if err != nil {
+		return "", nil
+	}
+	var hidden []string
+	set := map[string]bool{}
+	for _, capability := range catalog.Capabilities {
+		if !s.capGate.ReleasedByDefault(capability.ID) {
+			hidden = append(hidden, capability.ID)
+			set[capability.ID] = true
+		}
+	}
+	gate := s.capGate
+	return strings.Join(hidden, ","), func(path string) bool { return gate.SpecHidden(path, set) }
+}
+
+// hiddenCapabilities lists every catalog capability whose flag, or an
+// ancestor's, is off for the subject, so clients can hide what apid hides.
+func (s *server) hiddenCapabilities(subject platformflags.Subject) []string {
+	if s.capGate == nil {
+		return nil
+	}
+	catalog, err := productcap.Load()
+	if err != nil {
+		return nil
+	}
+	var hidden []string
+	for _, capability := range catalog.Capabilities {
+		if !s.capGate.Enabled(capability.ID, subject) {
+			hidden = append(hidden, capability.ID)
+		}
+	}
+	return hidden
 }
 
 // Plan restrictions take precedence when both gates deny access. Runtime

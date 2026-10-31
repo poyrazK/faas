@@ -24,7 +24,7 @@ func cmdEdgeRulesStats(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules stats --app <slug> [--window 1h|24h|7d]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule stats --app <slug> [--window 1h|24h|7d]", "edge-rules")
 		return 1
 	}
 	client, err := authedClient()
@@ -62,7 +62,7 @@ func cmdEdgeRulesStats(args []string) int {
 			trend = edgeRuleTrend(stats.Window, nil)
 		}
 		trend += strings.Repeat(" ", max(0, 28-utf8.RuneCountInString(trend)))
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-8s %10d %10d  %s  %s\n", r.ID, r.Kind, r.Mode, c[0], c[1], trend, truncate(r.Name, 40))
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-8s %10d %10d  %s  %s\n", r.ID, r.Kind, r.Mode, c[0], c[1], trend, terminalSafe(truncate(r.Name, 40)))
 	}
 	return 0
 }

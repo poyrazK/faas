@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, WorkflowsService, type WorkflowRunDiagnosticsResponse } from '../src/index.js';
+import { FaaSClient, WorkflowsService, type WorkflowRunDiagnosticsResponse } from '../src/preview.js';
 
 test('workflow diagnostics use read-only account and tenant routes with typed recovery blockers', async t => {
   const paths: string[] = [];

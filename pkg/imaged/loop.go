@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,25 +48,34 @@ const (
 // Loop is the imaged M8 daemon loop. cmd/imaged constructs it after wiring
 // the Handler's collaborators (store, notifier, OCI puller, builder).
 type Loop struct {
-	handler            *Handler
-	store              state.Store
-	pool               *pgxpool.Pool
-	log                *slog.Logger
-	now                func() time.Time
-	lvUsedPct          func(ctx context.Context) (float64, error)
-	gcEvery            time.Duration // default 24h; tests shrink to ms
-	securityScanEvery  time.Duration // default 6h; tests shrink to ms
-	securityLeaseEvery time.Duration // default 1m; tests shrink to ms
-	detectFC           func(ctx context.Context) (string, error)
-	appsRoot           string
-	storageRoot        string
-	gcMu               sync.Mutex
+	handler *Handler
+	store   state.Store
+	// crashCaptureCryptoEvery overrides the ADR-733 crash capture
+	// encryption cadence in tests; zero uses crashCaptureCryptoEvery.
+	crashCaptureCryptoEvery time.Duration
+	pool                    *pgxpool.Pool
+	log                     *slog.Logger
+	now                     func() time.Time
+	lvUsedPct               func(ctx context.Context) (float64, error)
+	gcEvery                 time.Duration // default 24h; tests shrink to ms
+	securityScanEvery       time.Duration // default 6h; tests shrink to ms
+	securityLeaseEvery      time.Duration // default 1m; tests shrink to ms
+	detectFC                func(ctx context.Context) (string, error)
+	appsRoot                string
+	storageRoot             string
+	gcMu                    sync.Mutex
+	// securityScanRunning keeps the start-up rescan goroutine and the loop's
+	// ticks from sweeping at the same time.
+	securityScanRunning atomic.Bool
+	// prep prepares deployments' images off the loop; nil prepares inline.
+	prep *imagePrepWorkers
 
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
 	remoteDeleteFailures         prometheus.Counter
 	mcpRecoveryAttempts          *prometheus.CounterVec
 	mcpHoldDuration              prometheus.Histogram
+	crashMetrics                 *crashCaptureMetrics
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
 	// built in NewLoop and can be overridden by the With*Channel helpers.
@@ -91,6 +101,9 @@ type LoopConfig struct {
 	GCEvery            time.Duration
 	SecurityScanEvery  time.Duration
 	SecurityLeaseEvery time.Duration
+	// ImagePrepWorkers is how many deployments the loop prepares at once
+	// (ADR-20261029174438). Zero or one prepares inline on the loop.
+	ImagePrepWorkers int
 }
 
 // NewLoop returns a Loop wired with sane defaults. The caller (cmd/imaged)
@@ -119,6 +132,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		now:                cfg.Now,
 		lvUsedPct:          cfg.LvUsedPct,
 		detectFC:           cfg.DetectFC,
+		prep:               newImagePrepWorkers(cfg.ImagePrepWorkers),
 		appsRoot:           cfg.AppsRoot,
 		storageRoot:        cfg.StorageRoot,
 		gcEvery:            cfg.GCEvery,
@@ -146,6 +160,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 			loop.remoteDeleteBacklogOldestAge,
 			loop.remoteDeleteFailures,
 		)
+		loop.crashMetrics = newCrashCaptureMetrics(cfg.Handler.ops.Registry())
 	}
 	return loop
 }
@@ -231,8 +246,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		reader, _ := l.store.(state.BuildImageHandoffObservationStore)
 		go m.run(observeCtx, reader, l.handler.nodeName, l.log)
 	}
+	// Image preparations still running on workers return before Run does.
+	defer l.prep.wait()
 	// Serialize recovery with notification handling: replay cannot race an
 	// imaged conversion in this process, and deployment status deduplicates it.
+	// With workers on, both hand a deployment to the workers instead, which
+	// never prepare one deployment twice at once.
 	buildTicker := time.NewTicker(2 * time.Second)
 	defer buildTicker.Stop()
 	jobMaterializationTicker := time.NewTicker(30 * time.Second)
@@ -243,7 +262,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	if securityScanEvery <= 0 {
 		securityScanEvery = securityScanSweepEvery
 	}
-	securityScanTicker := time.NewTicker(securityScanEvery)
+	securityScanTicker := time.NewTicker(securityScanCheckEvery(securityScanEvery))
 	defer securityScanTicker.Stop()
 	securityLeaseEvery := l.securityLeaseEvery
 	if securityLeaseEvery <= 0 {
@@ -320,6 +339,11 @@ func (l *Loop) Run(ctx context.Context) error {
 	// reclaim anything because every restart resets the ticker. Run one sweep
 	// after recovery so cleanup makes progress on frequently updated nodes.
 	go l.runGCTick(ctx, l.now())
+	// ADR-733: crash capture encryption, staging, purge and expiry run on
+	// their own goroutine (they stream whole guest memory images) and
+	// expire on time regardless of disk pressure.
+	go l.runCrashCaptureCrypto(ctx)
+	go l.runScannerDBRefresh(ctx)
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
 	go l.runProducedEvidenceRenewal(ctx)
 	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
@@ -336,9 +360,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if err := l.dispatchNotification(ctx, n); err != nil && ctx.Err() == nil {
-				l.log.Warn("imaged: notification handling failed", "id", n.OutboxID, "channel", n.Channel, "err", err)
-			}
+			l.handleLoopNotification(ctx, n)
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
 			l.recoverMCPTaskPromotions(ctx)
@@ -363,6 +385,25 @@ func (l *Loop) Run(ctx context.Context) error {
 			if l.runFCSweep(ctx) {
 				l.fcCh = nil
 			}
+		}
+	}
+}
+
+// runScannerDBRefresh keeps the vulnerability database current on its own
+// goroutine (ADR-20261028102540): at start, then every
+// api.ScannerDBRefreshEvery, so a download never holds the main loop.
+func (l *Loop) runScannerDBRefresh(ctx context.Context) {
+	if l.handler == nil {
+		return
+	}
+	ticker := time.NewTicker(api.ScannerDBRefreshEvery)
+	defer ticker.Stop()
+	for {
+		l.handler.refreshScannerDB(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }
@@ -517,6 +558,41 @@ func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) error 
 	return nil
 }
 
+// handleLoopNotification handles one LISTEN delivery. A snapshot_boot this
+// node prepares goes to the image preparation workers when they are on.
+func (l *Loop) handleLoopNotification(ctx context.Context, n db.Notification) {
+	deploymentID, ok := l.parallelImagePrep(n)
+	if !ok {
+		l.logNotificationError(ctx, n, l.dispatchNotification(ctx, n))
+		return
+	}
+	if !l.prep.start(ctx, deploymentID, func(ctx context.Context) {
+		l.logNotificationError(ctx, n, l.dispatchNotification(ctx, n))
+	}) {
+		l.log.Debug("imaged: snapshot_boot left to recovery; deployment already preparing", "deployment", deploymentID, "id", n.OutboxID)
+	}
+}
+
+// parallelImagePrep returns the deployment a snapshot_boot asks this node to
+// prepare, when the workers are on. Everything else stays on the loop,
+// including a payload the handler will reject.
+func (l *Loop) parallelImagePrep(n db.Notification) (string, bool) {
+	if l.prep == nil || l.handler == nil || n.Channel != db.NotifySnapshotBoot {
+		return "", false
+	}
+	var p snapshotBootPayload
+	if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.DeploymentID == "" || !handlesSnapshotBoot(l.handler.nodeName, p.NodeID) {
+		return "", false
+	}
+	return p.DeploymentID, true
+}
+
+func (l *Loop) logNotificationError(ctx context.Context, n db.Notification, err error) {
+	if err != nil && ctx.Err() == nil {
+		l.log.Warn("imaged: notification handling failed", "id", n.OutboxID, "channel", n.Channel, "err", err)
+	}
+}
+
 // dispatchNotification gives durable LISTEN deliveries the same renewable
 // ownership as replay. Legacy and advisory notifications still run directly.
 func (l *Loop) dispatchNotification(ctx context.Context, n db.Notification) error {
@@ -668,7 +744,7 @@ const localSnapshotOrphanGrace = time.Hour
 // stale row, protects its deployment directory. The age guard avoids racing a
 // newly-created directory before snapshot publication commits its row.
 func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
-	if strings.TrimSpace(l.storageRoot) == "" {
+	if strings.TrimSpace(l.storageRoot) == "" && (l.handler == nil || l.handler.nativeSnapshotRoot == "") {
 		return
 	}
 	knownIDs, err := l.store.ListSnapshotDeploymentIDs(ctx)
@@ -676,9 +752,21 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 		l.log.Warn("imaged: local snapshot orphan list", "err", err)
 		return
 	}
-	known := make(map[string]struct{}, len(knownIDs))
-	for _, deploymentID := range knownIDs {
+	// ADR-733 crash captures live under their deployment's directory and
+	// can outlive its snapshot rows.
+	captureIDs, err := l.store.LiveCrashCaptureDeploymentIDs(ctx)
+	if err != nil {
+		l.log.Warn("imaged: local snapshot orphan crash capture list", "err", err)
+		return
+	}
+	known := make(map[string]struct{}, len(knownIDs)+len(captureIDs))
+	for _, deploymentID := range append(knownIDs, captureIDs...) {
 		known[deploymentID] = struct{}{}
+	}
+	cutoff := now.Add(-localSnapshotOrphanGrace)
+	l.retireNativeRuntimeSnapshotOrphans(ctx, known, cutoff)
+	if strings.TrimSpace(l.storageRoot) == "" {
+		return
 	}
 	snapRoot := filepath.Join(filepath.Clean(l.storageRoot), "snap")
 	entries, err := os.ReadDir(snapRoot)
@@ -689,7 +777,6 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 		l.log.Warn("imaged: local snapshot orphan scan", "root", snapRoot, "err", err)
 		return
 	}
-	cutoff := now.Add(-localSnapshotOrphanGrace)
 	removed := 0
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
@@ -916,14 +1003,16 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		// The ADR-510 backing identity sits beside every capture; leaving it
 		// behind orphaned one object per collected snapshot (H5-13).
 		backingKey := state.SnapshotBackingKey(snap)
-		memErr := be.Delete(ctx, memKey)
-		vmstateErr := be.Delete(ctx, vmstateKey)
+		// A native runtime capture's objects are removed by vmmd (ADR
+		// 20261022184951 amendment 1); every other object by the backend.
+		memErr := l.handler.deleteSnapshotObject(ctx, be, memKey)
+		vmstateErr := l.handler.deleteSnapshotObject(ctx, be, vmstateKey)
 		var driveErr, backingErr error
 		if driveKey != "" {
-			driveErr = be.Delete(ctx, driveKey)
+			driveErr = l.handler.deleteSnapshotObject(ctx, be, driveKey)
 		}
 		if backingKey != "" {
-			backingErr = be.Delete(ctx, backingKey)
+			backingErr = l.handler.deleteSnapshotObject(ctx, be, backingKey)
 		}
 		memQuarantined := errors.Is(memErr, storage.ErrDeleteQuarantined)
 		vmstateQuarantined := errors.Is(vmstateErr, storage.ErrDeleteQuarantined)
@@ -1100,10 +1189,18 @@ func (l *Loop) recoverBuildHandoffs(ctx context.Context) {
 
 func (l *Loop) recoverImageWork(ctx context.Context, work []state.BuildImageWork, source string) {
 	for _, item := range work {
-		err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID})
-		l.handler.handoffMetrics.observeWork(ctx, source, err)
-		if err != nil {
-			l.log.Warn("imaged: recovered build handoff failed", "deployment", item.DeploymentID, "err", err)
+		prepare := func(ctx context.Context) {
+			err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID})
+			l.handler.handoffMetrics.observeWork(ctx, source, err)
+			if err != nil {
+				l.log.Warn("imaged: recovered build handoff failed", "deployment", item.DeploymentID, "err", err)
+			}
 		}
+		if l.prep == nil {
+			prepare(ctx)
+			continue
+		}
+		// A deployment already preparing is skipped; the next pass re-reads it.
+		l.prep.start(ctx, item.DeploymentID, prepare)
 	}
 }

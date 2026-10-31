@@ -30,11 +30,8 @@ func TestMigrationCatalogRuntimeScopesUpgradeAndPopulatedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "catalog-worker",
+	app := seedHistoricalInvocationApp(t, ctx, pool, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "catalog-worker",
 		Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker})
-	if err != nil {
-		t.Fatal(err)
-	}
 	legacyScope := strings.Repeat("a", 40)
 	if err := store.UpsertAppEnvInScope(ctx, account.ID, app.ID, legacyScope, "MODE", "legacy"); err != nil {
 		t.Fatal(err)

@@ -21,7 +21,7 @@ export type RequestAnalyticsComputeCost = {
   rate_millicents_per_gb_hour: number;
   currency: 'EUR';
   /**
-   * request_time_share (ADR-743) splits by observed request time; request_share is the fallback when the window has no timing.
+   * request_time_share splits by observed request time; request_share is the fallback when the window has no timing.
    */
   allocation_method: 'request_time_share' | 'request_share';
   basis: 'raw_ram_hours_at_current_overage_rate_before_allowance';

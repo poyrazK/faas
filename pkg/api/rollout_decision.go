@@ -48,6 +48,15 @@ const (
 	// the canary or after the rollout completed.
 	RolloutRuleAbortReleaseGate     = "abort_release_gate"
 	RolloutRuleAbortPostReleaseGate = "abort_post_release_gate"
+	// Release approvals (ADR-20261020085706): the release waits for people,
+	// someone rejected it, or it waited past the policy's timeout.
+	RolloutRuleHoldAwaitingApproval = "hold_awaiting_approval"
+	RolloutRuleAbortApprovalReject  = "abort_approval_rejected"
+	RolloutRuleAbortApprovalTimeout = "abort_approval_timeout"
+
+	// The route health guard held the canary past RouteHealthHoldDeadline
+	// (ADR-20261028110044).
+	RolloutRuleAbortRouteHealthTimeout = "abort_route_health_timeout"
 )
 
 var rolloutDecisionRules = map[string]string{
@@ -73,6 +82,11 @@ var rolloutDecisionRules = map[string]string{
 	RolloutRuleAbortPostReleaseP95:   RolloutDecisionAbort,
 	RolloutRuleAbortReleaseGate:      RolloutDecisionAbort,
 	RolloutRuleAbortPostReleaseGate:  RolloutDecisionAbort,
+	RolloutRuleHoldAwaitingApproval:  RolloutDecisionHold,
+	RolloutRuleAbortApprovalReject:   RolloutDecisionAbort,
+	RolloutRuleAbortApprovalTimeout:  RolloutDecisionAbort,
+
+	RolloutRuleAbortRouteHealthTimeout: RolloutDecisionAbort,
 }
 
 // RolloutDecision is the evidence behind one decision about a rollout

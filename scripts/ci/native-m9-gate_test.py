@@ -15,6 +15,8 @@ import uuid
 SPEC = importlib.util.spec_from_file_location("gate", Path(__file__).with_name("native-m9-gate.py"))
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
+# preflight compares `go env GOVERSION` with the checkout's go.mod toolchain.
+PINNED_GO = gate.re.search(r"(?m)^toolchain (go\S+)$", (gate.ROOT / "go.mod").read_text()).group(1)
 
 
 def uid():
@@ -237,7 +239,7 @@ class VerdictTests(unittest.TestCase):
                         if "status" in args:
                             return " M tracked.go" if case == "dirty checkout" else ""
                         if "GOVERSION" in args:
-                            return "go1.26.9"
+                            return PINNED_GO
                         return metadata
                     with patch.dict(gate.os.environ, {"FAAS_M9_VMMD_BINARY": str(binary), "FAAS_M9_CONFIRM": "native-x86", "DATABASE_URL": "private-dsn"}), \
                          patch.object(gate.os, "geteuid", return_value=0), patch.object(gate.platform, "system", return_value="Linux"), \

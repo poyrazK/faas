@@ -47,7 +47,7 @@ func writeExclusiveError(w http.ResponseWriter, err error) {
 		p = api.NewProblem(http.StatusConflict, "operation_identity_conflict", "Operation identity conflict", "the idempotency key already identifies a different operation")
 	case errors.Is(err, exclusivework.ErrStaleOwner):
 		p = api.NewProblem(http.StatusConflict, "operation_ownership_lost", "Operation ownership lost", "the ownership grant is no longer current")
-	case errors.Is(err, state.ErrNotFound):
+	case errors.Is(err, state.ErrNotFound), state.IsMalformedID(err):
 		p = api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Operation unavailable", "the operation, policy, or authorized scope is unavailable")
 	case errors.Is(err, state.ErrPlatformTenantSuspended):
 		p = api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Customer suspended", "resume this customer before starting work")

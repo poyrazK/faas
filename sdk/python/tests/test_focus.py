@@ -3,9 +3,9 @@
 import httpx
 import pytest
 
-from faas_sdk.api.billing import export_focus_invoices
+from faas_sdk.preview.api.billing import export_focus_invoices
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.problem import Problem
+from faas_sdk.preview.models.problem import Problem
 from faas_sdk.types import File
 
 
@@ -53,8 +53,8 @@ def test_focus_download_retains_problem() -> None:
 def test_focus_refresh_authentication_and_source_gap() -> None:
     from uuid import UUID
 
-    from faas_sdk.api.billing import refresh_invoice_facts
-    from faas_sdk.models.invoice_refresh_response import InvoiceRefreshResponse
+    from faas_sdk.preview.api.billing import refresh_invoice_facts
+    from faas_sdk.preview.models.invoice_refresh_response import InvoiceRefreshResponse
 
     invoice_id = UUID("c4979a3e-345b-4a96-a635-321589233f7f")
 

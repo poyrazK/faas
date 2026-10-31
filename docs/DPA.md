@@ -61,6 +61,12 @@ keeping (tax invoices: 7 years).
   billing purposes (spec §10).
 - Sending transactional email related to the service (account
   changes, billing alerts, deletion grace notice).
+- Only on Controller's instruction (Pro and Scale): restoring a copy
+  of a running instance's memory into an isolated, non-serving debug
+  instance (a production fork), and capturing such a copy when an
+  instance answers a request with a server error or when Controller's
+  application asks for one from its own code (a crash snapshot, off by
+  default per app).
 
 ## 3. Categories of data subjects
 
@@ -80,6 +86,31 @@ keeping (tax invoices: 7 years).
   retained beyond the in-flight transit window.
 - Operational logs: request path, status code, host IP, timing —
   retained for 30 days for security incident response (spec §11).
+- Application logs: what Controller's applications write to standard
+  output and standard error, which can contain any personal data an
+  application chooses to log. Held in memory while an instance runs,
+  then archived in object storage. Controller can read archived logs for
+  its plan's log retention (Free 1 day, Hobby 7, Pro 30, Scale 90). The
+  archive deletes them 90 days after they are written, and with the
+  account (section 11); the storage provider keeps a deleted object
+  recoverable for 7 more days before purging it.
+- Request traces: spans Controller's applications export when tracing is
+  on — operation and dependency names, durations, status and failure
+  class. Exception messages and stack traces are not retained. Spans are
+  kept with the request record and follow the same retention as
+  customer request analytics below.
+- Crash snapshots and production forks (only when Controller turns
+  them on or requests one): a copy of one instance's memory and
+  writable disk layer at one moment, which can contain any personal
+  data the application held in memory, including end users' data and
+  credentials. A crash snapshot records the triggering status code
+  and request path, or the label and path Controller's application
+  supplied when it asked for the snapshot. Crash snapshots are encrypted at rest with a key
+  unique to each snapshot and deleted with that key after 7 days;
+  they are decrypted only while Controller has a fork of them open.
+  A fork cannot reach the network, never receives production traffic,
+  stays on the node it was restored on, and is destroyed at its TTL
+  (at most 4 hours); its writable disk copy is deleted with it.
 - Customer request analytics: bounded aggregates over a normalized
   User-Agent family, hostname-only referrer, ISO country code, route,
   and status. The analytics path stores no source IP, raw User-Agent,
@@ -129,7 +160,7 @@ before signing up.
 ## 7. Sub-processors
 
 The current sub-processor list is published at
-https://docs.gregale.dev/dpa/subprocessors for advance notification
+https://gregale.dev/docs/dpa/subprocessors for advance notification
 of additions and replacements (30-day notice, see paragraph below);
 the executed sub-processor set for any signed DPA is the list
 enumerated in this section at the time of signature, and the
@@ -208,9 +239,18 @@ required by Art. 32 GDPR, including:
   state.
 - Customer secrets sealed at rest with the host X25519 key
   (pkg/secretbox, ADR-020). Plaintext VALUES never touch PG.
+- Crash snapshots encrypted on the capturing host before they are
+  stored (age, a fresh X25519 key per snapshot sealed to the fleet
+  key), so no unencrypted copy is ever written to storage; a decrypted
+  copy exists only on the host running a fork of the snapshot, for that
+  fork, and is deleted with it (ADR-733).
+- Production forks run with all outbound network access blocked and
+  are never routed production traffic; opening one requires a key
+  with secret-read scope and MFA, and every create, access and delete
+  is written to the audit log (ADR-732).
 - TLS 1.3 in transit; HSTS + Strict CSP on the dashboard.
 
-Full security checklist lives at https://docs.gregale.dev/security.
+Full security checklist lives at https://gregale.dev/docs/security.
 
 ## 9. Audit rights
 

@@ -38,6 +38,15 @@ func finalizeScenarioActionSnapshot(snapshot *api.ScenarioActionSnapshot, summar
 	for _, attempt := range snapshot.SimulatedAttempts {
 		combinedBytes += len(attempt.Payload)
 	}
+	for _, event := range snapshot.PublishedEvents {
+		combinedBytes += len(event.Data)
+	}
+	for _, message := range snapshot.QueueMessages {
+		combinedBytes += len(message.Message)
+	}
+	for _, call := range snapshot.PlatformCalls {
+		combinedBytes += len(call.Message)
+	}
 	if combinedBytes > api.MaxScenarioActionPayloadBytes {
 		snapshot.IncompleteSimulationAttempts++
 		snapshot.Truncated = true
@@ -56,6 +65,12 @@ func finalizeScenarioActionSnapshot(snapshot *api.ScenarioActionSnapshot, summar
 		snapshot.Status, snapshot.Reason = "incomplete", "recorder sessions are missing, failed or were not acknowledged by their execution owner"
 	case snapshot.IncompleteSimulationAttempts > 0:
 		snapshot.Status, snapshot.Reason = "incomplete", "simulation requests were unsupported, interrupted, oversized or missing durable evidence"
+	case snapshot.IncompleteCapturedEvents > 0:
+		snapshot.Status, snapshot.Truncated, snapshot.Reason = "incomplete", true, "published events or suppressed webhook events exceed the evidence format bounds"
+	case snapshot.IncompleteQueueMessages > 0:
+		snapshot.Status, snapshot.Truncated, snapshot.Reason = "incomplete", true, "queue sends or delayed tasks exceed the evidence format bounds"
+	case snapshot.IncompletePlatformCalls > 0:
+		snapshot.Status, snapshot.Truncated, snapshot.Reason = "incomplete", true, "workflow or realtime calls exceed the evidence format bounds"
 	case summary.incomplete > 0:
 		snapshot.Status, snapshot.Reason = "incomplete", "managed effects are missing capture or receiver identity; start a new run with upgraded completion workers"
 	case summary.captured > api.MaxScenarioActionIntents || summary.payloadBytes > api.MaxScenarioActionPayloadBytes:
@@ -74,6 +89,8 @@ func finalizeScenarioActionSnapshot(snapshot *api.ScenarioActionSnapshot, summar
 		snapshot.Status, snapshot.Truncated, snapshot.Reason = "incomplete", true, "captured intent cannot be encoded within the evidence format bounds"
 		snapshot.Intents = []api.ScenarioCapturedAction{}
 		snapshot.SimulatedAttempts = nil
+		snapshot.PublishedEvents, snapshot.SuppressedWebhookEvents = nil, nil
+		snapshot.QueueMessages, snapshot.PlatformCalls = nil, nil
 		body, _ = json.Marshal(snapshot) // All remaining fields are bounded metadata.
 	}
 	return body
@@ -165,6 +182,15 @@ func (s *PgStore) SealScenarioTestActions(ctx context.Context, accountID, runID 
 	if err := addScenarioColdSnapshot(ctx, tx, &snapshot, policies); err != nil {
 		return empty, err
 	}
+	if err := addScenarioEventSnapshot(ctx, tx, &snapshot, accountID, runID); err != nil {
+		return empty, err
+	}
+	if err := addScenarioQueueSnapshot(ctx, tx, &snapshot, accountID, runID); err != nil {
+		return empty, err
+	}
+	if err := addScenarioPlatformSnapshot(ctx, tx, &snapshot, accountID, runID); err != nil {
+		return empty, err
+	}
 	body := finalizeScenarioActionSnapshot(&snapshot, summary, intents)
 	if snapshot.Status == "pending" {
 		return snapshot, tx.Commit(ctx)
@@ -249,6 +275,9 @@ func (m *MemStore) SealScenarioTestActions(ctx context.Context, accountID, runID
 	m.addScenarioRecorderSnapshotLocked(&snapshot, appIDs, summary.pending == 0)
 	m.addScenarioColdSnapshotLocked(&snapshot, appIDs)
 	m.addScenarioSuspendSnapshotLocked(&snapshot, appIDs)
+	m.addScenarioEventSnapshotLocked(&snapshot, accountID, runID, members)
+	m.addScenarioQueueSnapshotLocked(&snapshot, accountID, runID, members)
+	m.addScenarioPlatformSnapshotLocked(&snapshot, accountID, runID, members)
 	body := finalizeScenarioActionSnapshot(&snapshot, summary, intents)
 	if snapshot.Status == "pending" {
 		return snapshot, nil

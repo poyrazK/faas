@@ -66,6 +66,32 @@ func managedSnapshotGrant(m *Manager, parent runtimeadmission.Receipt, warm bool
 	return runtimeadmission.SnapshotGrant{Version: runtimeadmission.SnapshotGrantVersion, Token: token, Parent: parent.Clone(), MemoryKey: key, VMStateKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: key}), PrivateDriveKey: state.SnapshotDriveKey(state.Snapshot{StorageKey: key}), FCVersion: m.fcVersion, Mode: mode, SourceStartedAtUnixNano: parent.CompletedAtUnixNano, IssuedAtUnixNano: now.UnixNano(), ExpiresAtUnixNano: now.Add(time.Minute).UnixNano()}
 }
 
+// A successor that adopted an admitted guest captures it under the
+// adoption's hold before it has admitted a boot of its own, so its replay
+// and flight maps start empty (ADR-595 extension).
+func TestManagedSnapshotOfAnAdoptedGuest(t *testing.T) {
+	m, original, request := consumedRuntimeFixture(t)
+	m.vmm = &capturedRuntimeVMM{consumedRuntimeVMM: original}
+	inst, receipt, err := m.WakeAdmitted(t.Context(), request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.runtimeAdmissionIncarnation = uuid.NewString()
+	m.runtimeAdmissionTokens, m.runtimeAdmissionInstances, m.runtimeAdmissionFlights = nil, nil, nil
+	m.mu.Unlock()
+	if _, _, err := m.CaptureAdmitted(t.Context(), managedSnapshotGrant(m, receipt, false)); !errors.Is(err, runtimeadmission.ErrStale) {
+		t.Fatalf("captured a predecessor's receipt without the adoption's hold: %v", err)
+	}
+	m.mu.Lock()
+	inst.admissionHeldFrom = receipt.Binding.Incarnation
+	m.mu.Unlock()
+	grant := managedSnapshotGrant(m, receipt, false)
+	if info, ack, err := m.CaptureAdmitted(t.Context(), grant); err != nil || !info.Capture.Parent.Equal(receipt) || ack.Check(grant, time.Now()) != nil {
+		t.Fatal("adopted capture", err)
+	}
+}
+
 func TestManagedSnapshotUsesOwnedParentAndChecksNativeCapture(t *testing.T) {
 	for _, warm := range []bool{false, true} {
 		m, original, request := consumedRuntimeFixture(t)

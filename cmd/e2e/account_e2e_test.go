@@ -163,18 +163,28 @@ func TestE2E_GraceExpiry_HardDelete(t *testing.T) {
 		t.Fatalf("fast-forward deletion_requested_at: %v", err)
 	}
 
-	// Poll /v1/account/export until it 401s. Bound to a generous
-	// deadline (10x the grace interval + slack for boot/handshake).
+	// Poll the row until the grace tick hard-deletes it. Bound to a
+	// generous deadline (10x the grace interval + slack for boot/handshake).
+	// The export route is limited to 3 requests a minute per IP, so it is
+	// asked once, after the row is gone.
 	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		_, status := doReq(t, h, key, http.MethodGet, "/v1/account/export", nil)
-		if status == http.StatusUnauthorized {
-			// Row hard-deleted; the API key is gone with it.
-			return
+	for {
+		var remaining int
+		if err := pool.QueryRow(context.Background(), `select count(*) from accounts where email = $1`, email).Scan(&remaining); err != nil {
+			t.Fatalf("count account rows: %v", err)
+		}
+		if remaining == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("grace tick did not hard-delete the account within 5s")
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
-	t.Fatalf("grace tick did not hard-delete the account within 5s")
+	// The API key is gone with the row.
+	if body, status := doReq(t, h, key, http.MethodGet, "/v1/account/export", nil); status != http.StatusUnauthorized {
+		t.Fatalf("export after hard delete: %d %s, want 401", status, body)
+	}
 }
 
 // --- M8 §14 row 7 (G6 GDPR self-service tightening) --------------------

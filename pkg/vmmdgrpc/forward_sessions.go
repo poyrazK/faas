@@ -76,6 +76,17 @@ func instanceStopped(ctx context.Context) bool {
 // long-lived forward streams so their clients see the connection end.
 func (s *Server) forgetForwarding(ctx context.Context, instance string) {
 	s.streamBridges.forget(context.WithoutCancel(ctx), instance)
+	s.closeForwardSessions(instance)
+}
+
+// suspendForwarding is forgetForwarding for a guest frozen in place
+// (ADR-1151): its bridge closes, but what started it stays for the thaw.
+func (s *Server) suspendForwarding(ctx context.Context, instance string) {
+	s.streamBridges.suspend(context.WithoutCancel(ctx), instance)
+	s.closeForwardSessions(instance)
+}
+
+func (s *Server) closeForwardSessions(instance string) {
 	if n := s.forwardSessions.closeInstance(instance); n > 0 && s.log != nil {
 		s.log.Info("vmmd: closed forward streams of a stopped instance", "instance", instance, "streams", n)
 	}

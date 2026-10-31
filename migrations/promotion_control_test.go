@@ -7,12 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestPromotionControlMigrationRoundTrip(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigrated(t)
 	files, err := filepath.Glob("*_promotion_controls.sql")
 	if err != nil || len(files) != 1 {
 		t.Fatalf("promotion control migration: %v %v", files, err)

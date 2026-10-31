@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundAIUserUsageItem } from './OutboundAIUserUsageItem.js';
 /**
- * One UTC day of per-end-user AI usage, most expensive first (ADR-994).
+ * One UTC day of per-end-user AI usage, most expensive first.
  */
 export type OutboundAIUserUsageResponse = {
   usage_date: string;

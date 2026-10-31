@@ -42,7 +42,7 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 	if !validNodeSettlementEnrollment(upload.ID, upload.QueueNodeSettlement) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
-	if m.objectCapacityFencedLocked(upload.BucketID) {
+	if m.objectCapacityFencedForKeyLocked(upload.BucketID, upload.Key) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	bucket, ok := m.objectBuckets[upload.BucketID]

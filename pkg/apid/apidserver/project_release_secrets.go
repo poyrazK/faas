@@ -57,13 +57,13 @@ func (s *server) stageProjectReleaseSecrets(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	recipient := setSecretRecipient()
+	recipient := runtimeSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("release secret encryption unavailable"))
 		return
 	}
 	rows, hash, err := deploystaging.SealProjectReleaseSecrets(acct.ID, apps, req, limits, hostHMACKey(), func(key, value string) ([]byte, string, string, error) {
-		return deploystaging.EncryptProjectReleaseSecret(recipient, limits, hostHMACKey(), key, value)
+		return deploystaging.EncryptProjectReleaseSecret(recipient, runtimeSecretBinding(acct.ID), limits, hostHMACKey(), key, value)
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))

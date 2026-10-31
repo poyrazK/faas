@@ -3,7 +3,6 @@ package imaged
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -40,8 +39,8 @@ type localOCIIndex struct {
 const maxFunctionAppUncompressedBytes int64 = 2 << 30
 
 // loadLocalOCIArchive verifies a builderd-produced OCI content chain before
-// exposing its gzip layers or config. The returned readers are ordered
-// bottom-to-top and remain valid until cleanup is called.
+// exposing its compressed (gzip or zstd) layers or config. The returned
+// readers are ordered bottom-to-top and remain valid until cleanup is called.
 func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(), error) {
 	return loadLocalOCIArchiveContext(context.Background(), archivePath)
 }
@@ -94,7 +93,7 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 		return fail(err)
 	}
 	for i := range manifest.Layers {
-		f, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.tar.gz", i)))
+		f, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.blob", i)))
 		if err != nil {
 			return fail(fmt.Errorf("create OCI layer %d: %w", i, err))
 		}
@@ -112,7 +111,7 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 	if len(manifest.Layers) != len(config.DiffIDs) {
 		return fail(fmt.Errorf("OCI layer count mismatch: manifest=%d config=%d", len(manifest.Layers), len(config.DiffIDs)))
 	}
-	if err := verifyLocalOCIDiffIDs(ctx, layerFiles, config.DiffIDs, api.LocalOCIMaxUncompressedLayerBytes); err != nil {
+	if err := verifyLocalOCIDiffIDs(ctx, manifest.Layers, layerFiles, config.DiffIDs, api.LocalOCIMaxUncompressedLayerBytes); err != nil {
 		return fail(err)
 	}
 	for i, f := range layerFiles {
@@ -242,12 +241,23 @@ type appLayerReport struct {
 	// not toolchain or cache content.
 	Unexpected  []string
 	PackageJSON []byte
+	// PythonInterpreter, when set, is the runner base's Python: the
+	// virtualenv's links into the dropped toolchain move to it (ADR-1500
+	// amendment 2), and a link that cannot move is unexpected.
+	PythonInterpreter string
+	// Python is what a package manager's `run` in the start command is
+	// checked against (ADR-1500 amendment 3); filled with PythonInterpreter.
+	Python sharedruntime.PythonLayer
 }
 
 const appLayerReportMaxUnexpected = 8
 
+// maxPyvenvConfigBytes bounds the pyvenv.cfg read for rewriting; real ones
+// are a few hundred bytes.
+const maxPyvenvConfigBytes = 64 << 10
+
 func (r *appLayerReport) dropped(hdr *tar.Header) {
-	if r == nil || hdr.Typeflag == tar.TypeDir || len(r.Unexpected) >= appLayerReportMaxUnexpected {
+	if r == nil || hdr.Typeflag == tar.TypeDir {
 		return
 	}
 	clean := pathpkg.Clean(hdr.Name)
@@ -255,8 +265,97 @@ func (r *appLayerReport) dropped(hdr *tar.Header) {
 		return // a whiteout removes a lower file; it adds nothing to the runtime.
 	}
 	if !sharedruntime.DroppableOutsideApp(clean) {
-		r.Unexpected = append(r.Unexpected, clean)
+		r.unexpected(clean)
 	}
+}
+
+func (r *appLayerReport) unexpected(name string) {
+	if len(r.Unexpected) < appLayerReportMaxUnexpected {
+		r.Unexpected = append(r.Unexpected, name)
+	}
+}
+
+// relinkVenv points a kept /app entry of the virtualenv at the runner base's
+// Python: interpreter symlinks are retargeted in hdr, and pyvenv.cfg is
+// rewritten and returned as the new content. Other entries pass through.
+func (r *appLayerReport) relinkVenv(hdr *tar.Header, content io.Reader) (io.Reader, error) {
+	switch {
+	case hdr.Typeflag == tar.TypeSymlink:
+		target, ok := sharedruntime.RelinkVenvLink(hdr.Name, hdr.Linkname, r.PythonInterpreter)
+		if !ok {
+			r.unexpected(hdr.Name + " -> " + hdr.Linkname)
+			return content, nil
+		}
+		hdr.Linkname = target
+	case hdr.Name == sharedruntime.PyvenvConfigPath && hdr.Typeflag == tar.TypeReg:
+		if hdr.Size > maxPyvenvConfigBytes {
+			r.unexpected(hdr.Name)
+			return content, nil
+		}
+		body := make([]byte, hdr.Size)
+		if _, err := io.ReadFull(content, body); err != nil {
+			return nil, err
+		}
+		rewritten, ok := sharedruntime.RewritePyvenvConfig(body, r.PythonInterpreter)
+		if !ok {
+			r.unexpected(hdr.Name)
+			rewritten = body
+		}
+		hdr.Size = int64(len(rewritten))
+		return bytes.NewReader(rewritten), nil
+	}
+	return content, nil
+}
+
+// notePython records a kept /app entry that ResolvePythonStart checks a
+// package manager's `run` against: a script in the virtualenv or an
+// /app/.env. For a .py file it returns a scanner for inline script metadata.
+func (r *appLayerReport) notePython(hdr *tar.Header) *inlineScriptScan {
+	switch name := hdr.Name; {
+	case hdr.Typeflag == tar.TypeDir:
+	case pathpkg.Dir(name) == "app/.venv/bin":
+		if r.Python.Scripts == nil {
+			r.Python.Scripts = map[string]bool{}
+		}
+		r.Python.Scripts[pathpkg.Base(name)] = true
+	case name == "app/.env":
+		r.Python.DotEnv = true
+	case hdr.Typeflag == tar.TypeReg && strings.HasSuffix(name, ".py") && !strings.HasPrefix(name, "app/.venv/"):
+		return &inlineScriptScan{}
+	}
+	return nil
+}
+
+// inlineScriptScan looks for the `# /// script` line that opens inline
+// script metadata (PEP 723) in a file copied through it, holding at most the
+// start of one line.
+type inlineScriptScan struct {
+	line  []byte
+	long  bool
+	found bool
+}
+
+const inlineScriptOpen = "# /// script"
+
+func (s *inlineScriptScan) Write(p []byte) (int, error) {
+	for _, c := range p {
+		switch {
+		case c == '\n':
+			s.endLine()
+		case len(s.line) < len(inlineScriptOpen)+8:
+			s.line = append(s.line, c)
+		default:
+			s.long = true
+		}
+	}
+	return len(p), nil
+}
+
+func (s *inlineScriptScan) endLine() {
+	if !s.long && strings.TrimRight(string(s.line), " \t\r") == inlineScriptOpen {
+		s.found = true
+	}
+	s.line, s.long = s.line[:0], false
 }
 
 func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reader, func(), error) {
@@ -278,16 +377,23 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 	}
 
 	for i, layer := range layers {
-		zr, err := gzip.NewReader(layer)
+		zr, err := rootfs.OpenCompressedLayer(layer)
 		if err != nil {
 			return fail(fmt.Errorf("open function layer %d: %w", i, err))
 		}
-		out, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.tar.gz", i)))
+		out, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.tar.zst", i)))
 		if err != nil {
 			_ = zr.Close()
 			return fail(fmt.Errorf("create filtered function layer %d: %w", i, err))
 		}
-		zw := gzip.NewWriter(out)
+		// The filtered layer is read once by rootfs assembly on this node, so
+		// it takes zstd: gzip here cost several seconds per hundred MiB.
+		zw, err := rootfs.NewLayerWriter(out)
+		if err != nil {
+			_ = out.Close()
+			_ = zr.Close()
+			return fail(fmt.Errorf("compress filtered function layer %d: %w", i, err))
+		}
 		tw := tar.NewWriter(zw)
 		tr := tar.NewReader(zr)
 		entries := 0
@@ -310,6 +416,18 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 			}
 			copyHeader := *hdr
 			copyHeader.Name = name
+			var content io.Reader = tr
+			if report != nil && report.PythonInterpreter != "" {
+				relinked, relinkErr := report.relinkVenv(&copyHeader, tr)
+				if relinkErr != nil {
+					_ = tw.Close()
+					_ = zw.Close()
+					_ = out.Close()
+					_ = zr.Close()
+					return fail(fmt.Errorf("read function layer %d virtualenv: %w", i, relinkErr))
+				}
+				content = relinked
+			}
 			if copyHeader.Size < 0 || copyHeader.Size > maxFunctionAppUncompressedBytes-retainedBytes {
 				_ = tw.Close()
 				_ = zw.Close()
@@ -335,11 +453,16 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 				_ = zr.Close()
 				return fail(fmt.Errorf("write function layer %d header: %w", i, err))
 			}
-			var content io.Reader = tr
 			var packageJSON bytes.Buffer
 			capture := report != nil && name == "app/package.json" && copyHeader.Typeflag == tar.TypeReg && copyHeader.Size <= 1<<20
 			if capture {
-				content = io.TeeReader(tr, &packageJSON)
+				content = io.TeeReader(content, &packageJSON)
+			}
+			var inlineScan *inlineScriptScan
+			if report != nil && report.PythonInterpreter != "" {
+				if inlineScan = report.notePython(&copyHeader); inlineScan != nil {
+					content = io.TeeReader(content, inlineScan)
+				}
 			}
 			if _, err := io.CopyN(tw, content, copyHeader.Size); err != nil {
 				_ = tw.Close()
@@ -350,6 +473,14 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 			}
 			if capture {
 				report.PackageJSON = packageJSON.Bytes()
+			}
+			if inlineScan != nil {
+				if inlineScan.endLine(); inlineScan.found {
+					if report.Python.InlineScripts == nil {
+						report.Python.InlineScripts = map[string]bool{}
+					}
+					report.Python.InlineScripts[pathpkg.Base(name)] = true
+				}
 			}
 			retainedBytes += copyHeader.Size
 			entries++
@@ -431,11 +562,15 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 		return nil, func() {}, fmt.Errorf("create Go handler staging dir: %w", err)
 	}
 	cleanupStaging := func() { _ = os.RemoveAll(staging) }
+	// The tenant's build produced these layers; one budget across all of them
+	// keeps a compressed layer from filling the staging filesystem.
+	readers := make([]io.Reader, len(layers))
 	for i, layer := range layers {
-		if err := rootfs.ApplyLayerGz(staging, layer); err != nil {
-			cleanupStaging()
-			return nil, func() {}, fmt.Errorf("apply Go build layer %d: %w", i, err)
-		}
+		readers[i] = layer
+	}
+	if err := rootfs.ApplyLayersGzWithin(staging, readers, api.GoFunctionLayerExtractionMaxBytes); err != nil {
+		cleanupStaging()
+		return nil, func() {}, fmt.Errorf("apply Go build layers: %w", err)
 	}
 	src, info, err := openGoFunctionExecutable(staging, executable)
 	if err != nil {
@@ -444,7 +579,7 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 	}
 	defer func() { _ = src.Close() }()
 
-	archive, err := os.CreateTemp("", "faas-go-handler-*.tar.gz")
+	archive, err := os.CreateTemp("", "faas-go-handler-*.tar.zst")
 	if err != nil {
 		cleanupStaging()
 		return nil, func() {}, fmt.Errorf("create Go handler layer: %w", err)
@@ -454,7 +589,11 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 		_ = os.Remove(archive.Name())
 		cleanupStaging()
 	}
-	zw := gzip.NewWriter(archive)
+	zw, err := rootfs.NewLayerWriter(archive)
+	if err != nil {
+		removeArchive()
+		return nil, func() {}, fmt.Errorf("compress Go handler layer: %w", err)
+	}
 	tw := tar.NewWriter(zw)
 	hdr := &tar.Header{Name: "app/server", Mode: int64(info.Mode().Perm()), Size: info.Size(), Typeflag: tar.TypeReg}
 	if err := tw.WriteHeader(hdr); err != nil {
@@ -477,7 +616,7 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 	}
 	if err := zw.Close(); err != nil {
 		removeArchive()
-		return nil, func() {}, fmt.Errorf("close Go handler gzip: %w", err)
+		return nil, func() {}, fmt.Errorf("close Go handler compression: %w", err)
 	}
 	if _, err := archive.Seek(0, io.SeekStart); err != nil {
 		removeArchive()
@@ -541,6 +680,14 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	}
 	defer cleanup()
 
+	healthcheck, err := sourceComposeHealthcheck(*dep)
+	if err != nil {
+		return fmt.Errorf("imaged: frozen Compose healthcheck: %w", err)
+	}
+	if config, err = applySourceComposeHealthcheck(config, healthcheck); err != nil {
+		return fmt.Errorf("imaged: Compose healthcheck: %w", err)
+	}
+	config = applySourceBuildProcess(config, *dep)
 	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
@@ -556,9 +703,17 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), app, acct)
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
+	}
+	if err := checkCompanionPorts(manifest, *dep); err != nil {
+		return fmt.Errorf("imaged: workload ports: %w", err)
+	}
+	// The built image's command HEALTHCHECK gates readiness whether it came
+	// from the Dockerfile or a Compose override (ADR-20261024100000).
+	if err := h.recordSourceHealthcheck(ctx, dep, manifest); err != nil {
+		return err
 	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)
@@ -589,7 +744,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason)
 		}
 	}
-	result, err := h.builder.Build(ctx, rootfs.BuildInput{
+	result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 		Layers:         buildLayers,
 		Manifest:       manifest,
 		GuestInitPath:  h.guestInitPath,

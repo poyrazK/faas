@@ -10,13 +10,15 @@ name: blast-radius
 # Report-only: the job never fails a pull request on what it finds, and no
 # branch protection requires it. It writes the job summary and keeps one
 # sticky comment on the pull request up to date.
+#
+# Opt-in: it runs only on a pull request labelled `blast-radius`
+# (docs/adr/20261029121500-light-pull-request-ci.md). Every pull request
+# ran it before, about 9 runner-minutes each, while the hosted pool sat at
+# its 40-job cap. Locally: python3 scripts/ci/blast_radius.py --base origin/main
 
 on:
   pull_request:
-
-concurrency:
-  group: blast-radius-${{ github.ref }}
-  cancel-in-progress: true
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
@@ -25,22 +27,30 @@ permissions:
 
 env:
   # Keep in lock-step with ci-light.yml (its lint job saves the cache below).
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
 
 jobs:
   report:
     name: release binary blast radius
+    # Adding any other label must not rerun it.
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'blast-radius') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'blast-radius')
+    # Job-level, so a skipped run never cancels a running report.
+    concurrency:
+      group: blast-radius-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     # A change to go.mod or a package every binary links builds all of them
     # twice; a warm cache keeps the common case to a few minutes.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # The merge base with the target branch.
           fetch-depth: 0
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -50,7 +60,7 @@ jobs:
       # Read-only: the light tier's main-branch cache holds the modules and
       # most compiled dependencies.
       - name: Restore main-branch Go build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build

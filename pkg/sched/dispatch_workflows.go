@@ -59,9 +59,19 @@ type WorkflowOrchestrator struct {
 	store    state.Store
 	executor WorkflowStepExecutor
 	outbound WorkflowOutboundExecutor
+	agents   WorkflowAgents
 	auditor  *audit.Auditor
 	metrics  *wire.WorkflowMetrics
 	log      *slog.Logger
+	// capabilityAllowed holds a claimed run while workflows are switched off
+	// for its app's account (ADR-20261023115741); nil allows every run.
+	capabilityAllowed func(ctx context.Context, appID string) bool
+	// agentsAllowed holds a claimed run with an agent step while the agents
+	// capability is off for its app's account (ADR-20261027090010); nil
+	// allows every run.
+	agentsAllowed func(ctx context.Context, appID string) bool
+	// dbPhase bounds dispatch slots' database work (workflow_db_phase.go).
+	dbPhase *workflowDBPhase
 }
 
 // NewWorkflowOrchestrator constructs a new orchestrator.
@@ -78,6 +88,7 @@ func NewWorkflowOrchestrator(
 		auditor:  auditor,
 		metrics:  metrics,
 		log:      log,
+		dbPhase:  newWorkflowDBPhase(api.WorkflowDispatchDBPhaseSlots),
 	}
 }
 
@@ -139,7 +150,12 @@ func (o *WorkflowOrchestrator) executeWorkflowHandlerWithRetryAfter(ctx context.
 		return 0, nil, time.Time{}, err
 	}
 	defer done()
-	status, result, retryAt, err := executor.ExecuteWorkflowStepWithRetryAfter(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID, DeploymentID: run.DeploymentID}, path, method, headers, body, timeout, operationID, generation)
+	var status int
+	var result []byte
+	var retryAt time.Time
+	outsideDBPhase(ctx, func() {
+		status, result, retryAt, err = executor.ExecuteWorkflowStepWithRetryAfter(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID, DeploymentID: run.DeploymentID}, path, method, headers, body, timeout, operationID, generation)
+	})
 	if ctx.Err() != nil {
 		return 0, nil, time.Time{}, ctx.Err()
 	}
@@ -152,7 +168,11 @@ func (o *WorkflowOrchestrator) executeWorkflowHandler(ctx context.Context, run *
 		return 0, nil, err
 	}
 	defer done()
-	status, result, err := o.dispatchWorkflowHandler(ctx, run, path, method, headers, body, timeout, managedOperationID, generation)
+	var status int
+	var result []byte
+	outsideDBPhase(ctx, func() {
+		status, result, err = o.dispatchWorkflowHandler(ctx, run, path, method, headers, body, timeout, managedOperationID, generation)
+	})
 	if ctx.Err() != nil {
 		return 0, nil, ctx.Err()
 	}
@@ -470,8 +490,14 @@ func (o *WorkflowOrchestrator) DispatchTick(ctx context.Context) error {
 }
 
 // DispatchBatch drains a bounded number of runs on an already reserved pool
-// slot. No run is claimed ahead of available execution capacity.
+// slot. No run is claimed ahead of available execution capacity. The slot
+// does its database work under a dispatch DB-phase token.
 func (o *WorkflowOrchestrator) DispatchBatch(ctx context.Context) error {
+	ctx, leave, err := o.enterDBPhase(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
 	for range api.WorkflowDispatchBatchPerSlot {
 		claimed, err := o.dispatchOne(ctx)
 		if err != nil || !claimed {
@@ -500,6 +526,18 @@ func (o *WorkflowOrchestrator) dispatchOne(ctx context.Context) (bool, error) {
 
 	if claimed != nil {
 		ctx = state.WithWorkflowRunGeneration(ctx, claimed.ID, claimed.ResumeCount)
+		if o.capabilityAllowed != nil && !o.capabilityAllowed(ctx, claimed.AppID) ||
+			o.agentsAllowed != nil && workflowRunHasAgentSteps(claimed) && !o.agentsAllowed(ctx, claimed.AppID) {
+			// Put the run back, due again after the deferral; its steps are
+			// untouched and it resumes when the flag is on.
+			if err := o.store.ScheduleWorkflowRun(ctx, claimed.ID, state.WorkflowRunStatusPending, time.Now().Add(capabilityDeferral)); err != nil {
+				return true, err
+			}
+			return true, nil
+		}
+		if claimed.ClaimedDueAt != nil {
+			o.metrics.ObserveDispatchLag("unknown", time.Since(*claimed.ClaimedDueAt))
+		}
 		if err := o.initAndAdvanceRun(ctx, claimed); err != nil {
 			if errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) || errors.Is(err, state.ErrWorkflowGuardNotReady) {
 				return true, nil
@@ -602,6 +640,9 @@ func (o *WorkflowOrchestrator) advanceWorkflowRunOnce(ctx context.Context, runID
 	var spec api.WorkflowSpec
 	if err := json.Unmarshal(run.DefinitionSnapshot, &spec); err != nil {
 		return false, err
+	}
+	if spec.Code != nil {
+		return o.advanceCodeWorkflowRunOnce(ctx, run, spec)
 	}
 
 	steps, err := o.store.GetWorkflowSteps(ctx, runID)
@@ -1001,6 +1042,9 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	}
 	if spec.WaitForCondition != nil {
 		return o.executeConditionCheck(ctx, run, step, spec)
+	}
+	if spec.Agent != "" {
+		return o.executeAgentStep(ctx, run, step, spec, steps)
 	}
 	// A duration wait has no executor call: only a persisted deadline is left
 	// behind while the run is parked. The step's first started_at is the source

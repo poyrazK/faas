@@ -54,6 +54,21 @@ func (c *Client) GetManagedPostgresUsage(ctx context.Context) (ManagedPostgresUs
 	return out, err
 }
 
+// GetManagedPostgresOverage reads the account's compute overage setting
+// (ADR-20261025094915).
+func (c *Client) GetManagedPostgresOverage(ctx context.Context) (ManagedPostgresOverage, error) {
+	var out ManagedPostgresOverage
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/overage", nil, &out)
+	return out, err
+}
+
+// SetManagedPostgresOverage turns the account's compute overage on or off.
+func (c *Client) SetManagedPostgresOverage(ctx context.Context, enabled bool) (ManagedPostgresOverage, error) {
+	var out ManagedPostgresOverage
+	err := c.do(ctx, http.MethodPut, "/v1/postgres/overage", ManagedPostgresOverageRequest{Enabled: &enabled}, &out)
+	return out, err
+}
+
 func (c *Client) PreviewManagedPostgresAccountingReconciliation(ctx context.Context, accountID string, request ManagedPostgresAccountingReconciliationRequest) (ManagedPostgresAccountingReconciliationResult, error) {
 	var out ManagedPostgresAccountingReconciliationResult
 	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/reconciliations/preview", request, &out)
@@ -111,6 +126,22 @@ func (c *Client) GetManagedPostgresDatabase(ctx context.Context, id string) (Man
 func (c *Client) DeleteManagedPostgresDatabase(ctx context.Context, id string) (ManagedPostgresDatabase, error) {
 	var out ManagedPostgresDatabase
 	err := c.do(ctx, http.MethodDelete, "/v1/postgres/databases/"+url.PathEscape(id), nil, &out)
+	return out, err
+}
+
+// PurgeManagedPostgresDatabase deletes a database at once, without the undo
+// window DeleteManagedPostgresDatabase keeps. It cannot be undone.
+func (c *Client) PurgeManagedPostgresDatabase(ctx context.Context, id string) (ManagedPostgresDatabase, error) {
+	var out ManagedPostgresDatabase
+	err := c.do(ctx, http.MethodDelete, "/v1/postgres/databases/"+url.PathEscape(id)+"?purge=true", nil, &out)
+	return out, err
+}
+
+// UndeleteManagedPostgresDatabase returns a database whose delete is
+// scheduled to ready, while its restorable_until is in the future.
+func (c *Client) UndeleteManagedPostgresDatabase(ctx context.Context, id string) (ManagedPostgresDatabase, error) {
+	var out ManagedPostgresDatabase
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/databases/"+url.PathEscape(id)+"/undelete", nil, &out)
 	return out, err
 }
 

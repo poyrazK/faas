@@ -20,6 +20,12 @@ type previewSetCheck struct {
 	RootSlug       string
 	RootParentSlug string
 	CurrentHead    bool
+	// ClosedHead marks the recorded head of a closed PR: Phase and Summary
+	// are its environment's result, members in their close grace counting
+	// as serving.
+	ClosedHead bool
+	// SupersededBy is the newer head that replaced this commit in its PR.
+	SupersededBy string
 }
 
 type previewPRResult struct {
@@ -39,13 +45,13 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 		return previewSetCheck{}, err
 	}
 	if set.Closed || set.CommitSHA != commitSHA {
-		return previewSetCheck{}, nil
+		return inactivePreviewSetCheck(ctx, pool, installationID, repo, set, commitSHA)
 	}
 	// GitHub identifies the shared `gregale-preview` check by repo, SHA, and
 	// name, not PR number. Two PRs can point at the same commit, so that check
 	// must represent every open preview set for the commit. The PR comment
 	// still reports only its own environment.
-	setRows, err := pool.Query(ctx, `select pr_number, root_app_id::text, member_app_ids
+	setRows, err := pool.Query(ctx, `select pr_number, root_app_id::text, member_app_ids, coalesce(setup_error, '')
 		from pr_preview_sets where installation_id = $1 and repo_full_name = $2
 		  and commit_sha = $3 and closed_at is null order by pr_number`, installationID, repo, commitSHA)
 	if err != nil {
@@ -54,7 +60,7 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 	var sets []state.PRPreviewSet
 	for setRows.Next() {
 		var candidate state.PRPreviewSet
-		if err := setRows.Scan(&candidate.PRNumber, &candidate.RootAppID, &candidate.MemberAppIDs); err != nil {
+		if err := setRows.Scan(&candidate.PRNumber, &candidate.RootAppID, &candidate.MemberAppIDs, &candidate.SetupError); err != nil {
 			setRows.Close()
 			return previewSetCheck{}, fmt.Errorf("githubd: scan preview set for commit: %w", err)
 		}
@@ -72,9 +78,47 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 			return previewSetCheck{}, err
 		}
 		results = append(results, previewPRResult{PRNumber: candidate.PRNumber,
-			Check: aggregatePRPreviewMembers(candidate.PRNumber, candidate.RootAppID, members)})
+			Check: aggregatePRPreviewMembers(candidate.PRNumber, candidate.RootAppID, members, candidate.SetupError)})
 	}
 	return combinePreviewSetChecks(prNumber, results), nil
+}
+
+// inactivePreviewSetCheck describes a commit that is no longer an open PR's
+// recorded head. The check it posted while it was the head would otherwise
+// stay queued or building forever. An open PR whose head is the same commit
+// owns the shared check, so then nothing is reported.
+func inactivePreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installationID int64, repo string, set state.PRPreviewSet, commitSHA string) (previewSetCheck, error) {
+	shared, err := commitHeadsOtherOpenPR(ctx, pool, installationID, repo, commitSHA, set.PRNumber)
+	if err != nil || shared {
+		return previewSetCheck{}, err
+	}
+	if set.CommitSHA != commitSHA {
+		return previewSetCheck{SupersededBy: set.CommitSHA}, nil
+	}
+	members, err := loadPRPreviewMembers(ctx, pool, set.RootAppID, set.PRNumber, set.MemberAppIDs, commitSHA)
+	if err != nil {
+		return previewSetCheck{}, err
+	}
+	for i := range members {
+		if members[i].PreviewState == state.PreviewPrStateClosed {
+			members[i].PreviewState = state.PreviewPrStateOpen
+		}
+	}
+	check := aggregatePRPreviewMembers(set.PRNumber, set.RootAppID, members, set.SetupError)
+	check.ClosedHead = true
+	return check, nil
+}
+
+// commitHeadsOtherOpenPR reports whether an open PR other than prNumber
+// previews commitSHA as its recorded head.
+func commitHeadsOtherOpenPR(ctx context.Context, pool *pgxpool.Pool, installationID int64, repo, commitSHA string, prNumber int) (bool, error) {
+	var shared bool
+	if err := pool.QueryRow(ctx, `select exists (select 1 from pr_preview_sets
+		where installation_id = $1 and repo_full_name = $2 and commit_sha = $3
+		  and closed_at is null and pr_number <> $4)`, installationID, repo, commitSHA, prNumber).Scan(&shared); err != nil {
+		return false, fmt.Errorf("githubd: find open PRs sharing a preview commit: %w", err)
+	}
+	return shared, nil
 }
 
 // combinePreviewSetChecks keeps the fixed-name GitHub check honest even when
@@ -172,8 +216,8 @@ func loadPRPreviewMembers(ctx context.Context, pool *pgxpool.Pool, rootAppID str
 // aggregatePRPreviewMembers is fail-closed. A missing or failed sibling takes
 // precedence over a live root; no event delivery order can make a partial
 // environment green. Only deployments for the recorded head reach this input.
-func aggregatePRPreviewMembers(prNumber int, rootAppID string, members []previewMemberStatus) previewSetCheck {
-	result := previewset.Evaluate(prNumber, rootAppID, members)
+func aggregatePRPreviewMembers(prNumber int, rootAppID string, members []previewMemberStatus, setupError string) previewSetCheck {
+	result := previewset.EvaluateSet(prNumber, rootAppID, members, setupError)
 	check := previewSetCheck{Summary: result.Summary, RootSlug: result.RootSlug, RootParentSlug: result.RootParentSlug}
 	switch result.Phase {
 	case previewset.PhaseLive:

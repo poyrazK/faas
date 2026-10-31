@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { createIssueReporter } from '../../sdk/node/dist/index.js';
+import { createIssueReporter } from '../../sdk/node/dist/preview.js';
 
 function smokeError(kind) {
   const error = new Error(`Controlled Gregale Issues ${kind.toLowerCase()} smoke failure`);

@@ -33,7 +33,17 @@ func (t readinessTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode >= 200 && res.StatusCode < 300 && (len(res.Header.Values("MCP-Protocol-Version")) != 1 || res.Header.Get("MCP-Protocol-Version") != t.version || len(res.Header.Values("MCP-Session-Id")) != 0) {
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return res, nil
+	}
+	sessionCreated := len(res.Header.Values("MCP-Session-Id")) != 0
+	// A notification's 202 Accepted carries no body and no protocol version
+	// to echo; every Gregale starter answers notifications/initialized with
+	// a bare 202, so requiring the header failed readiness for all of them
+	// (Hunt 14 H14-2). Responses with a body must still name the version.
+	versionMismatch := res.StatusCode != http.StatusAccepted &&
+		(len(res.Header.Values("MCP-Protocol-Version")) != 1 || res.Header.Get("MCP-Protocol-Version") != t.version)
+	if sessionCreated || versionMismatch {
 		_ = res.Body.Close()
 		return nil, errors.New("invalid stateless protocol response headers")
 	}

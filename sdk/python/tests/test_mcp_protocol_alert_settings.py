@@ -1,6 +1,6 @@
-from faas_sdk.models.alert_rule_response import AlertRuleResponse
-from faas_sdk.models.create_alert_rule_request import CreateAlertRuleRequest
-from faas_sdk.models.update_alert_rule_request import UpdateAlertRuleRequest
+from faas_sdk.preview.models.alert_rule_response import AlertRuleResponse
+from faas_sdk.preview.models.create_alert_rule_request import CreateAlertRuleRequest
+from faas_sdk.preview.models.update_alert_rule_request import UpdateAlertRuleRequest
 
 
 def test_mcp_alert_settings_round_trip():

@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 )
 
 // DiscoveredRouteLimit bounds persistent per-app cardinality independently of
@@ -38,6 +41,7 @@ type discoveredRouteCloudEvent struct {
 	DataContentType string                   `json:"datacontenttype"`
 	Data            discoveredRouteEventData `json:"data"`
 	AccountID       string                   `json:"accountid"`
+	Producer        string                   `json:"producer,omitempty"`
 }
 
 type discoveredRouteNotice struct {
@@ -65,7 +69,7 @@ func apiRouteDiscoveredPayloads(accountID, appID, route string, firstSeen time.T
 	envelope := discoveredRouteCloudEvent{
 		SpecVersion: "1.0", ID: eventID, Source: discoveredRouteEventSource,
 		Type: discoveredRouteEventType, Time: firstSeen, DataContentType: "application/json",
-		Data: eventData, AccountID: accountID,
+		Data: eventData, AccountID: accountID, Producer: eventcontract.AppProducer(appID),
 	}
 	eventPayload, err = json.Marshal(envelope)
 	if err != nil {
@@ -91,7 +95,7 @@ func discoveredRouteFor(event APIConsumerUsageEvent) string {
 	}
 	// Audit-enabled gateways predating the dedicated route field still have a
 	// normalized candidate. This also preserves the initial audit API tests.
-	if event.Audit != nil && event.Audit.RouteTemplate != discoveredRouteOverflow {
+	if event.Audit != nil && event.Audit.RouteTemplate != discoveredRouteOverflow && api.RouteDiscoverableStatus(event.Audit.HTTPStatus) {
 		return event.Audit.RouteTemplate
 	}
 	return ""
@@ -150,7 +154,8 @@ func (m *MemStore) recordDiscoveredRouteLocked(event APIConsumerUsageEvent) []by
 	entry.RequestCount++
 	m.discoveredAPIRoutes[key] = entry
 	m.discoveryReceipts[event.EventID] = struct{}{}
-	if !newRoute {
+	// Mirrors PgStore: a rehearsal-enrolled app's routes never fan out.
+	if _, enrolled := m.scenarioActionPolicies[event.AppID]; !newRoute || enrolled {
 		return nil
 	}
 	eventPayload, _, err := apiRouteDiscoveredPayloads(event.AccountID, event.AppID, route, when)

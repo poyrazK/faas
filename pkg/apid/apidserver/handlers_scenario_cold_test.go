@@ -30,7 +30,7 @@ func TestColdStartEnrollmentRequiresQualificationAndPinsBudget(t *testing.T) {
 	simulation := api.ScenarioSimulationPlan{Version: 1, Fixtures: []api.ScenarioSimulationFixture{{Workload: "primary", Name: "notify", Integration: "email", Adapter: "resend", Method: "POST", Path: "/emails", Responses: []api.ScenarioSimulationResponse{{Status: 200}}}}}
 	req := api.RegisterScenarioTestRequest{ColdStart: &rehearsalcold.Spec{Version: 1, WithinMS: 1000}, CommandVersion: 1, NetworkMode: "contained", WebhookMode: "capture", ActionEvidenceVersion: 2, Simulation: &simulation, Members: []api.ScenarioTestWorkload{{Workload: "primary", AppSlug: session.App.Slug}}}
 	path := "/v1/dev/test-runs/" + run
-	if r = e.Do(t, "PUT", path, req, nil); r.Code != http.StatusServiceUnavailable {
+	if r = e.Do(t, "PUT", path, req, nil); r.Code != http.StatusNotImplemented {
 		t.Fatalf("unqualified cold enrollment: %d %s", r.Code, r.Body.String())
 	}
 	*s.RehearsalColdStartEnabled() = true

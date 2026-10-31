@@ -10,11 +10,11 @@ import traceback
 from pathlib import Path
 
 import pytest
-from faas_sdk.async_object_storage_runtime import AsyncObjectStorageBinding
-from faas_sdk.async_postgres_pool_runtime import AsyncPostgresPoolBinding
+from faas_sdk.preview.async_object_storage_runtime import AsyncObjectStorageBinding
+from faas_sdk.preview.async_postgres_pool_runtime import AsyncPostgresPoolBinding
 from faas_sdk.async_secret_reload_runtime import AsyncSecretReloadCoordinator, AsyncSecretReloadIO
-from faas_sdk.object_storage_runtime import ObjectStorageBindingError
-from faas_sdk.postgres_pool_runtime import PostgresPoolBindingError
+from faas_sdk.preview.object_storage_runtime import ObjectStorageBindingError
+from faas_sdk.preview.postgres_pool_runtime import PostgresPoolBindingError
 from faas_sdk.secret_reload_runtime import SecretReloadError
 
 
@@ -301,8 +301,8 @@ class NoDrivers(importlib.abc.MetaPathFinder):
             raise AssertionError('SDK imported an application dependency')
 sys.meta_path.insert(0, NoDrivers())
 sys.path.insert(0, sys.argv[1])
-from faas_sdk.async_object_storage_runtime import AsyncObjectStorageBinding
-from faas_sdk.async_postgres_pool_runtime import AsyncPostgresPoolBinding
+from faas_sdk.preview.async_object_storage_runtime import AsyncObjectStorageBinding
+from faas_sdk.preview.async_postgres_pool_runtime import AsyncPostgresPoolBinding
 """,
             str(source),
         ],

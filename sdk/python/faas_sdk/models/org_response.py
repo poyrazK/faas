@@ -16,7 +16,7 @@ T = TypeVar("T", bound="OrgResponse")
 @_attrs_define
 class OrgResponse:
     """Canonical org wire shape. RFC3339 timestamps; zero-time
-    serialises as empty string. Mirrors `pkg/api.OrgResponse`.
+    serialises as empty string.
 
     """
 

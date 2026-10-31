@@ -35,6 +35,7 @@ func (h suggestionHost) Logger() *slog.Logger                                   
 func (h suggestionHost) EmitAudit(context.Context, string, *string, map[string]any) {}
 func (h suggestionHost) Notifier() Notifier                                         { return nil }
 func (h suggestionHost) PromQL() *promql.Client                                     { return nil }
+func (h suggestionHost) PlatformFlagEnabled(string, state.Account) bool             { return true }
 
 // telemetryStore serves canned request telemetry and records the window read.
 type telemetryStore struct {

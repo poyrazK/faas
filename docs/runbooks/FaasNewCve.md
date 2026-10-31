@@ -8,8 +8,9 @@
 ## Symptom
 
 The nightly cve-check workflow has detected a new CVE ≥ medium
-severity in the SBOM (grype) or the Go code (govulncheck) that
-was NOT present in the previous day's run. A GitHub Issue titled
+severity in the SBOM (grype), a published platform image (grype on
+`ghcr.io/poyrazk/<image>:latest`), or the Go code (govulncheck) that
+was NOT present in the previous successful run. A GitHub Issue titled
 "New CVE detected YYYY-MM-DD" with the `security` label
 has been opened automatically. A scanner or vulnerability-database failure
 keeps the workflow red and opens one deduplicated scanner-failure issue.
@@ -39,12 +40,25 @@ keeps the workflow red and opens one deduplicated scanner-failure issue.
    `govulncheck` already filters to "reachable from main" so a
    govulncheck hit IS exposed; for grype hits, read the
    `package_url` and decide.
+4. **Image findings** read `<image>: <package>@<version>`. They come from
+   the published `:latest` tag imaged stages for new deploys. A fixable
+   CRITICAL is urgent: vmmd refuses to boot a base whose scan shows one, so
+   apps on that runtime stop booting as soon as imaged writes a new scan for
+   the base (a re-stage or rebuild).
+   Reproduce with
+   `grype registry:ghcr.io/poyrazk/<image>:latest --platform linux/amd64 --only-fixed`.
 
 ## Mitigate
 
 - **Patch path (preferred):** bump the dependency to the
   fixed-in version. For Go modules, `go get pkg@version` +
   `go mod tidy` + standard PR review.
+- **Image patch path:** change the image's inputs in a PR: the package pin in
+  `images/<image>.Dockerfile`, or its parent digest via
+  `python3 scripts/ci/images_lock_update.py --repo-root .`
+  (`images/Dockerfile.lock`). images.yml rebuilds and gates the image on the
+  PR, then promotes `:latest` when it merges to main. A manual
+  `workflow_dispatch` run does not promote runtime images.
 - **Workaround path (if no patch is available yet):** add a
   grype ignore at `.grype.yaml` or a `// #nosec G204` annotation
   (for Go-side vulns), with a justification comment in the

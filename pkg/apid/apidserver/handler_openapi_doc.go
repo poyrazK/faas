@@ -77,8 +77,9 @@ func (s *server) getOpenAPIDoc(w http.ResponseWriter, r *http.Request, acct stat
 			s.notFound(w, "no OpenAPI document captured for this deployment")
 			return
 		}
+		logCustomerFailure(s.log, "failed to read OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read OpenAPI document", err.Error()))
+			"failed to read OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	// Cache-Control mirrors the CORS preset GET (5 min) — the
@@ -198,32 +199,25 @@ func (s *server) patchOpenAPIDoc(w http.ResponseWriter, r *http.Request, acct st
 			"doc must be a JSON object with a top-level 'openapi' or 'swagger' key", ""))
 		return
 	}
-	// Per-account quota gate. The COUNT is computed server-side
-	// via a SELECT COUNT(*) so the apid doesn't load the full
-	// body slice. The same deployment's doc is allowed to be
-	// overwritten (last-write-wins) — the count is the current
-	// row count, not the post-upsert count.
-	_, _, getErr := s.store.GetDeploymentOpenAPIDoc(r.Context(), depID, acct.ID)
-	alreadyExists := getErr == nil
-	if !alreadyExists {
-		count, err := s.store.CountOpenAPIDocsByAccount(r.Context(), acct.ID)
-		if err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-				"failed to count OpenAPI documents", err.Error()))
-			return
-		}
-		if count >= acct.Plan.OpenAPIDocsPerAccount() {
-			api.WriteProblem(w, api.ErrPlanOpenAPIDocQuota(acct.Plan, acct.Plan.OpenAPIDocsPerAccount(), count))
-			return
-		}
-	}
 	truncated := false
 	if req.Truncated != nil {
 		truncated = *req.Truncated
 	}
-	if err := s.store.UpsertDeploymentOpenAPIDoc(r.Context(), depID, acct.ID, app.ID, docBytes, source, truncated); err != nil {
+	// The store counts the documents of the app's billing subject
+	// (ADR-202610171904) and saves this one in one step, so concurrent
+	// captures cannot all take the last slot. Replacing this deployment's
+	// document is not a new one.
+	err = s.store.UpsertDeploymentOpenAPIDocIfUnderQuota(r.Context(), depID, acct.ID, app.ID, docBytes, source, truncated,
+		acct.Plan.OpenAPIDocsPerAccount())
+	var quota *state.OpenAPIDocQuotaError
+	switch {
+	case errors.As(err, &quota):
+		api.WriteProblem(w, api.ErrPlanOpenAPIDocQuota(acct.Plan, quota.Limit, quota.Observed))
+		return
+	case err != nil:
+		logCustomerFailure(s.log, "failed to persist OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to persist OpenAPI document", err.Error()))
+			"failed to persist OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	// Audit emit. The kind follows the dotted
@@ -239,8 +233,9 @@ func (s *server) patchOpenAPIDoc(w http.ResponseWriter, r *http.Request, acct st
 	// 200 with the updated row.
 	gotDoc, gotMeta, err := s.store.GetDeploymentOpenAPIDoc(r.Context(), depID, acct.ID)
 	if err != nil {
+		logCustomerFailure(s.log, "failed to read back OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read back OpenAPI document", err.Error()))
+			"failed to read back OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -287,8 +282,9 @@ func (s *server) openAPIDocDelete(w http.ResponseWriter, r *http.Request, acct s
 			s.notFound(w, "no OpenAPI document for this deployment")
 			return
 		}
+		logCustomerFailure(s.log, "failed to delete OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to delete OpenAPI document", err.Error()))
+			"failed to delete OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	s.audit.Emit(r.Context(), "app.openapi_doc.deleted", &acct.ID, map[string]any{

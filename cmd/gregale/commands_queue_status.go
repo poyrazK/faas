@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -106,8 +107,17 @@ func queueStatusHealthRank(health string) int {
 
 func cmdQueueStatus(args []string) int {
 	fs := newFlagSet("queue status", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || len(pos) != 1 {
+	if err := fs.Parse(flags); err != nil {
+		PrintUsage(osStderr, "usage: gregale queue status <slug>", "queue")
+		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
+	}
+	if len(pos) != 1 {
 		PrintUsage(osStderr, "usage: gregale queue status <slug>", "queue")
 		return 1
 	}

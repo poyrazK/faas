@@ -132,3 +132,26 @@ Pages for components that are not deployed in production (Loki, GCP Ops Agent) o
   instead of every four hours, optional `am_*_warn_webhook_url_file`
   channels keep warns out of the page chat, and the fleet dashboard opens
   with a firing-pages count and a firing-warn table.
+
+## Amendment (2026-10-28): event routing
+
+`FaasEventRoutingStalled` pages: no schedd has completed an event routing
+sweep for fifteen minutes, so every published event, object notification and
+webhook automation is accepted but none is delivered (rule 1, customers are
+failing now). The other event-routing alerts (`FaasEventRoutingSweepSlow`,
+`FaasEventDeliveryCapacityBacklog`, `FaasDeadLetterSpike`,
+`FaasBrokerTriggerPollErrors`, `FaasEventsPublishingPaused`) are warn. Runbook:
+[FaasEventDriven](../runbooks/FaasEventDriven.md).
+
+## Amendment (2026-10-31): routing that runs but delivers nothing
+
+A routing pass that fails every claim still completes, so
+`FaasEventRoutingStalled` stayed quiet while nothing was routed. schedd now
+counts routing results in `schedd_event_routing_outcomes_total{outcome}`
+(`routed`, `waiting`, `retry`, `failed`, `claim_error`). The page also fires
+when, for fifteen minutes, sweeps hit claim errors and route no recipient at
+all. It is still the only event-routing page. A new warn,
+`FaasEventRoutingFailing`, fires when more than half of the recipients routed
+in fifteen minutes (and at least 50) failed or went back to retry.
+`FaasDeadLetterSpike` now counts recipients whose routing failed alongside
+invocation and trigger dead letters. The warn route is unchanged.

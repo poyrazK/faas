@@ -84,13 +84,11 @@ func managedServiceProbeContextAndReceiptIsolation(t *testing.T, worker bool) {
 }
 
 func TestManagedServiceProbeRejectsUnsupportedContexts(t *testing.T) {
-	for _, scenario := range []string{"http", "held", "worker-class", "worker-mode", "job", "target-worker", "target-job", "target-held", "release-changed", "missing-binding"} {
+	for _, scenario := range []string{"held", "worker-class", "worker-mode", "job", "target-worker", "target-job", "target-held", "release-changed", "missing-binding"} {
 		t.Run(scenario, func(t *testing.T) {
 			store, app, dep, _, targetDep := managedProbeFixture(t)
 			frozen, _ := dep.ScopedWorkloadRuntime()
 			switch scenario {
-			case "http":
-				frozen.Baseline.ServiceBindingTransport = api.ServiceBindingTransportHTTP
 			case "held":
 				dep.EnvironmentWorkloadHeldValue = environmentWorkloadHeldFlag(true)
 			case "worker-class":
@@ -123,5 +121,25 @@ func TestManagedServiceProbeRejectsUnsupportedContexts(t *testing.T) {
 				t.Fatal("unsupported managed context admitted")
 			}
 		})
+	}
+}
+
+// ADR-20261019200059: an HTTP caller's edge resolves to the HTTP contract,
+// and the HTTPS spec keeps its original context revision.
+func TestManagedServiceProbeResolvesHTTPCallers(t *testing.T) {
+	store, app, dep, _, _ := managedProbeFixture(t)
+	secure, err := ResolveManagedServiceProbe(t.Context(), store, app.ID, dep.ID, "database")
+	if err != nil || secure.Transport != "" || secure.Contract() != api.ManagedServiceProbeContract {
+		t.Fatalf("HTTPS spec: %+v %v", secure, err)
+	}
+	frozen, _ := dep.ScopedWorkloadRuntime()
+	frozen.Baseline.ServiceBindingTransport = api.ServiceBindingTransportHTTP
+	raw, _ := json.Marshal(frozen)
+	dep.EnvironmentWorkloadRuntime = string(raw)
+	store.deployments[dep.ID] = dep
+	plain, err := ResolveManagedServiceProbe(t.Context(), store, app.ID, dep.ID, "database")
+	if err != nil || !plain.Valid() || plain.Transport != api.ServiceBindingTransportHTTP || plain.Contract() != api.ManagedServiceHTTPProbeContract ||
+		plain.ContextRevision == secure.ContextRevision {
+		t.Fatalf("HTTP spec: %+v %v", plain, err)
 	}
 }

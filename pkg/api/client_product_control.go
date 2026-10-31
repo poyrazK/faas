@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (c *Client) StartProductFeature(ctx context.Context, req ProductStartRequest, key string) (OperationAcceptedResponse, error) {
@@ -52,6 +53,22 @@ func (c *Client) SetProductCustomer(ctx context.Context, slug string, customer P
 		Suspended          bool   `json:"suspended"`
 	}{customer.AuthOrganizationID, customer.Plan, customer.Revision, customer.Suspended}
 	err := c.do(ctx, http.MethodPut, productPath(slug)+"/customers/"+url.PathEscape(customer.TenantID), req, &out)
+	return out, err
+}
+
+// SetProductCustomerTrialEnd moves a customer's running trial to end at
+// endsAt (ADR-20261021195901).
+func (c *Client) SetProductCustomerTrialEnd(ctx context.Context, slug, tenant string, endsAt time.Time) (ProductCustomer, error) {
+	var out ProductCustomer
+	err := c.do(ctx, http.MethodPut, productPath(slug)+"/customers/"+url.PathEscape(tenant)+"/trial", ProductTrialRequest{EndsAt: endsAt}, &out)
+	return out, err
+}
+
+// EndProductCustomerTrial ends a customer's running trial at the next UTC
+// minute.
+func (c *Client) EndProductCustomerTrial(ctx context.Context, slug, tenant string) (ProductCustomer, error) {
+	var out ProductCustomer
+	err := c.do(ctx, http.MethodDelete, productPath(slug)+"/customers/"+url.PathEscape(tenant)+"/trial", nil, &out)
 	return out, err
 }
 

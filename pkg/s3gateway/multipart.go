@@ -89,7 +89,7 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 		return
 	}
 	key := req.signatureKey(r)
-	if !objectstorage.ValidKey(key) {
+	if !objectstorage.ValidRequestKey(key) {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidRequest")
 		return
 	}
@@ -161,14 +161,12 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 		h.unsupported(w, r, req.requestID)
 		return
 	}
-	select {
-	case h.putSlots <- struct{}{}:
-		defer func() { <-h.putSlots }()
-	default:
+	if !h.acquirePutSlot(req.bucket.AccountID) {
 		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
 		return
 	}
+	defer h.releasePutSlot(req.bucket.AccountID)
 	h.forwardMultipartPart(w, r, req, upload, int32(part64), integrity, transfers)
 }
 

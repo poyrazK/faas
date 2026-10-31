@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -271,14 +272,25 @@ type Server struct {
 	// appTaskAttach pairs interactive app tasks with their attached client
 	// (ADR-1037). The zero value is ready to use.
 	appTaskAttach appTaskAttachRegistry
+	// hostCPU is the host CPU busy window Stats reports (ADR 20261030100950).
+	// The zero value is ready to use.
+	hostCPU hostCPUSampler
 
-	vmm   VmmdAPI
-	ops   *wire.OpsMetrics
-	fcVer string
-	log   *slog.Logger
+	vmm VmmdAPI
+	ops *wire.OpsMetrics
+	// agentRunsEnabled gates RunAgent (ADR-20261027090010 §1: off by default).
+	agentRunsEnabled bool
+	fcVer            string
+	log              *slog.Logger
+	// baseReadiness answers Ping's base generation report (ADR-20261022184531).
+	baseReadiness *CachedBaseGenerationReadiness
 	// diverged (ADR-740) lists instances that were served a developer live
 	// patch; their snapshot captures are refused. nil disables the guard.
 	diverged *DivergedInstances
+	// adoptionReportOn and adoptionReport serve AdoptionReport (vmmd
+	// restart adoption ADR §3); see WithAdoptionReport.
+	adoptionReportOn bool
+	adoptionReport   *AdoptionReport
 	// events (issue #517 / PR-C / ADR-064) is the wake-timeline
 	// fan-out. vmmd is the corroborating-observation source for
 	// wake.boot_observed at the gRPC server boundary and
@@ -312,6 +324,17 @@ type Server struct {
 	// inflightTraces holds each in-flight HTTP forward's traceparent for
 	// InflightRequestTrace (ADR-1138).
 	inflightTraces inflightTraces
+	// invokeHooks skips per-request invoke events for instances whose guest
+	// has no extension endpoint (ADR-20261025150000) while
+	// invokeHookBackoffOn is set (vmmd invoke_hook_backoff, default off).
+	invokeHooks         invokeHookBackoff
+	invokeHookBackoffOn bool
+	// bridgeStreamHeadroom is vmmd's bridge_stream_headroom switch
+	// (ADR-20261026120000); every stream bridge manager takes it.
+	bridgeStreamHeadroom bool
+	// streamBridgeGOMAXPROCS and streamBridgeGOGC are vmmd's
+	// stream_bridge_gomaxprocs and stream_bridge_gogc; 0 keeps Go's default.
+	streamBridgeGOMAXPROCS, streamBridgeGOGC int
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer
@@ -414,7 +437,11 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 		// never exported. Tests that don't assert metrics use this path.
 		ops = wire.NewOpsMetrics("vmmd_test")
 	}
-	return &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	s := &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	if j, ok := vmm.(instanceBridgeJournal); ok {
+		s.streamBridges.journal = j
+	}
+	return s
 }
 
 // WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline
@@ -498,6 +525,49 @@ func (s *Server) MigrationLeaser() leaser.Leaser[any] {
 		return nil
 	}
 	return NewMigrationLeaser(s.migrations)
+}
+
+// WithBridgeStreamHeadroom turns on the ADR-20261026120000 bridge
+// settings for the bridges this server starts from now on.
+func (s *Server) WithBridgeStreamHeadroom(on bool) *Server {
+	if s != nil {
+		s.bridgeStreamHeadroom = on
+		if s.streamBridges != nil {
+			s.streamBridges.headroom.Store(on)
+		}
+	}
+	return s
+}
+
+// WithStreamBridgeGoRuntime sets GOMAXPROCS and GOGC for the stream bridges
+// this server starts from now on; 0 keeps Go's default for that setting.
+func (s *Server) WithStreamBridgeGoRuntime(gomaxprocs, gogc int) *Server {
+	if s != nil {
+		s.streamBridgeGOMAXPROCS, s.streamBridgeGOGC = gomaxprocs, gogc
+		if s.streamBridges != nil {
+			s.streamBridges.setGoRuntime(gomaxprocs, gogc)
+		}
+	}
+	return s
+}
+
+// newBridgeManager builds a stream bridge manager carrying this server's
+// bridge settings.
+func (s *Server) newBridgeManager() *streamBridgeManager {
+	m := newStreamBridgeManager(s.log)
+	m.headroom.Store(s.bridgeStreamHeadroom)
+	m.setGoRuntime(s.streamBridgeGOMAXPROCS, s.streamBridgeGOGC)
+	return m
+}
+
+// WithInvokeHookBackoff turns on the ADR-20261025150000 backoff: an instance
+// whose guest answered that no extension endpoint is listening gets no
+// per-request invoke events for extension.InvokeUnavailableBackoff.
+func (s *Server) WithInvokeHookBackoff(on bool) *Server {
+	if s != nil {
+		s.invokeHookBackoffOn = on
+	}
+	return s
 }
 
 // WithFlowCounter wires the compute-side conntrack reader used by Stats.
@@ -675,6 +745,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 		s.incWakeFailure(ctx, "snapshot_restore_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "restore", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Schedd is the canonical emit site;
@@ -687,7 +758,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, wakeStatus(err)
 	}
 	if inst.Method == fcvm.WakeColdBoot && inst.RestoreError != "" {
 		s.log.Warn("vmmd: restore fell back to cold boot", "instance", req.GetInstance(), "err", inst.RestoreError)
@@ -705,14 +776,14 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 		return s.vmm.Wake(ctx, wr)
 	}
 	if s.streamBridges == nil {
-		s.streamBridges = newStreamBridgeManager(s.log)
+		s.streamBridges = s.newBridgeManager()
 	}
 	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
-		s.streamBridges.prewarm(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
+		s.prewarmStreamBridge(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,
-		}, ready.Netns)
+		}, ready)
 	})
 	if err != nil {
 		s.forgetForwarding(ctx, wr.Instance)
@@ -741,6 +812,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 		s.incWakeFailure(ctx, "mem_backend_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "cold_boot", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Same canonical-site pairing as
@@ -752,7 +824,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		s.log.Error("vmmd: cold boot failed", "instance", req.GetInstance(), "err", err.Error())
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, wakeStatus(err)
 	}
 	return wakeResponseFromInstance(req.GetInstance(), wr, inst, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil
 }
@@ -1110,10 +1182,21 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	info, err := s.vmm.WarmSnapshot(ctx, req.GetInstance(), fcvm.SnapshotSpec{
+	spec := fcvm.SnapshotSpec{
 		StorageKey:        req.GetStorageKey(),
 		VMStateStorageKey: req.GetVmstateStorageKey(),
-	})
+	}
+	var sealedKey []byte
+	if captureID := req.GetSealCaptureId(); captureID != "" {
+		store, sealed, err := s.sealCaptureStorage(captureID)
+		if err != nil {
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, grpcerr.ToStatus(api.NewProblem(int(codes.FailedPrecondition), api.CodeValidation,
+				"Cannot seal crash capture", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot"))
+		}
+		spec.Storage, sealedKey = store, sealed
+	}
+	info, err := s.vmm.WarmSnapshot(ctx, req.GetInstance(), spec)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -1122,8 +1205,23 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		MemBytes:     info.MemBytes,
 		VmstateBytes: info.VMStateBytes,
 		StoredBytes:  info.StoredBytes,
+		SealedKey:    sealedKey,
 		Capture:      info.Capture.ToProto(),
 	}, nil
+}
+
+// captureSealer is the optional ADR-733 capability of the VMM: a backend
+// that publishes a crash capture only as encrypted twins.
+type captureSealer interface {
+	SealCaptureStorage(captureID string) (storage.StorageBackend, []byte, error)
+}
+
+func (s *Server) sealCaptureStorage(captureID string) (storage.StorageBackend, []byte, error) {
+	sealer, ok := s.vmm.(captureSealer)
+	if !ok {
+		return nil, nil, errors.New("this vmmd cannot encrypt crash captures")
+	}
+	return sealer.SealCaptureStorage(captureID)
 }
 
 // ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
@@ -1240,6 +1338,38 @@ func (s *Server) DeleteWarmSnapshot(ctx context.Context, req *vmmdpb.DeleteWarmS
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return &vmmdpb.DeleteWarmSnapshotResponse{Deleted: true}, nil
+}
+
+// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+// capture on imaged's behalf (ADR 20261022184951 amendment 1). imaged owns
+// the collection decision; vmmd, the tree's only writer, does the removal.
+func (s *Server) RetireNativeRuntimeSnapshotObject(ctx context.Context, req *vmmdpb.RetireNativeRuntimeSnapshotObjectRequest) (*vmmdpb.RetireNativeRuntimeSnapshotObjectResponse, error) {
+	const op = "RetireNativeRuntimeSnapshotObject"
+	start := time.Now()
+	retirer, ok := s.vmm.(interface {
+		RetireNativeRuntimeSnapshotObject(context.Context, string) error
+	})
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot retirement unavailable", "vmmd does not expose native runtime snapshot retirement")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	err := retirer.RetireNativeRuntimeSnapshotObject(ctx, req.GetStorageKey())
+	s.ops.Observe(op, time.Since(start), err)
+	switch {
+	case err == nil:
+		return &vmmdpb.RetireNativeRuntimeSnapshotObjectResponse{}, nil
+	case errors.Is(err, storage.ErrInvalidKey):
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Not a native runtime snapshot object", err.Error()))
+	case errors.Is(err, fcvm.ErrNativeRuntimeSnapshotRootUnset):
+		// To imaged this vmmd is one without the RPC: keep the row, retry.
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot root unavailable", err.Error()))
+	default:
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
 }
 
 // FrameworkReady is the vmmd-side receipt of the guest-init "framework
@@ -1453,6 +1583,7 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 		LiveCount:   int32(s.vmm.LiveCount()),
 		LeasedCount: int32(s.vmm.LeasedCount()),
 	}
+	s.setCPUPressureReadings(resp, time.Now())
 
 	resident, ok := leakcheck.ResidentBytes()
 	if !ok {
@@ -1491,10 +1622,17 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 			}
 		}
 		row.OpenConns = openConns[inst]
+		row.EgressCircuitEnforcement = s.egressCircuitEnforcement(inst)
+		row.HttpAdmissionEnforcement = s.httpAdmissionEnforcement(inst)
 		row.FlowSummaries = flowSummariesToProto(flowTelemetry.summaries[inst])
 		resp.Instances = append(resp.Instances, row)
 	}
 	resp.TotalResidentBytes = wrapperspb.Int64(total)
+	if InstanceBridgeUnitsEnabled() {
+		if b, ok := instanceBridgeResidentBytes(); ok {
+			resp.InstanceBridgeResidentBytes = wrapperspb.Int64(b)
+		}
+	}
 	return resp, nil
 }
 
@@ -1673,17 +1811,26 @@ func buildInstanceStatsRow(
 // both gRPC socket reachability and that vmmd's goroutine
 // scheduler is responsive enough to schedule this handler. Idempotent
 // + side-effect free; no backing Manager call.
-func (s *Server) Ping(_ context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
+func (s *Server) Ping(ctx context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
 	const op = "Ping"
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
-	return &vmmdpb.PingResponse{
+	resp := &vmmdpb.PingResponse{
 		FcVersion:                          s.fcVer,
 		ServerTime:                         timestamppb.Now(),
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,
-	}, nil
+	}
+	// ADR-20261022184531: schedd's heartbeat marks a node that cannot adopt
+	// its configured base generation degraded. The report is cached; Ping
+	// never waits for shared storage.
+	for _, base := range s.baseReadiness.Report(ctx) {
+		resp.BaseGenerations = append(resp.BaseGenerations, &vmmdpb.BaseGenerationReadiness{
+			BaseKey: base.BaseKey, Generation: base.Generation, Adoptable: base.Adoptable, Reason: base.Reason,
+		})
+	}
+	return resp, nil
 }
 
 // UpdateEgressAllowlist (ADR-031 + ADR-033, tier-2 PR-B) walks the
@@ -2340,6 +2487,17 @@ func ParseSeccompLines(r io.Reader) (string, int32, error) {
 		return "", 0, fmt.Errorf("no Seccomp line (kernel too old?)")
 	}
 	return mode, filterLen, nil
+}
+
+// wakeStatus is a wake RPC's error status. A failure before the VM started
+// carries wake_stage=pre_start beside the Problem (ADR-20261022184531), so
+// schedd may place the wake on another node; the Problem itself is
+// unchanged.
+func wakeStatus(err error) error {
+	if errors.Is(err, fcvm.ErrWakeNotStarted) {
+		return grpcerr.ToStatusWithMetadata(toProblem(err), map[string]string{grpcerr.MetadataWakeStage: grpcerr.WakeStagePreStart})
+	}
+	return grpcerr.ToStatus(toProblem(err))
 }
 
 // toProblem lifts a plain error to *api.Problem if it isn't one already.

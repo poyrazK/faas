@@ -4,7 +4,7 @@
 /* eslint-disable */
 /**
  * Call an existing customer managed outbound integration bound to this app.
- * Credentials and fixed-origin routing remain with outboundd. Input is a
+ * Credentials and fixed-origin routing remain with the outbound gateway. Input is a
  * templated JSON body. Path segments and query values support the workflow
  * template syntax; dynamic path values are escaped as one segment. GET and
  * HEAD have no body and forbid explicit input.

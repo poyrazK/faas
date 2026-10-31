@@ -12,12 +12,13 @@ import (
 func cmdJobsStatus(args []string) int {
 	fs := newFlagSet("jobs status", flag.ContinueOnError)
 	check := fs.Bool("check", false, "exit successfully only when the run has succeeded")
+	showConditions := fs.Bool("conditions", false, "print the run's conditions (Succeeded, Progressing) instead of its summary")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	args = fs.Args()
 	if len(args) > 2 {
-		return printErr("Invalid Job status target", fmt.Errorf("usage: gregale jobs status [JOB] [RUN_ID|latest] [--check]"))
+		return printErr("Invalid Job status target", fmt.Errorf("usage: gregale job status [JOB] [RUN_ID|latest] [--check]"))
 	}
 	if len(args) == 0 {
 		defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "status", "my-job"})
@@ -33,7 +34,7 @@ func cmdJobsStatus(args []string) int {
 		args = append(args, "latest")
 	}
 	if len(args) != 2 || !jobSlugPattern.MatchString(args[0]) || (args[1] != "latest" && !jobRunIDPattern.MatchString(args[1])) {
-		return printErr("Invalid Job status target", fmt.Errorf("usage: gregale jobs status [JOB] [RUN_ID|latest] [--check]; provide a valid Job name and run UUID or latest"))
+		return printErr("Invalid Job status target", fmt.Errorf("usage: gregale job status [JOB] [RUN_ID|latest] [--check]; provide a valid Job name and run UUID or latest"))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -51,6 +52,13 @@ func cmdJobsStatus(args []string) int {
 	id, err := resolveJobRunReadArg(ctx, client, args[0], args[1])
 	if err != nil {
 		return printErr("Could not resolve Job run", err)
+	}
+	if *showConditions {
+		status, err := client.GetJobRunStatus(ctx, args[0], id)
+		if err != nil {
+			return printErr("Could not read conditions", jobRunStatusError(args[0], id, err))
+		}
+		return renderResourceStatus(status)
 	}
 	run, err := client.GetJobRun(ctx, args[0], id)
 	if err != nil {

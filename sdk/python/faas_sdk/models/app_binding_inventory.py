@@ -46,6 +46,9 @@ class AppBindingInventory:
     """Deployment selected for evidence: explicit selector or current manual-task deployment."""
     verification_scope: str | Unset = UNSET
     """Scope of the selected verification deployment."""
+    verification_probes_available: bool | Unset = UNSET
+    """Whether this control-plane host can run bindings verify probes (deployment-attached app tasks). False means
+    probe evidence cannot be produced here; absent from older servers."""
     runtime_freshness: BindingRuntimeFreshness | Unset = UNSET
     """App-wide timestamp-based configuration freshness, independent of canary verification. This is not guest
     acknowledgement, readiness or proof of credential use. Scope filtering selects deployments; task guests, jobs
@@ -87,6 +90,8 @@ class AppBindingInventory:
 
         verification_scope = self.verification_scope
 
+        verification_probes_available = self.verification_probes_available
+
         runtime_freshness: dict[str, Any] | Unset = UNSET
         if not isinstance(self.runtime_freshness, Unset):
             runtime_freshness = self.runtime_freshness.to_dict()
@@ -124,6 +129,8 @@ class AppBindingInventory:
             field_dict["verification_deployment_id"] = verification_deployment_id
         if verification_scope is not UNSET:
             field_dict["verification_scope"] = verification_scope
+        if verification_probes_available is not UNSET:
+            field_dict["verification_probes_available"] = verification_probes_available
         if runtime_freshness is not UNSET:
             field_dict["runtime_freshness"] = runtime_freshness
         if issues is not UNSET:
@@ -186,6 +193,8 @@ class AppBindingInventory:
 
         verification_scope = d.pop("verification_scope", UNSET)
 
+        verification_probes_available = d.pop("verification_probes_available", UNSET)
+
         _runtime_freshness = d.pop("runtime_freshness", UNSET)
         runtime_freshness: BindingRuntimeFreshness | Unset
         if isinstance(_runtime_freshness, Unset):
@@ -215,6 +224,7 @@ class AppBindingInventory:
             requested_deployment_id=requested_deployment_id,
             verification_deployment_id=verification_deployment_id,
             verification_scope=verification_scope,
+            verification_probes_available=verification_probes_available,
             runtime_freshness=runtime_freshness,
             issues=issues,
             warnings=warnings,

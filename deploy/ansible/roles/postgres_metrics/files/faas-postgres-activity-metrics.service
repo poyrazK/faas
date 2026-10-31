@@ -1,0 +1,21 @@
+[Unit]
+Description=Export PostgreSQL activity, statements and table health for node_exporter
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+# Writes into the shared node_exporter textfile directory (0775 node_exporter).
+SupplementaryGroups=node_exporter
+ExecStart=/usr/local/bin/faas-postgres-activity-metrics
+TimeoutStartSec=60
+# The collector competes with the database it watches; it always yields.
+Nice=10
+CPUWeight=20
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/node_exporter/textfile_collector

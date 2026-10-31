@@ -13,6 +13,10 @@ export type ProjectEnvironmentCloneResponse = {
    * Destination-to-source references copied under the new catalog environment identity. Git source bindings, ownership, overrides and runtime receipts are not copied.
    */
   secret_references_copied?: number;
+  /**
+   * Secrets the source environment shares with every service, copied to the new environment. Values are never returned.
+   */
+  project_secrets_copied?: number;
   workloads_copied: number;
   bindings_copied: number;
   routes_copied: number;

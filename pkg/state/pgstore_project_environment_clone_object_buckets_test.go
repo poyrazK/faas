@@ -14,3 +14,9 @@ func TestPgCloneBucketReservationRejectsForeignTarget(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	cloneBucketForeignTargetContract(t, s)
 }
+
+// adr: 1139
+func TestPgDurableCloneRefusesProjectSecrets(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	durableCloneRefusesProjectSecrets(t, s)
+}

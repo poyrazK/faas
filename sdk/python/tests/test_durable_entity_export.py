@@ -1,8 +1,8 @@
 """Owner state recovery wire contract; qualification is delegated."""
 
-from faas_sdk.api.invocations import export_durable_entity, restore_durable_entity
-from faas_sdk.models.durable_entity_restore_request import DurableEntityRestoreRequest
-from faas_sdk.models.durable_entity_state_export import DurableEntityStateExport
+from faas_sdk.preview.api.invocations import export_durable_entity, restore_durable_entity
+from faas_sdk.preview.models.durable_entity_restore_request import DurableEntityRestoreRequest
+from faas_sdk.preview.models.durable_entity_state_export import DurableEntityStateExport
 
 ACCOUNT_ID = "22222222-2222-4222-8222-222222222222"
 APP_ID = "33333333-3333-4333-8333-333333333333"
@@ -12,8 +12,8 @@ ENVIRONMENT_ID = "44444444-4444-4444-8444-444444444444"
 def test_application_validation_preserves_deployment_pin():
     from uuid import UUID
 
-    from faas_sdk.api.invocations import validate_durable_entity_restore
-    from faas_sdk.models.durable_entity_restore_validation_response import DurableEntityRestoreValidationResponse
+    from faas_sdk.preview.api.invocations import validate_durable_entity_restore
+    from faas_sdk.preview.models.durable_entity_restore_validation_response import DurableEntityRestoreValidationResponse
 
     deployment = UUID("11111111-1111-4111-8111-111111111111")
     exported = DurableEntityStateExport.from_dict(
@@ -50,8 +50,8 @@ def test_application_validation_preserves_deployment_pin():
 
 
 def test_backup_and_preview_wire_contract():
-    from faas_sdk.api.invocations import get_durable_entity_backup, list_durable_entity_backups
-    from faas_sdk.models.durable_entity_restore_preview import DurableEntityRestorePreview
+    from faas_sdk.preview.api.invocations import get_durable_entity_backup, list_durable_entity_backups
+    from faas_sdk.preview.models.durable_entity_restore_preview import DurableEntityRestorePreview
 
     listed = list_durable_entity_backups._get_kwargs("app", namespace="ns", key="doc/?雪", cursor="opaque+/=")
     assert listed["method"] == "get"

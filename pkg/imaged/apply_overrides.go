@@ -213,6 +213,10 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 	}
 	manifest.ExecutionMode = app.Manifest.ExecutionMode
 	manifest.RestartPolicy = app.Manifest.RestartPolicy
+	// Compose secrets the main workload reads from /run/secrets
+	// (ADR-20261023090000); like service URLs, they come from the app's
+	// project-reconciled manifest.
+	manifest.SecretFiles = api.CloneSecretFiles(app.Manifest.ProjectSecretFiles)
 	manifest.AfterRestore = nil
 	if app.Manifest.AfterRestore != nil {
 		hook := *app.Manifest.AfterRestore

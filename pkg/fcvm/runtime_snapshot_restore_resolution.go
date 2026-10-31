@@ -5,7 +5,6 @@ package fcvm
 import (
 	"context"
 	"errors"
-	"path/filepath"
 
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
@@ -63,15 +62,6 @@ func (v *JailerVMM) resolveRestoreArtifactsForInputs(ctx context.Context, lease 
 		return nil, runtimeadmission.ErrInvalid
 	}
 	return result, ctx.Err()
-}
-
-func snapshotRestoreSidecarName(spec RestoreSpec, index int, path string) string {
-	if spec.verifiedSnapshot != nil {
-		// provisionForOwner names config drive i as sidecarDriveImageName(i-1).
-		// Here index is the workload index, one less than its config drive index.
-		return sidecarDriveImageName(index)
-	}
-	return filepath.Base(path)
 }
 
 func verifiedSnapshotDriveConfig(lease Lease, spec RestoreSpec) (VMConfig, error) {

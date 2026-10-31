@@ -297,7 +297,7 @@ func TestPgOperationCodeSurvivesAutoRollback(t *testing.T) {
 	nextOp := admitPgOperationCode(t, s, app, next, tenant)
 	expireOperationCodeTimestamps(t, pool, oldOp)
 	expireOperationCodeTimestamps(t, pool, nextOp)
-	if target, err := s.LatestSupersededDeployment(ctx, app.ID); err != nil || target.ID != old.ID {
+	if target, err := s.LatestSupersededDeployment(ctx, app.ID, state.DefaultEnvScope); err != nil || target.ID != old.ID {
 		t.Fatalf("retained old revision cannot be selected: %+v %v", target, err)
 	}
 	if id, err := s.AutoRollbackDeploymentsTx(ctx, app.ID, next.ID); err != nil || id != old.ID {

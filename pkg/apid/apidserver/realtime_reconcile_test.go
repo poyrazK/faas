@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -97,6 +98,21 @@ func TestReconcileManagedRealtimeEndpointsRepairsAllRows(t *testing.T) {
 	_ = (*srv.Realtime()).ReconcileManagedRealtimeEndpoints(ctx)
 	if len(registrar.registered) != 1 || registrar.registered[0].AccountMaxConnections != 0 {
 		t.Fatalf("registered without fair use = %+v, want no account limit", registrar.registered)
+	}
+	// adr: 20261019102657 — only an account in the preview rollout gets its
+	// endpoints marked for realtimed's preview features.
+	if registrar.registered[0].Preview {
+		t.Fatal("endpoint marked for preview with nobody in the rollout")
+	}
+	rollout, err := managedrealtime.ParsePreviewRollout(account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	(*srv.Realtime()).Preview = rollout
+	registrar.registered = nil
+	_ = (*srv.Realtime()).ReconcileManagedRealtimeEndpoints(ctx)
+	if len(registrar.registered) != 1 || !registrar.registered[0].Preview {
+		t.Fatalf("registered for a listed account = %+v, want the preview mark", registrar.registered)
 	}
 }
 

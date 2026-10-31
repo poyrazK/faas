@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +20,7 @@ func cmdObsTriageHistory(args []string) int {
 	incident := fs.String("incident", "", "platform_alert/episode-id")
 	limit := fs.Int("limit", api.ObsAlertTriageHistoryLimitDefault, "maximum receipts (1..100)")
 	page := fs.String("cursor", "", "opaque next_cursor for this episode (15 minute lifetime)")
-	token := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	token := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
@@ -32,18 +31,15 @@ func cmdObsTriageHistory(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs triage-history: valid --incident platform_alert/id, --limit 1..100, cursor and positive --timeout required")
 		return 2
 	}
-	if *token == "" {
-		*token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if *token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs triage-history: --admin-token (or $FAAS_ADMIN_TOKEN) required")
+	cred, ok := resolveObsCredential("obs triage-history", *token)
+	if !ok {
 		return 2
 	}
 	query := url.Values{"limit": {strconv.Itoa(*limit)}}
 	if *page != "" {
 		query.Set("cursor", *page)
 	}
-	body, code := fetchObsSnapshot(subObsTriageHistory, operatorobs.TriageHistoryPath(id)+"?"+query.Encode(), *token, *timeout)
+	body, code := fetchObsSnapshot(subObsTriageHistory, operatorobs.TriageHistoryPath(id)+"?"+query.Encode(), cred, *timeout)
 	if code != 0 {
 		return code
 	}

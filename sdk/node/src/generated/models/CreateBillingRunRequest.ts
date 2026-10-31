@@ -5,7 +5,7 @@
 import type { BillingRunExport } from './BillingRunExport.js';
 import type { BillingRunSources } from './BillingRunSources.js';
 /**
- * A month-end billing run (ADR-1503). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps.
+ * A month-end billing run. Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps.
  */
 export type CreateBillingRunRequest = {
   /**

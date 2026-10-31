@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.profiling_config import ProfilingConfig
+    from ..models.secret_file import SecretFile
     from ..models.service_replicas import ServiceReplicas
     from ..models.tracing_config import TracingConfig
     from ..models.worker_scaling import WorkerScaling
@@ -68,24 +69,25 @@ T = TypeVar("T", bound="AppManifest")
 @_attrs_define
 class AppManifest:
     """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source
-    flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by the
-    host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are NEVER sealed
-    ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`, `stop_signal`,
-    `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the
-    widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with `execution_mode`, `restart_policy`,
-    `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs
-    service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour
+    flag. The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by the host at
+    wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the contract
+    additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init
+    ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with `execution_mode`,
+    `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract
+    (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour
     (execution_mode=request, restart_policy=on-failure).
 
     """
 
     entrypoint: list[str]
     profiling: ProfilingConfig | Unset = UNSET
-    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
+    """Opt-in sampled CPU profiling baked into each deployment."""
     tracing: TracingConfig | Unset = UNSET
-    """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
-    cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
-    OTel exporter are left untouched."""
+    """Opt-in zero-config request tracing baked into each deployment. Managed runtimes export database, cache and
+    HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel
+    exporter are left untouched."""
+    profiling_on_demand: bool | Unset = UNSET
+    """Dormant on-demand profile collectors stamped by the image service."""
     env: AppManifestEnv | Unset = UNSET
     env_secrets: AppManifestEnvSecrets | Unset = UNSET
     """Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against
@@ -98,14 +100,14 @@ class AppManifest:
     ports: list[WorkloadPort] | Unset = UNSET
     """Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness
     listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries
-    remain available for in-task discovery (ADR-165, ADR-176)."""
+    remain available for in-task discovery."""
     healthz: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
     healthcheck: AppManifestHealthcheck | Unset = UNSET
     """AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations
     are integer seconds at the JSON boundary to match OCI/Docker conventions."""
     stop_signal: None | str | Unset = UNSET
-    """OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2."""
+    """OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow."""
     secret_reload_signal: (
         AppManifestSecretReloadSignalType1
         | AppManifestSecretReloadSignalType2Type1
@@ -116,13 +118,16 @@ class AppManifest:
     """Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after
     replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Main and long-running sidecar
     images opt in independently, including deployments with companions; each workload reloads only its own granted
-    secrets. Must differ from stop_signal (ADR-222)."""
+    secrets. Must differ from stop_signal."""
     secret_reload_readiness: bool | Unset = False
     """Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal.
-    Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506)."""
+    Requires secret_reload_signal. Main and sidecar workloads opt in independently."""
+    secret_files: list[SecretFile] | Unset = UNSET
+    """App secrets guest-init writes to /run/secrets for the main workload. Set from the app's Compose service
+    secrets."""
     stop_grace_period: None | str | Unset = UNSET
     """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
-    enforced by Validate() — ADR-138 §Decision 4."""
+    enforced by Validate."""
     execution_mode: (
         AppManifestExecutionModeType1
         | AppManifestExecutionModeType2Type1
@@ -130,7 +135,7 @@ class AppManifest:
         | None
         | Unset
     ) = UNSET
-    """Lifecycle contract for this app (ADR-137 §Decision 1). Default 'request' preserves today's behaviour."""
+    """Lifecycle contract for this app. Default 'request' preserves today's behaviour."""
     restart_policy: (
         AppManifestRestartPolicyType1
         | AppManifestRestartPolicyType2Type1
@@ -138,8 +143,8 @@ class AppManifest:
         | None
         | Unset
     ) = UNSET
-    """Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for
-    worker/service, no for job, on-failure for request."""
+    """Restart behaviour when the main workload exits. Default is mode-derived: always for worker/service, no for
+    job, on-failure for request."""
     after_restore: AfterRestoreHook | Unset = UNSET
     """Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
     before the instance becomes ready."""
@@ -147,24 +152,23 @@ class AppManifest:
     """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
     warm snapshots; snapshot reuse skips the callback."""
     pause: AppManifestPause | Unset = UNSET
-    """The app's declared pause tier (ADR-1151). Absent means the default for its type: between_requests for a
-    function, when_idle for a request-mode app."""
+    """The app's declared pause tier. Absent means the default for its type: between_requests for a function,
+    when_idle for a request-mode app."""
     startup_deadline_s: int | None | Unset = UNSET
-    """Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0
-    means 'use plan default'."""
+    """Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate. Default 0 means 'use plan
+    default'."""
     max_retries: int | None | Unset = UNSET
-    """Consecutive restart-attempt cap (ADR-138 §Decision 3). Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0
-    means 'use plan default'."""
+    """Consecutive restart-attempt cap. Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0 means 'use plan
+    default'."""
     request_timeout_s: int | None | Unset = UNSET
     """Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."""
     function_concurrency: int | None | Unset = UNSET
-    """Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY
-    (ADR-1342). 0 or 1 means one request per worker."""
+    """Per-worker request concurrency the image service stamps into the function's build as
+    FAAS_FUNCTION_CONCURRENCY. 0 or 1 means one request per worker."""
     service_replicas: ServiceReplicas | Unset = UNSET
-    """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
-    Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
-    the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
-    image-digest pinning semantics land in M-4."""
+    """Per-deployment replica scaffold for execution_mode='service'. Replica count is bounded by ServiceReplicasMax
+    per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit the app's max_concurrency ceiling. min ≤ desired
+    ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land."""
     worker_replicas: WorkerScaling | Unset = UNSET
     """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
     min=0."""
@@ -194,9 +198,9 @@ class AppManifest:
     revision_pin_ttl_seconds: int | Unset = 0
     """Configured revision pin window in seconds; zero disables pinning."""
     release_policy: AppManifestReleasePolicy | Unset = UNSET
-    """Effective default rollout for production releases (ADR-1446, ADR-1450)."""
+    """Effective default rollout for production releases."""
     release_probe_paths: list[str] | Unset = UNSET
-    """Paths the default rollout probe checks; absent means / (ADR-1449)."""
+    """Paths the default rollout probe checks; absent means /."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -209,6 +213,8 @@ class AppManifest:
         tracing: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tracing, Unset):
             tracing = self.tracing.to_dict()
+
+        profiling_on_demand = self.profiling_on_demand
 
         env: dict[str, Any] | Unset = UNSET
         if not isinstance(self.env, Unset):
@@ -276,6 +282,13 @@ class AppManifest:
             secret_reload_signal = self.secret_reload_signal
 
         secret_reload_readiness = self.secret_reload_readiness
+
+        secret_files: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.secret_files, Unset):
+            secret_files = []
+            for secret_files_item_data in self.secret_files:
+                secret_files_item = secret_files_item_data.to_dict()
+                secret_files.append(secret_files_item)
 
         stop_grace_period: None | str | Unset
         if isinstance(self.stop_grace_period, Unset):
@@ -404,6 +417,8 @@ class AppManifest:
             field_dict["profiling"] = profiling
         if tracing is not UNSET:
             field_dict["tracing"] = tracing
+        if profiling_on_demand is not UNSET:
+            field_dict["profiling_on_demand"] = profiling_on_demand
         if env is not UNSET:
             field_dict["env"] = env
         if env_secrets is not UNSET:
@@ -428,6 +443,8 @@ class AppManifest:
             field_dict["secret_reload_signal"] = secret_reload_signal
         if secret_reload_readiness is not UNSET:
             field_dict["secret_reload_readiness"] = secret_reload_readiness
+        if secret_files is not UNSET:
+            field_dict["secret_files"] = secret_files
         if stop_grace_period is not UNSET:
             field_dict["stop_grace_period"] = stop_grace_period
         if execution_mode is not UNSET:
@@ -490,6 +507,7 @@ class AppManifest:
         from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.profiling_config import ProfilingConfig
+        from ..models.secret_file import SecretFile
         from ..models.service_replicas import ServiceReplicas
         from ..models.tracing_config import TracingConfig
         from ..models.worker_scaling import WorkerScaling
@@ -511,6 +529,8 @@ class AppManifest:
             tracing = UNSET
         else:
             tracing = TracingConfig.from_dict(_tracing)
+
+        profiling_on_demand = d.pop("profiling_on_demand", UNSET)
 
         _env = d.pop("env", UNSET)
         env: AppManifestEnv | Unset
@@ -643,6 +663,15 @@ class AppManifest:
         secret_reload_signal = _parse_secret_reload_signal(d.pop("secret_reload_signal", UNSET))
 
         secret_reload_readiness = d.pop("secret_reload_readiness", UNSET)
+
+        _secret_files = d.pop("secret_files", UNSET)
+        secret_files: list[SecretFile] | Unset = UNSET
+        if _secret_files is not UNSET:
+            secret_files = []
+            for secret_files_item_data in _secret_files:
+                secret_files_item = SecretFile.from_dict(secret_files_item_data)
+
+                secret_files.append(secret_files_item)
 
         def _parse_stop_grace_period(data: object) -> None | str | Unset:
             if data is None:
@@ -879,6 +908,7 @@ class AppManifest:
             entrypoint=entrypoint,
             profiling=profiling,
             tracing=tracing,
+            profiling_on_demand=profiling_on_demand,
             env=env,
             env_secrets=env_secrets,
             working_dir=working_dir,
@@ -891,6 +921,7 @@ class AppManifest:
             stop_signal=stop_signal,
             secret_reload_signal=secret_reload_signal,
             secret_reload_readiness=secret_reload_readiness,
+            secret_files=secret_files,
             stop_grace_period=stop_grace_period,
             execution_mode=execution_mode,
             restart_policy=restart_policy,

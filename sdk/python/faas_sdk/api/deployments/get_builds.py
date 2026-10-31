@@ -113,7 +113,7 @@ def sync_detailed(
     on this page — server-emitted, round-tripped verbatim. The
     id tiebreaker makes the keyset deterministic for queued
     tails (started_at IS NULL) and for sub-second collisions
-    on started_at. See ADR-091 §3.
+    on started_at.
 
     BuildResponse.started_at (the per-row wire field) is
     RFC3339 (whole-second) for backward compatibility with
@@ -176,7 +176,7 @@ def sync(
     on this page — server-emitted, round-tripped verbatim. The
     id tiebreaker makes the keyset deterministic for queued
     tails (started_at IS NULL) and for sub-second collisions
-    on started_at. See ADR-091 §3.
+    on started_at.
 
     BuildResponse.started_at (the per-row wire field) is
     RFC3339 (whole-second) for backward compatibility with
@@ -234,7 +234,7 @@ async def asyncio_detailed(
     on this page — server-emitted, round-tripped verbatim. The
     id tiebreaker makes the keyset deterministic for queued
     tails (started_at IS NULL) and for sub-second collisions
-    on started_at. See ADR-091 §3.
+    on started_at.
 
     BuildResponse.started_at (the per-row wire field) is
     RFC3339 (whole-second) for backward compatibility with
@@ -295,7 +295,7 @@ async def asyncio(
     on this page — server-emitted, round-tripped verbatim. The
     id tiebreaker makes the keyset deterministic for queued
     tails (started_at IS NULL) and for sub-second collisions
-    on started_at. See ADR-091 §3.
+    on started_at.
 
     BuildResponse.started_at (the per-row wire field) is
     RFC3339 (whole-second) for backward compatibility with

@@ -58,7 +58,7 @@ fi
 
 cd "${repo_root}"
 [[ -z "$(git status --porcelain --untracked-files=all)" ]] || die "candidate checkout must be clean for source provenance"
-[[ "$(go env GOVERSION)" == go1.26.9 ]] || die "requires the pinned Go 1.26.9 toolchain"
+[[ "$(go env GOVERSION)" == go1.26.10 ]] || die "requires the pinned Go 1.26.10 toolchain"
 export GREGALE_CI_ACCEPTANCE_SOURCE_SHA
 GREGALE_CI_ACCEPTANCE_SOURCE_SHA="$(git rev-parse HEAD)"
 evidence_root="${GREGALE_CI_ACCEPTANCE_EVIDENCE_ROOT:-/var/tmp/gregale-ci-native}"

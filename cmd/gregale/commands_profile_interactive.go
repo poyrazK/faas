@@ -20,7 +20,7 @@ func cmdProfileUseInteractive(args []string, cfg cliConfig) int {
 		return 1
 	}
 	if !*interactive || fs.NArg() != 0 || *timeout <= 0 {
-		PrintUsage(osStderr, "usage: gregale profile use --interactive [--timeout 10s]", "config")
+		PrintUsage(osStderr, "usage: gregale config profile use --interactive [--timeout 10s]", "config")
 		return 1
 	}
 	if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {

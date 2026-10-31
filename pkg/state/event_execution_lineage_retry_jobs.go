@@ -469,7 +469,6 @@ func (m *MemStore) advanceLineageRetryJobItem() (bool, error) {
 	}
 	job := cloneLineageRetryJob(selected)
 	c := job.Items[job.Processed].Selection
-	coverage := m.eventExecutionCoverage[job.SubscriptionID]
 	app, ok := m.eventSubscriptionAppLocked(job.AppID)
 	if !ok {
 		return false, ErrNotFound
@@ -478,7 +477,7 @@ func (m *MemStore) advanceLineageRetryJobItem() (bool, error) {
 	if err = finishLineageRetryJobItem(&job, result, err); err != nil {
 		return false, err
 	}
-	coverage = m.eventExecutionCoverage[job.SubscriptionID]
+	coverage := m.eventExecutionCoverage[job.SubscriptionID]
 	coverage.jobs[job.RequestID] = job
 	m.eventExecutionCoverage[job.SubscriptionID] = coverage
 	return true, nil

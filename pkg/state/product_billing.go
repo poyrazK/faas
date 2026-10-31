@@ -96,16 +96,25 @@ func productBillingReview(scope ProductBillingScope, currency string, lines []ap
 	return review, nil
 }
 
-// productMonthFee prices a customer's month from the plans they held in it
-// (ADR-20261021154511); catalog loads a revision of the scope's app.
-func productMonthFee(held []productcontrol.PlanHeld, period string, catalog func(revision string) (api.ProductCatalog, bool)) *api.ProductBillingFee {
+// productMonthFee prices a customer's month from the plans they held in it,
+// less their trial (ADR-20261021154511, ADR-20261021195901); catalog loads
+// a revision of the scope's app.
+func productMonthFee(held []productcontrol.PlanHeld, period string, trial *productcontrol.Trial, catalog func(revision string) (api.ProductCatalog, bool)) *api.ProductBillingFee {
 	return productcontrol.MonthlyFee(held, func(revision, plan string) int64 {
 		c, ok := catalog(revision)
 		if !ok {
 			return 0
 		}
 		return c.Spec.Plans[plan].MonthlyFeeMillicents
-	}, period)
+	}, period, trial)
+}
+
+// productTrial is a customer's trial for fees, nil without one.
+func productTrial(c api.ProductCustomer) *productcontrol.Trial {
+	if c.TrialStartsAt == nil || c.TrialEndsAt == nil {
+		return nil
+	}
+	return &productcontrol.Trial{Start: *c.TrialStartsAt, End: *c.TrialEndsAt}
 }
 
 // productMonthBounds is a billing period's first instant and the next

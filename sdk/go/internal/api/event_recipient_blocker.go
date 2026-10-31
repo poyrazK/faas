@@ -38,7 +38,7 @@ type EventRecipientBlockerResponse struct {
 	Recipient    *EventBacklogRecipient     `json:"recipient,omitempty"`
 }
 
-func (c *Client) GetEventRecipientBlocker(ctx context.Context, query EventRecipientBlockerQuery) (EventRecipientBlockerResponse, error) {
+func (c *PreviewClient) GetEventRecipientBlocker(ctx context.Context, query EventRecipientBlockerQuery) (EventRecipientBlockerResponse, error) {
 	var out EventRecipientBlockerResponse
 	if err := query.Validate(); err != nil {
 		return out, err
@@ -75,7 +75,7 @@ type EventRecipientBlockerBatchResponse struct {
 	Items []EventRecipientBlockerBatchItem `json:"items"`
 }
 
-func (c *Client) GetEventRecipientBlockers(ctx context.Context, request EventRecipientBlockerBatchRequest) (EventRecipientBlockerBatchResponse, error) {
+func (c *PreviewClient) GetEventRecipientBlockers(ctx context.Context, request EventRecipientBlockerBatchRequest) (EventRecipientBlockerBatchResponse, error) {
 	var out EventRecipientBlockerBatchResponse
 	if err := request.Validate(); err != nil {
 		return out, err

@@ -109,6 +109,7 @@ func TruncateRunes(s string, maxRunes int) string {
 var AllowedAlertRuleMetrics = []string{
 	MetricMCPProtocolErrorRate, MetricMCPProtocolP95,
 	AlertMetricRouteInsightsDetected,
+	AlertMetricRouteMonitorIncidents, AlertMetricRouteHealthHolds,
 	"event_recovery_notification_admission_overdue_jobs",
 	"event_recovery_notification_admission_dead_jobs",
 	"event_recovery_notification_admission_unknown_jobs",
@@ -152,6 +153,9 @@ var AllowedAlertRuleMetrics = []string{
 	"cert_expiry_seconds",
 	"cert_issuance_failed",
 	"queue_depth",
+	// ADR-20261018101500 amendment 2026-10-27: an app's durable queue.
+	"queue_backlog",
+	"queue_oldest_age_seconds",
 	"pre_auth_target_threshold",
 	"pre_auth_target_signal_gap_pct",
 	"pre_auth_pressure",
@@ -201,6 +205,8 @@ var AllowedAlertRuleMetrics = []string{
 	MetricMCPOAuthReauthorization, MetricMCPOAuthRenewalFailed, MetricMCPOAuthRetirementExpiring, MetricMCPOAuthIssuanceUnknown,
 	// ADR-745: one pushed custom metric, named by custom_metric_name.
 	AlertRuleMetricCustomMetric,
+	// ADR-20261018083536: log events matching the rule's log_query.
+	AlertRuleMetricLogSearchMatches,
 }
 
 // AlertRuleMetricCustomMetric is the metric whose rules name one pushed
@@ -211,6 +217,15 @@ const AlertRuleMetricCustomMetric = "custom_metric"
 // longer windows average a pushed gauge over days, which hides the incident
 // the alert exists to catch. Mirrors alert_rules_custom_metric_chk.
 var CustomMetricAlertWindowSpecs = []string{"5m", "15m", "1h", "6h", "24h"}
+
+// AlertRuleMetricLogSearchMatches counts an app's log events matching the
+// rule's log_query (a canonical log search filter string) within the window
+// (ADR-20261018083536). Like custom_metric it is app-scoped and webhook-only.
+const AlertRuleMetricLogSearchMatches = "log_search_matches"
+
+// LogSearchAlertWindowSpecs are the windows a log_search_matches rule may
+// use; a text filter covers at most a day. Mirrors alert_rules_log_search_chk.
+var LogSearchAlertWindowSpecs = []string{"5m", "15m", "1h", "6h", "24h"}
 
 // ADR-747 SLO alert metrics. Both are app-scoped and name one SLO by slo_id.
 // slo_budget_burn is the multi-window burn rate against the SLO's own
@@ -236,6 +251,28 @@ const (
 // IsSyntheticCheckAlertMetric reports whether a metric names a check via synthetic_check_id.
 func IsSyntheticCheckAlertMetric(metric string) bool {
 	return metric == AlertRuleMetricSyntheticConsecutiveFailures || metric == AlertRuleMetricSyntheticLatencyP95
+}
+
+// alertMetricCapabilities names the product capability an alert metric needs
+// beyond alerts' own (ADR-20261023115741).
+var alertMetricCapabilities = map[string]string{
+	AlertRuleMetricCustomMetric:                 "custom-metric-history",
+	AlertRuleMetricLogSearchMatches:             "log-search",
+	AlertRuleMetricSLOBudgetBurn:                "custom-slos",
+	AlertRuleMetricSLOBudgetRemaining:           "custom-slos",
+	AlertRuleMetricSyntheticConsecutiveFailures: "synthetic-checks",
+	AlertRuleMetricSyntheticLatencyP95:          "synthetic-checks",
+	AlertMetricRouteInsightsDetected:            "route-insights",
+	AlertMetricRouteMonitorIncidents:            "production-route-monitoring",
+	AlertMetricRouteHealthHolds:                 "route-health-canary-guard",
+}
+
+// AlertMetricCapability returns the capability an alert metric needs beyond
+// alerts', if any. apid refuses creating such a rule while the capability is
+// off for the account, and meterd stops evaluating it (ADR-20261028101615).
+func AlertMetricCapability(metric string) (string, bool) {
+	capability, ok := alertMetricCapabilities[metric]
+	return capability, ok
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
@@ -328,7 +365,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
-		metric == AlertRuleMetricCustomMetric || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected {
+		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || metric == "queue_backlog" || metric == "queue_oldest_age_seconds" || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected || IsRouteAlertMetric(metric) {
 		return action == "" || action == "webhook"
 	}
 	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
@@ -355,6 +392,7 @@ type CreateAlertRuleRequest struct {
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
 	CustomMetricName                string  `json:"custom_metric_name,omitempty"`
+	LogQuery                        string  `json:"log_query,omitempty"`
 	SLOID                           string  `json:"slo_id,omitempty"`
 	SyntheticCheckID                string  `json:"synthetic_check_id,omitempty"`
 	// ChannelIDs are ADR-749 notification channels the rule delivers to.
@@ -364,6 +402,9 @@ type CreateAlertRuleRequest struct {
 	WebhookURL      string   `json:"webhook_url"`
 	WebhookSecret   string   `json:"webhook_secret"`
 	CooldownMinutes *int     `json:"cooldown_minutes,omitempty"`
+	// NotifyResolved also sends the webhook a signed resolve event when the
+	// rule recovers (ADR-20261029203000). Needs webhook_url.
+	NotifyResolved bool `json:"notify_resolved,omitempty"`
 }
 
 // UpdateAlertRuleRequest is the PATCH body. Every editable field is
@@ -395,6 +436,7 @@ type UpdateAlertRuleRequest struct {
 	WebhookURL      *string   `json:"webhook_url,omitempty"`
 	WebhookSecret   *string   `json:"webhook_secret,omitempty"`
 	CooldownMinutes *int      `json:"cooldown_minutes,omitempty"`
+	NotifyResolved  *bool     `json:"notify_resolved,omitempty"`
 }
 
 // RotateAlertRuleSecretRequest carries a caller-supplied replacement. The
@@ -431,12 +473,14 @@ type AlertRuleResponse struct {
 	WindowSpec                      string   `json:"window_spec"`
 	FailureSource                   string   `json:"failure_source,omitempty"`
 	CustomMetricName                string   `json:"custom_metric_name,omitempty"`
+	LogQuery                        string   `json:"log_query,omitempty"`
 	SLOID                           string   `json:"slo_id,omitempty"`
 	SyntheticCheckID                string   `json:"synthetic_check_id,omitempty"`
 	ChannelIDs                      []string `json:"channel_ids,omitempty"`
 	Action                          string   `json:"action"`
 	WebhookURL                      string   `json:"webhook_url"`
 	WebhookSecretSealedMasked       string   `json:"webhook_secret_sealed_masked"`
+	NotifyResolved                  bool     `json:"notify_resolved,omitempty"`
 	CooldownMinutes                 int      `json:"cooldown_minutes"`
 	State                           string   `json:"state"`
 	LastFiredAt                     string   `json:"last_fired_at,omitempty"`
@@ -468,10 +512,12 @@ type AlertRuleRow struct {
 	WindowSpec                      string
 	FailureSource                   string
 	CustomMetricName                string
+	LogQuery                        string
 	SLOID                           string
 	SyntheticCheckID                string
 	Action                          string
 	WebhookURL                      string
+	NotifyResolved                  bool
 	CooldownMinutes                 int
 	State                           string
 	LastFiredAt                     time.Time
@@ -505,11 +551,13 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		WindowSpec:                      r.WindowSpec,
 		FailureSource:                   r.FailureSource,
 		CustomMetricName:                r.CustomMetricName,
+		LogQuery:                        r.LogQuery,
 		SLOID:                           r.SLOID,
 		SyntheticCheckID:                r.SyntheticCheckID,
 		Action:                          r.Action,
 		WebhookURL:                      r.WebhookURL,
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,
+		NotifyResolved:                  r.NotifyResolved,
 		CooldownMinutes:                 r.CooldownMinutes,
 		State:                           r.State,
 		LastFiredAt:                     FormatAlertTime(r.LastFiredAt),
@@ -628,6 +676,45 @@ func ValidateRouteInsightAlert(metric, windowSpec, appID string) *Problem {
 	return nil
 }
 
+// Route alert metrics (ADR-20261028110044): production route monitor
+// incidents and canaries held by the route health guard reach alert rules and
+// notification channels, not only app webhooks.
+const (
+	// AlertMetricRouteMonitorIncidents counts the app's route monitor
+	// incidents open at any time within the window.
+	AlertMetricRouteMonitorIncidents = "route_monitor_incidents"
+	// AlertMetricRouteHealthHolds counts the app's canaries the enforce-mode
+	// route health guard holds now, plus those it aborted within the window.
+	AlertMetricRouteHealthHolds = "route_health_holds"
+)
+
+// RouteAlertWindowSpecs are the windows route alerts accept: monitors are
+// evaluated every minute and canaries checked on every step.
+var RouteAlertWindowSpecs = []string{"5m", "15m", "1h", "6h", "24h"}
+
+// RouteAlertNotes caps how many incidents or holds one notification lists.
+const RouteAlertNotes = 5
+
+// IsRouteAlertMetric reports whether metric is a route alert metric.
+func IsRouteAlertMetric(metric string) bool {
+	return metric == AlertMetricRouteMonitorIncidents || metric == AlertMetricRouteHealthHolds
+}
+
+// ValidateRouteAlert checks a route alert rule: an app scope and a route alert
+// window. Mirrors the alert_rules_route_alerts_chk constraint.
+func ValidateRouteAlert(metric, windowSpec, appID string) *Problem {
+	if !IsRouteAlertMetric(metric) {
+		return nil
+	}
+	if appID == "" {
+		return ErrAlertRuleInvalid(metric + " alerts require an app")
+	}
+	if !containsString(RouteAlertWindowSpecs, windowSpec) {
+		return ErrAlertRuleInvalid(metric + " alerts use window_spec " + strings.Join(RouteAlertWindowSpecs, ", "))
+	}
+	return nil
+}
+
 // EdgeRuleAlertWindowSpecs are the windows edge-rule activity alerts
 // accept: hit counts are kept in hourly buckets for 14 days (ADR-960), so
 // sub-hour windows cannot be answered and 15d outlives retention.
@@ -675,6 +762,8 @@ func AlertMetricActionRestriction(metric string) string {
 		return "MCP task age alerts support webhook action only"
 	case "mcp_tasks_metrics_stale":
 		return "MCP task metrics freshness alerts support webhook action only"
+	case AlertRuleMetricLogSearchMatches:
+		return "log search alerts support webhook action only"
 	}
 	return "pre-auth target metrics support webhook action only"
 }

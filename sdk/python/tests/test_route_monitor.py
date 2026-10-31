@@ -5,7 +5,7 @@ from uuid import UUID
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.apps import (
+from faas_sdk.preview.api.apps import (
     get_route_monitor,
     get_route_monitor_incident,
     get_route_monitor_report,
@@ -13,7 +13,7 @@ from faas_sdk.api.apps import (
     preview_route_monitor,
     set_route_monitor,
 )
-from faas_sdk.models import (
+from faas_sdk.preview.models import (
     PreviewRouteMonitorRequest,
     RouteMonitorConfig,
     RouteMonitorIncident,

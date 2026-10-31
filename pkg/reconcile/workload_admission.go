@@ -37,6 +37,11 @@ func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) 
 func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.Workload) []string {
 	var reasons []string
 	for _, workload := range workloads {
+		reasons = append(reasons, composeResourcesAdmissionReasons(plan, workload)...)
+		// Built services carry Compose process overrides too (ADR-20261022160000).
+		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))
+		}
 		mode := scanExecutionMode(workload)
 		if workload.Image == "" && mode == "" {
 			continue
@@ -44,9 +49,6 @@ func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.W
 		manifest := api.AppManifest{ExecutionMode: mode}
 		if err := manifest.ValidateLifecyclePlan(plan); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q: %s", workload.Name, err))
-		}
-		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
-			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))
 		}
 	}
 	return reasons
@@ -69,8 +71,18 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 	}
 
 	bySlug := make(map[string]state.App, len(accountApps))
+	var projectApps []state.App
 	for _, app := range accountApps {
 		bySlug[app.Slug] = app
+		if projectID != "" && app.ProjectID == projectID {
+			projectApps = append(projectApps, app)
+		}
+	}
+	// A renamed service keeps its previous name's app (ADR-20261029090000),
+	// so that app is this workload's member.
+	renamed := RenamedWorkloads(workloads, projectApps)
+	member := func(app state.App, workload reposcan.Workload) bool {
+		return app.WorkloadName == workload.Name || renamed[app.WorkloadName] == workload.Name
 	}
 	seen := make(map[string]string, len(workloads))
 	var reasons []string
@@ -99,6 +111,9 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		if err := workload.DockerfileBuild.Validate(); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q has invalid build options: %s", workload.Name, err))
 		}
+		if err := api.ValidateSecretFiles(workload.SecretFiles); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has invalid secret files: %s", workload.Name, err))
+		}
 		if workload.Image != "" && !workload.DockerfileBuild.IsZero() {
 			reasons = append(reasons, fmt.Sprintf("workload %q is a prebuilt image; build options apply only to Dockerfile builds", workload.Name))
 		}
@@ -108,7 +123,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 			// fresh allocation (or a collision outside this exact member) is
 			// rejected.
 			app, exists := bySlug[slug]
-			if !exists || projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name || app.PreviewOfSlug != "" {
+			if !exists || projectID == "" || app.ProjectID != projectID || !member(app, workload) || app.PreviewOfSlug != "" {
 				reasons = append(reasons, fmt.Sprintf(
 					"workload %q uses app slug %q reserved for a Gregale service",
 					workload.Name, slug))
@@ -129,7 +144,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		}
 		seen[slug] = workload.RootDir
 		if app, exists := bySlug[slug]; exists &&
-			(projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name || app.PreviewOfSlug != "") {
+			(projectID == "" || app.ProjectID != projectID || !member(app, workload) || app.PreviewOfSlug != "") {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q conflicts with existing app slug %q outside this project member",
 				workload.Name, app.Slug))

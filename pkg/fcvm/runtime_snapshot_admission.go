@@ -56,7 +56,8 @@ func (m *Manager) checkSnapshotGrantIdentity(g runtimeadmission.SnapshotGrant) e
 	if err != nil {
 		return err
 	}
-	if g.Parent.Binding.NodeID != identity.NodeID || g.Parent.Binding.Incarnation != identity.Incarnation || identity.ProtocolVersion < runtimeadmission.ArtifactProtocolVersion || g.FCVersion != m.fcVersion {
+	held := g.Parent.Binding.Incarnation == identity.Incarnation || m.AdmissionHeldFrom(g.Parent.Binding.InstanceID, g.Parent) != ""
+	if g.Parent.Binding.NodeID != identity.NodeID || !held || identity.ProtocolVersion < runtimeadmission.ArtifactProtocolVersion || g.FCVersion != m.fcVersion {
 		return runtimeadmission.ErrStale
 	}
 	return nil
@@ -99,6 +100,7 @@ func (m *Manager) consumeSnapshotGrant(g runtimeadmission.SnapshotGrant, flight 
 	if err := m.checkOwnedRuntimeEgressLocked(inst.runtimeAdmissionEgress, b.EgressRevision); err != nil {
 		return nil, err
 	}
+	m.ensureRuntimeAdmissionMapsLocked()
 	m.runtimeAdmissionTokens[g.Token] = time.Unix(0, g.ExpiresAtUnixNano)
 	m.runtimeAdmissionFlights[b.InstanceID] = flight
 	return inst, nil

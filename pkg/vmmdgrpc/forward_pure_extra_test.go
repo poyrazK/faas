@@ -220,9 +220,10 @@ func TestStreamBridgeVersion_DefaultIsV2(t *testing.T) {
 }
 
 func TestStreamBridgeVersion_EnvWins(t *testing.T) {
+	// The v1 shell bridge is no longer selectable (bug hunt 2026-10-28 B23).
 	t.Setenv("FAAS_STREAM_BRIDGE_VERSION", "v1")
-	if got := currentStreamBridgeVersion(); got != "v1" {
-		t.Errorf("env=v1: got %q, want v1", got)
+	if got := currentStreamBridgeVersion(); got != "v2" {
+		t.Errorf("env=v1: got %q, want v2", got)
 	}
 	t.Setenv("FAAS_STREAM_BRIDGE_VERSION", "v3.14")
 	if got := currentStreamBridgeVersion(); got != "v3.14" {
@@ -274,14 +275,14 @@ func TestResolveStreamBridgePath_FallsBackWhenEnvEmpty(t *testing.T) {
 // --- streamBridgeSockPath ----------------------------------------
 
 func TestStreamBridgeSockPath(t *testing.T) {
-	if got := streamBridgeSockPath("inst-1"); got != "/var/run/faas/stream/inst-1.sock" {
+	if got := streamBridgeSockPath("inst-1", bridgeIdentity{}); got != "/var/run/faas/stream/inst-1.sock" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestStreamBridgeSockPathForRequestIsUnique(t *testing.T) {
-	first := streamBridgeSockPathForRequest("inst-1")
-	second := streamBridgeSockPathForRequest("inst-1")
+	first := streamBridgeSockPathForRequest("inst-1", bridgeIdentity{})
+	second := streamBridgeSockPathForRequest("inst-1", bridgeIdentity{})
 	if first == second {
 		t.Fatalf("request socket paths collided: %q", first)
 	}
@@ -309,7 +310,7 @@ func TestStopStreamBridgeReapsChild(t *testing.T) {
 // --- newStreamBridgeH2CTransport ---------------------------------
 
 func TestNewStreamBridgeH2CTransport_Fields(t *testing.T) {
-	tr := newStreamBridgeH2CTransport("/var/run/faas/stream/test.sock")
+	tr := newStreamBridgeH2CTransport("/var/run/faas/stream/test.sock", bridgeIdentity{})
 	if tr == nil {
 		t.Fatal("nil transport")
 	}
@@ -360,7 +361,7 @@ func TestNewStreamBridgeH2CTransport_DialsUnixSocket(t *testing.T) {
 		}
 	}()
 
-	tr := newStreamBridgeH2CTransport(sockPath)
+	tr := newStreamBridgeH2CTransport(sockPath, bridgeIdentity{})
 	dialed, err := tr.DialTLSContext(context.Background(), "ignored", "ignored", nil)
 	if err != nil {
 		t.Fatalf("DialTLSContext: %v", err)

@@ -1195,7 +1195,7 @@ func (q *Queries) OperatorCapacityProfiles(ctx context.Context, db DBTX, resourc
 }
 
 const operatorCommandCronObservations = `-- name: OperatorCommandCronObservations :many
-SELECT c.schedule,c.timezone,c.created_at,c.last_fired_at,c.enabled,c.skip_if_running,c.schedule_policy,
+SELECT c.schedule,c.timezone,c.created_at,c.last_fired_at,c.schedule_anchor_at,c.enabled,c.skip_if_running,c.schedule_policy,
  (c.suspended_reason<>'')::boolean AS suspended,(a.status='deleted')::boolean AS app_deleted,
  (account.status IN ('active','past_due') AND account.abuse_hold_at IS NULL)::boolean AS account_active,
  EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=c.app_id AND d.status='live'
@@ -1223,6 +1223,7 @@ type OperatorCommandCronObservationsRow struct {
 	Timezone            string
 	CreatedAt           pgtype.Timestamptz
 	LastFiredAt         pgtype.Timestamptz
+	ScheduleAnchorAt    pgtype.Timestamptz
 	Enabled             bool
 	SkipIfRunning       bool
 	SchedulePolicy      []byte
@@ -1253,6 +1254,7 @@ func (q *Queries) OperatorCommandCronObservations(ctx context.Context, db DBTX, 
 			&i.Timezone,
 			&i.CreatedAt,
 			&i.LastFiredAt,
+			&i.ScheduleAnchorAt,
 			&i.Enabled,
 			&i.SkipIfRunning,
 			&i.SchedulePolicy,
@@ -1980,7 +1982,8 @@ WITH scoped AS MATERIALIZED (
  SELECT d.id,d.stage_at,d.rootfs_key,
   (cardinality(d.release_command)=0 OR coalesce(t.status='succeeded' AND t.app_id=d.app_id
    AND t.artifact_key=d.rootfs_key AND t.image_digest=d.image_digest AND t.deployment_scope=d.scope
-   AND t.command_shell=d.release_command_shell AND t.command=d.release_command,false)) AS release_allowed,
+   AND (t.command_shell=d.release_command_shell AND t.command=d.release_command
+    OR NOT t.command_shell AND scenario_rehearsal_release_matches(t.command,d.id,d.release_command,d.release_command_shell)),false)) AS release_allowed,
   cardinality(d.release_command)>0 AS release_required,t.finished_at AS release_at,
   sn.created_at AS snapshot_at,c.changed_at,
   coalesce(ins.active,false) AS active,coalesce(ins.parked,false) AS parked,

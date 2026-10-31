@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -128,6 +129,195 @@ func TestOperatorHTTPErrorExplainsStepUp(t *testing.T) {
 	err := newOperatorHTTPClient(&sess).doJSON(t.Context(), http.MethodPost, "/mutation", nil, nil, true, nil)
 	if err == nil || !strings.Contains(err.Error(), "gregalectl auth step-up") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// apid accepts each TOTP code once (RFC 6238 §5.2). Logging in spends the
+// code; a forced step-up that reuses it must say the code was already used
+// and keep the saved session, and the next code must step up and save the
+// re-issued cookie. (Without --force a step-up this fresh asks nothing.)
+func TestOperatorAuthLoginThenStepUpRefusesAReusedCode(t *testing.T) {
+	const loginCode, nextCode = "123456", "654321"
+	used := map[string]bool{}
+	wantCookie, issued := "mfa-pending", 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/login":
+			var req api.PasswordLoginRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email != "operator@gregale.test" || req.Password != "correct horse" {
+				t.Errorf("login body = %+v, %v", req, err)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "faas_sid", Value: wantCookie, MaxAge: 3600})
+			writeTestJSON(w, http.StatusOK, api.PasswordLoginResponse{AccountID: "account-1", Plan: "pro"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/account/mfa/verify":
+			if cookie, err := r.Cookie("faas_sid"); err != nil || cookie.Value != wantCookie {
+				t.Errorf("verify session cookie = %v, %v; want %q", cookie, err, wantCookie)
+			}
+			var req api.MFAVerifyRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("verify body: %v", err)
+			}
+			if used[req.Totp] {
+				writeTestJSON(w, http.StatusUnauthorized, api.Problem{Status: http.StatusUnauthorized, Code: api.CodeMFAInvalidCode, Detail: api.MFACodeReusedDetail})
+				return
+			}
+			used[req.Totp] = true
+			issued++
+			wantCookie = fmt.Sprintf("stepped-up-%d", issued)
+			http.SetCookie(w, &http.Cookie{Name: "faas_sid", Value: wantCookie, MaxAge: 3600})
+			writeTestJSON(w, http.StatusOK, api.MFAVerifyResponse{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(operatorSessionFile, t.TempDir()+"/operator-session.json")
+	t.Setenv("FAAS_APID_URL", server.URL)
+	t.Setenv(operatorSessionEnv, "")
+	out, stderr, restore := captureOperatorIO()
+	defer restore()
+
+	answerOperatorPrompts(t, "correct horse", loginCode)
+	if code := cmdOperatorAuthDispatch([]string{"login", "--email", "Operator@Gregale.test"}); code != 0 {
+		t.Fatalf("login exit = %d, stderr=%s", code, stderr)
+	}
+	loggedIn, err := loadOperatorSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loggedIn.Cookie != "stepped-up-1" || loggedIn.AccountID != "account-1" || loggedIn.SteppedUpAt.IsZero() {
+		t.Fatalf("session after login = %+v", loggedIn)
+	}
+	if !strings.Contains(out.String(), "operator session ready for operator@gregale.test") {
+		t.Fatalf("login stdout = %q", out)
+	}
+
+	answerOperatorPrompts(t, loginCode)
+	if code := cmdOperatorAuthDispatch([]string{"step-up", "--force"}); code != 1 {
+		t.Fatalf("reused-code step-up exit = %d, want 1", code)
+	}
+	if want := "TOTP code rejected: " + api.MFACodeReusedDetail; !strings.Contains(stderr.String(), want) {
+		t.Fatalf("reused-code stderr = %q, want %q", stderr, want)
+	}
+	if kept, err := loadOperatorSession(); err != nil || kept.Cookie != loggedIn.Cookie || !kept.SteppedUpAt.Equal(loggedIn.SteppedUpAt) {
+		t.Fatalf("session after refused step-up = %+v, %v; want it unchanged", kept, err)
+	}
+
+	answerOperatorPrompts(t, nextCode)
+	if code := cmdOperatorAuthDispatch([]string{"step-up", "--force"}); code != 0 {
+		t.Fatalf("next-code step-up exit = %d, stderr=%s", code, stderr)
+	}
+	steppedUp, err := loadOperatorSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steppedUp.Cookie != "stepped-up-2" || steppedUp.SteppedUpAt.Before(loggedIn.SteppedUpAt) {
+		t.Fatalf("session after step-up = %+v", steppedUp)
+	}
+}
+
+// A step-up under a minute old is not repeated: the code on screen may be
+// the one just spent. An older one, or --force, asks for a code.
+func TestOperatorAuthStepUpSkipsAFreshStepUp(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		age       time.Duration
+		args      []string
+		wantAsked bool
+	}{
+		{"fresh", 10 * time.Second, nil, false},
+		{"fresh with --force", 10 * time.Second, []string{"--force"}, true},
+		{"older than a minute", 2 * time.Minute, nil, true},
+		{"never stepped up", 0, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			verified := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/account/mfa/verify" {
+					t.Errorf("unexpected request %s", r.URL)
+				}
+				verified++
+				http.SetCookie(w, &http.Cookie{Name: "faas_sid", Value: "stepped-up", MaxAge: 3600})
+				writeTestJSON(w, http.StatusOK, api.MFAVerifyResponse{})
+			}))
+			defer server.Close()
+			t.Setenv(operatorSessionFile, t.TempDir()+"/operator-session.json")
+			t.Setenv("FAAS_APID_URL", server.URL)
+			t.Setenv(operatorSessionEnv, "")
+			sess := operatorSession{BaseURL: server.URL, Cookie: "opaque-session", ExpiresAt: time.Now().UTC().Add(time.Hour)}
+			if tc.age > 0 {
+				sess.SteppedUpAt = time.Now().UTC().Add(-tc.age)
+			}
+			if err := saveOperatorSession(sess); err != nil {
+				t.Fatal(err)
+			}
+			out, stderr, restore := captureOperatorIO()
+			defer restore()
+			if tc.wantAsked {
+				answerOperatorPrompts(t, "654321")
+			} else {
+				answerOperatorPrompts(t)
+			}
+
+			if code := cmdOperatorAuthDispatch(append([]string{"step-up"}, tc.args...)); code != 0 {
+				t.Fatalf("exit = %d, stderr=%s", code, stderr)
+			}
+			if got := verified == 1; got != tc.wantAsked {
+				t.Fatalf("verify requests = %d, want asked=%t", verified, tc.wantAsked)
+			}
+			skipped := strings.Contains(out.String(), "already valid until") && strings.Contains(out.String(), "--force")
+			if skipped == tc.wantAsked {
+				t.Fatalf("stdout = %q, want skipped=%t", out, !tc.wantAsked)
+			}
+		})
+	}
+}
+
+// A FAAS_OPERATOR_SESSION cookie cannot be stepped up, so neither a
+// step-up refusal from apid nor 'auth step-up' may send the operator to
+// 'auth step-up'; both name the way out.
+func TestOperatorEnvSessionStepUpNamesTheWayOut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mutation" {
+			t.Errorf("unexpected request %s", r.URL)
+		}
+		writeTestJSON(w, http.StatusForbidden, api.Problem{Status: http.StatusForbidden, Code: api.CodeStepUpRequired})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_APID_URL", server.URL)
+	t.Setenv(operatorSessionEnv, "env-cookie")
+	sess, err := loadOperatorSession()
+	if err != nil || !sess.fromEnv {
+		t.Fatalf("loadOperatorSession = %+v, %v", sess, err)
+	}
+	err = newOperatorHTTPClient(&sess).doJSON(t.Context(), http.MethodPost, "/mutation", nil, nil, true, nil)
+	if err == nil || !strings.Contains(err.Error(), "FAAS_OPERATOR_SESSION") || strings.Contains(err.Error(), "run 'gregalectl auth step-up'") {
+		t.Fatalf("mutation error = %v", err)
+	}
+
+	_, stderr, restore := captureOperatorIO()
+	defer restore()
+	answerOperatorPrompts(t)
+	if code := cmdOperatorAuthDispatch([]string{"step-up"}); code != 1 {
+		t.Fatalf("step-up exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), envSessionStepUpHint) {
+		t.Fatalf("step-up stderr = %q", stderr)
+	}
+}
+
+// answerOperatorPrompts answers the next password and TOTP prompts in order.
+func answerOperatorPrompts(t *testing.T, answers ...string) {
+	t.Helper()
+	old := readOperatorSecret
+	t.Cleanup(func() { readOperatorSecret = old })
+	readOperatorSecret = func(prompt string) (string, error) {
+		if len(answers) == 0 {
+			t.Fatalf("unexpected prompt %q", prompt)
+		}
+		answer := answers[0]
+		answers = answers[1:]
+		return answer, nil
 	}
 }
 

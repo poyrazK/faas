@@ -32,7 +32,7 @@ func (c *Client) ListAccountWorkflowReadinessQueue(ctx context.Context, slug str
 	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/queue"+operationWorkflowReadinessQueueQuery(opts, false), nil, &out)
 	return out, err
 }
-func (c *Client) ListPlatformTenantSelfWorkflowReadinessQueue(ctx context.Context, opts OperationWorkflowReadinessQueueOptions) (OperationWorkflowReadinessQueueResponse, error) {
+func (c *PreviewClient) ListPlatformTenantSelfWorkflowReadinessQueue(ctx context.Context, opts OperationWorkflowReadinessQueueOptions) (OperationWorkflowReadinessQueueResponse, error) {
 	var out OperationWorkflowReadinessQueueResponse
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/queue"+operationWorkflowReadinessQueueQuery(opts, true), nil, &out)
 	return out, err
@@ -43,7 +43,7 @@ func (c *Client) CompareAccountWorkflowReadiness(ctx context.Context, slug strin
 	err := c.doOperation(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/compare", req, &out)
 	return out, err
 }
-func (c *Client) ComparePlatformTenantSelfWorkflowReadiness(ctx context.Context, req OperationWorkflowReadinessComparisonRequest) (OperationWorkflowReadinessComparisonResponse, error) {
+func (c *PreviewClient) ComparePlatformTenantSelfWorkflowReadiness(ctx context.Context, req OperationWorkflowReadinessComparisonRequest) (OperationWorkflowReadinessComparisonResponse, error) {
 	var out OperationWorkflowReadinessComparisonResponse
 	err := c.doOperation(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness/compare", req, &out)
 	return out, err

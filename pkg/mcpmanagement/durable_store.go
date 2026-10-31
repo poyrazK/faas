@@ -1,6 +1,7 @@
 package mcpmanagement
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -15,21 +16,48 @@ import (
 	"sync"
 
 	"github.com/gofrs/flock"
+
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 const stateFormat = "gregale-mcp-state-v1"
 const maxStateBytes = 32 << 20
 
-// StateStore is an encrypted, atomic, single-writer bridge journal. Its key
-// must be provided independently of the state file and retained across restarts.
+// StateStore is an encrypted, single-writer bridge journal. Its key must be
+// provided independently of the stored state and retained across restarts.
+// A self-hosted bridge keeps it in a private file; the hosted bridge keeps it
+// in Postgres under a lease (ADR-20261026195952).
 type StateStore struct {
 	mu      sync.Mutex
-	path    string
-	lock    *flock.Flock
-	aead    cipher.AEAD
+	persist statePersistence
 	records map[string]json.RawMessage
 	failure error
 	closed  bool
+	// seqs is the snapshot sequence of each record set through
+	// updateSnapshot, so an older snapshot committed late never replaces a
+	// newer one.
+	seqs map[string]uint64
+}
+
+// statePersistence makes the store's records durable.
+type statePersistence interface {
+	load() (map[string]json.RawMessage, error)
+	// commit makes records durable. changed names the namespaces this update
+	// set or removed; a backend that stores the records whole may ignore it.
+	commit(records map[string]json.RawMessage, changed []string) error
+	close() error
+}
+
+func openStateStore(persist statePersistence) (*StateStore, error) {
+	records, err := persist.load()
+	if err != nil {
+		_ = persist.close()
+		return nil, err
+	}
+	if records == nil {
+		records = map[string]json.RawMessage{}
+	}
+	return &StateStore{persist: persist, records: records}, nil
 }
 
 // OpenStateStore locks a private state directory until Close. The key file must
@@ -39,21 +67,7 @@ func OpenStateStore(path, keyPath string) (*StateStore, error) {
 	if path == "" || keyPath == "" {
 		return nil, errors.New("state file and independent key file are both required")
 	}
-	key, err := readPrivateFile(keyPath, 128)
-	if err != nil {
-		return nil, fmt.Errorf("read MCP state key: %w", err)
-	}
-	if len(key) != 32 {
-		key, err = hex.DecodeString(strings.TrimSpace(string(key)))
-	}
-	if err != nil || len(key) != 32 {
-		return nil, errors.New("MCP state key must be 32 raw bytes or 64 hex characters")
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	aead, err := cipher.NewGCM(block)
+	aead, err := readStateKey(keyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -77,21 +91,42 @@ func OpenStateStore(path, keyPath string) (*StateStore, error) {
 		_ = lock.Close()
 		return nil, errors.New("MCP state is already in use or cannot be locked")
 	}
-	store := &StateStore{path: path, lock: lock, aead: aead, records: map[string]json.RawMessage{}}
-	if err := store.load(); err != nil {
-		_ = lock.Unlock()
-		return nil, err
-	}
-	return store, nil
+	return openStateStore(&fileState{path: path, lock: lock, aead: aead})
 }
 
-func readPrivateFile(path string, limit int64) ([]byte, error) {
+// readStateKey reads the independent 32-byte state key. The key is an
+// operator-provisioned secret, so it takes the platform's secret-file modes:
+// the hosted bridge receives it through systemd LoadCredential=, which exposes
+// it as a 0440 root-owned file the unit's user reads through an ACL
+// (production rc.300, 2026-10-28: a 0600-only check kept the bridge from starting).
+func readStateKey(keyPath string) (cipher.AEAD, error) {
+	key, err := readPrivateFile(keyPath, 128, secretbox.AllowedSecretFileMode)
+	if err != nil {
+		return nil, fmt.Errorf("read MCP state key: %w", err)
+	}
+	if len(key) != 32 {
+		key, err = hex.DecodeString(strings.TrimSpace(string(key)))
+	}
+	if err != nil || len(key) != 32 {
+		return nil, errors.New("MCP state key must be 32 raw bytes or 64 hex characters")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+// ownerOnly is the mode rule for the files the bridge writes itself.
+func ownerOnly(perm os.FileMode) bool { return perm&0077 == 0 }
+
+func readPrivateFile(path string, limit int64, allowed func(os.FileMode) bool) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("must be a private regular file (0600)")
+	if !info.Mode().IsRegular() || !allowed(info.Mode().Perm()) {
+		return nil, fmt.Errorf("must be a private regular file, not %s", info.Mode())
 	}
 	f, err := os.Open(path) //nolint:forbidigo // operator-owned state/key path, checked above for private permissions and no symlink
 	if err != nil {
@@ -103,28 +138,6 @@ func readPrivateFile(path string, limit int64) ([]byte, error) {
 		return nil, errors.New("private file is too large")
 	}
 	return data, err
-}
-
-func (s *StateStore) load() error {
-	data, err := readPrivateFile(s.path, maxStateBytes)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read MCP state: %w", err)
-	}
-	n := s.aead.NonceSize()
-	if len(data) < n {
-		return errors.New("invalid encrypted MCP state")
-	}
-	plain, err := s.aead.Open(nil, data[:n], data[n:], []byte(stateFormat))
-	if err != nil {
-		return errors.New("MCP state authentication failed; use the original key and unmodified state")
-	}
-	if err := json.Unmarshal(plain, &s.records); err != nil || s.records == nil {
-		return errors.New("invalid MCP state records")
-	}
-	return nil
 }
 
 func (s *StateStore) read(namespace string, value any) error {
@@ -143,6 +156,15 @@ func (s *StateStore) read(namespace string, value any) error {
 }
 
 func (s *StateStore) update(namespace string, value any) error {
+	return s.updateSnapshot(namespace, value, 0)
+}
+
+// updateSnapshot sets namespace to value and commits what changed. A record
+// whose bytes did not change is not written again: discovery GETs and reads
+// used to rewrite the whole state. seq orders snapshots taken under the
+// caller's lock but committed outside it; a value older than the record's
+// last seq is already covered by it. Zero is unordered.
+func (s *StateStore) updateSnapshot(namespace string, value any, seq uint64) error {
 	if s == nil {
 		return nil
 	}
@@ -155,65 +177,55 @@ func (s *StateStore) update(namespace string, value any) error {
 	if err != nil {
 		return err
 	}
-	if value == nil {
-		delete(s.records, namespace)
-	} else {
-		s.records[namespace] = data
+	if s.seqs == nil {
+		s.seqs = map[string]uint64{}
 	}
-	if snapshot, ok := value.(oauthSnapshot); ok && namespace == "oauth" {
+	var changed []string
+	stale := seq != 0 && seq < s.seqs[namespace]
+	switch {
+	case stale:
+	case value == nil:
+		if _, ok := s.records[namespace]; ok {
+			delete(s.records, namespace)
+			changed = append(changed, namespace)
+		}
+	case !bytes.Equal(s.records[namespace], data):
+		s.records[namespace] = data
+		changed = append(changed, namespace)
+	}
+	if !stale && seq != 0 {
+		s.seqs[namespace] = seq
+	}
+	if snapshot, ok := value.(oauthSnapshot); ok && namespace == "oauth" && !stale {
 		for key := range s.records {
 			if strings.HasPrefix(key, "plans/") || strings.HasPrefix(key, "environment-plans/") {
 				grantID := strings.TrimPrefix(strings.TrimPrefix(key, "environment-plans/"), "plans/")
 				if _, active := snapshot.Grants[grantID]; !active {
 					delete(s.records, key)
+					changed = append(changed, key)
 				}
 			}
 		}
 	}
-	if err := s.flush(); err != nil {
+	if len(changed) == 0 {
+		return nil
+	}
+	// Memory is now ahead of storage, so a failed commit disables the store
+	// and the bridge exits to reload (ADR-20261026195952 amendment 2).
+	if err := s.persist.commit(s.records, changed); err != nil {
 		s.failure = err
 		return errors.New("MCP state could not be committed; further access disabled")
 	}
 	return nil
 }
 
-func (s *StateStore) flush() error {
-	plain, err := json.Marshal(s.records)
-	if err != nil {
-		return err
+// fail disables further access, as a failed commit does.
+func (s *StateStore) fail(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failure == nil {
+		s.failure = err
 	}
-	nonce := make([]byte, s.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return err
-	}
-	data := s.aead.Seal(nonce, nonce, plain, []byte(stateFormat))
-	if len(data) > maxStateBytes {
-		return errors.New("MCP state capacity reached")
-	}
-	temp, err := os.CreateTemp(filepath.Dir(s.path), ".mcp-state-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(temp.Name()) }()
-	if _, err = temp.Write(data); err == nil {
-		err = temp.Sync()
-	}
-	closeErr := temp.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if err := os.Rename(temp.Name(), s.path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(s.path)) //nolint:forbidigo // private operator-owned directory validated during OpenStateStore; opened only for fsync
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dir.Close() }()
-	return dir.Sync()
 }
 
 func (s *StateStore) available() bool {
@@ -231,10 +243,88 @@ func (s *StateStore) Close() error {
 		return nil
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
-	return s.lock.Unlock()
+	s.mu.Unlock()
+	// Closing waits for the Postgres lease renewal to stop, and a renewal
+	// that just lost the lease records that through fail, under s.mu: hold
+	// it here and both wait forever. Marking the store closed first keeps
+	// every read and write out meanwhile.
+	return s.persist.close()
+}
+
+// fileState seals every record into one private file, replaced atomically.
+type fileState struct {
+	path string
+	lock *flock.Flock
+	aead cipher.AEAD
+}
+
+func (f *fileState) load() (map[string]json.RawMessage, error) {
+	data, err := readPrivateFile(f.path, maxStateBytes, ownerOnly)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read MCP state: %w", err)
+	}
+	n := f.aead.NonceSize()
+	if len(data) < n {
+		return nil, errors.New("invalid encrypted MCP state")
+	}
+	plain, err := f.aead.Open(nil, data[:n], data[n:], []byte(stateFormat))
+	if err != nil {
+		return nil, errors.New("MCP state authentication failed; use the original key and unmodified state")
+	}
+	var records map[string]json.RawMessage
+	if err := json.Unmarshal(plain, &records); err != nil || records == nil {
+		return nil, errors.New("invalid MCP state records")
+	}
+	return records, nil
+}
+
+func (f *fileState) commit(records map[string]json.RawMessage, _ []string) error {
+	plain, err := json.Marshal(records)
+	if err != nil {
+		return err
+	}
+	nonce := make([]byte, f.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	data := f.aead.Seal(nonce, nonce, plain, []byte(stateFormat))
+	if len(data) > maxStateBytes {
+		return errors.New("MCP state capacity reached")
+	}
+	temp, err := os.CreateTemp(filepath.Dir(f.path), ".mcp-state-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(temp.Name()) }()
+	if _, err = temp.Write(data); err == nil {
+		err = temp.Sync()
+	}
+	closeErr := temp.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Rename(temp.Name(), f.path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(f.path)) //nolint:forbidigo // private operator-owned directory validated during OpenStateStore; opened only for fsync
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
+}
+
+func (f *fileState) close() error {
+	return f.lock.Unlock()
 }

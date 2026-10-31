@@ -218,6 +218,11 @@ func assertBackendFallthrough(t *testing.T, status int, body []byte) {
 	if status == http.StatusServiceUnavailable && json.Unmarshal(body, &problem) == nil && problem.Code == api.CodeCapacity {
 		return
 	}
+	// A browser navigation (Accept: text/html) gets the same outcome as the
+	// HTML error page rather than a problem document.
+	if status == http.StatusServiceUnavailable && bytes.Contains(body, []byte(`<meta name="faas-error-code" content="`+api.CodeCapacity+`">`)) {
+		return
+	}
 	t.Errorf("backend fallthrough: status=%d body=%s", status, body)
 }
 
@@ -229,10 +234,32 @@ func problemCode(body []byte) string {
 
 // seedRouteSubstitute seeds the `kind=route` precondition rule that
 // every per-kind e2e test needs to get past Backend.Lookup on a
-// synthetic host. Without this, ServeHTTP returns 404 at handler.go
-// :2261 before any non-route edge rule fires.
+// synthetic host. Without this, ServeHTTP returns 404 before any
+// non-route edge rule fires. The gateway only applies a route rule on a
+// host that resolves to an app of the rule's account, so the host is
+// first registered as a verified custom domain of that app; it must sit
+// outside the apps domain, whose hosts resolve by slug only.
 func seedRouteSubstitute(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	accountID, appID, host, appSlug string) string {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		insert into custom_domains (domain, app_id, verified_at)
+		values ($1, $2, now())
+		on conflict (domain) do update set app_id = excluded.app_id, verified_at = excluded.verified_at`,
+		host, appID); err != nil {
+		t.Fatalf("seed verified custom domain %s: %v", host, err)
+	}
+	// Public routing pins an eligible deployment before evaluating non-route
+	// rules. This APID/Gatewayd fixture has no builder or VM, so seed the
+	// serving roster while retaining the existing no-capacity fallthrough.
+	_, err := pool.Exec(ctx, `INSERT INTO deployments(app_id, status, kind, image_digest, scope, traffic_percent)
+	 SELECT id, 'live', 'image', 'sha256:edge-rule-fixture', $2, 100 FROM apps
+	 WHERE id=$1::uuid AND NOT EXISTS (
+	   SELECT 1 FROM deployments WHERE app_id=$1::uuid AND scope=$2
+	     AND status='live' AND deleted_at IS NULL AND traffic_percent>0)`, appID, state.DefaultEnvScope)
+	if err != nil {
+		t.Fatalf("seed edge-rule serving deployment: %v", err)
+	}
 	return seedEdgeRuleDirect(t, ctx, pool, accountID, appID, host,
 		state.EdgeRuleKindRoute,
 		map[string]any{

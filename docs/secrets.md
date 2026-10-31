@@ -5,11 +5,11 @@ app they belong to. Gregale injects them into the guest at wake; plaintext
 values are never returned, logged, or included in deployment receipts.
 
 ```bash
-gregale secrets set --app my-api STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
-gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
-gregale secrets rotate --app my-api DATABASE_URL="$NEW_DATABASE_URL" --restart
-gregale secrets list --app my-api
-gregale secrets unset --app my-api STRIPE_SECRET_KEY
+gregale env set --app my-api STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
+gregale env set --app my-api DATABASE_URL="$DATABASE_URL" --restart
+gregale env rotate --app my-api DATABASE_URL="$NEW_DATABASE_URL" --restart
+gregale env list --app my-api
+gregale env unset --app my-api STRIPE_SECRET_KEY
 ```
 
 Use `--json` or `FAAS_JSON=1` in scripts. Successful `set`, `rotate`, and
@@ -23,7 +23,7 @@ in a `warnings` array, so stdout remains parseable JSON.
 
 ```bash
 gregale --json secrets set --app my-api STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
-printf '%s\n' "DATABASE_URL=$DATABASE_URL" | FAAS_JSON=1 gregale secrets rotate --app my-api --from-stdin
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | FAAS_JSON=1 gregale env rotate --app my-api --from-stdin
 gregale --json secrets unset --app my-api OLD_API_KEY
 ```
 
@@ -66,12 +66,9 @@ rotate` to apply immediately. Gregale durably queues a rolling configuration
 refresh: it cold-boots replacements with the current environment, routes new
 requests to them, waits for route convergence and in-flight requests to drain,
 then destroys the old processes without snapshotting their old environment.
-The scheduler keeps app concurrency at or below its configured ceiling plus
-one temporary slot; node RAM and CPU limits still apply, so a refresh can
-remain pending until capacity is available. In a multi-node fleet, the drain
-waits for registered gateways to acknowledge the route update
-and fresh VM telemetry; legacy single-box installs use their existing local
-notification path.
+Gregale keeps app concurrency at or below its configured ceiling plus one
+temporary slot, and a refresh can remain pending until capacity is available.
+The old processes drain only after every gateway routes to the replacements.
 
 `secrets rotate --wait-for-ack` is the in-process counterpart: after rotating,
 the CLI polls the complete active authorized-runtime roster until every
@@ -119,7 +116,7 @@ its target history after the secret and runtime are removed; it stores only
 the app, scope, key name, opaque revision, timestamps, closed status/error
 codes, and runtime correlation IDs—never secret material. A runtime is counted
 as acknowledged only after its application reports that the deleted key is no
-longer in use. `gregale secrets unset --wait-for-ack --timeout 2m` waits for
+longer in use. `gregale env unset --wait-for-ack --timeout 2m` waits for
 that proof and exits non-zero on timeout, application failure, or a target
 that cannot live-reload. Without the wait flag, unset returns the revocation
 ID immediately; query its progress with
@@ -231,7 +228,7 @@ serialized behind startup. After seeing the first valid revision, all subsequent
 reads use strict validation. SIGTERM/SIGINT cancel the wait and ACK work. Redeploy
 the updated starter to obtain this behavior; no platform migration is required.
 
-`gregale secrets list` reports delivery for each key:
+`gregale env list` reports delivery for each key:
 
 - `pending` means the current version has not yet reached a successfully
   started runtime.
@@ -277,9 +274,9 @@ to receive a signal. Neither substitutes for the separate application ACK.
 
 Images without the readiness label keep their startup-gate behavior and must
 install their signal handler early; guest-init cannot infer completion of
-arbitrary initialization. Upgrade the outcome validator and apply the new observation migration before
-replacing guests, and redeploy an image with the readiness label to obtain the stronger
-startup guarantee. Required markers that are never written leave delivery queued.
+arbitrary initialization. Redeploy an image with the readiness label to obtain
+the stronger startup guarantee. Required markers that are never written leave
+delivery queued.
 
 Each opted-in process receives `FAAS_SECRETS_RELOAD_GENERATION`, a platform-owned
 32-character opaque execution ID. Echo it as `generation` in every application
@@ -296,10 +293,9 @@ Strict binding promotion requires the active process ID to match the ACK's ID.
 The adoption target exposes optional `process_generation` and
 `application_ack_generation` fields; missing coverage is `unknown`. Legacy guests
 can still report version-only ACKs while no process generation has been registered,
-but those receipts cannot satisfy strict adoption. Apply the ADR-508 migration and
-upgrade vmmd first, then redeploy applications with the updated helper and guest
-together. Old helpers running in new guests receive `409` until they echo their own
-execution ID. Historical completed revocation operations retain their completion
+but those receipts cannot satisfy strict adoption. Redeploy applications with
+the updated helper and guest together. Old helpers running in new guests
+receive `409` until they echo their own execution ID. Historical completed revocation operations retain their completion
 history; live receipts are invalidated on restart.
 
 ## Project environment secrets
@@ -310,10 +306,10 @@ of once per app (ADR-1139):
 
 ```bash
 printf 'DATABASE_PASSWORD=%s\n' "$DATABASE_PASSWORD" | \
-  gregale projects environments secrets set shop production --from-stdin
-gregale projects environments secrets rotate shop production --file ./rotated.env
-gregale projects environments secrets shop production
-gregale projects environments secrets unset shop production PAYMENTS_KEY
+  gregale environment secrets set shop production --from-stdin
+gregale environment secrets rotate shop production --file ./rotated.env
+gregale environment secrets shop production
+gregale environment secrets unset shop production PAYMENTS_KEY
 ```
 
 Every service of the environment receives the value as an environment variable
@@ -323,6 +319,12 @@ key itself, as a plain variable, a secret or a secret reference, keeps its own
 value. Deployments that list their secrets explicitly (`env_secrets`) receive
 only what they list, and Git-managed scheduled Jobs receive only their reviewed
 definition.
+
+Creating an environment from another (`gregale environment create
+--from`) copies the source's shared secrets along with the services' own
+secrets. Promotion does not copy them: each environment keeps its own. A
+release qualification records the shared secrets it ran with, and promoting
+that release is refused if one of them changed afterwards.
 
 Values are write-only: listings show each key's version, sealing `kid`, value
 fingerprint and timestamps, never the value. A change reaches each service at

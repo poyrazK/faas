@@ -5,8 +5,8 @@ import json
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.queues import create_queue_binding, get_queue_binding_status, queue_send, send_app_message
-from faas_sdk.models import CreateQueueBindingRequest, QueueSendRequest, QueueSendRequestPayload, SendAppMessageRequest
+from faas_sdk.preview.api.queues import create_queue_binding, get_queue_binding_status, queue_send, send_app_message
+from faas_sdk.preview.models import CreateQueueBindingRequest, QueueSendRequest, QueueSendRequestPayload, SendAppMessageRequest
 
 
 def test_queue_environment_transport() -> None:

@@ -1,0 +1,117 @@
+# Pinned upstream nftables for native VMM hosts (ADR-1749).
+#
+# The public bridge socket generation guard XORs the socket mark with the
+# output interface (`meta mark set meta mark ^ meta oif`). nftables 1.0.9 on
+# Ubuntu 24.04 rejects a variable right-hand side, so VMMD refuses every
+# native boot. Build the pinned release with its matching libnftnl into a
+# private prefix (rpath, so the distro libnftnl is unchanged), prove the guard
+# loads into this kernel, then divert /usr/sbin/nft so VMMD, nftables.service
+# and the syntax check below all use it. Converged hosts skip the build.
+
+- name: nftables upstream — require a kernel with variable bitwise support
+  ansible.builtin.assert:
+    that:
+      - ansible_kernel is version('6.13', '>=')
+    fail_msg: "ADR-1749 public forwarding needs Linux 6.13+; this host runs {{ ansible_kernel }}"
+
+- name: nftables upstream — inspect the installed build
+  ansible.builtin.command:
+    argv: ["{{ nftables_upstream_prefix }}/sbin/nft", --version]
+  register: nftables_upstream_installed
+  changed_when: false
+  failed_when: false
+
+- name: nftables upstream — build when the pinned release is missing
+  when: nftables_upstream_installed.rc != 0 or ('v' ~ nftables_upstream_version ~ ' ') not in nftables_upstream_installed.stdout
+  block:
+    - name: nftables upstream — install build dependencies
+      ansible.builtin.apt:
+        name: [build-essential, pkg-config, libmnl-dev, libjansson-dev]
+        state: present
+        install_recommends: false
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: nftables upstream — create the source directory
+      ansible.builtin.file:
+        path: "{{ nftables_upstream_src }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: nftables upstream — download libnftnl
+      ansible.builtin.get_url:
+        url: "https://www.netfilter.org/projects/libnftnl/files/libnftnl-{{ nftables_upstream_libnftnl_version }}.tar.xz"
+        dest: "{{ nftables_upstream_src }}/libnftnl-{{ nftables_upstream_libnftnl_version }}.tar.xz"
+        checksum: "sha256:{{ nftables_upstream_libnftnl_sha256 }}"
+        mode: "0644"
+
+    - name: nftables upstream — download nftables
+      ansible.builtin.get_url:
+        url: "https://www.netfilter.org/projects/nftables/files/nftables-{{ nftables_upstream_version }}.tar.xz"
+        dest: "{{ nftables_upstream_src }}/nftables-{{ nftables_upstream_version }}.tar.xz"
+        checksum: "sha256:{{ nftables_upstream_sha256 }}"
+        mode: "0644"
+
+    - name: nftables upstream — unpack sources
+      ansible.builtin.unarchive:
+        src: "{{ nftables_upstream_src }}/{{ item }}.tar.xz"
+        dest: "{{ nftables_upstream_src }}"
+        remote_src: true
+        creates: "{{ nftables_upstream_src }}/{{ item }}/configure"
+      loop:
+        - "libnftnl-{{ nftables_upstream_libnftnl_version }}"
+        - "nftables-{{ nftables_upstream_version }}"
+
+    - name: nftables upstream — build and install libnftnl
+      ansible.builtin.shell:
+        cmd: >-
+          set -e;
+          ./configure --prefix={{ nftables_upstream_prefix }} --disable-static;
+          make -j{{ ansible_processor_vcpus | default(2) }};
+          make install
+        chdir: "{{ nftables_upstream_src }}/libnftnl-{{ nftables_upstream_libnftnl_version }}"
+        executable: /bin/bash
+        creates: "{{ nftables_upstream_prefix }}/lib/libnftnl.so.11"
+
+    - name: nftables upstream — build and install nftables
+      ansible.builtin.shell:
+        cmd: >-
+          set -e;
+          PKG_CONFIG_PATH={{ nftables_upstream_prefix }}/lib/pkgconfig ./configure --prefix={{ nftables_upstream_prefix }}
+          --sysconfdir=/etc --disable-static --disable-man-doc --with-json --with-mini-gmp --without-cli
+          LDFLAGS=-Wl,-rpath,{{ nftables_upstream_prefix }}/lib;
+          make -j{{ ansible_processor_vcpus | default(2) }};
+          make install
+        chdir: "{{ nftables_upstream_src }}/nftables-{{ nftables_upstream_version }}"
+        executable: /bin/bash
+        creates: "{{ nftables_upstream_prefix }}/sbin/nft"
+
+- name: nftables upstream — install the guard self-check
+  ansible.builtin.copy:
+    src: nftables-public-forward-check.sh
+    dest: /usr/local/sbin/faas-nftables-public-forward-check
+    owner: root
+    group: root
+    mode: "0755"
+
+# Fail before switching the host binary if this kernel or build cannot load
+# the exact guard VMMD installs.
+- name: nftables upstream — prove the public forward guard loads
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/faas-nftables-public-forward-check, "{{ nftables_upstream_prefix }}/sbin/nft"]
+  changed_when: false
+
+- name: nftables upstream — divert the distro nft binary
+  ansible.builtin.command:
+    argv: [dpkg-divert, --local, --rename, --add, --divert, /usr/sbin/nft.distrib, /usr/sbin/nft]
+  register: nftables_upstream_divert
+  changed_when: "'Adding' in nftables_upstream_divert.stdout"
+
+- name: nftables upstream — point /usr/sbin/nft at the pinned build
+  ansible.builtin.file:
+    src: "{{ nftables_upstream_prefix }}/sbin/nft"
+    dest: /usr/sbin/nft
+    state: link
+    force: true

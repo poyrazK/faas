@@ -164,6 +164,8 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 	if inventory.VerificationScope == "" {
 		inventory.VerificationScope = "default"
 	}
+	probesAvailable := s.appTaskAPIEnabled
+	inventory.VerificationProbesAvailable = &probesAvailable
 	changedAt, _, err := s.store.AppRuntimeConfigChangedAt(ctx, app.ID)
 	if err != nil {
 		bindings.AppendVerificationIssue(inventory)

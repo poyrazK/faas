@@ -3,10 +3,14 @@ package apidserver
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -34,23 +38,70 @@ func (s *server) testNotificationChannel(w http.ResponseWriter, r *http.Request,
 		s.notFound(w, "no such notification channel")
 		return
 	}
-	target, prob := openChannelTarget(r.Context(), row)
-	if prob != nil {
+	if prob := s.channelTestAllowed(acct); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	now := time.Now()
-	msg := alertchannels.Message{Event: alertchannels.EventTest, RuleName: "test", DedupKey: "test-" + row.ID, OccurredAt: now}
-	sendErr := channelSender(apidChannelMailer{s.mailer}).Send(r.Context(), target, msg)
-	errMsg := ""
-	if sendErr != nil {
-		errMsg = sendErr.Error()
+	errMsg, prob := s.sendChannelTest(r.Context(), acct, row, now)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	if err := store.RecordNotificationChannelDelivery(r.Context(), row.ID, now, errMsg); err != nil {
 		s.log.Warn("record notification channel test", "channel", row.ID, "err", err)
 	}
-	s.audit.Emit(r.Context(), "notification_channel.tested", &acct.ID, map[string]any{"channel_id": row.ID, "delivered": sendErr == nil})
-	writeJSON(w, http.StatusOK, api.TestNotificationChannelResponse{Delivered: sendErr == nil, Error: errMsg})
+	s.audit.Emit(r.Context(), "notification_channel.tested", &acct.ID, map[string]any{"channel_id": row.ID, "delivered": errMsg == ""})
+	writeJSON(w, http.StatusOK, api.TestNotificationChannelResponse{Delivered: errMsg == "", Error: errMsg})
+}
+
+// channelTestAllowed takes one of the account's
+// NotificationChannelTestsPerAccountMinute test sends (ADR-20261028101615).
+func (s *server) channelTestAllowed(acct state.Account) *api.Problem {
+	return s.testSendAllowed(&s.channelTestsOnce, &s.channelTests, acct,
+		api.NotificationChannelTestsPerAccountMinute, api.ErrNotificationChannelTestRateLimited)
+}
+
+// testSendAllowed takes one of an account's limit test sends a minute from
+// the limiter once builds; limited is the 429 past it.
+func (s *server) testSendAllowed(once *sync.Once, limiter **peraccount.Limiter, acct state.Account, limit int,
+	limited func(limit, retryAfterS int) *api.Problem) *api.Problem {
+	account, err := uuid.Parse(acct.ID)
+	if err != nil {
+		// Account ids are UUIDs; one that is not cannot be counted, so
+		// the send is refused rather than let through unlimited.
+		s.log.Error("test send: account id is not a UUID", "account", acct.ID, "err", err)
+		return api.ErrInternal("could not count this account's test sends")
+	}
+	once.Do(func() { *limiter = peraccount.NewLimiter() })
+	if ok, retryMS := (*limiter).Take(account, limit); !ok {
+		return limited(limit, int((retryMS+999)/1000))
+	}
+	return nil
+}
+
+// sendChannelTest sends the test message and returns the delivery error,
+// empty on success. A destination apid cannot open is sealed to the
+// alerting domain: meterd sends it (ADR 20261022111812, section 3).
+func (s *server) sendChannelTest(ctx context.Context, acct state.Account, row state.NotificationChannel, now time.Time) (string, *api.Problem) {
+	target, prob := openChannelTarget(ctx, row)
+	if prob != nil {
+		res, relayProb := s.relayTestSend(ctx, acct.ID, state.AlertTestSendChannel, row.ID, nil, channelTestRelayWait)
+		switch {
+		case relayProb != nil:
+			return "", relayProb
+		case res.Failure != "":
+			return "", prob
+		}
+		return res.Error, nil
+	}
+	msg := alertchannels.Message{Event: alertchannels.EventTest, RuleName: "test", DedupKey: "test-" + row.ID, OccurredAt: now}
+	// A failed delivery is the test's result, not an apid error.
+	deliveryErr := ""
+	if err := channelSender(apidChannelMailer{s.mailer}).Send(ctx, target, msg); err != nil {
+		deliveryErr = err.Error()
+	}
+	return deliveryErr, nil
 }
 
 // openChannelTarget unseals a channel's destination. Error details stay in

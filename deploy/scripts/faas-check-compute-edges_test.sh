@@ -23,7 +23,7 @@ exit 0
 EOF
 chmod +x "$ROOT/curl"
 
-discovery='[{"targets":["10.0.0.2:9092"],"labels":{"job":"gatewayd-public-edge","node":"cn-1"}},{"targets":["10.0.0.3:9092"],"labels":{"job":"gatewayd-public-edge","node":"cn-2"}}]'
+discovery='[{"targets":["10.0.0.2:9109"],"labels":{"job":"gatewayd-public-edge","node":"cn-1"}},{"targets":["10.0.0.3:9109"],"labels":{"job":"gatewayd-public-edge","node":"cn-2"}}]'
 run() {
   FAAS_CURL="$ROOT/curl" MOCK_DISCOVERY="$1" MOCK_DOWN="$2" bash "$CHECK"
 }
@@ -37,7 +37,7 @@ if out="$(run "$discovery" "10.0.0.3:20241")"; then
 fi
 [[ "$out" == *"cn-2"*"connector=NOT-CONNECTED"* ]] || { echo "FAIL: cn-2 connector not flagged: $out" >&2; exit 1; }
 
-if out="$(run "$discovery" "10.0.0.2:9092/readyz")"; then
+if out="$(run "$discovery" "10.0.0.2:9109/readyz")"; then
   echo "FAIL: an unready edge passed" >&2; exit 1
 fi
 [[ "$out" == *"cn-1"*"edge=NOT-READY"* ]] || { echo "FAIL: cn-1 edge not flagged: $out" >&2; exit 1; }

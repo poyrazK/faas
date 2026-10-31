@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
 
@@ -72,28 +74,65 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool, previe
 		}{plan, preview}))
 	}
 	renderCLIPreview(w, preview)
+	// Mark each row that came from a default instead of repeating the
+	// values in a separate list; JSON keeps defaults_applied.
+	defaulted := map[string]bool{}
+	for _, applied := range plan.DefaultsApplied {
+		key, _, _ := strings.Cut(applied, "=")
+		defaulted[key] = true
+	}
+	marked := map[string]bool{}
+	mark := func(keys ...string) string {
+		suffix := ""
+		for _, key := range keys {
+			marked[key] = true
+			if defaulted[key] {
+				suffix = " (default)"
+			}
+		}
+		return suffix
+	}
 	_, _ = fmt.Fprintf(w, "Simple app plan for %s\n", plan.Slug)
 	_, _ = fmt.Fprintf(w, "  source:             %s\n", plan.Source)
 	if plan.Framework != "" {
 		_, _ = fmt.Fprintf(w, "  framework:          %s\n", plan.Framework)
 	}
-	_, _ = fmt.Fprintf(w, "  resources:          %s\n", plan.ResourceProfile)
+	_, _ = fmt.Fprintf(w, "  resources:          %s%s\n", plan.ResourceProfile, mark("resource_profile"))
 	if plan.MemoryMB > 0 {
 		_, _ = fmt.Fprintf(w, "  memory/cpu:         %d MB / %d millicores\n", plan.MemoryMB, plan.CPUMillicores)
 	}
 	if plan.HealthPath == "" {
-		_, _ = fmt.Fprintf(w, "  listener:           :%d · TCP listener readiness\n", plan.Port)
+		_, _ = fmt.Fprintf(w, "  listener:           :%d · TCP listener readiness%s\n", plan.Port, mark("port", "readiness"))
 	} else {
-		_, _ = fmt.Fprintf(w, "  listener:           :%d %s\n", plan.Port, plan.HealthPath)
+		_, _ = fmt.Fprintf(w, "  listener:           :%d %s%s\n", plan.Port, plan.HealthPath, mark("port", "health_path"))
 	}
-	_, _ = fmt.Fprintf(w, "  execution:          %s\n", plan.ExecutionMode)
-	_, _ = fmt.Fprintf(w, "  scaling:            scale to zero\n")
-	_, _ = fmt.Fprintf(w, "  local storage:      %s\n", plan.LocalStorage)
-	_, _ = fmt.Fprintf(w, "  durable state:      %s (bind a database/object store)\n", plan.DurableState)
-	_, _ = fmt.Fprintln(w, "  defaults applied:")
+	_, _ = fmt.Fprintf(w, "  execution:          %s%s\n", plan.ExecutionMode, mark("execution_mode"))
+	_, _ = fmt.Fprintf(w, "  scaling:            scale to zero%s\n", mark("scale_to_zero"))
+	_, _ = fmt.Fprintf(w, "  local storage:      %s%s\n", plan.LocalStorage, mark("local_storage"))
+	_, _ = fmt.Fprintf(w, "  durable state:      %s (bind a database/object store)%s\n", plan.DurableState, mark("durable_state"))
 	for _, applied := range plan.DefaultsApplied {
-		_, _ = fmt.Fprintf(w, "    - %s\n", applied)
+		if key, _, _ := strings.Cut(applied, "="); !marked[key] {
+			_, _ = fmt.Fprintf(w, "  default:            %s\n", applied)
+		}
 	}
 	_, _ = fmt.Fprintln(w, "No remote state changed. This is local inference, not a saved apply plan; deploy rechecks the source and remote state.")
 	return 0
+}
+
+// manifestDeployExecutionMode is the execution mode gregale.yaml declares for
+// the app: worker when it has a worker: section, else lifecycle.execution_mode.
+// An unreadable manifest yields "" here; the deploy reports it when it saves
+// the manifest's settings.
+func manifestDeployExecutionMode(dir string) string {
+	m, found, err := gregalemanifest.Load(dir)
+	if err != nil || !found || m == nil {
+		return ""
+	}
+	if m.Worker != nil {
+		return api.ExecutionModeWorker
+	}
+	if m.Lifecycle != nil && m.Lifecycle.ExecutionMode != nil {
+		return strings.TrimSpace(*m.Lifecycle.ExecutionMode)
+	}
+	return ""
 }

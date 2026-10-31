@@ -185,3 +185,51 @@ func TestPgStore_CreateCronRetryIsIdempotentAtQuota(t *testing.T) {
 		t.Fatalf("retry ID = %q, want existing %q", retry.ID, first.ID)
 	}
 }
+
+// Concurrent creates on different apps of one account must not both pass the
+// per-account count. Each transaction used to lock only its own app row, so
+// under READ COMMITTED every create saw the others' rows as uncommitted and
+// the account ended above its cap.
+func TestPgStore_CreateCronIfUnderQuota_ConcurrentAppsShareAccountCap(t *testing.T) {
+	s, ctx := pgStore(t)
+	limits := api.MustLimitsFor(api.PlanPro)
+	limits.CronLimitPerAccount = 1
+	acct, _, _ := seedLiveDeploy(t, s, ctx)
+	const apps = 8
+	ids := make([]string, apps)
+	for i := range ids {
+		app, err := s.CreateApp(ctx, state.App{
+			AccountID: acct, Slug: fmt.Sprintf("cron-race-%d", i), Type: state.AppTypeFunction,
+			RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+		})
+		if err != nil {
+			t.Fatalf("CreateApp %d: %v", i, err)
+		}
+		ids[i] = app.ID
+	}
+	start := make(chan struct{})
+	errs := make(chan error, apps)
+	for _, id := range ids {
+		go func() {
+			<-start
+			_, err := s.CreateCronIfUnderQuota(ctx, id, "*/5 * * * *", "/race", true, limits)
+			errs <- err
+		}()
+	}
+	close(start)
+	created := 0
+	for range ids {
+		err := <-errs
+		var qe *state.CronQuotaError
+		switch {
+		case err == nil:
+			created++
+		case errors.As(err, &qe) && qe.Scope == state.CronQuotaScopeAccount:
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if created != 1 {
+		t.Fatalf("created %d crons concurrently; the per-account cap is 1", created)
+	}
+}

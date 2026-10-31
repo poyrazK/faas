@@ -69,7 +69,8 @@ their own coverage and do not certify the entire dependency graph.
 The connected scan accepts `app_slugs`, for example
 `{"api":"shop-backend","web":"shop-frontend"}`. Each returned workload has its
 original `name` and reviewed `app_slug`. Omitted mappings receive suggestions in
-migration mode. Keep `only` and `initial_secrets` keyed by repository names.
+migration mode; outside it, only names that cannot be slugs are prefixed
+(ADR-20261022120205). Keep `only` and `initial_secrets` keyed by repository names.
 
 The API workflow uses a migration-mode connected project scan, followed by
 `POST /v1/project-migrations` with a client-generated canonical `id`, the reviewed

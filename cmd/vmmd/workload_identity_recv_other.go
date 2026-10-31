@@ -22,3 +22,5 @@ func StartWorkloadIdentityReceiver(context.Context, *slog.Logger, *fcvm.Manager,
 func (*WorkloadIdentityReceiver) Close() {}
 
 func (*WorkloadIdentityReceiver) UseMetrics(*workloadIdentityMetrics) {}
+
+func (*WorkloadIdentityReceiver) UseDeployments(workloadIdentityDeployments) {}

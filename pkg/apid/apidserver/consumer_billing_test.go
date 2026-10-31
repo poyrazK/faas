@@ -55,7 +55,12 @@ func TestConsumerBillingSelfService(t *testing.T) {
 		return &apidserverResponse{code: res.Code, body: res.Body.String()}
 	}
 
-	for name, token := range map[string]string{"operator key": *e.Key(), "malformed": "ck_nope", "wrong secret": billingKey[:len(billingKey)-1] + "0"} {
+	// Change the secret's last character; a key already ending in "0" gets "1".
+	wrong := billingKey[:len(billingKey)-1] + "0"
+	if wrong == billingKey {
+		wrong = billingKey[:len(billingKey)-1] + "1"
+	}
+	for name, token := range map[string]string{"operator key": *e.Key(), "malformed": "ck_nope", "wrong secret": wrong} {
 		if res := get("/v1/consumer-billing/metered", token); res.code != http.StatusUnauthorized {
 			t.Fatalf("%s: %d %s, want 401", name, res.code, res.body)
 		}
@@ -93,13 +98,18 @@ func TestConsumerBillingSelfService(t *testing.T) {
 	if res := get("/v1/consumer-billing/metered/statements", billingKey); res.code != http.StatusOK || strings.Contains(res.body, statement.ID) {
 		t.Fatalf("draft statements are hidden: %d %s", res.code, res.body)
 	}
+	if _, err := (*e.Store()).CreateAPIConsumerCreditGrant(context.Background(), state.APIConsumerCreditGrant{
+		AccountID: (*e.Acct()).ID, AppID: consumer.AppID, ConsumerID: consumer.ID, Currency: "EUR", AmountMillicents: 1000}); err != nil {
+		t.Fatal(err)
+	}
 	if fin := e.Do(t, http.MethodPost, "/v1/apps/metered/consumers/"+consumer.ID+"/usage-statements/"+statement.ID+"/finalize", struct{}{}, nil); fin.Code != http.StatusOK {
 		t.Fatalf("finalize: %d %s", fin.Code, fin.Body)
 	}
 	res = get("/v1/consumer-billing/metered/statements", billingKey)
 	var statements api.ConsumerBillingStatementsResponse
 	if err := json.Unmarshal([]byte(res.body), &statements); err != nil || res.code != http.StatusOK || len(statements.Statements) != 1 ||
-		statements.Statements[0].ID != statement.ID || statements.Statements[0].AmountMillicents != 3750 {
+		statements.Statements[0].ID != statement.ID || statements.Statements[0].AmountMillicents != 3750 ||
+		statements.Statements[0].CreditAppliedMillicents != 1000 || statements.Statements[0].AmountDueMillicents != 2750 {
 		t.Fatalf("statements: %d %s", res.code, res.body)
 	}
 

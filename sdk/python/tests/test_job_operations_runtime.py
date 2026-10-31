@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
-from faas_sdk.job_operations_runtime import GregaleJobOperations
-from faas_sdk.models.operation_artifact_request import OperationArtifactRequest
+from faas_sdk.preview.job_operations_runtime import GregaleJobOperations
+from faas_sdk.preview.models.operation_artifact_request import OperationArtifactRequest
 
 ids = [f"{n:08d}-{n:04d}-4{n:03d}-8{n:03d}-{n:012d}" for n in range(1, 7)]
 env = dict(

@@ -164,7 +164,9 @@ func TestPostgresRealIsolatedImportComparison(t *testing.T) {
 }
 
 func TestPostgresRealPendingSQLAndUnsupportedObjectsCannotPass(t *testing.T) {
-	for _, tc := range []struct{ name, sql string }{{"uncommitted write", "BEGIN; INSERT INTO public.imports VALUES ('pending')"}, {"undeclared table", "CREATE TABLE public.unobserved (id int)"}, {"view replacement", "DROP TABLE public.imports; CREATE VIEW public.imports AS SELECT 'forged'::text AS item"}, {"forced row security", "ALTER TABLE public.imports ENABLE ROW LEVEL SECURITY; ALTER TABLE public.imports FORCE ROW LEVEL SECURITY"}} {
+	// An undeclared table is now inventoried rather than refused
+	// (TestPostgresRealMigrationSchemaIsInventoried, ADR-20261020180000).
+	for _, tc := range []struct{ name, sql string }{{"uncommitted write", "BEGIN; INSERT INTO public.imports VALUES ('pending')"}, {"view replacement", "DROP TABLE public.imports; CREATE VIEW public.imports AS SELECT 'forged'::text AS item"}, {"forced row security", "ALTER TABLE public.imports ENABLE ROW LEVEL SECURITY; ALTER TABLE public.imports FORCE ROW LEVEL SECURITY"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, s := newPostgresTest(t)
 			r, c := createPostgresTest(t, s)
@@ -176,6 +178,59 @@ func TestPostgresRealPendingSQLAndUnsupportedObjectsCannotPass(t *testing.T) {
 				t.Fatalf("unsafe seal: %+v %v", evidence, e)
 			}
 		})
+	}
+}
+
+// A release migration that creates tables, types and indexes seals complete
+// evidence whose schema inventory, including undeclared-table row counts,
+// shows exactly how the candidate's database differs (ADR-20261020180000).
+func TestPostgresRealMigrationSchemaIsInventoried(t *testing.T) {
+	_, s := newPostgresTest(t)
+	r1, c1 := createPostgresTest(t, s)
+	if _, e := c1.Exec(t.Context(), "INSERT INTO public.imports VALUES ('same-item')"); e != nil {
+		t.Fatal(e)
+	}
+	before, e := sealPostgresTest(t, s, r1)
+	if e != nil || before.SchemaInventoryVersion != rehearsalpg.SchemaInventoryVersion || before.Validate() != nil {
+		t.Fatalf("baseline seal: %+v %v", before, e)
+	}
+	r2, c2 := createPostgresTest(t, s)
+	migration := `CREATE TYPE public.mood AS ENUM ('calm','busy');
+CREATE TABLE public.audit (id integer PRIMARY KEY, mood public.mood NOT NULL DEFAULT 'calm', tags text[]);
+CREATE INDEX audit_mood_idx ON public.audit (mood);
+ALTER TABLE public.imports ADD COLUMN flags integer[];
+INSERT INTO public.audit (id) VALUES (1),(2);
+INSERT INTO public.imports VALUES ('same-item')`
+	if _, e := c2.Exec(t.Context(), migration); e != nil {
+		t.Fatal(e)
+	}
+	after, e := sealPostgresTest(t, s, r2)
+	if e != nil || after.Status != "complete" || after.Validate() != nil {
+		t.Fatalf("migration seal: %+v %v", after, e)
+	}
+	byName := map[string]rehearsalpg.SchemaObject{}
+	for _, o := range after.Schema {
+		byName[o.Kind+" "+o.Name] = o
+	}
+	audit, ok := byName["table public.audit"]
+	if !ok || audit.Rows == nil || *audit.Rows != 2 || !strings.Contains(audit.Definition, "mood public.mood not null") {
+		t.Fatalf("undeclared table not inventoried: %+v", audit)
+	}
+	if mood := byName["type public.mood"]; mood.Definition != "enum ('calm', 'busy')" {
+		t.Fatalf("enum = %+v", mood)
+	}
+	if _, ok := byName["index public.audit_mood_idx"]; !ok {
+		t.Fatalf("index missing from inventory: %+v", after.Schema)
+	}
+	if imports := byName["table public.imports"]; !strings.Contains(imports.Definition, "flags integer[]") || imports.Rows != nil {
+		t.Fatalf("declared table definition = %+v", imports)
+	}
+	c := rehearsalpg.Compare(&before, &after)
+	if c.Status != "failed" || len(c.SchemaChanges) < 4 {
+		t.Fatalf("migration difference not reported: %+v", c)
+	}
+	if c.Before[0].Table != "public.imports" || len(c.After[0].Inserted) != 1 {
+		t.Fatalf("declared rows still compare: %+v", c)
 	}
 }
 

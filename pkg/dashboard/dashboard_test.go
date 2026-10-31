@@ -38,7 +38,7 @@ func TestRender_Layout(t *testing.T) {
 	for _, want := range []string{
 		"<!doctype html>",
 		"<title>Overview — onebox faas</title>",
-		"htmx.org@2.0.4",
+		"/dashboard/assets/htmx-2.0.4.min.js",
 		"/dashboard/",
 		"Overview",
 	} {

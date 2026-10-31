@@ -31,7 +31,7 @@ func (h *fakeHost) EmitAudit(_ context.Context, kind string, _ *string, data map
 	h.data = append(h.data, data)
 }
 
-func (h *fakeHost) Seal(key, value string, maxBytes int) (projectsecrets.Sealed, *api.Problem) {
+func (h *fakeHost) Seal(_, key, value string, maxBytes int) (projectsecrets.Sealed, *api.Problem) {
 	if len(value) > maxBytes {
 		return projectsecrets.Sealed{}, api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeSecretValueTooLarge, "Secret value too large", "too large")
 	}

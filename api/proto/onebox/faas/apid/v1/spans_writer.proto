@@ -50,6 +50,14 @@ service SpansWriter {
   // the public-ingest codec, and merges spans through its own flush loop.
   // Outcomes ride on the response, not gRPC errors.
   rpc IngestGuestSpans(IngestGuestSpansRequest) returns (IngestGuestSpansResponse);
+
+  // IngestGuestLogs accepts one raw OTLP/HTTP logs export from the same
+  // in-guest bridge (ADR-213 runtime adapter). The request carries the same
+  // host-owned identity and the frame's payload codec with the logs signal
+  // bit cleared. apid checks the plan and per-account log export cap,
+  // decodes, redacts and bounds each record, and writes log_events rows with
+  // source runtime. Outcomes ride on the response, not gRPC errors.
+  rpc IngestGuestLogs(IngestGuestSpansRequest) returns (IngestGuestLogsResponse);
 }
 
 // WriteSpansSummaryRequest is one coalesced spans_summary
@@ -110,5 +118,15 @@ message IngestGuestSpansResponse {
   string outcome = 1;
   int64 accepted_spans = 2;
   int64 rejected_spans = 3;
+  int64 retry_after_ms = 4;
+}
+
+// IngestGuestLogsResponse reports how many log records from one export were
+// written and how many were dropped (over the per-export bound, without a
+// message, or otherwise invalid).
+message IngestGuestLogsResponse {
+  string outcome = 1;
+  int64 accepted_records = 2;
+  int64 rejected_records = 3;
   int64 retry_after_ms = 4;
 }

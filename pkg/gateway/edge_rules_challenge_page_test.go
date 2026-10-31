@@ -4,18 +4,21 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"golang.org/x/net/html"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // htmlTemplatePage is the page as html/template rendered it before
 // renderChallengePage; tests may execute templates, daemons may not.
 var htmlTemplatePage = template.Must(template.New("challenge").Parse(challengePageParts[0] + "{{.Nonce}}" +
-	challengePageParts[1] + "{{.Action}}" + challengePageParts[2] + "{{.Token}}" + challengePageParts[3] +
-	"{{.Difficulty}}" + challengePageParts[4] + "{{.Token}}" + challengePageParts[5] + "{{.Return}}" +
-	challengePageParts[6] + "{{.Nonce}}" + challengePageParts[7]))
+	challengePageParts[1] + "{{.Reference}}" + challengePageParts[2] + "{{.Action}}" + challengePageParts[3] +
+	"{{.Token}}" + challengePageParts[4] + "{{.Difficulty}}" + challengePageParts[5] + "{{.Token}}" +
+	challengePageParts[6] + "{{.Return}}" + challengePageParts[7] + "{{.Nonce}}" + challengePageParts[8]))
 
 // tokens is the page as a browser's tokenizer sees it: tags with their
 // decoded attributes, and text.
@@ -49,6 +52,8 @@ func TestChallengePageMatchesHTMLTemplate(t *testing.T) {
 		{Nonce: "n", Action: ChallengeSolvePath, Token: `c1."><script>alert(1)</script>`, Difficulty: 0,
 			Return: `/"><img src=x onerror=alert(1)>&amp;'`},
 		{Nonce: `"'<>&`, Action: ChallengeSolvePath, Token: "", Difficulty: 31, Return: "/ünïcode/路径?q=a+b"},
+		{Nonce: "n", Action: ChallengeSolvePath, Token: "c1.t", Difficulty: 16, Return: "/ref",
+			Reference: ` If you can't, give the site's owner this reference: </noscript><script>alert(1)</script>&.`},
 	} {
 		t.Run(fmt.Sprintf("%.20s", d.Return), func(t *testing.T) {
 			var got, want bytes.Buffer
@@ -73,5 +78,25 @@ func TestChallengePageMatchesHTMLTemplate(t *testing.T) {
 				t.Errorf("the return path does not decode back to %q", d.Return)
 			}
 		})
+	}
+}
+
+// TestChallengePageReference: a visitor without JavaScript is shown the
+// request ID, which the owner finds on the rule's challenged event (ADR-831
+// amendment 8); without one the sentence is left out.
+func TestChallengePageReference(t *testing.T) {
+	for _, tc := range []struct{ id, want string }{
+		{"req-7f3a", "Turn on JavaScript to continue to this site. If you can't, give the site's owner this reference: req-7f3a."},
+		{"", "Turn on JavaScript to continue to this site."},
+	} {
+		r := browserRequest("GET", "/shop")
+		if tc.id != "" {
+			r.Header.Set(api.RequestIDHeader, tc.id)
+		}
+		w := httptest.NewRecorder()
+		writeChallengePage(w, r, "c1.t", 16)
+		if !strings.Contains(html.UnescapeString(w.Body.String()), tc.want+"</p></noscript>") {
+			t.Errorf("id %q: page lacks %q:\n%s", tc.id, tc.want, w.Body.String())
+		}
 	}
 }

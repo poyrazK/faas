@@ -57,20 +57,20 @@ jobs:
           case "/$GREG_MCP_BASELINE/" in
             */../*) exit 1 ;;
           esac
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: poyrazK/faas
           ref: ${{ inputs.gregale-ref }}
           path: gregale-source
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: gregale-source/go.mod
           cache-dependency-path: gregale-source/go.sum
       - name: Build the pinned CLI
         working-directory: gregale-source
         run: go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.baseline-ref || github.event.pull_request.base.sha || github.sha }}
           path: caller-baseline
@@ -86,7 +86,7 @@ jobs:
         run: bash gregale-source/scripts/ci/mcp-catalog-check.sh "$RUNNER_TEMP/gregale"
       - name: Preserve catalog evidence even when the gate fails
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ inputs.receipt-name }}
           path: ${{ runner.temp }}/mcp-catalog-receipt

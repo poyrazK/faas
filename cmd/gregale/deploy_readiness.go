@@ -67,7 +67,8 @@ func renderDoctorReadiness(w io.Writer, report doctorReport) {
 		}
 	}
 	if first == nil {
-		_, _ = fmt.Fprintln(w, "Local checks: no error or warning findings. Skipped checks and profile advice may still need review.")
+		// The report's closing line already says there are no findings and
+		// which checks were skipped; a second summary up front repeats it.
 		return
 	}
 	_, _ = fmt.Fprintf(w, "Local checks: %s finding — %s\n", first.Status, oneLine(first.Name))

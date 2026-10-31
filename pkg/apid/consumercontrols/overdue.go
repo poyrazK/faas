@@ -158,10 +158,16 @@ func (s *Service) syncConsumerOverdueOnce(ctx context.Context) error {
 		return fmt.Errorf("sync overdue holds: %w", err)
 	}
 	for _, h := range placed {
+		if !s.released(h.AccountID) {
+			continue
+		}
 		s.Host.Audit(ctx, "api_consumer.overdue_blocked", h.AccountID, map[string]any{"app_id": h.AppID, "consumer_id": h.ConsumerID,
 			"export_id": h.ExportID, "due_at": h.DueAt})
 	}
 	for _, h := range lifted {
+		if !s.released(h.AccountID) {
+			continue
+		}
 		s.Host.Audit(ctx, "api_consumer.overdue_unblocked", h.AccountID, map[string]any{"app_id": h.AppID, "consumer_id": h.ConsumerID,
 			"export_id": h.ExportID})
 	}

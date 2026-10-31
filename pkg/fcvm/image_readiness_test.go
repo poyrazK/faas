@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -97,7 +98,7 @@ func TestImageHealthcheckGatesNetworkAndWorkerReadiness(t *testing.T) {
 					close(done)
 					receipt = &characterizationReceipt{done: done, report: api.CharacterizationReport{ObservedClass: "worker", ExitCode: -1}}
 				}
-				err := v.waitApplicationReady(t.Context(), l, "", false, "", 0, mode, true, receipt)
+				err := v.waitApplicationReady(t.Context(), l, "", false, "", 0, mode, false, true, receipt)
 				if (err == nil) != healthy {
 					t.Fatalf("healthy=%v readiness error=%v", healthy, err)
 				}
@@ -125,11 +126,40 @@ func TestImageHealthcheckRejectsSnapshotPassAndMissingReports(t *testing.T) {
 		t.Fatal("restored old health result authorized readiness")
 	}
 	missing := &JailerVMM{chrootBase: t.TempDir(), readyTimeout: 30 * time.Millisecond, tcpReadinessDial: v.tcpReadinessDial}
-	if err := missing.waitApplicationReady(t.Context(), l, "", false, "", 0, "", true, nil); err == nil || !strings.Contains(err.Error(), "image_healthcheck") {
+	if err := missing.waitApplicationReady(t.Context(), l, "", false, "", 0, "", false, true, nil); err == nil || !strings.Contains(err.Error(), "image_healthcheck") {
 		t.Fatalf("TCP success bypassed missing command result: %v", err)
 	}
-	if err := missing.waitApplicationReady(t.Context(), l, "", false, "", 0, "", false, nil); err != nil {
+	if err := missing.waitApplicationReady(t.Context(), l, "", false, "", 0, "", false, false, nil); err != nil {
 		t.Fatalf("healthcheck-free legacy readiness broken: %v", err)
+	}
+}
+
+func TestStartupOOMExplainsFailedReadiness(t *testing.T) {
+	v, l := imageReadinessVMM(t, func(req healthcheckproto.Request) healthcheckproto.Response {
+		return healthcheckproto.Response{Nonce: req.Nonce, Healthy: true}
+	})
+	vm := &JailerVMM{
+		chrootBase: t.TempDir(), readyTimeout: 30 * time.Millisecond, tcpReadinessDial: v.tcpReadinessDial,
+		recs: map[string]*instanceRecord{l.Instance: {}},
+	}
+	err := vm.waitApplicationReady(t.Context(), l, "", false, "", 0, "", false, true, nil)
+	if err == nil || strings.Contains(err.Error(), api.CodeAppRuntimeOOM) {
+		t.Fatalf("failed startup without an OOM report = %v, want the readiness error", err)
+	}
+
+	vm.NoteWorkloadOOM("unknown-instance", 1, 1) // ignored, no panic
+	vm.NoteWorkloadOOM(l.Instance, 300, 256)
+	err = vm.waitApplicationReady(t.Context(), l, "", false, "", 0, "", false, true, nil)
+	var problem *api.Problem
+	if !errors.As(err, &problem) || problem.Code != api.CodeAppRuntimeOOM {
+		t.Fatalf("failed startup after an OOM report = %v, want %s", err, api.CodeAppRuntimeOOM)
+	}
+	if !strings.Contains(problem.Detail, "peak 300 MB, plan 256 MB") {
+		t.Fatalf("detail = %q, want the observed peak and plan", problem.Detail)
+	}
+	// A startup that succeeds is not reclassified by an earlier kill.
+	if err := vm.waitApplicationReady(t.Context(), l, "", false, "", 0, "", false, false, nil); err != nil {
+		t.Fatalf("successful startup after an OOM report = %v", err)
 	}
 }
 

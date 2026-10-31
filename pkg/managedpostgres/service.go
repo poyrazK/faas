@@ -180,6 +180,9 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
+		if existing.Restorable(s.now()) {
+			return Database{}, fmt.Errorf("%w: the name %q belongs to a database scheduled for deletion; undelete it, or delete it with purge=true to reuse the name now", ErrConflict, request.Name)
+		}
 		if reservedID != "" && existing.ID != reservedID {
 			return Database{}, ErrConflict
 		}
@@ -204,13 +207,16 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 	if err != nil {
 		return Database{}, err
 	}
-	if err := backend.Capabilities.Supports(request.Spec); err != nil {
+	if err := backend.Capabilities.SupportsNewDatabase(request.Spec); err != nil {
 		return Database{}, err
 	}
 	if s.admit != nil {
 		if err := s.admit(ctx, PolicySubject(ctx, request.AccountID)); err != nil {
 			return Database{}, err
 		}
+	}
+	if err := s.admitFleet(ctx, true); err != nil {
+		return Database{}, err
 	}
 	now := s.now()
 	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
@@ -377,6 +383,9 @@ func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string,
 			return 0, err
 		}
 	}
+	if err := s.admitFleet(ctx, true); err != nil {
+		return 0, err
+	}
 	backend, err := s.registry.Resolve(definition.BackendID, definition.BackendFingerprint)
 	if err != nil {
 		return 0, err
@@ -498,6 +507,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	if err != nil {
 		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
+	observed.Spec = SpecForObservation(database.Spec, observed.Spec)
 	if err := validateCloneRestoreObservation(database, observed); err != nil {
 		code := "restore_lineage_unavailable"
 		if errors.Is(err, ErrConflict) {
@@ -592,12 +602,32 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 	if err != nil {
 		return Database{}, err
 	}
+	return s.delete(ctx, database)
+}
+
+// DeleteEnvironmentCloneTarget deletes a database that a full environment
+// clone restored for its target, when the clone will not publish
+// (ADR-20261024224230). Customers cannot see such a database, so the clone's
+// own operation names it.
+func (s *Service) DeleteEnvironmentCloneTarget(ctx context.Context, accountID, databaseID, operationID string) (Database, error) {
+	database, err := s.store.Get(ctx, accountID, databaseID)
+	if err != nil {
+		return Database{}, err
+	}
+	if operationID == "" || database.EnvironmentCloneOperationID != operationID {
+		return Database{}, ErrConflict
+	}
+	return s.delete(ctx, database)
+}
+
+func (s *Service) delete(ctx context.Context, database Database) (Database, error) {
+	accountID, databaseID := database.AccountID, database.ID
 	if database.State == StateDeleted {
 		return database, nil
 	}
 	now := s.now()
 	leaseToken := s.newLeaseToken()
-	database, err = s.store.ClaimDelete(ctx, accountID, databaseID, leaseToken, now, now.Add(s.leaseDuration))
+	database, err := s.store.ClaimDelete(ctx, accountID, databaseID, leaseToken, now, now.Add(s.leaseDuration))
 	if err != nil {
 		return Database{}, err
 	}

@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,8 +24,6 @@ import (
 )
 
 const (
-	appTaskPtsDir             = "/dev/pts"
-	appTaskPtsMountOptions    = "newinstance,ptmxmode=0666,mode=0620"
 	appTaskDefaultTerm        = "xterm-256color"
 	appTaskOutputDrainWindow  = 200 * time.Millisecond
 	appTaskTTYEndOfTransmit   = 0x04
@@ -201,7 +198,7 @@ func superviseAppTaskProcess(ctx context.Context, cmd *exec.Cmd, hangup syscall.
 // The slave is owned by the task identity so programs that reopen their
 // terminal by name keep working after the credential drop.
 func openAppTaskPTY(credential *syscall.Credential) (*os.File, *os.File, error) {
-	if err := ensureAppTaskDevpts(); err != nil {
+	if err := ensureDevpts(); err != nil {
 		return nil, nil, err
 	}
 	master, err := openAppTaskPTYMaster()
@@ -218,7 +215,7 @@ func openAppTaskPTY(credential *syscall.Credential) (*os.File, *os.File, error) 
 		_ = master.Close()
 		return nil, nil, fmt.Errorf("pty index: %w", err)
 	}
-	name := fmt.Sprintf("%s/%d", appTaskPtsDir, index)
+	name := fmt.Sprintf("%s/%d", devptsDir, index)
 	if credential != nil {
 		if err := os.Chown(name, int(credential.Uid), int(credential.Gid)); err != nil {
 			_ = master.Close()
@@ -236,7 +233,7 @@ func openAppTaskPTY(credential *syscall.Credential) (*os.File, *os.File, error) 
 
 func openAppTaskPTYMaster() (*os.File, error) {
 	var lastErr error
-	for _, path := range []string{appTaskPtsDir + "/ptmx", "/dev/ptmx"} {
+	for _, path := range []string{devptsDir + "/ptmx", "/dev/ptmx"} {
 		//nolint:forbidigo // fixed kernel pty multiplexer path
 		master, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0)
 		if err == nil {
@@ -245,22 +242,6 @@ func openAppTaskPTYMaster() (*os.File, error) {
 		lastErr = err
 	}
 	return nil, fmt.Errorf("open pty master: %w", lastErr)
-}
-
-// ensureAppTaskDevpts mounts a private devpts instance on first use. Serving
-// guests never mount one; only interactive TTY tasks need it.
-func ensureAppTaskDevpts() error {
-	if info, err := os.Stat(appTaskPtsDir + "/ptmx"); err == nil && info.Mode()&os.ModeCharDevice != 0 {
-		return nil
-	}
-	if err := os.MkdirAll(appTaskPtsDir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", appTaskPtsDir, err)
-	}
-	err := syscall.Mount("devpts", appTaskPtsDir, "devpts", syscall.MS_NOSUID|syscall.MS_NOEXEC, appTaskPtsMountOptions)
-	if err != nil && !errors.Is(err, syscall.EBUSY) {
-		return fmt.Errorf("mount devpts: %w", err)
-	}
-	return nil
 }
 
 func setAppTaskPTYSize(master *os.File, rows, cols uint16) error {

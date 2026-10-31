@@ -301,7 +301,7 @@ callback recovery, business work or monitoring loop starts on import. See the
 adapter and idempotent notification callback to the same monitoring setup:
 
 ```python
-from faas_sdk import EventAcknowledgmentIntentCheckpointWatchCancelled
+from faas_sdk.preview import EventAcknowledgmentIntentCheckpointWatchCancelled
 from durable_consumer import watch_acknowledgment_recovery_with_checkpoint
 
 try:
@@ -432,7 +432,7 @@ connection scopes. Never relabel earlier immediate, durable, failure or manually
 leased records; each processor rejects other modes and failure decisions.
 
 ```python
-from faas_sdk import EventAcknowledgmentPreparedOptions
+from faas_sdk.preview import EventAcknowledgmentPreparedOptions
 from prepared_consumer import process_owned_prepared_delivery
 
 def connection_scope():
@@ -560,7 +560,7 @@ observer. The existing version-5 processing helper and protected records stay
 the same:
 
 ```python
-from faas_sdk import EventAcknowledgmentPreparationMetrics
+from faas_sdk.preview import EventAcknowledgmentPreparationMetrics
 from prepared_consumer import prepared_options_with_metrics, process_owned_prepared_delivery
 
 metrics = EventAcknowledgmentPreparationMetrics()
@@ -651,7 +651,7 @@ fixed delay, omit the policy and supply `backoff_ms=1000` instead.
 ```python
 from dataclasses import asdict
 from durable_consumer import recover_saved_callbacks_pass
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentRecoveryPassCancelled,
     EventAcknowledgmentIntentRecoveryPassCommitUnknownError,
     EventAcknowledgmentIntentRecoveryPassError,
@@ -729,7 +729,7 @@ host/cache and event-loop thread for polling and scraping, with one process:
 ```python
 import asyncio
 import uvicorn  # Application supplied; not an SDK dependency.
-from faas_sdk import EventAcknowledgmentWorkerCancelled
+from faas_sdk.preview import EventAcknowledgmentWorkerCancelled
 from recovery_metrics import RecoveryHealthMetricsHost
 
 host = RecoveryHealthMetricsHost(

@@ -15,7 +15,7 @@ func TestCreateApp_LifecycleRoundTrip(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	req := api.CreateAppRequest{
 		Slug: "service-app", ExecutionMode: api.ExecutionModeService,
-		RestartPolicy: api.RestartPolicyAlways, StartupDeadlineS: 60,
+		RestartPolicy: api.RestartPolicyAlways, StartupDeadlineS: 25,
 		MaxRetries: 10, RequestTimeoutS: 12, ServiceReplicas: &api.ServiceReplicas{Min: 1, Max: 5, Desired: 2},
 	}
 	rec := e.Do(t, "POST", "/v1/apps", req, nil)
@@ -27,7 +27,7 @@ func TestCreateApp_LifecycleRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out.Manifest.ExecutionMode != api.ExecutionModeService || out.Manifest.RestartPolicy != api.RestartPolicyAlways ||
-		out.Manifest.StartupDeadlineS != 60 || out.Manifest.MaxRetries != 10 || out.Manifest.RequestTimeoutS != 12 || out.RequestTimeoutS != 12 ||
+		out.Manifest.StartupDeadlineS != 25 || out.Manifest.MaxRetries != 10 || out.Manifest.RequestTimeoutS != 12 || out.RequestTimeoutS != 12 ||
 		out.Manifest.ServiceReplicas == nil || out.Manifest.ServiceReplicas.Desired != 2 {
 		t.Fatalf("lifecycle response = %+v", out.Manifest)
 	}

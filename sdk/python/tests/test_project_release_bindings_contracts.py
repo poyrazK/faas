@@ -1,7 +1,7 @@
 import unittest
 
-from faas_sdk.api.projects import activate_checked_project_release
-from faas_sdk.models.checked_project_release_manifest import CheckedProjectReleaseManifest
+from faas_sdk.preview.api.projects import activate_checked_project_release
+from faas_sdk.preview.models.checked_project_release_manifest import CheckedProjectReleaseManifest
 
 
 class CheckedReleaseContracts(unittest.TestCase):
@@ -24,8 +24,8 @@ class CheckedReleaseContracts(unittest.TestCase):
         self.assertEqual(request["json"], data)
 
     def test_rollback_round_trip_keeps_historical_and_current_release(self):
-        from faas_sdk.api.projects import rollback_checked_project_release
-        from faas_sdk.models.project_release_set_response import ProjectReleaseSetResponse
+        from faas_sdk.preview.api.projects import rollback_checked_project_release
+        from faas_sdk.preview.models.project_release_set_response import ProjectReleaseSetResponse
 
         data = {
             "project": "shop",
@@ -61,8 +61,8 @@ class CheckedReleaseContracts(unittest.TestCase):
         self.assertEqual(str(receipt.rollback_previous_release_id), data["expected_active_release_id"])
 
     def test_deactivation_round_trip_keeps_zero_ttl_and_fallback(self):
-        from faas_sdk.api.projects import deactivate_checked_project_release
-        from faas_sdk.models.project_release_deactivation_receipt import ProjectReleaseDeactivationReceipt
+        from faas_sdk.preview.api.projects import deactivate_checked_project_release
+        from faas_sdk.preview.models.project_release_deactivation_receipt import ProjectReleaseDeactivationReceipt
 
         data = {
             "deactivate": True,
@@ -97,13 +97,13 @@ class CheckedReleaseContracts(unittest.TestCase):
         self.assertEqual(str(receipt.fallback_members[0].deployment_id), data["deployments"]["api"])
 
     def test_staging_keeps_exact_manifest_and_explicit_lifecycle(self):
-        from faas_sdk.api.projects import (
+        from faas_sdk.preview.api.projects import (
             cancel_project_release_stage,
             get_project_release_stage,
             stage_checked_project_release,
         )
-        from faas_sdk.models.project_release_stage import ProjectReleaseStage
-        from faas_sdk.models.stage_project_release_request import StageProjectReleaseRequest
+        from faas_sdk.preview.models.project_release_stage import ProjectReleaseStage
+        from faas_sdk.preview.models.stage_project_release_request import StageProjectReleaseRequest
 
         data = {
             "manifest": {

@@ -10,6 +10,10 @@ import (
 
 const ManagedServiceProbeContract = "managed-https-v1"
 
+// ManagedServiceHTTPProbeContract verifies an edge whose caller uses the
+// plain HTTP service transport (ADR-20261019200059).
+const ManagedServiceHTTPProbeContract = "managed-http-v1"
+
 // Reuse the oldest reserved probe handler with a distinct argument shape.
 // Existing guests reject its third argument instead of executing a customer
 // binary named after a new, unknown operation.
@@ -27,10 +31,31 @@ type ManagedServiceProbeSpec struct {
 	TargetDeploymentID string `json:"target_deployment_id"`
 	ReleaseID          string `json:"release_id"`
 	ContextRevision    string `json:"context_revision"`
+	// Transport is empty for the original HTTPS probe, so its pins and
+	// receipts are unchanged, and "http" for a plain HTTP caller. Guests that
+	// predate it reject the unknown field.
+	Transport ServiceBindingTransport `json:"transport,omitempty"`
+}
+
+// ProbeTransport is the caller transport the spec verifies.
+func (s ManagedServiceProbeSpec) ProbeTransport() ServiceBindingTransport {
+	if s.Transport == ServiceBindingTransportHTTP {
+		return ServiceBindingTransportHTTP
+	}
+	return ServiceBindingTransportHTTPS
+}
+
+// Contract names the inventory contract that selects this spec.
+func (s ManagedServiceProbeSpec) Contract() string {
+	if s.ProbeTransport() == ServiceBindingTransportHTTP {
+		return ManagedServiceHTTPProbeContract
+	}
+	return ManagedServiceProbeContract
 }
 
 func (s ManagedServiceProbeSpec) Valid() bool {
-	if s.Version != 1 || ValidateScope(s.Scope) != nil || ValidateEnvKey(s.Binding) != nil || !ValidAppSlug(s.Service) {
+	if s.Version != 1 || ValidateScope(s.Scope) != nil || ValidateEnvKey(s.Binding) != nil || !ValidAppSlug(s.Service) ||
+		s.Transport != "" && s.Transport != ServiceBindingTransportHTTP {
 		return false
 	}
 	for _, id := range []string{s.CallerDeploymentID, s.TargetAppID, s.TargetDeploymentID, s.ReleaseID} {
@@ -64,10 +89,18 @@ func ParseManagedServiceProbeCommand(command []string, shell bool) (ManagedServi
 
 func ManagedServiceProbeForItem(item AppBindingInventoryItem) (ManagedServiceProbeSpec, bool) {
 	c := item.ServiceContext
-	if item.Type != BindingTypeService || c == nil || c.Source != "environment_release" || !c.VerificationSupported || c.VerificationReason != "" || c.VerificationContract != ManagedServiceProbeContract || c.RoutingStatus != "resolved" || item.Transport != "https" {
+	if item.Type != BindingTypeService || c == nil || c.Source != "environment_release" || !c.VerificationSupported || c.VerificationReason != "" || c.RoutingStatus != "resolved" {
+		return ManagedServiceProbeSpec{}, false
+	}
+	var transport ServiceBindingTransport
+	switch {
+	case c.VerificationContract == ManagedServiceProbeContract && item.Transport == string(ServiceBindingTransportHTTPS):
+	case c.VerificationContract == ManagedServiceHTTPProbeContract && item.Transport == string(ServiceBindingTransportHTTP):
+		transport = ServiceBindingTransportHTTP
+	default:
 		return ManagedServiceProbeSpec{}, false
 	}
 	spec := ManagedServiceProbeSpec{Version: 1, CallerDeploymentID: c.CallerDeploymentID, Scope: item.Scope, Service: item.Name, Binding: item.Binding,
-		TargetAppID: c.TargetAppID, TargetDeploymentID: item.ServiceTargetDeploymentID, ReleaseID: c.ReleaseID, ContextRevision: c.Revision}
+		TargetAppID: c.TargetAppID, TargetDeploymentID: item.ServiceTargetDeploymentID, ReleaseID: c.ReleaseID, ContextRevision: c.Revision, Transport: transport}
 	return spec, spec.Valid()
 }

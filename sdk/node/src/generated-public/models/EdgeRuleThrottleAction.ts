@@ -1,0 +1,125 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+/**
+ * Per-route token-bucket cap. Customers tighten the per-route rps/burst
+ * below their plan's `plan.RateLimitRPS` — the API
+ * validator enforces the sub-plan ceiling; the gateway
+ * compiler enforces it again at load time.
+ *
+ * Sub-plan ceiling — the load-bearing constraint. A
+ * throttle rule is STRICTLY a tightening primitive. A
+ * rule that exceeds the ceiling is rejected with 422
+ * BEFORE any DB write — a customer cannot raise their
+ * plan limit by registering a throttle rule.
+ *
+ * Per-IP sub-keying is deliberately absent: a memory-bounded limiter
+ * with attacker-controlled IP cardinality would grow without bound. Country keying uses
+ * the existing trusted GeoIP lookup and therefore has bounded
+ * cardinality.
+ *
+ * The wire shape has optional per-consumer
+ * keying. Default values (`""` for key_by, omitted
+ * jwt_claim_name, 0 for max_keys_per_rule) preserve the behaviour bit-for-bit.
+ *
+ */
+export type EdgeRuleThrottleAction = {
+  /**
+   * Token-bucket refill rate per route. The API
+   * validator rejects rps > plan.RateLimitRPS with a
+   * 422. The gateway compiler clamps + warns on the
+   * same bound at load time.
+   *
+   */
+  requests_per_second: number;
+  /**
+   * Token-bucket burst per route. Mirrors rps: rejected
+   * above `plan.RateLimitBurst` at create time and
+   * clamped at compile time.
+   *
+   */
+  burst: number;
+  /**
+   * Per-consumer keying dimension. When `""` or `"none"`, the bucket is shared
+   * across every caller of the route (shape).
+   * When `"api_key"`, one bucket per authenticated API
+   * key. When `"consumer_id"`, one bucket per stable API consumer
+   * identity (all rotated keys for that consumer share a bucket).
+   * When `"jwt_subject"`, one bucket per JWT `sub`.
+   * When `"jwt_claim"`, one bucket per value of the
+   * claim named by `jwt_claim_name`. When `"country"`, one
+   * bucket per ISO 3166-1 alpha-2 country resolved from the
+   * gateway's trusted client IP. When `"ip"`, one bucket per
+   * trusted client IP (IPv6 clients keyed by their /64).
+   * When `"composite"`, one bucket per combination of
+   * `key_fields`.
+   * Each non-empty
+   * value activates the bounded design: when the
+   * per-rule consumer set exceeds
+   * `max_keys_per_rule`, all over-cap callers collapse
+   * into a single non-evicting `__other__` bucket that
+   * still consumes tokens (the load-bearing safety
+   * property — §"Consequences").
+   *
+   */
+  key_by?: '' | 'none' | 'api_key' | 'consumer_id' | 'jwt_subject' | 'jwt_claim' | 'country' | 'ip' | 'composite';
+  /**
+   * Required iff `key_by="jwt_claim"`. Names the JWT
+   * custom claim to extract (e.g., `"tier"`,
+   * `"org_id"`). Format is a CodeQL safe-identifier:
+   * leading letter or underscore, then `[A-Za-z0-9_]`,
+   * max 64 chars. Top-level string, number, and boolean
+   * values are supported and normalized to their JSON scalar
+   * representation. Arrays, objects, empty strings, and values
+   * longer than 256 bytes are treated as missing. The configured
+   * claim is retained first within the verifier's 64-claim
+   * request-context bound.
+   *
+   */
+  jwt_claim_name?: string;
+  /**
+   * Caps the cardinality of the per-consumer bucket map
+   * for this rule. 0 means "use plan default"
+   * (`Limits.ThrottleMaxKeysPerRule` per plan: Free 100
+   * / Hobby 1000 / Pro 5000 / Scale 10000). The
+   * validator rejects values above
+   * `plan.ThrottleMaxKeysPerRule`. Must be 0 when
+   * `key_by` is `""` or `"none"` — the cap is moot for
+   * non-per-consumer rules.
+   *
+   */
+  max_keys_per_rule?: number;
+  /**
+   * Required iff `key_by="composite"`: the request
+   * fields combined into one bucket identity. Each is one of
+   * ip, country, api_key, consumer_id, jwt_subject, jwt_claim
+   * (with `jwt_claim_name`), method, path or `header:<name>`.
+   * A field the request lacks makes the identity missing, so
+   * `missing_key_policy` applies.
+   *
+   */
+  key_fields?: Array<string>;
+  /**
+   * When set, requests are admitted while the bucket
+   * has a token but only responses with one of these statuses
+   * charge it, e.g. [401, 403] to limit failed logins without
+   * limiting successful ones. Across gateways the admission
+   * check uses each gateway's last-known shared balance.
+   *
+   */
+  count_statuses?: Array<number>;
+  /**
+   * Behavior when an authentication-backed dimension is not
+   * available on the request. `"shared"` places all such
+   * requests in one bounded `__anonymous__` bucket (the
+   * backward-compatible default). `"reject"` returns 401
+   * before consuming a route token. This field requires a
+   * dimensional `key_by` value. Country lookup dependency
+   * failures remain fail-closed with 503 rather than being
+   * treated as an anonymous identity.
+   *
+   */
+  missing_key_policy?: 'shared' | 'reject';
+};
+

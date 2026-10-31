@@ -87,7 +87,7 @@ func TestServiceBindingContractDeclaredFields(t *testing.T) {
 		})
 	}
 	for name, values := range map[string][]string{
-		"ServiceBindingPolicy":    {string(ServiceBindingPolicyAccount), string(ServiceBindingPolicyDeclared)},
+		"ServiceBindingPolicy":    {string(ServiceBindingPolicyAccount), string(ServiceBindingPolicyDeclared), string(ServiceBindingPolicyProject)},
 		"ServiceBindingTransport": {string(ServiceBindingTransportHTTP), string(ServiceBindingTransportHTTPS)},
 	} {
 		if !reflect.DeepEqual(schemas[name].Enum, values) {

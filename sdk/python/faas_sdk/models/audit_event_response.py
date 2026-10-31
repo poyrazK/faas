@@ -29,8 +29,8 @@ class AuditEventResponse:
     at: datetime.datetime
     """When the event was recorded (RFC 3339, UTC)."""
     actor: str
-    """Which daemon wrote the row. `apid` for IAM-4 surface; `schedd` for state-transition events (instance wakes /
-    parks / watchdog timeouts)."""
+    """Which daemon wrote the row. `apid` for surface; `schedd` for state-transition events (instance wakes / parks
+    / watchdog timeouts)."""
     kind: str
     """Namespaced event kind. Common values: `auth.login`, `auth.logout`, `auth.session.created`,
     `auth.session.revoke`, `auth.sessions.revoke_all`, `auth.session.stolen`, `key.created`, `key.deleted`,
@@ -45,7 +45,7 @@ class AuditEventResponse:
     severity: AuditEventResponseSeverity | Unset = UNSET
     """Highest-severity classification for stateless.advisory rows (`high` for /data, /db, /var/lib/postgresql,
     /var/lib/mysql; `warn` for other closed paths; `info` for an empty batch). Omitted for non-stateless kinds and
-    for pre-PR-427 stateless.advisory rows where the data.severity key is absent. Mega-PR B / stateless-DX work."""
+    for older stateless.advisory rows without a severity."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

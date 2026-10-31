@@ -18,6 +18,9 @@ func ownerFixtureServer(t *testing.T, taskID, ruleID string, deleted *int) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/delayed-tasks/"+taskID:
 			main.WriteJSONTest(w, api.DelayedTaskResponse{ID: taskID, AppID: "app-web", State: "completed"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/delayed-tasks/"+taskID:
+			*deleted++
+			main.WriteJSONTest(w, api.DelayedTaskResponse{ID: taskID, AppID: "app-web", State: "cancelled"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/edge-rules/"+ruleID:
 			main.WriteJSONTest(w, api.EdgeRuleResponse{ID: ruleID, AppID: "app-web"})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/edge-rules/"+ruleID:
@@ -58,6 +61,36 @@ func TestOwnerScopedGetAndRm(t *testing.T) {
 	}
 	if code := main.CmdEdgeRulesRm([]string{ruleID, "--app", "web", "--yes"}); code != 0 || deleted != 1 {
 		t.Fatalf("edge-rules rm --app web: exit=%d deleted=%d", code, deleted)
+	}
+}
+
+// TestDelayedTaskCancelOwnerFlag pins Hunt 11 H11-18: `delayed-task cancel
+// <id> --app <slug>` was refused with a bare usage line although add, list
+// and get take --app. --app now checks the owner before cancelling.
+func TestDelayedTaskCancelOwnerFlag(t *testing.T) {
+	main.ResetJSONOut(t)
+	const taskID = "3081e8fe-e18a-44ed-b7c4-e38dd7d822e7"
+	tests := []struct {
+		name        string
+		args        []string
+		wantOK      bool
+		wantDeletes int
+	}{
+		{"other app's task is not cancelled", []string{taskID, "--app", "other"}, false, 0},
+		{"owner app cancels", []string{"--app", "web", taskID}, true, 1},
+		{"no --app cancels", []string{taskID}, true, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deleted := 0
+			ownerFixtureServer(t, taskID, "37f7d80e-4471-46c1-b4cf-0e7fb765adb6", &deleted)
+			_, restore := main.CaptureStdout(t)
+			defer restore()
+			code := main.CmdDelayedTaskCancel(tt.args)
+			if (code == 0) != tt.wantOK || deleted != tt.wantDeletes {
+				t.Fatalf("cancel %q: exit=%d deleted=%d, want ok=%t deleted=%d", tt.args, code, deleted, tt.wantOK, tt.wantDeletes)
+			}
+		})
 	}
 }
 

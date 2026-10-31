@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -69,7 +70,12 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 	if requestID != "" {
 		prior, err := s.store.FindGdprRequestByRequestID(r.Context(), acct.ID, requestID)
 		switch {
-		case err == nil && prior.Action == state.GdprActionExport:
+		// The request ID is client-supplied and the ledger row never
+		// expires, so a retry counts as the original only shortly after
+		// it; otherwise one ID replayed forever ran unlimited exports.
+		case err == nil && prior.Action == state.GdprActionExport &&
+			time.Since(prior.RequestedAt) <= api.ExportReplayWindow &&
+			s.exportReplays.allow(prior.ID, prior.RequestedAt, time.Now()):
 			isIdempotentRetry = true
 			s.log.Info("apid: export request_id idempotent hit",
 				"account", acct.ID, "request_id", requestID, "ledger_id", prior.ID)
@@ -134,6 +140,11 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 			return
 		}
 	}
+	if _, busy := s.exportsInFlight.LoadOrStore(acct.ID, struct{}{}); busy {
+		api.WriteProblem(w, api.ErrExportRateLimited(api.ExportInFlightRetryAfterSeconds))
+		return
+	}
+	defer s.exportsInFlight.Delete(acct.ID)
 	include := r.URL.Query().Get("include_secrets") != includeSecretsFalse
 	spool, byteCount, err := prepareAccountExport(r.Context(), s, acct, include)
 	if err != nil {
@@ -194,7 +205,7 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 // returns the same envelope (status + scheduled_at + restore_until)
 // without re-stamping the timestamp or re-sending the email.
 func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	fresh, err := s.scheduleDeletion(r.Context(), acct, "rest")
+	fresh, err := s.scheduleDeletion(r.Context(), acct, "rest", r.URL.Query().Get(includeManagedPostgresParam) == "true")
 	if err != nil {
 		api.WriteProblem(w, err)
 		return
@@ -212,7 +223,13 @@ func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct stat
 // "dashboard"); it's threaded through so the IAM-4 audit emit can
 // attribute the action to the right caller (the dashboard form vs
 // the REST DELETE).
-func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via string) (state.Account, *api.Problem) {
+//
+// includeDatabases is the customer's explicit request that the deletion include
+// their managed PostgreSQL databases (ADR-20261024150500). It is honoured only
+// for accounts in FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS; for any other
+// account it is ignored like the unknown option it is to them.
+func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via string, includeDatabases bool) (state.Account, *api.Problem) {
+	includeDatabases = includeDatabases && api.AccountDeletionManagedPostgresEnabled(acct.ID)
 	if acct.Status != state.AccountDeletedPending {
 		// The store only schedules an active account (a past_due one
 		// must not be re-armed into a self-service deletion). That
@@ -224,18 +241,13 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		if prob := s.sharedOrgOwnershipBlocksDeletion(ctx, acct.ID); prob != nil {
 			return acct, prob
 		}
-		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID)
+		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID, state.IncludingManagedPostgres(includeDatabases))
 		if err != nil {
-			if errors.Is(err, state.ErrOrgAppOwnershipPending) {
-				return acct, api.NewProblem(http.StatusConflict, api.CodeConflict,
-					"Company app ownership migration required",
-					"company applications still depend on this account; contact support to complete their ownership transfer before deleting your account")
-			}
-			if errors.Is(err, state.ErrNotFound) {
-				return acct, accountDeletionBlocked()
-			}
-			return acct, api.ErrCapacity("could not mark for deletion")
+			return acct, deletionRefusedProblem(err)
 		}
+		// Reported after the rest of the bookkeeping, which must happen
+		// once the deletion is recorded either way.
+		cancelProb := s.endSubscriptionAfterDeletionScheduled(ctx, acct)
 		s.notifyAccountLifecycle(ctx, acct.ID, "account_deleted_pending")
 		fresh, err := s.store.AccountByID(ctx, acct.ID)
 		if err != nil {
@@ -272,13 +284,39 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 			// form submission from a CLI/API DELETE — useful when
 			// a customer's session cookie was stolen and the
 			// attacker prefers the dashboard surface.
-			s.audit.Emit(ctx, "account.deletion_scheduled", &fresh.ID, map[string]any{
-				"via": via,
-			})
+			data := map[string]any{"via": via}
+			if includeDatabases {
+				// Only set when chosen, so the dark option never shows up
+				// in a customer's audit log before launch.
+				data["includes_managed_postgres"] = true
+			}
+			s.audit.Emit(ctx, "account.deletion_scheduled", &fresh.ID, data)
+		}
+		if cancelProb != nil {
+			return fresh, cancelProb
 		}
 		return fresh, nil
 	}
+	// A repeat request retries a cancellation that failed the first time.
+	if prob := s.endSubscriptionAfterDeletionScheduled(ctx, acct); prob != nil {
+		return acct, prob
+	}
 	return acct, nil
+}
+
+// endSubscriptionAfterDeletionScheduled ends the paid subscription with its
+// period, so a deleted customer stops paying (Hunt 17 H17-2); restoring the
+// account within grace does not resume it. It runs only after the deletion
+// is recorded: run first, any refusal while recording (live databases,
+// company apps) left the customer using an account whose plan silently
+// ended at period end. A failure is retried by a repeat request and again
+// by beforeAccountDelete before erasure.
+func (s *server) endSubscriptionAfterDeletionScheduled(ctx context.Context, acct state.Account) *api.Problem {
+	if err := s.endSubscriptionForDeletion(ctx, acct); err != nil {
+		s.log.Error("account deletion: end billing subscription", "account", acct.ID, "err", err)
+		return api.ErrCapacity("account deletion is scheduled, but its billing subscription could not be cancelled yet; send the request again to finish")
+	}
+	return nil
 }
 
 // recordGdprRequest appends a single row to the gdpr_requests
@@ -331,8 +369,16 @@ func (s *server) restoreAccount(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	s.recordGdprRequest(r.Context(), fresh, state.GdprActionRestore, "")
+	if fresh.Plan != api.PlanFree {
+		w.Header().Set("Warning", `299 - "`+restoreSubscriptionNotice+`"`)
+	}
 	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), fresh, r))
 }
+
+// restoreSubscriptionNotice tells a restored customer that the deletion
+// ended their subscription and restoring did not resume it
+// (ADR-20261026180850); without it they dropped to Free at period end.
+const restoreSubscriptionNotice = "Requesting deletion cancelled your paid subscription, and restoring the account does not resume it: it ends with the current billing period. Re-subscribe at " + wire.DashboardBillingURL + " to keep your plan."
 
 // cancelDeletion is the business-logic core reused by both the REST
 // handler (restoreAccount) and the dashboard form handler. Returns
@@ -397,6 +443,29 @@ func (s *server) sharedOrgOwnershipBlocksDeletion(ctx context.Context, accountID
 	}
 	return nil
 }
+
+// deletionRefusedProblem explains why the store refused to schedule the
+// deletion. Each guard is something the customer must resolve first, so it is
+// a 409, never the 503 a client would retry forever.
+func deletionRefusedProblem(err error) *api.Problem {
+	var databases *state.AccountManagedPostgresDatabasesError
+	switch {
+	case errors.Is(err, state.ErrOrgAppOwnershipPending):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Company app ownership migration required",
+			"company applications still depend on this account; contact support to complete their ownership transfer before deleting your account")
+	case errors.As(err, &databases):
+		return api.ErrAccountDeletionManagedPostgres(databases.Live)
+	case errors.Is(err, state.ErrNotFound):
+		return accountDeletionBlocked()
+	}
+	return api.ErrCapacity("could not mark for deletion")
+}
+
+// includeManagedPostgresParam asks a self-service deletion to include the
+// account's managed PostgreSQL databases. Dark until launch: kept out of
+// OpenAPI, the SDKs and CLI help (ADR-20261024150500).
+const includeManagedPostgresParam = "include_managed_postgres_databases"
 
 func accountDeletionBlocked() *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeConflict,
@@ -547,7 +616,8 @@ func prepareAccountExport(ctx context.Context, s *server, acct state.Account, in
 		_ = os.Remove(spool.Name())
 		return nil, 0, cause
 	}
-	if err := writeAccountExportJSON(ctx, s, acct, includeSecrets, spool); err != nil {
+	capped := &cappedExportWriter{dst: spool, left: api.AccountExportSpoolMaxBytes}
+	if err := writeAccountExportJSON(ctx, s, acct, includeSecrets, capped); err != nil {
 		return fail(err)
 	}
 	info, err := spool.Stat()
@@ -558,6 +628,62 @@ func prepareAccountExport(ctx context.Context, s *server, acct state.Account, in
 		return fail(err)
 	}
 	return spool, info.Size(), nil
+}
+
+// errAccountExportTooLarge stops an export whose bundle outgrew
+// AccountExportSpoolMaxBytes.
+var errAccountExportTooLarge = errors.New("apidserver: account export exceeds the spool limit")
+
+// cappedExportWriter stops an export bundle at AccountExportSpoolMaxBytes so
+// one account cannot fill the control-plane disk (bug hunt 2026-10-28 H61).
+type cappedExportWriter struct {
+	dst  io.Writer
+	left int64
+}
+
+func (w *cappedExportWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > w.left {
+		return 0, errAccountExportTooLarge
+	}
+	n, err := w.dst.Write(p)
+	w.left -= int64(n)
+	return n, err
+}
+
+// exportReplayCounter bounds how many retries of one export, identified by
+// its ledger row, rebuild the bundle (api.ExportReplaysMax). The request ID
+// is chosen by the client, so without a count one replayed ID ran a full
+// export on every call inside the replay window (bug hunt 2026-10-28 H61).
+// Per apid process.
+type exportReplayCounter struct {
+	mu   sync.Mutex
+	seen map[string]exportReplays
+}
+
+type exportReplays struct {
+	count       int
+	requestedAt time.Time
+}
+
+// allow counts a retry of the export recorded as ledgerID at requestedAt and
+// reports whether it may rebuild the bundle.
+func (c *exportReplayCounter) allow(ledgerID string, requestedAt, now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, r := range c.seen {
+		if now.Sub(r.requestedAt) > api.ExportReplayWindow {
+			delete(c.seen, id)
+		}
+	}
+	r := c.seen[ledgerID]
+	if r.count >= api.ExportReplaysMax {
+		return false
+	}
+	if c.seen == nil {
+		c.seen = map[string]exportReplays{}
+	}
+	c.seen[ledgerID] = exportReplays{count: r.count + 1, requestedAt: requestedAt}
+	return true
 }
 
 func cleanupAccountExportSpool(s *server, spool *os.File) {
@@ -685,6 +811,8 @@ func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, 
 		{"domains", func() (any, error) { return listDomainsForAccountExport(ctx, s.store, acct.ID) }},
 		{"crons", func() (any, error) { return listCronsForAccountExport(ctx, s.store, acct.ID) }},
 		{"api_keys", func() (any, error) { return listKeysForAccountExport(ctx, s.store, acct.ID) }},
+		{"edge_rules", func() (any, error) { return s.listEdgeRulesForAccountExport(ctx, acct) }},
+		{"edge_rule_lists", func() (any, error) { return listEdgeRuleListsForAccountExport(ctx, s.store, acct.ID) }},
 	}
 	for _, section := range sections {
 		value, err := section.load()

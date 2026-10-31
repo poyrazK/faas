@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -30,7 +29,7 @@ func cmdObsInputHealth(args []string) int {
 		role = selected
 		return nil
 	})
-	token := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	token := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
@@ -40,11 +39,8 @@ func cmdObsInputHealth(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs input-health: no positional arguments and a positive timeout required")
 		return 2
 	}
-	if *token == "" {
-		*token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if *token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs input-health: admin token required")
+	cred, ok := resolveObsCredential("obs input-health", *token)
+	if !ok {
 		return 2
 	}
 	path := operatorobs.InputHealthPath
@@ -53,7 +49,7 @@ func cmdObsInputHealth(args []string) int {
 	}
 	client := &http.Client{Timeout: *timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	var out api.ObsInputHealth
-	if err := fetchObsBundleSection(context.Background(), client, apidBase()+path, *token, subObsInputHealth, &out); err != nil {
+	if err := fetchObsBundleSection(context.Background(), client, apidBase()+path, cred, subObsInputHealth, &out); err != nil {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl obs %v\n", err)
 		return 1
 	}

@@ -35,7 +35,9 @@ type Service struct {
 	quotaWarningUnsubscribe   string
 	nonpaymentDeletion        *credentialConfig
 	accountSuspended          *credentialConfig
+	managedPostgresCap        *credentialConfig
 	deploymentFailed          *credentialConfig
+	agentRunDelivered         *credentialConfig
 	deploymentDashboardOrigin string
 	subscriptionEnded         *credentialConfig
 	accountRestored           *credentialConfig

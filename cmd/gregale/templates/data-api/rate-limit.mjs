@@ -32,6 +32,20 @@ export function createRateLimiter(value, clock = () => performance.now()) {
   }
 }
 
+// admitServerKeyRate applies the optional per-slot server-key bucket
+// (ADR-20261021180534); refusals share the per-user code with reason server_key.
+export function admitServerKeyRate(limiter, slot, res, problem) {
+  const rejected = limiter.take(['server', slot])
+  if (!rejected) return true
+  const refusal = { ...rejected, reason: 'server_key' }
+  markRateLimit(res, refusal)
+  res.setHeader('Retry-After', String(refusal.retry_after_seconds))
+  res.setHeader('Connection', 'close')
+  problem(res, 429, 'data_api_rate_limited', { ...refusal, limit: { per_second: refusal.per_second, burst: refusal.burst }, observed: { available_requests: 0 },
+    docs: 'https://gregale.dev/docs/data-api#server-key-limits' })
+  return false
+}
+
 export function admitRateLimit(limiter, subject, res, problem) {
   const rejected = limiter.take(subject)
   if (!rejected) return true

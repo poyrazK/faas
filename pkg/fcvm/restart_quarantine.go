@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // ErrRestartQuarantine means resources survived a previous vmmd, but this
@@ -22,10 +23,26 @@ type restartInventoryOptions struct {
 	procRoot, netRoot, netnsRoot, jailRoot string
 }
 
+// readProcFile reads a file under /proc. Tests replace it to make a process
+// exit while it is being read.
+var readProcFile = os.ReadFile
+
+// processExited reports whether a read of a process's /proc file failed
+// because the process is gone. One that exited before the open reports
+// ENOENT; one reaped between the open and the read reports ESRCH. Either way
+// the startup inventory skips it, as it does any process that exits during
+// enumeration.
+func processExited(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
+}
+
 type restartInventory struct {
 	slots     map[int]struct{}
 	instances map[string]struct{}
 	processes int
+	// bridgeProcesses counts surviving processes that run as a bridge uid
+	// (connection-survival ADR, slice 1a).
+	bridgeProcesses int
 }
 
 // RestartQuarantineReport describes resources excluded from new allocation.
@@ -34,6 +51,9 @@ type RestartQuarantineReport struct {
 	Slots, Instances, Processes           int
 	JournalRecords, JournalProcessMatches int
 	ReclaimedPreparedRecords              int
+	// BridgeProcesses counts surviving processes running as a bridge uid.
+	// Each reserves its slot, so no new lease shares that uid with it.
+	BridgeProcesses int
 	// ReclaimedDeadRecords counts instance records retired at startup
 	// because their process and kernel resources were gone (ADR-971).
 	ReclaimedDeadRecords int
@@ -86,7 +106,7 @@ func (m *Manager) recoverRestartQuarantine(ctx context.Context, opts restartInve
 	m.alloc.quarantine(inv.slots)
 	m.restartQuarantine = inv.instances
 	m.restartInventoryDone = true
-	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes, JournalRecords: records, JournalProcessMatches: matches, ReclaimedPreparedRecords: reclaimed, ReclaimedDeadRecords: dead, DeadRecordsSkipped: deadSkippedReason}, nil
+	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes, BridgeProcesses: inv.bridgeProcesses, JournalRecords: records, JournalProcessMatches: matches, ReclaimedPreparedRecords: reclaimed, ReclaimedDeadRecords: dead, DeadRecordsSkipped: deadSkippedReason}, nil
 }
 
 func scanRestartInventory(ctx context.Context, opts restartInventoryOptions) (restartInventory, error) {
@@ -145,8 +165,8 @@ func (inv *restartInventory) scanProcesses(ctx context.Context, root string) err
 			continue
 		}
 		path := filepath.Join(root, entry.Name())
-		raw, err := os.ReadFile(filepath.Join(path, "cmdline"))
-		if errors.Is(err, os.ErrNotExist) {
+		raw, err := readProcFile(filepath.Join(path, "cmdline"))
+		if processExited(err) {
 			continue // Exited during enumeration.
 		}
 		if err != nil {
@@ -158,6 +178,9 @@ func (inv *restartInventory) scanProcesses(ctx context.Context, root string) err
 			if jailer || strings.HasPrefix(filepath.Base(args[0]), "firecracker") {
 				return fmt.Errorf("cannot identify surviving guest instance (pid %s)", entry.Name())
 			}
+			if err := inv.scanBridgeProcess(path); err != nil {
+				return fmt.Errorf("read process %s credentials: %w", entry.Name(), err)
+			}
 			continue
 		}
 		// Firecracker no longer carries jailer's --uid after exec. Its
@@ -167,8 +190,8 @@ func (inv *restartInventory) scanProcesses(ctx context.Context, root string) err
 		if jailer {
 			slot = restartJailerSlot(args)
 		} else {
-			status, err := os.ReadFile(filepath.Join(path, "status"))
-			if errors.Is(err, os.ErrNotExist) {
+			status, err := readProcFile(filepath.Join(path, "status"))
+			if processExited(err) {
 				continue
 			}
 			if err != nil {
@@ -184,6 +207,46 @@ func (inv *restartInventory) scanProcesses(ctx context.Context, root string) err
 		inv.processes++
 	}
 	return nil
+}
+
+// scanBridgeProcess reserves the slot of a process running as a bridge uid.
+// A bridge's uid is derived from its lease's slot, so reusing that slot while
+// the bridge survives would give a new tenant's bridge the same uid. Every
+// uid field counts: any of them lets the process signal a same-uid bridge.
+func (inv *restartInventory) scanBridgeProcess(path string) error {
+	status, err := readProcFile(filepath.Join(path, "status"))
+	if processExited(err) {
+		return nil // Exited during enumeration.
+	}
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, slot := range restartBridgeSlots(string(status)) {
+		inv.slots[slot] = struct{}{}
+		found = true
+	}
+	if found {
+		inv.bridgeProcesses++
+	}
+	return nil
+}
+
+func restartBridgeSlots(status string) []int {
+	var slots []int
+	for _, line := range strings.Split(status, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "Uid:" {
+			continue
+		}
+		for _, field := range fields[1:] {
+			uid, err := strconv.Atoi(field)
+			if err == nil && uid >= BridgeUIDBase && uid <= BridgeUIDMax {
+				slots = append(slots, uid-BridgeUIDBase)
+			}
+		}
+	}
+	return slots
 }
 
 func restartJailerSlot(args []string) int {

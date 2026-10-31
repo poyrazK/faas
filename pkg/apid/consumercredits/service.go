@@ -48,7 +48,14 @@ type Service struct {
 	// monetization is released by a runtime setting (ADR-20261018090210).
 	// Nil runs it.
 	Enabled func() bool
+	// Released reports whether API monetization is released to an account
+	// (ADR-20261020170649); the worker skips accounts it is not. Nil
+	// releases every account.
+	Released func(accountID string) bool
 }
+
+// released reports whether the worker serves an account's monetization.
+func (s *Service) released(accountID string) bool { return s.Released == nil || s.Released(accountID) }
 
 // tick runs one background tick unless Enabled pauses the worker; paused,
 // spend caps are not rechecked.
@@ -271,7 +278,7 @@ func (s *Service) PutSpendCap(w http.ResponseWriter, r *http.Request, acct state
 	}
 	s.Host.Audit(r.Context(), "api_consumer.spend_cap_set", acct.ID, map[string]any{"app_id": app.ID, "consumer_id": consumer.ID,
 		"currency": stored.Currency, "monthly_cap_millicents": stored.MonthlyCapMillicents})
-	if checked, err := s.check(r.Context(), stored); err == nil {
+	if checked, err := s.check(r.Context(), stored, true); err == nil {
 		stored = checked
 	}
 	httpkit.WriteJSON(w, http.StatusOK, spendCapResponse(stored))
@@ -329,7 +336,7 @@ func (s *Service) recheck(ctx context.Context, accountID, consumerID string) {
 		return
 	}
 	if c, err := caps.GetAPIConsumerSpendCap(ctx, accountID, consumerID); err == nil {
-		_, _ = s.check(ctx, c)
+		_, _ = s.check(ctx, c, true)
 	}
 }
 
@@ -367,7 +374,10 @@ func (s *Service) CheckOnce(ctx context.Context) error {
 	}
 	var firstErr error
 	for _, c := range due {
-		if _, err := s.check(ctx, c); err != nil && firstErr == nil {
+		if !s.released(c.AccountID) {
+			continue // rechecked when its lease ends
+		}
+		if _, err := s.check(ctx, c, false); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -379,8 +389,9 @@ func (s *Service) CheckOnce(ctx context.Context) error {
 
 // check prices the consumer's month to date, subtracts the credit that
 // pays it, and records whether the rest passes the cap. A quote in another
-// currency cannot be compared and never caps.
-func (s *Service) check(ctx context.Context, c state.APIConsumerSpendCap) (state.APIConsumerSpendCap, error) {
+// currency cannot be compared and never caps. Unless forced, a check
+// reuses the last price while it holds (lastPriceHolds).
+func (s *Service) check(ctx context.Context, c state.APIConsumerSpendCap, force bool) (state.APIConsumerSpendCap, error) {
 	credits, okCredits := s.Host.Store().(state.APIConsumerCreditStore)
 	caps, okCaps := s.Host.Store().(state.APIConsumerSpendCapStore)
 	if !okCredits || !okCaps {
@@ -388,6 +399,13 @@ func (s *Service) check(ctx context.Context, c state.APIConsumerSpendCap) (state
 	}
 	now := s.now()
 	monthStart := billing.MonthStart(now)
+	changes, okChanges := s.Host.Store().(state.SpendCapUsageChangeStore)
+	if !force && okChanges && lastPriceHolds(c.CheckedAt, c.MonthStart, c.AmountDueMillicents, c.UpdatedAt, monthStart, now,
+		func(windowFrom, since time.Time) (bool, error) {
+			return changes.APIConsumerUsageChangedSince(ctx, c.AccountID, c.AppID, c.ConsumerID, windowFrom, since)
+		}) {
+		return s.recordCheck(ctx, caps, c, monthStart, *c.AmountDueMillicents, *c.CheckedAt, now)
+	}
 	quote, err := s.Host.QuoteConsumerUsage(ctx, c.AccountID, c.AppID, c.ConsumerID, monthStart, now.Truncate(time.Minute).Add(time.Minute))
 	if err != nil {
 		return c, fmt.Errorf("quote consumer %s: %w", c.ConsumerID, err)
@@ -398,10 +416,17 @@ func (s *Service) check(ctx context.Context, c state.APIConsumerSpendCap) (state
 		if err != nil {
 			return c, fmt.Errorf("credit position %s: %w", c.ConsumerID, err)
 		}
-		due = max(0, quote.AmountMillicents-pos.AvailableMillicents-pos.AppliedInMonthMillicents)
+		due = max(0, quote.AmountMillicents-pos.AvailableMillicents-pos.AppliedToUsageInMonthMillicents)
 	}
+	return s.recordCheck(ctx, caps, c, monthStart, due, now, now)
+}
+
+// recordCheck records a consumer's amount due as priced at checkedAt,
+// capped against the cap as it is now, and audits a change.
+func (s *Service) recordCheck(ctx context.Context, caps state.APIConsumerSpendCapStore, c state.APIConsumerSpendCap,
+	monthStart time.Time, due int64, checkedAt, now time.Time) (state.APIConsumerSpendCap, error) {
 	capped := due > c.MonthlyCapMillicents
-	was, err := caps.RecordAPIConsumerSpendCheck(ctx, c.ConsumerID, monthStart, due, capped, now, now.Add(api.ConsumerSpendCapCheckInterval))
+	was, err := caps.RecordAPIConsumerSpendCheck(ctx, c.ConsumerID, monthStart, due, capped, checkedAt, now.Add(api.ConsumerSpendCapCheckInterval))
 	if err != nil {
 		return c, fmt.Errorf("record spend check %s: %w", c.ConsumerID, err)
 	}
@@ -413,7 +438,31 @@ func (s *Service) check(ctx context.Context, c state.APIConsumerSpendCap) (state
 		s.Host.Audit(ctx, event, c.AccountID, map[string]any{"app_id": c.AppID, "consumer_id": c.ConsumerID,
 			"currency": c.Currency, "monthly_cap_millicents": c.MonthlyCapMillicents, "amount_due_millicents": due})
 	}
-	month, at := monthStart, now
+	month, at := monthStart, checkedAt
 	c.Capped, c.MonthStart, c.AmountDueMillicents, c.CheckedAt = capped, &month, &due, &at
 	return c, nil
+}
+
+// spendCheckClockSkew covers a usage write that began before the last
+// check read the usage but committed after it, and clock skew between apid
+// and Postgres.
+const spendCheckClockSkew = 30 * time.Second
+
+// lastPriceHolds reports whether a cap's last check still prices its month
+// (ADR-20261020211500): it priced this month less than
+// ConsumerSpendCapRepriceInterval ago, the cap has not changed since, and
+// no usage was recorded since. A failed lookup reprices.
+func lastPriceHolds(checkedAt, checkedMonth *time.Time, due *int64, capUpdatedAt, monthStart, now time.Time,
+	changedSince func(windowFrom, since time.Time) (bool, error)) bool {
+	if checkedAt == nil || checkedMonth == nil || due == nil || !checkedMonth.Equal(monthStart) ||
+		now.Sub(*checkedAt) >= api.ConsumerSpendCapRepriceInterval || !capUpdatedAt.Before(*checkedAt) {
+		return false
+	}
+	since := checkedAt.Add(-spendCheckClockSkew)
+	windowFrom := since.Add(-api.ConsumerSpendCapUsageLookback)
+	if windowFrom.Before(monthStart) {
+		windowFrom = monthStart
+	}
+	changed, err := changedSince(windowFrom, since)
+	return err == nil && !changed
 }

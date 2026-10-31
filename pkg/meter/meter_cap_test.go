@@ -28,6 +28,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -53,6 +54,42 @@ func TestRunQuotaOnce_EgressCountsTowardOverageCap(t *testing.T) {
 	loop.RunQuotaOnce(ctx)
 	if body := scrapeBody(t, ops); !strings.Contains(body, `meter_test_egress_cap_billing_cap_exceeded_total{plan="hobby"} 1`) {
 		t.Fatalf("egress did not count toward cap:\n%s", body)
+	}
+	// ADR-20261026120843: schedd knows only compute, so meterd records the
+	// combined result for it.
+	hold, found, err := store.GetSpendCapHold(ctx, acct.ID)
+	if err != nil || !found || hold.CapCents != 1 || hold.ObservedCents < 1 || !hold.Holds(1, now) {
+		t.Fatalf("spend cap hold = %+v found=%v err=%v; want a hold at the 1-cent cap", hold, found, err)
+	}
+	// Raising the cap above the combined overage clears the hold.
+	store.SetOverageCapCentsForTest(acct.ID, 1_000_000)
+	loop.RunQuotaOnce(ctx)
+	if _, found, err := store.GetSpendCapHold(ctx, acct.ID); err != nil || found {
+		t.Fatalf("hold after raising the cap: found=%v err=%v", found, err)
+	}
+}
+
+// Hunt 16 H16-3: the cap limits what is billed; it never exempts an account
+// from its plan quota. A Free account with a zero cap is still hard-stopped.
+func TestRunQuotaOnce_CappedFreeAccountStillHardStops(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	store.SetClockForTest(func() time.Time { return now })
+	acct := makeAccount(t, ctx, store, api.PlanFree)
+	store.SetOverageCapCentsForTest(acct.ID, 0)
+	overQuota := int64(api.PlanFree.PlanIncludedGBHours()+1) * api.SecondsPerGBHour
+	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1", now.Add(-time.Minute), overQuota, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &meter.Config{}
+	cfg.Defaults()
+	loop := meter.NewLoop(store, nil, &fakeParker{}, nil, &fakeNotifier{}, nil, nil, nil, nil,
+		func() time.Time { return now }, discardLog(), cfg, wire.NewOpsMetrics("meter_test_capped_free"))
+	loop.RunQuotaOnce(ctx)
+	got, err := store.AccountByID(ctx, acct.ID)
+	if err != nil || got.Status != state.AccountSuspended {
+		t.Fatalf("capped Free account over quota: status=%q err=%v; want suspended", got.Status, err)
 	}
 }
 
@@ -449,5 +486,52 @@ func TestOverageCap_MeterdAdvisory(t *testing.T) {
 	anyLine := "meter_test_advisory_billing_cap_exceeded_total{"
 	if !strings.Contains(body, anyLine) {
 		t.Errorf("cap-exceeded counter series missing entirely\nbody:\n%s", body)
+	}
+}
+
+// ADR-20261030093512: a customer is told when the spend cap stops their
+// workloads, once per month and cap, not on every quota tick.
+func TestRunQuotaOnce_SpendCapMailsOnceWhenTheHoldEngages(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	store.SetClockForTest(func() time.Time { return now })
+	acct := makeAccount(t, ctx, store, api.PlanHobby)
+	store.SetOverageCapCentsForTest(acct.ID, 1)
+	over := int64(api.PlanHobby.PlanIncludedGBHours()+2) * api.SecondsPerGBHour
+	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1", now.Add(-time.Minute), over, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	mailer := &fakeMailer{}
+	cfg := &meter.Config{}
+	cfg.Defaults()
+	loop := meter.NewLoop(store, nil, &fakeParker{}, nil, &fakeNotifier{}, mailer, nil, nil, nil,
+		func() time.Time { return now }, discardLog(), cfg, wire.NewOpsMetrics("meter_test_cap_mail"))
+	capMails := func() []mail.Message {
+		mailer.mu.Lock()
+		defer mailer.mu.Unlock()
+		var out []mail.Message
+		for _, m := range mailer.sent {
+			if strings.Contains(m.Subject, "spend cap") {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	loop.RunQuotaOnce(ctx)
+	loop.RunQuotaOnce(ctx)
+	sent := capMails()
+	if len(sent) != 1 {
+		t.Fatalf("spend cap mails after two ticks = %d, want 1", len(sent))
+	}
+	if sent[0].To[0] != acct.Email || !strings.Contains(sent[0].TextBody, "$0.01") || !strings.Contains(sent[0].TextBody, "gregale billing spend-cap") {
+		t.Fatalf("spend cap mail = %+v", sent[0])
+	}
+	// A new cap the account also exceeds is a new hold: the customer hears
+	// again.
+	store.SetOverageCapCentsForTest(acct.ID, 2)
+	loop.RunQuotaOnce(ctx)
+	if got := len(capMails()); got != 2 {
+		t.Fatalf("spend cap mails after the cap changed = %d, want 2", got)
 	}
 }

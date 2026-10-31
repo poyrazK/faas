@@ -55,15 +55,23 @@ func (e *Engine) resumeWarmWithStandards(ctx context.Context, app state.App, war
 	if err != nil {
 		return nil, err
 	}
-	if identity.Validate() != nil || identity.NodeID != warm.NodeID || identity.Incarnation != parent.Binding.Incarnation || capture.NativeInputHash != parent.Binding.CapturedInputHash {
+	if identity.Validate() != nil || identity.NodeID != warm.NodeID || capture.NativeInputHash != parent.Binding.CapturedInputHash {
 		return nil, runtimeadmission.ErrStale
+	}
+	// A parent issued by an earlier vmmd is one the warm-parent lock accepted
+	// through the instance's re-binds (ADR-595 extension): promote it under
+	// the current process, holding the issuer.
+	held := ""
+	if identity.Incarnation != parent.Binding.Incarnation {
+		held = parent.Binding.Incarnation
 	}
 	if parent.Binding.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion && (identity.ProtocolVersion < runtimeadmission.ArtifactProtocolVersion || identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion) {
 		return nil, runtimeadmission.ErrUnavailable
 	}
-	p := runtimeadmission.Promotion{Binding: parent.Binding, Parent: parent}
+	p := runtimeadmission.Promotion{Binding: parent.Binding, Parent: parent}.Held(held)
 	now := time.Now().UTC()
 	p.Binding.Token, p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = uuid.NewString(), now.UnixNano(), now.Add(api.ApplicationStandardRuntimeAdmissionTTL).UnixNano()
+	p.Binding.Incarnation = identity.Incarnation
 	p.Binding.PayloadHash, err = runtimeadmission.HashPromotionPayload(p.ToProto())
 	if err != nil {
 		return nil, err
@@ -72,6 +80,7 @@ func (e *Engine) resumeWarmWithStandards(ctx context.Context, app state.App, war
 	if err != nil {
 		return nil, applicationStandardRuntimeProblem(err)
 	}
+	p = p.Held(held)
 	r, err := native.PromoteAdmittedRuntime(ctx, warm.NodeID, p.ToProto())
 	if err != nil {
 		return nil, err

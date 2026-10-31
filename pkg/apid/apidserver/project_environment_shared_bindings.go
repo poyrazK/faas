@@ -171,7 +171,10 @@ func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct s
 				if resolveErr != nil {
 					return nil, fmt.Errorf("resolve object storage provider for isolated binding %q: %w", credentialID, resolveErr)
 				}
-				if _, ok := backend.Provider.(objectstorage.CrossBucketObjectCopier); !ok {
+				// An isolated clone creates a bucket on its source's backend,
+				// which bypasses pool placement, so a backend with a bucket
+				// ceiling cannot take one (ADR-20261029174627).
+				if _, ok := backend.Provider.(objectstorage.CrossBucketObjectCopier); !ok || backend.MaxBuckets > 0 {
 					return nil, errIsolatedObjectStorageCloneUnsupported
 				}
 			}
@@ -332,12 +335,15 @@ func (s *server) cloneSharedObjectStorageBinding(r *http.Request, acct state.Acc
 	if !s.object.ObjectStorageSecretSealReady() {
 		return errors.New("object storage secret sealing is unavailable")
 	}
-	recipient := hostSecretRecipient()
+	recipients, kid, recipientErr := storageCredentialRecipients()
+	if recipientErr != nil {
+		return fmt.Errorf("object storage credential sealing: %w", recipientErr)
+	}
 	accessKeyID, secretAccessKey, err := api.GenerateObjectS3Credential()
 	if err != nil {
 		return fmt.Errorf("generate isolated object storage credential: %w", err)
 	}
-	sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
+	sealed, err := secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
 	if err != nil {
 		return fmt.Errorf("seal isolated object storage credential: %w", err)
 	}
@@ -354,7 +360,7 @@ func (s *server) cloneSharedObjectStorageBinding(r *http.Request, acct state.Acc
 	}
 	_, err = store.CreateObjectS3ComputeBinding(r.Context(), state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
 		ID: credentialID, AccountID: acct.ID, BucketID: plan.bucket.ID, AccessKeyID: accessKeyID,
-		SecretSealed: sealed, KID: recipient.String(), Label: plan.objectCred.Label,
+		SecretSealed: sealed, KID: kid, Label: plan.objectCred.Label,
 		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
 		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
 	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})

@@ -54,6 +54,9 @@ func (h *Handler) ensureVerifiedBaseExt4(ctx context.Context, r verifiedBaseRequ
 	if cached, ok, err := h.reuseVerifiedBase(ctx, r, store, resolved.SourceReference); err != nil || ok {
 		return cached, err
 	}
+	if err := h.checkBaseProvenance(ctx, resolved); err != nil {
+		return BaseStageResult{}, err
+	}
 	build := verifiedBaseBuild{prepared: preparedContainerWorkload{ImageResolution: resolved}}
 	if r.parentRef == "" {
 		build, err = h.buildVerifiedBase(ctx, r, build)
@@ -202,12 +205,31 @@ func (h *Handler) buildVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 	return build, err
 }
 
+// parentSourceMatches reports whether a parent producer was staged from ref.
+// The producer records the resolved source reference, repository@digest. A
+// digest-pinned ref, which named production nodes require, must name that
+// digest. A tag ref (dev, CI and test nodes) never equals it, and every child
+// base (node24, python312) failed to stage there; it matches on the
+// repository, and the child's layer chain must still extend the parent's
+// (ADR-20261029103512).
+func parentSourceMatches(recorded, ref string) bool {
+	if recorded == ref {
+		return true
+	}
+	got, err := oci.ParseReference(recorded)
+	want, wantErr := oci.ParseReference(ref)
+	if err != nil || wantErr != nil || got.Registry != want.Registry || got.Repository != want.Repository {
+		return false
+	}
+	return want.Digest == "" || want.Digest == got.Digest
+}
+
 func (h *Handler) buildVerifiedChildBase(ctx context.Context, r verifiedBaseRequest, store state.BaseImageProducerStore, build verifiedBaseBuild) (verifiedBaseBuild, error) {
 	parent, err := store.GetCurrentBaseImageProducer(ctx, r.parentKey)
 	if err != nil {
 		return build, err
 	}
-	if parent.Input.SourceReference != r.parentRef || parent.Input.LayoutVersion != baseLayoutVersion || parent.Input.GuestInitDigest != baseGuestDigest(r.guestDigest) {
+	if !parentSourceMatches(parent.Input.SourceReference, r.parentRef) || parent.Input.LayoutVersion != baseLayoutVersion || parent.Input.GuestInitDigest != baseGuestDigest(r.guestDigest) {
 		return build, fmt.Errorf("imaged: selected parent producer does not match base intent")
 	}
 	base, err := imagechain.Validate(parent.Input.ImageChain, parent.Input.SourceDigest, parent.Input.SelectedDigest)
@@ -290,6 +312,13 @@ func (h *Handler) publishVerifiedBase(ctx context.Context, r verifiedBaseRequest
 }
 
 func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest, producer state.BaseImageProducer, configDigest string, skipped bool) (BaseStageResult, error) {
+	if skipped {
+		// ADR-20261026181418: the reuse was verified from this node's cache,
+		// which says nothing about the generation's shared key.
+		if err := h.publishReusedBase(ctx, r.be, r.key); err != nil {
+			return BaseStageResult{}, err
+		}
+	}
 	if err := h.writeBaseDigestSidecar(ctx, r.be, r.digestKey, configDigest, r.guestDigest, producer.Input.SourceReference); err != nil {
 		return BaseStageResult{}, err
 	}
@@ -314,6 +343,18 @@ func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest,
 // or a deferred child base (H10-95) then left the refusal on bytes that had
 // not changed, and every cold boot on that base returned 503 until a later
 // stage rewrote it (H10-103).
+//
+// The refusal names no generation. The scan sidecar is the commit marker
+// vmmd's ensureBaseGeneration reads before it pulls the base and digest
+// sidecar: one that named the new ref while the shared base still held the
+// previous bytes let a node on the new release commit those old bytes as the
+// new generation, and keep booting them once the scan completed. Only
+// finishVerifiedBase names the generation, after the base and its digest
+// sidecar are published (ADR-20261024191249).
 func invalidateScanBeforeRebuild(ctx context.Context, r verifiedBaseRequest) error {
-	return writeProducedBaseScanCompatibility(ctx, r.be, r.key, r.ref, r.out, state.BaseImageScan{})
+	return writeProducedBaseScanCompatibility(ctx, r.be, r.key, uncommittedBaseScanImage, r.out, state.BaseImageScan{})
 }
+
+// uncommittedBaseScanImage is the image a rebuild's fail-closed scan sidecar
+// names: no configured generation matches it.
+const uncommittedBaseScanImage = ""

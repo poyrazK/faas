@@ -95,8 +95,97 @@ func healthcheckGRPCFromDep(dep state.Deployment) (bool, string) {
 	return true, hc.GRPC.Service
 }
 
+// healthcheckGRPCForApp adds the gRPC-app default to healthcheckGRPCFromDep:
+// an app_protocol=grpc app whose deployment declares no startup probe gets
+// standard gRPC health readiness. A gRPC server cannot answer the HTTP
+// /healthz default, so `deploy --app-protocol grpc` without
+// --healthcheck-grpc ended in app_startup_timeout after a full build, and
+// every later plain redeploy would again (Hunt 14 H14-55).
+func healthcheckGRPCForApp(dep state.Deployment, appProtocol string) (bool, string) {
+	if grpc, service := healthcheckGRPCFromDep(dep); grpc {
+		return grpc, service
+	}
+	if appProtocol != api.AppProtocolGRPC || deploymentDeclaresStartupProbe(dep) {
+		return false, ""
+	}
+	return true, ""
+}
+
+// startupProbeForApp resolves the primary app's whole startup probe. The
+// gRPC-app default replaces the HTTP path rather than joining it: a source
+// build's inferred framework profile still names /healthz, and vmmd refuses
+// a spec that carries both, so h14-grpc's first deploy on rc.297 failed its
+// snapshot prime with "healthcheck_path and healthcheck_grpc are mutually
+// exclusive" (Hunt 14 H14-55).
+func startupProbeForApp(dep state.Deployment, app state.App) (path string, grpc bool, service string) {
+	if grpc, service = healthcheckGRPCForApp(dep, app.AppProtocol); grpc {
+		return "", true, service
+	}
+	return healthcheckPathForApp(dep, app), false, ""
+}
+
+// healthcheckPathForApp drops the platform's default /healthz when the routed
+// port is one of the app's public raw-TCP listeners (ADR-20261027090000). A
+// TCP service such as a database cannot answer an HTTP GET, and a source
+// build had no way to say so: every boot ended app_not_listening. A health
+// path the customer chose (deploy override, environment runtime field,
+// gregale.yaml hosting.health, or a non-default path) keeps HTTP readiness.
+func healthcheckPathForApp(dep state.Deployment, app state.App) string {
+	path := healthcheckPathFromDep(dep)
+	if path != defaultHealthcheckPath || !routesRawTCPListener(dep, app) ||
+		deploymentDeclaresStartupProbe(dep) || profileHealthFromConfig(dep) {
+		return path
+	}
+	return ""
+}
+
+const defaultHealthcheckPath = "/healthz"
+
+// routesRawTCPListener reports that the deployment's routed port is declared
+// on the app as a public TCP listener.
+func routesRawTCPListener(dep state.Deployment, app state.App) bool {
+	port := deploymentRuntimePort(dep)
+	if port == 0 {
+		port = api.DefaultAppPort
+	}
+	for _, declared := range app.Manifest.Ports {
+		if declared.Port == port && !declared.Internal && declared.EffectiveProtocol() == api.WorkloadPortTCP {
+			return true
+		}
+	}
+	return false
+}
+
+// profileHealthFromConfig reports that the persisted profile's health path is
+// gregale.yaml's explicit hosting.health rather than the inferred default.
+func profileHealthFromConfig(dep state.Deployment) bool {
+	var receipt struct {
+		Profile frameworkprofile.Profile `json:"profile"`
+	}
+	if len(dep.APIHostingReceipt) > 0 && json.Unmarshal(dep.APIHostingReceipt, &receipt) == nil && receipt.Profile.HealthFromConfig {
+		return true
+	}
+	var profile frameworkprofile.Profile
+	return len(dep.InferredProfile) > 0 && json.Unmarshal(dep.InferredProfile, &profile) == nil && profile.HealthFromConfig
+}
+
+// deploymentDeclaresStartupProbe reports an explicit primary-app probe: an
+// environment-scoped healthcheck or healthz, or a deploy-time override.
+// Inferred framework paths are defaults, not declarations.
+func deploymentDeclaresStartupProbe(dep state.Deployment) bool {
+	for _, field := range []string{"healthcheck", "healthz"} {
+		if _, declared := scopedDeploymentRuntimeField(dep, field); declared {
+			return true
+		}
+	}
+	return len(dep.OverrideHealthcheck) > 0
+}
+
 func imageHealthcheckRequiredFromDep(dep state.Deployment) bool {
-	return dep.Kind == state.DeploymentKindImage && frameworkprofile.RequiresImageHealthcheck(dep.InferredProfile)
+	if dep.Kind == state.DeploymentKindImage {
+		return frameworkprofile.RequiresImageHealthcheck(dep.InferredProfile)
+	}
+	return frameworkprofile.RequiresSourceImageHealthcheck(dep.InferredProfile)
 }
 
 func validRuntimeHealthPath(path string) bool {

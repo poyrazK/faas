@@ -56,6 +56,7 @@ func issuedPublicDeclarationMigration(name string) bool {
 		"20261004232943929_application_standard_retained_native_admission.sql",
 		"20261004234710285_application_standard_retained_native_protocol.sql",
 		"20261012080000001_application_standard_shared_base_read_fences.sql",
+		"20261018095850501_function_migration_destination.sql",
 		"20261019190114207_org_resource_lifecycle_online.sql":
 		return true
 	default:

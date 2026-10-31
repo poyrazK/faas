@@ -82,14 +82,14 @@ def sync_detailed(
     r"""List every sealed secret across the caller's account.
 
      Replaces the per-app fan-out from `/v1/apps/{slug}/secrets`
-    with one account-scoped read (issue #393). Each row carries
+    with one account-scoped read. Each row carries
     the owning app's `app_id` and `app_slug` so the dashboard
     can render \"foo-app / DATABASE_URL\" without a parallel
     `/v1/apps` round-trip.
 
     **Plaintext never appears here** — only the age-sealed
     envelope (base64). The plaintext value lives transiently in
-    the PUT handler and never crosses the apid wire.
+    the PUT handler and never crosses the API wire.
 
     Cursor: `?before=<slug>|<key>` — the (app_slug, key) pair,
     pipe-separated. The SQL splits it back via `split_part`.
@@ -129,14 +129,14 @@ def sync(
     r"""List every sealed secret across the caller's account.
 
      Replaces the per-app fan-out from `/v1/apps/{slug}/secrets`
-    with one account-scoped read (issue #393). Each row carries
+    with one account-scoped read. Each row carries
     the owning app's `app_id` and `app_slug` so the dashboard
     can render \"foo-app / DATABASE_URL\" without a parallel
     `/v1/apps` round-trip.
 
     **Plaintext never appears here** — only the age-sealed
     envelope (base64). The plaintext value lives transiently in
-    the PUT handler and never crosses the apid wire.
+    the PUT handler and never crosses the API wire.
 
     Cursor: `?before=<slug>|<key>` — the (app_slug, key) pair,
     pipe-separated. The SQL splits it back via `split_part`.
@@ -171,14 +171,14 @@ async def asyncio_detailed(
     r"""List every sealed secret across the caller's account.
 
      Replaces the per-app fan-out from `/v1/apps/{slug}/secrets`
-    with one account-scoped read (issue #393). Each row carries
+    with one account-scoped read. Each row carries
     the owning app's `app_id` and `app_slug` so the dashboard
     can render \"foo-app / DATABASE_URL\" without a parallel
     `/v1/apps` round-trip.
 
     **Plaintext never appears here** — only the age-sealed
     envelope (base64). The plaintext value lives transiently in
-    the PUT handler and never crosses the apid wire.
+    the PUT handler and never crosses the API wire.
 
     Cursor: `?before=<slug>|<key>` — the (app_slug, key) pair,
     pipe-separated. The SQL splits it back via `split_part`.
@@ -216,14 +216,14 @@ async def asyncio(
     r"""List every sealed secret across the caller's account.
 
      Replaces the per-app fan-out from `/v1/apps/{slug}/secrets`
-    with one account-scoped read (issue #393). Each row carries
+    with one account-scoped read. Each row carries
     the owning app's `app_id` and `app_slug` so the dashboard
     can render \"foo-app / DATABASE_URL\" without a parallel
     `/v1/apps` round-trip.
 
     **Plaintext never appears here** — only the age-sealed
     envelope (base64). The plaintext value lives transiently in
-    the PUT handler and never crosses the apid wire.
+    the PUT handler and never crosses the API wire.
 
     Cursor: `?before=<slug>|<key>` — the (app_slug, key) pair,
     pipe-separated. The SQL splits it back via `split_part`.

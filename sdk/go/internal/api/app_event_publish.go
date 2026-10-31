@@ -55,7 +55,7 @@ type AppPublishEventResponse struct {
 	Receipt   AppPublishedEventReceipt `json:"receipt"`
 }
 
-func (c *Client) PublishAppEvent(ctx context.Context, slug string, req AppPublishEventRequest) (AppPublishEventResponse, error) {
+func (c *PreviewClient) PublishAppEvent(ctx context.Context, slug string, req AppPublishEventRequest) (AppPublishEventResponse, error) {
 	var out AppPublishEventResponse
 	if err := req.Validate(); err != nil {
 		return out, err

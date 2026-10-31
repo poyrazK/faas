@@ -46,7 +46,7 @@ type CommitRecoveryDiagnosticProgress struct {
 
 // DiagnoseCommitRecoveryStatus rotates exact lookups within the existing read cap.
 // Only call with validated status; retained samples keep their original timestamps.
-func (c *Client) DiagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult) CommitRecoveryStatusResult {
+func (c *PreviewClient) DiagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult) CommitRecoveryStatusResult {
 	out, err := c.diagnoseCommitRecoveryStatus(ctx, status, nil, 0)
 	if err != nil {
 		return status
@@ -56,7 +56,7 @@ func (c *Client) DiagnoseCommitRecoveryStatus(ctx context.Context, status Commit
 
 // ResumeCommitRecoveryDiagnostics binds earlier samples and cursors to the exact
 // validated selection and attempts. Saved aggregate counters are never trusted.
-func (c *Client) ResumeCommitRecoveryDiagnostics(ctx context.Context, status, previous CommitRecoveryStatusResult) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) ResumeCommitRecoveryDiagnostics(ctx context.Context, status, previous CommitRecoveryStatusResult) (CommitRecoveryStatusResult, error) {
 	return c.diagnoseCommitRecoveryStatus(ctx, status, &previous, 0)
 }
 
@@ -64,7 +64,7 @@ func (c *Client) ResumeCommitRecoveryDiagnostics(ctx context.Context, status, pr
 type CommitRecoveryDiagnosticsOptions struct{ MaxDiagnosticAge time.Duration }
 
 // DiagnoseCommitRecoveryStatusWithOptions recomputes saved freshness under the current policy.
-func (c *Client) DiagnoseCommitRecoveryStatusWithOptions(ctx context.Context, status CommitRecoveryStatusResult, previous *CommitRecoveryStatusResult, options CommitRecoveryDiagnosticsOptions) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) DiagnoseCommitRecoveryStatusWithOptions(ctx context.Context, status CommitRecoveryStatusResult, previous *CommitRecoveryStatusResult, options CommitRecoveryDiagnosticsOptions) (CommitRecoveryStatusResult, error) {
 	return c.diagnoseCommitRecoveryStatus(ctx, status, previous, options.MaxDiagnosticAge)
 }
 func validateDiagnosticAge(age time.Duration) error {
@@ -73,7 +73,7 @@ func validateDiagnosticAge(age time.Duration) error {
 	}
 	return nil
 }
-func (c *Client) diagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult, previous *CommitRecoveryStatusResult, maxAge time.Duration, strictReads ...bool) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) diagnoseCommitRecoveryStatus(ctx context.Context, status CommitRecoveryStatusResult, previous *CommitRecoveryStatusResult, maxAge time.Duration, strictReads ...bool) (CommitRecoveryStatusResult, error) {
 	if err := validateDiagnosticAge(maxAge); err != nil {
 		return status, err
 	}

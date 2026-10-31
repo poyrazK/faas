@@ -121,7 +121,7 @@ func TestGetManagedRealtimeOccupancy(t *testing.T) {
 		Nodes:        map[string]map[string]int{"a": {"lobby": 4}, "b": {"lobby": 2, "game": 7}},
 		NodesQueried: 2, NodesUnavailable: 1,
 	}}
-	svc := &Service{Host: &ticketTestHost{store: store, app: app}, Owner: owner}
+	svc := &Service{Host: &ticketTestHost{store: store, app: app}, Owner: owner, Preview: everyonePreview(t)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy", func(w http.ResponseWriter, r *http.Request) { svc.GetManagedRealtimeOccupancy(w, r, acct) })
 	get := func(query string) *httptest.ResponseRecorder {

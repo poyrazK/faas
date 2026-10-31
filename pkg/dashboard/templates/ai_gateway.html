@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    th, td { text-align: right; padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    th:first-child, td:first-child { text-align: left; }
+    .muted { color: #6b7280; }
+    .notice { padding: 0.7rem; background: #fff8c5; border: 1px solid #e2cf6e; }
+    .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.8rem; background: #e5e7eb; color: #374151; margin-left: 0.25rem; }
+    @media (max-width: 750px) { table { font-size: 0.85rem; } th, td { padding: 0.4rem 0.25rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/ai">AI gateway</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>AI gateway</h1>
+    <p>Calls your apps make to AI providers through the gateway, with their cost and quality. Today is {{.Data.Day}} (UTC).</p>
+    {{if .Data.Unavailable}}
+      <p class="notice" role="status">{{.Data.Unavailable}}</p>
+    {{else if .Data.Integrations}}
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Integration</th><th>Calls today</th><th>Error rate</th><th>Cost today</th><th>Flagged answers</th><th>Mean score</th></tr></thead>
+          <tbody>
+            {{range .Data.Integrations}}
+              <tr>
+                <td><a href="{{.Href}}">{{.Name}}</a> <span class="muted">{{.Provider}}</span>
+                  {{if .RequestLog}}<span class="badge">request log</span>{{end}}
+                  {{if .OnlineEvaluation}}<span class="badge">online evaluation</span>{{end}}
+                  {{if .Alerts}}<span class="badge">drift alerts</span>{{end}}</td>
+                <td>{{.Requests}}</td><td>{{.ErrorRate}}</td><td>{{.Cost}}</td><td>{{.Flagged}}</td><td>{{.Score}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    {{else}}
+      <p>No AI integrations yet. Create one with <code>gregale outbound create</code> and <code>gregale ai policy &lt;id&gt; --provider openai</code>.</p>
+    {{end}}
+  </main>
+</body>
+</html>

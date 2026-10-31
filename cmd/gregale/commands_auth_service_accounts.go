@@ -101,7 +101,7 @@ func cmdAuthServiceAccounts(args []string) int {
 	}
 	if args[0] == "remove" && !*yes {
 		_, _ = fmt.Fprintf(osStderr, "About to remove service account %s of %s with its secrets; its tokens stop working at once.\n", fs.Arg(1), fs.Arg(0))
-		if !requireTyped("remove service account") {
+		if !requireTypedOr("remove service account", "--yes") {
 			return 1
 		}
 	}

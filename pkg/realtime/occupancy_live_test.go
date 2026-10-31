@@ -65,7 +65,7 @@ func newOccupancyTestManager(t *testing.T, client ManagedRealtimeOccupancyClient
 	t.Helper()
 	m := NewManager(Config{OccupancyPreview: true, OccupancyClient: client, occupancyManual: true}, nil)
 	t.Cleanup(func() { _ = m.Close() })
-	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
 		t.Fatal(err)
 	}
 	return m

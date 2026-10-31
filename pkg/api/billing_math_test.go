@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestBillableMBSecondsUsesPlanAllowance(t *testing.T) {
 	const sec = SecondsPerGBHour
@@ -33,5 +36,40 @@ func TestOverageCentsForMBSecondsUsesCorrectUnits(t *testing.T) {
 	}
 	if got := OverageCentsForMBSeconds(PlanHobby, 200*SecondsPerGBHour); got != 0 {
 		t.Fatalf("at-allowance overage = %d, want 0", got)
+	}
+}
+
+// A paid plan's default spend cap is one more allowance at the overage rate,
+// the managed PostgreSQL overage ceiling; Free has none.
+// adr: 20261029180000
+func TestDefaultOverageCapCents(t *testing.T) {
+	for plan, want := range map[Plan]int64{PlanHobby: 200, PlanPro: 1_000, PlanScale: 3_000} {
+		got, ok := plan.DefaultOverageCapCents()
+		if !ok || got != want {
+			t.Errorf("%s default cap = (%d, %v), want (%d, true)", plan, got, ok, want)
+		}
+		allowance := int64(plan.PlanIncludedGBHours()) * OverageMillicentsPerGBHour / MillicentsPerCent
+		if got != allowance*(ManagedPostgresOverageCeilingMultiplier-1) {
+			t.Errorf("%s default cap %d is not one allowance (%d cents) of overage", plan, got, allowance)
+		}
+	}
+	if got, ok := PlanFree.DefaultOverageCapCents(); ok {
+		t.Errorf("free default cap = %d, want none", got)
+	}
+}
+
+// The finality bound covers every late write meterd can make: the catch-up
+// window, the newest-closed-minute offset, one tick and the roll settle. It
+// stays minute-aligned so the pusher's completeness read is a valid window.
+// adr: 20261030120000
+func TestMeterUsageFinalAfterCoversLateWrites(t *testing.T) {
+	if MeterUsageFinalAfter < MeterCatchUpWindow+2*time.Minute+MeterRollSettle {
+		t.Fatalf("MeterUsageFinalAfter %s does not cover catch-up %s + 2m + settle %s", MeterUsageFinalAfter, MeterCatchUpWindow, MeterRollSettle)
+	}
+	if MeterUsageFinalAfter%time.Minute != 0 {
+		t.Fatalf("MeterUsageFinalAfter %s is not a whole number of minutes", MeterUsageFinalAfter)
+	}
+	if MeterTelemetryDrainWindow > MeterCatchUpWindow {
+		t.Fatalf("telemetry drain window %s exceeds catch-up window %s", MeterTelemetryDrainWindow, MeterCatchUpWindow)
 	}
 }

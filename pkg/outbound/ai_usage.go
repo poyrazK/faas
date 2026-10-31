@@ -89,6 +89,26 @@ type AIUsageRecord struct {
 	EndUser string
 	// Tags are the call's usage tags, sorted by key (ADR-1436).
 	Tags []string
+	// TraceID is the call's AI trace, set when its integration records
+	// traces; ToolCalls names the tools its response requested, and
+	// ToolSignature hashes them with their arguments (ADR 20261020202035).
+	TraceID       string
+	ToolCalls     []string
+	ToolSignature []byte
+	// CallID is the call's ID and its request-log entry ID, or empty for
+	// the store to choose; QualityFlags mark what went wrong with its
+	// answer (ADR 20261021171712).
+	CallID       string
+	QualityFlags []string
+	// EvaluationSampled marks a logged, captured call the settlement may
+	// queue for the online evaluation worker (ADR 20261021171712).
+	EvaluationSampled bool
+	// InstanceID is the calling app instance a verified workload identity
+	// names; the settlement adds the call, with its time to first byte in
+	// TTFBMS (nil when no byte arrived), to that instance's deployment
+	// (ADR 20261022153155). Empty for every other caller.
+	InstanceID string
+	TTFBMS     *int64
 	// LeaseID is the call's admission lease. It keys the settlement, so a
 	// retried settlement counts the call once, and the settlement deletes
 	// the lease (ADR-1120). Empty settles without a key.
@@ -284,6 +304,12 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	if record.EndUser != "" && !api.ValidOutboundAIUserID(record.EndUser) {
 		return fmt.Errorf("%w: AI usage end user is invalid", ErrInvalidIntegration)
 	}
+	if err := validateAITraceRecord(record); err != nil {
+		return err
+	}
+	if err := validateAIQualityRecord(record); err != nil {
+		return err
+	}
 	if record.LeaseID != "" && !validUUID(record.LeaseID) {
 		return fmt.Errorf("%w: AI usage lease id must be a UUID", ErrInvalidIntegration)
 	}
@@ -412,6 +438,13 @@ type aiEnvelopeInner struct {
 	Usage *aiUsageFields `json:"usage"`
 	// Output is an OpenAI Responses object's output items (ADR-1433).
 	Output json.RawMessage `json:"output"`
+	// Content is an Anthropic message's content blocks, whose tool_use
+	// blocks are requested tool calls (ADR 20261020202035).
+	Content json.RawMessage `json:"content"`
+	// Status and IncompleteDetails say why a Responses object stopped
+	// early (ADR 20261021171712).
+	Status            json.RawMessage `json:"status"`
+	IncompleteDetails json.RawMessage `json:"incomplete_details"`
 }
 
 // aiToolItem is one OpenAI Responses output item, as far as built-in tool
@@ -455,6 +488,24 @@ type aiEnvelope struct {
 	Output     json.RawMessage `json:"output"`
 	Item       json.RawMessage `json:"item"`
 	Candidates json.RawMessage `json:"candidates"`
+	// Requested tool calls (ADR 20261020202035): Chat Completions choices,
+	// Anthropic content and its stream's content blocks and deltas at an
+	// index, and Bedrock ConverseStream block starts and deltas.
+	Choices           json.RawMessage `json:"choices"`
+	Content           json.RawMessage `json:"content"`
+	ContentBlock      json.RawMessage `json:"content_block"`
+	Index             json.RawMessage `json:"index"`
+	Delta             json.RawMessage `json:"delta"`
+	Start             json.RawMessage `json:"start"`
+	ContentBlockIndex json.RawMessage `json:"contentBlockIndex"`
+	// Quality flags (ADR 20261021171712): Anthropic and Bedrock stop
+	// reasons, a Responses object's status and incomplete reason, and a
+	// Gemini prompt's block reason.
+	StopReason        json.RawMessage `json:"stop_reason"`
+	BedrockStopReason json.RawMessage `json:"stopReason"`
+	Status            json.RawMessage `json:"status"`
+	IncompleteDetails json.RawMessage `json:"incomplete_details"`
+	PromptFeedback    json.RawMessage `json:"promptFeedback"`
 	// Predictions carries Vertex AI text-embedding token counts (ADR-995).
 	Predictions []struct {
 		Embeddings *struct {
@@ -835,6 +886,10 @@ type aiUsageObserver struct {
 	// chatSearch marks a chat completion on a search model, which runs one
 	// web search per call (ADR-1433).
 	chatSearch bool
+	// tools are the tool calls the response requested (ADR 20261020202035).
+	tools aiToolCalls
+	// quality follows the answer's quality flags (ADR 20261021171712).
+	quality aiQuality
 }
 
 // newAIUsageObserver observes a call in the provider's default format.
@@ -1108,6 +1163,8 @@ func (o *aiUsageObserver) applyEnvelope(envelope aiEnvelope) {
 			o.raw.noteGrounding(candidates)
 		}
 	}
+	o.noteToolCalls(envelope)
+	o.noteQuality(envelope)
 	o.noteModel(envelope.Model)
 	o.noteModel(envelope.ModelVersion)
 	for _, inner := range []*aiEnvelopeInner{envelope.Message, envelope.Response} {
@@ -1166,6 +1223,10 @@ func (o *aiUsageObserver) Finish() AIUsage {
 // containerIDs lists the code-interpreter containers a response used
 // (ADR-1433).
 func (o *aiUsageObserver) containerIDs() []string { return o.raw.containers }
+
+// toolCalls reports the names of the tool calls the response requested,
+// and their signature for loop detection (ADR 20261020202035).
+func (o *aiUsageObserver) toolCalls() ([]string, []byte) { return o.tools.names(), o.tools.signature() }
 
 // FirstByteAt reports when the first response body byte was observed.
 func (o *aiUsageObserver) FirstByteAt() time.Time { return o.firstByteAt }

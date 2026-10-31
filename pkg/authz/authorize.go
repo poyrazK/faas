@@ -51,6 +51,7 @@ var allowRoleMatrix = map[OrgAction]map[state.OrgRole]bool{
 	},
 	OrgActionManageAppSecurity:         {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
 	OrgActionDeleteApp:                 {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	OrgActionApproveAppRelease:         {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
 	OrgActionReadProject:               {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true, state.OrgRoleViewer: true},
 	OrgActionConfigureProject:          {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
 	OrgActionDeployProject:             {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
@@ -58,6 +59,7 @@ var allowRoleMatrix = map[OrgAction]map[state.OrgRole]bool{
 	OrgActionManageProjectSecrets:      {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
 	OrgActionApproveProjectEnvironment: {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
 	OrgActionDeleteProject:             {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	OrgActionManagePreviews:            {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
 	OrgActionSetApplicationStandardLocalIntent: {
 		state.OrgRoleOwner:     true,
 		state.OrgRoleAdmin:     true,

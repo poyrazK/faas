@@ -102,7 +102,7 @@ func newRig(t *testing.T, scanFn func(fs.FS) (reposcan.Result, error)) *testRig 
 	aud := audit.New(mem, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, "githubd_test")
 	rec := reconcile.NewService(mem, aud, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if scanFn != nil {
-		rec.Scan = scanFn
+		rec.Scan = func(fsys fs.FS, _ reposcan.ScanOptions) (reposcan.Result, error) { return scanFn(fsys) }
 	}
 	acct, err := mem.CreateAccount(context.Background(), "octo@example.com", "hobby")
 	if err != nil {
@@ -817,6 +817,47 @@ func TestHandlePushRequest_PathFilter_MatchesOneApp(t *testing.T) {
 	}
 	if cf.calls != 1 {
 		t.Errorf("ChangedFiles calls = %d, want 1", cf.calls)
+	}
+}
+
+// A delivery dropped as stale (a newer push had already moved the branch)
+// never ran its compare, and the next push compared only its own
+// before..after range: a monorepo app changed only by the dropped push was
+// never rebuilt. The compare now starts at the last deployed commit when the
+// push is not built on it.
+func TestHandlePushRequest_PathFilter_ComparesFromLastDeployedCommit(t *testing.T) {
+	cf := &stubChangedFiles{files: []string{"services/billing/charge.go"}}
+	svc, rec, acct := pathFilterRig(t, cf, false)
+	ctx := context.Background()
+	first := []byte(`{"ref":"refs/heads/main","before":"base000","after":"deploy111","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	if _, err := svc.HandlePushRequest(ctx, first); err != nil {
+		t.Fatalf("first push: %v", err)
+	}
+	if cf.lastBase != "base000" {
+		t.Fatalf("first compare base = %q, want the push's before", cf.lastBase)
+	}
+	apps, err := svc.Reconcile.Store.ListApps(ctx, acct)
+	if err != nil || len(apps) == 0 {
+		t.Fatalf("project apps = %d, %v", len(apps), err)
+	}
+	for _, app := range apps {
+		if _, err := svc.Reconcile.Store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub,
+			CommitSHA: "deploy111", GitHubSourceRef: "main"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	builds := len(rec.calls)
+	// skipped222 is a push whose delivery was dropped: this push is built on
+	// it, not on the last deployed commit.
+	second := []byte(`{"ref":"refs/heads/main","before":"skipped222","after":"head333","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	if _, err := svc.HandlePushRequest(ctx, second); err != nil {
+		t.Fatalf("second push: %v", err)
+	}
+	if cf.lastBase != "deploy111" || cf.lastHead != "head333" {
+		t.Fatalf("second compare = %s..%s, want deploy111..head333", cf.lastBase, cf.lastHead)
+	}
+	if len(rec.calls) == builds {
+		t.Fatal("the app changed by the dropped push was not rebuilt")
 	}
 }
 

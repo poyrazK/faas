@@ -304,6 +304,64 @@
         "allowed_service_callers": [],
         "allowed_service_call_scopes": {}
       }
+    },
+    {
+      "name": "project-member",
+      "body": {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "slug": "demo",
+        "type": "app",
+        "ram_mb": 256,
+        "vcpu": 1,
+        "cpu_millicores": 500,
+        "configured_resources": {
+          "memory_mb": 256,
+          "cpu_millicores": 500
+        },
+        "max_concurrency": 2,
+        "concurrency_per_vm": 80,
+        "effective_limits": {
+          "memory_limit_mb": 256,
+          "plan_memory_max_mb": 256,
+          "ephemeral_disk_max_mb": 512,
+          "guest_vcpus": 1,
+          "cpu_limit_millicores": 500,
+          "plan_cpu_max_millicores": 500,
+          "cpu_weight": 100,
+          "max_instances": 2,
+          "concurrency_per_instance": 80,
+          "concurrency_queue_depth": 10,
+          "concurrency_queue_wait_ms": 500,
+          "app_request_rate_rps": 50,
+          "app_request_burst": 100,
+          "account_request_rate_rpm": 1000,
+          "request_budget_ms": 10000,
+          "request_budget_max_ms": 30000,
+          "response_write_timeout_s": 30,
+          "request_body_max_bytes": 1048576
+        },
+        "min_instances": 0,
+        "status": "active",
+        "build_cache_hit_rate_pct": 0,
+        "url": "https://demo.gregale.dev",
+        "autoscale_target_rps": 0,
+        "autoscale_target_cpu_pct": 0,
+        "manifest": {
+          "entrypoint": [
+            "node",
+            "server.js"
+          ]
+        },
+        "service_binding_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "service_binding_policy": "project",
+        "service_binding_transport": "http",
+        "service_bindings": [
+          {
+            "binding": "GREGALE_SERVICE_PAYMENTS_URL",
+            "service": "payments"
+          }
+        ]
+      }
     }
   ]
 }

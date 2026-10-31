@@ -244,6 +244,7 @@ type EnqueueParams struct {
 	OverrideEnv              json.RawMessage
 	MCPTaskMigrationOverride bool
 	OverrideHealthcheck      json.RawMessage
+	OverrideLivenessProbe    json.RawMessage
 	OverrideMainDependsOn    json.RawMessage
 	TrafficPercent           int
 	TrafficPercentExplicit   bool
@@ -528,12 +529,17 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				p.Log.Warn("apidsource.Enqueue: infer source profile", "app", p.AppID, "err", profileErr)
 			}
 		}
-		if profileErr == nil || p.Kind == state.DeploymentKindDockerfile {
+		// An explicit Dockerfile selection (a gregale.yaml build: section, a
+		// Compose build) makes a Dockerfile build whatever the deployment's
+		// provenance kind, so a GitHub or source-ref deploy honours it too
+		// (ADR-20261026152731).
+		dockerfileBuild := p.Kind == state.DeploymentKindDockerfile || p.DockerfilePath != ""
+		if profileErr == nil || dockerfileBuild {
 			// The explicit deployment kind is authoritative. A source tree can
 			// contain language markers alongside its Dockerfile; persisting a
 			// Railpack profile would make builderd ignore the customer's
 			// Dockerfile selection.
-			if p.Kind == state.DeploymentKindDockerfile {
+			if dockerfileBuild {
 				profile.Version = frameworkprofile.Version
 				profile.Framework = string(markers.FrameworkDocker)
 				profile.FrameworkVer = ""
@@ -552,6 +558,21 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			}
 			if !p.DockerfileBuild.IsZero() {
 				profile.DockerfileBuild = p.DockerfileBuild.Clone()
+			}
+			if !p.ImageProcess.IsZero() {
+				if err := p.ImageProcess.Validate(); err != nil {
+					return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: Compose process: %w", err)
+				}
+				profile.BuildProcess = p.ImageProcess.Clone()
+			}
+			// A Compose healthcheck on a built service is frozen like a
+			// prebuilt image's (ADR-20261019195000); imaged merges it onto
+			// the built image's HEALTHCHECK.
+			if p.ImageHealthcheck != nil {
+				if err := p.ImageHealthcheck.Validate(); err != nil {
+					return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: Compose healthcheck: %w", err)
+				}
+				profile.ImageHealthcheck = &frameworkprofile.ImageHealthcheck{Version: frameworkprofile.ImageHealthcheckVersion, Override: p.ImageHealthcheck.Clone()}
 			}
 			if inferredProfile, err = json.Marshal(profile); err != nil {
 				if p.Log != nil {
@@ -626,6 +647,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		OverrideEnv:              append(json.RawMessage(nil), p.OverrideEnv...),
 		MCPTaskMigrationOverride: p.MCPTaskMigrationOverride,
 		OverrideHealthcheck:      append(json.RawMessage(nil), p.OverrideHealthcheck...),
+		OverrideLivenessProbe:    append(json.RawMessage(nil), p.OverrideLivenessProbe...),
 		OverrideMainDependsOn:    append(json.RawMessage(nil), p.OverrideMainDependsOn...),
 		InferredProfile:          append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:           p.TrafficPercent,

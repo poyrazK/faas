@@ -58,7 +58,7 @@ func productIncludedStartsContract(t *testing.T, s productContractStore) {
 	}
 	period := productcontrol.Period(time.Now())
 	quote := func(starts int64) string {
-		return productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", catalog, customer, period, starts)
+		return productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", catalog, customer, period, starts, time.Now())
 	}
 	admit := func(key, quote string) (Operation, error) {
 		op, _, err := s.AdmitOperation(ctx, OperationAdmission{AccountID: account.ID, PlatformTenantID: tenant.ID, DefinitionID: def.ID, ProductFeature: "export",

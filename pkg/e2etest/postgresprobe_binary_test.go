@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -35,12 +34,8 @@ func TestPostgresProbeBuildDoesNotImportControlPlane(t *testing.T) {
 	// ADR-465: this customer SQL workload runs independently of the catalog.
 	// Importing the control plane also forces a cold static build of its large
 	// state packages inside the fixture's bounded build deadline.
-	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate PostgreSQL probe source")
-	}
 	command := exec.Command("go", "list", "-deps", ".")
-	command.Dir = filepath.Join(filepath.Dir(source), "testdata", "postgresprobe")
+	command.Dir = filepath.Join("testdata", "postgresprobe")
 	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 	output, err := command.CombinedOutput()
 	if err != nil {

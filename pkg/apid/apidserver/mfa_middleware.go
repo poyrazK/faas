@@ -24,8 +24,8 @@
 // with it — keeping a copy here would have been an unused
 // duplicate golangci-lint flags as dead code. The s.requireMFA
 // facade now lives in cmd/apid/auth_facade.go. This file keeps
-// only mfaSessionPending, which the login handlers use to decide
-// whether to stamp MfaPending=true on a freshly issued cookie.
+// only the predicates the login handlers use to decide whether to
+// stamp MfaPending=true on a freshly issued cookie.
 
 package apidserver
 
@@ -47,4 +47,11 @@ import (
 // cmd/apid.
 func mfaSessionPending(acct state.Account) bool {
 	return acct.MFARequired || acct.MFAEnrolled()
+}
+
+// sessionMFAPending is what the login handlers stamp: mfaSessionPending,
+// plus every platform operator (ADR 20261023214253). An operator with no
+// authenticator is confined to enrollment, as if mfa_required were set.
+func (s *server) sessionMFAPending(acct state.Account) bool {
+	return mfaSessionPending(acct) || s.isOperator(acct)
 }

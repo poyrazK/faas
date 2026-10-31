@@ -42,8 +42,10 @@ func captureAutomationStdout(t *testing.T) *bytes.Buffer {
 }
 
 func TestCmdAutomationsDispatchUsage(t *testing.T) {
+	// The verb list is too long for one usage line; the error names the
+	// shape and the help command that lists every verb.
 	code, output := runWithStderr(t, func() int { return cmdAutomations(nil) })
-	if code != 1 || !strings.Contains(output, "automations <live|init|check|diff|list|get|health|history|report|runs|diagnose|recovery-preview|recover|recovery-plan|recovery-start|recovery-retry-plan|event-recovery-plan|event-recovery-start|event-recover|pause|resume|revisions|restore|delete|validate|simulate|apply|publish|publish-policy|failure-policy|failure-resume|recovery-health|recovery-cancel-preview|recovery-cancel|recovery-response-plan|recovery-response-preview|recovery-response-apply|recovery-response-status|recovery-policy|recovery-policy-evaluate|recovery-policy-reviews|recovery-suppress|failures|failure-recovery-plan|failure-recovery-review|failure-recovery-reviews|failure-recovery-evidence|recovery-retry-evidence>") {
+	if code != 1 || !strings.Contains(output, "usage: gregale automations <command>") || !strings.Contains(output, "All options: gregale automations --help") {
 		t.Fatalf("exit=%d stderr=%q", code, output)
 	}
 	code, output = runWithStderr(t, func() int { return cmdAutomations([]string{"unknown"}) })
@@ -458,7 +460,7 @@ func TestCmdAutomationsRestoreRequiresVersionAndRevision(t *testing.T) {
 		{"--app", "billing", "--name", "paid-invoice", "--revision", "42", "--expected-version", "-1"},
 	} {
 		code, output := runWithStderr(t, func() int { return cmdAutomationsRestore(args) })
-		if code != 1 || !strings.Contains(output, "usage: gregale automations restore") || f.sawMethod != "" {
+		if code != 1 || !strings.Contains(output, "usage: gregale automation restore") || f.sawMethod != "" {
 			t.Fatalf("args=%v exit=%d stderr=%q request=%s %s", args, code, output, f.sawMethod, f.sawPath)
 		}
 	}

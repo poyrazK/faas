@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
 /**
- * One named event for every active operation of a definition about one business subject (ADR-1197).
+ * One named event for every active operation of a definition about one business subject.
  */
 export type OperationSubjectSignalRequest = {
   scope: string;

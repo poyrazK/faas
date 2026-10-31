@@ -183,6 +183,7 @@ var HostKeys = map[string]HostBlock{
 	"schedd": {
 		Daemon: "schedd",
 		PrivateKeys: []string{
+			"apps_domain",
 			"socket_path",
 			"listen_addr",
 			"tls_cert_path",
@@ -199,6 +200,8 @@ var HostKeys = map[string]HostBlock{
 			"owner_user",
 			"metrics_addr",
 			"db_url",
+			// ADR-20261021215353, rendered only when the manifest sets it.
+			"frozen_tier_early_freeze_after_s",
 		},
 		// schedd has no [compute_node] block on its TOML today.
 		ComputeNodeBlock: nil,
@@ -236,6 +239,7 @@ var HostKeys = map[string]HostBlock{
 			"socket_path",
 			"metrics_addr",
 			"db_url",
+			"apps_domain",
 		},
 		ComputeNodeBlock: nil,
 	},
@@ -281,6 +285,7 @@ var HostKeys = map[string]HostBlock{
 	"imaged": {
 		Daemon: "imaged",
 		PrivateKeys: []string{
+			"apps_domain",
 			"socket_path",
 			"metrics_addr",
 			"db_url",
@@ -290,6 +295,7 @@ var HostKeys = map[string]HostBlock{
 	"builderd": {
 		Daemon: "builderd",
 		PrivateKeys: []string{
+			"apps_domain",
 			"socket_path",
 			"metrics_addr",
 			"db_url",

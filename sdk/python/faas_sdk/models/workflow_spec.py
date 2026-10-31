@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.workflow_code_spec import WorkflowCodeSpec
     from ..models.workflow_step_spec import WorkflowStepSpec
     from ..models.workflow_trigger_spec import WorkflowTriggerSpec
 
@@ -18,10 +19,10 @@ T = TypeVar("T", bound="WorkflowSpec")
 
 @_attrs_define
 class WorkflowSpec:
-    """A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances for this
-    workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
-    max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler queue
-    while all action slots are occupied.
+    """A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this workflow;
+    excess admitted runs remain pending until a slot opens, subject to the app plan's run quota. max_concurrent_actions
+    caps active executor steps across runs of this workflow; steps wait in the scheduler queue while all action slots
+    are occupied.
 
     """
 
@@ -35,6 +36,10 @@ class WorkflowSpec:
     """Maximum running action and condition-check steps across runs of this workflow. Omit or set 0 for no
     additional per-workflow action cap. Event, callback, and duration waits do not consume an action slot. Runs use
     the value from their immutable definition snapshot."""
+    code: WorkflowCodeSpec | Unset = UNSET
+    """A code-first workflow's entry handler. Exactly one of run or path. Gregale POSTs the run's journal to it at
+    every durable boundary; the SDKs (@gregale/sdk-node/workflows, faas_sdk.workflows) answer with the operations
+    the code reaches next. A code workflow has an empty steps list."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +64,10 @@ class WorkflowSpec:
 
         max_concurrent_actions = self.max_concurrent_actions
 
+        code: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.code, Unset):
+            code = self.code.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -73,11 +82,14 @@ class WorkflowSpec:
             field_dict["max_concurrent_runs"] = max_concurrent_runs
         if max_concurrent_actions is not UNSET:
             field_dict["max_concurrent_actions"] = max_concurrent_actions
+        if code is not UNSET:
+            field_dict["code"] = code
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.workflow_code_spec import WorkflowCodeSpec
         from ..models.workflow_step_spec import WorkflowStepSpec
         from ..models.workflow_trigger_spec import WorkflowTriggerSpec
 
@@ -112,12 +124,20 @@ class WorkflowSpec:
 
         max_concurrent_actions = d.pop("max_concurrent_actions", UNSET)
 
+        _code = d.pop("code", UNSET)
+        code: WorkflowCodeSpec | Unset
+        if isinstance(_code, Unset):
+            code = UNSET
+        else:
+            code = WorkflowCodeSpec.from_dict(_code)
+
         workflow_spec = cls(
             name=name,
             steps=steps,
             trigger=trigger,
             max_concurrent_runs=max_concurrent_runs,
             max_concurrent_actions=max_concurrent_actions,
+            code=code,
         )
 
         workflow_spec.additional_properties = d

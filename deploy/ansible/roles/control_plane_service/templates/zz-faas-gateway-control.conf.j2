@@ -1,0 +1,7 @@
+[Service]
+# ADR-20261022004500: a split control plane runs no gatewayd-internal, so the
+# loopback FAAS_GATEWAYD_CONTROL_URL default refuses every MCP replica probe,
+# route observation, streaming-cap lookup and deployment response check. apid
+# instead calls the private control listener (port 9097) of an active compute
+# node from the compute_nodes registry; nftables admits only this host there.
+Environment=FAAS_GATEWAYD_CONTROL_FROM_REGISTRY=1

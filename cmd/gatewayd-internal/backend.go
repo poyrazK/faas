@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,7 +23,7 @@ import (
 // to its routing app. gatewayd only ever READS these tables — apid owns apps and
 // domains, schedd owns instances (CLAUDE.md §Component ownership).
 type pgRouter struct {
-	store state.Store
+	store publicHostAppStore
 	// appsSuffix is the configured public suffix in leading-dot form. A host
 	// under it is a platform subdomain whose label is the app slug; anything
 	// else is a custom domain resolved through the domains table.
@@ -35,6 +36,25 @@ type pgRouter struct {
 	// callers may leave it nil, in which case the historical environment
 	// accessor remains the fallback.
 	tenantSurfacesEnabled func() bool
+	// fullEnvironmentClones gates the full-clone readiness read for stage
+	// URLs (ADR-590). Nil keeps the read; while no full clone can be admitted
+	// the live router skips a lookup that always misses.
+	fullEnvironmentClones func() bool
+	// cachedHostPolicy keeps host resolution on the route cache even when the
+	// store can open an ADR-570 public host snapshot. Production sets it unless
+	// FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY is enabled; fixtures leave it
+	// false to exercise the authoritative snapshot path.
+	cachedHostPolicy bool
+}
+
+// snapshotStore returns the authoritative public host snapshot reader, or
+// false when this router serves from the route cache.
+func (r pgRouter) snapshotStore() (state.PublicHostPolicySnapshotStore, bool) {
+	if r.cachedHostPolicy {
+		return nil, false
+	}
+	store, ok := r.store.(state.PublicHostPolicySnapshotStore)
+	return store, ok
 }
 
 var errProjectEnvironmentCloneNotReady = errors.New("project environment clone is not ready")
@@ -92,6 +112,13 @@ func (r pgRouter) ResolvePlatformTenantHost(ctx context.Context, host string) (g
 // ResolveHost implements gateway.Router. A missing/unverified/deleted route is a
 // clean ok=false (404); only an actual store failure returns a non-nil error.
 func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bool, error) {
+	if snapshot, ok := r.snapshotStore(); ok {
+		return r.resolveHostSnapshot(ctx, snapshot, host)
+	}
+	return r.resolveHost(ctx, host)
+}
+
+func (r pgRouter) resolveHost(ctx context.Context, host string) (gateway.App, bool, error) {
 	if environmentID, appID, matched := gateway.EnvironmentIDsFromHost(r.deploySuffix, host); matched {
 		return r.environmentHost(ctx, environmentID, appID)
 	}
@@ -101,6 +128,10 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 	if label, ok := r.deploymentAliasLabelForHost(host); ok {
 		if app, found, err := r.deploymentAliasByHostLabel(ctx, label); err != nil || found {
 			return app, found, err
+		}
+		reserved, err := r.deploymentAliasReserved(ctx, label)
+		if err != nil || reserved {
+			return gateway.App{}, false, err
 		}
 	}
 	if slug, ok := r.slugFor(host); ok {
@@ -136,8 +167,16 @@ func (r pgRouter) IsDynamicRouteHost(host string) bool {
 	return matched
 }
 
+func (r pgRouter) RequiresFreshHostPolicy() bool {
+	_, authoritative := r.snapshotStore()
+	return authoritative
+}
+
 func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
-	domain, err := r.store.DomainByName(ctx, host)
+	if strings.ContainsRune(host, '*') {
+		return false, nil
+	}
+	domain, err := r.liveDomainByName(ctx, host)
 	if errors.Is(err, state.ErrNotFound) {
 		if wildcardStore, ok := r.store.(state.CustomDomainWildcardStore); ok {
 			domain, err = wildcardStore.WildcardDomainForHost(ctx, host)
@@ -213,13 +252,14 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	}
 	resolved.PinnedDeploymentID = deployment.ID
 	resolved.PinnedDeploymentScope = environment.Slug
+	resolved.PublicEnvironmentID = environment.ID
 	return resolved, true, nil
 }
 
 func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
 	if clones, ok := r.store.(interface {
 		ProjectEnvironmentCloneTargetOperation(context.Context, string, string, string) (state.ProjectEnvironmentCloneOperation, error)
-	}); ok {
+	}); ok && (r.fullEnvironmentClones == nil || r.fullEnvironmentClones()) {
 		op, err := clones.ProjectEnvironmentCloneTargetOperation(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return state.Deployment{}, false, err
@@ -228,7 +268,9 @@ func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, envi
 			return state.Deployment{}, false, errProjectEnvironmentCloneNotReady
 		}
 	}
-	if reader, ok := r.store.(state.ProjectReleaseSetReader); ok {
+	if reader, ok := r.store.(interface {
+		ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error)
+	}); ok {
 		release, err := reader.ActiveProjectReleaseSet(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
 		if err == nil {
 			for _, member := range release.Members {
@@ -242,7 +284,7 @@ func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, envi
 				if loadErr != nil {
 					return state.Deployment{}, false, loadErr
 				}
-				if deployment.AppID != app.ID || deployment.Scope != environment.Slug || deployment.Status != state.DeployLive {
+				if deployment.AppID != app.ID || deployment.Scope != environment.Slug || deployment.Status != state.DeployLive || deployment.DeletedAt != nil {
 					return state.Deployment{}, false, nil
 				}
 				return deployment, true, nil
@@ -264,14 +306,7 @@ func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, envi
 }
 
 func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
-	if r.appsSuffix == "" {
-		return "", false
-	}
-	label, ok := strings.CutSuffix(host, r.appsSuffix)
-	if !ok || !strings.HasPrefix(label, "tag-") || strings.Contains(label, ".") {
-		return "", false
-	}
-	return label, true
+	return hostidentity.DeploymentAliasLabelFromHost(r.appsSuffix, host)
 }
 
 func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel string) (gateway.App, bool, error) {
@@ -336,7 +371,7 @@ func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision i
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if deployment.AppID != app.ID || !deployment.DeploymentPreviewActive() {
+	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentPreviewActive() {
 		return gateway.App{}, false, nil
 	}
 	resolved, ok, err := r.toAppWithDeployment(ctx, app, &deployment)
@@ -367,8 +402,23 @@ func (r pgRouter) appBySlug(ctx context.Context, slug string) (gateway.App, bool
 // customDomain — the legacy custom_domains branch (spec §7).
 // Must exist AND be verified before we route to it; a deleted
 // parent app falls through to a clean 404.
-func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, bool, error) {
+// liveDomainByName returns the exact custom-domain row for host while it still
+// reserves the hostname. An expired, unverified claim reads as not found so
+// it cannot shadow a verified wildcard: any account may create one with no
+// DNS proof, and nothing deletes it once its deadline passes.
+func (r pgRouter) liveDomainByName(ctx context.Context, host string) (state.CustomDomain, error) {
 	dom, err := r.store.DomainByName(ctx, host)
+	if err == nil && !dom.ClaimLive(time.Now()) {
+		return state.CustomDomain{}, state.ErrNotFound
+	}
+	return dom, err
+}
+
+func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, bool, error) {
+	if strings.ContainsRune(host, '*') {
+		return gateway.App{}, false, nil
+	}
+	dom, err := r.liveDomainByName(ctx, host)
 	if errors.Is(err, state.ErrNotFound) {
 		// Wildcard rows are a separate optional seam so narrow test doubles
 		// and older adapters keep the exact-domain behavior unchanged.
@@ -498,14 +548,7 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 // the host is a custom domain (or the suffix is unconfigured). It rejects
 // multi-label prefixes (only one app-slug label under the configured suffix).
 func (r pgRouter) slugFor(host string) (string, bool) {
-	if r.appsSuffix == "" {
-		return "", false
-	}
-	label, ok := strings.CutSuffix(host, r.appsSuffix)
-	if !ok || label == "" || strings.Contains(label, ".") {
-		return "", false
-	}
-	return label, true
+	return hostidentity.AppSlugFromHost(r.appsSuffix, host)
 }
 
 // previewScopeFromHost (issue #272 / ADR-095 PR-B) peels a preview-hostname
@@ -550,6 +593,27 @@ func (r pgRouter) toPublicApp(ctx context.Context, app state.App) (gateway.App, 
 	return resolved, found, err
 }
 
+// previewProductionAppID resolves a PR preview's production app, whose
+// app-wide edge rules the preview applies too (ADR-091 amendment 2026-10-30).
+// A production app the account no longer holds leaves the preview with its
+// own rules; a failed read fails the host's resolution closed.
+func (r pgRouter) previewProductionAppID(ctx context.Context, app state.App) (string, error) {
+	if app.PreviewOfSlug == "" {
+		return "", nil
+	}
+	production, err := r.store.AppBySlug(ctx, app.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve the preview's production app: %w", err)
+	}
+	if production.AccountID != app.AccountID || production.Status == state.AppDeleted {
+		return "", nil
+	}
+	return production.ID, nil
+}
+
 func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
 	if app.Status == state.AppDeleted {
 		return gateway.App{}, false, nil
@@ -577,9 +641,13 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		// An environment URL serves one release, not the application's
 		// cross-environment live set. Sidecar ingress and quarantine state
 		// must come from that release even when production differs.
-		liveDeployments = []state.Deployment{*exact}
+		projected := *exact
+		// Exact URLs can keep serving a zero-weight retained revision.
+		// Its own ingress contract still applies to that URL.
+		projected.TrafficPercent = api.TrafficPolicyMaxWeight
+		liveDeployments = []state.Deployment{projected}
 	} else {
-		deps, depErr := productionLiveDeployments(ctx, r.store, app.ID)
+		deps, depErr := r.livePublicRoutingDeployments(ctx, app)
 		if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
 			return gateway.App{}, false, depErr
 		}
@@ -612,12 +680,18 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 	maxQueueDepth := 0
 	wakeMaxQueueDepth := 0
 	wakeMaxQueueWaitSeconds := 0
+	perInstanceConcurrency := 0
 	if app.ScalingPolicy != nil {
 		concurrencyOverflow = app.ScalingPolicy.ConcurrencyOverflow
 		maxQueueWaitMS = app.ScalingPolicy.MaxQueueWaitMS
 		maxQueueDepth = app.ScalingPolicy.MaxQueueDepth
 		wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
+		perInstanceConcurrency = app.ScalingPolicy.PerInstanceConcurrency
+	}
+	productionAppID, err := r.previewProductionAppID(ctx, app)
+	if err != nil {
+		return gateway.App{}, false, err
 	}
 	requestRateLimitRPS, requestRateLimitBurst := 0, 0
 	if app.RequestRateLimitRPS != nil {
@@ -638,6 +712,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		Plan:                         acct.Plan,
 		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),
 		MaxConcurrency:               app.MaxConcurrency,
+		PerInstanceConcurrency:       perInstanceConcurrency,
 		ConcurrencyOverflow:          concurrencyOverflow,
 		MaxQueueWaitMS:               maxQueueWaitMS,
 		MaxQueueDepth:                maxQueueDepth,
@@ -651,6 +726,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		Slug:                         app.Slug,
 		CanonicalHost:                app.Slug + r.appsSuffix,
 		IsPreview:                    app.PreviewOfSlug != "",
+		ProductionAppID:              productionAppID,
 		StreamingEnabled:             app.StreamingEnabled,
 		SessionAffinity:              app.Manifest.SessionAffinity,
 		VersionAffinityCookie:        app.Manifest.VersionAffinityCookie,
@@ -856,14 +932,7 @@ func edgeAnswersFromManifest(manifest state.AppManifest) ([]byte, string, bool, 
 // leading-dot suffix form pgRouter/gateway compare against (".gregale.dev").
 // Empty in → empty out (custom-domain-only routing).
 func appsSuffix(domain string) string {
-	domain = strings.ToLower(strings.TrimSpace(domain))
-	if domain == "" {
-		return ""
-	}
-	if domain[0] != '.' {
-		domain = "." + domain
-	}
-	return domain
+	return hostidentity.AppsSuffix(domain)
 }
 
 // invalidator is the slice of gateway.PGBackend the notify loop drives. Declared
@@ -959,16 +1028,9 @@ type invalidator interface {
 	// the per-host edge-rule LRU and response cache so the next
 	// request recompiles and re-fetches the up-to-date preset via
 	// state.GetCorsPresetByID, and cannot serve cached old CORS
-	// headers. Wholesale reset is
-	// correct: the per-rule compile path re-reads the preset
-	// on every cache miss, so the post-reset compile produces
-	// resolved actions against the latest row. The account_id
-	// payload is informational — the cmd-side pg_notify channel
-	// is too narrow to do per-account surgical eviction without
-	// restructuring the LRU key to include account_id. For the
-	// multi-tenant case the worst-case is "another account's
-	// request recompiles" — same compile cost as the first
-	// request to a host, no incorrect routing.
+	// headers. It is the wholesale fallback: an invalidator with
+	// the scoped edge-rule surface drops only the changed
+	// account's sets and responses (invalidateCorsPresetChange).
 	ResetCorsPresets(accountID string)
 }
 
@@ -1015,6 +1077,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		// owner's app at that host stayed unreachable on this node.
 		db.NotifyAppDelete,
 		db.NotifyAccountDeleted,
+		db.NotifyTrafficSecurityChanged,
 	}
 	notif, err := db.SubscribeWithReconnect(ctx, pool, channels, log)
 	if err != nil {
@@ -1029,19 +1092,32 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 	if subscribed != nil {
 		close(subscribed)
 	}
+	gatewayNode := ""
+	if len(nodeName) > 0 {
+		gatewayNode = strings.TrimSpace(nodeName[0])
+	}
+	// A named gateway stamps its edge-rule listener's liveness from this loop
+	// (ADR-091 amendment 2026-10-27), so a loop that stops draining
+	// notifications also stops vouching for this node in apid's convergence
+	// barrier.
+	var heartbeat <-chan time.Time
+	if gatewayNode != "" {
+		touchEdgeListenerHeartbeat(ctx, pool, inv, gatewayNode, log)
+		ticker := time.NewTicker(state.EdgeListenerHeartbeatInterval)
+		defer ticker.Stop()
+		heartbeat = ticker.C
+	}
 	// Reconnect wrapper owns its own cancel via the deferred goroutine.
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat:
+			touchEdgeListenerHeartbeat(ctx, pool, inv, gatewayNode, log)
 		case n, ok := <-notif:
 			if !ok {
 				// Defensive — wrapper keeps open until ctx cancels.
 				return
-			}
-			gatewayNode := ""
-			if len(nodeName) > 0 {
-				gatewayNode = strings.TrimSpace(nodeName[0])
 			}
 			if n.Channel == db.NotifyDeploymentRouteChanged {
 				payload, applied := handleDeploymentRouteInvalidation(ctx, inv, n.Payload, log)
@@ -1051,6 +1127,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 				continue
 			}
 			handleInvalidation(ctx, inv, n, log)
+			requestPublicRoutingRefresh(inv, n)
 			if n.Channel == db.NotifyEdgeRuleChanged && gatewayNode != "" {
 				ackEdgeRuleInvalidation(ctx, pool, n.Payload, gatewayNode, log)
 			}
@@ -1079,6 +1156,10 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 		log.Warn("gatewayd: refresh deployment route weights failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
 		return payload, false
 	}
+	if err := refreshPublicRoutingForRoute(ctx, inv, payload.AppID); err != nil {
+		log.Warn("gatewayd: refresh deployment route routing view failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
+		return payload, false
+	}
 	return payload, true
 }
 
@@ -1089,6 +1170,22 @@ func ackDeploymentRouteInvalidation(ctx context.Context, pool *pgxpool.Pool, gen
 	}
 	if err := db.Notify(ctx, pool, db.NotifyDeploymentRouteAck, string(body)); err != nil {
 		log.Warn("gatewayd: acknowledge deployment route generation", "generation", generation, "node", node, "err", err)
+	}
+}
+
+// touchEdgeListenerHeartbeat stamps node's edge listener heartbeat and, when
+// the write succeeds, records it on inv's metrics, so an alert sees a stamp
+// that stopped advancing without waiting for a rule change.
+func touchEdgeListenerHeartbeat(ctx context.Context, pool *pgxpool.Pool, inv invalidator, node string, log *slog.Logger) {
+	// Short: the write runs on the notification loop it vouches for.
+	touchCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := state.NewPgStore(pool).TouchEdgeListenerHeartbeat(touchCtx, node); err != nil {
+		log.Warn("gatewayd: edge listener heartbeat", "node", node, "err", err)
+		return
+	}
+	if observer, ok := inv.(interface{ ObserveEdgeListenerHeartbeat(time.Time) }); ok {
+		observer.ObserveEdgeListenerHeartbeat(time.Now())
 	}
 }
 
@@ -1140,8 +1237,21 @@ func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node 
 // require both app_id and instance_id and malformed payloads are logged.
 func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
+	case db.NotifyTrafficSecurityChanged:
+		if _, err := db.ParseTrafficSecurityChangedPayload(n.Payload); err != nil {
+			log.Warn("gatewayd: invalid traffic security notification", "err", err)
+			return
+		}
+		if refresher, ok := inv.(interface{ RequestTrafficRevocationRefresh() }); ok {
+			refresher.RequestTrafficRevocationRefresh()
+		}
+		// Refresh advisory app/account flags too. Decisions still use the
+		// authoritative generation even when this notification was missed.
+		inv.FlushRoutes()
 	case db.NotifyInstanceReadinessChanged:
 		var p struct {
+			WakeID     string    `json:"wake_id"`
+			NodeID     string    `json:"node_id"`
 			AppID      string    `json:"app_id"`
 			InstanceID string    `json:"instance_id"`
 			Source     string    `json:"source"`
@@ -1154,6 +1264,10 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			return
 		}
 		if setter, ok := inv.(interface {
+			SetInstanceReadinessForTarget(appID, instanceID, wakeID, nodeID, source, status string, at time.Time, eventID int64)
+		}); ok {
+			setter.SetInstanceReadinessForTarget(p.AppID, p.InstanceID, p.WakeID, p.NodeID, p.Source, p.Status, p.At, p.EventID)
+		} else if setter, ok := inv.(interface {
 			SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64)
 		}); ok {
 			setter.SetInstanceReadinessSource(p.AppID, p.InstanceID, p.Source, p.Status, p.At, p.EventID)
@@ -1168,6 +1282,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			InstanceID string `json:"instance_id"`
 			State      string `json:"state"`
 			WakeID     string `json:"wake_id"`
+			NodeID     string `json:"node_id"`
 			Kind       string `json:"kind"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil ||
@@ -1236,7 +1351,15 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				inv.EvictInstance(p.AppID, p.InstanceID)
 			}
 		case "stopped", "failed", "parked", "snapshotting", "migrating", "draining":
-			inv.EvictInstance(p.AppID, p.InstanceID)
+			if scoped, ok := inv.(interface {
+				EvictInstanceForRoutingIdentity(string, string, string, string)
+			}); ok {
+				scoped.EvictInstanceForRoutingIdentity(p.AppID, p.InstanceID, p.WakeID, p.NodeID)
+			} else if scoped, ok := inv.(interface{ EvictInstanceForWake(string, string, string) }); ok {
+				scoped.EvictInstanceForWake(p.AppID, p.InstanceID, p.WakeID)
+			} else {
+				inv.EvictInstance(p.AppID, p.InstanceID)
+			}
 		}
 	case db.NotifyAppChanged:
 		// APID publishes a JSON envelope, while the maintenance-mode
@@ -1263,6 +1386,12 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			AppID string `json:"app_id"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err == nil && p.AppID != "" {
+			// Before ResetApp, which drops the cached app the account comes
+			// from: the deleted app's rules stop applying to the account's
+			// other apps (ADR-091 amendment 2026-10-28).
+			if edge, ok := inv.(interface{ InvalidateEdgeRulesOfDeletedApp(string) }); ok {
+				edge.InvalidateEdgeRulesOfDeletedApp(p.AppID)
+			}
 			inv.ResetApp(p.AppID)
 			inv.InvalidateRoutesForApp(p.AppID)
 			inv.InvalidateResponseCacheByApp(p.AppID)
@@ -1461,14 +1590,18 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// correct.
 		payload, parseErr := db.ParseEdgeRuleChangedPayload(n.Payload)
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "prepare" {
-			if converger, ok := inv.(interface{ BeginEdgeRuleConvergence(string, []string, int64) }); ok {
-				converger.BeginEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
+			if converger, ok := inv.(interface {
+				BeginEdgeRuleConvergence(string, string, []string, int64)
+			}); ok {
+				converger.BeginEdgeRuleConvergence(payload.AccountID, payload.AppID, payload.MatchHosts, payload.Generation)
 			}
 			return
 		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "abort" {
-			if converger, ok := inv.(interface{ EndEdgeRuleConvergence(string, []string, int64) }); ok {
-				converger.EndEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
+			if converger, ok := inv.(interface {
+				EndEdgeRuleConvergence(string, string, []string, int64)
+			}); ok {
+				converger.EndEdgeRuleConvergence(payload.AccountID, payload.AppID, payload.MatchHosts, payload.Generation)
 			}
 			return
 		}
@@ -1483,15 +1616,15 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			inv.ResetEdgeRules()
 			inv.InvalidateResponseCacheAll()
 		} else {
-			invalidateEdgeRuleScope(ctx, inv, payload.AppID, payload.MatchHosts)
+			invalidateEdgeRuleScope(ctx, inv, payload.AccountID, payload.AppID, payload.MatchHosts)
 		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "apply" {
 			if converger, ok := inv.(interface {
-				EndEdgeRuleConvergence(string, []string, int64)
+				EndEdgeRuleConvergence(string, string, []string, int64)
 				SetEdgeRuleLoadedGeneration(int64)
 			}); ok {
 				converger.SetEdgeRuleLoadedGeneration(payload.Generation)
-				converger.EndEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
+				converger.EndEdgeRuleConvergence(payload.AccountID, payload.AppID, payload.MatchHosts, payload.Generation)
 			}
 		}
 	case db.NotifyTenantSurfaceChanged:
@@ -1524,15 +1657,11 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// allow_origins / allow_methods / etc. into the
 		// resolved EdgeRuleCORSResolved slice at compile
 		// time, so a preset edit leaves stale resolved
-		// shapes in the per-host LRU. ResetCorsPresets also
-		// purges the response cache so old CORS headers cannot
-		// survive in cached responses.
-		// The account_id payload is informational; the
-		// LRU is per-host keyed, not per-account, so a
-		// surgical per-account eviction would require a
-		// richer key. Wholesale flush is the same posture
-		// as NotifyEdgeRuleChanged and is bounded by the
-		// compile cost (one SELECT per cache miss).
+		// shapes in the per-host LRU. The account's cached
+		// responses are purged too so old CORS headers cannot
+		// survive in them. Only the account in the payload is
+		// invalidated (invalidateCorsPresetChange, ADR-091
+		// amendment 2026-10-28): presets are per account.
 		//
 		// Empty / missing payload is logged-and-dropped:
 		// the production trigger always emits
@@ -1543,6 +1672,17 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			log.Warn("gatewayd: bad cors_preset_changed payload", "payload", n.Payload)
 			return
 		}
-		inv.ResetCorsPresets(n.Payload)
+		invalidateCorsPresetChange(ctx, inv, n.Payload)
 	}
+}
+
+func (r pgRouter) deploymentAliasReserved(ctx context.Context, label string) (bool, error) {
+	store, ok := r.store.(state.DeploymentAliasReservationStore)
+	if ok {
+		return store.DeploymentAliasReserved(ctx, label)
+	}
+	if _, supportsAliases := r.store.(state.DeploymentAliasRoutingStore); supportsAliases {
+		return false, errors.New("deployment alias reservation reader is unavailable")
+	}
+	return false, nil
 }

@@ -6,7 +6,7 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 
 ## At a glance
 
-| Plan | Monthly | Deployed apps | PR preview apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Max request timeout |
+| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Max request timeout |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | **Free** | $0 | 1 | 1 | 1 | 1 | 256 MB | 20 | 256 MB | 1m | 30s |
 | **Hobby** | $10 | 5 | 2 | 2 | 2 | 512 MB | 200 | 512 MB | 1m | 1m |
@@ -16,10 +16,10 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 ## What each limit means
 
 - **Deployed apps** is the maximum number of production app records on the plan. `gregale dev` environments have a separate developer-app allowance.
-- **PR preview apps** is the separate limit for temporary pull-request workloads. Each preview dependency uses a slot; the whole set is reserved together.
+- **PR preview environments** is the separate limit for temporary pull-request previews: one per open pull request, however many workloads it runs. One environment runs at most as many workloads as the plan can deploy, and a closed pull request frees its environment at once. See [PR preview environments](preview-environments.md#quota).
 - **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.
 - **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.
-- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate.
+- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (Hobby $2, Pro $10, Scale $30); `gregale billing spend-cap` raises or clears it.
 - **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md). Functions default to 30s on every plan; any app or function can set its own value from 10s up to twice the plan default.
 - **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within 3s and an app request within 30s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and 30s.
 
@@ -47,8 +47,21 @@ Realtime is included on every paid plan at no extra charge: Gregale bills comput
 
 The connection limit counts open WebSocket and SSE connections across all of an account's endpoints. One account may also hold at most 50% of a single realtime node's connections; see [realtime fair use](realtime.md#fair-use-limits).
 
+## Object storage
+
+Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs $0.03 per GiB-month. Requests and egress are not charged. Free stops at its included storage.
+
+| Plan | Included storage | Beyond the included storage |
+|---|---:|---|
+| **Free** | 1 GiB | stops at 1 GiB |
+| **Hobby** | 10 GiB | $0.03 per GiB-month |
+| **Pro** | 50 GiB | $0.03 per GiB-month |
+| **Scale** | 200 GiB | $0.03 per GiB-month |
+
+Included storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. See [object storage](object-storage.md).
+
 ## Choose a plan
 
 Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).
 
-Plan changes are safe to preview with `gregale plan`; quota errors include the exact observed value, limit, and next action.
+Plan changes are safe to preview with `gregale billing plan`; quota errors include the exact observed value, limit, and next action.

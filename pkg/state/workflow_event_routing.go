@@ -22,6 +22,10 @@ type EventWorkflowRoutingResult struct {
 	RunCreated     bool
 	Progress       PublishedEventRecipientProgress
 	ReceiptSettled bool
+	// CapacityDeferred reports that the app's concurrent workflow run limit
+	// was reached: the recipient waits like a full delivery capacity and the
+	// claim did not spend a routing attempt.
+	CapacityDeferred bool
 }
 
 func workflowRoutingRecipient(receipt *PublishedEventWork, claim PublishedEventRoutingClaim) (PublishedEventRecipient, bool, error) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -44,7 +45,20 @@ type candidateBindingTestStore interface {
 // These are owner-API fixtures, not native build, guest TLS or KVM evidence.
 func candidateBindingFixture(t *testing.T, basic gitOpsTestStore, kind, age string) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest, state.EnvironmentWorkloadQualificationPlacement) {
 	t.Helper()
-	lease, plan, _ := workloadGraphFixtureWithWorkerSources(t, basic, true, api.ServiceBindingTransportHTTPS, nil, kind)
+	return candidateBindingFixtureWith(t, basic, kind, age, nil)
+}
+
+// storage runs before each candidate's enforced policy is stored, so it can
+// create bindings and returns that policy's object storage requirements.
+func candidateBindingFixtureWith(t *testing.T, basic gitOpsTestStore, kind, age string, storage func(accountID, appID, resource string) map[string]string) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest, state.EnvironmentWorkloadQualificationPlacement) {
+	t.Helper()
+	return candidateBindingFixtureFor(t, basic, api.ServiceBindingTransportHTTPS, kind, age, storage)
+}
+
+// candidateBindingFixtureFor selects the callers' service transport.
+func candidateBindingFixtureFor(t *testing.T, basic gitOpsTestStore, transport api.ServiceBindingTransport, kind, age string, storage func(accountID, appID, resource string) map[string]string) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest, state.EnvironmentWorkloadQualificationPlacement) {
+	t.Helper()
+	lease, plan, _ := workloadGraphFixtureWithWorkerSources(t, basic, true, transport, nil, kind)
 	store := basic.(candidateBindingTestStore)
 	preparer := basic.(state.EnvironmentGitOpsPreparationStore)
 	artifacts := map[string]state.EnvironmentWorkloadSourceArtifact{}
@@ -72,7 +86,11 @@ func candidateBindingFixture(t *testing.T, basic gitOpsTestStore, kind, age stri
 		if candidate.Resource == "workload/worker" {
 			requirements["orders"] = api.QueueEvidenceHandlerCompletion
 		}
-		if _, err := store.SetBindingReleasePolicy(t.Context(), lease.Source.AccountID, candidate.AppID, "production", api.SetBindingReleasePolicyRequest{Mode: "enforce", ExpectedRevision: new(int64), MaxVerificationAge: age, QueueRequirements: requirements}); err != nil {
+		var storageRequirements map[string]string
+		if storage != nil {
+			storageRequirements = storage(lease.Source.AccountID, candidate.AppID, candidate.Resource)
+		}
+		if _, err := store.SetBindingReleasePolicy(t.Context(), lease.Source.AccountID, candidate.AppID, "production", api.SetBindingReleasePolicyRequest{Mode: "enforce", ExpectedRevision: new(int64), MaxVerificationAge: age, QueueRequirements: requirements, ObjectStorageRequirements: storageRequirements}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -92,6 +110,12 @@ func candidateBindingFixture(t *testing.T, basic gitOpsTestStore, kind, age stri
 }
 
 func completeCandidateBindingCohort(t *testing.T, store candidateBindingTestStore, claimed []state.EnvironmentWorkloadQualificationRequest, placement state.EnvironmentWorkloadQualificationPlacement, exchange bool) {
+	completeCandidateBindingCohortWithSecrets(t, store, claimed, placement, exchange, nil)
+}
+
+// secrets maps an app ID to the scoped secret versions its candidate runtime
+// was captured and restored with.
+func completeCandidateBindingCohortWithSecrets(t *testing.T, store candidateBindingTestStore, claimed []state.EnvironmentWorkloadQualificationRequest, placement state.EnvironmentWorkloadQualificationPlacement, exchange bool, secrets map[string]map[string]int64) {
 	type member struct {
 		request      state.EnvironmentWorkloadQualificationRequest
 		frame        state.EnvironmentQualificationExecution
@@ -110,6 +134,7 @@ func completeCandidateBindingCohort(t *testing.T, store candidateBindingTestStor
 			t.Fatal(err)
 		}
 		inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now().UTC(), Variables: request.FrozenInputs.Variables, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
+		maps.Copy(inputs.SecretVersions, secrets[request.AppID])
 		if inputs.Variables == nil {
 			inputs.Variables = map[string]string{}
 		}
@@ -175,6 +200,12 @@ func completeCandidateBindingCohort(t *testing.T, store candidateBindingTestStor
 				if err := store.RecordEnvironmentQualificationServiceExchange(t.Context(), selector, forged); err == nil {
 					t.Fatal("forged deadline extended candidate authority")
 				}
+				// ADR-20261019200059: a receipt carries the caller's own transport.
+				forged = route
+				forged.RequireHTTPS = !route.RequireHTTPS
+				if err := store.RecordEnvironmentQualificationServiceExchange(t.Context(), selector, forged); err == nil {
+					t.Fatal("receipt with the other transport produced evidence")
+				}
 
 				proxy := gateway.NewEnvironmentQualificationServiceProxy(gateway.EnvironmentQualificationServiceProxyConfig{Store: store, ResolveNode: func(_ context.Context, _ string) (string, error) { return selector.NodeID, nil }, Forward: func(target gateway.Target) http.Handler {
 					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -186,11 +217,13 @@ func completeCandidateBindingCohort(t *testing.T, store candidateBindingTestStor
 				}})
 				request := httptest.NewRequest(http.MethodGet, api.EnvironmentQualificationServicePrefix+m.request.GraphID+"/"+name+"/readyz", nil)
 				request.RemoteAddr = m.instance.HostIP + ":12345"
-				request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13}
+				if route.RequireHTTPS {
+					request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13}
+				}
 				response := httptest.NewRecorder()
 				proxy.ServeHTTP(response, request)
 				if response.Code != http.StatusNoContent {
-					t.Fatalf("private HTTPS exchange: %d %s", response.Code, response.Body.String())
+					t.Fatalf("private service exchange (https=%t): %d %s", route.RequireHTTPS, response.Code, response.Body.String())
 				}
 			}
 		}

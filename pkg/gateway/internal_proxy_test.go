@@ -525,6 +525,7 @@ func TestInternalReverseProxy_PublicEdgeOwnsStaticSecurityHeaders(t *testing.T) 
 func TestInternalReverseProxy_LongLivedResponseDetachesBudget(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(api.StreamingStatusHeader, string(api.StreamingStatusStreaming))
+		w.Header().Set(trafficResponseSessionHeader, "long-lived")
 		w.WriteHeader(http.StatusOK)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -608,32 +609,43 @@ func TestInternalReverseProxy_UpstreamError_StatusPropagated(t *testing.T) {
 	}
 }
 
+// An app's own 504 still rides the Worker hop as 409 + marker. A platform
+// problem (it carries api.ErrorCodeHeader) is left as written for
+// PlatformErrorStatus, which sends it as 503 (ADR-20261030115139).
 func TestInternalReverseProxy_Encodes504ForCloudflareWorkerSubrequest(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusGatewayTimeout)
-		_, _ = w.Write([]byte(`{"code":"request_budget_exceeded","status":504}`))
-	}))
-	defer upstream.Close()
-	p := NewInternalReverseProxy(&stubDialer{server: upstream}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set(cloudflareWorkerHeader, cloudflareWorkerZone)
-	rr := httptest.NewRecorder()
+	for _, tc := range []struct {
+		name       string
+		platform   bool
+		wantStatus int
+		wantMarker string
+	}{
+		{name: "app 504", wantStatus: edgeOrigin504TransportStatus, wantMarker: "504"},
+		{name: "platform problem", platform: true, wantStatus: http.StatusGatewayTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.platform {
+					w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
+				}
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusGatewayTimeout)
+				_, _ = w.Write([]byte(`{"code":"request_budget_exceeded","status":504}`))
+			}))
+			defer upstream.Close()
+			p := NewInternalReverseProxy(&stubDialer{server: upstream}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set(cloudflareWorkerHeader, cloudflareWorkerZone)
+			rr := httptest.NewRecorder()
 
-	p.ServeHTTP(rr, req)
+			p.ServeHTTP(rr, req)
 
-	if rr.Code != edgeOrigin504TransportStatus {
-		t.Fatalf("status = %d, want transport status %d", rr.Code, edgeOrigin504TransportStatus)
-	}
-	if got := rr.Header().Get(edgeOriginalStatusHeader); got != "504" {
-		t.Fatalf("%s = %q, want 504", edgeOriginalStatusHeader, got)
-	}
-	if got := rr.Header().Get(api.ErrorCodeHeader); got != api.CodeRequestBudgetExceeded {
-		t.Fatalf("%s = %q, want %q", api.ErrorCodeHeader, got, api.CodeRequestBudgetExceeded)
-	}
-	if !strings.Contains(rr.Body.String(), api.CodeRequestBudgetExceeded) {
-		t.Fatalf("body = %q, want canonical budget error", rr.Body.String())
+			if rr.Code != tc.wantStatus || rr.Header().Get(edgeOriginalStatusHeader) != tc.wantMarker {
+				t.Fatalf("status = %d marker = %q, want %d %q", rr.Code, rr.Header().Get(edgeOriginalStatusHeader), tc.wantStatus, tc.wantMarker)
+			}
+			if !strings.Contains(rr.Body.String(), api.CodeRequestBudgetExceeded) {
+				t.Fatalf("body = %q, want canonical budget error", rr.Body.String())
+			}
+		})
 	}
 }
 
@@ -680,15 +692,21 @@ func TestInternalReverseProxy_Encodes502OnlyForAWorkerThatRestoresIt(t *testing.
 	}
 }
 
-func TestInternalReverseProxy_EncodesItsOwn502ForARestoringWorker(t *testing.T) {
+// The proxy's own 502 is a platform problem, so it is left for
+// PlatformErrorStatus to send as 503 rather than encoded for the Worker
+// (ADR-20261030115139).
+func TestInternalReverseProxy_LeavesItsOwn502ToPlatformErrorStatus(t *testing.T) {
 	p := NewInternalReverseProxy(&stubDialer{dialErr: errors.New("connection refused")}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set(cloudflareWorkerHeader, cloudflareWorkerZone)
 	req.Header.Set(edgeRestorableHeader, "502,504")
 	rr := httptest.NewRecorder()
 	p.ServeHTTP(rr, req)
-	if rr.Code != edgeOrigin504TransportStatus || rr.Header().Get(edgeOriginalStatusHeader) != "502" {
-		t.Fatalf("status = %d marker = %q, want the 409 transport of 502", rr.Code, rr.Header().Get(edgeOriginalStatusHeader))
+	if rr.Code != http.StatusBadGateway || rr.Header().Get(edgeOriginalStatusHeader) != "" {
+		t.Fatalf("status = %d marker = %q, want an unencoded 502", rr.Code, rr.Header().Get(edgeOriginalStatusHeader))
+	}
+	if got := rr.Header().Get(api.ErrorCodeHeader); got != api.CodeBadGateway {
+		t.Fatalf("%s = %q, want %q", api.ErrorCodeHeader, got, api.CodeBadGateway)
 	}
 	if !strings.Contains(rr.Body.String(), api.CodeBadGateway) {
 		t.Fatalf("body = %q, want the App connection failed problem", rr.Body.String())

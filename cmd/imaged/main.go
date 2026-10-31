@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -48,8 +49,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -60,6 +63,9 @@ import (
 )
 
 func main() {
+	if code, ok := runBaseProvenanceCommand(os.Args[1:], os.Stdout, os.Stderr); ok {
+		os.Exit(code)
+	}
 	wire.Daemon("imaged", run)
 }
 
@@ -228,7 +234,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(imgCfg.GetAppsDomain(getenv)))
 	// Register the same canonical OpenAPI projector as apid. imaged owns the
 	// snapshot_written → live transition, so the capture and the contract gate
 	// must be wired in this process too.
@@ -304,6 +310,18 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		})
 		pullerOpts = append(pullerOpts, oci.WithBlobCache(blobCache))
 		log.Info("imaged: OCI blob cache enabled", "root", blobCache.Root(), "max_bytes", blobCacheMaxBytes)
+	}
+	// ADR-20261025114554: anonymous Docker Hub pulls go through the
+	// operator's mirrors first, since Docker Hub limits them per IP.
+	mirrors, err := api.ParseDockerHubMirrors(os.Getenv(api.DockerHubMirrorsEnv))
+	if err != nil {
+		return fmt.Errorf("imaged: %w", err)
+	}
+	if len(mirrors) > 0 {
+		pullerOpts = append(pullerOpts, oci.WithDockerHubMirrors(mirrors, func(mirror string, err error) {
+			log.Warn("imaged: Docker Hub mirror failed; trying the next source", "mirror", mirror, "err", err)
+		}))
+		log.Info("imaged: Docker Hub mirrors enabled", "mirrors", mirrors)
 	}
 	puller := oci.NewRegistryClient(pullerOpts...)
 	log.Info("imaged: oci puller ready", "timeout_s", int(ociPullTimeout().Seconds()))
@@ -478,9 +496,27 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if artifactErr != nil {
 		return artifactErr
 	}
+	// ADR-20261029155852: check a platform base's provenance before building it.
+	baseProvenance, err := newBaseProvenanceVerifier(getenv, puller, envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), ops.Registry(), log)
+	if err != nil {
+		return err
+	}
+	// ADR-1155: on-demand collectors reach only accounts profile-captures is
+	// released to, so the flag watcher runs only when captures are installed.
+	var profileCapturesReleased func(platformflags.Subject) bool
+	if getenv("FAAS_PROFILING_ON_DEMAND") == "1" {
+		released, err := startProfileCapturesRelease(ctx, getenv, store, pool, log)
+		if err != nil {
+			return err
+		}
+		profileCapturesReleased = released
+	}
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithValidatorArtifactCheck(validatorArtifacts.Check).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
+		WithProfilingOnDemand(getenv("FAAS_PROFILING_ON_DEMAND") == "1").
+		WithProfileCapturesRelease(profileCapturesReleased).
+		WithContinuousProfiling(getenv("FAAS_PROFILING_ENABLED") == "1").
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
@@ -499,8 +535,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// "scan-critical" failure rather than the supply-chain
 		// installation gap it actually is.
 		WithGrypeRun(makeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
+		WithGrypeIdentityProbe(os.Getenv("FAAS_GRYPE_BIN")).
 		WithRuntimeGrypeRun(makeRuntimeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
 		WithSyftRun(makeSyftRunner(os.Getenv("FAAS_SYFT_BIN"))).
+		WithBaseProvenance(baseProvenance).
 		// PR-A: layer-side secret-scan walker. Wired
 		// unconditionally so the default in
 		// pkg/imaged/secretscan.go::runDeployLayerSecretScan
@@ -518,7 +556,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// matches /run/faas/vmmd.sock (ADR-015); operators can
 		// override with FAAS_VMM_SOCK for dev (e.g. a bufconn
 		// test on a Mac).
-		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log))
+		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log)).
+		// ADR 20261022184951 amendment 1: native runtime snapshots live in
+		// vmmd's private tree, which imaged only reads; vmmd removes them.
+		// An absent tree (every node without native runtime capture) leaves
+		// collection exactly as before.
+		WithNativeRuntimeSnapshotRoot(envOr("FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT", "/srv/fc/native-snap"))
 	releasePhaseEnabled, err := parseBoolEnv("FAAS_RELEASE_PHASE_ENABLED", getenv("FAAS_RELEASE_PHASE_ENABLED"))
 	if err != nil {
 		return err
@@ -527,6 +570,19 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if releasePhaseEnabled {
 		log.Info("imaged: deployment release phase enabled")
 	}
+	// ADR-20261029174438: prepare several deployments at once, off by default.
+	parallelPrep, err := parseBoolEnv("FAAS_IMAGED_PARALLEL_PREP", getenv("FAAS_IMAGED_PARALLEL_PREP"))
+	if err != nil {
+		return err
+	}
+	prepWorkers := 1
+	if parallelPrep {
+		prepWorkers = api.ImagedImagePrepWorkers
+	}
+	// Same gate and semantics as apid's contained recipe commands
+	// (ADR-20261020150000): a contained rehearsal's release runs only when the
+	// operator has qualified and enabled contained command execution.
+	h.WithRehearsalCommandsEnabled(getenv("FAAS_REHEARSAL_COMMAND_EXECUTION") == "1")
 	// Public-beta compute nodes require a configured public-origin smoke. The
 	// verifier remains optional for single-box/offline development, but the
 	// required flag installs it even when the URL is missing so deployments
@@ -584,17 +640,34 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// identity wired, the registry credential lookup is skipped
 	// and pulls stay anonymous (matches Free plan + no-cred
 	// Hobby paths).
+	var legacyIdentities []*age.X25519Identity
 	if identityPath := envOr("FAAS_HOST_AGE_IDENTITY_PATH", ""); identityPath != "" {
 		identities, err := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath))
 		if err != nil {
 			return fmt.Errorf("imaged: load host age identity %q: %w", identityPath, err)
 		}
 		h.WithSecretboxIdentities(identities)
+		legacyIdentities = identities
 		log.Info("host age identity loaded for registry credential unseal",
 			"path", identityPath)
-	} else {
+	}
+	// ADR 20261022111812: once the seal_domains role stages the build
+	// domain, its identity opens private-registry passwords ahead of the
+	// fleet and host identities. Crash captures keep those two; vmmd seals
+	// every capture at the source, so they matter only for one captured in
+	// plaintext. Once the domain is contracted the role unsets the path and
+	// imaged runs on the domain alone.
+	buildIdentities, err := loadBuildSealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if len(buildIdentities) > 0 {
+		h.WithRegistryIdentities(registryReaders(buildIdentities, legacyIdentities))
+	} else if len(legacyIdentities) == 0 {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — registry credential unseal disabled (Free plan + anonymous-only deployments)")
 	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
+	log.Info("build seal domain", "domain_identity", len(buildIdentities) > 0, "fleet_identity", len(legacyIdentities) > 0)
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either
 	// env var is set but the path doesn't exist on disk — silent omission
@@ -647,6 +720,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		cacheRoot = cache.Root()
 	}
 	imagedProbe := buildImageReadinessProbe(envOr("FAAS_STORAGE_BACKEND", "local"), envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), cacheRoot)
+	registerDatabaseReadiness(ctx, imagedProbe, pool)
 	imagedProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("imaged", ready, reason)
 	})
@@ -701,6 +775,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	arch := imaged.BuilderArch()
+	// ADR-20261026181418: publish and read each gated runtime base under the
+	// shared keys of this release's generation, before anything stages one.
+	routedBases, err := h.RouteBaseGenerations(arch, getenv)
+	if err != nil {
+		return err
+	}
+	log.Info("imaged: runtime bases routed to their generation keys", "bases", routedBases)
 	basePath := builderBasePathFromEnv(arch)
 	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
 	// under storagekey.BaseForArch / storagekey.BaseDigestForArch, partitioned
@@ -725,27 +806,45 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	for _, base := range profileBases {
 		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
+	agentBases, err := h.EnsureAgentRunDrives(ctx, arch, getenv)
+	if err != nil {
+		return err
+	}
+	for _, base := range agentBases {
+		log.Info("imaged agent base ready", "digest", base.ConfigDigest, "skipped", base.Skipped)
+	}
 	if prestageOnlyFromEnv(getenv) {
+		// ADR-20261024191249: the rolled vmmd must be able to boot every
+		// runtime base the release configures, not only those of the apps
+		// this node owns (rc.293: fsn-2 owned none and published nothing).
+		releaseBases, err := h.EnsureReleaseBases(ctx, arch, getenv, assignedBases)
+		if err != nil {
+			return err
+		}
 		log.Info("imaged runtime-base pre-stage complete",
 			"arch", arch,
 			"assigned_runtimes", assignedBases.Runtimes,
 			"assigned_minimal", assignedBases.Minimal,
-			"deferred_to_serving_imaged", assignedBases.Deferred,
+			"release_bases_published", releaseBases.Staged,
+			"release_bases_current", releaseBases.Current,
+			"release_bases_unpublished", releaseBases.Unpublished,
+			"deferred_to_serving_imaged", append(assignedBases.Deferred, releaseBases.Deferred...),
 		)
 		return nil
 	}
 
 	loop := imaged.NewLoop(imaged.LoopConfig{
-		Handler:     h,
-		Store:       store,
-		Pool:        pool,
-		Log:         log,
-		Now:         d.now,
-		LvUsedPct:   d.lvUsedPct,
-		DetectFC:    d.detectFC,
-		AppsRoot:    appsRoot,
-		StorageRoot: envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
-		GCEvery:     envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		Handler:          h,
+		Store:            store,
+		Pool:             pool,
+		Log:              log,
+		Now:              d.now,
+		LvUsedPct:        d.lvUsedPct,
+		DetectFC:         d.detectFC,
+		AppsRoot:         appsRoot,
+		StorageRoot:      envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
+		GCEvery:          envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		ImagePrepWorkers: prepWorkers,
 		// PR-B: builderd owns the build-queue durability surface now;
 		// imaged no longer runs a reaper tick or subscribes to
 		// NotifyBuildQueued. FAAS_REAP_INTERVAL +

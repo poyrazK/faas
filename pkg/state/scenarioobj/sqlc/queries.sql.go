@@ -40,9 +40,11 @@ func (q *Queries) Active(ctx context.Context, db DBTX, afterID pgtype.UUID) ([][
 }
 
 const expired = `-- name: Expired :many
-SELECT document FROM scenario_object_fixtures WHERE status IN ('ready','sealing') AND expires_at<now() ORDER BY expires_at LIMIT 16
+SELECT document FROM scenario_object_fixtures WHERE status IN ('ready','sealing') AND expires_at<now() ORDER BY random() LIMIT 16
 `
 
+// Random order: rows whose cleanup keeps failing must not occupy every batch
+// and starve newer expiries (ADR-20261019120000).
 func (q *Queries) Expired(ctx context.Context, db DBTX) ([][]byte, error) {
 	rows, err := db.Query(ctx, expired)
 	if err != nil {

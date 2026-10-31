@@ -48,9 +48,16 @@ type NodeLedger struct {
 	// reservation check.
 	measured MeasuredMemory
 	// quietPaused, when set, lets the vCPU and CPU gates count only active
-	// instances (ADR-1151, admission_quiet.go).
+	// instances (ADR-1151, admission_cpu_discount.go).
 	quietPaused QuietPaused
-	now         func() time.Time // nil means time.Now; tests set it
+	// measuredCPU, when set, charges measured instances their measured CPU
+	// at the vCPU and CPU gates (ADR 20261029151111, admission_cpu_discount.go).
+	measuredCPU MeasuredCPU
+	// cpuPressured, when set, reports whether a node is held under CPU
+	// pressure (ADR 20261030100950): the gates then count its bookings in
+	// full. The engine sets it from its node registry.
+	cpuPressured func(nodeID string, now time.Time) bool
+	now          func() time.Time // nil means time.Now; tests set it
 }
 
 func (l *NodeLedger) clock() time.Time {
@@ -189,6 +196,16 @@ const (
 	KindFrozen
 	// A private rehearsal consumes node capacity independently of app replicas.
 	KindDataRepairRehearsal
+	// KindFork is a quarantined production fork (ADR-732). It holds real
+	// node RAM/vCPU for its whole TTL but never serves traffic, so it must
+	// not consume the app's request-concurrency budget (invariant 1) while
+	// still counting toward the RAM ceiling (invariant 2).
+	KindFork
+	// KindAgentRun is one disposable agent run VM (ADR-20261027090010 §5, ADR-20261027090014 §2).
+	// It counts toward per-node RAM, vCPU and CPU like a job and belongs to
+	// no app; agentd enforces AgentRunConcurrentPerAccount before it asks.
+	// It is admitted only on agent-pool nodes.
+	KindAgentRun
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -196,7 +213,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen && kind != KindDataRepairRehearsal
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen && kind != KindDataRepairRehearsal && kind != KindFork && kind != KindAgentRun
 }
 
 // Request is an admission request for one instance (a wake or a build).
@@ -286,6 +303,10 @@ type Request struct {
 	// through to the normal fleet chooser and the shared backend remains the
 	// cold-restore fallback.
 	PreferredNodeIDs []string
+	// ExcludeNodeIDs are nodes that already refused this wake before
+	// starting its VM (ADR-20261022184531). The chooser skips them like
+	// nodes without headroom; hints never bring them back.
+	ExcludeNodeIDs []string
 	// PrioritizeSnapshotLocality is reserved for an authenticated deployment
 	// smoke. The candidate's first public request must use a fitting node
 	// already holding its snapshot when one is known; choosing an empty node
@@ -306,11 +327,24 @@ type Request struct {
 	// preferred region with no headroom falls through to the
 	// least-loaded path (ADR-005 cold-boot invariant).
 	PreferredRegion string
+	// SpreadReplicas places this instance away from the app's other live
+	// instances: among the nodes that fit, those whose zone and then whose
+	// own node hold the fewest of them (ADR-20261026140000). Service replicas
+	// and minimum-instance floors set it. It is a preference among fitting
+	// nodes, never a capacity gate: a fleet with one fitting node still admits.
+	SpreadReplicas bool
+	// AppInstancesByNode counts the app's live instances on each node for
+	// SpreadReplicas. The Engine fills it from the ledger.
+	AppInstancesByNode map[string]int
 	// restorePressureAware marks snapshot restores whose placement may account
 	// for other in-flight restore RPCs on each node. The Engine sets this only
 	// for real snapshot restores; cold boots and deployment smokes keep their
 	// existing placement rules.
 	restorePressureAware bool
+	// restoreSnapshot, when set, narrows placement to the nodes whose CPU can
+	// restore this snapshot (ADR-20261024225612). Only snapshot restores set
+	// it; cold boots may land on any node.
+	restoreSnapshot *state.Snapshot
 	// restorePressureByNode is a point-in-time count captured atomically with
 	// restore placement reservation. It is a short-lived I/O-pressure hint, not
 	// durable capacity accounting.
@@ -337,16 +371,24 @@ type Request struct {
 	// legacy/unregistered test seams; production placement always supplies
 	// a positive value.
 	CPUBudgetMillicores int
-	// AllowCPUOvercommitRecovery lets startup reconstruction account for
-	// VMs that already existed before millicore admission was enabled. It
-	// never authorizes a new VM: recovery records the full overcommitted
-	// total so every subsequent normal admission remains blocked until the
-	// node falls back below its physical CPU budget.
-	AllowCPUOvercommitRecovery bool
+	// AllowResidentRecovery lets startup reconstruction account for VMs that
+	// are already resident past a node's bare RAM, vCPU or physical CPU
+	// budget: booked under measured admission's overcommit bound (ADR-909),
+	// quiet-pause admission (ADR-1151), or before millicore admission was
+	// enabled. SeedLedger runs before any node measurement exists, so without
+	// it every row past the bare ceiling was dropped and its app's
+	// concurrency undercounted (Hunt 18 H18-1). It never authorizes a new VM:
+	// recovery records the full overcommitted total so every subsequent
+	// normal admission remains blocked until the node falls back below its
+	// budget.
+	AllowResidentRecovery bool
 	// ownerApp is the wake's app, read moments ago or held by the owner
 	// cache under a generation the admission insert rechecks; placement's
 	// ownership check uses it instead of reading the app again (ADR-1741).
 	ownerApp *state.App
+	// agentPool restricts a KindAgentRun placement to these node IDs or names
+	// (AgentRunner's configured pool).
+	agentPool map[string]bool
 }
 
 func (r Request) admissionMB() int {
@@ -451,8 +493,10 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible {
 		ramCeiling -= flexibleAppReserveRAMMB
 	}
-	if err := l.ramHeadroom_locked(r, node, ramCeiling); err != nil {
-		return err
+	if !r.AllowResidentRecovery {
+		if err := l.ramHeadroom_locked(r, node, ramCeiling); err != nil {
+			return err
+		}
 	}
 
 	// Per-node vCPU headroom (Tier A2, migration 00123). Replaces
@@ -472,12 +516,17 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible {
 		vcpuCeiling -= flexibleAppReserveVCPU
 	}
-	quietVCPU, quietCPU := l.quietDiscount_locked(r.NodeID)
-	vcpuUsed := quietEffective(node.usedVCPU, quietVCPU, vcpuCeiling)
-	if vcpuUsed+r.VCPU > vcpuCeiling {
+	discountVCPU, discountCPU := l.cpuDiscount_locked(r.NodeID)
+	overcommitCap := l.overcommitCap_locked()
+	pressure := ""
+	if l.nodeCPUPressured_locked(r.NodeID) {
+		pressure = " (node under CPU pressure: every booking counts)"
+	}
+	vcpuUsed := quietEffective(node.usedVCPU, discountVCPU, vcpuCeiling, overcommitCap)
+	if vcpuUsed+r.VCPU > vcpuCeiling && !r.AllowResidentRecovery {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
-			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget",
-			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
+			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget%s",
+			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling, pressure)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
 	}
 
 	// Host CPU admission is distinct from guest-visible vCPU topology.
@@ -494,13 +543,13 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible && cpuCeiling > 0 {
 		cpuCeiling -= flexibleAppReserveCPUMillicores
 	}
-	cpuUsed := quietEffective(node.usedCPUMillicores, quietCPU, cpuCeiling)
+	cpuUsed := quietEffective(node.usedCPUMillicores, discountCPU, cpuCeiling, overcommitCap)
 	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
 		cpuUsed+reservedCPU > cpuCeiling &&
-		!r.AllowCPUOvercommitRecovery {
+		!r.AllowResidentRecovery {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
-			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
-			r.NodeID, cpuUsed, reservedCPU, cpuCeiling)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))
+			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget%s",
+			r.NodeID, cpuUsed, reservedCPU, cpuCeiling, pressure)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))
 	}
 
 	l.entries[r.Instance] = &reservation{
@@ -806,11 +855,51 @@ func (l *NodeLedger) HeadroomMB() int {
 	return head
 }
 
+// AdmissionHeadroomMB is the most RAM one more reservation can take on a
+// single node under the rule Admit applies: the largest
+// ceiling - AdmissionUsedMB over the nodes the ledger knows, or the global
+// ceiling when it knows none. Unlike HeadroomMB it does not sum the nodes:
+// under measured admission (ADR-909) a node's reservations may pass its bare
+// ceiling, and that negative term made every floor report ram_ceiling while
+// Admit would have placed it.
+func (l *NodeLedger) AdmissionHeadroomMB() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.resident) == 0 {
+		return api.RAMAdmissionCeilingMB
+	}
+	best := 0
+	for nodeID, r := range l.resident {
+		ceiling := r.ceilingMB
+		if ceiling <= 0 {
+			ceiling = l.ceilingForNode_locked(nodeID, api.Limits{})
+		}
+		used, _ := l.admissionUsed_locked(nodeID, r.residentRAM, r.frozenRAM, ceiling)
+		best = max(best, ceiling-used)
+	}
+	return best
+}
+
 // Concurrency returns the number of instances of appID counting toward its cap.
 func (l *NodeLedger) Concurrency(appID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.perApp[appID]
+}
+
+// AppInstancesByNode counts appID's serving reservations on each node, the
+// instances replica spread keeps apart (ADR-20261026140000). The owner
+// scheduler admits every instance of its apps, so its ledger sees them all.
+func (l *NodeLedger) AppInstancesByNode(appID string) map[string]int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	byNode := make(map[string]int)
+	for _, r := range l.entries {
+		if r.appID == appID && r.countsConc {
+			byNode[r.nodeID]++
+		}
+	}
+	return byNode
 }
 
 // ConcurrencyForDeployment returns the per-(app, deployment) live
@@ -932,6 +1021,23 @@ func (l *NodeLedger) MeasuredAdmissionEnabled() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.measured != nil
+}
+
+// ReservationPercent is how far Σ(ram_mb + 8) on nodeID may reach, as a
+// percent of its admission ceiling, for an admission this ledger makes now:
+// the ADR-909 overcommit bound while a fresh measurement of the node drives
+// admission, otherwise 100. The durable per-node guard enforces it (ADR-909
+// amendment 1), so a measured admission is not refused at the bare ceiling.
+func (l *NodeLedger) ReservationPercent(nodeID string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.measured == nil {
+		return 100
+	}
+	if _, _, ok := l.measured(nodeID); !ok {
+		return 100
+	}
+	return api.MeasuredAdmissionMaxOvercommitPercent
 }
 
 // CeilingForNode is the RAM admission ceiling the ledger last applied on a

@@ -1,4 +1,4 @@
-from faas_sdk.models.workflow_recovery_history import WorkflowRecoveryHistory
+from faas_sdk.preview.models.workflow_recovery_history import WorkflowRecoveryHistory
 
 
 def test_evidence_history_round_trip():

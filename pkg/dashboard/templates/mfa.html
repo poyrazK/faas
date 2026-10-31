@@ -22,7 +22,7 @@
     {{with .Data}}
     {{if .Enrolled}}
     <p>Enter the 6-digit code from your authenticator app to finish signing in as <strong>{{$.Account.Email}}</strong>.</p>
-    {{if .Failed}}<p class="error" role="alert">That code did not match. Try the current code.</p>{{end}}
+    {{if .Reused}}<p class="error" role="alert">That code was already used. Wait for your authenticator app to show the next code.</p>{{else if .Failed}}<p class="error" role="alert">That code did not match. Try the current code.</p>{{end}}
     <form method="POST" action="/dashboard/mfa">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="next" value="{{.Next}}">

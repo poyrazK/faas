@@ -26,7 +26,9 @@ import (
 //     ClaimPendingFireNowRequest / MarkFireNowRequestRunning /
 //     MarkFireNowRequestSucceeded / MarkFireNowRequestFailed. It
 //     updates status to `running` on claim and to a terminal value
-//     after RunCronNow returns.
+//     after RunCronNow returns; an HTTP fire that queued an invocation
+//     stays `running` and takes that invocation's terminal status on
+//     read (ADR-20261026201726).
 //
 // Cross-account safety: every helper takes an explicit account_id or
 // cron_id parameter; schedd never queries by account_id alone (the
@@ -60,6 +62,56 @@ func (s *PgStore) InsertFireNowRequest(ctx context.Context, cronID, accountID st
 		return "", fmt.Errorf("state: insert fire_now_request: %w", err)
 	}
 	return id, nil
+}
+
+// InsertFireNowRequestUnderCap inserts a pending row unless the cron
+// already has maxActive requests requested at or after since that are
+// pending, claimed, or queued behind a pending/dispatching invocation
+// (ADR-20261026201726). Concurrent inserts may overshoot by the number of
+// racing callers; the cap bounds a burst, it is not a ledger.
+func (s *PgStore) InsertFireNowRequestUnderCap(ctx context.Context, cronID, accountID string, maxActive int, since time.Time) (string, error) {
+	id := uuid.NewString()
+	var active, inserted int
+	err := s.pool.QueryRow(ctx, `
+		WITH active AS (
+			SELECT count(*) AS n
+			  FROM cron_fire_now_requests r
+			  LEFT JOIN invocations i ON i.id = r.invocation_id
+			 WHERE r.cron_id = $2 AND r.requested_at >= $5
+			   AND (r.status = 'pending'
+			        OR (r.status = 'running' AND (r.invocation_id IS NULL OR i.state IN ('pending', 'dispatching'))))
+		), ins AS (
+			INSERT INTO cron_fire_now_requests (id, cron_id, account_id, status)
+			SELECT $1, $2, $3, 'pending' FROM active WHERE active.n < $4
+			RETURNING id
+		)
+		SELECT (SELECT n FROM active), (SELECT count(*) FROM ins)
+	`, id, cronID, accountID, maxActive, since.UTC()).Scan(&active, &inserted)
+	if err != nil {
+		return "", fmt.Errorf("state: insert capped fire_now_request: %w", err)
+	}
+	if inserted == 0 {
+		return "", &FireNowCapError{Limit: maxActive, Observed: active}
+	}
+	return id, nil
+}
+
+// MarkFireNowRequestQueued records the invocation a claimed HTTP request
+// queued for the drain. The row stays running; GetFireNowRequest reports
+// the invocation's terminal status.
+func (s *PgStore) MarkFireNowRequestQueued(ctx context.Context, requestID, invocationID string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE cron_fire_now_requests
+		SET invocation_id = $2::uuid
+		WHERE id = $1 AND status = 'running'
+	`, requestID, invocationID)
+	if err != nil {
+		return fmt.Errorf("state: mark fire_now_request queued: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrFireNowRequestNotFound
+	}
+	return nil
 }
 
 // ClaimPendingFireNowRequest atomically transitions one pending row
@@ -185,22 +237,30 @@ func (s *PgStore) MarkFireNowRequestFailed(ctx context.Context, requestID, errMs
 
 // GetFireNowRequest reads one row by id. Used by the API surface to
 // poll request status, including the invocation or command task receipt.
+// A running request with a queued invocation reports that invocation's
+// terminal status (ADR-20261026201726).
 func (s *PgStore) GetFireNowRequest(ctx context.Context, requestID string) (FireNowRequest, error) {
 	var req FireNowRequest
+	var invState pgtype.Text
+	var invError *string
+	var invCompletedAt *time.Time
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, cron_id, account_id, requested_at, status,
-		       invocation_id, operation_id, task_id, error, finished_at
-		FROM cron_fire_now_requests
-		WHERE id = $1
+		SELECT r.id, r.cron_id, r.account_id, r.requested_at, r.status,
+		       r.invocation_id, r.operation_id, r.task_id, r.error, r.finished_at,
+		       i.state, i.last_error, i.completed_at
+		FROM cron_fire_now_requests r
+		LEFT JOIN invocations i ON i.id = r.invocation_id
+		WHERE r.id = $1
 	`, requestID)
 	if err := row.Scan(
 		&req.ID, &req.CronID, &req.AccountID, &req.RequestedAt, &req.Status,
 		&req.InvocationID, &req.OperationID, &req.TaskID, &req.Error, &req.FinishedAt,
+		&invState, &invError, &invCompletedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return FireNowRequest{}, ErrFireNowRequestNotFound
 		}
 		return FireNowRequest{}, fmt.Errorf("state: get fire_now_request: %w", err)
 	}
-	return req, nil
+	return settleFireNowFromInvocation(req, InvocationState(invState.String), invError, invCompletedAt), nil
 }

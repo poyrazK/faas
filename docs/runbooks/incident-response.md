@@ -40,7 +40,7 @@ Roll back when all of the following are true:
 - rollback reduces customer impact faster than a forward fix; and
 - the IC has named an owner and a verification probe.
 
-Do not roll back a schema or data migration solely to restore availability. Freeze writes or isolate the affected path, consult the migration owner, and use the recovery procedure instead. For a suspected security event, preserve evidence and follow the breach runbook before rotating or deleting anything unless active containment requires it.
+Do not roll back a schema or data migration solely to restore availability. Freeze writes or isolate the affected path, consult the migration owner, and use the recovery procedure instead. For a suspected security event, preserve evidence and follow the breach runbook before rotating or deleting anything unless active containment requires it. If sealed customer secrets may have been read, follow [customer-secret-store-compromise.md](customer-secret-store-compromise.md), which starts with `gregalectl break-glass pause` and `revoke-credentials`.
 
 After every mitigation, verify the customer-facing probe, error rate, queue depth, and affected dependency. Keep the incident open until the IC records a stable observation window and an explicit recovery decision.
 

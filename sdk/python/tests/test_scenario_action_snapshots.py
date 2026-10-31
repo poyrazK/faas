@@ -1,13 +1,13 @@
 import httpx
 
-from faas_sdk.api.dev import seal_scenario_test_actions
+from faas_sdk.preview.api.dev import seal_scenario_test_actions
 from faas_sdk.client import Client
-from faas_sdk.models.scenario_action_snapshot import ScenarioActionSnapshot
+from faas_sdk.preview.models.scenario_action_snapshot import ScenarioActionSnapshot
 
 
 def test_simulation_fixture_and_attempt_scope_round_trip():
-    from faas_sdk.models.register_scenario_test_request import RegisterScenarioTestRequest
-    from faas_sdk.models.register_scenario_test_response import RegisterScenarioTestResponse
+    from faas_sdk.preview.models.register_scenario_test_request import RegisterScenarioTestRequest
+    from faas_sdk.preview.models.register_scenario_test_response import RegisterScenarioTestResponse
 
     fixture = {
         "workload": "primary", "name": "notify", "integration": "email", "adapter": "resend",
@@ -96,9 +96,9 @@ def test_seal_endpoint_preserves_pending_without_marking_complete():
 
 
 def test_rehearsal_network_enrollment_serialization_and_acknowledgement():
-    from faas_sdk.api.dev import register_scenario_test
-    from faas_sdk.models.register_scenario_test_request import RegisterScenarioTestRequest
-    from faas_sdk.models.register_scenario_test_response import RegisterScenarioTestResponse
+    from faas_sdk.preview.api.dev import register_scenario_test
+    from faas_sdk.preview.models.register_scenario_test_request import RegisterScenarioTestRequest
+    from faas_sdk.preview.models.register_scenario_test_response import RegisterScenarioTestResponse
 
     wire = {"webhook_mode": "capture", "network_mode": "contained", "members": [{"workload": "primary", "app_slug": "isolated-api"}]}
     body = RegisterScenarioTestRequest.from_dict(wire)

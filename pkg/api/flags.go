@@ -287,6 +287,38 @@ func OperationSchedulesEnabled(accountID string) bool {
 	return accountListed(os.Getenv("FAAS_OPERATION_SCHEDULES_ACCOUNTS"), accountID)
 }
 
+// PerInstanceConcurrencyEnabled reports whether accountID may set
+// scaling_policy.per_instance_concurrency (ADR-20261022203523). Default off
+// until the owner has tested it on production:
+// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS is a comma-separated list of account
+// UUIDs, or "*" for every account. Read at every call. The gateway and schedd
+// honour whatever value is stored; apid is the only writer, so the gate is
+// complete at write time.
+func PerInstanceConcurrencyEnabled(accountID string) bool {
+	list := os.Getenv("FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS")
+	return strings.TrimSpace(list) == "*" || accountListed(list, accountID)
+}
+
+// AccountDeletionManagedPostgresEnabled reports whether accountID may delete
+// its account together with its personal managed PostgreSQL databases
+// (ADR-20261024150500). Default off until launch:
+// FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS is a comma-separated list of
+// account UUIDs, or "*" for every account. For any other account the option
+// is answered like an absent field. Read at every call.
+func AccountDeletionManagedPostgresEnabled(accountID string) bool {
+	list := os.Getenv("FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS")
+	return strings.TrimSpace(list) == "*" || accountListed(list, accountID)
+}
+
+// NonpaymentDeletionIncludesManagedPostgres reports whether a non-payment
+// deletion includes the account's managed PostgreSQL databases
+// (ADR-20261024150500). On by default; the operator kill switch
+// FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES=off keeps such accounts suspended
+// and blocked instead. Read at every call by apid and meterd.
+func NonpaymentDeletionIncludesManagedPostgres() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES")), "off")
+}
+
 func accountListed(list, accountID string) bool {
 	for _, id := range strings.Split(list, ",") {
 		if id = strings.TrimSpace(id); id != "" && id == accountID {

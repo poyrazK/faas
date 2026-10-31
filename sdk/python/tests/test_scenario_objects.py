@@ -1,5 +1,5 @@
-from faas_sdk.models.create_scenario_objects_request import CreateScenarioObjectsRequest
-from faas_sdk.models.scenario_objects_evidence import ScenarioObjectsEvidence
+from faas_sdk.preview.models.create_scenario_objects_request import CreateScenarioObjectsRequest
+from faas_sdk.preview.models.scenario_objects_evidence import ScenarioObjectsEvidence
 
 
 def test_object_fixture_bytes_and_duplicate_receipts_round_trip():

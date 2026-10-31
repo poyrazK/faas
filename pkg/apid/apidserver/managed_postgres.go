@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -18,7 +19,46 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
+// managedPostgresOverageGate decides whether an account may run its databases
+// past the compute allowance (plan and capability); nil means never.
+type managedPostgresOverageGate func(state.Account) bool
+
+// managedPostgresRelease decides production provisioning for one account
+// (ADR-20261028103115); nil releases every account, for workers that only
+// continue work apid already admitted.
+type managedPostgresRelease func(context.Context, string) bool
+
+// managedPostgresHooks connects the managed PostgreSQL loader to the rest of
+// apid. Workers pass nil: no overage, every account released, and no cap email.
+type managedPostgresHooks struct {
+	Overage  managedPostgresOverageGate
+	Released managedPostgresRelease
+	// NotifyCap queues a compute cap email (ADR-20261025094915 decision 8).
+	NotifyCap func(context.Context, managedpostgres.CapEvent) error
+}
+
+func (h *managedPostgresHooks) overage() managedPostgresOverageGate {
+	if h == nil {
+		return nil
+	}
+	return h.Overage
+}
+
+func (h *managedPostgresHooks) released() managedPostgresRelease {
+	if h == nil {
+		return nil
+	}
+	return h.Released
+}
+
+func (h *managedPostgresHooks) notifyCap() func(context.Context, managedpostgres.CapEvent) error {
+	if h == nil {
+		return nil
+	}
+	return h.NotifyCap
+}
+
+func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
 	registry, err := managedpostgres.Load(getenv, managedPostgresFactories(pool))
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -35,16 +75,32 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			return nil, nil, nil, nil, nil, nil, err
 		}
 	}
-	usageOptions := managedpostgres.UsageCollectorOptions{Logger: log}
+	usageOptions := managedpostgres.UsageCollectorOptions{Logger: log, Exclusive: store.TryAcquireUsageSweep}
 	if metrics != nil {
 		usageOptions.Observe = metrics.ObserveUsage
 		usageOptions.ObserveSweep = metrics.ObserveUsageSweep
+	}
+	overage, released := hooks.overage(), hooks.released()
+	capEnforcer, err := loadManagedPostgresCapEnforcer(registry, store, accountStore, getenv, log, hooks, registerers...)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	var fleet *managedpostgres.Service
+	usageOptions.AfterSweep = func(ctx context.Context) {
+		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("managed postgres compute cap sweep failed", "error", err)
+		}
+		observeManagedPostgresFleet(ctx, fleet, metrics, log)
 	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	baseProvisioningGate := managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now)
+	baseProvisioningGate := managedpostgres.NewProvisioningGate(registry, getenv, time.Now)
+	production := managedpostgres.ProductionEnvironmentActive(getenv)
+	if production {
+		logManagedPostgresProductionReadiness(registry, getenv, metrics, log)
+	}
 	provisioningGate := func() bool {
 		enabled := baseProvisioningGate()
 		if metrics != nil {
@@ -54,7 +110,12 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	canaryAccountGate := managedpostgres.NewStagingCanaryAccountGate(getenv)
 	provisioningAllowed := func(ctx context.Context, accountID string) bool {
+		// Production releases accounts by the capability flag, staging by
+		// its canary allowlist.
 		allowed := canaryAccountGate(accountID)
+		if production {
+			allowed = released == nil || released(ctx, accountID)
+		}
 		if metrics != nil {
 			metrics.ObserveCanary(allowed)
 		}
@@ -108,7 +169,11 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 				}
 				return admitErr
 			}
-			admitErr := registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
+			overageOn, overageErr := managedPostgresStoredOverage(ctx, store, overage, account, accountID)
+			if overageErr != nil {
+				return overageErr
+			}
+			admitErr := registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits, overageOn))
 			if metrics != nil {
 				metrics.ObserveAdmission(admitErr)
 			}
@@ -118,6 +183,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	fleet = service
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
 		IncludeProvisioning: provisioningGate,
 		Observe: func(ob managedpostgres.ReconcileObservation) {
@@ -136,31 +202,14 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			if setSecretRecipient == nil {
 				return nil
 			}
-			return hostSecretRecipient()
+			return runtimeSecretRecipient()
 		},
-		func() []byte {
-			if hostHMACKey == nil {
-				return nil
-			}
-			return hostHMACKeyBytes()
-		},
+		hostCredentialHMACKey,
 	)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	secretSink.identities = func() []*age.X25519Identity {
-		if mfaIdentities != nil {
-			if ids := mfaIdentities(); len(ids) > 0 {
-				return ids
-			}
-		}
-		if mfaIdentity != nil {
-			if id := mfaIdentity(); id != nil {
-				return []*age.X25519Identity{id}
-			}
-		}
-		return nil
-	}
+	secretSink.identities = hostCredentialIdentities
 	secretSink.probe = managedpostgres.VerifyCredentialSQL
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
 		ProvisioningEnabled: provisioningGate,
@@ -201,14 +250,110 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 // month, and its monthly compute units (ADR-1430). Restore history, egress and
 // spend remain operator-configured COGS ceilings; the intersection is applied
 // in managedpostgres so adapters never learn about Gregale plan names.
-func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedpostgres.UsageCeilings {
+// hostCredentialHMACKey and hostCredentialIdentities are the host
+// secret providers shared by the credential sink and candidate verification.
+func hostCredentialHMACKey() []byte {
+	if hostHMACKey == nil {
+		return nil
+	}
+	return hostHMACKeyBytes()
+}
+
+func hostCredentialIdentities() []*age.X25519Identity {
+	if mfaIdentities != nil {
+		if ids := mfaIdentities(); len(ids) > 0 {
+			return ids
+		}
+	}
+	if mfaIdentity != nil {
+		if id := mfaIdentity(); id != nil {
+			return []*age.X25519Identity{id}
+		}
+	}
+	return nil
+}
+
+// loadManagedPostgresCapEnforcer builds the compute cap enforcer
+// (ADR-20261025094915). Each subject's ceiling is its plan's monthly compute
+// allowance, or twice it with overage on; the enforcer intersects it with the
+// operator's usage cap.
+func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *managedpostgres.PostgresStore, accountStore state.AppOwnerReader, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.CapEnforcer, error) {
+	overage := hooks.overage()
+	mode, err := managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
+	if err != nil {
+		return nil, err
+	}
+	storageMode, err := managedpostgres.ParseStorageCapEnforcementMode(getenv(managedpostgres.StorageCapEnforcementEnv))
+	if err != nil {
+		return nil, err
+	}
+	options := managedpostgres.CapEnforcerOptions{
+		Mode:        mode,
+		StorageMode: storageMode,
+		Logger:      log,
+		Notify:      hooks.notifyCap(),
+		Ceiling: func(ctx context.Context, subject string) (managedpostgres.CapLimits, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, subject)
+			if err != nil {
+				return managedpostgres.CapLimits{}, err
+			}
+			limits, _ := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+			overageOn, err := managedPostgresStoredOverage(ctx, store, overage, account, subject)
+			if err != nil {
+				return managedpostgres.CapLimits{}, err
+			}
+			return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
+				Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
+				StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
+		},
+	}
+	if mode == managedpostgres.CapEnforcementOn {
+		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
+		if err != nil {
+			return nil, fmt.Errorf("%s=on needs a readable %s: %w", managedpostgres.CapEnforcementEnv, managedpostgres.CapQualificationPathEnv, err)
+		}
+		options.Qualification = &qualification
+	}
+	if storageMode == managedpostgres.CapEnforcementOn {
+		qualification, err := managedpostgres.LoadStorageCapQualification(getenv(managedpostgres.StorageCapQualificationPathEnv))
+		if err != nil {
+			return nil, fmt.Errorf("%s=on needs a readable %s: %w", managedpostgres.StorageCapEnforcementEnv, managedpostgres.StorageCapQualificationPathEnv, err)
+		}
+		options.StorageQualification = &qualification
+	}
+	if len(registerers) > 0 {
+		metrics, err := managedpostgres.NewCapMetrics(registerers[0], "apid", mode, storageMode)
+		if err != nil {
+			return nil, err
+		}
+		options.Observe = metrics.Observe
+	}
+	return managedpostgres.NewCapEnforcer(registry, store, options)
+}
+
+// configureManagedPostgresCapMode records the compute cap enforcement mode for
+// the usage views. loadManagedPostgres already refused an invalid value.
+func (s *server) configureManagedPostgresCapMode(getenv func(string) string) {
+	s.managedPostgresCapMode, _ = managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
+}
+
+// managedPostgresStoredOverage reads a subject's overage choice when the
+// account may use overage at all.
+func managedPostgresStoredOverage(ctx context.Context, store managedpostgres.OverageStore, overage managedPostgresOverageGate, account state.Account, subject string) (bool, error) {
+	if overage == nil || !overage(account) {
+		return false, nil
+	}
+	return store.OverageEnabled(ctx, subject)
+}
+
+func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits, overage bool) managedpostgres.UsageCeilings {
 	if limits.DatabasesMax <= 0 {
 		return managedpostgres.UsageCeilings{}
 	}
 	const secondsPerBillingMonth = int64(31 * 24 * time.Hour / time.Second)
 	ceilings := managedpostgres.UsageCeilings{}
 	if limits.MonthlyComputeUnitSeconds > 0 {
-		ceilings.MaxMonthlyComputeUnitSeconds = limits.MonthlyComputeUnitSeconds
+		ceilings.MaxMonthlyComputeUnitSeconds = managedPostgresComputeCeiling(limits, overage)
 	}
 	if limits.StorageLimitBytes > 0 && limits.StorageLimitBytes <= math.MaxInt64/secondsPerBillingMonth {
 		ceilings.MaxMonthlyStorageByteSeconds = limits.StorageLimitBytes * secondsPerBillingMonth

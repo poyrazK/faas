@@ -20,7 +20,7 @@ func cmdSLOsStatus(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale slos status --app <slug> <slo-id>", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo status --app <slug> <slo-id>", "slos")
 		return 1
 	}
 	client, err := authedClient()
@@ -45,8 +45,13 @@ func renderSLOStatus(w io.Writer, slo api.SLOResponse) {
 		_, _ = fmt.Fprintln(w, "  (no status returned)")
 		return
 	}
-	_, _ = fmt.Fprintf(w, "  Attained:          %s (%d of %d requests)\n", fmtPct(st.AttainmentPct), st.Good, st.Total)
-	_, _ = fmt.Fprintf(w, "  Budget remaining:  %s\n", fmtPct(st.BudgetRemainingPct))
+	if pending, ok := api.SLOWindowPending(*st); ok {
+		_, _ = fmt.Fprintf(w, "  Attained:          %s\n", pending)
+		_, _ = fmt.Fprintf(w, "  Budget remaining:  %s\n", "pending")
+	} else {
+		_, _ = fmt.Fprintf(w, "  Attained:          %s (%d of %d requests)\n", fmtPct(st.AttainmentPct), st.Good, st.Total)
+		_, _ = fmt.Fprintf(w, "  Budget remaining:  %s\n", fmtPct(st.BudgetRemainingPct))
+	}
 	_, _ = fmt.Fprintf(w, "  Burn rate:         %s (1h) · %s (6h)\n", fmtBurn(st.BurnRate1h), fmtBurn(st.BurnRate6h))
 	_, _ = fmt.Fprintf(w, "  History:           %d of %d hours since %s\n", st.HoursRecorded, st.HoursExpected, st.WindowStart)
 	if strings.HasPrefix(st.Source, "degraded") {

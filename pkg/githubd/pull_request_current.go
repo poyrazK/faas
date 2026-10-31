@@ -12,11 +12,13 @@ import (
 )
 
 // PullRequestSnapshot is the current GitHub state, independent of webhook
-// delivery order. HeadRepoFullName identifies a same-repository PR.
+// delivery order. HeadRepoFullName identifies a same-repository PR. Draft is
+// the PR's draft state now, which a delayed event may no longer carry.
 type PullRequestSnapshot struct {
 	State            string
 	HeadSHA          string
 	HeadRepoFullName string
+	Draft            bool
 }
 
 type PullRequestCurrentClient interface {
@@ -77,6 +79,7 @@ func (c *httpCurrentPullRequests) CurrentPullRequest(ctx context.Context, instal
 	var payload struct {
 		Number int    `json:"number"`
 		State  string `json:"state"`
+		Draft  bool   `json:"draft"`
 		Head   struct {
 			SHA  string `json:"sha"`
 			Repo struct {
@@ -92,10 +95,14 @@ func (c *httpCurrentPullRequests) CurrentPullRequest(ctx context.Context, instal
 		return PullRequestSnapshot{}, fmt.Errorf("%w: invalid response", ErrPullRequestUnavailable)
 	}
 	return PullRequestSnapshot{State: payload.State, HeadSHA: payload.Head.SHA,
-		HeadRepoFullName: payload.Head.Repo.FullName}, nil
+		HeadRepoFullName: payload.Head.Repo.FullName, Draft: payload.Draft}, nil
 }
 
-func (s *Service) currentPullRequestDelivery(ctx context.Context, installationID int64, ev PullRequestEvent) (bool, error) {
+// currentPullRequestDelivery reports whether ev still describes the PR. A
+// current delivery takes the PR's draft state from GitHub: a delayed event
+// sent while the PR was a draft must not skip (or retire) the preview of a
+// PR that is now ready for review.
+func (s *Service) currentPullRequestDelivery(ctx context.Context, installationID int64, ev *PullRequestEvent) (bool, error) {
 	if s.PullRequests == nil {
 		return true, nil // legacy test rigs; production wires a fail-closed client
 	}
@@ -114,6 +121,9 @@ func (s *Service) currentPullRequestDelivery(ctx context.Context, installationID
 			"pr_number", ev.Number, "action", ev.Action, "event_sha", ev.PullRequest.HeadSHA,
 			"current_state", current.State, "current_sha", current.HeadSHA)
 		return false, nil
+	}
+	if ev.Action != PullRequestActionClosed {
+		ev.PullRequest.Draft = current.Draft
 	}
 	return true, nil
 }

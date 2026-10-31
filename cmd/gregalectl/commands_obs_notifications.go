@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"time"
@@ -17,7 +16,7 @@ import (
 func cmdObsNotificationHealth(args []string) int {
 	fs := flag.NewFlagSet(subObsNotificationHealth, flag.ContinueOnError)
 	fs.SetOutput(osStderr)
-	token := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	token := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
@@ -27,15 +26,12 @@ func cmdObsNotificationHealth(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs notification-health: no positional arguments and a positive timeout required")
 		return 2
 	}
-	if *token == "" {
-		*token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if *token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs notification-health: admin token required")
+	cred, ok := resolveObsCredential("obs notification-health", *token)
+	if !ok {
 		return 2
 	}
 	var out api.ObsNotificationHealth
-	if err := fetchObsBundleSection(context.Background(), &http.Client{Timeout: *timeout}, apidBase()+operatorobs.NotificationHealthPath, *token, subObsNotificationHealth, &out); err != nil {
+	if err := fetchObsBundleSection(context.Background(), &http.Client{Timeout: *timeout}, apidBase()+operatorobs.NotificationHealthPath, cred, subObsNotificationHealth, &out); err != nil {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl obs %v\n", err)
 		return 1
 	}

@@ -47,7 +47,7 @@ func TestObsAlertTriageMutationAndFilters(t *testing.T) {
 		t.Fatalf("claim: %d %s", rec.Code, rec.Body)
 	}
 	for _, query := range []string{"acknowledgment=acknowledged", "ownership=owned", "ownership=mine", "snooze=inactive"} {
-		rec := e.Do(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&"+query, nil, nil)
+		rec := e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&"+query, nil, nil)
 		var out api.ObsIncidentListResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatal(err)
@@ -56,7 +56,7 @@ func TestObsAlertTriageMutationAndFilters(t *testing.T) {
 			t.Fatalf("filter %s: %d %s", query, rec.Code, rec.Body)
 		}
 	}
-	rec := e.Do(t, "GET", "/v1/admin/obs/incidents/platform_alert/"+episode.ID+"/evidence", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/incidents/platform_alert/"+episode.ID+"/evidence", nil, nil)
 	var evidence api.ObsIncidentEvidenceResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &evidence); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestObsAlertTriageMutationAndFilters(t *testing.T) {
 		t.Fatalf("missing evidence triage: %s", rec.Body)
 	}
 	for _, query := range []string{"acknowledgment=acknowledged", "type=deployment&ownership=owned", "type=platform_alert&snooze=forever"} {
-		if rec := e.Do(t, "GET", "/v1/admin/obs/incidents?"+query, nil, nil); rec.Code != 400 {
+		if rec := e.DoOperator(t, "GET", "/v1/admin/obs/incidents?"+query, nil, nil); rec.Code != 400 {
 			t.Fatalf("bad filter %s: %d", query, rec.Code)
 		}
 	}

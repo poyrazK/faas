@@ -182,7 +182,8 @@ func (s *server) parseDrainLifecycleTransition(ctx context.Context, w http.Respo
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeCapacity, "drain CAS race", "please retry"))
 			return false
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "could not change compute-node lifecycle", err.Error()))
+		logCustomerFailure(s.log, "could not change compute-node lifecycle", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "could not change compute-node lifecycle", api.DetailServerFailure))
 		return false
 	}
 	return true
@@ -245,7 +246,7 @@ func (s *server) waitForDrainComplete(w http.ResponseWriter, r *http.Request, no
 	for i := 0; i < drainWaitMaxPolls; i++ {
 		select {
 		case <-r.Context().Done():
-			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "request canceled", r.Context().Err().Error()))
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "request canceled", "The request ended before the drain completed."))
 			return
 		case <-time.After(drainWaitInterval):
 		}

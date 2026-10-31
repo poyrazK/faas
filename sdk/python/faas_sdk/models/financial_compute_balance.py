@@ -49,11 +49,11 @@ class FinancialComputeBalance:
     app_id: UUID | Unset = UNSET
     job_id: UUID | Unset = UNSET
     project_id: UUID | Unset = UNSET
-    """The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in
-    the project. Jobs are not covered."""
+    """The capped project of a strict project budget (amendment 1): one gross book shared by every app in the
+    project. Jobs are not covered."""
     environment_id: UUID | Unset = UNSET
-    """The capped environment of a strict environment budget (ADR-1750, amendment 2): one gross book shared by
-    every deployment that runs in the environment. Capacity floors and jobs are not covered."""
+    """The capped environment of a strict environment budget (amendment 2): one gross book shared by every
+    deployment that runs in the environment. Capacity floors and jobs are not covered."""
     account_id: UUID | Unset = UNSET
     scope_kind: FinancialComputeBalanceScopeKind | Unset = UNSET
     basis: FinancialComputeBalanceBasis | Unset = UNSET

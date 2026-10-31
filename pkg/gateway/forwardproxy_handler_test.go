@@ -213,6 +213,12 @@ func (s *stubVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.Execute
 func (s *stubVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by HTTP gateway tests")
 }
+func (s *stubVmmdClient) RunAgent(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.RunAgentRequest, vmmdpb.RunAgentEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "agent runs are not used by HTTP gateway tests")
+}
+func (s *stubVmmdClient) CaptureAgentSnapshot(context.Context, *vmmdpb.CaptureAgentSnapshotRequest, ...grpc.CallOption) (*vmmdpb.CaptureAgentSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "agent runs are not used by HTTP gateway tests")
+}
 func (s *stubVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed in handler integration test")
 }
@@ -221,6 +227,9 @@ func (s *stubVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskR
 }
 func (s *stubVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
 	panic("ExecuteAppTask: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) ExecForkCommand(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	panic("ExecForkCommand: not stubbed in handler integration test")
 }
 func (s *stubVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed in handler integration test")
@@ -278,6 +287,9 @@ func (s *stubVmmdClient) StopInstance(context.Context, *vmmdpb.StopInstanceReque
 }
 func (s *stubVmmdClient) Stats(context.Context, *vmmdpb.StatsRequest, ...grpc.CallOption) (*vmmdpb.StatsResponse, error) {
 	return &vmmdpb.StatsResponse{}, nil
+}
+func (s *stubVmmdClient) CaptureProfile(context.Context, *vmmdpb.CaptureProfileRequest, ...grpc.CallOption) (*vmmdpb.CaptureProfileResponse, error) {
+	return &vmmdpb.CaptureProfileResponse{}, nil
 }
 func (s *stubVmmdClient) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest, ...grpc.CallOption) (*vmmdpb.HeartbeatResponse, error) {
 	return &vmmdpb.HeartbeatResponse{}, nil

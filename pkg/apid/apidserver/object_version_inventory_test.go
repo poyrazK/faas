@@ -131,7 +131,7 @@ func TestGatewayVersionInventoryEndToEndPG(t *testing.T) {
 		t.Fatal("unadmitted delete marker created")
 	}
 	batch, err := f.client.DeleteObjects(ctx, &awss3.DeleteObjectsInput{Bucket: aws.String("assets"), Delete: &types.Delete{Objects: []types.ObjectIdentifier{{Key: aws.String("key")}}}})
-	if err != nil || batch == nil || len(batch.Deleted) != 0 || len(batch.Errors) != 1 || aws.ToString(batch.Errors[0].Code) != "ServiceUnavailable" || aws.ToString(batch.Errors[0].Key) != "key" {
+	if err != nil || batch == nil || len(batch.Deleted) != 0 || len(batch.Errors) != 1 || aws.ToString(batch.Errors[0].Code) != "OperationAborted" || aws.ToString(batch.Errors[0].Key) != "key" {
 		t.Fatal("bulk deletion did not preserve its per-entry accounting fence", batch, err)
 	}
 	snap, err = f.st.ObjectUsage(ctx, f.account.ID, time.Now())

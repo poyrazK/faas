@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow definitions take a deadline and an execution budget (ADR-20261016110803), and job definitions take none.
+ * Bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow definitions take a deadline and an execution budget, and job definitions take none.
  */
 export type OperationLimits = {
   /**

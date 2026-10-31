@@ -46,102 +46,19 @@ func (s *server) applySourceRefManifestAsyncRoutes(ctx context.Context, acct sta
 		}
 	}
 
-	existing, err := s.store.ListEdgeRulesForApp(ctx, app.ID)
-	if err != nil {
-		return api.ErrCapacity("could not list app edge rules for async_routes")
-	}
-	existingByKey := make(map[string]state.EdgeRule)
-	managedCount := 0
-	for _, rule := range existing {
-		if !strings.HasPrefix(rule.ManifestKey, manifestAsyncRouteKeyPrefix) {
-			continue
-		}
-		if rule.Kind != state.EdgeRuleKindAsync {
-			return api.ErrCapacity("manifest-owned async route has an unexpected edge-rule kind")
-		}
-		if _, duplicate := existingByKey[rule.ManifestKey]; duplicate {
-			return api.ErrCapacity("duplicate manifest-owned async route identity")
-		}
-		existingByKey[rule.ManifestKey] = cloneSourceRefManifestEdgeRule(rule)
-		managedCount++
-	}
-
-	desiredByKey := make(map[string]state.CreateEdgeRuleParams, len(matching))
-	desiredOrder := make([]string, 0, len(matching))
+	desired := make([]state.CreateEdgeRuleParams, 0, len(matching))
 	for _, route := range matching {
 		params, problem := s.sourceRefManifestAsyncRouteParams(ctx, acct, app, route)
 		if problem != nil {
 			return problem
 		}
-		key := params.ManifestKey
-		desiredByKey[key] = params
-		desiredOrder = append(desiredOrder, key)
+		desired = append(desired, params)
 	}
-
-	// A manifest route never adopts an unowned edge rule implicitly. This
-	// preflight catches the common exact-match collision before any mutation.
-	for key, desired := range desiredByKey {
-		for _, current := range existing {
-			if current.ManifestKey == "" && sameEdgeRuleMatch(current, desired) {
-				return api.ErrEdgeRuleConflict(fmt.Sprintf("async route %q overlaps unmanaged edge rule %s; remove or change the existing rule first", strings.TrimPrefix(key, manifestAsyncRouteKeyPrefix), current.ID))
-			}
-		}
-	}
-
-	limits, ok := api.LimitsFor(acct.Plan)
-	if !ok {
-		return api.ErrCapacity("could not resolve account plan limits")
-	}
-	finalRuleCount := len(existing) - managedCount + len(matching)
-	if finalRuleCount > limits.EdgeRulesPerApp {
-		return api.ErrPlanLimitEdgeRules(acct.Plan, limits.EdgeRulesPerApp, finalRuleCount)
-	}
-
-	// Existing identities are updated in place, preserving the edge-rule ID.
-	for _, key := range desiredOrder {
-		current, exists := existingByKey[key]
-		if !exists {
-			continue
-		}
-		desired := desiredByKey[key]
-		if sourceRefManifestEdgeRuleMatches(current, desired) {
-			continue
-		}
-		updated, problem := s.updateSourceRefManifestEdgeRule(ctx, acct, app, current, desired, staged)
-		if problem != nil {
-			return problem
-		}
-		existingByKey[key] = updated
-	}
-
-	// Remove stale manifest-owned routes before creating replacements so a
-	// deploy at the plan's exact edge-rule cap has room to make progress.
-	staleKeys := make([]string, 0)
-	for key := range existingByKey {
-		if _, keep := desiredByKey[key]; !keep {
-			staleKeys = append(staleKeys, key)
-		}
-	}
-	sort.Strings(staleKeys)
-	for _, key := range staleKeys {
-		current := existingByKey[key]
-		if _, keep := desiredByKey[current.ManifestKey]; keep {
-			continue
-		}
-		if problem := s.deleteSourceRefManifestEdgeRule(ctx, app, current, staged); problem != nil {
-			return problem
-		}
-	}
-
-	for _, key := range desiredOrder {
-		if _, exists := existingByKey[key]; exists {
-			continue
-		}
-		if problem := s.createSourceRefManifestEdgeRule(ctx, acct, app, desiredByKey[key], staged); problem != nil {
-			return problem
-		}
-	}
-	return nil
+	return s.reconcileManifestEdgeRules(ctx, acct, app, manifestEdgeRuleSet{
+		prefix: manifestAsyncRouteKeyPrefix, label: "async route",
+		kinds:   map[state.EdgeRuleKind]bool{state.EdgeRuleKindAsync: true},
+		desired: desired, matches: sourceRefManifestEdgeRuleMatches, collides: sameEdgeRuleMatch,
+	}, staged)
 }
 
 func (s *server) sourceRefManifestAsyncRouteParams(ctx context.Context, acct state.Account, app state.App, route gregalemanifest.AsyncRoute) (state.CreateEdgeRuleParams, *api.Problem) {
@@ -263,6 +180,14 @@ func cloneSourceRefManifestEdgeRule(rule state.EdgeRule) state.EdgeRule {
 		}
 		rule.Action.Async = &action
 	}
+	if rule.Action.Route != nil {
+		action := *rule.Action.Route
+		rule.Action.Route = &action
+	}
+	if rule.Action.Rewrite != nil {
+		action := *rule.Action.Rewrite
+		rule.Action.Rewrite = &action
+	}
 	return rule
 }
 
@@ -278,10 +203,10 @@ func sourceRefManifestEdgeRuleUpdate(desired state.CreateEdgeRuleParams) state.U
 	}
 }
 
-func (s *server) createSourceRefManifestEdgeRule(ctx context.Context, acct state.Account, app state.App, desired state.CreateEdgeRuleParams, staged *sourceRefManifestStaged) *api.Problem {
+func (s *server) createSourceRefManifestEdgeRule(ctx context.Context, label string, acct state.Account, app state.App, desired state.CreateEdgeRuleParams, staged *sourceRefManifestStaged) *api.Problem {
 	convergence, err := s.edgeRules.PrepareEdgeRuleMutation(ctx, app.ID, "", "created", desired.MatchHost)
 	if err != nil {
-		return api.ErrCapacity("async route fleet convergence is unavailable; no route was created")
+		return api.ErrCapacity(label + " fleet convergence is unavailable; no route was created")
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {
@@ -291,50 +216,50 @@ func (s *server) createSourceRefManifestEdgeRule(ctx context.Context, acct state
 	created, err := s.store.CreateEdgeRuleIfUnderQuota(ctx, desired, limits)
 	if err != nil {
 		convergence.Abort(ctx)
-		return sourceRefManifestEdgeRuleStoreProblem(err, acct.Plan)
+		return sourceRefManifestEdgeRuleStoreProblem(err, acct.Plan, label)
 	}
 	staged.edgeRuleChanges = append(staged.edgeRuleChanges, sourceRefManifestEdgeRuleChange{
 		kind: "created", ruleID: created.ID, current: cloneSourceRefManifestEdgeRule(created),
 	})
 	if err := convergence.Apply(ctx, created.ID); err != nil {
-		return api.ErrCapacity("async route fleet did not converge after creation")
+		return api.ErrCapacity(label + " fleet did not converge after creation")
 	}
 	return nil
 }
 
-func (s *server) updateSourceRefManifestEdgeRule(ctx context.Context, acct state.Account, app state.App, previous state.EdgeRule, desired state.CreateEdgeRuleParams, staged *sourceRefManifestStaged) (state.EdgeRule, *api.Problem) {
+func (s *server) updateSourceRefManifestEdgeRule(ctx context.Context, label string, app state.App, previous state.EdgeRule, desired state.CreateEdgeRuleParams, staged *sourceRefManifestStaged) (state.EdgeRule, *api.Problem) {
 	convergence, err := s.edgeRules.PrepareEdgeRuleMutation(ctx, app.ID, previous.ID, "updated", previous.MatchHost, desired.MatchHost)
 	if err != nil {
-		return state.EdgeRule{}, api.ErrCapacity("async route fleet convergence is unavailable; no route was updated")
+		return state.EdgeRule{}, api.ErrCapacity(label + " fleet convergence is unavailable; no route was updated")
 	}
 	updated, err := s.store.UpdateEdgeRule(ctx, previous.ID, sourceRefManifestEdgeRuleUpdate(desired))
 	if err != nil {
 		convergence.Abort(ctx)
-		return state.EdgeRule{}, api.ErrCapacity("could not update manifest async route")
+		return state.EdgeRule{}, api.ErrCapacity("could not update manifest " + label)
 	}
 	staged.edgeRuleChanges = append(staged.edgeRuleChanges, sourceRefManifestEdgeRuleChange{
 		kind: "updated", ruleID: updated.ID, previous: cloneSourceRefManifestEdgeRule(previous), current: cloneSourceRefManifestEdgeRule(updated),
 	})
 	if err := convergence.Apply(ctx, updated.ID); err != nil {
-		return updated, api.ErrCapacity("async route fleet did not converge after update")
+		return updated, api.ErrCapacity(label + " fleet did not converge after update")
 	}
 	return updated, nil
 }
 
-func (s *server) deleteSourceRefManifestEdgeRule(ctx context.Context, app state.App, previous state.EdgeRule, staged *sourceRefManifestStaged) *api.Problem {
+func (s *server) deleteSourceRefManifestEdgeRule(ctx context.Context, label string, app state.App, previous state.EdgeRule, staged *sourceRefManifestStaged) *api.Problem {
 	convergence, err := s.edgeRules.PrepareEdgeRuleMutation(ctx, app.ID, previous.ID, "deleted", previous.MatchHost)
 	if err != nil {
-		return api.ErrCapacity("async route fleet convergence is unavailable; no route was deleted")
+		return api.ErrCapacity(label + " fleet convergence is unavailable; no route was deleted")
 	}
 	if err := s.store.DeleteEdgeRule(ctx, previous.ID); err != nil {
 		convergence.Abort(ctx)
-		return api.ErrCapacity("could not remove stale manifest async route")
+		return api.ErrCapacity("could not remove stale manifest " + label)
 	}
 	staged.edgeRuleChanges = append(staged.edgeRuleChanges, sourceRefManifestEdgeRuleChange{
 		kind: "deleted", ruleID: previous.ID, previous: cloneSourceRefManifestEdgeRule(previous),
 	})
 	if err := convergence.Apply(ctx, previous.ID); err != nil {
-		return api.ErrCapacity("async route fleet did not converge after deletion")
+		return api.ErrCapacity(label + " fleet did not converge after deletion")
 	}
 	return nil
 }
@@ -406,7 +331,7 @@ func edgeRuleCreateParams(rule state.EdgeRule) state.CreateEdgeRuleParams {
 	}
 }
 
-func sourceRefManifestEdgeRuleStoreProblem(err error, plan api.Plan) *api.Problem {
+func sourceRefManifestEdgeRuleStoreProblem(err error, plan api.Plan, label string) *api.Problem {
 	var quota *state.EdgeRuleQuotaError
 	if errors.As(err, &quota) {
 		if quota.PerKind {
@@ -420,5 +345,5 @@ func sourceRefManifestEdgeRuleStoreProblem(err error, plan api.Plan) *api.Proble
 	if errors.Is(err, state.ErrConflict) {
 		return api.ErrEdgeRuleConflict("an edge rule with this manifest identity already exists")
 	}
-	return api.ErrCapacity("could not apply manifest async route")
+	return api.ErrCapacity("could not apply manifest " + label)
 }

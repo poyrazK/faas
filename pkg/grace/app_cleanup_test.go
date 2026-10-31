@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -132,5 +133,73 @@ func metricValue(t *testing.T, registry *prometheus.Registry, name string) float
 		}
 	}
 	t.Fatalf("metric %s not found", name)
+	return 0
+}
+
+// A purge refused because the app still holds a retained resource waits quietly and counts as retained_resources, not as a
+// failed database delete logged at WARN every minute (Hunt 11 H11-21).
+func TestRunAppsOnceWaitsQuietlyForRetainedResources(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "app-grace-retained@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "retained", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ScheduleAppDeletion(ctx, app.ID, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	registry := prometheus.NewRegistry()
+	g := grace.New(grace.Params{
+		Store: statetest.NewMem(&retainedPurgeStore{MemStore: store}), Registry: registry, Now: time.Now,
+		Log: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
+	})
+	if err := g.RunAppsOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppByID(ctx, app.ID); err != nil {
+		t.Fatalf("app with a live bucket was purged: %v", err)
+	}
+	if strings.Contains(logs.String(), "hard delete failed") {
+		t.Fatalf("retained-resource wait logged as a failure: %s", logs.String())
+	}
+	if got := labeledCounter(t, registry, "apid_app_grace_failures_total", "stage", "retained_resources"); got != 1 {
+		t.Fatalf("retained_resources failures = %v, want 1", got)
+	}
+	if got := labeledCounter(t, registry, "apid_app_grace_failures_total", "stage", "delete_database"); got != 0 {
+		t.Fatalf("delete_database failures = %v, want 0", got)
+	}
+}
+
+// retainedPurgeStore answers DeleteAppPermanently as the PgStore does while a
+// live bucket, managed PostgreSQL binding or uncertain part write holds the app.
+type retainedPurgeStore struct{ MemStore *state.MemStore }
+
+func (retainedPurgeStore) DeleteAppPermanently(context.Context, string) error {
+	return state.ErrConflict
+}
+
+func labeledCounter(t *testing.T, registry *prometheus.Registry, name, label, value string) float64 {
+	t.Helper()
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.Metric {
+			for _, pair := range metric.GetLabel() {
+				if pair.GetName() == label && pair.GetValue() == value {
+					return metric.GetCounter().GetValue()
+				}
+			}
+		}
+	}
 	return 0
 }

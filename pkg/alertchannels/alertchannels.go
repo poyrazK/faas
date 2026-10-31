@@ -62,6 +62,9 @@ type Message struct {
 	DashboardURL string
 	OccurredAt   time.Time
 	DedupKey     string
+	// Release is set for release approval events (ADR-20261020085706),
+	// which render from it instead of the alert fields.
+	Release *ReleaseNotice
 
 	// Summary, when set, replaces the metric/threshold detail line. Budget
 	// alerts (ADR-20261019193500) preformat exact money amounts here and
@@ -137,6 +140,9 @@ func NewHTTPClient() *http.Client {
 
 // Send delivers msg to t.
 func (s *Sender) Send(ctx context.Context, t Target, msg Message) error {
+	if msg.Release != nil && t.Kind == KindPagerDuty {
+		return ErrReleaseNoticeKind
+	}
 	switch t.Kind {
 	case KindSlack:
 		if err := ValidateSlackURL(t.SlackURL); err != nil {
@@ -215,6 +221,9 @@ func (s *Sender) postJSON(ctx context.Context, endpoint string, body any) error 
 
 // Headline is the one-line summary shared by every channel.
 func Headline(msg Message) string {
+	if msg.Release != nil {
+		return releaseHeadline(*msg.Release)
+	}
 	switch msg.Event {
 	case EventResolve:
 		return fmt.Sprintf("Resolved: %s", msg.RuleName)
@@ -226,6 +235,9 @@ func Headline(msg Message) string {
 
 // Detail describes the condition: "metric observed vs comparison threshold".
 func Detail(msg Message) string {
+	if msg.Release != nil {
+		return strings.Join(releaseLines(*msg.Release), " ")
+	}
 	if msg.Event == EventTest {
 		return "This channel is set up correctly. Real alerts will look like this, with the rule, the observed value and a dashboard link."
 	}

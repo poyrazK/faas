@@ -3,9 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ScenarioCapturedAction } from './ScenarioCapturedAction.js';
+import type { ScenarioCapturedEvent } from './ScenarioCapturedEvent.js';
+import type { ScenarioCapturedPlatformCall } from './ScenarioCapturedPlatformCall.js';
+import type { ScenarioCapturedQueueMessage } from './ScenarioCapturedQueueMessage.js';
 import type { ScenarioColdStartEvidence } from './ScenarioColdStartEvidence.js';
 import type { ScenarioManagedWorkEvidence } from './ScenarioManagedWorkEvidence.js';
 import type { ScenarioSimulationAttempt } from './ScenarioSimulationAttempt.js';
+import type { ScenarioSuppressedWebhookEvents } from './ScenarioSuppressedWebhookEvents.js';
 import type { ScenarioSuspendResumeEvidence } from './ScenarioSuspendResumeEvidence.js';
 /**
  * Bounded evidence for a sealed action window. Version 1 covers managed webhooks. Version 2 adds declared simulated relay attempts and durable host recorder coverage. Incomplete snapshots never establish equivalent behavior.
@@ -54,5 +58,24 @@ export type ScenarioActionSnapshot = {
   suppressed_deliveries: number;
   truncated: boolean;
   reason?: string;
+  /**
+   * Present from servers that capture published events. A comparison across capture versions is inconclusive.
+   */
+  event_capture_version?: 1;
+  published_events?: Array<ScenarioCapturedEvent>;
+  suppressed_webhook_events?: Array<ScenarioSuppressedWebhookEvents>;
+  incomplete_captured_events?: number;
+  /**
+   * Present from servers that capture queue sends and delayed tasks.
+   */
+  queue_capture_version?: 1;
+  queue_messages?: Array<ScenarioCapturedQueueMessage>;
+  incomplete_queue_messages?: number;
+  /**
+   * Present from servers that capture workflow and realtime calls.
+   */
+  platform_capture_version?: 1;
+  platform_calls?: Array<ScenarioCapturedPlatformCall>;
+  incomplete_platform_calls?: number;
 };
 

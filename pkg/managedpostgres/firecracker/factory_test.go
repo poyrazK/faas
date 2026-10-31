@@ -55,6 +55,15 @@ func TestDocumentedBackendLoadsThroughTheRegistry(t *testing.T) {
 	if err != nil || backend.Driver != Driver {
 		t.Fatalf("default backend = %+v, %v; want the native backend", backend, err)
 	}
+	// apid loads the backend only behind its operator switch.
+	gated := map[string]managedpostgres.Factory{Driver: GatedFactory(pool)}
+	if _, err := managedpostgres.Load(func(k string) string { return env[k] }, gated); err == nil || !strings.Contains(err.Error(), EnabledEnv) {
+		t.Fatalf("loaded a native backend with %s unset: %v", EnabledEnv, err)
+	}
+	env[EnabledEnv] = "1"
+	if _, err := managedpostgres.Load(func(k string) string { return env[k] }, gated); err != nil {
+		t.Fatalf("load with %s=1: %v", EnabledEnv, err)
+	}
 	delete(env, "FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY")
 	if _, err := managedpostgres.Load(func(k string) string { return env[k] }, map[string]managedpostgres.Factory{Driver: Factory(pool)}); err == nil {
 		t.Fatal("loaded a native backend without its credential key")

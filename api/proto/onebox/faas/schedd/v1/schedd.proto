@@ -310,6 +310,30 @@ service Schedd {
   // end; existing field tags are untouched.
   rpc ReportWorkloadOOM(ReportWorkloadOOMRequest) returns (ReportWorkloadOOMAck);
 
+  // RunAgent runs one agent run for agentd (ADR-20261027090010 §6, ADR-20261027090014 §1). schedd
+  // admits it on an agent-pool node, streams it through that node's vmmd,
+  // and releases the reservation once vmmd has destroyed the VM. The first
+  // client frame is start. After the placed event (the reservation is held,
+  // nothing booted) schedd waits for proceed, which agentd sends once it has
+  // recorded the run as running: that is ADR-20261027090010's at-most-once fence.
+  // Cancel stops the harness, or ends the run before the boot. Events after
+  // proceed: booted, output chunks, then one result.
+  rpc RunAgent(stream AgentRunRequest) returns (stream AgentRunEvent);
+  // ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
+  // memory-pressure report: MemAvailable fell to the pressure share of
+  // MemTotal while a profile collector was registered. schedd queues one
+  // automatic heap capture on that instance, rate limited per app, so the
+  // heap is captured before an OOM kill. Reports for instances this schedd
+  // does not own are ignored (queued=false). Additive per ADR-016.
+  rpc ReportMemoryPressure(ReportMemoryPressureRequest) returns (ReportMemoryPressureAck);
+
+  // ReportSlowRequest (ADR-1155) is gatewayd-internal's best-effort report
+  // of a request still in flight after ProfileCaptureSlowRequestAfter.
+  // schedd queues one automatic stacks+CPU capture of the serving instance,
+  // rate limited per app, so the stacks show where the request is stuck.
+  // Reports for instances this schedd does not own are ignored
+  // (queued=false). Additive per ADR-016.
+  rpc ReportSlowRequest(ReportSlowRequestRequest) returns (ReportSlowRequestAck);
   // Database VMs (ADR-1027): schedd's database scheduler places native
   // managed databases on database nodes, wakes them within each node's RAM
   // ceiling and parks idle ones. ProvisionDatabase, DeleteDatabase,
@@ -1053,6 +1077,17 @@ message CapacityReport {
   // Absence means an older producer; complete=false means unknown. A complete
   // empty inventory explicitly asserts that this node has no running VMs.
   NodeInstanceInventory instance_inventory = 11;
+  // StatsResponse.instance_bridge_resident_bytes from the same sample: the
+  // node's instance bridge units (connection-survival ADR §2). Telemetry
+  // like the instance rows, outside the capacity signature; absent when
+  // bridge units are off or on an older vmmd.
+  google.protobuf.Int64Value instance_bridge_resident_bytes = 12;
+  // StatsResponse.tenant_cpu_pressure_some_avg10 and host_cpu_busy_percent
+  // from the same sample (ADR 20261030100950): the readings the node's
+  // schedd checks for CPU pressure. Telemetry outside the capacity
+  // signature; absent on an older vmmd or a host without the files.
+  google.protobuf.DoubleValue tenant_cpu_pressure_some_avg10 = 13;
+  google.protobuf.DoubleValue host_cpu_busy_percent = 14;
 }
 
 // Inherits node_id, sampled_at_unix_ms and node_key_id from CapacityReport.
@@ -1102,6 +1137,14 @@ message InstanceTelemetry {
   // ADR-1151: vmmd holds the instance frozen (paused in place until schedd
   // thaws or destroys it). Mirrors vmmd InstanceStats.frozen.
   bool frozen = 20;
+  // ADR-20261023171905: the quiet pause record schedd keeps in the pause
+  // ledger. Mirrors vmmd InstanceStats.quiet_paused_since,
+  // quiet_last_pause_started_at, quiet_last_pause_ended_at and
+  // quiet_paused_ns_total.
+  google.protobuf.Timestamp quiet_paused_since = 21;
+  google.protobuf.Timestamp quiet_last_pause_started_at = 22;
+  google.protobuf.Timestamp quiet_last_pause_ended_at = 23;
+  google.protobuf.Int64Value quiet_paused_ns_total = 24;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"
@@ -1191,6 +1234,119 @@ message FlowSummary {
   int64 count = 6;
 }
 
+// AgentRunRequest is a client frame on RunAgent. Start occurs exactly once,
+// first.
+message AgentRunRequest {
+  oneof frame {
+    AgentRunStart start = 1;
+    AgentRunCancel cancel = 2;
+    AgentRunProceed proceed = 3;
+  }
+}
+
+// AgentRunProceed lets a placed run boot.
+message AgentRunProceed {}
+
+// AgentRunStart is the run's machine, already checked against the account's
+// plan, and the run itself: an agentrunproto.Request in JSON. relay is the
+// identity vmmd binds to the run's outbound relay; without it the run gets
+// no relay.
+message AgentRunStart {
+  string run_id = 1;
+  string account_id = 2;
+  string plan = 3;
+  int32 ram_mb = 4;
+  int32 vcpu = 5;
+  int32 cpu_millicores = 6;
+  bytes run = 7;
+  AgentRunRelay relay = 8;
+  // input_key is the storage key of the run's input drive, the checkout
+  // image agentd prepared (ADR-20261027090010 §3). Empty: no input drive.
+  string input_key = 9;
+  // pause_during_model_calls is the version's model-wait pause opt-in
+  // (ADR-20261027090012 §1). false (a version that opted out, or an older
+  // agentd) keeps the run's VM running while it waits on the model.
+  bool pause_during_model_calls = 10;
+}
+
+// AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010
+// §7, ADR-20261027090016): agentd's lease token fences it, and the tenant names the
+// end user the AI gateway attributes the run's model calls to. None of it
+// comes from the guest.
+message AgentRunRelay {
+  string lease_token = 1;
+  string tenant_id = 2;
+  string agent_id = 3;
+  int32 agent_version = 4;
+}
+
+message AgentRunCancel {}
+
+message AgentRunEvent {
+  oneof frame {
+    AgentRunPlaced placed = 1;
+    AgentRunBooted booted = 2;
+    AgentRunOutput output = 3;
+    AgentRunResult result = 4;
+  }
+}
+
+message AgentRunPlaced {
+  string instance = 1;
+  string node_id = 2;
+}
+
+message AgentRunBooted {
+  string method = 1;
+  int64 boot_ms = 2;
+}
+
+message AgentRunOutput {
+  // stream is "stdout" or "stderr".
+  string stream = 1;
+  bytes chunk = 2;
+}
+
+// AgentRunResult is the guest's agentrunproto.Result in JSON, without the
+// stdout and stderr the output frames already carried.
+message AgentRunResult {
+  bytes result = 1;
+}
+
+message ReportMemoryPressureRequest {
+  string instance_id = 1;
+  string source_node_id = 2;
+  uint32 available_mb = 3;
+  uint32 total_mb = 4;
+  uint32 anon_mb = 5;
+}
+
+message ReportMemoryPressureAck {
+  // queued is true when an automatic heap capture was queued.
+  bool queued = 1;
+  // reason explains a skipped capture (rate limited, capture already
+  // running, plan without profiling, instance not running).
+  string reason = 2;
+}
+
+message ReportSlowRequestRequest {
+  string instance_id = 1;
+  // request_id is the public x-faas-request-id; trace_id is the id the
+  // request's telemetry row is stored under.
+  string request_id = 2;
+  string trace_id = 3;
+  // route is the route template or method + path label, never a full URL.
+  string route = 4;
+  int64 inflight_ms = 5;
+}
+
+message ReportSlowRequestAck {
+  // queued is true when an automatic stack capture was queued.
+  bool queued = 1;
+  // reason explains a skipped capture (rate limited, capture already
+  // running, plan without profiling, instance not running).
+  string reason = 2;
+}
 // Database VMs (ADR-1027).
 message DatabaseRef {
   string database_id = 1;

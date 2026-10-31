@@ -66,9 +66,33 @@ func checkConsumerCredits(t *testing.T, ctx context.Context, st state.Store, acc
 	if remaining[expiring.ID] != 0 || remaining[lasting.ID] != 150 || remaining[voided.ID] != 0 {
 		t.Fatalf("remaining after finalize = %v (expiring %s, lasting %s)", remaining, expiring.ID, lasting.ID)
 	}
+	// A statement with a base fee: credit pays the fee first, and only the
+	// rest counts as paying usage (ADR-20261020211500).
+	feeStart := start.Add(time.Hour)
+	withFee, _, err := statements.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{
+		AccountID: accountID, AppID: appID, ConsumerID: consumer.ID, Revision: 1, PeriodStart: feeStart, PeriodEnd: feeStart.Add(time.Hour),
+		Currency: "EUR", BillableUnits: 2, AmountMillicents: 200, Priced: true, AsOf: time.Now().UTC(),
+		Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: feeStart, BillableUnits: 2, RateCardID: uuid.NewString(),
+			Currency: "EUR", PriceMillicentsPerUnit: 50, AmountMillicents: 100}},
+		Fees: []state.APIConsumerStatementFee{{Kind: state.StatementFeeBase, RateCardID: uuid.NewString(), AmountMillicents: 100}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final, _, err := statements.FinalizeAPIConsumerUsageStatement(ctx, accountID, appID, consumer.ID, withFee.ID); err != nil ||
+		final.CreditAppliedMillicents != 150 {
+		t.Fatalf("finalized with fee = %+v, %v", final, err)
+	}
+	var wantApplied int64
+	if thisMonth := time.Now().UTC().Month(); start.Month() == thisMonth {
+		wantApplied += 200
+	}
+	if time.Now().UTC().Month() == feeStart.Month() {
+		wantApplied += 50
+	}
 	pos, err := credits.APIConsumerCreditPosition(ctx, accountID, appID, consumer.ID, "EUR", time.Now())
-	if err != nil || pos.AvailableMillicents != 150 || (start.Month() == time.Now().UTC().Month() && pos.AppliedInMonthMillicents != 200) {
-		t.Fatalf("position = %+v, %v", pos, err)
+	if err != nil || pos.AvailableMillicents != 0 || pos.AppliedToUsageInMonthMillicents != wantApplied {
+		t.Fatalf("position = %+v, %v; want applied to usage %d", pos, err, wantApplied)
 	}
 
 	if _, err := caps.PutAPIConsumerSpendCap(ctx, state.APIConsumerSpendCap{ConsumerID: consumer.ID, AccountID: accountID, AppID: appID,

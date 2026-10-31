@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    th, td { text-align: right; padding: 0.45rem 0.55rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    th:first-child, td:first-child { text-align: left; }
+    .muted { color: #6b7280; }
+    .notice { padding: 0.7rem; background: #fff8c5; border: 1px solid #e2cf6e; }
+    .filter { display: flex; gap: 0.75rem; align-items: end; flex-wrap: wrap; margin: 1rem 0; }
+    .filter label { display: grid; gap: 0.25rem; }
+    .filter input, .filter select, .filter button { padding: 0.4rem 0.55rem; font: inherit; }
+    .looping { color: #b45309; }
+    @media (max-width: 750px) { table { font-size: 0.85rem; } th, td { padding: 0.35rem 0.25rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/ai">AI gateway</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p><a href="/dashboard/ai">AI gateway</a> / <a href="{{.Data.IntegrationHref}}">{{.Data.IntegrationName}}</a> /</p>
+    <h1>Traces</h1>
+    <p>A trace is one task's calls, named by <code>X-Gregale-AI-Trace</code> or the trace ID of <code>traceparent</code>. Newest last call first.</p>
+    <form class="filter" method="get" action="{{.Data.Action}}">
+      <label for="trace-app">First call's app
+        <select id="trace-app" name="app_id">
+          <option value="">Any</option>
+          {{range .Data.Apps}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+      </label>
+      <label for="trace-user">End user
+        <input id="trace-user" name="end_user" value="{{.Data.EndUser}}" maxlength="64">
+      </label>
+      <button type="submit">Filter</button>
+    </form>
+    {{if .Data.Unavailable}}
+      <p class="notice" role="status">{{.Data.Unavailable}}</p>
+    {{else if .Data.Traces}}
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Trace</th><th>Last call</th><th>Calls</th><th>Errors</th><th>Cost</th><th>Tool calls</th><th>Repeated</th><th>Models</th><th>App</th><th>End user</th></tr></thead>
+          <tbody>
+            {{range .Data.Traces}}
+              <tr><td><a href="{{.Href}}"><code>{{.ID}}</code></a></td><td>{{.LastCall}}</td><td>{{.Calls}}</td><td>{{.Errors}}</td><td>{{.Cost}}</td><td>{{.ToolCalls}}</td>
+                <td>{{if .Looping}}<span class="looping">{{.Repeated}}</span>{{else}}{{.Repeated}}{{end}}</td><td>{{.Models}}</td><td>{{.Caller}}</td><td>{{.EndUser}}</td></tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{if .Data.OlderHref}}<p><a href="{{.Data.OlderHref}}">Older traces</a></p>{{end}}
+    {{else}}
+      <p class="muted">No traces match.</p>
+    {{end}}
+    {{if .Data.Note}}<p class="muted">{{.Data.Note}}</p>{{end}}
+  </main>
+</body>
+</html>

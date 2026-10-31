@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -23,6 +24,8 @@ type Config struct {
 	// DatabaseScheduler enables the database scheduler (ADR-1027).
 	DatabaseScheduler *DatabaseSchedulerConfig `toml:"database_scheduler"`
 
+	// AppsDomain matches public routing for deployment alias activation checks.
+	AppsDomain                      string `toml:"apps_domain"`
 	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
 	EventAcknowledgmentWriterRoster string `toml:"event_acknowledgment_writer_roster"`
 	// SocketPath is the unix-domain socket schedd's gRPC server binds when
@@ -190,9 +193,39 @@ type Config struct {
 	// QuietPauseAdmission (ADR-1151) makes the vCPU and CPU gates count only
 	// active instances: bookings less those vmmd reports quiet-paused, with
 	// all bookings capped at api.QuietPauseMaxVCPUOvercommitPercent of the
-	// budget. Off by default; turn it on together with vmmd's quiet_pause on
-	// the same nodes. A node without a fresh sample counts every booking.
+	// budget. On by default (ADR-1151 amendment 2026-10-31), as vmmd's
+	// quiet_pause is; quiet_pause_admission = false turns it off, and
+	// FAAS_QUIET_PAUSE_ADMISSION overrides it either way. A node without a
+	// fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
+
+	// MeasuredCPUAdmission (ADR 20261029151111) makes the vCPU and CPU gates
+	// charge an instance the latest instance stats sample measured its
+	// measured host CPU instead of its booking, never less than
+	// api.MeasuredCPUMinChargePercent of the booking, and stops counting its
+	// guest vCPUs; all bookings stay capped at
+	// api.MeasuredCPUMaxOvercommitPercent of the budget. On by default
+	// (amendment 2026-10-31); measured_cpu_admission = false turns it off,
+	// and FAAS_MEASURED_CPU_ADMISSION overrides it either way. A node
+	// without a fresh sample counts every booking.
+	MeasuredCPUAdmission bool `toml:"measured_cpu_admission"`
+
+	// CPUPressureBackstop (ADR 20261030100950) makes this schedd hold the
+	// nodes whose readings it receives under CPU pressure while their tenant
+	// tasks wait for CPU (api.NodeCPUPressureStallPercent) and their CPUs
+	// are nearly all busy (api.NodeCPUPressureBusyPercent). Every schedd
+	// honours a hold: placement prefers other nodes and admission counts the
+	// node's bookings in full. On by default (amendment 2026-10-31);
+	// cpu_pressure_backstop = false turns it off, and
+	// FAAS_CPU_PRESSURE_BACKSTOP overrides it either way. The readings'
+	// gauges are published either way.
+	CPUPressureBackstop bool `toml:"cpu_pressure_backstop"`
+
+	// QuietPauseLedger (ADR-20261023171905) records the quiet pauses this
+	// schedd's node reports in the pause ledger, for meterd to subtract from
+	// billed seconds once its quiet_pause_unbilled switch is on. Off by
+	// default; FAAS_QUIET_PAUSE_LEDGER overrides it.
+	QuietPauseLedger bool `toml:"quiet_pause_ledger"`
 
 	// FrozenTier (ADR-1151) freezes an idle eligible function instance in
 	// place at its idle timeout instead of parking it: vmmd keeps the VM
@@ -203,14 +236,20 @@ type Config struct {
 	FrozenTier bool `toml:"frozen_tier"`
 	// FrozenTierApps (ADR-1151 step 3) extends the frozen tier from
 	// functions to request-mode apps whose declared pause is not never.
-	// Off by default and ignored unless frozen_tier is on.
-	// FAAS_FROZEN_TIER_APPS overrides it.
+	// On by default (ADR-1151 amendment 2026-10-27) and ignored unless
+	// frozen_tier is on. FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
 	// FrozenTierWorkers (ADR-20261019103000) lets a worker pool freeze a
 	// surplus worker that holds no queue lease instead of stopping it, and
 	// thaw it before booting a new one. Off by default and ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_WORKERS overrides it.
 	FrozenTierWorkers bool `toml:"frozen_tier_workers"`
+	// FrozenTierEarlyFreezeAfterS (ADR-20261021215353) freezes a quiet
+	// between_requests instance this many seconds after its last request
+	// instead of at its idle timeout, so it stops accruing usage soon after
+	// it last served. 0 (the default) is off; otherwise 2-300. Ignored unless
+	// frozen_tier is on. FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S overrides it.
+	FrozenTierEarlyFreezeAfterS int `toml:"frozen_tier_early_freeze_after_s"`
 
 	// FrozenFastPath (ADR-1740) thaws a frozen VM from a ticket recorded
 	// when it froze: one runtime-values read beside the vmmd thaw and one
@@ -358,6 +397,13 @@ func (c *Config) ResolveVMMTarget() string {
 	return "unix://" + c.VMMDSocket
 }
 
+func (c *Config) GetAppsDomain(env func(string) string) string {
+	if value := env("FAAS_APPS_DOMAIN"); value != "" {
+		return value
+	}
+	return c.AppsDomain
+}
+
 // LoadServerTLS returns the server's mTLS config when all three TLS
 // paths are set, or (nil, nil) when none are set. Partial cluster is
 // rejected — wire.LoadServerTLSConfig names the missing fields.
@@ -441,6 +487,7 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		AppsDomain:         hostidentity.DefaultAppsDomain,
 		SocketPath:         "/run/faas/schedd.sock",
 		VMMDSocket:         "/run/faas/vmmd.sock",
 		GatewaySynthSocket: "/run/faas/gatewayd-internal.sock",
@@ -470,6 +517,18 @@ func LoadConfig(path string) (*Config, error) {
 		ReaperAggressive: true,
 		// ADR-909 (accepted 2026-10-12): admit by measured memory.
 		MeasuredAdmission: true,
+		// ADR-1151 amendment 2026-10-27: request-mode apps join the frozen
+		// tier whenever frozen_tier is on. FAAS_FROZEN_TIER_APPS=false or
+		// frozen_tier_apps = false keeps the tier to functions.
+		FrozenTierApps: true,
+		// Amendments of 2026-10-31 to ADR-1151, ADR 20261029151111 and
+		// ADR 20261030100950: admit CPU by what instances use, with the
+		// pressure backstop. Release rollouts re-render schedd.toml from the
+		// manifest, so only a binary default keeps them on; each stays an
+		// opt-out (= false in schedd.toml).
+		QuietPauseAdmission:  true,
+		MeasuredCPUAdmission: true,
+		CPUPressureBackstop:  true,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go
@@ -544,6 +603,14 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
 	}
+	// ADR-20261023171905: FAAS_QUIET_PAUSE_LEDGER overrides quiet_pause_ledger.
+	if v := os.Getenv("FAAS_QUIET_PAUSE_LEDGER"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_QUIET_PAUSE_LEDGER must be a boolean (got %q)", v)
+		}
+		c.QuietPauseLedger = enabled
+	}
 	// ADR-1151: FAAS_FROZEN_TIER overrides frozen_tier.
 	if v := os.Getenv("FAAS_FROZEN_TIER"); v != "" {
 		enabled, err := strconv.ParseBool(v)
@@ -575,12 +642,43 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.FrozenTierApps = enabled
 	}
+	// The density switches default on (amendments of 2026-10-31). A manifest
+	// render rewrites schedd.toml at every rollout, so a node's opt-out set
+	// there does not last; an environment drop-in does.
+	for _, sw := range []struct {
+		env string
+		dst *bool
+	}{
+		{"FAAS_QUIET_PAUSE_ADMISSION", &c.QuietPauseAdmission},
+		{"FAAS_MEASURED_CPU_ADMISSION", &c.MeasuredCPUAdmission},
+		{"FAAS_CPU_PRESSURE_BACKSTOP", &c.CPUPressureBackstop},
+	} {
+		if v := os.Getenv(sw.env); v != "" {
+			enabled, err := strconv.ParseBool(v)
+			if err != nil {
+				return nil, fmt.Errorf("schedd: %s must be a boolean (got %q)", sw.env, v)
+			}
+			*sw.dst = enabled
+		}
+	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_WORKERS"); v != "" {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {
 			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_WORKERS must be a boolean (got %q)", v)
 		}
 		c.FrozenTierWorkers = enabled
+	}
+	// ADR-20261021215353: FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S overrides
+	// frozen_tier_early_freeze_after_s.
+	if v := os.Getenv("FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S"); v != "" {
+		seconds, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S must be an integer (got %q)", v)
+		}
+		c.FrozenTierEarlyFreezeAfterS = seconds
+	}
+	if s := c.FrozenTierEarlyFreezeAfterS; s != 0 && (s < api.FrozenEarlyFreezeMinSeconds || s > api.FrozenEarlyFreezeMaxSeconds) {
+		return nil, fmt.Errorf("schedd: frozen_tier_early_freeze_after_s must be 0 or %d-%d (got %d)", api.FrozenEarlyFreezeMinSeconds, api.FrozenEarlyFreezeMaxSeconds, s)
 	}
 	applyRoutingEnv()
 	return c, loadDatabaseSchedulerFile(c)

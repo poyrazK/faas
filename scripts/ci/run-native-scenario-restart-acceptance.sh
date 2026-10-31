@@ -9,6 +9,8 @@ mkdir -p -- "${evidence_root}"
 evidence="$(mktemp -d "${evidence_root}/run-XXXXXXXX")"
 echo "Native scenario evidence: ${evidence}"
 python3 "${repo_root}/scripts/ci/scenario-restart-native.py" --repo "${repo_root}" --out "${evidence}" --check-runner
+# Capability flags (ADR-20261023115741) must release what this run exercises.
+python3 "${repo_root}/scripts/ci/require-capabilities.py" --api "${FAAS_API:?set the acceptance API URL}" --token-env FAAS_TOKEN scenario-tests developer-environments projects
 command -v node >/dev/null
 command -v openssl >/dev/null
 command -v flock >/dev/null

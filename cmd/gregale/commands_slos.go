@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const slosUsage = "usage: gregale slos <list|create|status|rm> --app <slug>"
+const slosUsage = "usage: gregale alert slo <list|create|status|rm> --app <slug>"
 
 // cmdSLOs implements `gregale slos` (ADR-747): customer-defined SLO
 // definitions. Distinct from `gregale slo <slug>`, ADR-082's fixed panel.
@@ -34,14 +34,18 @@ func cmdSLOs(args []string) int {
 	return 1
 }
 
+// cmdSLOsList lists an app's SLOs. --window adds the app's measured SLO
+// panel for that window, what `gregale slo` shows (ADR-20261026145832:
+// `alert slo list --window`).
 func cmdSLOsList(args []string) int {
 	fs := newFlagSet("slos list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
+	window := fs.String("window", "", "also show the measured SLO panel for this window (1h, 24h, 7d)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale slos list --app <slug>", "slos")
+	if *slug == "" || fs.NArg() != 0 || !validSLOPanelWindow(*window) {
+		PrintUsage(os.Stderr, "usage: gregale alert slo list --app <slug> [--window 1h|24h|7d]", "slos")
 		return 1
 	}
 	client, err := authedClient()
@@ -52,16 +56,34 @@ func cmdSLOsList(args []string) int {
 	if err != nil {
 		return printErr("Could not list SLOs", err)
 	}
+	if *window == "" {
+		if jsonOutput {
+			return jsonOut(writeJSON(slos))
+		}
+		renderSLOList(osStdout, slos)
+		return 0
+	}
+	panel, err := client.GetAppSLO(context.Background(), *slug, *window)
+	if err != nil {
+		return printErr("Could not fetch SLO", err)
+	}
 	if jsonOutput {
-		return jsonOut(writeJSON(slos))
+		return jsonOut(writeJSON(map[string]any{"slos": slos, "panel": panel}))
 	}
 	renderSLOList(osStdout, slos)
+	_, _ = fmt.Fprintf(osStdout, "\nMeasured over the last %s:\n", *window)
+	renderAppSLO(osStdout, panel)
 	return 0
+}
+
+// validSLOPanelWindow reports an empty window or one the SLO panel serves.
+func validSLOPanelWindow(window string) bool {
+	return window == "" || window == "1h" || window == "24h" || window == "7d"
 }
 
 func renderSLOList(w io.Writer, slos []api.SLOResponse) {
 	if len(slos) == 0 {
-		_, _ = fmt.Fprintln(w, "No SLOs defined. Create one with `gregale slos create`.")
+		_, _ = fmt.Fprintln(w, "No SLOs defined. Create one with `gregale alert slo create`.")
 		return
 	}
 	_, _ = fmt.Fprintf(w, "%-36s  %-24s  %-26s  %s\n", "ID", "NAME", "OBJECTIVE", "WINDOW")
@@ -90,7 +112,7 @@ func cmdSLOsCreate(args []string) int {
 		return 1
 	}
 	if *slug == "" || *name == "" || *objective == 0 || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale slos create --app <slug> --name <name> --objective <pct> [--sli availability|latency --latency-threshold-ms N] [--window-days 7|30]", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo create --app <slug> --name <name> --objective <pct> [--sli availability|latency --latency-threshold-ms N] [--window-days 7|30]", "slos")
 		return 1
 	}
 	req := api.CreateSLORequest{Name: *name, SLI: *sli, LatencyThresholdMS: *threshold, ObjectivePct: *objective, WindowDays: *window}
@@ -115,11 +137,13 @@ func cmdSLOsCreate(args []string) int {
 func cmdSLOsRm(args []string) int {
 	fs := newFlagSet("slos rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
+	// rm never prompts; --yes is accepted like webhooks rm (Hunt 12 H12-37).
+	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale slos rm --app <slug> <slo-id>", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo delete --app <slug> <slo-id> [--yes]", "slos")
 		return 1
 	}
 	client, err := authedClient()

@@ -7,10 +7,10 @@
  */
 export type ReleaseGateResult = {
   name: string;
-  kind: 'slo' | 'new_errors' | 'custom_metric';
+  kind: 'slo' | 'new_errors' | 'custom_metric' | 'ai';
   passed: boolean;
   /**
-   * The burn rate, new error groups, or metric average.
+   * The burn rate, new error groups, metric average, or the release's AI metric.
    */
   observed: number;
   /**
@@ -18,7 +18,7 @@ export type ReleaseGateResult = {
    */
   bound: number;
   /**
-   * The release's requests, new-error events, or metric values.
+   * The release's requests, new-error events, metric values or AI calls.
    */
   samples: number;
   /**
@@ -33,5 +33,9 @@ export type ReleaseGateResult = {
    * What the gate measured, in one line.
    */
   summary: string;
+  /**
+   * True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says what it was waiting for.
+   */
+  not_judged?: boolean;
 };
 

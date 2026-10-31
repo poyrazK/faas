@@ -68,6 +68,9 @@ type branch struct {
 	RestoredAs      string `json:"restored_as"`
 	CreatedAt       string `json:"created_at"`
 	Default         bool   `json:"default"`
+	// LogicalSize is the branch's current logical size in bytes, which
+	// settings.quota.logical_size_bytes limits.
+	LogicalSize *int64 `json:"logical_size"`
 }
 
 type endpoint struct {
@@ -186,6 +189,9 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 			managedpostgres.MeterHistoryByteSeconds,
 			managedpostgres.MeterEgressBytes,
 		},
+		// PostgreSQL 14 reaches upstream end of life in November 2026, and
+		// Neon has no in-place major upgrade.
+		RetiringMajors: []int{14},
 	}
 }
 

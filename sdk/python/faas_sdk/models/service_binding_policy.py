@@ -1,10 +1,11 @@
 from typing import Literal
 
-ServiceBindingPolicy = Literal["account", "declared"]
+ServiceBindingPolicy = Literal["account", "declared", "project"]
 
 SERVICE_BINDING_POLICY_VALUES: set[ServiceBindingPolicy] = {
     "account",
     "declared",
+    "project",
 }
 
 

@@ -57,7 +57,7 @@ func TestAccessRevocationClosesIdleSessionAndRejectsReconnection(t *testing.T) {
 	reader := &testAccessReader{}
 	m := NewManager(Config{JWTAuthorizer: &recordingJWTAuthorizer{}, AccessPreview: true, AccessReader: reader}, nil)
 	defer m.Close()
-	if err := m.RegisterEndpoint(Endpoint{ID: "private", ClientAuth: AuthPolicy{Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example", JWKSURL: "https://issuer.example/jwks", Algorithms: []string{"RS256"}}}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "private", ClientAuth: AuthPolicy{Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example", JWKSURL: "https://issuer.example/jwks", Algorithms: []string{"RS256"}}}); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(m.Handler())

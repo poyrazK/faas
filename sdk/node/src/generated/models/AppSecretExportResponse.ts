@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One sealed secret in export form: key name, sealed ciphertext (sealed at rest per §11), version, and timestamps. Plaintext is never exported.
+ * One sealed secret in export form: key name, sealed ciphertext (sealed at rest), version, and timestamps. Plaintext is never exported.
  */
 export type AppSecretExportResponse = {
   app_id: string;

@@ -23,7 +23,7 @@ var shippedRuleFiles = []string{
 }
 
 // ruleFixtureGlobs match every promtool fixture CI runs (ci.yml's
-// "promtool check rules" step).
+// promtool-fixtures job).
 var ruleFixtureGlobs = []string{
 	"deploy/ansible/roles/prometheus/files/*.test.yml",
 	"pkg/promqlrules/testdata/*.test.yml",

@@ -14,3 +14,9 @@ func TestPgQualificationPinsWorkloadConfigurations(t *testing.T) {
 	store, _, _ := pgStoreWithPool(t)
 	testQualificationPinsWorkloadConfigurations(t, store)
 }
+
+// adr: 1139
+func TestPgQualificationRecordsProjectSecrets(t *testing.T) {
+	store, _, _ := pgStoreWithPool(t)
+	testQualificationRecordsProjectSecrets(t, store)
+}

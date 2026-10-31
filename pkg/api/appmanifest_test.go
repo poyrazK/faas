@@ -215,11 +215,17 @@ func TestManifestValidate(t *testing.T) {
 		}, true},
 		{"startup_deadline_s at scale cap ok", AppManifest{
 			Entrypoint:       []string{"x"},
-			StartupDeadlineS: 120, // DefaultStartupDeadlineS for Scale
+			StartupDeadlineS: 30, // the cold-boot window (ADR-138 amendment)
 		}, true},
-		{"startup_deadline_s over per-plan cap rejected", AppManifest{
+		// Hunt 12 H12-10: Scale accepted 120 s, and the app could then
+		// never cold boot (30 s window).
+		{"startup_deadline_s past the cold-boot window rejected", AppManifest{
 			Entrypoint:       []string{"x"},
-			StartupDeadlineS: 121,
+			StartupDeadlineS: 31,
+		}, false},
+		{"startup_deadline_s of the old Scale cap rejected", AppManifest{
+			Entrypoint:       []string{"x"},
+			StartupDeadlineS: 120,
 		}, false},
 		{"startup_deadline_s over absolute cap rejected", AppManifest{
 			Entrypoint:       []string{"x"},
@@ -446,8 +452,12 @@ func TestManifestValidate_PerPlanTierTightening(t *testing.T) {
 	}{
 		{"free_rejects_60s_startup", PlanFree, 60, false},   // Free cap=15
 		{"hobby_rejects_60s_startup", PlanHobby, 60, false}, // Hobby cap=30
-		{"pro_accepts_60s_startup", PlanPro, 60, true},
-		{"scale_accepts_120s_startup", PlanScale, 120, true},
+		// No plan accepts a startup longer than the 30 s cold-boot window
+		// (ADR-138 amendment, Hunt 12 H12-10).
+		{"pro_accepts_30s_startup", PlanPro, 30, true},
+		{"pro_rejects_60s_startup", PlanPro, 60, false},
+		{"scale_accepts_30s_startup", PlanScale, 30, true},
+		{"scale_rejects_120s_startup", PlanScale, 120, false},
 	}
 	for _, tc := range startupCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -565,8 +575,10 @@ func TestLimits_M2DefaultsPerPlan(t *testing.T) {
 	}{
 		{PlanFree, 15, 15, 3, 0, 0, 0},
 		{PlanHobby, 30, 30, 5, 1, 3, 300},
-		{PlanPro, 60, 60, 10, 3, 5, 1800},
-		{PlanScale, 120, 120, 20, 10, 20, 3600},
+		// Startup deadlines stop at the 30 s cold-boot window (ADR-138
+		// amendment, Hunt 12 H12-10).
+		{PlanPro, 60, 30, 10, 3, 5, 1800},
+		{PlanScale, 120, 30, 20, 10, 20, 3600},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.plan), func(t *testing.T) {

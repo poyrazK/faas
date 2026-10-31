@@ -4,18 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// previewDependencyParents selects only the bound workload's transitive
-// depends_on closure. An unrelated service in the same repository never gets
-// a PR preview merely because it was discovered by the scanner.
+// previewDependencyParents selects the bound workload's transitive
+// depends_on closure. Under the project service policy the bound preview may
+// call any service of its project without declaring it, so every callable
+// sibling at the PR head joins the preview too (ADR-20261025093331); workers,
+// jobs and scheduled workloads join only as declared dependencies. Otherwise
+// an unrelated service never gets a PR preview merely because the scanner
+// discovered it.
 func (s *Service) previewDependencyParents(ctx context.Context, parent state.App, scan reposcan.Result, prNumber int) ([]state.App, error) {
 	if parent.ProjectID == "" {
 		return nil, nil // legacy single-app bindings have no project graph
@@ -28,13 +36,13 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 	for _, workload := range scan.Workloads {
 		key := strings.ToLower(workload.Name)
 		if _, duplicate := workloads[key]; duplicate {
-			return nil, fmt.Errorf("githubd: ambiguous PR workload %q", workload.Name)
+			return nil, previewSetupFailure("the project declares the workload %q more than once", workload.Name)
 		}
 		workloads[key] = workload
 	}
 	root := strings.ToLower(parent.WorkloadName)
 	if _, found := workloads[root]; !found {
-		return nil, fmt.Errorf("githubd: bound workload %q is absent from PR source", parent.WorkloadName)
+		return nil, previewSetupFailure("the previewed workload %q is not in the project at this commit", parent.WorkloadName)
 	}
 	selected := make(map[string]reposcan.Workload)
 	var visit func(string) error
@@ -48,7 +56,7 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 			if managed[key] {
 				return nil // external managed services are not app previews
 			}
-			return fmt.Errorf("githubd: PR workload %q depends on missing service %q", parent.WorkloadName, name)
+			return previewSetupFailure("a workload depends on %q, which is not in the project at this commit", name)
 		}
 		selected[key] = workload
 		for _, dependency := range workload.DependsOn {
@@ -61,14 +69,6 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 	if err := visit(root); err != nil {
 		return nil, err
 	}
-	closure := make([]reposcan.Workload, 0, len(selected))
-	for _, workload := range selected {
-		closure = append(closure, workload)
-	}
-	order, err := reposcan.DependencyOrder(closure, scan.Managed)
-	if err != nil {
-		return nil, fmt.Errorf("githubd: PR dependency graph: %w", err)
-	}
 	production, err := s.Reconcile.Store.AppsForProject(ctx, parent.AccountID, parent.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("githubd: list production dependency apps: %w", err)
@@ -76,6 +76,23 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 	byWorkload := make(map[string]state.App, len(production))
 	for _, app := range production {
 		byWorkload[strings.ToLower(app.WorkloadName)] = app
+	}
+	if previewCallsWholeProject(parent, workloads[root]) {
+		for key, workload := range workloads {
+			if callablePreviewSibling(workload, byWorkload[key]) {
+				if err := visit(key); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	closure := make([]reposcan.Workload, 0, len(selected))
+	for _, workload := range selected {
+		closure = append(closure, workload)
+	}
+	order, err := reposcan.DependencyOrder(closure, scan.Managed)
+	if err != nil {
+		return nil, previewSetupFailure("the project's service dependencies are invalid: %s", err)
 	}
 	parents := make([]state.App, 0, len(order)-1)
 	for _, name := range order {
@@ -87,19 +104,35 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 		if !found {
 			// A PR may introduce a new dependency before it exists in
 			// production. Start with a clean preview template, without
-			// copying the root app's env or credentials.
+			// copying the root app's env or credentials. It answers on a
+			// guessable preview host, so it keeps the bound app's access
+			// and egress gates, and the visibility production would give
+			// it: a service without ports or declared internal stays off
+			// the internet. The bound app's declared-route contract is
+			// not its contract: the routes are another service's, so they
+			// would refuse this one's (ADR-20261031120000).
 			if !api.ValidAppSlug(name) {
-				return nil, fmt.Errorf("githubd: PR dependency %q is not a valid app slug", name)
+				return nil, previewSetupFailure("the new service %q needs a name of 3 to 40 lowercase letters, digits and dashes to be previewed", name)
 			}
-			app = state.App{
-				AccountID: parent.AccountID, ProjectID: parent.ProjectID,
+			// Its preview answers on pr-<N>-<name>, the host of <name>'s own
+			// PR previews. An app that already holds the name, in any
+			// account, owns that host: taking it would serve this PR's code
+			// as that app's preview and fail that app's own PR previews.
+			if holder, holderErr := s.Reconcile.Store.AppBySlug(ctx, name); holderErr == nil && holder.ID != "" {
+				return nil, previewSetupFailure("the new service %q has the name of an existing Gregale app, so it cannot be previewed under that name; give the service a unique name", name)
+			} else if holderErr != nil && !errors.Is(holderErr, state.ErrNotFound) {
+				return nil, fmt.Errorf("githubd: check new service name %q: %w", name, holderErr)
+			}
+			app = withAccessGates(state.App{
+				AccountID: parent.AccountID, OrgID: parent.OrgID, ProjectID: parent.ProjectID,
 				Slug: name, WorkloadName: name, Type: state.AppTypeApp,
 				RAMMB: 128, MaxConcurrency: 1, CPUMillicores: api.DefaultAppCPUMillicores,
-				Status: state.AppActive,
-			}
+				Status:     state.AppActive,
+				Visibility: reposcan.NewWorkloadVisibility(workloads[key]),
+			}, parent)
 		}
-		if app.Status != state.AppActive {
-			return nil, fmt.Errorf("githubd: PR dependency %q has no active production app", name)
+		if !previewableProductionApp(app) {
+			return nil, previewSetupFailure("the dependency %q has a production app that is not active", name)
 		}
 		// A production app can appear after the first PR preview, possibly
 		// with a different slug. Reuse the already-reserved preview identity
@@ -107,17 +140,41 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 		existing, err := s.Reconcile.Store.PreviewAppByProjectWorkload(ctx,
 			parent.AccountID, parent.ProjectID, prNumber, name)
 		if err == nil {
-			expected, slugErr := previewSlug(existing.PreviewOfSlug, prNumber)
-			if slugErr != nil || existing.Slug != expected {
-				return nil, fmt.Errorf("githubd: PR dependency %q has inconsistent preview identity: %w", name, state.ErrConflict)
+			// Renaming the production app relinks its previews to the new
+			// name but leaves their pr-<N>-<old> host. Such a preview is not
+			// reused: this head reserves pr-<N>-<new> and the set
+			// replacement retires the old row.
+			if expected, slugErr := previewSlug(existing.PreviewOfSlug, prNumber); slugErr == nil && existing.Slug == expected {
+				app.Slug = existing.PreviewOfSlug
 			}
-			app.Slug = existing.PreviewOfSlug
 		} else if !errors.Is(err, state.ErrNotFound) {
 			return nil, fmt.Errorf("githubd: resolve existing PR dependency %q: %w", name, err)
 		}
 		parents = append(parents, app)
 	}
 	return parents, nil
+}
+
+// previewCallsWholeProject reports whether the bound preview runs under the
+// project service policy: the PR head's declaration, else the policy the
+// production app already has, as reconcile applies it to the preview.
+func previewCallsWholeProject(parent state.App, root reposcan.Workload) bool {
+	policy := parent.Manifest.EffectiveServiceBindingPolicy()
+	if root.ServiceBindingPolicy != "" {
+		policy = api.ServiceBindingPolicy(root.ServiceBindingPolicy).Effective()
+	}
+	return policy == api.ServiceBindingPolicyProject
+}
+
+// callablePreviewSibling reports whether a project sibling serves calls.
+// A worker, job or scheduled workload consumes production queues or runs on
+// a timer; it joins a preview only when a service declares it in depends_on.
+func callablePreviewSibling(workload reposcan.Workload, production state.App) bool {
+	if workload.Schedule != "" || len(workload.Schedules) > 0 ||
+		workload.Class == reposcan.ClassJob || workload.Class == reposcan.ClassWorker {
+		return false
+	}
+	return production.WorkloadClass != state.WorkloadClassJob && production.WorkloadClass != state.WorkloadClassWorker
 }
 
 // makePRDependencyPreview builds the desired sibling row. The caller reserves
@@ -130,34 +187,126 @@ func previewManifest(parent state.AppManifest) state.AppManifest {
 	return parent
 }
 
+// prHeadComposeValues reads the plain values the PR head's Compose file
+// declares, for each service by lower-cased name, under the same opt-in and
+// rules as a project deploy (ADR-20261026181020). They come from the PR's own
+// source, so a preview may run with them (ADR-20261028090000). An unreadable
+// Compose environment imports nothing, as on a project deploy.
+func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, opts reposcan.ScanOptions, limits api.Limits) map[string]map[string]string {
+	env, err := reposcan.ReadProjectEnv(fsys, opts)
+	if err != nil || !env.ImportsAny() {
+		return nil
+	}
+	callable := make([]string, 0, len(scan.Workloads))
+	for _, workload := range scan.Workloads {
+		callable = append(callable, workload.Name)
+	}
+	out := make(map[string]map[string]string, len(scan.Workloads))
+	for _, workload := range scan.Workloads {
+		if values := projectsetup.PlanEnvImport(env, workload.Name, callable, limits, !opts.HTTPSTransportUnavailable).Values; len(values) > 0 {
+			out[strings.ToLower(workload.Name)] = values
+		}
+	}
+	return out
+}
+
+// withPRHeadValues adds a preview's PR head values to its manifest
+// environment. Platform-owned keys, such as the service binding URLs, win.
+func withPRHeadValues(env, values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return env
+	}
+	merged := make(map[string]string, len(env)+len(values))
+	for key, value := range values {
+		merged[key] = value
+	}
+	for key, value := range env {
+		merged[key] = value
+	}
+	return merged
+}
+
+// withParentAccessGates copies the parent's access, egress and route gates
+// onto a PR preview of the parent.
+func withParentAccessGates(preview, parent state.App) state.App {
+	preview = withAccessGates(preview, parent)
+	// The declared-route contract answers undeclared paths at the gateway; a
+	// preview without it served every path the production app hides.
+	preview.OnlyAllowDeclaredRoutes = parent.OnlyAllowDeclaredRoutes
+	preview.DeclaredRoutes = append([]state.DeclaredRoute(nil), parent.DeclaredRoutes...)
+	return preview
+}
+
+// withAccessGates copies the access and egress gates of from onto a PR
+// preview. A preview answers on a guessable pr-<n>-<slug> host and runs the PR
+// head, so the preview of an IP-allowlisted, password-protected, signed-only
+// or egress-restricted app must keep those gates; the developer preview API
+// already copies them.
+func withAccessGates(preview, from state.App) state.App {
+	preview.RequireAuthn = from.RequireAuthn
+	preview.PublicAuthMode = from.PublicAuthMode
+	preview.PublicAuthBasicSealed = append([]byte(nil), from.PublicAuthBasicSealed...)
+	preview.PublicAuthIPAllowlist = append([]netip.Prefix(nil), from.PublicAuthIPAllowlist...)
+	preview.ConsumerAuthMode = from.ConsumerAuthMode
+	preview.RequireSigned = from.RequireSigned
+	preview.EgressAllowlist = append([]netip.Prefix(nil), from.EgressAllowlist...)
+	return preview
+}
+
 func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time, policy state.GitHubDeployPolicy) (state.App, error) {
 	slug, err := previewSlug(parent.Slug, prNumber)
 	if err != nil {
 		return state.App{}, err
 	}
-	return applyGitHubRootPolicy(state.App{
-		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Type: parent.Type,
+	return withParentAccessGates(applyGitHubRootPolicy(state.App{
+		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Visibility: parent.Visibility, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, MaxConcurrency: parent.MaxConcurrency,
 		IdleTimeoutS: parent.IdleTimeoutS, ProjectID: parent.ProjectID,
+		CPUMillicores: parent.CPUMillicores, StreamingEnabled: parent.StreamingEnabled,
+		WebSocketEnabled: parent.WebSocketEnabled, RouteMetricsEnabled: parent.RouteMetricsEnabled,
 		RootDir: parent.RootDir, WorkloadName: parent.WorkloadName,
 		WorkloadClass: parent.WorkloadClass, StartCommand: parent.StartCommand,
 		Manifest: previewManifest(parent.Manifest), AppProtocol: parent.AppProtocol, Status: state.AppActive,
 		PreviewOfSlug: parent.Slug, PreviewPrNumber: prNumber,
 		PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiresAt,
-	}, policy), nil
+	}, policy), parent), nil
 }
 
-func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy) (state.App, error) {
+func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy, headValues, platform map[string]string) (state.App, error) {
 	// Also clear environment values on an existing preview. Earlier preview
 	// rows inherited parent values; a synchronize event must not retain them.
 	preview.Manifest = previewManifest(preview.Manifest)
 	desired := reconcile.ApplyScannedWorkloadToApp(preview, workload, available)
+	desired.Manifest.Env = withPRHeadValues(desired.Manifest.Env, headValues)
+	if len(platform) > 0 && desired.Manifest.Env == nil {
+		desired.Manifest.Env = make(map[string]string, len(platform))
+	}
+	for key, value := range platform {
+		desired.Manifest.Env[key] = value // GREGALE_ is reserved: the platform's values win
+	}
 	desired = applyGitHubRootPolicy(desired, policy)
-	return s.Reconcile.Store.UpdateApp(ctx, preview.ID, state.UpdateAppParams{
+	params := state.UpdateAppParams{
 		RootDir: &desired.RootDir, WorkloadName: &desired.WorkloadName,
 		WorkloadClass: &desired.WorkloadClass, StartCommand: &desired.StartCommand,
 		Manifest: &desired.Manifest,
-	})
+	}
+	// A preview runs with the resources its head declares (ADR-20261023120000).
+	if !workload.Resources.IsZero() {
+		params.RAMMB, params.CPUMillicores, params.MaxConcurrency = &desired.RAMMB, &desired.CPUMillicores, &desired.MaxConcurrency
+	}
+	return s.Reconcile.Store.UpdateApp(ctx, preview.ID, params)
+}
+
+// previewPlatformEnv tells a PR preview what it is running: app code could
+// otherwise not tell a preview from production without a value the customer
+// set in the pr-preview scope. The values follow the PR head on every push.
+func previewPlatformEnv(ev PullRequestEvent) map[string]string {
+	return map[string]string{
+		"GREGALE_PREVIEW":    "1",
+		"GREGALE_PR_NUMBER":  strconv.Itoa(ev.Number),
+		"GREGALE_GIT_BRANCH": ev.PullRequest.HeadRef,
+		"GREGALE_GIT_COMMIT": ev.PullRequest.HeadSHA,
+	}
 }
 
 // closePRDependencies advances every sibling in the same project and PR to

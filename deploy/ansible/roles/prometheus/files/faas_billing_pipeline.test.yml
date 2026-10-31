@@ -1,0 +1,82 @@
+# ADR-20261029180000: meterd billing pipeline and Polar webhook alerts.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: a record stuck past 30 minutes fires; healthy ticks stay quiet
+    interval: 1m
+    input_series:
+      # Healthy ticks read 60-120 s, then one minute stays unrecorded.
+      - series: meterd_usage_final_lag_seconds{job="meterd",instance="cp"}
+        values: 90x29 120+60x90
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: FaasMeterdUsageDeliveryStalled
+        exp_alerts: []
+      - eval_time: 85m
+        alertname: FaasMeterdUsageDeliveryStalled
+        exp_alerts: []
+      - eval_time: 95m
+        alertname: FaasMeterdUsageDeliveryStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: billing_delivery
+              public_status: internal
+              job: meterd
+              instance: cp
+            exp_annotations:
+              summary: meterd holds back usage older than 30 minutes
+              description: "The oldest closed minute of meterd's 72 h catch-up window that is not recorded compute-complete is 1h 7m 0s old. The provider pusher delivers usage only for hours before that minute, so every account's usage waits and cost reports lose coverage (ADR-1162, ADR-20261029180000). A new environment shows this until its first catch-up finishes, about five hours."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md
+  - name: three failed Polar webhook answers in 30 minutes fire
+    interval: 1m
+    input_series:
+      - series: apid_ops_total{job="apid",instance="cp",op="polar_webhook",code="ok"}
+        values: 0+1x60
+      - series: apid_ops_total{job="apid",instance="cp",op="polar_webhook",code="unavailable"}
+        values: 0x10 1x10 2x10 3x30
+      - series: apid_ops_total{job="apid",instance="cp",op="polar_webhook",code="rejected"}
+        values: 0x60
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasPolarWebhookFailing
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: FaasPolarWebhookFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: billing_webhooks
+              public_status: internal
+            exp_annotations:
+              summary: apid answered 3 Polar webhooks with an error in 30 minutes
+              description: "Polar disables a webhook endpoint after ten consecutive non-2xx deliveries. rejected means a bad signature or body (check the webhook secret); unavailable means apid could not apply the event. Reconciliation repairs subscription state every 30 minutes, but invoices and refunds arrive only by webhook."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/PolarBillingWebhooks.md
+  - name: sample ticks failing for 15 minutes fire; one failure does not
+    interval: 1m
+    input_series:
+      - series: meterd_ops_total{job="meterd",instance="cp",op="sample",code="err"}
+        values: 0x10 1x20 1+1x40
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasMeterdSampleFailing
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: FaasMeterdSampleFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: billing_delivery
+              public_status: internal
+              job: meterd
+              instance: cp
+              op: sample
+              code: err
+            exp_annotations:
+              summary: meterd sample ticks keep failing
+              description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 72 h."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md

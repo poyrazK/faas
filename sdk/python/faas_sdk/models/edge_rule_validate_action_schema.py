@@ -12,8 +12,8 @@ T = TypeVar("T", bound="EdgeRuleValidateActionSchema")
 @_attrs_define
 class EdgeRuleValidateActionSchema:
     """Inline JSON Schema document (Draft 2020-12). The schema
-    is preserved byte-exact across apid↔gatewayd round-trips
-    so the SHA-256 cache key in `pkg/edgevalidate` is stable.
+    is preserved byte-exact across the API↔the gateway round-trips
+    so the SHA-256 cache key is stable.
 
     """
 

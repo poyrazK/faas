@@ -1,0 +1,99 @@
+---
+# serving_probe (ADR-20261023124955 §5). See defaults/main.yml.
+
+- name: serving_probe — remove the probe while no URL is configured
+  when: faas_serving_probe_urls | length == 0
+  block:
+    - name: serving_probe — stop and disable the timer
+      ansible.builtin.systemd:
+        name: faas-serving-probe.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: serving_probe — remove units, helper and configuration
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/faas-serving-probe.timer
+        - /etc/systemd/system/faas-serving-probe.service
+        - /etc/faas/serving-probe.env
+        - /usr/local/sbin/faas-serving-probe
+        - /var/lib/node_exporter/textfile_collector/serving-probe.prom
+      notify: daemon-reload serving probe
+
+- name: serving_probe — install and enable the probe
+  when: faas_serving_probe_urls | length > 0
+  block:
+    - name: serving_probe — validate configuration
+      ansible.builtin.assert:
+        that:
+          - faas_serving_probe_urls | select('match', '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~!&()*+,;=:@%/?-]*)?$') | list | length == faas_serving_probe_urls | length
+          - faas_serving_probe_timeout_seconds | int >= 1
+          - faas_serving_probe_retry_delay_seconds | int >= 0
+          - faas_serving_probe_interval | string is match('^[0-9]+(s|min|h)$')
+        fail_msg: >-
+          faas_serving_probe_urls must be https URLs without spaces or quotes
+          (got {{ faas_serving_probe_urls }}); the timeout must be at least 1 s
+          and the interval a systemd time span such as 5min.
+
+    - name: serving_probe — stat the webhook credential
+      ansible.builtin.stat:
+        path: "{{ faas_serving_probe_secrets_dir }}/webhook_url"
+      register: serving_probe_webhook_file
+
+    - name: serving_probe — stat the optional heartbeat credential
+      ansible.builtin.stat:
+        path: "{{ faas_serving_probe_secrets_dir }}/heartbeat_url"
+      register: serving_probe_heartbeat_file
+
+    # The webhook is the only alert path that survives a control-plane outage,
+    # so a probe without one would fail silently. Both files are credentials:
+    # the role checks owner and mode, never reads them.
+    - name: serving_probe — require root-only credential files
+      ansible.builtin.assert:
+        that:
+          - serving_probe_webhook_file.stat.exists
+          - serving_probe_webhook_file.stat.pw_name == 'root'
+          - serving_probe_webhook_file.stat.mode == '0400'
+          - not serving_probe_heartbeat_file.stat.exists or (serving_probe_heartbeat_file.stat.pw_name == 'root' and serving_probe_heartbeat_file.stat.mode == '0400')
+        fail_msg: >-
+          Create {{ faas_serving_probe_secrets_dir }}/webhook_url (and optionally
+          heartbeat_url) as root:root 0400 before listing probe URLs. See
+          docs/ops/serving-probe.md.
+
+    - name: serving_probe — install the probe helper
+      ansible.builtin.copy:
+        src: faas-serving-probe
+        dest: /usr/local/sbin/faas-serving-probe
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: serving_probe — render configuration
+      ansible.builtin.template:
+        src: faas-serving-probe.env.j2
+        dest: /etc/faas/serving-probe.env
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: serving_probe — install service and timer
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - faas-serving-probe.service
+        - faas-serving-probe.timer
+      notify: daemon-reload serving probe
+
+    - name: serving_probe — enable the timer
+      ansible.builtin.systemd:
+        name: faas-serving-probe.timer
+        enabled: true
+        state: started
+        daemon_reload: true

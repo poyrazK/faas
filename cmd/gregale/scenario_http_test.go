@@ -172,3 +172,57 @@ func TestOpenAPITestScaffoldCapsManifestSteps(t *testing.T) {
 		t.Fatalf("large scaffold = (%d steps, %d skipped, %v)", len(steps), skipped, err)
 	}
 }
+
+// In a monorepo the OpenAPI document sits in its workload directory; the
+// scaffold used to write `source: .` (the repository root, holding several
+// workloads), so `gregale test --validate` failed until it was edited by hand.
+func TestCmdTestInitDefaultsSourceToTheDocumentsWorkload(t *testing.T) {
+	spec := []byte(`openapi: 3.1.0
+info: {title: Gateway, version: 1.0.0}
+paths:
+  /healthz:
+    get:
+      security: []
+      responses: {'200': {description: OK}}
+`)
+	for _, tc := range []struct {
+		name, specDir, source, want string
+		marker                      bool
+	}{
+		{name: "document inside a workload", specDir: "services/gateway", marker: true, want: "./services/gateway"},
+		{name: "document outside any workload", specDir: "docs", want: "."},
+		{name: "document beside the manifest", specDir: ".", marker: true, want: "."},
+		{name: "explicit source wins", specDir: "services/gateway", marker: true, source: "./services/other", want: "./services/other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, tc.specDir)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.marker {
+				if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			specPath, manifestPath := filepath.Join(dir, "openapi.json"), filepath.Join(root, "gregale-test.yaml")
+			if err := os.WriteFile(specPath, spec, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"--from", specPath, "--project", "pulse-mesh", "--output", manifestPath}
+			if tc.source != "" {
+				args = append(args, "--source", tc.source)
+			}
+			if code := main.CmdTestInit(args); code != 0 {
+				t.Fatalf("test init exit = %d", code)
+			}
+			body, err := os.ReadFile(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), "source: "+tc.want+"\n") {
+				t.Fatalf("manifest source, want %q:\n%s", tc.want, body)
+			}
+		})
+	}
+}

@@ -186,9 +186,17 @@ func TestCommandCronObservationStoreLifecycle(t *testing.T) {
 			}
 			assert(commandCronDisabled, time.Time{})
 			enabled := true
-			if _, err := s.UpdateCron(ctx, c.ID, nil, nil, &enabled, nil); err != nil {
+			reenabled, err := s.UpdateCron(ctx, c.ID, nil, nil, &enabled, nil)
+			if err != nil {
 				t.Fatal(err)
 			}
+			// ADR-20261026201726: enabling restarts the schedule at the
+			// anchor, so the cron is next due at the following boundary.
+			if reenabled.ScheduleAnchorAt.IsZero() {
+				t.Fatal("enable did not anchor the schedule", reenabled)
+			}
+			assert(commandCronNotDue, time.Time{})
+			now = reenabled.ScheduleAnchorAt.UTC().Truncate(time.Minute).Add(time.Minute)
 			if err := s.UpdateDeploymentStatus(ctx, d.ID, state.DeployFailed, ""); err != nil {
 				t.Fatal(err)
 			}

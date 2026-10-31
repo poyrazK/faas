@@ -33,9 +33,9 @@ func TestEdgeRulesSuggestCommand(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"POST /login received 900 requests",
-		"gregale edge-rules recipe rate-limit-path --app demo --set methods=POST --set path=/login",
-		"Or challenge visitors on a path: gregale edge-rules recipe challenge-path --app demo --set path=/login",
-		"gregale edge-rules recipe allow-ips-only --app demo --set 'path=/admin/**' --set cidrs=<cidrs>",
+		"gregale edge rule recipe apply rate-limit-path --app demo --set methods=POST --set path=/login",
+		"Or challenge visitors on a path: gregale edge rule recipe apply challenge-path --app demo --set path=/login",
+		"gregale edge rule recipe apply allow-ips-only --app demo --set 'path=/admin/**' --set cidrs=<cidrs>",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)

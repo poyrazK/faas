@@ -8,9 +8,10 @@ is the queue in front of its own pool, not Postgres.
 The counter behind the alert, `<daemon>_db_pool_canceled_acquires_total`, is
 deliberately the one without a warm-up floor. Its sibling
 `_db_pool_empty_acquires_total` also counts acquisitions that found no idle
-connection, but pools run `MinConns=0`, so every daemon necessarily posts
-empty acquires while warming up. A cancelled acquire cannot happen that way:
-someone gave up waiting.
+connection, but pools start empty (`MinConns=0`, or a warm floor from
+`pkg/db.DaemonMinConnections` opened in the background), so every daemon
+necessarily posts empty acquires while warming up. A cancelled acquire
+cannot happen that way: someone gave up waiting.
 
 pkg/db counts it with a pgxpool acquire tracer rather than pgxpool's own
 `CanceledAcquireCount`, which also counts an acquisition whose context had

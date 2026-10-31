@@ -35,6 +35,18 @@
     update_cache: true
     cache_valid_time: 3600
 
+# ADR-1749: the public forward guard needs nftables 1.1.3+, which Ubuntu 24.04
+# does not ship. Rendering it for the distro nft would refuse every native boot.
+- name: nftables — public forwarding requires its host prerequisites
+  ansible.builtin.assert:
+    that:
+      - not (faas_public_forwarding | bool) or (faas_public_forward_host | bool)
+    fail_msg: "faas_public_forwarding needs faas_public_forward_host (nftables {{ nftables_upstream_version }}+, loose rp_filter)"
+
+- name: nftables — install the pinned upstream nftables
+  ansible.builtin.include_tasks: upstream.yml
+  when: faas_public_forward_host | bool
+
 - name: nftables — inspect any pre-existing nftables.conf
   ansible.builtin.stat:
     path: /etc/nftables.conf
@@ -94,6 +106,28 @@
 - name: nftables — bring the tenant bridge up
   ansible.builtin.command: ip link set {{ tenant_bridge }} up
   changed_when: false
+
+# ADR-1749: public forwarding replies must not be dropped by strict
+# reverse-path filtering on the tenant bridge (VMMD checks the effective
+# max(all, bridge) value before every native boot). The drop-in sorts after
+# the image's 60-gce-network-security.conf, and systemd's udev rule applies
+# per-interface keys whenever the bridge is created at boot.
+- name: nftables — loose reverse-path filtering on the tenant bridge (drop-in)
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/90-faas-public-forward.conf
+    content: |
+      # Managed by Gregale Ansible; do not edit. ADR-1749 public forwarding.
+      net.ipv4.conf.{{ tenant_bridge }}.rp_filter = 2
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_public_forward_host | bool
+
+# Apply on every run: the bridge may have been recreated since the last boot.
+- name: nftables — loose reverse-path filtering on the tenant bridge (now)
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/90-faas-public-forward.conf
+  changed_when: false
+  when: faas_public_forward_host | bool
 
 # Boot-persistent bridge (tier-1, closes #134). The oneshot unit runs on
 # every boot BEFORE nftables.service (see Before= in the unit file), so the
@@ -172,6 +206,15 @@
     fail_msg: Cloudflare-only origin ingress requires non-empty pinned IPv4 and IPv6 ranges.
   when: faas_cloudflare_origin_only | bool
 
+# The input chain's br-tenants rules let guests reach only the bridge
+# services (the per-netns chain narrows the ports), the public edge for
+# hairpin calls, and ICMP; the drop keeps bridge traffic from the rules below
+# (spec §11, ADR-20261020123000). That rationale lives here, not as a Jinja
+# comment in the template: ansible.builtin.template renders with
+# trim_blocks, so a `{#- ... #}` line there joined `iif lo accept` to the
+# next rule and the rc.291 control-plane converge failed `nft -c`
+# (2026-10-24). scripts/egress-render-cross-check.sh renders with the same
+# trim_blocks setting.
 - name: nftables — render faas ruleset into /etc/nftables.conf (per-host, ADR-055)
   ansible.builtin.template:
     src: policy_nftables.conf.j2

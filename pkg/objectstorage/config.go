@@ -33,6 +33,9 @@ type Config struct {
 	PublicEndpoint    string                    `json:"public_endpoint,omitempty"`
 	PublicRegion      string                    `json:"public_region,omitempty"`
 	Backends          []BackendConfig           `json:"backends"`
+	// Pools lists, per region, the backends that receive new buckets in fill
+	// order (ADR-20261029174627). A region without a pool uses its default.
+	Pools map[string][]string `json:"pools,omitempty"`
 }
 
 type BackendConfig struct {
@@ -61,6 +64,9 @@ type BackendConfig struct {
 	GCSImpersonateServiceAccount bool     `json:"gcs_impersonate_service_account,omitempty"`
 	AllowedOrigins               []string `json:"allowed_origins,omitempty"`
 	AllowHTTP                    bool     `json:"allow_http,omitempty"`
+	// MaxBuckets caps the live buckets placed on this backend; 0 is no
+	// ceiling. Set it below the provider's per-account bucket quota.
+	MaxBuckets int64 `json:"max_buckets,omitempty"`
 }
 
 // UsageConfig selects the provider-specific authoritative usage adapter. It
@@ -90,6 +96,7 @@ type Registry struct {
 	PublicRegion      string
 	backends          map[string]Backend
 	defaults          map[string]string
+	pools             map[string][]string
 }
 
 type Factory func(BackendConfig, func(string) string) (Provider, error)
@@ -132,7 +139,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	if !validRegion.MatchString(c.PublicRegion) {
 		return nil, errors.New("object storage: invalid public_region")
 	}
-	r := &Registry{DefaultRegion: c.DefaultRegion, MaxBucketsPerApp: c.MaxBucketsPerApp, MaxUploadBytes: c.MaxUploadBytes, PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), PublicRegion: c.PublicRegion, backends: map[string]Backend{}, defaults: map[string]string{}}
+	r := &Registry{DefaultRegion: c.DefaultRegion, MaxBucketsPerApp: c.MaxBucketsPerApp, MaxUploadBytes: c.MaxUploadBytes, PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), PublicRegion: c.PublicRegion, backends: map[string]Backend{}, defaults: map[string]string{}, pools: map[string][]string{}}
 	r.MaxSinglePutBytes, r.MaxPartBytes = c.MaxSinglePutBytes, c.MaxPartBytes
 	r.Transfer, err = NormalizeObjectTransfer(c.Transfer, c.MaxSinglePutBytes, c.MaxPartBytes)
 	if err != nil {
@@ -147,8 +154,10 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if r.Accounting.GatewaySafety() && r.Accounting.GatewayMeteringSince.After(time.Now().UTC()) {
 			return nil, errors.New("object storage: gateway metering coverage cannot begin in the future")
 		}
-		if r.Accounting.GatewaySafety() && (c.Pricing != nil || c.PublicEndpoint == "" || r.Transfer.Profile != "proxied") {
-			return nil, errors.New("object storage: gateway safety accounting requires a public gateway, proxied transfers and no pricing")
+		// Gateway safety meters stored bytes itself but not provider-side
+		// requests or egress, so it prices storage only (ADR-20261024132844).
+		if r.Accounting.GatewaySafety() && (c.Pricing != nil && !c.Pricing.StorageOnly() || c.PublicEndpoint == "" || r.Transfer.Profile != "proxied") {
+			return nil, errors.New("object storage: gateway safety accounting requires a public gateway, proxied transfers and storage-only pricing")
 		}
 	}
 	if c.Pricing != nil {
@@ -162,7 +171,11 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	validGCSLocation := regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
 	validGCSServiceAccount := regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,126}@[a-z0-9.-]+\.gserviceaccount\.com$`)
 	encryptionOwners := map[string]string{}
+	configs := map[string]BackendConfig{}
 	for _, b := range c.Backends {
+		if b.MaxBuckets < 0 || b.MaxBuckets > api.MaxObjectStorageBackendBuckets {
+			return nil, fmt.Errorf("object storage: backend %s has an invalid max_buckets", b.ID)
+		}
 		if b.OwnedNodeUsageCounters && !b.OwnedNodeReceipts {
 			return nil, errors.New("object storage: owned node usage counters require owned node receipts")
 		}
@@ -265,7 +278,8 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if b.ObjectLock.Enabled && !SupportsNativeObjectLock(p) {
 			return nil, fmt.Errorf("object storage: backend %s lacks its declared Object Lock contract", b.ID)
 		}
-		r.backends[b.ID] = Backend{ObjectLock: b.ObjectLock, Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
+		r.backends[b.ID] = Backend{ObjectLock: b.ObjectLock, Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage, MaxBuckets: b.MaxBuckets}
+		configs[b.ID] = b
 	}
 	for region, id := range c.Defaults {
 		b, ok := r.backends[id]
@@ -273,6 +287,14 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 			return nil, errors.New("object storage: default references missing backend or mismatched region")
 		}
 		r.defaults[region] = id
+		r.pools[region] = []string{id}
+	}
+	for region, ids := range c.Pools {
+		if err := validatePool(region, ids, c.Defaults, configs); err != nil {
+			return nil, err
+		}
+		r.defaults[region] = ids[0]
+		r.pools[region] = append([]string(nil), ids...)
 	}
 	if _, ok := r.defaults[r.DefaultRegion]; !ok {
 		return nil, errors.New("object storage: default_region is not configured")
@@ -301,7 +323,9 @@ func (r *Registry) Backends() []Backend {
 // deployments can qualify accounting and safety budgets before choosing
 // customer prices. The allowance is the account plan's included usage.
 func (r *Registry) ChargeForUsage(usage api.ObjectStorageUsage, allowance api.ObjectStorageAllowance) (*api.ObjectStorageCharge, error) {
-	if r == nil || r.Pricing == nil || r.Accounting.GatewaySafety() {
+	// Gateway safety charges once Gregale meters every live bucket's storage
+	// (ADR-20261024132844); until then there is no estimate.
+	if r == nil || r.Pricing == nil || r.Accounting.GatewaySafety() && !usage.Chargeable() {
 		return nil, nil
 	}
 	charge, err := CalculateCharge(*r.Pricing, usage, allowance)
@@ -362,8 +386,16 @@ func (r *Registry) CanProvision(region string) bool {
 	if r == nil || !r.Accounting.Valid() {
 		return false
 	}
-	backend, err := r.Default(region)
-	return err == nil && (r.Accounting.GatewaySafety() || backend.UsageReportsPath != "")
+	backends, err := r.Placements(region)
+	if err != nil {
+		return false
+	}
+	for _, backend := range backends {
+		if !r.Accounting.GatewaySafety() && backend.UsageReportsPath == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // CanProvisionAllRegions is the conservative customer-facing availability
@@ -391,6 +423,33 @@ func (r *Registry) Resolve(id, placementFingerprint string) (Backend, error) {
 	b.Encryption = cloneEncryptionConfig(b.Encryption)
 	b.AllowedOrigins = append([]string(nil), b.AllowedOrigins...)
 	return b, nil
+}
+
+// Placements returns the backends that receive new buckets in region, in
+// fill order (ADR-20261029174627). A region without a pool has its default.
+func (r *Registry) Placements(region string) ([]Backend, error) {
+	if r == nil {
+		return nil, ErrUnavailable
+	}
+	ids, ok := r.pools[region]
+	if !ok {
+		return nil, ErrInvalid
+	}
+	out := make([]Backend, 0, len(ids))
+	for _, id := range ids {
+		b := r.backends[id]
+		b.Encryption = cloneEncryptionConfig(b.Encryption)
+		b.AllowedOrigins = append([]string(nil), b.AllowedOrigins...)
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// PlacementLimited reports whether a new bucket in region needs the state
+// store's placement check: its pool has several backends or a ceiling.
+func (r *Registry) PlacementLimited(region string) bool {
+	backends, err := r.Placements(region)
+	return err == nil && (len(backends) > 1 || backends[0].MaxBuckets > 0)
 }
 
 func (r *Registry) Regions() []string {

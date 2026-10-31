@@ -145,3 +145,56 @@ func TestFailureReportHostedRelayAcknowledgesAfterOwnerApplies(t *testing.T) {
 		t.Fatalf("relay attempts=%d, want 2 before cold outcome", len(relay.got))
 	}
 }
+
+type recordingReadyRelay struct {
+	recordingRelay
+	ready []string
+	err   error
+}
+
+func (r *recordingReadyRelay) RelayFrameworkReady(_ context.Context, instanceID, appID string) error {
+	r.ready = append(r.ready, instanceID+"/"+appID)
+	return r.err
+}
+
+// Hunt 14 H14-104: vmmd on fsn-3 reported framework readiness to its own
+// schedd for instances whose app fsn-2 owns; the receipt was refused with
+// FailedPrecondition, so those instances never qualified for warm or frozen
+// capture. The host schedd relays it, and only for instances it hosts.
+func TestReportFrameworkReady_RelaysHostedForeignInstance(t *testing.T) {
+	const self, peer = "node-host", "node-owner"
+	for _, tc := range []struct {
+		name     string
+		hostNode string
+		relay    *recordingReadyRelay
+		wantCode codes.Code
+		want     []string
+	}{
+		{name: "hosted here, owned by peer", hostNode: self, relay: &recordingReadyRelay{}, wantCode: codes.OK, want: []string{"ins-1/app-1"}},
+		{name: "hosted on another node", hostNode: "node-other", relay: &recordingReadyRelay{}, wantCode: codes.FailedPrecondition},
+		{name: "no relay wired", hostNode: self, wantCode: codes.FailedPrecondition},
+		{name: "relay publish fails", hostNode: self, relay: &recordingReadyRelay{err: errors.New("pg down")}, wantCode: codes.Unavailable, want: []string{"ins-1/app-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := &fakeResolver{
+				apps:  map[string]state.App{"app-1": {ID: "app-1", NodeID: peer}},
+				insts: map[string]state.Instance{"ins-1": {ID: "ins-1", AppID: "app-1", NodeID: tc.hostNode}},
+			}
+			srv := New(nil, nil, nil).WithOwner(OwnerNodeID(self), res)
+			if tc.relay != nil {
+				srv.WithForeignReportRelay(tc.relay)
+			}
+			_, err := srv.ReportFrameworkReady(context.Background(), &scheddpb.FrameworkReadyReport{InstanceId: "ins-1"})
+			if got := status.Code(err); got != tc.wantCode {
+				t.Fatalf("code = %v (err %v), want %v", got, err, tc.wantCode)
+			}
+			var got []string
+			if tc.relay != nil {
+				got = tc.relay.ready
+			}
+			if len(got) != len(tc.want) || (len(got) == 1 && got[0] != tc.want[0]) {
+				t.Fatalf("relayed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

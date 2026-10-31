@@ -270,8 +270,17 @@ func TestProductControlOwnerEmailConsoleAndScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Dashboard app routes authorize the app first (#5320), so the unverified
+	// account retries on an app it owns: the email gate, not access, refuses.
+	own, err := store.CreateApp(ctx, state.App{AccountID: created.Account.ID, Slug: "unverified-email-owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	jar[apidserver.SessionCookie] = &http.Cookie{Name: apidserver.SessionCookie, Value: unverified}
-	call("POST", base+"/"+d.ID+"/retry", form.Encode(), "", true, 403)
+	refused := call("POST", strings.Replace(base, app.Slug, own.Slug, 1)+"/"+d.ID+"/retry", form.Encode(), "", true, 403)
+	if !strings.Contains(refused.Body.String(), string(api.CodeEmailVerificationRequired)) {
+		t.Fatalf("unverified retry refused for another reason: %s", refused.Body)
+	}
 	if revoked, e := store.RevokeSession(ctx, unverifiedID, created.Account.ID); e != nil || !revoked {
 		t.Fatal(revoked, e)
 	}

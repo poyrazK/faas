@@ -10,10 +10,10 @@ and in-memory behavior.
 ## Start or resume
 
 ```go
-result, err := faas.WatchEventAcknowledgmentIntentHealthWithCheckpoint(
+result, err := preview.WatchEventAcknowledgmentIntentHealthWithCheckpoint(
     ctx, db, accountID, appID,
-    faas.EventAcknowledgmentIntentCheckpointWatchOptions{
-        EventAcknowledgmentIntentWatchOptions: faas.EventAcknowledgmentIntentWatchOptions{
+    preview.EventAcknowledgmentIntentCheckpointWatchOptions{
+        EventAcknowledgmentIntentWatchOptions: preview.EventAcknowledgmentIntentWatchOptions{
             DueThreshold: 100, StalledThreshold: 1, ParkedThreshold: 1,
             Sustain: 30 * time.Second,
         },
@@ -144,7 +144,7 @@ plus incident ID and sequence. Notification time is local wall time; condition
 ## Exact acknowledgments and capacity
 
 ```go
-updated, err := faas.AcknowledgeEventAcknowledgmentIntentAlerts(saved, []faas.EventAcknowledgmentIntentAcknowledgment{
+updated, err := preview.AcknowledgeEventAcknowledgmentIntentAlerts(saved, []preview.EventAcknowledgmentIntentAcknowledgment{
     {IncidentID: delivered.IncidentID, Sequence: delivered.Sequence},
 })
 ```

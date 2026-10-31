@@ -15,17 +15,24 @@ import (
 // bundle installs into.
 func TestFeatureLeavesStayOutOfTheRequiredSets(t *testing.T) {
 	required := map[string]bool{}
+	requiredFiles := map[string]bool{}
 	for _, role := range Roles() {
 		required[role.Directory] = true
+		requiredFiles[role.Directory+"/"+role.Filename] = true
 	}
-	for _, box := range []string{"control-plane", "compute-only", "single-box"} {
-		roles := FeatureRoles(FeatureLiveQueries, box)
-		if len(roles) == 0 {
-			t.Fatalf("%s carries no live-query leaf", box)
-		}
-		for _, role := range roles {
-			if required[role.Directory] {
-				t.Errorf("%s: feature leaf %s/%s shares a required leaf's directory", box, role.Directory, role.Filename)
+	for _, feature := range Features() {
+		for _, box := range []string{"control-plane", "compute-only", "single-box"} {
+			roles := FeatureRoles(feature, box)
+			if len(roles) == 0 {
+				t.Fatalf("%s: %s carries no leaf", feature, box)
+			}
+			for _, role := range roles {
+				if requiredFiles[role.Directory+"/"+role.Filename] {
+					t.Errorf("%s: %s: feature leaf %s/%s is a required leaf's path", feature, box, role.Directory, role.Filename)
+				}
+				if required[role.Directory] && !SharedDirectoryFeatureLeaf(role) {
+					t.Errorf("%s: %s: feature leaf %s/%s shares a required leaf's directory", feature, box, role.Directory, role.Filename)
+				}
 			}
 		}
 	}
@@ -101,5 +108,130 @@ func TestEnsureFeatureLeaves(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(out, "ca")); !os.IsNotExist(err) {
 		t.Error("feature issuance wrote a CA into the output directory")
+	}
+}
+
+// adr: 20261023124955 — the platform-log leaves: Loki's server leaf and the
+// Promtail, Prometheus and Grafana client leaves on the control plane, and
+// only Promtail's on a compute node. Each verifies against the fleet CA under
+// the name its peer checks, and a single box carries Promtail's leaf once.
+func TestPlatformLogsFeatureLeaves(t *testing.T) {
+	names := func(roles []Role) []string {
+		var out []string
+		for _, r := range roles {
+			out = append(out, r.Directory+"/"+r.Filename)
+		}
+		return out
+	}
+	if got := names(FeatureRoles(FeaturePlatformLogs, "compute-only")); strings.Join(got, ",") != "promtail/loki-client" {
+		t.Fatalf("compute-only leaves = %v", got)
+	}
+	if got := names(FeatureRoles(FeaturePlatformLogs, "single-box")); len(got) != 4 {
+		t.Fatalf("single-box leaves = %v, want the four control-plane leaves once each", got)
+	}
+
+	ca := t.TempDir()
+	caCert, _, err := EnsureCA(ca, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	issued, err := EnsureFeatureLeaves(ca, out, FeaturePlatformLogs, "control-plane")
+	if err != nil || len(issued) != 4 {
+		t.Fatalf("issue = %v, %v", names(issued), err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	want := map[string]struct {
+		name  string
+		usage x509.ExtKeyUsage
+	}{
+		"loki/server":            {LokiServerName, x509.ExtKeyUsageServerAuth},
+		"promtail/loki-client":   {PromtailLokiClient, x509.ExtKeyUsageClientAuth},
+		"prometheus/loki-client": {PrometheusLokiClient, x509.ExtKeyUsageClientAuth},
+		"grafana/loki-client":    {GrafanaLokiClient, x509.ExtKeyUsageClientAuth},
+	}
+	for _, role := range issued {
+		w := want[role.Directory+"/"+role.Filename]
+		certPath, keyPath := LeafPaths(out, role)
+		pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leaf, err := x509.ParseCertificate(pair.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := leaf.Verify(x509.VerifyOptions{Roots: pool, DNSName: w.name, KeyUsages: []x509.ExtKeyUsage{w.usage}}); err != nil {
+			t.Errorf("%s does not verify as %s: %v", certPath, w.name, err)
+		}
+	}
+	if again, err := EnsureFeatureLeaves(ca, out, FeaturePlatformLogs, "control-plane"); err != nil || len(again) != 0 {
+		t.Fatalf("second issue = %v, %v; want the leaves kept", names(again), err)
+	}
+}
+
+// adr: 989 — the outbound relay's leaves: outboundd's server leaf on the
+// control plane verifies as outboundd.faas, and vmmd's client leaf on a
+// compute node carries the node's name, which is what outboundd's node
+// verifier binds the connection to. A compute node's leaf is never issued
+// without that name, and a leaf issued for another name is replaced.
+func TestOutboundRelayFeatureLeaves(t *testing.T) {
+	ca := t.TempDir()
+	caCert, _, err := EnsureCA(ca, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	leafAt := func(root string, role Role) *x509.Certificate {
+		t.Helper()
+		certPath, keyPath := LeafPaths(root, role)
+		pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leaf, err := x509.ParseCertificate(pair.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return leaf
+	}
+
+	cp := t.TempDir()
+	server := FeatureRoles(FeatureOutboundRelay, "control-plane")
+	if issued, err := EnsureFeatureLeaves(ca, cp, FeatureOutboundRelay, "control-plane"); err != nil || len(issued) != 1 || len(server) != 1 {
+		t.Fatalf("control-plane issue = %v, %v", issued, err)
+	}
+	if _, err := leafAt(cp, server[0]).Verify(x509.VerifyOptions{Roots: pool, DNSName: OutbounddRelayServerName, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+		t.Errorf("relay server leaf does not verify as %s: %v", OutbounddRelayServerName, err)
+	}
+
+	node := t.TempDir()
+	client := FeatureRoles(FeatureOutboundRelay, "compute-only")
+	if len(client) != 1 || !RoleUsesNodeIdentity(client[0]) {
+		t.Fatalf("compute-only relay leaves = %v; want one node-identity client leaf", client)
+	}
+	if _, err := EnsureFeatureLeavesForNode(ca, node, FeatureOutboundRelay, "compute-only", ""); err == nil || !strings.Contains(err.Error(), "node name") {
+		t.Fatalf("issuing the client leaf without a node name = %v", err)
+	}
+	if issued, err := EnsureFeatureLeavesForNode(ca, node, FeatureOutboundRelay, "compute-only", "fsn-2.faas"); err != nil || len(issued) != 1 {
+		t.Fatalf("compute-only issue = %v, %v", issued, err)
+	}
+	leaf := leafAt(node, client[0])
+	if leaf.Subject.CommonName != "fsn-2.faas" {
+		t.Errorf("client leaf CN = %q, want the node name", leaf.Subject.CommonName)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		t.Errorf("client leaf does not verify for client auth: %v", err)
+	}
+	if issued, err := EnsureFeatureLeavesForNode(ca, node, FeatureOutboundRelay, "compute-only", "fsn-2.faas"); err != nil || len(issued) != 0 {
+		t.Fatalf("second issue = %v, %v; want the leaf kept", issued, err)
+	}
+	if issued, err := EnsureFeatureLeavesForNode(ca, node, FeatureOutboundRelay, "compute-only", "fsn-3.faas"); err != nil || len(issued) != 1 {
+		t.Fatalf("issue for another node name = %v, %v; want the leaf replaced", issued, err)
+	}
+	if got := leafAt(node, client[0]).Subject.CommonName; got != "fsn-3.faas" {
+		t.Errorf("replaced client leaf CN = %q", got)
 	}
 }

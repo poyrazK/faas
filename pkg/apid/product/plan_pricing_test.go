@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 20261021154511 — a catalog with included starts publishes only while
@@ -64,6 +65,25 @@ func TestProductPlanPricingGate(t *testing.T) {
 	}
 	if got := ownerPlanFee(catalog, "starter"); got != "None" {
 		t.Fatalf("owner plan without a fee = %q", got)
+	}
+	// adr: 20261021195901 — a trial that is not running is refused with its
+	// own code, and plans offering a trial need the gate too.
+	w = httptest.NewRecorder()
+	respond(w, nil, state.ErrProductTrialUnavailable)
+	if json.Unmarshal(w.Body.Bytes(), &problem) != nil || w.Code != http.StatusConflict || problem.Code != api.CodeProductTrialUnavailable {
+		t.Fatalf("trial refusal = %d %s", w.Code, w.Body)
+	}
+	trial := spec(grant)
+	trial.Plans["starter"] = api.ProductPlan{Features: trial.Plans["starter"].Features, TrialDays: 14}
+	if err := s.checkPlanPricing(trial); !errors.Is(err, errPlanPricingUnavailable) {
+		t.Fatalf("trial plan with the gate unset: %v", err)
+	}
+	ends := time.Now().Add(48 * time.Hour)
+	if got := ownerTrial(&api.ProductCustomer{TrialStartsAt: &ends, TrialEndsAt: &ends}, 0); got != "Until "+ends.UTC().Format(time.DateOnly) {
+		t.Fatalf("running trial = %q", got)
+	}
+	if got := ownerTrial(nil, 14); got != "Starts now for 14 days" {
+		t.Fatalf("offered trial = %q", got)
 	}
 }
 

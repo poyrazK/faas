@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -127,7 +128,8 @@ func TestMagicLinkOutboxPublicWiringUniformResponseAndRollback(t *testing.T) {
 			}
 			var cookie *http.Cookie
 			for _, c := range verify.Result().Cookies() {
-				if c.Name == "faas_sid" {
+				// HTTPS sign-in sets __Host-faas_sid and expires the legacy name (#5522).
+				if sessioncookie.IsName(c.Name) && c.Value != "" {
 					cookie = c
 				}
 			}
@@ -188,6 +190,9 @@ func TestMagicLinkOutboxNewAccountProofRevokesPreVerificationCredentials(t *test
 	if _, err := store.CreateAPIKey(t.Context(), account.ID, api.HashToken([]byte("pre-verification-api-key")), "unproved key", []string{"admin"}); err != nil {
 		t.Fatal(err)
 	}
+	// The owner asks after the per-account sign-in mail interval; a second
+	// link within it is not sent (bug hunt 2026-10-27 H14).
+	server.AdvanceSecurityMailClockForTest(api.SecurityMailPerAccountInterval)
 	if response := resetFormPost(handler, "/v1/auth/signup/magic-link", url.Values{"email": {account.Email}}); response.Code != http.StatusOK {
 		t.Fatal(response.Code)
 	}

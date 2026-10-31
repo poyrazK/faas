@@ -107,6 +107,10 @@ func TestUnverifiedAccountCannotReachDeployOrBilling_Property(t *testing.T) {
 			{http.MethodPost, "/v1/apps/blocked-app/deployments/dev-source", ""},
 			{http.MethodPost, "/v1/apps/blocked-app/deployments/source-ref", `{}`},
 			{http.MethodPost, "/v1/apps/blocked-app/deployments/source-tarball", ""},
+			// The resumable upload routes are the CLI's default source deploy
+			// path and published code without the legacy route's gate.
+			{http.MethodPost, "/v1/uploads", `{"app_slug":"blocked-app","total_size":10}`},
+			{http.MethodPost, "/v1/uploads/00000000-0000-0000-0000-000000000000/commit", ""},
 			{http.MethodPatch, "/v1/account/plan", `{"plan":"hobby"}`},
 			{http.MethodGet, "/v1/billing/portal", ""},
 			{http.MethodPost, "/v1/billing/retry", ""},

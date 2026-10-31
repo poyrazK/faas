@@ -473,6 +473,9 @@ var restoreTimingPhases = []string{
 	"resolve_images_ms",
 	"stage_drives_ms",
 	"stage_writable_ms",
+	"journal_sync_ms",
+	"journal_lock_wait_ms",
+	"journal_commits",
 	"restore_gate_wait_ms",
 }
 

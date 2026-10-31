@@ -50,6 +50,10 @@ func SimulateAutomation(ctx context.Context, request api.SimulateAutomationReque
 		response.Issues = append(response.Issues, err.Error())
 		return response, nil
 	}
+	if request.Definition.Code != nil {
+		response.Issues = append(response.Issues, "code-first workflows cannot be simulated; test them with the SDK's local runner")
+		return response, nil
+	}
 	response.DefinitionValid, response.StepOrder = true, order
 	s := automationSimulator{request: request, snapshot: snapshot, response: response, specs: map[string]api.WorkflowStepSpec{}, steps: map[string]WorkflowStep{}, rows: map[string][]api.AutomationSimulationStep{}, done: map[string]bool{}, usedMocks: map[string]bool{}, usedItemMocks: map[string]bool{}, usedAttemptMocks: map[string]bool{}, usedItemAttemptMocks: map[string]map[string]bool{}}
 	if len(s.request.Input) == 0 {

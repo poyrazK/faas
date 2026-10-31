@@ -107,7 +107,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost, MCPTaskMigrationOverride: req.MCPTaskMigrationOverride, OverrideFreeze: req.OverrideFreeze}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost, MCPTaskMigrationOverride: req.MCPTaskMigrationOverride, OverrideFreeze: req.OverrideFreeze, ReleaseAt: req.ReleaseAt, ReleaseNotify: req.ReleaseNotify}
 	if problem := reviewedSourceStage(req, rolloutReq); problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -122,11 +122,16 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
-	if p := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); p != nil {
+	sched, p := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
+	if p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
+		api.WriteProblem(w, ap)
+		return
+	}
 	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -148,6 +153,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrValidation("native_rollout must match the reviewed workload mode"))
 		return
 	}
+	sched.park(rolloutReq)
 	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
@@ -249,7 +255,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		}
 		branchRef = req.SourceBranch
 	}
-	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+	if prob := s.scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := scanForStatefulShapeAtRoot(spoolPath, false, app.RootDir); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -257,9 +267,14 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, problem)
 		return
 	}
-	manifest, manifestProblem := loadReviewedSourceManifest(spoolPath, app, acct.Plan, req.ExpectedSource != nil)
+	manifest, manifestProblem := loadReviewedSourceManifest(spoolPath, app, acct.Plan, req.ExpectedSource != nil, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
+		return
+	}
+	sourceBuild, _, buildProblem := resolveSourceDockerfileBuild(spoolPath, app.RootDir, app, manifest)
+	if buildProblem != nil {
+		api.WriteProblem(w, buildProblem)
 		return
 	}
 	releaseCommand, releaseProblem := reviewedSourceReleaseCommand(spoolPath, app, manifest, req.ExpectedSource != nil)
@@ -346,6 +361,8 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		SourcePath:                spoolPath,
 		SourceBytes:               spoolBytes,
 		SourceRoot:                app.RootDir,
+		DockerfilePath:            sourceBuild.path,
+		DockerfileBuild:           sourceBuild.options,
 		SourceURL:                 fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
 		CommitSHA:                 resolvedSHA,
 		GitHubSourceRef:           branchRef,
@@ -412,6 +429,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	d.StagedReview = res.StagedReview
+	if p := s.recordReleaseSchedule(r, acct, app, d, sched); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 

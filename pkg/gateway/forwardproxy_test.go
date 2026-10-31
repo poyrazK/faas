@@ -583,6 +583,12 @@ func (f *fakeVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.Execute
 func (f *fakeVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by gateway tests")
 }
+func (f *fakeVmmdClient) RunAgent(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.RunAgentRequest, vmmdpb.RunAgentEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "agent runs are not used by gateway tests")
+}
+func (f *fakeVmmdClient) CaptureAgentSnapshot(context.Context, *vmmdpb.CaptureAgentSnapshotRequest, ...grpc.CallOption) (*vmmdpb.CaptureAgentSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "agent runs are not used by gateway tests")
+}
 func (f *fakeVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed")
 }
@@ -591,6 +597,9 @@ func (f *fakeVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskR
 }
 func (f *fakeVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
 	panic("ExecuteAppTask: not stubbed")
+}
+func (f *fakeVmmdClient) ExecForkCommand(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	panic("ExecForkCommand: not stubbed")
 }
 func (f *fakeVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed")
@@ -650,6 +659,9 @@ func (f *fakeVmmdClient) StopInstance(context.Context, *vmmdpb.StopInstanceReque
 }
 func (f *fakeVmmdClient) Stats(context.Context, *vmmdpb.StatsRequest, ...grpc.CallOption) (*vmmdpb.StatsResponse, error) {
 	panic("Stats: not stubbed")
+}
+func (f *fakeVmmdClient) CaptureProfile(context.Context, *vmmdpb.CaptureProfileRequest, ...grpc.CallOption) (*vmmdpb.CaptureProfileResponse, error) {
+	panic("CaptureProfile: not stubbed")
 }
 func (f *fakeVmmdClient) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest, ...grpc.CallOption) (*vmmdpb.HeartbeatResponse, error) {
 	panic("Heartbeat: not stubbed")

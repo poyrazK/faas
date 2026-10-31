@@ -2,7 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppTaskResponse } from '../models/AppTaskResponse.js';
 import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
+import type { CreateDataAPIContractTaskRequest } from '../models/CreateDataAPIContractTaskRequest.js';
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
 import type { DataAPIConnectionBudgets } from '../models/DataAPIConnectionBudgets.js';
@@ -19,11 +21,14 @@ import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js
 import type { ManagedPostgresCutoverPreflight } from '../models/ManagedPostgresCutoverPreflight.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresOverage } from '../models/ManagedPostgresOverage.js';
+import type { ManagedPostgresOverageRequest } from '../models/ManagedPostgresOverageRequest.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -50,6 +55,38 @@ export class ManagedPostgresService {
       query: {
         'region': region,
       },
+    });
+  }
+  /**
+   * Show whether compute overage is on
+   * With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the default; the databases are then suspended at the allowance. A cap never deletes a database.
+   * @returns ManagedPostgresOverage The account's overage setting and compute ceiling
+   * @returns Problem Authentication, plan or capability error
+   * @throws ApiError
+   */
+  public static getManagedPostgresOverage(): CancelablePromise<ManagedPostgresOverage | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/overage',
+    });
+  }
+  /**
+   * Turn compute overage on or off
+   * Paid plans only; Free stops at its allowance and answers 403 managed_postgres_not_in_plan. Turning overage off while past the allowance suspends the databases at the next cap sweep. Compute above the allowance is not billed until managed PostgreSQL has invoicing.
+   * @returns ManagedPostgresOverage The new overage setting and compute ceiling
+   * @returns Problem Validation, authentication, plan or capability error
+   * @throws ApiError
+   */
+  public static setManagedPostgresOverage({
+    requestBody,
+  }: {
+    requestBody: ManagedPostgresOverageRequest,
+  }): CancelablePromise<ManagedPostgresOverage | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/overage',
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
@@ -116,11 +153,83 @@ export class ManagedPostgresService {
   }
   /**
    * Delete a managed PostgreSQL database
+   * A ready database is kept for 7 days with its compute stopped and its connections refused, and can be undeleted until restorable_until. It still counts toward the plan's database limit and keeps its name until it is purged. Any other database, or a delete with purge=true, is deleted at once. Bindings and restore dependencies must be removed first.
    * @returns ManagedPostgresDatabase Database deletion status
    * @returns Problem Authentication or database deletion error
    * @throws ApiError
    */
   public static deleteManagedPostgresDatabase({
+    id,
+    idempotencyKey,
+    purge = false,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    /**
+     * true deletes the database at once, including one already scheduled for deletion. It cannot be undone.
+     */
+    purge?: boolean,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/postgres/databases/{id}',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'purge': purge,
+      },
+    });
+  }
+  /**
+   * Read a managed database's conditions.
+   * Preview (resource-conditions capability). The database's Ready,
+   * Progressing and Degraded conditions, mapped from the response
+   * GET /v1/postgres/databases/{id} returns, cached health included, and
+   * never stored. Ready follows the lifecycle state; a database whose
+   * compute scaled to zero is Ready=True with reason suspended. Failed,
+   * deleting and deleted databases report terminal conditions.
+   * Cache-Control no-store.
+   *
+   * @returns ResourceStatus The managed database's conditions.
+   * @returns Problem Missing sign-in, database read scope or MFA, a database this account does not own, managed databases not configured, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getManagedPostgresDatabaseStatus({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/status',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Undelete a managed PostgreSQL database
+   * Returns a database whose delete is scheduled to ready, with its data, spec and restore history, while restorable_until is in the future. The plan must still allow the database's spec. After the window the database is gone and the request returns 404.
+   * @returns ManagedPostgresDatabase Database returned to ready
+   * @returns Problem Window ended, database not scheduled for deletion, plan limit, or provider error
+   * @throws ApiError
+   */
+  public static undeleteManagedPostgresDatabase({
     id,
     idempotencyKey,
   }: {
@@ -136,8 +245,8 @@ export class ManagedPostgresService {
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
     return __request(OpenAPI, {
-      method: 'DELETE',
-      url: '/v1/postgres/databases/{id}',
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/undelete',
       path: {
         'id': id,
       },
@@ -547,6 +656,100 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Inspect a Data API app's database contract
+   * Runs one fixed schema inspection inside a fresh task VM from the app's
+   * live deployment: `types` renders the TypeScript contract, `validators`
+   * the table and RPC input validators, and `schema` the JSON contract
+   * snapshot. The receipt is an ordinary app task receipt and the output
+   * arrives in `stdout_tail`. Belongs to the Data API, so it works without
+   * the general app-task API.
+   *
+   * @returns AppTaskResponse Contract inspection admitted and queued.
+   * @throws ApiError
+   */
+  public static createDataApiContractTask({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateDataAPIContractTaskRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppTaskResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/data-api/contract-tasks',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Get one Data API contract inspection
+   * Current or terminal receipt of a contract inspection. Any other app task is not found here.
+   * @returns AppTaskResponse Current or terminal contract inspection receipt.
+   * @throws ApiError
+   */
+  public static getDataApiContractTask({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a deployment-attached app task.
+     */
+    id: string,
+  }): CancelablePromise<AppTaskResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/data-api/contract-tasks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
    * Read Data API usage
    * Usage that the app's Data API runtime reported, per hour or UTC day, with month-to-date totals that owner caps compare against. Counts come from the app's own runtime and are owner telemetry, not billing records. Apps created before usage reporting, or with it off, have no rows.
    * @returns DataAPIUsage Zero-filled usage buckets, window totals and month-to-date totals
@@ -750,7 +953,7 @@ export class ManagedPostgresService {
         401: `code: unauthorized`,
         409: `code: conflict`,
         422: `Observation reporting is unsupported by this catalog adapter.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -777,7 +980,7 @@ export class ManagedPostgresService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -926,7 +1129,7 @@ export class ManagedPostgresService {
   }
   /**
    * Delete a company PostgreSQL resource.
-   * An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must be removed first; accounting evidence remains available.
+   * An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must be removed first; accounting evidence remains available. A ready database is kept for 7 days and can be undeleted until restorable_until; purge=true deletes at once.
    * @returns ManagedPostgresDatabase Result of the request to delete a company PostgreSQL resource.
    * @returns Problem Problem while attempting to delete a company PostgreSQL resource.
    * @throws ApiError
@@ -935,6 +1138,7 @@ export class ManagedPostgresService {
     organization,
     id,
     idempotencyKey,
+    purge = false,
   }: {
     /**
      * Organization selected to inspect a company postgresql database.
@@ -950,6 +1154,10 @@ export class ManagedPostgresService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * true deletes the company database at once, even during its undelete window. It cannot be undone.
+     */
+    purge?: boolean,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
     return __request(OpenAPI, {
       method: 'DELETE',
@@ -960,6 +1168,9 @@ export class ManagedPostgresService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'purge': purge,
       },
       errors: {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
@@ -1200,6 +1411,50 @@ export class ManagedPostgresService {
         'organization': organization,
         'id': id,
         'change_id': changeId,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Undelete a company PostgreSQL database.
+   * An owner or admin returns a company database whose delete is scheduled to ready while restorable_until is in the future. The company plan must still allow the database's spec.
+   * @returns ManagedPostgresDatabase Result of the request to undelete a company PostgreSQL database.
+   * @returns Problem Problem while attempting to undelete a company PostgreSQL database.
+   * @throws ApiError
+   */
+  public static undeleteOrgManagedPostgresDatabase({
+    organization,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Organization that owns the company database to undelete.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/undelete',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
       },
       errors: {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,

@@ -7,6 +7,13 @@
 -- newest excludes rollback targets, which are older than what they replaced.
 -- An immediate release may not stamp rollout_started_at; its baseline then
 -- ends when it completed.
+-- The predecessor is the release a plain rollback returns to
+-- (LatestRetainedRollbackDeployment): the one that served most recently, never
+-- a canary candidate aborted before it completed. Ordered by created_at, a
+-- canary aborted between v1 and v3 (retired as superseded when v3 completed)
+-- or a build superseded before it went live was chosen, so the watch compared
+-- v3 with a release that never served and rolled back to it (release review
+-- 2026-10-28).
 SELECT d.id, d.app_id, d.scope, d.created_at,
        COALESCE(d.rollout_started_at, d.rollout_completed_at)::timestamptz AS rollout_started_at, d.rollout_completed_at,
        pred.id AS predecessor_id
@@ -16,7 +23,8 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
          WHERE p.app_id = d.app_id
            AND COALESCE(NULLIF(p.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
            AND p.status = 'superseded' AND p.created_at < d.created_at
-         ORDER BY p.created_at DESC, p.id DESC LIMIT 1) AS pred ON true
+           AND NOT (p.canary_total_steps > 0 AND p.rollout_state = 'aborted' AND p.rollout_completed_at IS NULL)
+         ORDER BY COALESCE(p.serving_ended_at, p.created_at) DESC, p.created_at DESC, p.id DESC LIMIT 1) AS pred ON true
  WHERE d.status = 'live'
    AND d.rollback_on_5xx
    AND d.last_auto_rollback_reason IS NULL

@@ -47,10 +47,10 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -83,9 +83,10 @@ const (
 	// (issue #757). Config schema: RedisStreamsConfig{Addr, Stream,
 	// Group, Consumer}.
 	TriggerKindRedisStreams TriggerKind = "redis_streams"
-	// TriggerKindSQSCompat — long-poll the in-platform SQS-compatible
-	// HTTP queue (issue #757). Config schema:
-	// SQSCompatConfig{QueueURL, LongPollSecs}.
+	// TriggerKindSQSCompat — long-poll an SQS-compatible HTTP queue
+	// (issue #757). Delisted 2026-10-29: its poller speaks no real SQS
+	// wire protocol, so the manifest refuses it like amqp. Config
+	// schema: SQSCompatConfig{QueueURL, LongPollSecs}.
 	TriggerKindSQSCompat TriggerKind = "sqs_compat"
 	// TriggerKindQueue — in-platform queue / delayed_task merger
 	// (issue #757, ADR-0NN). The platform's own `invocations` rows
@@ -769,8 +770,8 @@ type Trigger struct {
 	// kafka poller reconciles its broker offset with a
 	// dead-lettered record. Closed vocab: "commit" (default —
 	// broker offset advances; same as no field) and
-	// "seek-to-offset" (the kafka poller calls SetOffset so the
-	// next Poll re-fetches the same message). Empty string
+	// "seek-to-offset" (the kafka poller keeps the record and
+	// hands it back on every Poll; nothing past it commits). Empty string
 	// means "use the plan default"; per-kind validator at
 	// Validate() rejects anything outside the closed vocabulary
 	// so a YAML typo surfaces at load time rather than at
@@ -1095,6 +1096,16 @@ type ScalingConfig struct {
 	MaxQueueDepth           int `yaml:"max_queue_depth,omitempty"`
 	WakeMaxQueueDepth       int `yaml:"wake_max_queue_depth,omitempty"`
 	WakeMaxQueueWaitSeconds int `yaml:"wake_max_queue_wait_seconds,omitempty"`
+	// PerInstanceConcurrency is how many requests one instance serves at
+	// once (ADR-20261022203523). Set it to the server's own concurrency, for
+	// example gunicorn's --workers, and the platform scales out on the next
+	// request instead of queueing it on a full instance. Zero uses the plan's
+	// concurrency_per_vm; the API applies that upper bound.
+	//
+	//	scaling:
+	//	  max_instances: 3
+	//	  per_instance_concurrency: 2
+	PerInstanceConcurrency int `yaml:"per_instance_concurrency,omitempty"`
 	// Timezone is the IANA zone the schedules below are evaluated in
 	// (ADR-195). Empty means UTC.
 	Timezone string `yaml:"timezone,omitempty"`
@@ -1225,6 +1236,9 @@ func (s *ScalingConfig) Validate() error {
 	if s.WakeMaxQueueWaitSeconds < 0 || s.WakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
 		return fmt.Errorf("scaling: wake_max_queue_wait_seconds must be between 0 and %d; got %d", api.WakeQueueMaxWaitSeconds, s.WakeMaxQueueWaitSeconds)
 	}
+	if s.PerInstanceConcurrency < 0 {
+		return fmt.Errorf("scaling: per_instance_concurrency must be >= 0; got %d", s.PerInstanceConcurrency)
+	}
 	// The closed metric set and the per-metric value rules come from
 	// pkg/api (ADR-194) rather than being restated here. This file used to
 	// carry its own copy of the switch, and it drifted: it accepted `rps`
@@ -1307,6 +1321,7 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		MaxQueueDepth:           s.MaxQueueDepth,
 		WakeMaxQueueDepth:       s.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: s.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  s.PerInstanceConcurrency,
 	}
 	if s.MinInstances != nil {
 		out.MinInstances = *s.MinInstances
@@ -1427,9 +1442,9 @@ func (d BucketDependency) EffectiveLabel() string {
 }
 
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
-// The supported top-level declarations are `schema_version`, `hosting`,
+// The supported top-level declarations are `schema_version`, `hosting`, `build`,
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
-// `triggers`, `event_triggers`, `async_routes`, `companions`, `main_depends_on`,
+// `triggers`, `event_triggers`, `async_routes`, `routes`, `companions`, `main_depends_on`,
 // `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
 // and the local-only `dev`
 // profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
@@ -1442,8 +1457,11 @@ type Manifest struct {
 	// set it to 1; a future incompatible manifest requires a new version.
 	SchemaVersion int                   `yaml:"schema_version,omitempty"`
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
-	Dev           *DevConfig            `yaml:"dev,omitempty"`
-	Function      *FunctionConfig       `yaml:"function,omitempty"`
+	// Build selects and parameterizes a Dockerfile build for a source
+	// deploy (ADR-20261026152731).
+	Build    *BuildConfig    `yaml:"build,omitempty"`
+	Dev      *DevConfig      `yaml:"dev,omitempty"`
+	Function *FunctionConfig `yaml:"function,omitempty"`
 	// Functions declares several functions deployed from one manifest, each
 	// as its own app (ADR-985). Mutually exclusive with Function.
 	Functions []FunctionSpec   `yaml:"functions,omitempty"`
@@ -1468,6 +1486,7 @@ type Manifest struct {
 	OperationWorkflows []OperationWorkflow           `yaml:"operation_workflows,omitempty" toml:"operation_workflows"`
 	ResolvedOperations []api.OperationDefinitionSpec `yaml:"-"`
 	AsyncRoutes        []AsyncRoute                  `yaml:"async_routes,omitempty"`
+	Routes             []PathRoute                   `yaml:"routes,omitempty"` // ADR-20261021223225; nil/empty as AsyncRoutes
 	Companions         []CompanionSpec               `yaml:"companions,omitempty"`
 	// MainDependsOn gates the primary application workload on declared
 	// long-running companions. Init companions remain implicit prerequisites.
@@ -1478,6 +1497,9 @@ type Manifest struct {
 	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
+	// Realtime declares managed realtime endpoints by slug
+	// (ADR-20261019102657).
+	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate
@@ -1660,6 +1682,32 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 	}
 }
 
+// LifecycleRequest is the app update a manifest's lifecycle and worker blocks
+// ask for. The CLI and apid's source deploys apply the same request, so a hook
+// declared in gregale.yaml reaches the app however the source arrives. ok is
+// false when the manifest declares neither block.
+func (m *Manifest) LifecycleRequest() (req api.UpdateAppRequest, ok bool) {
+	if m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil) {
+		return api.UpdateAppRequest{}, false
+	}
+	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
+		req = m.Lifecycle.ToAPI()
+	}
+	if m.Worker != nil {
+		workerMode := api.ExecutionModeWorker
+		req.ExecutionMode = &workerMode
+		req.WorkerReplicas = m.Worker.Scale.ToAPI()
+		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
+			req.StopGracePeriodS = &drainTimeout
+		}
+		if m.Worker.StopSignal != "" {
+			sig := m.Worker.StopSignal
+			req.StopSignal = &sig
+		}
+	}
+	return req, true
+}
+
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
 	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&
@@ -1773,6 +1821,30 @@ func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 	}
 }
 
+// ScalingPolicyRequest is the app scaling policy the manifest asks for: the
+// scaling block, with a worker block that names a metric taking its bounds
+// and target. The CLI and apid's source deploys both apply it, so a worker
+// deployed from a repository scales like one deployed from a laptop
+// (ADR-20261018101500 amendment 2026-10-27). Cooldowns default as the
+// scaling block's do, because the API refuses zero cooldowns.
+func (m *Manifest) ScalingPolicyRequest() *api.ScalingPolicy {
+	if m == nil {
+		return nil
+	}
+	policy := m.Scaling.ToAPI()
+	if m.Worker == nil || m.Worker.Scale.Metric == "" {
+		return policy
+	}
+	if policy == nil {
+		policy = &api.ScalingPolicy{ScaleOutCooldownS: defaultScaleOutCooldownS, ScaleInCooldownS: defaultScaleInCooldownS}
+	}
+	scale := m.Worker.Scale
+	policy.MinInstances, policy.MaxInstances = scale.Min, scale.Max
+	policy.Targets = nil
+	policy.Target = &api.ScalingTarget{Metric: scale.Metric, Name: scale.Name, Value: scale.Target}
+	return policy
+}
+
 // Validate checks worker configuration syntax and constraints.
 func (w *WorkerSpec) Validate() error {
 	if w == nil {
@@ -1800,14 +1872,14 @@ func (w *WorkerSpec) Validate() error {
 	}
 	if w.Source != nil {
 		switch w.Source.Kind {
-		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue:
+		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindQueue:
 			// valid broker kinds
-		case TriggerKindAMQP, TriggerKindRabbitMQ:
+		case TriggerKindAMQP, TriggerKindRabbitMQ, TriggerKindSQSCompat:
 			return fmt.Errorf("worker.source: %w", errBrokerKindUnavailable(w.Source.Kind))
 		case "":
 			return errors.New("worker.source: kind is required")
 		default:
-			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, sqs_compat, queue", w.Source.Kind)
+			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, queue", w.Source.Kind)
 		}
 		if err := w.Source.validateKindConfig(0); err != nil {
 			return fmt.Errorf("worker.source: %w", err)
@@ -2123,6 +2195,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if err := m.validateFunctions(plan); err != nil {
 		return err
 	}
+	if err := m.validateRealtime(); err != nil {
+		return err
+	}
 	if m.Profiling != nil {
 		if err := m.Profiling.Validate(plan); err != nil {
 			return err
@@ -2130,7 +2205,7 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if m.Lifecycle == nil {
 			m.Lifecycle = &LifecycleConfig{}
 		}
-		if m.Lifecycle.Profiling != nil && *m.Lifecycle.Profiling != *m.Profiling {
+		if m.Lifecycle.Profiling != nil && !m.Lifecycle.Profiling.Equal(m.Profiling) {
 			return fmt.Errorf("declare profiling once, at top level or in lifecycle")
 		}
 		m.Lifecycle.Profiling = m.Profiling
@@ -2157,6 +2232,12 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := m.Hosting.Validate(); err != nil {
 			return fmt.Errorf("hosting: %w", err)
 		}
+	}
+	if err := m.Build.Validate(); err != nil {
+		return fmt.Errorf("build: %w", err)
+	}
+	if m.Build != nil && (m.Function != nil || len(m.Functions) > 0) {
+		return fmt.Errorf("build: applies to app deploys; functions build from the platform runtime")
 	}
 	if m.Dev != nil {
 		if err := m.Dev.Validate(); err != nil {
@@ -2224,6 +2305,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		}
 		seenAsyncMatches[route.App+"\x00"+matchKey] = struct{}{}
 	}
+	if err := validatePathRoutes(m.Routes); err != nil {
+		return err
+	}
 	if m.Lifecycle != nil {
 		if err := m.Lifecycle.Validate(); err != nil {
 			return fmt.Errorf("lifecycle: %w", err)
@@ -2283,11 +2367,10 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindKafka,
 			TriggerKindNATS,
 			TriggerKindRedisStreams,
-			TriggerKindSQSCompat,
 			TriggerKindQueue,
 			TriggerKindRealtime:
 			// fall through to per-kind validation below
-		case TriggerKindAMQP, TriggerKindRabbitMQ:
+		case TriggerKindAMQP, TriggerKindRabbitMQ, TriggerKindSQSCompat:
 			return fmt.Errorf("trigger[%d]: %w", i, errBrokerKindUnavailable(t.Kind))
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
@@ -2572,7 +2655,7 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue, realtime"
+	return "cron, kafka, nats, redis_streams, queue, realtime"
 }
 
 // errBrokerKindUnavailable rejects broker kinds the manifest can parse but
@@ -2602,11 +2685,11 @@ func (t Trigger) validateKindConfig(idx int) error {
 	}
 	switch t.Kind {
 	case TriggerKindCron:
-		if _, err := sched.ParseSchedule(t.Schedule); err != nil {
+		if _, err := cronexpr.Parse(t.Schedule, cronexpr.DefaultTimezone); err != nil {
 			return fmt.Errorf("trigger[%d]: bad schedule %q: %w", idx, t.Schedule, err)
 		}
-		if !strings.HasPrefix(t.Path, "/") {
-			return fmt.Errorf("trigger[%d]: path must start with '/' (got %q)", idx, t.Path)
+		if problem := api.ValidateCronPath(t.Path); problem != nil {
+			return fmt.Errorf("trigger[%d]: invalid path %q: %s", idx, t.Path, problem.Detail)
 		}
 		if t.Timezone != "" {
 			if _, err := time.LoadLocation(t.Timezone); err != nil {

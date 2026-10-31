@@ -138,6 +138,10 @@ func allBindingPreviewOperation(binding api.AppBindingInventoryItem, scope, stat
 	case api.BindingTypeService:
 		step.ProbeMode = "https_route"
 		step.Operations = []string{"dns", "tls", "authorization", "routing"}
+		if binding.Transport == string(api.ServiceBindingTransportHTTP) {
+			// ADR-20261019200059: HTTP callers are probed over the plaintext proxy.
+			step.ProbeMode, step.Operations = "http_route", []string{"dns", "authorization", "routing"}
+		}
 	case api.BindingTypePostgres:
 		step.ProbeMode = "query"
 		step.Operations = []string{"connect", "query"}

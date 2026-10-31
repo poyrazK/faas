@@ -155,7 +155,7 @@ func TestComposeDockerfileBuildWithoutDockerfileWarns(t *testing.T) {
 	if got := composeBuildWorkload(t, result, "api").DockerfileBuild; got != nil {
 		t.Fatalf("DockerfileBuild = %+v, want nil for a Railpack build", got)
 	}
-	if !containsWarning(result.Warnings, "api: build.args and build.target ignored: the build context has no Dockerfile, so it builds with Railpack") {
+	if !containsWarning(result.Warnings, "api: build.args, build.target and build.secrets ignored: the build context has no Dockerfile, so it builds with Railpack") {
 		t.Fatalf("warnings = %q", result.Warnings)
 	}
 }
@@ -177,4 +177,68 @@ func TestDockerfileStages(t *testing.T) {
 	if got := dockerfileStages(body); !reflect.DeepEqual(got, want) {
 		t.Fatalf("dockerfileStages = %q, want %q", got, want)
 	}
+}
+
+func TestComposeBuildSecrets(t *testing.T) {
+	const top = "secrets:\n  npm_token:\n    environment: NPM_TOKEN\n  gh:\n    environment: GH_TOKEN\n  local_file:\n    file: ./secret.txt\n"
+	for _, tc := range []struct {
+		name, build string
+		want        []api.DockerfileBuildSecret
+		warning     string
+	}{
+		{"short form", "secrets: [npm_token]",
+			[]api.DockerfileBuildSecret{{ID: "npm_token", Secret: "NPM_TOKEN"}}, ""},
+		{"long form with a target id", "secrets:\n        - source: gh\n          target: hub\n        - npm_token",
+			[]api.DockerfileBuildSecret{{ID: "hub", Secret: "GH_TOKEN"}, {ID: "npm_token", Secret: "NPM_TOKEN"}}, ""},
+		{"file secrets are not uploaded", "secrets: [npm_token, local_file]",
+			[]api.DockerfileBuildSecret{{ID: "npm_token", Secret: "NPM_TOKEN"}}, `build secret "local_file" ignored: only secrets declared with environment: NAME`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "services:\n  web:\n    build:\n      context: .\n      " + tc.build + "\n    ports: [3000]\n" + top
+			result, err := scanCompose(t, body, "Dockerfile", "FROM node:22\n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := composeBuildWorkload(t, result, "web").DockerfileBuild
+			if got == nil || !reflect.DeepEqual(got.Secrets, tc.want) {
+				t.Fatalf("secrets = %+v, want %+v", got, tc.want)
+			}
+			if tc.warning != "" && !containsWarning(result.Warnings, tc.warning) {
+				t.Fatalf("warnings %q lack %q", result.Warnings, tc.warning)
+			}
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, "build.secrets ignored") {
+					t.Fatalf("unexpected warning %q", warning)
+				}
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name, build, want string
+	}{
+		{"undeclared secret", "secrets: [missing]", `build secret "missing" is not declared under the top-level secrets`},
+		{"not a list", "secrets: npm_token", "build.secrets must be a list"},
+		{"entry without a source", "secrets:\n        - target: npm", "build.secrets entries must name a secret"},
+		{"invalid id", "secrets:\n        - source: npm_token\n          target: \"a,b\"", "build secret id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "services:\n  web:\n    build:\n      context: .\n      " + tc.build + "\n" + top
+			if _, err := scanCompose(t, body, "Dockerfile", "FROM node:22\n"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	t.Run("railpack builds ignore them", func(t *testing.T) {
+		body := "services:\n  web:\n    build: {context: web, secrets: [npm_token]}\n" + top
+		result, err := scanCompose(t, body, "web/package.json", `{"scripts":{"start":"node index.js"}}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := composeBuildWorkload(t, result, "web").DockerfileBuild; got != nil {
+			t.Fatalf("Railpack build kept %+v", got)
+		}
+		if !containsWarning(result.Warnings, "build.args, build.target and build.secrets ignored") {
+			t.Fatalf("warnings = %q", result.Warnings)
+		}
+	})
 }

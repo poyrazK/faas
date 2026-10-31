@@ -19,10 +19,10 @@ T = TypeVar("T", bound="DeploymentRelease")
 
 @_attrs_define
 class DeploymentRelease:
-    """A deployment's release command run (ADR-1448)."""
+    """A deployment's release command run."""
 
     status: DeploymentReleaseStatus
-    """The release task's status; pending before imaged has admitted the task."""
+    """The release task's status; pending before the image service has admitted the task."""
     started_at: datetime.datetime | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
     migration_databases: list[ReleaseDatabaseRef] | Unset = UNSET

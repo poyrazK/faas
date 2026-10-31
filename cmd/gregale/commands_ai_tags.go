@@ -17,7 +17,7 @@ import (
 )
 
 const aiTagsUsage = "usage: gregale ai tags <integration-id> [--date YYYY-MM-DD] [--key KEY] [--limit N] | " +
-	"gregale ai tags export <integration-id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--key KEY] [--format csv|ndjson]"
+	"gregale ai tags export <integration-id> [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--key KEY] [--format csv|ndjson]"
 
 // cmdAITags lists one UTC day's tags by cost, then tokens.
 func cmdAITags(args []string) int {

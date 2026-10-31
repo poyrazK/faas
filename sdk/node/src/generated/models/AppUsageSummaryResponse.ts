@@ -28,7 +28,7 @@ export type AppUsageSummaryResponse = {
    */
   period_end: string;
   /**
-   * Sum of usage_minutes.mb_seconds for this app in the window (ADR-048 billable unit).
+   * Sum of usage_minutes.mb_seconds for this app in the window (billable unit).
    */
   mb_seconds: number;
   /**
@@ -40,11 +40,11 @@ export type AppUsageSummaryResponse = {
    */
   requests: number;
   /**
-   * Cumulative HTTP response body bytes (ADR-046; diagnostic subset of net_tx_bytes; never add both).
+   * Cumulative HTTP response body bytes (diagnostic subset of net_tx_bytes; never add both).
    */
   tx_bytes: number;
   /**
-   * Canonical cumulative host-interface egress bytes for the window (ADR-046; includes framing).
+   * Canonical cumulative host-interface egress bytes for the window (includes framing).
    */
   net_tx_bytes: number;
   /**

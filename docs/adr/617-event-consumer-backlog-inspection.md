@@ -117,3 +117,37 @@ large account aggregation, and root/child lock order. Projection changes commit
 or roll back with their authoritative writers; the API never claims or replays
 work. Existing claim fencing and atomic routing tests remain regression gates.
 Tenant predicates protect every result independently of opaque cursors.
+
+## Amendment (2026-10-25): skip refreshes that cannot change the projection
+
+Keeping the projection current cost eight refreshes per routed event (V12
+trigger profile). Some could not change any row:
+
+- Settling a receipt that uses recipient claims refreshed every key on each
+  state change. Once a recipient has its own row, its projection row takes
+  state, availability and lease from that row, not the outbox. Such an
+  outbox change now refreshes only captured recipients without a row yet,
+  plus any changed progress keys. Without recipient claims the receipt
+  still refreshes.
+- Every recipient update refreshed its key. The update trigger now fires
+  only when a column the view reads changes: state, total attempts,
+  capacity deferrals, availability, lease, recipient, receipt position or
+  the keys. Claim tokens, generation counters and deadlines do not.
+- A recipient deleted together with its receipt skips the refresh, because
+  the receipt's projection rows cascade.
+
+The triggers stay immediate. The view, the refresh statement, the readers
+and the lock order are unchanged.
+
+Refreshing once per key at commit, through deferred constraint triggers,
+would also have folded the two or three refreshes that adoption and
+completion make in one transaction. It was rejected. With deferred trigger
+events pending, `ALTER TABLE` and `CREATE INDEX` on the table fail (SQLSTATE
+55006), so any migration or repair that changes these rows and then alters
+the tables in the same transaction would break. That cost outweighs saving
+about one refresh per event.
+
+Tests: `TestPgEventRoutingBacklogMatchesSourceThroughRouting`,
+`TestPgEventRoutingBacklogWithinOneTransaction` (including DDL after row
+changes) and `TestPgEventRoutingBacklogRecipientModeOutboxMoves` compare the
+projection with its source view after each step.

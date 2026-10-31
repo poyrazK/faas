@@ -106,10 +106,21 @@ func computeWorkloadPolicies(tx financialComputeTxn, key string) ([]FinancialBud
 	if err != nil {
 		return nil, err
 	}
+	// An account without budgets has nothing to scope: every wake of its
+	// apps checks this, so the scopes read is skipped.
+	if len(all) == 0 {
+		return []FinancialBudget{}, nil
+	}
 	scopes, err := tx.workloadScopes(key, "", "")
 	if err != nil {
 		return nil, err
 	}
+	return computeWorkloadPoliciesIn(tx, key, all, scopes)
+}
+
+// computeWorkloadPoliciesIn is computeWorkloadPolicies over policies and
+// scopes already read.
+func computeWorkloadPoliciesIn(tx financialComputeTxn, key string, all []FinancialBudget, scopes computeScopes) ([]FinancialBudget, error) {
 	environments, err := computeProjectEnvironmentSet(tx, scopes.Project, all)
 	if err != nil {
 		return nil, err

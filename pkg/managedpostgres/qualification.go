@@ -132,6 +132,15 @@ type QualificationReport struct {
 	StorageGrowth        *StorageResizeEvidence       `json:"storage_growth,omitempty"`
 	MajorUpgrade         bool                         `json:"major_upgrade"`
 	Upgrade              *MajorUpgradeEvidence        `json:"upgrade,omitempty"`
+	// DeletionHold is set by every run against a provider that holds
+	// databases for deletion (ADR-20261029174950); older reports lack it.
+	DeletionHold *DeletionHoldEvidence `json:"deletion_hold,omitempty"`
+	// ComputeCap is set only by a --compute-cap run, whose output is its own
+	// artifact (ADR-20261025094915); provisioning approvals never carry it.
+	ComputeCap *ComputeCapEvidence `json:"compute_cap,omitempty"`
+	// StorageCap is set only by a --storage-cap run, whose output is also
+	// its own artifact.
+	StorageCap *StorageCapEvidence `json:"storage_cap,omitempty"`
 }
 
 // LifecycleQualificationReport contains the non-sensitive evidence from a
@@ -381,6 +390,12 @@ func ValidateQualificationReport(report QualificationReport) error {
 	}
 	if report.Restore != nil {
 		requiredChecks = append(append([]string(nil), requiredChecks...), restoreQualificationChecks[:]...)
+	}
+	if report.DeletionHold != nil {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "deletion_hold_probe")
+		if report.DeletionHold.Validate() != nil {
+			return ErrUnavailable
+		}
 	}
 	if !hasQualificationChecks(report.Checks, requiredChecks) {
 		return ErrInvalid
@@ -648,6 +663,11 @@ type QualificationOptions struct {
 	// resource with no settled usage yet. The failed check remains mandatory:
 	// the run returns ErrQualificationFailed and cannot authorize provisioning.
 	ContinueAfterUsageFailure bool
+	// ComputeCap also runs the compute cap probe (ADR-20261025094915
+	// decision 10) on the disposable resource.
+	ComputeCap bool
+	// StorageCap also runs the storage pool probe (decisions 9 and 10).
+	StorageCap bool
 }
 
 const defaultQualificationTimeout = 20 * time.Minute
@@ -892,6 +912,51 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			probeErr = probe.Validate()
 		}
 		if !record("scale_to_zero_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if _, holds := provider.(DeletionHoldProvider); holds {
+		prober, ok := provider.(DeletionHoldProber)
+		if !ok {
+			record("deletion_hold_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeDeletionHold(ctx, providerResourceID, material)
+		report.DeletionHold = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("deletion_hold_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if options.ComputeCap {
+		prober, ok := provider.(ComputeCapProber)
+		if !ok {
+			record("compute_cap_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeComputeCap(ctx, providerResourceID, material)
+		report.ComputeCap = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("compute_cap_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if options.StorageCap {
+		prober, ok := provider.(StorageCapProber)
+		if !ok {
+			record("storage_cap_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeStorageCap(ctx, providerResourceID, material)
+		report.StorageCap = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("storage_cap_probe", probeErr) {
 			return report, resultErr
 		}
 	}

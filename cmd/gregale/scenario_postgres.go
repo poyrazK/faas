@@ -216,4 +216,14 @@ func printTestPostgresComparison(out io.Writer, c *rehearsalpg.Comparison) {
 		a := c.After[i]
 		_, _ = fmt.Fprintf(out, "    %s: baseline +%d/-%d rows; candidate +%d/-%d rows\n", b.Table, len(b.Inserted), len(b.Deleted), len(a.Inserted), len(a.Deleted))
 	}
+	// Schema inventory differences between the two final databases
+	// (ADR-20261020180000); the JSON receipt keeps every definition.
+	const shown = 20
+	for i, change := range c.SchemaChanges {
+		if i == shown {
+			_, _ = fmt.Fprintf(out, "    … %d more schema changes in the JSON receipt\n", len(c.SchemaChanges)-shown)
+			break
+		}
+		_, _ = fmt.Fprintf(out, "    schema %s %s: %s\n", change.Kind, change.Name, change.Status)
+	}
 }

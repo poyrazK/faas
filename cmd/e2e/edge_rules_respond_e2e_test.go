@@ -43,7 +43,7 @@ func TestEdgeRulesRespond_E2E_ServesAndDisablesPreviewMock(t *testing.T) {
 	}
 	preview := getAppBySlug(t, pool, previewSlug)
 
-	successHost := "edgectl-respond.apps.test.example"
+	successHost := "edgectl-respond.edge-e2e.example"
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, preview.ID, successHost, previewSlug)
 	successRuleID := seedEdgeRuleDirect(t, context.Background(), pool,
@@ -58,7 +58,7 @@ func TestEdgeRulesRespond_E2E_ServesAndDisablesPreviewMock(t *testing.T) {
 		},
 	)
 
-	errorHost := "edgectl-respond-error.apps.test.example"
+	errorHost := "edgectl-respond-error.edge-e2e.example"
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, preview.ID, errorHost, previewSlug)
 	seedEdgeRuleDirect(t, context.Background(), pool,

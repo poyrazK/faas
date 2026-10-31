@@ -1,0 +1,67 @@
+[
+  {
+    "step": "TestDocsPages",
+    "bug": "40 of 77 pages in docs/customer-pages.json answer 404 on gregale.dev",
+    "since": "2026-10-26"
+  },
+  {
+    "step": "TestPublicSurface/security_txt",
+    "bug": "security.txt Canonical URL ends in 404; its Encryption URL serves an HTML page, not a PGP key",
+    "since": "2026-10-26"
+  },
+  {
+    "step": "TestCustomDomainBinding/add",
+    "bug": "custom domains are disabled on production: domains add answers 'Custom domains are unavailable ... not available on this Gregale installation right now' though the inventory lists them as GA",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestImageRegistryAndDeployTokens/cli_deploy_with_token",
+    "bug": "gregale deploy with an app's deploy token fails insufficient_scope (the CLI calls an endpoint needing admin or apps:read); the deploy API itself accepts the token",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/push_to_deploy",
+    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (three runs); github status reports the binding healthy",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/checks_status",
+    "bug": "follows from push_to_deploy: no deployment, so no Gregale check on the pushed commit",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/preview_created_on_pr_open",
+    "bug": "opening a pull request on the bound fixture repository created no preview within 5 min; gregale preview create works and the preview serves",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/preview_removed_on_pr_close",
+    "bug": "closing the pull request did not record the close (the step now checks pr_state=closed with a 24h grace; teardown after the grace is by design); root cause shared with push_to_deploy: the App webhook URL and secret were wrong (fixed on GitHub 2026-10-29) and githubd rejected every real pull_request payload (#5862), known until #5862 is released",
+    "since": "2026-10-28"
+  },
+  {
+    "step": "TestObjectStorage/object_storage_enabled",
+    "bug": "object storage is still preview (GA row 108): gregale feature list reports object-storage disabled until s3_enabled is on and the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner turns it on",
+    "since": "2026-10-29"
+  },
+  {
+    "step": "TestRealtime/realtime_enabled",
+    "bug": "realtime is still preview (GA row 112): gregale feature list reports realtime disabled until the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner releases it",
+    "since": "2026-10-30"
+  },
+  {
+    "step": "TestRealtime/resumable_protocol_offered",
+    "bug": "the resumable realtime protocol (retained history, presence, occupancy, tickets) is still preview (GA row 112): realtimed offers gregale.realtime.v2 only to accounts in the realtime_preview rollout with FAAS_REALTIME_RESUME_PREVIEW_ENABLED on, and the journey's later steps report blocked; remove once the e2e account is released",
+    "since": "2026-10-30"
+  },
+  {
+    "step": "TestTrafficSplitAndRollback/production_wakes_v1_while_staged",
+    "bug": "#6121: after deploy --no-traffic, a parked or frozen serving release cannot wake beside the staged release's instance: production answers 429 app_concurrency_reached until that instance idles out (the gateway grants ADR-199's rollout slot only for a positive-weight sibling)",
+    "since": "2026-10-31"
+  },
+  {
+    "step": "TestEdgeTrafficPolicies/route",
+    "bug": "#6148: a route rule on an app's own URL never applies on production (edge rule trace says it routes, edge rule stats records no match); the slug-resolved public host source never sets CanSubstitute",
+    "since": "2026-10-31"
+  }
+]

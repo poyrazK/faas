@@ -57,6 +57,38 @@
   changed_when: false
   failed_when: false
 
+# ADR-20261023124955 §2: faas_obs_logs_enabled is the switch for platform
+# logs. Turning it off stops the shipper and the backend on the next
+# converge rather than leaving them running unmanaged. They are not masked,
+# so turning logs back on needs nothing but the flag.
+- name: role_convergence — stop platform log services while logs are disabled
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - alloy.service
+    - promtail.service
+    - loki.service
+  when: not (faas_obs_logs_enabled | default(false) | bool)
+  failed_when: false
+
+# ADR-20261023185953: exactly one journal shipper runs. The selected one's
+# role starts it; the other is stopped so two never ship the same lines.
+- name: role_convergence — stop the journal shipper that is not selected
+  ansible.builtin.systemd:
+    name: "{{ 'promtail.service' if faas_obs_log_shipper | default('alloy') == 'alloy' else 'alloy.service' }}"
+    state: stopped
+    enabled: false
+  when: faas_obs_logs_enabled | default(false) | bool
+  failed_when: false
+
+- name: role_convergence — remove gregalectl's Loki settings while logs are disabled
+  ansible.builtin.file:
+    path: /etc/faas/loki-client.env
+    state: absent
+  when: not (faas_obs_logs_enabled | default(false) | bool)
+
 - name: role_convergence — mask opposite-role services even when absent
   ansible.builtin.file:
     src: /dev/null

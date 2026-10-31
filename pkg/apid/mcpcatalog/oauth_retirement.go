@@ -21,9 +21,10 @@ func RetirementHandler(store state.Store) httpkit.AccountHandler {
 			respond(w, nil, errors.New("retirement store unavailable"))
 			return
 		}
+		visibility := NewRetirementVisibility(r, store, account)
+		var err error
 		if r.Method == http.MethodGet {
 			offset := 0
-			var err error
 			if raw := r.URL.Query().Get("offset"); raw != "" {
 				offset, err = strconv.Atoi(raw)
 			}
@@ -32,6 +33,9 @@ func RetirementHandler(store state.Store) httpkit.AccountHandler {
 				return
 			}
 			out, err := source.ListMCPOAuthRetirements(r.Context(), account.ID, offset)
+			if err == nil {
+				out, err = visibility.Filter(out)
+			}
 			respond(w, out, err)
 			return
 		}
@@ -49,6 +53,10 @@ func RetirementHandler(store state.Store) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrValidation("use retry or acknowledge_manual"))
 			return
 		}
+		if err := retirementVisible(r.Context(), store, visibility, account.ID, id.String()); err != nil {
+			respond(w, nil, err)
+			return
+		}
 		out, err := source.RecoverMCPOAuthRetirement(r.Context(), account.ID, id.String(), action)
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Grant retirement cannot be changed", "The record is leased, terminal, or past retention; reload the retirement ledger"))
@@ -56,6 +64,25 @@ func RetirementHandler(store state.Store) httpkit.AccountHandler {
 		}
 		respond(w, out, err)
 	}
+}
+
+// retirementVisible refuses a recovery action on a hidden app's record as if
+// the record did not exist. Retrying can revoke a grant at the provider and
+// acknowledging closes the company's open revocation work.
+func retirementVisible(ctx context.Context, store state.Store, visibility *RetirementVisibility, account, id string) error {
+	reader, ok := store.(state.MCPOAuthRetirementReader)
+	if !ok {
+		return errors.New("retirement app unavailable")
+	}
+	appID, err := reader.MCPOAuthRetirementAppID(ctx, account, id)
+	if err != nil {
+		return err
+	}
+	visible, err := visibility.Visible(appID)
+	if err == nil && !visible {
+		err = state.ErrNotFound
+	}
+	return err
 }
 func (r *ObserverRunner) prepareExchangeRetirement(ctx context.Context, job state.MCPCatalogObserverJob, ids []*age.X25519Identity, clientSecret string) (api.MCPOAuthRetirement, error) {
 	source, ok := r.Store.(state.MCPOAuthRetirementStore)

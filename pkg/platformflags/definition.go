@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -19,23 +20,61 @@ import (
 // regardless of rules or Default. When Enabled is true, rules run in order and
 // the first match decides; an account no rule matches gets Default.
 type Definition struct {
-	Enabled bool   `json:"enabled"`
-	Default bool   `json:"default"`
-	Rules   []Rule `json:"rules,omitempty"`
+	Enabled   bool       `json:"enabled"`
+	Default   bool       `json:"default"`
+	Rules     []Rule     `json:"rules,omitempty"`
+	SelfServe *SelfServe `json:"self_serve,omitempty"`
 }
 
-// Rule targets accounts. Accounts, Group, Plans and Rollout combine with AND;
-// a rule must set at least one of them. Rollout is in basis points of the
-// accounts the other constraints admit (1000 = 10%, 10000 = all) and uses the
-// same stable hash as customer Flags, so raising it keeps the earlier cohort.
-// Value is required so a rule can never enable a feature by omission.
+// SelfServe lets customers join a preview themselves (ADR 20261021080640).
+// An opted-in account or organization on an eligible plan gets the flag when
+// no rule matched; a rule, such as a value: false rule listed first, still
+// decides before any opt-in. Plans lists the eligible plans, empty for all.
+// MaxSubjects caps opted-in accounts plus organizations; 0 means
+// api.PlatformFlagsMaxOptInSubjects. Disabling it stops new opt-ins and
+// ignores existing ones without deleting them.
+type SelfServe struct {
+	Enabled     bool     `json:"enabled"`
+	Plans       []string `json:"plans,omitempty"`
+	MaxSubjects int      `json:"max_subjects,omitempty"`
+}
+
+// Capacity is the number of subjects that may opt in.
+func (s SelfServe) Capacity() int {
+	if s.MaxSubjects <= 0 {
+		return api.PlatformFlagsMaxOptInSubjects
+	}
+	return s.MaxSubjects
+}
+
+// Eligible reports whether an account on plan may use an opt-in. An unknown
+// plan is not eligible when the preview names plans.
+func (s SelfServe) Eligible(plan string) bool {
+	return len(s.Plans) == 0 || slices.Contains(s.Plans, plan)
+}
+
+// Rule targets accounts. Accounts, Orgs, Group, Plans and Rollout combine with
+// AND; a rule must set at least one of them. Orgs matches the organization a
+// request acts under (ADR 20261021080640), never an account's other
+// memberships. Rollout is in basis points of the accounts the other
+// constraints admit (1000 = 10%, 10000 = all) and uses the same stable hash as
+// customer Flags, so raising it keeps the earlier cohort. Value is required so
+// a rule can never enable a feature by omission.
+//
+// StartsAt and EndsAt bound when the rule applies (ADR 20261021080640):
+// outside the window it does not match and evaluation falls through. A rule
+// with only a window and no targeting applies to everyone inside it.
 type Rule struct {
-	ID       string   `json:"id"`
-	Accounts []string `json:"accounts,omitempty"`
-	Group    string   `json:"group,omitempty"`
-	Plans    []string `json:"plans,omitempty"`
-	Rollout  *int     `json:"rollout,omitempty"`
-	Value    *bool    `json:"value"`
+	ID       string     `json:"id"`
+	Accounts []string   `json:"accounts,omitempty"`
+	Orgs     []string   `json:"orgs,omitempty"`
+	Group    string     `json:"group,omitempty"`
+	Plans    []string   `json:"plans,omitempty"`
+	Rollout  *int       `json:"rollout,omitempty"`
+	StartsAt *time.Time `json:"starts_at,omitempty"`
+	EndsAt   *time.Time `json:"ends_at,omitempty"`
+	Ramp     *Ramp      `json:"ramp,omitempty"`
+	Value    *bool      `json:"value"`
 }
 
 // Groups are the shared named account sets rules reference by name. They are
@@ -93,6 +132,10 @@ func decodeStrict(raw json.RawMessage, out any) error {
 // plans to lowercase so equality and hashing never depend on input casing.
 func NormalizeDefinition(def Definition) Definition {
 	out := Definition{Enabled: def.Enabled, Default: def.Default}
+	if def.SelfServe != nil {
+		selfServe := SelfServe{Enabled: def.SelfServe.Enabled, MaxSubjects: def.SelfServe.MaxSubjects, Plans: normalizePlans(def.SelfServe.Plans)}
+		out.SelfServe = &selfServe
+	}
 	if len(def.Rules) == 0 {
 		return out
 	}
@@ -107,13 +150,35 @@ func NormalizeDefinition(def Definition) Definition {
 			value := *rule.Value
 			next.Value = &value
 		}
-		next.Accounts = normalizeAccounts(rule.Accounts)
-		for _, plan := range rule.Plans {
-			next.Plans = append(next.Plans, strings.ToLower(strings.TrimSpace(plan)))
+		next.StartsAt, next.EndsAt = utcSecond(rule.StartsAt), utcSecond(rule.EndsAt)
+		next.Ramp = cloneRamp(rule.Ramp)
+		if next.Ramp != nil {
+			next.Ramp.OnBreach = strings.ToLower(strings.TrimSpace(next.Ramp.OnBreach))
 		}
+		next.Accounts = normalizeAccounts(rule.Accounts)
+		next.Orgs = normalizeAccounts(rule.Orgs)
+		next.Plans = normalizePlans(rule.Plans)
 		out.Rules = append(out.Rules, next)
 	}
 	return out
+}
+
+func normalizePlans(plans []string) []string {
+	var out []string
+	for _, plan := range plans {
+		out = append(out, strings.ToLower(strings.TrimSpace(plan)))
+	}
+	return out
+}
+
+// utcSecond stores a schedule boundary in UTC at whole-second precision, so
+// a definition round-trips byte for byte.
+func utcSecond(at *time.Time) *time.Time {
+	if at == nil {
+		return nil
+	}
+	t := at.UTC().Truncate(time.Second)
+	return &t
 }
 
 // NormalizeGroups canonicalizes every member account ID.
@@ -159,10 +224,17 @@ func ValidateDefinition(def Definition, groups Groups) error {
 		if rule.Value == nil {
 			return fmt.Errorf("rule %q requires an explicit boolean value", rule.ID)
 		}
-		if len(rule.Accounts) == 0 && rule.Group == "" && len(rule.Plans) == 0 && rule.Rollout == nil {
-			return fmt.Errorf("rule %q requires accounts, group, plans or rollout targeting", rule.ID)
+		if len(rule.Accounts) == 0 && len(rule.Orgs) == 0 && rule.Group == "" && len(rule.Plans) == 0 && rule.Rollout == nil &&
+			rule.StartsAt == nil && rule.EndsAt == nil {
+			return fmt.Errorf("rule %q requires accounts, orgs, group, plans, rollout or a schedule window", rule.ID)
+		}
+		if rule.StartsAt != nil && rule.EndsAt != nil && !rule.EndsAt.After(*rule.StartsAt) {
+			return fmt.Errorf("rule %q: ends_at must be after starts_at", rule.ID)
 		}
 		if err := validateAccounts(rule.Accounts, api.PlatformFlagsMaxAccountsPerRule); err != nil {
+			return fmt.Errorf("rule %q: %w", rule.ID, err)
+		}
+		if err := validateIDs(rule.Orgs, api.PlatformFlagsMaxOrgsPerRule, "organization"); err != nil {
 			return fmt.Errorf("rule %q: %w", rule.ID, err)
 		}
 		if rule.Group != "" {
@@ -175,16 +247,34 @@ func ValidateDefinition(def Definition, groups Groups) error {
 				}
 			}
 		}
-		seenPlans := map[string]bool{}
-		for _, plan := range rule.Plans {
-			if !api.Plan(plan).Valid() || seenPlans[plan] {
-				return fmt.Errorf("rule %q: invalid or duplicate plan %q", rule.ID, plan)
-			}
-			seenPlans[plan] = true
+		if err := validatePlans(rule.Plans); err != nil {
+			return fmt.Errorf("rule %q: %w", rule.ID, err)
 		}
 		if rule.Rollout != nil && (*rule.Rollout < 0 || *rule.Rollout > 10000) {
 			return fmt.Errorf("rule %q: rollout must be 0..10000 basis points", rule.ID)
 		}
+		if err := validateRamp(rule); err != nil {
+			return fmt.Errorf("rule %q: %w", rule.ID, err)
+		}
+	}
+	if s := def.SelfServe; s != nil {
+		if err := validatePlans(s.Plans); err != nil {
+			return fmt.Errorf("self_serve: %w", err)
+		}
+		if s.MaxSubjects < 0 || s.MaxSubjects > api.PlatformFlagsMaxOptInSubjects {
+			return fmt.Errorf("self_serve: max_subjects must be 0..%d", api.PlatformFlagsMaxOptInSubjects)
+		}
+	}
+	return nil
+}
+
+func validatePlans(plans []string) error {
+	seen := map[string]bool{}
+	for _, plan := range plans {
+		if !api.Plan(plan).Valid() || seen[plan] {
+			return fmt.Errorf("invalid or duplicate plan %q", plan)
+		}
+		seen[plan] = true
 	}
 	return nil
 }
@@ -206,19 +296,25 @@ func ValidateGroups(groups Groups) error {
 }
 
 func validateAccounts(accounts []string, limit int) error {
-	if len(accounts) > limit {
-		return fmt.Errorf("at most %d accounts are allowed", limit)
+	return validateIDs(accounts, limit, "account")
+}
+
+// validateIDs bounds a list of canonical UUIDs naming accounts or
+// organizations.
+func validateIDs(ids []string, limit int, noun string) error {
+	if len(ids) > limit {
+		return fmt.Errorf("at most %d %ss are allowed", limit, noun)
 	}
-	seen := make(map[string]bool, len(accounts))
-	for _, account := range accounts {
-		id, err := uuid.Parse(account)
-		if err != nil || id.String() != account {
-			return fmt.Errorf("account %q is not a canonical account UUID", account)
+	seen := make(map[string]bool, len(ids))
+	for _, raw := range ids {
+		id, err := uuid.Parse(raw)
+		if err != nil || id.String() != raw {
+			return fmt.Errorf("%s %q is not a canonical %s UUID", noun, raw, noun)
 		}
-		if seen[account] {
-			return fmt.Errorf("duplicate account %q", account)
+		if seen[raw] {
+			return fmt.Errorf("duplicate %s %q", noun, raw)
 		}
-		seen[account] = true
+		seen[raw] = true
 	}
 	return nil
 }

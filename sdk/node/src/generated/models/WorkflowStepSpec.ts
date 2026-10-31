@@ -9,7 +9,7 @@ import type { WorkflowJoinSpec } from './WorkflowJoinSpec.js';
 import type { WorkflowOutboundSpec } from './WorkflowOutboundSpec.js';
 import type { WorkflowRetrySpec } from './WorkflowRetrySpec.js';
 /**
- * One workflow step. The canonical ADR-081 target is `run`; `path`
+ * One workflow step. The canonical target is `run`; `path`
  * and `method` remain accepted for the existing HTTP wake executor
  * during the runtime migration. Exactly one of `run`, `path`,
  * `wait_for_event`, `wait_for_callback`, `wait_for_duration`,

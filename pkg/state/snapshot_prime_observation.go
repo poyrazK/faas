@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"sort"
 	"time"
 
@@ -177,8 +176,8 @@ func (m *MemStore) snapshotPrimeReleaseLocked(d Deployment) (bool, time.Time) {
 		if t.DeploymentID != d.ID || t.Kind != AppTaskKindRelease {
 			continue
 		}
-		valid := t.Status == AppTaskSucceeded && t.AppID == d.AppID && t.ArtifactKey == d.RootfsKey && t.ImageDigest == d.ImageDigest &&
-			t.DeploymentScope == normalizedDeploymentScope(d.Scope) && t.CommandShell == d.ReleaseCommandShell && slices.Equal(t.Command, d.ReleaseCommand)
+		valid := t.Status == AppTaskSucceeded && t.ArtifactKey == d.RootfsKey && t.ImageDigest == d.ImageDigest &&
+			t.DeploymentScope == normalizedDeploymentScope(d.Scope) && ReleaseTaskRunsDeploymentRelease(t, d)
 		if t.FinishedAt == nil {
 			return valid, time.Time{}
 		}

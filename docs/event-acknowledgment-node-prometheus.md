@@ -13,7 +13,7 @@ import {
   EventAcknowledgmentPreparationMetrics,
   formatEventAcknowledgmentPreparationMetrics,
   EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const metrics = new EventAcknowledgmentPreparationMetrics();
 // Pass onEvent: metrics.record to your prepared operations.

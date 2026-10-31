@@ -105,7 +105,7 @@ def sync_detailed(
     logins, logouts, key mints/deletes, secret sets/deletes, plan
     changes, and account deletion scheduling/restore.
 
-    The events table is append-only (spec §5 / §6.1). The response
+    The events table is append-only. The response
     is bounded by `limit` (default 50, max 100). For a full-history
     pull, use `GET /v1/account/export`, which unions these events
     with the customer's GDPR-action rows.
@@ -155,7 +155,7 @@ def sync(
     logins, logouts, key mints/deletes, secret sets/deletes, plan
     changes, and account deletion scheduling/restore.
 
-    The events table is append-only (spec §5 / §6.1). The response
+    The events table is append-only. The response
     is bounded by `limit` (default 50, max 100). For a full-history
     pull, use `GET /v1/account/export`, which unions these events
     with the customer's GDPR-action rows.
@@ -200,7 +200,7 @@ async def asyncio_detailed(
     logins, logouts, key mints/deletes, secret sets/deletes, plan
     changes, and account deletion scheduling/restore.
 
-    The events table is append-only (spec §5 / §6.1). The response
+    The events table is append-only. The response
     is bounded by `limit` (default 50, max 100). For a full-history
     pull, use `GET /v1/account/export`, which unions these events
     with the customer's GDPR-action rows.
@@ -248,7 +248,7 @@ async def asyncio(
     logins, logouts, key mints/deletes, secret sets/deletes, plan
     changes, and account deletion scheduling/restore.
 
-    The events table is append-only (spec §5 / §6.1). The response
+    The events table is append-only. The response
     is bounded by `limit` (default 50, max 100). For a full-history
     pull, use `GET /v1/account/export`, which unions these events
     with the customer's GDPR-action rows.

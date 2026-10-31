@@ -81,3 +81,36 @@ FROM (
 WHERE s.events > 0
 GROUP BY s.minute, s.source
 ORDER BY s.minute, s.source;
+
+-- name: RouteAwakeWorkMinutes :many
+-- Deliveries schedd made to the app (ADR-20261022184757), per minute and
+-- source: how many were running and how many started. Cron firings are keyed
+-- by cron job and queue deliveries by queue. A delivery runs from received_at
+-- to completed_at; one still running ends at until_at, and none counts for
+-- more than max_minutes.
+WITH work AS MATERIALIZED (
+    SELECT i.source, i.queue_name, i.cron_id, i.received_at,
+           LEAST(COALESCE(i.completed_at, sqlc.arg(until_at)::timestamptz), sqlc.arg(until_at)::timestamptz,
+                 i.received_at + make_interval(mins => sqlc.arg(max_minutes)::int)) AS ended_at
+    FROM invocations i
+    WHERE i.app_id = sqlc.arg(app_id)
+      AND i.account_id = sqlc.arg(account_id)
+      AND i.received_at IS NOT NULL
+      AND i.received_at >= sqlc.arg(since_at)::timestamptz - make_interval(mins => sqlc.arg(max_minutes)::int)
+      AND i.received_at < sqlc.arg(until_at)::timestamptz
+)
+SELECT gs.minute::timestamptz AS minute,
+       w.source::text AS source,
+       COALESCE(w.cron_id::text, NULLIF(w.queue_name, ''), '')::text AS detail,
+       COALESCE(MAX(c.schedule), '')::text AS cron_schedule,
+       COALESCE(MAX(left(CASE WHEN cardinality(c.command) > 0 THEN array_to_string(c.command, ' ') ELSE c.path END, 200)), '')::text AS cron_target,
+       count(*)::bigint AS running,
+       count(*) FILTER (WHERE gs.minute = date_trunc('minute', w.received_at))::bigint AS started
+FROM work w
+LEFT JOIN crons c ON c.id = w.cron_id
+CROSS JOIN LATERAL generate_series(
+    date_trunc('minute', GREATEST(w.received_at, sqlc.arg(since_at)::timestamptz)),
+    date_trunc('minute', w.ended_at), interval '1 minute') AS gs(minute)
+WHERE w.ended_at >= sqlc.arg(since_at)::timestamptz
+GROUP BY gs.minute, w.source, COALESCE(w.cron_id::text, NULLIF(w.queue_name, ''), '')
+ORDER BY 1, 2, 3;

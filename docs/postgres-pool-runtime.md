@@ -30,7 +30,7 @@ driver dependency to the SDK and stays outside browser imports.
 
 ```js
 import pg from 'pg';
-import {PostgresPoolBinding} from '@gregale/sdk-node/postgres/runtime';
+import {PostgresPoolBinding} from '@gregale/sdk-node/preview/postgres/runtime';
 import {SecretReloadCoordinator} from '@gregale/sdk-node/secrets/runtime';
 
 const database = new PostgresPoolBinding('DATABASE_URL', config => {
@@ -64,10 +64,10 @@ The leaf SDK uses only the standard library. The application registers its own
 `database/sql` PostgreSQL driver, or supplies a different pool type.
 
 ```go
-database, err := faas.NewPostgresPoolBinding("DATABASE_URL",
-    func(_ context.Context, config faas.PostgresPoolConfig) (*sql.DB, error) {
+database, err := preview.NewPostgresPoolBinding("DATABASE_URL",
+    func(_ context.Context, config preview.PostgresPoolConfig) (*sql.DB, error) {
         return sql.Open("pgx", config.ConnectionString) // Register pgx in your app.
-    }, faas.PostgresPoolOptions[*sql.DB]{
+    }, preview.PostgresPoolOptions[*sql.DB]{
         Validate: func(ctx context.Context, pool *sql.DB) error { return pool.PingContext(ctx) },
         Retire: func(pool *sql.DB) error { return pool.Close() },
     })
@@ -86,14 +86,14 @@ is retired too. Validation errors and panics are sanitized and retire candidates
 
 ## Python
 
-`faas_sdk.postgres_pool_runtime` supports synchronous, thread-safe drivers such
+`faas_sdk.preview.postgres_pool_runtime` supports synchronous, thread-safe drivers such
 as `psycopg_pool.ConnectionPool`. Factory and validator callbacks receive a
 cancellation object with `is_set()`. Validators must return `None`; async
 factories and validators are rejected.
 
 ```python
 from psycopg_pool import ConnectionPool
-from faas_sdk.postgres_pool_runtime import PostgresPoolBinding
+from faas_sdk.preview.postgres_pool_runtime import PostgresPoolBinding
 
 def factory(config, cancel):
     return ConnectionPool(conninfo=config.connection_string, min_size=0,
@@ -122,7 +122,7 @@ be thread-safe.
 
 ## Async Python
 
-Use `faas_sdk.async_postgres_pool_runtime.AsyncPostgresPoolBinding` with
+Use `faas_sdk.preview.async_postgres_pool_runtime.AsyncPostgresPoolBinding` with
 `faas_sdk.async_secret_reload_runtime.AsyncSecretReloadCoordinator`. Factories,
 validators and retirement hooks return awaitables and run on one owning event
 loop, including late-candidate cleanup. The SDK imports no PostgreSQL driver.
@@ -132,7 +132,7 @@ objects. See the runnable
 TLS policy, bounded SQL, partial-allocation cleanup and lifespan wiring.
 
 ```python
-from faas_sdk.async_postgres_pool_runtime import AsyncPostgresPoolBinding
+from faas_sdk.preview.async_postgres_pool_runtime import AsyncPostgresPoolBinding
 from faas_sdk.async_secret_reload_runtime import AsyncSecretReloadCoordinator
 
 # App-supplied async callbacks; validator must connect and return its connection.

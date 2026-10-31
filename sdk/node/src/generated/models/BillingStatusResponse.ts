@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Provider-independent customer billing status (issue
+ * Provider-independent customer billing status.
  */
 export type BillingStatusResponse = {
   mode: 'live' | 'disabled';

@@ -30,7 +30,7 @@ func (s *server) getManagedPostgresCapabilities(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
-	view := managedPostgresCapabilitiesView(discovery, limits, s.applicationAuthEnabled(acct))
+	view := managedPostgresCapabilitiesView(discovery, limits, s.applicationAuthEnabled(flagSubject(r, acct)))
 	view.StorageResize = view.StorageResize && s.storageResizes().Allows(acct.ID) // a preview until launch
 	writeJSON(w, http.StatusOK, view)
 }

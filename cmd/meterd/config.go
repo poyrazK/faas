@@ -159,6 +159,9 @@ func LoadConfig(path string) (*Config, error) {
 			// empty TOML default. role.FromConfig falls back to
 			// RoleSingleBox when the env is unset.
 			c.Role = role.FromConfig(string(c.Role), "FAAS_METERD_ROLE")
+			if err := c.overlayQuietPauseUnbilled(); err != nil {
+				return nil, err
+			}
 			return c, nil
 		}
 		return nil, fmt.Errorf("meterd: read %q: %w", path, err)
@@ -185,5 +188,21 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
 	}
+	if err := c.overlayQuietPauseUnbilled(); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// overlayQuietPauseUnbilled applies FAAS_QUIET_PAUSE_UNBILLED over
+// [meter] quiet_pause_unbilled (ADR-20261023171905). A value other than off,
+// shadow or on refuses to start rather than guessing how to bill.
+func (c *Config) overlayQuietPauseUnbilled() error {
+	if v := os.Getenv("FAAS_QUIET_PAUSE_UNBILLED"); v != "" {
+		c.Meter.QuietPauseUnbilled = v
+	}
+	if _, err := meter.ParseQuietPauseMode(c.Meter.QuietPauseUnbilled); err != nil {
+		return fmt.Errorf("meterd: %w", err)
+	}
+	return nil
 }

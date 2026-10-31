@@ -49,22 +49,26 @@ type PasswdEntry struct {
 func ParsePasswd(r io.Reader) (map[string]PasswdEntry, error) {
 	out := make(map[string]PasswdEntry)
 	scanner := bufio.NewScanner(r)
+	// Errors name the line number, never its content: the file comes from the
+	// image, and the error reaches the customer's deployment status.
+	lineNo := 0
 	for scanner.Scan() {
+		lineNo++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "+") {
 			continue
 		}
 		fields := strings.Split(line, ":")
 		if len(fields) != 7 {
-			return nil, fmt.Errorf("rootfs: parse_passwd: malformed line %q (want 7 colon-separated fields)", line)
+			return nil, fmt.Errorf("rootfs: parse_passwd: malformed line %d (want 7 colon-separated fields)", lineNo)
 		}
 		uid, err := strconv.Atoi(fields[2])
 		if err != nil {
-			return nil, fmt.Errorf("rootfs: parse_passwd: bad uid in line %q: %w", line, err)
+			return nil, fmt.Errorf("rootfs: parse_passwd: bad uid in line %d", lineNo)
 		}
 		gid, err := strconv.Atoi(fields[3])
 		if err != nil {
-			return nil, fmt.Errorf("rootfs: parse_passwd: bad gid in line %q: %w", line, err)
+			return nil, fmt.Errorf("rootfs: parse_passwd: bad gid in line %d", lineNo)
 		}
 		out[fields[0]] = PasswdEntry{Name: fields[0], Uid: uid, Gid: gid}
 	}

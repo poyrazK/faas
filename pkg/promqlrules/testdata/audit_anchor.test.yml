@@ -1,0 +1,106 @@
+# ADR-20261026163015: audit log tamper evidence alerts.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/pg_backup.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: a finding in the recent verification pages
+    interval: 1m
+    input_series:
+      - series: faas_audit_anchor_recent_findings{instance="cp-1:9100",job="node"}
+        values: 0 0 1 1
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FaasAuditLogTampered
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: FaasAuditLogTampered
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              family: audit_anchor
+              instance: cp-1:9100
+            exp_annotations:
+              summary: "Audit log rows or anchors no longer match their seals on cp-1:9100"
+              description: |
+                An audit log verification found anchors that do not verify: sealed
+                rows were rewritten, erased or added, or anchors were altered.
+                Treat it as a security incident. `journalctl -u faas-audit-anchor.service
+                -u faas-audit-verify.service | grep 'audit anchor finding'` lists them.
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/AuditLogAnchors.md"
+
+  - name: a finding in the daily verification pages
+    interval: 1m
+    input_series:
+      - series: faas_audit_verify_findings{instance="cp-1:9100",job="node"}
+        values: 2 2
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FaasAuditLogTampered
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              family: audit_anchor
+              instance: cp-1:9100
+            exp_annotations:
+              summary: "Audit log rows or anchors no longer match their seals on cp-1:9100"
+              description: |
+                An audit log verification found anchors that do not verify: sealed
+                rows were rewritten, erased or added, or anchors were altered.
+                Treat it as a security incident. `journalctl -u faas-audit-anchor.service
+                -u faas-audit-verify.service | grep 'audit anchor finding'` lists them.
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/AuditLogAnchors.md"
+
+  - name: a falling anchor seq pages
+    interval: 1m
+    input_series:
+      - series: faas_audit_anchor_seq{instance="cp-1:9100",job="node"}
+        values: 5 5 6 6 3 3
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasAuditAnchorErased
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: FaasAuditAnchorErased
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              family: audit_anchor
+              instance: cp-1:9100
+              job: node
+            exp_annotations:
+              summary: "The newest audit log anchors disappeared on cp-1:9100"
+              description: |
+                faas_audit_anchor_seq fell to 3, below its 7-day maximum.
+                Unless the control-plane database was just restored, the newest
+                anchors were deleted, probably with the audit rows they sealed.
+                Compare with the "audit anchor sealed" lines in Loki.
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/AuditLogAnchors.md"
+
+  - name: an anchor run older than an hour warns
+    interval: 1m
+    input_series:
+      - series: faas_audit_anchor_last_success_timestamp_seconds{instance="cp-1:9100",job="node"}
+        values: 0+0x100
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: FaasAuditAnchorStale
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: FaasAuditAnchorStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              family: audit_anchor
+              instance: cp-1:9100
+              job: node
+            exp_annotations:
+              summary: "The audit log is not being sealed or verified on cp-1:9100"
+              description: |
+                No audit anchor run completed in the last hour, or no full
+                verification in the last 26 hours. New audit rows are unsealed
+                meanwhile. A run that refuses to extend a chain whose newest anchor
+                does not verify, or that was sealed under another key, also stops
+                here. Check `journalctl -u faas-audit-anchor.service -u faas-audit-verify.service`.
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/AuditLogAnchors.md"

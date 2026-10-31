@@ -31,6 +31,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"io"
 	"log/slog"
 	"net/http"
@@ -309,6 +310,9 @@ func fwdOnceWithEvents(w http.ResponseWriter, r *http.Request, nodes NodeClientL
 	cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 	if !ok {
 		markUndeliveredTarget(r.Context())
+		// This gateway cannot reach the target's vmmd; another node's
+		// gateway may (ADR-20261022184531 step 5).
+		markNotDispatched(w, r, NotDispatchedProxyRefused)
 		writeForwarderProblem(w, http.StatusServiceUnavailable)
 		return
 	}
@@ -359,13 +363,11 @@ func fwdStreamOnce(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient
 // emitted on the first downstream byte (the Response Init
 // frame's WriteHeader). nil events opts out (pre-PR-C fixtures).
 //
-// ADR-093 follow-up: when the inbound request carries an end-to-end
-// budget, it governs admission and the response headers. Once the
-// headers are committed, newStreamSession detaches that budget and
-// the stream is bounded by activity, the 910 s hop ceiling, and the
-// independent idle timer.
+// ADR-570: ordinary responses retain their budget through the full body.
+// Explicit streams and gRPC detach after successful headers, retaining the
+// independent session ceiling, idle bound and client cancellation.
 func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient, log *slog.Logger, t Target, events *evts.Platform) {
-	ctx, detachBudget, touch, cancel := newStreamSession(r.Context(), 910*time.Second, streamIdleTimeout)
+	ctx, detachBudget, touch, cancel := newHTTPForwardSession(r.Context(), isLongLivedForward(r))
 	defer cancel()
 
 	// ADR-126: Handler.ServeHTTP stamps the app's wire-protocol choice
@@ -382,11 +384,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if log.Enabled(r.Context(), slog.LevelDebug) {
 		log.Debug("gateway: framing selection",
 			"node", t.NodeID,
-			"app", r.Header.Get("x-faas-app"),
-			"app_protocol", protocol)
+			"app", logsanitize.Field(r.Header.Get("x-faas-app")),
+			"app_protocol", logsanitize.Field(protocol))
 	}
 
-	stream, err := cli.ForwardHTTPStream(grpcStreamContext{wire.ForwardContext(ctx)}) //nolint:contextcheck // authenticated private-hop metadata; preserve cancellation and hide only grpc-timeout.
+	stream, err := cli.ForwardHTTPStream(grpcStreamContext{wire.ForwardContext(wire.WithRequestCorrelationOutgoing(ctx))}) //nolint:contextcheck // authenticated private-hop and correlation metadata; preserve cancellation and hide only grpc-timeout.
 	if err != nil {
 		if handleForwardRequestCancellation(w, r, true) {
 			return
@@ -398,6 +400,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		log.Error("gateway: forwarder stream open failed",
 			"node", t.NodeID, "err", err.Error())
+		// No stream, so no request byte left this gateway
+		// (ADR-20261022184531 step 5).
+		markNotDispatched(w, r, NotDispatchedProxyRefused)
 		writeForwarderProblem(w, responseStatus)
 		return
 	}
@@ -461,7 +466,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if err := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
 		Frame: &vmmdpb.ForwardHTTPStreamRequest_Init{Init: init},
 	}); err != nil {
+		err = forwardingSendStatus(err, stream)
 		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
+		if writeNodeAdmissionRefusal(w, r, err) {
 			return
 		}
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
@@ -530,10 +539,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// straight to w.Write (which the statusRecorder
 	// intercepts to fire maybeFlush → onFlush).
 	wroteHeader := false
+	budgetDetached := false
 	for {
 		frame, err := stream.Recv()
 		touch()
 		if errors.Is(err, io.EOF) {
+			if wroteHeader && trafficRevocationCause(r.Context()) != nil {
+				panic(http.ErrAbortHandler)
+			}
 			break
 		}
 		if err != nil {
@@ -542,11 +555,15 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// closed and the body goroutine can finish before return.
 			cancel()
 			<-bodyErrCh
+			if wroteHeader && trafficRevocationCause(r.Context()) != nil {
+				panic(http.ErrAbortHandler)
+			}
+			if wroteHeader && !budgetDetached && (streamErr != nil || requestBudgetExpired(r.Context())) {
+				// A partial ordinary response must be visibly truncated,
+				// never terminated as a complete short body.
+				panic(http.ErrAbortHandler)
+			}
 			if streamErr != nil && wroteHeader {
-				// A detached stream ended because its client canceled or
-				// its independent idle/ceiling safety bound fired. The
-				// response is already committed, so close cleanly without
-				// attempting to write a second error response.
 				return
 			}
 			if handleForwardRequestCancellation(w, r, !wroteHeader) {
@@ -567,6 +584,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					"node", t.NodeID, "err", err.Error())
 				panic(http.ErrAbortHandler)
 			}
+			if writeNodeAdmissionRefusal(w, r, err) {
+				return
+			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				markStaleTargetErr(r.Context(), err)
 				log.Warn("gateway: forwarder stream Unavailable; surfacing 503",
@@ -582,6 +602,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				markUndeliveredTarget(r.Context())
 				log.Warn("gateway: forwarder target not found on node; surfacing 503",
 					"node", t.NodeID, "instance", t.InstanceID)
+				markNotDispatched(w, r, NotDispatchedProxyRefused)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
@@ -591,7 +612,19 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
+			// Recv can deliver a queued init after the wall-clock budget
+			// expires, before cancellation reaches the transport. Keep the
+			// uncommitted response available for the canonical timeout.
+			if handleForwardRequestCancellation(w, r, true) {
+				cancel()
+				<-bodyErrCh
+				return
+			}
 			recordForwardedFirstByte(r.Context())
+			// The session context drops only the handshake budget after a
+			// successful long response. Its lifetime fence still interrupts writes.
+			stopWriteGuard := sync.OnceFunc(guardResponseWrites(ctx, w))
+			defer stopWriteGuard()
 			stampDeploymentSmokeResponse(r.Context(), w.Header())
 			// Connection can nominate headers appearing anywhere in the
 			// frame, so filter the complete block before forwarding fields.
@@ -605,8 +638,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					forwardedResponseHeader(r.Context(), w.Header(), name, value)
 				}
 			}
+			stampInstanceNode(r.Context(), w.Header(), t.NodeID)
 			for _, trailer := range init.GetTrailers() {
-				if name := strings.TrimSpace(trailer.GetName()); name != "" {
+				if name := strings.TrimSpace(trailer.GetName()); name != "" && !isTrafficResponseControlHeader(name) {
 					w.Header().Add("Trailer", name)
 				}
 			}
@@ -617,17 +651,22 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
-			// The initial response headers are the first response byte for
-			// budget purposes. From this point onward, the stream is governed
-			// by activity plus the independent idle timer, not the ordinary
-			// 3/30-second request budget.
+			// Only an explicit long-lived response may detach its handshake
+			// budget. Ordinary HTTP uses the same RPC framing but stays bounded.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
 				detachBudget()
-				if isEventStream(w.Header()) {
-					// An EventSource reconnects with Last-Event-ID, so a
-					// gateway restart ends it cleanly below rather than
-					// holding the drain open.
-					drain.EndOnShutdown(ctx, cancel)
+				budgetDetached = isLongLivedForward(r)
+				if budgetDetached {
+					recordTrafficStreamDetached(r.Context())
+					if isEventStream(w.Header()) {
+						// An EventSource reconnects with Last-Event-ID, so a
+						// gateway restart ends it cleanly below rather than
+						// holding the drain open. Ordinary responses keep
+						// the drain grace and finish within their budget.
+						// Lift the write fence first so the stream's end
+						// reaches the client instead of an abort.
+						drain.EndOnShutdown(ctx, func() { stopWriteGuard(); cancel() })
+					}
 				}
 			}
 			if grpcDuplex {
@@ -685,6 +724,18 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		if chunk := frame.GetBodyChunk(); len(chunk) > 0 {
 			if _, werr := w.Write(chunk); werr != nil {
+				if wroteHeader && errors.Is(werr, errResponseCapExceeded) {
+					// The body passed the plan's response cap after the
+					// status went out. Returning would end the chunked body
+					// cleanly and the client would take the truncated
+					// payload for the whole one (Hunt 11 H11-36); abort so
+					// it sees a transport error instead.
+					cancel()
+					<-bodyErrCh
+					log.Warn("gateway: streamed response exceeded its body cap after commit; aborting",
+						"node", t.NodeID, "instance", t.InstanceID)
+					panic(http.ErrAbortHandler)
+				}
 				// Client disconnect mid-stream. The
 				// receiver stops reading frames. The
 				// body-copy goroutine is cancelled via
@@ -697,6 +748,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					"node", t.NodeID, "err", werr.Error())
 				cancel()
 				<-bodyErrCh
+				if trafficRevocationCause(r.Context()) != nil || (!budgetDetached && requestBudgetExpired(r.Context())) {
+					panic(http.ErrAbortHandler)
+				}
 				return
 			}
 			if grpcDuplex {
@@ -813,8 +867,11 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		metrics.ObserveWSSessionDuration(string(plan), wsOutcome, time.Since(sessionStart))
 	}()
 
-	stream, err := cli.ForwardRawStream(grpcStreamContext{wire.ForwardContext(ctx)}) //nolint:contextcheck // authenticated private-hop metadata; preserve cancellation and hide only grpc-timeout.
+	stream, err := cli.ForwardRawStream(grpcStreamContext{wire.ForwardContext(wire.WithRequestCorrelationOutgoing(ctx))}) //nolint:contextcheck // authenticated private-hop and correlation metadata; preserve cancellation and hide only grpc-timeout.
 	if err != nil {
+		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder stream open failed",
 			"node", t.NodeID, "err", err.Error())
@@ -848,6 +905,14 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if err := stream.Send(&vmmdpb.ForwardRawRequest{
 		Frame: &vmmdpb.ForwardRawRequest_Init{Init: init},
 	}); err != nil {
+		err = forwardingSendStatus(err, stream)
+		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
+		if writeNodeAdmissionRefusal(w, r, err) {
+			wsOutcome = WSOutcomeUpstreamUnavailable
+			return
+		}
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder stream init send failed",
 			"node", t.NodeID, "err", err.Error())
@@ -870,6 +935,14 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if err := stream.Send(&vmmdpb.ForwardRawRequest{
 		Frame: &vmmdpb.ForwardRawRequest_BodyChunk{BodyChunk: requestHead},
 	}); err != nil {
+		err = forwardingSendStatus(err, stream)
+		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
+		if writeNodeAdmissionRefusal(w, r, err) {
+			wsOutcome = WSOutcomeUpstreamUnavailable
+			return
+		}
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder request head send failed",
 			"node", t.NodeID, "err", err.Error())
@@ -911,6 +984,22 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// raw path guarantees the H2C DATA frame emits even when
 	// the chunk is below the 32 KiB maybeFlush threshold).
 	wroteHeader := false
+	upgradeEstablished := false
+	// refusalRemaining counts the body bytes still owed by a guest that
+	// refused an upgrade with a Content-Length response; -1 otherwise. A
+	// keep-alive guest does not close its socket after the refusal, so the
+	// stream ends here once the declared body is relayed, not when the request
+	// budget expires (issue #2681).
+	refusalRemaining := int64(-1)
+	// refusalChunked decodes a chunked refusal the same way: the payload is
+	// relayed and the stream ends at the terminating chunk.
+	var refusalChunked *chunkedRefusal
+	var stopResponseWrites func()
+	defer func() {
+		if stopResponseWrites != nil {
+			stopResponseWrites()
+		}
+	}()
 	for {
 		frame, err := stream.Recv()
 		touch()
@@ -927,10 +1016,20 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if errors.As(bodyErr, &sendErr) {
 				wsOutcome = WSOutcomeUpstreamUnavailable
 			}
+			if wroteHeader && !upgradeEstablished && (streamErr != nil || requestBudgetExpired(r.Context())) {
+				panic(http.ErrAbortHandler)
+			}
 			if streamErr != nil && wroteHeader {
 				// A detached upgrade ended because its client canceled or
 				// its independent idle/ceiling safety bound fired. The
 				// handshake is already committed, so close cleanly.
+				return
+			}
+			if handleForwardRequestCancellation(w, r, !wroteHeader) {
+				return
+			}
+			if !wroteHeader && writeNodeAdmissionRefusal(w, r, err) {
+				wsOutcome = WSOutcomeUpstreamUnavailable
 				return
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
@@ -956,10 +1055,20 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
+			// A buffered response init does not outrank an expired handshake.
+			if handleForwardRequestCancellation(w, r, true) {
+				cancel()
+				<-bodyErrCh
+				return
+			}
 			recordForwardedFirstByte(r.Context())
+			if init.GetStatus() != http.StatusSwitchingProtocols {
+				stopResponseWrites = guardResponseWrites(ctx, w)
+			}
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeaderWithUpgrade(r.Context(), w.Header(), h.GetName(), h.GetValue(), init.GetStatus() == http.StatusSwitchingProtocols)
 			}
+			stampInstanceNode(r.Context(), w.Header(), t.NodeID)
 			if init.GetStatus() == http.StatusSwitchingProtocols {
 				conn, reader, err := beginRawUpgrade(w)
 				if err != nil {
@@ -978,13 +1087,21 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			} else {
 				w.WriteHeader(int(init.GetStatus()))
 				upgradeReader <- nil
+				if isUpgradeRequest(r) && init.Error == "" {
+					refusalRemaining = rawResponseContentLength(init.GetHeaders())
+					if refusalRemaining < 0 && rawResponseChunked(init.GetHeaders()) {
+						refusalChunked = &chunkedRefusal{}
+					}
+				}
 			}
 			wroteHeader = true
-			if upgraded || (init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest) {
-				// The upgrade response has started. Drop only the ordinary
+			if upgraded || (!isUpgradeRequest(r) && isLongLivedForward(r) && init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest) {
+				// A socket upgrade or declared raw stream has started. Drop only the ordinary
 				// request budget; the raw session remains bounded by activity,
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
+				recordTrafficStreamDetached(r.Context())
+				upgradeEstablished = true
 			}
 			if upgraded {
 				// WebSocket clients reconnect; a restart closes the session
@@ -1051,9 +1168,25 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				}
 				flushSafe(w)
 			}
+			if refusalRemaining == 0 {
+				flushSafe(w)
+				break
+			}
 			continue
 		}
 		if chunk := frame.GetBodyChunk(); len(chunk) > 0 {
+			if refusalChunked != nil {
+				decoded, derr := refusalChunked.feed(chunk)
+				if derr != nil {
+					log.Debug("gateway: malformed chunked upgrade refusal from the guest; ending the response",
+						"node", t.NodeID, "err", derr.Error())
+					break
+				}
+				chunk = decoded
+			}
+			if refusalRemaining >= 0 && int64(len(chunk)) > refusalRemaining {
+				chunk = chunk[:refusalRemaining]
+			}
 			// Issue #676 / ADR-080 follow-up, PR-B: rx byte
 			// counter increments per chunk received
 			// (guest→customer). Counter is increment-before-
@@ -1102,9 +1235,24 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if !upgraded {
 				flushSafe(w)
 			}
+			if refusalRemaining > 0 {
+				refusalRemaining -= int64(len(chunk))
+				if refusalRemaining == 0 {
+					break
+				}
+			}
+			if refusalChunked != nil && refusalChunked.done {
+				break
+			}
 		}
 	}
 
+	// Disarm the write callback before normal RPC cleanup cancels its context.
+	// net/http still needs to flush the final chunk after this handler returns.
+	if stopResponseWrites != nil {
+		stopResponseWrites()
+		stopResponseWrites = nil
+	}
 	cancel()
 	// Wait for the body goroutine to drain so we can
 	// distinguish a clean bidi close from a client-disconnect
@@ -1118,6 +1266,21 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// could inspect bodyErrCh's final value to distinguish
 	// client-initiated FIN from server-initiated close; for
 	// PR-B the customer-side churn signal is sufficient.
+}
+
+// rawResponseContentLength is the guest response's Content-Length, or -1 when
+// it has none or an unusable one.
+func rawResponseContentLength(headers []*vmmdpb.Header) int64 {
+	for _, h := range headers {
+		if strings.EqualFold(h.GetName(), "Content-Length") {
+			n, err := strconv.ParseInt(strings.TrimSpace(h.GetValue()), 10, 64)
+			if err != nil || n < 0 {
+				return -1
+			}
+			return n
+		}
+	}
+	return -1
 }
 
 // finishForwardRequestBody joins the request pump on every exit, including
@@ -1368,10 +1531,7 @@ func (cr *ctxReader) Read(p []byte) (int, error) {
 // touched exactly once per request.
 type NodeClientCache struct {
 	mu      sync.Mutex
-	clients map[string]*grpc.ClientConn // nodeID -> conn
-	// refcount lets us close the conn once the last lease is released,
-	// avoiding an idle conn lingering for a node that just got drained.
-	refs map[string]int
+	clients map[string]*nodeConn // nodeID -> current conn
 	// dialing coalesces the first-use resolver + gRPC dial for a node.
 	// Without this map, a burst that lands on a new node makes every
 	// request perform the same Postgres target lookup and start a
@@ -1380,6 +1540,47 @@ type NodeClientCache struct {
 
 	dial func(ctx context.Context, target string) (*grpc.ClientConn, error)
 	log  *slog.Logger
+	// restartNotices, when set, holds stream opens through a node's planned
+	// vmmd restart (vmmd_restart_hold.go).
+	restartNotices *restartNotices
+}
+
+// nodeConn is one dialed connection and the leases on it. Leases are counted
+// per connection, not per node: the count used to live in a map keyed by node
+// ID, so an eviction with requests in flight dropped the count and leaked the
+// connection, and the old leases then decremented the next connection's count
+// until an eviction closed it under live requests (bug hunt 2026-10-28 B17).
+// Guarded by NodeClientCache.mu.
+type nodeConn struct {
+	conn   *grpc.ClientConn
+	target string
+	refs   int
+	// retired is set once the conn left the cache; the last lease closes it.
+	retired bool
+}
+
+// WithRestartNotices makes forwards to a node whose vmmd is restarting under
+// a planned notice wait for the successor instead of failing. Startup only.
+func (c *NodeClientCache) WithRestartNotices(store RestartNoticeReader) *NodeClientCache {
+	if c != nil && store != nil {
+		c.restartNotices = &restartNotices{store: store, now: time.Now}
+	}
+	return c
+}
+
+// client is the VmmdClient a lease of conn hands out.
+func (c *NodeClientCache) client(nodeID string, conn *grpc.ClientConn) vmmdpb.VmmdClient {
+	cli := vmmdpb.NewVmmdClient(conn)
+	if c.restartNotices == nil {
+		return cli
+	}
+	return restartHoldClient{VmmdClient: cli, conn: conn, node: nodeID, notices: c.restartNotices, log: c.log}
+}
+
+// leaseLocked takes a lease on entry. Caller holds c.mu.
+func (c *NodeClientCache) leaseLocked(nodeID string, entry *nodeConn) (vmmdpb.VmmdClient, io.Closer) {
+	entry.refs++
+	return c.client(nodeID, entry.conn), &leaseCloser{c: c, entry: entry}
 }
 
 type nodeDialCall struct {
@@ -1395,8 +1596,7 @@ func NewNodeClientCache(dial func(ctx context.Context, target string) (*grpc.Cli
 		log = slog.Default()
 	}
 	return &NodeClientCache{
-		clients: map[string]*grpc.ClientConn{},
-		refs:    map[string]int{},
+		clients: map[string]*nodeConn{},
 		dialing: map[string]*nodeDialCall{},
 		dial:    dial,
 		log:     log,
@@ -1405,8 +1605,8 @@ func NewNodeClientCache(dial func(ctx context.Context, target string) (*grpc.Cli
 
 // ClientFor resolves nodeID to a VmmdClient on a cached
 // *grpc.ClientConn. Returns ok=false on a dial failure; the caller
-// surfaces 503. Each successful call increments the refcount so
-// Evict() can wait for in-flight requests before closing.
+// surfaces 503. Each successful call leases the connection so Evict()
+// can wait for in-flight requests before closing it.
 //
 // On a cache miss, one caller looks the node's dial target up via the
 // resolver (production: pkg/state.ComputeNodeByID; tests: a fixed
@@ -1418,16 +1618,12 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 	}
 	c.mu.Lock()
 	if c.clients == nil {
-		c.clients = map[string]*grpc.ClientConn{}
+		c.clients = map[string]*nodeConn{}
 	}
-	if c.refs == nil {
-		c.refs = map[string]int{}
-	}
-	conn, ok := c.clients[nodeID]
-	if ok {
-		c.refs[nodeID]++
+	if entry, ok := c.clients[nodeID]; ok {
+		cli, lease := c.leaseLocked(nodeID, entry)
 		c.mu.Unlock()
-		return vmmdpb.NewVmmdClient(conn), leaseCloser{c: c, nodeID: nodeID}, true
+		return cli, lease, true
 	}
 	if c.dialing == nil {
 		c.dialing = map[string]*nodeDialCall{}
@@ -1437,15 +1633,13 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 		select {
 		case <-call.done:
 			c.mu.Lock()
-			conn, ok := c.clients[nodeID]
-			if ok {
-				c.refs[nodeID]++
-			}
-			c.mu.Unlock()
+			defer c.mu.Unlock()
+			entry, ok := c.clients[nodeID]
 			if !ok {
 				return nil, nil, false
 			}
-			return vmmdpb.NewVmmdClient(conn), leaseCloser{c: c, nodeID: nodeID}, true
+			cli, lease := c.leaseLocked(nodeID, entry)
+			return cli, lease, true
 		case <-ctx.Done():
 			return nil, nil, false
 		}
@@ -1458,11 +1652,11 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 	// must not block hits for other nodes.
 	target, ok := c.resolveTarget(ctx, nodeID)
 	if !ok {
-		c.finishNodeDial(nodeID, call, nil)
+		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
 	if c.dial == nil {
-		c.finishNodeDial(nodeID, call, nil)
+		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
 	conn, err := c.dial(ctx, target)
@@ -1471,10 +1665,11 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 			c.log.Warn("gateway: vmmd dial failed",
 				"node", nodeID, "target", target, "err", err.Error())
 		}
-		c.finishNodeDial(nodeID, call, nil)
+		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
-	if !c.finishNodeDial(nodeID, call, conn) {
+	cli, lease, ok := c.finishNodeDial(nodeID, call, conn, target)
+	if !ok {
 		// The node was evicted or the cache was closed while the dial
 		// was in flight. The dial result was not published and is now
 		// owned by this caller.
@@ -1483,12 +1678,13 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 		}
 		return nil, nil, false
 	}
-	return vmmdpb.NewVmmdClient(conn), leaseCloser{c: c, nodeID: nodeID}, true
+	return cli, lease, true
 }
 
-// finishNodeDial publishes a successful connection and wakes all waiters.
-// It returns false when an eviction/close invalidated the in-flight dial.
-func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn *grpc.ClientConn) bool {
+// finishNodeDial publishes a successful connection with the leader's lease
+// and wakes all waiters. It returns ok=false when an eviction/close
+// invalidated the in-flight dial.
+func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn *grpc.ClientConn, target string) (vmmdpb.VmmdClient, io.Closer, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.dialing != nil {
@@ -1496,20 +1692,16 @@ func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn
 	}
 	if call.invalidated || conn == nil {
 		close(call.done)
-		return false
+		return nil, nil, false
 	}
 	if c.clients == nil {
-		c.clients = map[string]*grpc.ClientConn{}
+		c.clients = map[string]*nodeConn{}
 	}
-	if c.refs == nil {
-		c.refs = map[string]int{}
-	}
-	c.clients[nodeID] = conn
-	// The leader took its lease before starting the external work.
-	// Keep that reference while publishing the connection.
-	c.refs[nodeID] = 1
+	entry := &nodeConn{conn: conn, target: target}
+	c.clients[nodeID] = entry
+	cli, lease := c.leaseLocked(nodeID, entry)
 	close(call.done)
-	return true
+	return cli, lease, true
 }
 
 // resolveTarget is the seam that turns a compute_node.id into the
@@ -1538,27 +1730,50 @@ func (c *NodeClientCache) resolveTarget(ctx context.Context, nodeID string) (str
 }
 
 // Evict drops the cached conn for nodeID. Safe to call from a
-// LISTEN/NOTIFY goroutine; concurrent in-flight ClientFor calls
-// finish on their existing refcount before the conn is closed.
-func (c *NodeClientCache) Evict(nodeID string) {
+// LISTEN/NOTIFY goroutine; requests that leased the conn finish on it,
+// and the last of them closes it.
+func (c *NodeClientCache) Evict(nodeID string) { c.evict(nodeID) }
+
+// evict is Evict, reporting whether a cached conn was dropped.
+func (c *NodeClientCache) evict(nodeID string) bool {
 	c.mu.Lock()
 	if c.dialing != nil {
 		if call, ok := c.dialing[nodeID]; ok {
 			call.invalidated = true
 		}
 	}
-	conn, ok := c.clients[nodeID]
+	entry, ok := c.clients[nodeID]
 	if !ok {
 		c.mu.Unlock()
-		return
+		return false
 	}
-	refs := c.refs[nodeID]
 	delete(c.clients, nodeID)
-	delete(c.refs, nodeID)
+	entry.retired = true
+	idle := entry.refs == 0
 	c.mu.Unlock()
-	if refs == 0 {
-		_ = conn.Close()
+	if idle && entry.conn != nil {
+		_ = entry.conn.Close()
 	}
+	return true
+}
+
+// EvictIfChanged drops the cached conn for nodeID when the node is no
+// longer active or its dial target changed. Every heartbeat re-registration
+// fires compute_node_changed, and evicting on each one re-dialed every node
+// about 360 times an hour per gateway (bug hunt 2026-10-28 B17).
+func (c *NodeClientCache) EvictIfChanged(ctx context.Context, nodeID string, active bool) bool {
+	if active {
+		c.mu.Lock()
+		entry, cached := c.clients[nodeID]
+		c.mu.Unlock()
+		if !cached {
+			return false
+		}
+		if target, ok := c.resolveTarget(ctx, nodeID); ok && target == entry.target {
+			return false
+		}
+	}
+	return c.evict(nodeID)
 }
 
 // Close shuts down every cached conn. Called by cmd/gatewayd-internal/on
@@ -1569,32 +1784,45 @@ func (c *NodeClientCache) Close() error {
 	for _, call := range c.dialing {
 		call.invalidated = true
 	}
-	conns := c.clients
-	c.clients = map[string]*grpc.ClientConn{}
-	c.refs = map[string]int{}
+	entries := c.clients
+	c.clients = map[string]*nodeConn{}
+	for _, entry := range entries {
+		entry.retired = true
+	}
 	c.mu.Unlock()
 	var errs []error
-	for _, conn := range conns {
-		if err := conn.Close(); err != nil {
+	for _, entry := range entries {
+		if entry.conn == nil {
+			continue
+		}
+		if err := entry.conn.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// leaseCloser decrements the per-node refcount and closes the conn
-// when the last lease is released. The connection itself lives in
-// the cache so a subsequent request skips the dial.
+// leaseCloser releases one lease on the connection it was taken on. The
+// connection stays cached for the next caller; once evicted, the last lease
+// closes it. Close is idempotent.
 type leaseCloser struct {
-	c      *NodeClientCache
-	nodeID string
+	c        *NodeClientCache
+	entry    *nodeConn
+	released bool
 }
 
-func (l leaseCloser) Close() error {
+func (l *leaseCloser) Close() error {
 	l.c.mu.Lock()
-	l.c.refs[l.nodeID]--
+	if l.released {
+		l.c.mu.Unlock()
+		return nil
+	}
+	l.released = true
+	l.entry.refs--
+	closeConn := l.entry.retired && l.entry.refs == 0
 	l.c.mu.Unlock()
-	// Refcount-driven close happens on Evict; the conn stays cached
-	// for the next caller as long as the row stays alive.
+	if closeConn && l.entry.conn != nil {
+		return l.entry.conn.Close()
+	}
 	return nil
 }

@@ -40,17 +40,20 @@ func (s *server) validateRuleChannels(ctx context.Context, accountID string, ids
 // channel-only rule stores no webhook: an empty URL and an empty sealed
 // secret, which the evaluator reads as "deliver to channels only".
 func sealCreateWebhook(ctx context.Context, req api.CreateAlertRuleRequest) ([]byte, *api.Problem) {
+	if req.NotifyResolved && req.WebhookURL == "" {
+		return nil, errNotifyResolvedNeedsWebhook()
+	}
 	if req.WebhookURL == "" && req.WebhookSecret == "" {
 		return []byte{}, nil
 	}
 	if prob := resolveAndCheckEgress(ctx, req.WebhookURL); prob != nil {
 		return nil, prob
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
+	recipients, err := alertingCredentialRecipients()
+	if err != nil {
+		return nil, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret")
 	}
-	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, []byte(req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			return nil, prob
@@ -81,7 +84,16 @@ func (s *server) updatedRuleChannels(ctx context.Context, accountID string, exis
 	if merged.WebhookURL == "" && count == 0 {
 		return nil, api.ErrAlertRuleInvalid("an alert rule needs a webhook_url or at least one notification channel")
 	}
+	if merged.NotifyResolved && merged.WebhookURL == "" {
+		return nil, errNotifyResolvedNeedsWebhook()
+	}
 	return req, nil
+}
+
+// errNotifyResolvedNeedsWebhook refuses notify_resolved on a rule with no
+// webhook: channels always receive resolves (ADR-20261029203000).
+func errNotifyResolvedNeedsWebhook() *api.Problem {
+	return api.ErrAlertRuleInvalid("notify_resolved needs a webhook_url; notification channels always receive resolves")
 }
 
 // bindRuleChannels stores a rule's channels. On a create that fails here

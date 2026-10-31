@@ -87,6 +87,9 @@ type InstanceStat struct {
 	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
 	// place.
 	Frozen bool
+	// QuietPause is vmmd's quiet pause record, which the pause ledger
+	// keeps for billing (ADR-20261023171905).
+	QuietPause sched.QuietPauseRecord
 	// LastRequestAt is the most recent ForwardHTTP start time on
 	// this instance. PR-B populates it from the vmmd
 	// ActivityTracker; PR-A leaves it zero and the poller
@@ -222,6 +225,11 @@ type Reader struct {
 	// shadow is the latest per-node ADR-909 measurement (memory_shadow.go).
 	shadow atomic.Pointer[memoryShadowSnapshot]
 	quiet  atomic.Pointer[quietPausedSnapshot]
+	// cpu is the latest per-instance measured CPU (measured_cpu.go).
+	cpu atomic.Pointer[measuredCPUSnapshot]
+	// pressure is the latest per-node CPU pressure readings
+	// (cpu_pressure.go).
+	pressure atomic.Pointer[cpuPressureSnapshot]
 
 	// rateMu protects the cumulative-counter baselines and their
 	// derived app-level rates. These are deliberately separate from

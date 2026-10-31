@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, ProjectsService, type ProjectSafeRelease } from '../src/index.js';
+import { FaaSClient, ProjectsService, type ProjectSafeRelease } from '../src/preview.js';
 
 test('atomic additions carry explicit intent and return reservation metadata', async (t) => {
   const checkpoint: ProjectSafeRelease = {

@@ -19,7 +19,8 @@ func TestNpmIntegrityDoesNotHideCredentials(t *testing.T) {
 	}{
 		{"checksum", "package-lock.json", integrity, "", 0},
 		{"shrinkwrap", "npm-shrinkwrap.json", integrity, "", 0},
-		{"ordinary source", "source.json", integrity, "", 1},
+		// ADR-20261026152731: an SRI digest is public in every file.
+		{"ordinary source", "source.json", integrity, "", 0},
 		{"not a checksum", "package-lock.json", token, "", 1},
 		{"credential in lock", "package-lock.json", integrity, `,"token":"` + token + `"`, 1},
 		{"provider in integrity", "package-lock.json", providerFixture, "", 1},
@@ -32,7 +33,7 @@ func TestNpmIntegrityDoesNotHideCredentials(t *testing.T) {
 			}
 		})
 	}
-	if got := ScanFile("package-lock.json", []byte(fmt.Sprintf("\"integrity\":%q", integrity))); len(got) != 1 {
-		t.Fatal("non-lockfile content suppressed")
+	if got := ScanFile("package-lock.json", []byte(fmt.Sprintf("\"integrity\":%q", integrity))); len(got) != 0 {
+		t.Fatalf("SRI digest outside a lockfile document = %+v, want no finding", got)
 	}
 }

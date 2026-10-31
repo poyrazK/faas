@@ -19,7 +19,9 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,9 +42,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/gitfetch"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/imagelisten"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -66,9 +72,18 @@ type runDeps struct {
 	capCheck func() error
 }
 
+// githubdConfigPath is the --config path wire.Daemon parsed, so a unit or
+// harness can point githubd at its own TOML, like outboundd.
+func githubdConfigPath() string {
+	if f := flag.Lookup("config"); f != nil && strings.TrimSpace(f.Value.String()) != "" {
+		return f.Value.String()
+	}
+	return "/etc/faas/githubd.toml"
+}
+
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath: "/etc/faas/githubd.toml",
+		configPath: githubdConfigPath(),
 		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 			return db.OpenWithAppName(ctx, dsn, "faas-githubd")
 		},
@@ -153,15 +168,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//      path (this PR). Every inbound webhook needs an
 	//      unsealed install token to fetch the codeload archive.
 	//
-	// Loading the identity unconditionally (before the OAuth
-	// branch) keeps a single failure path: an operator who
-	// hasn't provisioned host.age yet gets a fatal startup error
-	// regardless of which daemon mode they want to run. The
-	// 0o400 perm check inside LoadHostKey trips first.
-	identity, err := secretbox.LoadHostKey(hostKeyPath())
+	// Loading the identity before the OAuth branch keeps a single
+	// failure path: an operator who hasn't provisioned host.age yet
+	// gets a fatal startup error regardless of which daemon mode they
+	// want to run. The 0o400 perm check inside LoadHostKey trips first.
+	//
+	// ADR 20261022111812: once the seal_domains role stages the source
+	// domain, its identity opens install tokens and webhook secrets ahead
+	// of the fleet identity, and new install tokens follow its write mode.
+	// Once the domain is contracted the role unsets the key path, and
+	// githubd loads no fleet or host identity at all.
+	sourceDomain, err := loadSourceSealDomain(os.Getenv)
 	if err != nil {
-		return fmt.Errorf("githubd: load host age identity: %w", err)
+		return err
 	}
+	keyPath := legacyKeyPath(os.Getenv, sourceDomain.staged())
+	var identity *age.X25519Identity
+	if keyPath != "" {
+		if identity, err = secretbox.LoadHostKey(keyPath); err != nil {
+			return fmt.Errorf("githubd: load host age identity: %w", err)
+		}
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Source, sourceDomain.staged())
+	log.Info("source seal domain", "write_mode", string(sourceDomain.mode), "domain_identity", sourceDomain.staged(), "fleet_identity", identity != nil)
 
 	// PR-H: per-daemon audit + reconcile services. The auditor
 	// carries actor="githubd" so every project.reconcile.* /
@@ -170,7 +199,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reconcile service shares the same state.Store as the
 	// apid-side reconcile (one PgStore per daemon — no
 	// cross-process shared state).
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.AppsDomain))
 	wire.BootStamps(ctx, "githubd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-190 follow-up: export this pool's live statistics so the
@@ -178,6 +207,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	wire.RegisterPoolMetrics(ops, pool)
 	ghAud := audit.New(store, log, ops, "githubd")
 	ghReconcile := buildGithubdReconcileService(store, ghAud, log)
+	// Push deploys classify a prebuilt Compose image the way apid's plan does
+	// (ADR-20261029120000 amendment 2).
+	imageListening := imagelisten.NewRegistry().Listening
+	ghReconcile.Scan = func(fsys fs.FS, opts reposcan.ScanOptions) (reposcan.Result, error) {
+		opts.ImageListening = imageListening
+		return reposcan.ScanWithOptions(fsys, opts)
+	}
 
 	// PR-H: source fetcher for the push-dispatch path. The
 	// work dir is operator-configurable (default
@@ -192,7 +228,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	gitFetcher := gitfetch.NewHTTPWithLimits(workDir, api.MustLimitsFor(api.PlanScale))
 	installsAdapter := newStateInstallsAdapter(pool)
 	storeAdapter := newStateBindingsAdapter(pool)
-	source := newInstallationSourceFetcher(installsAdapter, gitFetcher, identity, log)
+	source := newInstallationSourceFetcher(installsAdapter, gitFetcher, identity, log).WithIdentities(sourceDomain.readers(identity))
 	webhookSecret := loadGithubWebhookSecret(os.Getenv)
 	deliveryStore := githubd.NewPGWebhookDeliveryStore(pool)
 	ops.Registry().MustRegister(githubd.NewRecoveryCollector(pool))
@@ -209,7 +245,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The janitor (1m tick) evicts expired entries so the map
 	// stays bounded across the daemon's lifetime. Mirrors
 	// TokenCache.StartJanitor.
-	secretResolver := githubd.NewPGWebhookSecretResolver(newStateSecretStoreAdapter(pool), log, 60*time.Second)
+	// ADR 20261022111812: the webhook secret's sealed copy opens with the
+	// source domain identity once staged, then the fleet identity (and the
+	// host identities for legacy rows).
+	var webhookIdentities []*age.X25519Identity
+	if keyPath != "" {
+		webhookIdentities, err = sealdomain.LoadReaderIdentities("", keyPath, filepath.Join(filepath.Dir(keyPath), "faas_host_age_identity"))
+		if err != nil {
+			return fmt.Errorf("githubd: load webhook secret identities: %w", err)
+		}
+	}
+	webhookIdentities = sourceDomain.readers(webhookIdentities...)
+	secretResolver := githubd.NewPGWebhookSecretResolver(newStateSecretStoreAdapter(pool, webhookIdentities), log, 60*time.Second)
 	stopJanitor := secretResolver.StartJanitor(ctx)
 	defer stopJanitor()
 
@@ -268,12 +315,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	webhookSvc.Installs = installsAdapter
 	webhookSvc.Source = source
 	webhookSvc.Reconcile = ghReconcile
+	capabilityAllowed, err := startCapabilityFlags(ctx, store, pool, log)
+	if err != nil {
+		return err
+	}
+	webhookSvc.CapabilityAllowed = capabilityAllowed
 	// Issue #432 phase 5: workDir is the root under which
 	// the per-app source tarballs land during the dispatch
 	// loop (pkg/githubd/staging.go). Same value as the
 	// gitfetch temp dir hoisted at line 123-127; both
 	// producers share the operator-controlled dir tree.
 	webhookSvc.WorkDir = workDir
+	// ADR-20261026152731: each push stages a full repository archive under
+	// build-sources/<account>/<app>/<commit>; expire them like apid's spool.
+	go sourcespool.Sweeper{Root: filepath.Join(workDir, "build-sources"), Layout: sourcespool.GithubdStaging,
+		Store: store, MaxAge: api.SourceSpoolRetention, Log: log}.Run(ctx, api.SourceSpoolSweepInterval)
 	// Issue #432 phase 5: build fan-out. The production
 	// enqueuer dials the apid gRPC bridge via the
 	// ApidBridgeClient (cmd/githubd/apid_bridge.go). The
@@ -288,7 +344,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// when FAAS_APID_GITHUBD_BRIDGE_SOCK is empty, so
 	// the dispatcher stays safe on a dev box where the
 	// apid daemon isn't running.
-	webhookSvc.Enqueuer = NewApidEnqueuer(newApidBridgeClient(ctx, os.Getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK"), nil, log), log)
+	apidBridge := newApidBridgeClient(ctx, os.Getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK"), nil, log)
+	webhookSvc.Enqueuer = NewApidEnqueuer(apidBridge, log)
+	webhookSvc.AutomationEvents = newApidAutomationEvents(os.Getenv, apidBridge, log)
 	// A missing GitHub App credential must stop push dispatch before source
 	// fetch; the branch-head check is a production freshness boundary.
 	webhookSvc.BranchHeads = githubd.NewUnavailableBranchHeads()
@@ -336,6 +394,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					return fmt.Errorf("githubd: new checks api: %w", checksErr)
 				}
 				checks.WithCheckRunStore(deliveryStore).WithGitHubDeploymentStore(deliveryStore)
+				checks.Ops, checks.Log = ops, log
+				if id, parseErr := strconv.ParseInt(appID, 10, 64); parseErr == nil && id > 0 {
+					checks.AppID = id
+				}
 				// PR-C: load the host age keypair so the install
 				// token can be sealed at rest (SealOne at mint)
 				// and unsealed at cold-start rehydrate (Open).
@@ -354,7 +416,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// LoadHostKeys fails — the box still unseals
 				// current-keyed envelopes, just not previous-keyed ones.
 				var identities []*age.X25519Identity
-				if dir := filepath.Dir(hostKeyPath()); dir != "" {
+				if dir := filepath.Dir(keyPath); keyPath != "" && dir != "" {
 					if ids, loadErr := secretbox.LoadFleetAndHostKeys(dir); loadErr != nil {
 						log.Warn("githubd: LoadHostKeys (rotation overlap) failed; install-token unseal will work only for envelopes sealed under the current host.age",
 							"dir", dir, "err", loadErr.Error())
@@ -374,12 +436,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
 				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
 				realSvc.CIPullRequests = githubd.NewHTTPCIPullRequests(tokens, deps.httpClient())
+				realSvc.IssueComments = githubd.NewHTTPIssueComments(tokens, deps.httpClient())
 				realSvc.CIChanges = githubd.NewHTTPCIChangedFiles(tokens, deps.httpClient())
 				realSvc.ProtectedBranches = githubd.NewHTTPProtectedBranches(tokens, deps.httpClient())
 				realSvc.ReviewedMerges = githubd.NewHTTPReviewedMerges(tokens, deps.httpClient())
-				if identities != nil {
-					realSvc.Identities = identities
+				readers := identities
+				if readers == nil {
+					readers = []*age.X25519Identity{identity}
 				}
+				realSvc.Identities = sourceDomain.readers(readers...)
+				tokenRecipients, terr := sourceDomain.recipients(recipient)
+				if terr != nil {
+					return fmt.Errorf("githubd: source seal domain: %w", terr)
+				}
+				realSvc.Recipients = tokenRecipients
 				// Path-filtered build fan-out (ADR-050 §103-109).
 				// Token resolution is per-call via the TokenCache
 				// (Option A from the plan review) so the daemon
@@ -427,7 +497,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				webhookSvc.WritePreviewCheckForInstallation = checks.WritePreviewCheckForInstallation
 				webhookSvc.WritePreviewCheckForkRefused = checks.WritePreviewCheckForkRefused
 				webhookSvc.WritePreviewCheckForkRefusedForInstallation = checks.WritePreviewCheckForkRefusedForInstallation
+				webhookSvc.WritePreviewCheckNeutralForInstallation = checks.WritePreviewCheckNeutralForInstallation
 				webhookSvc.WritePreviewCommentForInstallation = checks.UpsertPreviewComment
+				// GitHub's own delivery log is the only witness of a delivery
+				// that never reached this listener (wrong webhook URL, stale
+				// secret, githubd down).
+				hookDeliveryMetrics := githubd.NewHookDeliveryMetrics()
+				ops.Registry().MustRegister(hookDeliveryMetrics)
+				go githubd.RunHookDeliveryMonitor(ctx, &githubd.HookDeliveryMonitor{
+					MintJWT: auth.MintAppJWT,
+					Client:  deps.httpClient(),
+					Metrics: hookDeliveryMetrics,
+					Log:     log,
+				}, githubd.DefaultHookDeliveryPollInterval, log)
 				log.Info("githubd: OAuth + Checks wired", "app_id", appID)
 			}
 		}
@@ -635,7 +717,7 @@ func readKeyPEMDefault() ([]byte, error) {
 	return data, nil
 }
 
-// hostKeyPath returns the path to the host age private key. Used
+// legacyKeyPath returns the path to the host age private key. Used
 // by ensureInstallToken's cold-start rehydrate path to unseal
 // stored install tokens. The default matches the rest of the
 // secrets tree (spec §11: /etc/faas/secrets/host.age, mode 0400
@@ -650,12 +732,20 @@ func readKeyPEMDefault() ([]byte, error) {
 // silently failed every unseal. Reconciled to host.age here so
 // LoadHostKeys(dir) (current + previous) returns the same pair
 // every daemon consumes.
-func hostKeyPath() string {
-	if p := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH"); p != "" {
+//
+// With the source seal domain staged and neither path set it returns "":
+// the seal_domains role unsets both when it contracts the domain (ADR
+// 20261022111812, step 4), and githubd then loads no fleet or host
+// identity.
+func legacyKeyPath(getenv func(string) string, sourceDomainStaged bool) string {
+	if p := getenv("FAAS_HOST_AGE_IDENTITY_PATH"); p != "" {
 		return p
 	}
-	if p := os.Getenv("FAAS_HOST_AGE_KEY"); p != "" {
+	if p := getenv("FAAS_HOST_AGE_KEY"); p != "" {
 		return p
+	}
+	if sourceDomainStaged {
+		return ""
 	}
 	return secretbox.DefaultHostKeyPath
 }

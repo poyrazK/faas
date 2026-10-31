@@ -6,14 +6,14 @@ import (
 	"net/http"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 // RecoveryHealthMetricsHost separates explicit polling from a cache-only server.
 // Construct once per trusted owner scope; the application supervises both loops.
 type RecoveryHealthMetricsHost struct {
 	Server           *http.Server
-	metrics          *faas.EventAcknowledgmentIntentHealthMetrics
+	metrics          *preview.EventAcknowledgmentIntentHealthMetrics
 	db               *sql.DB
 	accountID, appID string
 }
@@ -22,13 +22,13 @@ type RecoveryHealthMetricsHost struct {
 // a configured PostgreSQL pool; keep it alive until Run and HTTP shutdown join.
 func NewRecoveryHealthMetricsHost(db *sql.DB, accountID, appID string) (*RecoveryHealthMetricsHost, error) {
 	if db == nil {
-		return nil, faas.ErrInvalidEventConsumerRequest
+		return nil, preview.ErrInvalidEventConsumerRequest
 	}
-	metrics, err := faas.NewEventAcknowledgmentIntentHealthMetrics(accountID, appID, faas.EventAcknowledgmentIntentHealthMetricsOptions{MaxAge: 30 * time.Second})
+	metrics, err := preview.NewEventAcknowledgmentIntentHealthMetrics(accountID, appID, preview.EventAcknowledgmentIntentHealthMetricsOptions{MaxAge: 30 * time.Second})
 	if err != nil {
 		return nil, err
 	}
-	handler, err := faas.NewEventAcknowledgmentIntentHealthMetricsHandler(metrics, faas.EventAcknowledgmentIntentHealthPrometheusOptions{})
+	handler, err := preview.NewEventAcknowledgmentIntentHealthMetricsHandler(metrics, preview.EventAcknowledgmentIntentHealthPrometheusOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -46,9 +46,9 @@ func NewRecoveryHealthMetricsHost(db *sql.DB, accountID, appID string) (*Recover
 // Run polls sequentially until ctx cancellation, joining the active database
 // call and clearing evidence before return. Driver deadlines remain host-owned.
 func (h *RecoveryHealthMetricsHost) Run(ctx context.Context) error {
-	return faas.WatchEventAcknowledgmentIntentHealthMetrics(ctx, h.db, h.accountID, h.appID, h.metrics,
-		faas.EventAcknowledgmentIntentHealthMetricsWatchOptions{
-			Health:       faas.EventAcknowledgmentIntentHealthOptions{ScanLimit: 1000, StallAfter: 5 * time.Minute},
+	return preview.WatchEventAcknowledgmentIntentHealthMetrics(ctx, h.db, h.accountID, h.appID, h.metrics,
+		preview.EventAcknowledgmentIntentHealthMetricsWatchOptions{
+			Health:       preview.EventAcknowledgmentIntentHealthOptions{ScanLimit: 1000, StallAfter: 5 * time.Minute},
 			PollInterval: 5 * time.Second,
 			QueryTimeout: 5 * time.Second,
 		})

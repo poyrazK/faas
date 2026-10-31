@@ -308,6 +308,36 @@ func TestLeaseFailureDecidesLocallyButSpendsHeldTokens(t *testing.T) {
 	}
 }
 
+// A gateway that has never reached Postgres must not arm the central outage
+// grace from a cold-start allowance admit: otherwise, with Postgres down from
+// the start, it would fall back to its full per-gateway local bucket (N× the
+// shared limit) instead of failing closed.
+func TestLeaseColdStartOutageDoesNotArmGraceAndFailsClosed(t *testing.T) {
+	clock := newFakeClock(time.Unix(1_700_000_000, 0))
+	bucket := &sharedBucket{clock: clock}
+	bucket.mu.Lock()
+	bucket.failWith = errors.New("postgres unavailable at cold start")
+	bucket.mu.Unlock()
+	l, _ := leasingGateway(bucket, clock)
+
+	// The first request bootstraps via allowance (no central round-trip); its
+	// lease statement then fails and opens the breaker.
+	if !allow(l, 100, 500) {
+		t.Fatal("cold-start allowance refused the first request")
+	}
+	if l.centralVerifiedAt.Load() != 0 {
+		t.Fatalf("outage grace armed on a never-verified gateway (centralVerifiedAt=%d); a cold-start allowance admit is not a shared-counter decision", l.centralVerifiedAt.Load())
+	}
+	if !l.centralBreakerOpen(clock.Now()) {
+		t.Fatal("a failed cold-start lease statement did not open the breaker")
+	}
+	// Breaker open + never verified → fail closed, not a fall back to the full
+	// per-gateway local bucket.
+	if allow(l, 100, 500) {
+		t.Fatal("request admitted during a cold-start outage; a never-verified gateway must fail closed, not use its local bucket")
+	}
+}
+
 func TestLeaseShortfallIsCountedAndMarksTheCounterEmpty(t *testing.T) {
 	clock := newFakeClock(time.Unix(1_700_000_000, 0))
 	bucket := &sharedBucket{clock: clock}
@@ -331,6 +361,32 @@ func TestLeaseShortfallIsCountedAndMarksTheCounterEmpty(t *testing.T) {
 	if allow(l, 100, 500) {
 		t.Fatal("request admitted after a shortfall marked the counter empty")
 	}
+}
+
+// A counter commit past the 250 ms pre-auth bound (a checkpoint or fsync
+// stall) failed the lease, opened the breaker and refused requests within
+// their limit with 503. A lease now gets the consume bound, and a request
+// waiting on it the batch wait (ADR-20261027173012 amendment 2).
+func TestLeaseOutlastsASlowCommit(t *testing.T) {
+	clock := newFakeClock(time.Unix(1_700_000_000, 0))
+	hold := make(chan struct{})
+	bucket := &sharedBucket{clock: clock, hold: hold}
+	l, _ := leasingGateway(bucket, clock)
+	const rps, burst = 10.0, 10.0
+	// The first request is admitted from the allowance and starts a lease
+	// that stalls in Postgres; the second has no allowance left and waits.
+	if !l.AllowWithCentralParams(t.Context(), "lease-app", rps, burst, leaseTestKey) {
+		t.Fatal("first request refused")
+	}
+	stall := time.AfterFunc(400*time.Millisecond, func() { close(hold) })
+	defer stall.Stop()
+	ctx := withRateAdmissionEvidence(t.Context())
+	allowed := l.AllowWithCentralParams(ctx, "lease-app", rps, burst, leaseTestKey)
+	unavailable, _ := ctx.Value(rateAdmissionKey{}).(*atomic.Bool)
+	if !allowed || unavailable.Load() {
+		t.Fatalf("request behind a 400 ms commit: allowed=%v unavailable=%v, want admitted", allowed, unavailable.Load())
+	}
+	l.lease.calls.Wait()
 }
 
 func TestLeaseDropsIdleStates(t *testing.T) {

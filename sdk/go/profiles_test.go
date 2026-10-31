@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 func TestDifferentialProfileWirePreservesUnknownAndZeroRates(t *testing.T) {
-	var out faas.ProfileCompareResponse
+	var out preview.ProfileCompareResponse
 	data := []byte(`{"comparable":true,"functions":[{"name":"new","baseline_cpu_per_second":0,"candidate_cpu_per_second":0.3,"delta_cpu_per_second":0,"baseline_observed":false,"candidate_observed":true,"delta_known":false}],"flamegraph":{"name":"all","baseline_cpu_per_second":0.2,"candidate_cpu_per_second":0.3,"delta_cpu_per_second":0.1,"width_cpu_per_second":0.5,"children":[{"name":"new","candidate_cpu_per_second":0.3,"width_cpu_per_second":0.3,"children":[]},{"name":"observedZero","candidate_cpu_per_second":0,"width_cpu_per_second":0,"children":[]}]}}`)
 	if err := json.Unmarshal(data, &out); err != nil {
 		t.Fatal(err)

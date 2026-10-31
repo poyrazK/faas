@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -40,8 +41,10 @@ type drainSynth struct {
 	calls          atomic.Int64
 	active         atomic.Int64
 	maxActive      atomic.Int64
-	permanent      atomic.Bool // if true, return ErrPermanentInvoke
-	transient      atomic.Bool // if true, return a transient error
+	permanent      atomic.Bool  // if true, return ErrPermanentInvoke
+	transient      atomic.Bool  // if true, return a transient error
+	refused        atomic.Bool  // if true, the gateway refuses the dispatch before the app
+	appStatus      atomic.Int64 // if set, the app's own code returned this status
 	responseStatus int
 	outcomeCode    string
 	hold           time.Duration
@@ -72,8 +75,14 @@ func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocatio
 	if perm {
 		return inv, ErrPermanentInvoke
 	}
+	if status := int(d.appStatus.Load()); status > 0 {
+		return inv, applicationStatusError{status: status, err: fmt.Errorf("%w: application returned HTTP %d", ErrPermanentInvoke, status)}
+	}
 	if trans {
 		return inv, errors.New("drain synth: transient")
+	}
+	if d.refused.Load() {
+		return inv, dispatchRefusedError{err: errors.New("sched: invocation: gateway returned 503 (traffic_policy_unavailable)")}
 	}
 	inv.State = state.InvocationDispatching
 	inv.InstanceID = "inst-" + inv.ID
@@ -690,7 +699,7 @@ func TestDrain_InvocationRetryPolicyIsClampedByPlanAndKeepsDelay(t *testing.T) {
 	if got := d.invocationAttemptBudget(context.Background(), inv); got != 3 {
 		t.Fatalf("attempt budget = %d, want Hobby cap 3", got)
 	}
-	if got := d.invocationRetryDelay(inv); got != 8*time.Second {
+	if got := d.invocationRetryDelay(context.Background(), inv); got != 8*time.Second {
 		t.Fatalf("retry delay = %s, want 8s", got)
 	}
 }

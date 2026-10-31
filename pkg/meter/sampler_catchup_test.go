@@ -21,11 +21,65 @@ type ledgerStore struct {
 	failMinute time.Time
 	appends    map[time.Time]int64 // minute -> mb_seconds appended
 	calls      map[time.Time]int   // minute -> AppendUsage calls
+	// paused is the quiet pause ledger by minute (ADR-20261023171905);
+	// pausedErr fails its reads and pausedReads counts them.
+	paused      map[time.Time]map[string]state.QuietPausedSeconds
+	pausedErr   error
+	pausedReads int
+	// pricingErr is the tick's price capture failure that tick passes to
+	// recordFinancialSample; failJobMinute fails the job ledger read for
+	// that minute; failRecords fails that many sampling-window writes.
+	pricingErr    error
+	failJobMinute time.Time
+	failRecords   int
+	// appReads and windowReads count the fleet reads a tick issues (O2).
+	appReads, windowReads int
+}
+
+func (s *ledgerStore) ListAllApps(ctx context.Context) ([]state.App, error) {
+	s.mu.Lock()
+	s.appReads++
+	s.mu.Unlock()
+	return s.MemStore.ListAllApps(ctx)
+}
+
+func (s *ledgerStore) ListBillingWindowInstances(ctx context.Context, since, end time.Time) ([]state.Instance, error) {
+	s.mu.Lock()
+	s.windowReads++
+	s.mu.Unlock()
+	return s.MemStore.ListBillingWindowInstances(ctx, since, end)
 }
 
 func newLedgerStore() *ledgerStore {
 	return &ledgerStore{MemStore: state.NewMemStore(), resident: map[time.Time]map[string]int64{},
-		appends: map[time.Time]int64{}, calls: map[time.Time]int{}}
+		appends: map[time.Time]int64{}, calls: map[time.Time]int{},
+		paused: map[time.Time]map[string]state.QuietPausedSeconds{}}
+}
+
+func (s *ledgerStore) QuietPausedSeconds(_ context.Context, start, _ time.Time) (map[string]state.QuietPausedSeconds, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pausedReads++
+	if s.pausedErr != nil {
+		return nil, s.pausedErr
+	}
+	out := map[string]state.QuietPausedSeconds{}
+	for id, p := range s.paused[start] {
+		out[id] = p
+	}
+	return out, nil
+}
+
+func (s *ledgerStore) RecordQuietPauses(context.Context, string, time.Time, []state.QuietPause) error {
+	return nil
+}
+
+func (s *ledgerStore) OpenQuietPauses(context.Context, string) ([]state.QuietPause, error) {
+	return nil, nil
+}
+
+func (s *ledgerStore) DeleteQuietPausesBefore(context.Context, time.Time, int) (int64, error) {
+	return 0, nil
 }
 
 func (s *ledgerStore) InstanceBillingSeconds(_ context.Context, start, _ time.Time) (map[string]int64, error) {
@@ -41,8 +95,24 @@ func (s *ledgerStore) InstanceBillingSeconds(_ context.Context, start, _ time.Ti
 	return out, nil
 }
 
-func (s *ledgerStore) ListJobInstancesInBillingWindow(context.Context, time.Time, time.Time) ([]state.JobBillingInstance, error) {
+func (s *ledgerStore) ListJobInstancesInBillingWindow(_ context.Context, start, _ time.Time) ([]state.JobBillingInstance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if start.Equal(s.failJobMinute) {
+		return nil, context.Canceled
+	}
 	return nil, nil
+}
+
+func (s *ledgerStore) RecordFinancialSamplingWindow(ctx context.Context, minute time.Time, compute, egress bool) error {
+	s.mu.Lock()
+	if s.failRecords > 0 {
+		s.failRecords--
+		s.mu.Unlock()
+		return context.DeadlineExceeded
+	}
+	s.mu.Unlock()
+	return s.MemStore.RecordFinancialSamplingWindow(ctx, minute, compute, egress)
 }
 
 func (s *ledgerStore) AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes int64, coldBootCount int32, tailSeconds int64) error {
@@ -113,10 +183,8 @@ func tick(t *testing.T, store *ledgerStore, sampler *Sampler, at time.Time) ([]R
 	rows, err := sampler.SampleAndRoll(ctx)
 	_, jerr := sampler.SampleJobsAndRoll(ctx)
 	sampleErr := errors.Join(err, jerr)
-	if recErr := (&Loop{store: store}).recordFinancialSample(ctx, sampler, at, sampleErr); recErr != nil {
-		t.Fatalf("record financial sample: %v", recErr)
-	}
-	return rows, sampleErr
+	recErr := (&Loop{store: store}).recordFinancialSample(ctx, sampler, at, sampleErr, store.pricingErr)
+	return rows, errors.Join(sampleErr, store.pricingErr, recErr)
 }
 
 func completedMinutes(t *testing.T, store state.FinancialStore, from, to time.Time) map[time.Time]bool {
@@ -130,6 +198,94 @@ func completedMinutes(t *testing.T, store state.FinancialStore, from, to time.Ti
 		out[m] = true
 	}
 	return out
+}
+
+// A minute is rolled only api.MeterRollSettle after it closes, so a residency
+// interval committed just after the boundary is in the roll.
+// adr: 20261030120000
+func TestSampler_RollSettleWaitsForTheBoundary(t *testing.T) {
+	store := newLedgerStore()
+	base := time.Date(2026, 10, 8, 2, 50, 0, 0, time.UTC)
+	seedRunningInstance(t, store, base.Add(-time.Minute), base.Add(2*time.Minute))
+	recordComplete(t, store, base.Add(-api.MeterCatchUpWindow), base.Add(-time.Minute))
+	now := base.Add(time.Minute + 5*time.Second) // 02:50 closed 5 s ago
+	sampler := NewSampler(store, nil, func() time.Time { return now }).WithRollSettle(api.MeterRollSettle)
+	if _, err := tick(t, store, sampler, now); err != nil {
+		t.Fatalf("tick inside the settle: %v", err)
+	}
+	if _, calls := store.appended(base); calls != 0 {
+		t.Fatalf("02:50 rolled %s after it closed, before the %s settle", 5*time.Second, api.MeterRollSettle)
+	}
+	if _, calls := store.appended(base.Add(-time.Minute)); calls != 1 {
+		t.Fatalf("02:49 rolled %d times, want once", calls)
+	}
+	now = base.Add(time.Minute + api.MeterRollSettle)
+	if _, err := tick(t, store, sampler, now); err != nil {
+		t.Fatalf("tick after the settle: %v", err)
+	}
+	if _, calls := store.appended(base); calls != 1 {
+		t.Fatalf("02:50 rolled %d times after the settle, want once", calls)
+	}
+}
+
+// A caught-up minute takes its deployment floor from the instances resident
+// in that minute, not from their state now: an instance parked since still
+// carries its deployment's floor for the minute it ran.
+// adr: 20261030120000
+func TestSampler_CaughtUpFloorUsesTheMinutesResidency(t *testing.T) {
+	ctx := context.Background()
+	store := newLedgerStore()
+	base := time.Date(2026, 10, 8, 2, 50, 0, 0, time.UTC)
+	acct, err := store.CreateAccount(ctx, "floor-catchup@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "floor-catchup", RAMMB: 256, Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive, Kind: state.DeploymentKindImage, MinInstances: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateParked), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.resident[base] = map[string]int64{ins.ID: 60}
+	recordComplete(t, store, base.Add(-api.MeterCatchUpWindow), base)
+	now := base.Add(2 * time.Minute) // 02:51 rolls live, 02:50 is caught up
+	sampler := NewSampler(store, nil, func() time.Time { return now })
+	if _, err := tick(t, store, sampler, now); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	perMinute := int64(api.BillableRAMMB(256)) * 60
+	if got, _ := store.appended(base); got != 2*perMinute {
+		t.Fatalf("caught-up 02:50 billed %d MB-s, want %d: the instance's minute plus one floor slot", got, 2*perMinute)
+	}
+}
+
+// A meterd outage longer than a day still bills its minutes: catch-up reaches
+// back api.MeterCatchUpWindow, past a weekend.
+// adr: 20261030120000
+func TestSampler_CatchesUpAfterAMultiDayOutage(t *testing.T) {
+	store := newLedgerStore()
+	base := time.Date(2026, 10, 8, 2, 50, 0, 0, time.UTC)
+	outageStart := base.Add(-48 * time.Hour)
+	seedRunningInstance(t, store, outageStart, outageStart.Add(10*time.Minute))
+	recordComplete(t, store, base.Add(-api.MeterCatchUpWindow), outageStart)
+	recordComplete(t, store, outageStart.Add(10*time.Minute), base)
+	perMinute := int64(api.BillableRAMMB(256)) * 60
+	now := base.Add(time.Minute)
+	sampler := NewSampler(store, nil, func() time.Time { return now })
+	if _, err := tick(t, store, sampler, now); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	for m := outageStart; m.Before(outageStart.Add(10 * time.Minute)); m = m.Add(time.Minute) {
+		if got, calls := store.appended(m); got != perMinute || calls != 1 {
+			t.Fatalf("minute %s, 48 h back: appended %d MB-s in %d calls, want %d once", m.Format(time.RFC3339), got, calls, perMinute)
+		}
+	}
 }
 
 // production-us hunt #6 (H5-55): while meterd crash-looped through the
@@ -261,6 +417,11 @@ func TestSampler_CatchUpIsBoundedPerTick(t *testing.T) {
 	if len(caught) != api.MeterCatchUpMinutesPerTick || !caught[0].Equal(start) {
 		t.Fatalf("first tick caught up %d minutes from %v, want %d from %v", len(caught), caught, api.MeterCatchUpMinutesPerTick, start)
 	}
+	// The caught-up minutes share one read of the apps and of the instance
+	// window; the newest minute reads its own (bug hunt 2026-10-28 O2).
+	if store.appReads != 2 || store.windowReads != 2 {
+		t.Fatalf("one catch-up tick read apps %d and the instance window %d times, want 2 each", store.appReads, store.windowReads)
+	}
 	if _, calls := store.appended(start.Add(-time.Minute)); calls != 0 {
 		t.Fatal("caught up a minute outside the window")
 	}
@@ -275,6 +436,118 @@ func TestSampler_CatchUpIsBoundedPerTick(t *testing.T) {
 	for _, m := range []time.Time{start, newest} {
 		if _, calls := store.appended(m); calls != 1 {
 			t.Fatalf("minute %s rolled %d times by one process, want once", m.Format("15:04"), calls)
+		}
+	}
+}
+
+// finalThrough is how far the provider pusher may deliver at now.
+func finalThrough(t *testing.T, store *ledgerStore, now time.Time) time.Time {
+	t.Helper()
+	through, err := NewPusher(store, nil, nil, func() time.Time { return now }, nil).usageFinalThrough(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return through
+}
+
+// A closed minute both samplers rolled in full on a tick whose price capture,
+// job sampler or record write failed was left unrecorded for good: the
+// process never rolls it again, so the pusher stopped delivering every
+// account at that minute until it left the 24 h catch-up window. Its record
+// is now retried on the next tick, without rolling the minute again.
+// adr: 20261029180000
+func TestSampler_UnrecordedRolledMinuteIsRecordedNextTick(t *testing.T) {
+	cases := []struct {
+		name   string
+		inject func(*ledgerStore, time.Time)
+		heal   func(*ledgerStore)
+	}{
+		{"price capture failed", func(s *ledgerStore, _ time.Time) { s.pricingErr = errors.New("financial pricing: timeout") },
+			func(s *ledgerStore) { s.pricingErr = nil }},
+		{"job sampler failed", func(s *ledgerStore, minute time.Time) { s.failJobMinute = minute },
+			func(s *ledgerStore) { s.failJobMinute = time.Time{} }},
+		{"record write failed", func(s *ledgerStore, _ time.Time) { s.failRecords = 1 },
+			func(*ledgerStore) {}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newLedgerStore()
+			base := time.Date(2026, 10, 8, 2, 50, 0, 0, time.UTC)
+			seedRunningInstance(t, store, base.Add(-time.Hour), base.Add(3*time.Hour))
+			recordComplete(t, store, base.Add(-api.MeterCatchUpWindow), base)
+			perMinute := int64(api.BillableRAMMB(256)) * 60
+			now := base.Add(time.Minute) // newest closed minute 02:50
+			sampler := NewSampler(store, nil, func() time.Time { return now })
+
+			tc.inject(store, base)
+			if _, err := tick(t, store, sampler, now); err == nil {
+				t.Fatal("tick with an injected failure succeeded")
+			}
+			if completedMinutes(t, store, base, base.Add(time.Minute))[base] {
+				t.Fatal("minute recorded complete on the failed tick")
+			}
+			tc.heal(store)
+			for i := 2; i <= 70; i++ {
+				now = base.Add(time.Duration(i) * time.Minute)
+				if _, err := tick(t, store, sampler, now); err != nil {
+					t.Fatalf("tick %d: %v", i, err)
+				}
+			}
+			complete := completedMinutes(t, store, base, now.Add(-time.Minute))
+			for m := base; m.Before(now.Add(-time.Minute)); m = m.Add(time.Minute) {
+				if !complete[m] {
+					t.Fatalf("minute %s never recorded complete", m.Format("15:04"))
+				}
+			}
+			if got, want := sampler.FirstIncompleteMinute(), now.Add(-time.Minute); !got.Equal(want) {
+				t.Fatalf("first incomplete minute %s, want the newest closed minute %s", got.Format("15:04"), want.Format("15:04"))
+			}
+			if got, want := finalThrough(t, store, now), now.Truncate(time.Minute); !got.Equal(want) {
+				t.Fatalf("usage final through %s, want %s", got.Format("15:04"), want.Format("15:04"))
+			}
+			if got, calls := store.appended(base); got != perMinute || calls != 1 {
+				t.Fatalf("minute 02:50 appended %d MB-s in %d calls, want %d once", got, calls, perMinute)
+			}
+		})
+	}
+}
+
+// A persistent price capture failure keeps every minute unrecorded but
+// never re-rolls one, and the backlog is recorded, oldest first and bounded
+// per tick, once pricing recovers.
+// adr: 20261029180000
+func TestSampler_PricingOutageRecordsBacklogWithoutRerolling(t *testing.T) {
+	store := newLedgerStore()
+	base := time.Date(2026, 10, 8, 2, 50, 0, 0, time.UTC)
+	seedRunningInstance(t, store, base.Add(-time.Hour), base.Add(3*time.Hour))
+	recordComplete(t, store, base.Add(-api.MeterCatchUpWindow), base)
+	now := base
+	sampler := NewSampler(store, nil, func() time.Time { return now })
+	store.pricingErr = errors.New("financial pricing: invalid plan")
+	for i := 1; i <= 30; i++ {
+		now = base.Add(time.Duration(i) * time.Minute)
+		_, _ = tick(t, store, sampler, now)
+	}
+	if got := len(completedMinutes(t, store, base, now)); got != 0 {
+		t.Fatalf("%d minutes recorded complete while pricing failed", got)
+	}
+	if got := sampler.FirstIncompleteMinute(); !got.Equal(base) {
+		t.Fatalf("first incomplete minute %s during the outage, want %s", got.Format("15:04"), base.Format("15:04"))
+	}
+	store.pricingErr = nil
+	for range 2 {
+		now = now.Add(time.Minute)
+		if _, err := tick(t, store, sampler, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newest := now.Add(-time.Minute)
+	if got := len(completedMinutes(t, store, base, newest.Add(time.Minute))); got != 32 {
+		t.Fatalf("%d minutes recorded after recovery, want all 32", got)
+	}
+	for m := base; !m.After(newest); m = m.Add(time.Minute) {
+		if _, calls := store.appended(m); calls != 1 {
+			t.Fatalf("minute %s rolled %d times, want once", m.Format("15:04"), calls)
 		}
 	}
 }

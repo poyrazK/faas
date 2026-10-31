@@ -12,7 +12,8 @@
 //   * Stack ordering (outermost → innermost):
 //       1. idempotency — one Idempotency-Key per logical mutating call
 //       2. rfc7807    — decode the final Problem, raise typed errors
-//       3. retry      — bounded exponential backoff on 5xx + 429
+//       3. retry      — bounded exponential backoff on 5xx + 429 and on a
+//                       timed-out traffic policy check (422 + Retry-After)
 //       4. logger     — emit one log line per attempt
 //       5. user fetch — globalThis.fetch (or a test-supplied fetch)
 //
@@ -26,7 +27,6 @@
 
 import timers from 'node:timers/promises';
 import { OpenAPI } from './generated/index.js';
-import { RunsService } from './generated/services/RunsService.js';
 import {
   asFaasError,
   isFaasError,
@@ -35,21 +35,6 @@ import {
   type Problem,
 } from './errors.js';
 import { isMutating, mintIdempotencyKey, type IdempotencyKey } from './idempotency.js';
-import {
-  runExecution as runExecutionRequest,
-  watchExecution as watchExecutionEvents,
-  type RunExecutionOptions,
-  type ExecutionEvent,
-  type WatchExecutionOptions,
-} from './executions.js';
-import type { CreateExecutionRequest } from './generated/models/CreateExecutionRequest.js';
-import type { CreateExecutionArtifactGrantRequest } from './generated/models/CreateExecutionArtifactGrantRequest.js';
-import type { ExecutionResponse } from './generated/models/ExecutionResponse.js';
-import type { ExecutionCapabilitiesResponse } from './generated/models/ExecutionCapabilitiesResponse.js';
-import type { ExecutionListResponse } from './generated/models/ExecutionListResponse.js';
-import type { ExecutionWorkflowResponse } from './generated/models/ExecutionWorkflowResponse.js';
-import type { ExecutionArtifactGrantResponse } from './generated/models/ExecutionArtifactGrantResponse.js';
-import type { RevokeExecutionArtifactGrantResponse } from './generated/models/RevokeExecutionArtifactGrantResponse.js';
 
 /** Minimal logger contract — the SDK doesn't bind to `console` or a
  *  third-party logger. Customers can pass `console`, pino, winston,
@@ -75,6 +60,19 @@ function retryAfterMs(value: string | null): number {
   const raw = value.trim();
   const delay = /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw) - Date.now();
   return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+
+/** A traffic policy check that ran out of time on a busy control plane
+ *  (422 traffic_policy_too_complex with Retry-After). The refusal saved
+ *  nothing and asks to be resent. Reads a clone, so the body stays intact. */
+async function policyCheckTimedOut(response: Response): Promise<boolean> {
+  if (response.status !== 422 || !response.headers.get('Retry-After')) return false;
+  try {
+    const problem: unknown = await response.clone().json();
+    return typeof problem === 'object' && problem !== null && (problem as { code?: unknown }).code === 'traffic_policy_too_complex';
+  } catch {
+    return false;
+  }
 }
 
 async function waitForRetry(delayMs: number, signal?: AbortSignal | null): Promise<void> {
@@ -219,62 +217,6 @@ export class FaaSClient {
     OpenAPI.HEADERS = headers;
   }
 
-  /** Read this account's Runs admission contract and plan limits. The result
-   *  does not indicate scheduler or runtime image readiness. */
-  getExecutionCapabilities(): Promise<ExecutionCapabilitiesResponse> {
-    return RunsService.getExecutionCapabilities();
-  }
-
-  /** Read status counts and terminal-run usage for one visible workflow. */
-  getExecutionWorkflow(workflowID: string): Promise<ExecutionWorkflowResponse> {
-    return RunsService.getExecutionWorkflow({ workflowId: workflowID });
-  }
-
-  /** List receipts in one visible workflow, optionally narrowed by status. */
-  listExecutionsForWorkflow(
-    workflowID: string,
-    options: { limit?: number; offset?: number; status?: ExecutionResponse['status'] } = {},
-  ): Promise<ExecutionListResponse> {
-    return RunsService.listExecutions({
-      ...options,
-      workflowId: workflowID,
-    });
-  }
-
-  /** Create a short-lived, single-use capability for one output artifact.
-   *  The returned token is shown once; share it only with the intended agent. */
-  createExecutionArtifactGrant(
-    executionID: string,
-    requestBody: CreateExecutionArtifactGrantRequest,
-  ): Promise<ExecutionArtifactGrantResponse> {
-    return RunsService.createExecutionArtifactGrant({ id: executionID, requestBody });
-  }
-
-  /** Revoke an artifact grant before it is redeemed. */
-  revokeExecutionArtifactGrant(
-    grantID: string,
-  ): Promise<RevokeExecutionArtifactGrantResponse> {
-    return RunsService.revokeExecutionArtifactGrant({ id: grantID });
-  }
-
-  /** Stream one disposable execution until its terminal event. The
-   *  iterator resumes automatically after transient disconnects. */
-  watchExecution(
-    executionID: string,
-    options: WatchExecutionOptions = {},
-  ): AsyncGenerator<ExecutionEvent, void, void> {
-    return watchExecutionEvents(executionID, options);
-  }
-
-  /** Submit one disposable execution, stream/resume its events, and return
-   * the terminal receipt after VM teardown. */
-  runExecution(
-    requestBody: CreateExecutionRequest,
-    options: RunExecutionOptions = {},
-  ): Promise<ExecutionResponse> {
-    return runExecutionRequest(requestBody, options);
-  }
-
   /** Build the wrapped fetch: idempotency(rfc7807(retry(logger(userFetch)))). */
   private makeWrappedFetch(): typeof globalThis.fetch {
     const userFetch = this.originalFetch;
@@ -392,9 +334,11 @@ export class FaaSClient {
       const attempts = body instanceof ReadableStream ? 1 : Math.max(1, retry.maxAttempts);
       for (let attempt = 0; attempt < attempts; attempt++) {
         signal?.throwIfAborted();
-        // Transport errors propagate unchanged; only HTTP 429/5xx retry.
+        // Transport errors propagate unchanged; only HTTP 429/5xx and a
+        // timed-out traffic policy check retry.
         const response = await loggerLayer(input, init);
-        if ((response.status < 500 && response.status !== 429) || attempt + 1 === attempts) return response;
+        const retryable = response.status >= 500 || response.status === 429 || await policyCheckTimedOut(response);
+        if (!retryable || attempt + 1 === attempts) return response;
         const delay = Math.max(retry.backoffMs * 2 ** attempt, retryAfterMs(response.headers.get('Retry-After')));
         // Release intermediate bodies only. The final body must remain intact
         // for typed errors and the generated client's normal response parser.

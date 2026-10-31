@@ -253,6 +253,11 @@ func (s *server) dashboardReplayFailedJobRun(w http.ResponseWriter, r *http.Requ
 	apiRequest.URL = &apiURL
 	apiRequest.Header = r.Header.Clone()
 	apiRequest.Header.Set("Idempotency-Key", "dashboard-job-replay-"+runID)
+	// The API route reads no body. Dropping the form, with its per-page CSRF
+	// token, keeps the key's request fingerprint (ADR-20261022204036) the same
+	// for every submit from any page.
+	apiRequest.Body, apiRequest.ContentLength = http.NoBody, 0
+	apiRequest.Header.Del("Content-Type")
 	apiRequest.SetPathValue("name", name)
 	apiRequest.SetPathValue("id", runID)
 	result := httptest.NewRecorder()

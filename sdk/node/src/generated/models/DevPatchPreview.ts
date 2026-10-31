@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have been applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a measurement only; the normal developer build always runs.
+ * Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have been applied as a live source patch to the deployment that was live at upload time (phase 1). It is a measurement only; the normal developer build always runs.
  */
 export type DevPatchPreview = {
   eligible: boolean;

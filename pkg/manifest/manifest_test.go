@@ -2,10 +2,13 @@ package manifest
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const validManifest = `schema_version: "1.0.0"
@@ -272,6 +275,42 @@ func TestValidate_GatewaydInternalRateLimitMode(t *testing.T) {
 	}
 }
 
+// ADR-20261021215353: early freeze is schedd-only and takes 0 (off) or the
+// api.FrozenEarlyFreeze* bounds, the range schedd itself accepts at startup.
+func TestValidate_ScheddFrozenTierEarlyFreeze(t *testing.T) {
+	const schedd = "    bind: tcp://0.0.0.0:7100\n"
+	cases := []struct {
+		name, replace, wantErr string
+	}{
+		{"off", schedd + "    frozen_tier_early_freeze_after_s: 0\n", ""},
+		{"recommended", schedd + "    frozen_tier_early_freeze_after_s: 10\n", ""},
+		{"min", schedd + fmt.Sprintf("    frozen_tier_early_freeze_after_s: %d\n", api.FrozenEarlyFreezeMinSeconds), ""},
+		{"max", schedd + fmt.Sprintf("    frozen_tier_early_freeze_after_s: %d\n", api.FrozenEarlyFreezeMaxSeconds), ""},
+		{"below min", schedd + "    frozen_tier_early_freeze_after_s: 1\n", "daemons.schedd.frozen_tier_early_freeze_after_s: must be 0 or"},
+		{"above max", schedd + "    frozen_tier_early_freeze_after_s: 301\n", "daemons.schedd.frozen_tier_early_freeze_after_s: must be 0 or"},
+		{"negative", schedd + "    frozen_tier_early_freeze_after_s: -5\n", "daemons.schedd.frozen_tier_early_freeze_after_s: must be 0 or"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := mustParseValidate(t, strings.Replace(validManifest, schedd, tc.replace, 1))
+			if tc.wantErr == "" {
+				if errs != nil {
+					t.Fatalf("Validate = %v, want nil", errs)
+				}
+				return
+			}
+			if errs == nil || !strings.Contains(errs.Error(), tc.wantErr) {
+				t.Fatalf("Validate = %v, want error containing %q", errs, tc.wantErr)
+			}
+		})
+	}
+	wrong := strings.Replace(validManifest, "overlay:\n",
+		"  apid:\n    bind: unix:///run/faas/apid.sock\n    frozen_tier_early_freeze_after_s: 10\noverlay:\n", 1)
+	if errs := mustParseValidate(t, wrong); errs == nil || !strings.Contains(errs.Error(), "daemons.apid.frozen_tier_early_freeze_after_s: is only valid for schedd") {
+		t.Fatalf("Validate = %v, want schedd-only error", errs)
+	}
+}
+
 func TestValidate_StorageDeviceMustBeAbsolute(t *testing.T) {
 	body := strings.Replace(validManifest,
 		"      address: 10.42.0.2:50051\n",
@@ -394,6 +433,33 @@ func TestValidate_AppsDomain(t *testing.T) {
 	}
 	if !strings.Contains(errs.Error(), "apps_domain") {
 		t.Errorf("Validate error %q, want apps_domain message", errs)
+	}
+}
+
+// adr: 20261026100000
+func TestValidate_DomainLayout(t *testing.T) {
+	for name, tc := range map[string]struct {
+		layout string
+		want   string
+	}{
+		"split":            {"  platform_domain: gregale.dev\n  deploy_domain: gregale.app\n  apps_domain_aliases: [old.example]\n  apps_domain_alias_mode: redirect\n", ""},
+		"alias nests apps": {"  apps_domain_aliases: [gregale.dev]\n", "dns"},
+		"bad mode":         {"  apps_domain_alias_mode: bounce\n", "dns"},
+		"bad platform":     {"  platform_domain: -nope\n", "dns"},
+		"nested alias":     {"  apps_domain_aliases: [x.apps.gregale.dev]\n", "dns"},
+		"alias is apps":    {"  apps_domain_aliases: [apps.gregale.dev]\n", "dns"},
+		"no layout field":  {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := strings.Replace(validManifest, "  apps_domain: apps.gregale.dev\n", "  apps_domain: apps.gregale.dev\n"+tc.layout, 1)
+			errs := mustParseValidate(t, s)
+			switch {
+			case tc.want == "" && errs != nil:
+				t.Fatalf("Validate = %v, want nil", errs)
+			case tc.want != "" && (errs == nil || !strings.Contains(errs.Error(), tc.want)):
+				t.Fatalf("Validate = %v, want a %s error", errs, tc.want)
+			}
+		})
 	}
 }
 

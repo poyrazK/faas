@@ -13,6 +13,7 @@ import (
 	"time"
 
 	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 type configuration struct {
@@ -35,23 +36,23 @@ func inspect() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	client, err := faas.NewClient(config.API, config.Token)
+	client, err := preview.NewClient(config.API, config.Token)
 	if err != nil {
 		return errors.New("go operations client construction failed")
 	}
 	for range 2 {
-		receipt, err := client.StartPlatformTenantSelfOperation(ctx, faas.OperationStartRequest{DefinitionID: config.DefinitionID, Input: json.RawMessage(`{"count":1}`)}, "customer-export")
+		receipt, err := client.StartPlatformTenantSelfOperation(ctx, preview.OperationStartRequest{DefinitionID: config.DefinitionID, Input: json.RawMessage(`{"count":1}`)}, "customer-export")
 		if err != nil || receipt.ID != config.OperationID {
 			return errors.New("go operations submission replay changed logical identity")
 		}
 	}
-	_, err = client.StartPlatformTenantSelfOperation(ctx, faas.OperationStartRequest{DefinitionID: config.DefinitionID, Input: json.RawMessage(`{"count":2}`)}, "customer-export")
+	_, err = client.StartPlatformTenantSelfOperation(ctx, preview.OperationStartRequest{DefinitionID: config.DefinitionID, Input: json.RawMessage(`{"count":2}`)}, "customer-export")
 	var problem *faas.APIError
 	if !errors.As(err, &problem) || problem.Problem.Status != 409 {
 		return errors.New("go operations changed-input conflict was lost")
 	}
 	operation, err := client.GetPlatformTenantSelfOperation(ctx, config.OperationID)
-	if err != nil || operation.State != faas.OperationSucceeded || operation.CompletionDelivery.LastError == "" || operation.Progress == nil || operation.Progress.Stage != "uploading" || len(operation.Artifacts) != 1 {
+	if err != nil || operation.State != preview.OperationSucceeded || operation.CompletionDelivery.LastError == "" || operation.Progress == nil || operation.Progress.Stage != "uploading" || len(operation.Artifacts) != 1 {
 		return errors.New("go operations business/progress/delivery projection changed")
 	}
 	var result struct {
@@ -99,7 +100,7 @@ func inspect() error {
 			}
 			switch frame.Event {
 			case "snapshot", "resync":
-				var snapshot faas.OperationResponse
+				var snapshot preview.OperationResponse
 				if json.Unmarshal([]byte(frame.Data), &snapshot) != nil || snapshot.ID != config.OperationID {
 					return errors.New("go operations stream snapshot ownership changed")
 				}
@@ -107,7 +108,7 @@ func inspect() error {
 					cursor = snapshot.LatestSequence
 				}
 			case "operation":
-				var event faas.OperationEvent
+				var event preview.OperationEvent
 				if json.Unmarshal([]byte(frame.Data), &event) != nil || event.OperationID != config.OperationID || event.Sequence != cursor+1 || frame.ID != strconv.FormatInt(event.Sequence, 10) {
 					return errors.New("go operations stream cursor changed")
 				}

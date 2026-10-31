@@ -79,7 +79,7 @@ func (s *PgStore) GetEventRetentionHealth(ctx context.Context, account, app stri
 			return out, mapErr(err)
 		}
 	}
-	r, err := q.EventRetentionHealth(ctx, tx, sqlc.EventRetentionHealthParams{AccountID: mustPgUUID(account), AppID: app, EventSource: query.Source, NowAt: pgtypeFromTime(now), WindowEnd: pgtypeFromTime(now.Add(query.Window)), JobCutoffAt: pgtypeFromTime(now.Add(-api.EventReplayBackfillJobRetention)), RetentionSeconds: int64(PublishedEventIdentityRetention / time.Second), SampleLimit: int32(query.Limit + 1)})
+	r, err := q.EventRetentionHealth(ctx, tx, sqlc.EventRetentionHealthParams{AccountID: mustPgUUID(account), AppID: app, EventSource: query.Source, NowAt: pgtypeFromTime(now), WindowEnd: pgtypeFromTime(now.Add(query.Window)), JobCutoffAt: pgtypeFromTime(now.Add(-api.EventReplayBackfillJobRetention)), RetentionSeconds: int64(limits.EventStorage.SettledRetention() / time.Second), SampleLimit: int32(query.Limit + 1)})
 	if err != nil {
 		return out, err
 	}
@@ -143,7 +143,7 @@ func (m *MemStore) GetEventRetentionHealth(ctx context.Context, account, app str
 			out.UnknownDeadlineReceipts++
 			continue
 		}
-		until := work.DeliveredAt.Add(PublishedEventIdentityRetention)
+		until := work.DeliveredAt.Add(usage.Limits.SettledRetention())
 		status, holdReason := "expiring", ""
 		if _, held := holds[work.ID]; held {
 			status, holdReason = "held", "recovery_pending"

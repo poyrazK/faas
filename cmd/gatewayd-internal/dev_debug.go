@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tcpmetrics"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 type devDebugTargets interface {
@@ -35,6 +36,9 @@ type devDebugTunnel struct {
 	forward  func(context.Context, net.Conn, gateway.Target) error
 	sessions devDebugSessions
 	log      *slog.Logger
+	// traffic enrolls the tunnel under the app's security scopes
+	// (admitPlatformTraffic); nil only in legacy fixtures.
+	traffic *trafficrevocation.Registry
 }
 
 // setTargets wires the service proxy once gatewayd-internal has built it;
@@ -112,21 +116,27 @@ func (h *devDebugTunnel) attach(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("wake developer environment for debugging"))
 		return
 	}
+	upgradeHeader := http.Header{}
+	ctx, releaseTraffic, ok := admitPlatformTraffic(r.Context(), w, r, h.traffic, upgradeHeader, acct.ID, app.ID)
+	if !ok {
+		return
+	}
+	defer releaseTraffic()
 	upgrader := websocket.Upgrader{
 		// The CLI sends no Origin. Refusing browser origins stops a web page
 		// from opening the tunnel with an ambient credential.
 		CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == "" },
 	}
-	socket, err := upgrader.Upgrade(w, r, nil)
+	socket, err := upgrader.Upgrade(w, r, upgradeHeader)
 	if err != nil {
 		return
 	}
 	conn := devbridge.NewWebSocketConn(socket)
 	defer func() { _ = conn.Close() }()
-	stop := context.AfterFunc(r.Context(), func() { _ = conn.Close() })
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	h.log.Info("developer debugger attached", "account_id", acct.ID, "app_id", app.ID, "instance_id", target.InstanceID)
-	if err := h.forward(r.Context(), conn, target); err != nil && r.Context().Err() == nil {
+	if err := h.forward(ctx, conn, target); err != nil && ctx.Err() == nil {
 		h.log.Info("developer debugger session ended", "app_id", app.ID, "err", err)
 	}
 }
@@ -142,7 +152,7 @@ func newDevDebugTunnel(deps runDeps, log *slog.Logger) *devDebugTunnel {
 	if deps.metrics != nil {
 		forwarder.Metrics = tcpmetrics.New(deps.metrics.Registry(), "gatewayd_internal_dev_debug")
 	}
-	return &devDebugTunnel{auth: deps.authMw, forward: forwarder.ServeConn, log: log}
+	return &devDebugTunnel{auth: deps.authMw, forward: forwarder.ServeConn, log: log, traffic: deps.trafficRevocations}
 }
 
 // devDebugSessions bounds concurrent debugger connections per app.

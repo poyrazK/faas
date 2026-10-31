@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One prepaid credit grant to a platform tenant (ADR-20261019100331).
+ * One prepaid credit grant to a platform tenant.
  */
 export type PlatformTenantCreditResponse = {
   id: string;

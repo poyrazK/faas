@@ -6,7 +6,7 @@ import type { AppOpenAPIPolicyPreviewRoute } from './AppOpenAPIPolicyPreviewRout
 import type { EdgeRuleSuggestion } from './EdgeRuleSuggestion.js';
 /**
  * Read-only declared-vs-observed route and edge-policy preview
- * (API-hosting roadmap item 11 / ADR-126 follow-up). The response
+ * (API-hosting roadmap item 11). The response
  * never writes an OpenAPI document or edge rule.
  *
  */

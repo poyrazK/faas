@@ -45,6 +45,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -162,6 +163,10 @@ type Stats struct {
 	AuditEmitFailed            int // per-row audit emit errors (warn-logged, never propagated)
 	AutoAborted                int // stuck rollouts recovered through APID
 	AutoAbortFailed            int // stuck rollouts whose automatic recovery failed
+	// AwaitingApproval counts rollouts past the stuck window that are
+	// waiting for people (ADR-20261020085706); apid aborts them at the
+	// policy's timeout, so the stuck detector leaves them alone.
+	AwaitingApproval int
 }
 
 // ErrOrchestratorNilStore is returned when the orchestrator is
@@ -301,6 +306,10 @@ func (o *Orchestrator) walkRow(ctx context.Context, d state.Deployment, now time
 		// operator CLI is still the manual escape hatch).
 		if d.CanaryStepStartedAt != nil {
 			elapsed := now.Sub(*d.CanaryStepStartedAt)
+			if elapsed > StuckAfterDuration && o.awaitingApproval(ctx, d, now) {
+				stats.AwaitingApproval++
+				return
+			}
 			if elapsed > StuckAfterDuration {
 				o.Log.Warn("safedeploy: rollout stuck",
 					"deployment_id", d.ID, "app_id", d.AppID,
@@ -356,6 +365,10 @@ func (o *Orchestrator) autoAbort(ctx context.Context, d state.Deployment, elapse
 			"deployment_id", d.ID, "app_id", d.AppID, "err", err)
 		return
 	}
+	if app.Status == state.AppDeleted {
+		o.closeDeletedAppRollout(ctx, d, stats)
+		return
+	}
 	reason := fmt.Sprintf("automatic abort: rollout stuck at canary step %d/%d for %s (safety gate or progression worker did not recover)",
 		d.CanaryStep, d.CanaryTotalSteps, elapsed.Round(time.Second))
 	key := fmt.Sprintf("safedeploy/%s/stuck-abort", d.ID)
@@ -378,13 +391,49 @@ func (o *Orchestrator) autoAbort(ctx context.Context, d state.Deployment, elapse
 		"deployment_id", d.ID, "app_slug", app.Slug, "reason", reason)
 }
 
+// closeDeletedAppRollout ends a stuck rollout whose app was deleted. APID
+// will not load a deleted app's rollout, so the recovery call failed on every
+// tick and the row was picked again forever: h11-py, deleted four minutes into
+// its canary, sat at canary step 1 for six days (Hunt 14 H14-84). No traffic
+// remains to redistribute, so the row is only stamped aborted.
+func (o *Orchestrator) closeDeletedAppRollout(ctx context.Context, d state.Deployment, stats *Stats) {
+	abortedAt := o.now()
+	var startedAt *time.Time
+	if d.RolloutStartedAt != nil {
+		s := *d.RolloutStartedAt
+		startedAt = &s
+	}
+	const reason = "app deleted during rollout"
+	if _, err := o.Store.SafedeployStampRollout(ctx, d.ID, "aborted", startedAt, nil, &abortedAt, reason); err != nil {
+		if o.stampSuperseded(d, err) {
+			return
+		}
+		stats.AutoAbortFailed++
+		o.Log.Warn("safedeploy: close rollout of deleted app",
+			"deployment_id", d.ID, "app_id", d.AppID, "err", err)
+		return
+	}
+	o.emitAudit(ctx, d, AuditKindRolloutAborted, map[string]any{
+		"deployment_id": d.ID,
+		"app_id":        d.AppID,
+		"canary_step":   d.CanaryStep,
+		"canary_total":  d.CanaryTotalSteps,
+		"reason":        reason,
+		"aborted_at":    abortedAt.UTC().Format(time.RFC3339Nano),
+	}, stats)
+	stats.AutoAborted++
+	o.Log.Info("safedeploy: closed rollout of deleted app", "deployment_id", d.ID, "app_id", d.AppID)
+}
+
 // start flips pending → rolling_out and stamps rollout_started_at.
 // One audit row emitted per transition.
 func (o *Orchestrator) start(ctx context.Context, d state.Deployment, now time.Time, stats *Stats) {
 	startedAt := now
 	if _, err := o.Store.SafedeployStampRollout(ctx, d.ID, "rolling_out", &startedAt, nil, nil, ""); err != nil {
-		o.Log.Warn("safedeploy: stamp rolling_out",
-			"deployment_id", d.ID, "err", err)
+		if !o.stampSuperseded(d, err) {
+			o.Log.Warn("safedeploy: stamp rolling_out",
+				"deployment_id", d.ID, "err", err)
+		}
 		return
 	}
 	o.emitAudit(ctx, d, AuditKindRolloutStarted, map[string]any{
@@ -413,8 +462,10 @@ func (o *Orchestrator) complete(ctx context.Context, d state.Deployment, now tim
 		startedAt = &s
 	}
 	if _, err := o.Store.SafedeployStampRollout(ctx, d.ID, "complete", startedAt, &completedAt, nil, ""); err != nil {
-		o.Log.Warn("safedeploy: stamp complete",
-			"deployment_id", d.ID, "err", err)
+		if !o.stampSuperseded(d, err) {
+			o.Log.Warn("safedeploy: stamp complete",
+				"deployment_id", d.ID, "err", err)
+		}
 		return
 	}
 	o.emitAudit(ctx, d, AuditKindRolloutCompleted, map[string]any{
@@ -492,6 +543,18 @@ func (o *Orchestrator) emitAudit(ctx context.Context, d state.Deployment, kind s
 	}
 }
 
+// stampSuperseded reports a stamp the store refused because the rollout
+// changed after this tick listed it, for example APID aborted it. The row
+// keeps its new state; nothing is stamped or audited (Hunt 20 H20-2).
+func (o *Orchestrator) stampSuperseded(d state.Deployment, err error) bool {
+	if !errors.Is(err, state.ErrRolloutStateInvalid) {
+		return false
+	}
+	o.Log.Info("safedeploy: rollout changed since it was listed; left as is",
+		"deployment_id", d.ID, "app_id", d.AppID, "err", err)
+	return true
+}
+
 func (o *Orchestrator) now() time.Time {
 	if o.Now == nil {
 		return time.Now()
@@ -504,4 +567,35 @@ func (o *Orchestrator) actorOrDefault() string {
 		return "meterd:safedeploy"
 	}
 	return o.Actor
+}
+
+// rolloutHoldReader is optional. The production store reports the newest
+// hold recorded for a rollout's current step.
+type rolloutHoldReader interface {
+	LatestRolloutHold(ctx context.Context, deploymentID string) (json.RawMessage, error)
+}
+
+// awaitingApproval reports whether the rollout's newest hold says it waits
+// for approval (ADR-20261020085706) and was recorded within the stuck
+// window, which proves the canary worker and apid still visit it. apid aborts
+// such a release at its approval timeout; a stale hold falls back to the
+// stuck detector.
+func (o *Orchestrator) awaitingApproval(ctx context.Context, d state.Deployment, now time.Time) bool {
+	reader, ok := o.Store.(rolloutHoldReader)
+	if !ok {
+		return false
+	}
+	raw, err := reader.LatestRolloutHold(ctx, d.ID)
+	if err != nil || len(raw) == 0 {
+		return false
+	}
+	var hold struct {
+		Rule      string `json:"rule"`
+		DecidedAt string `json:"decided_at"`
+	}
+	if json.Unmarshal(raw, &hold) != nil || hold.Rule != api.RolloutRuleHoldAwaitingApproval {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, hold.DecidedAt)
+	return err == nil && now.Sub(at) < StuckAfterDuration
 }

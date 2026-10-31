@@ -180,6 +180,12 @@ func FormatStageDuration(durationMs int64, status, reason string) string {
 		// completed / pending — always render the duration so the
 		// column is never blank.
 		d := time.Duration(durationMs) * time.Millisecond
+		// A completed stage may carry a note, such as the builder-slot
+		// wait booked to source_download, which read as a 192 s
+		// download (Hunt 12 H12-5).
+		if status == stageStatusCompleted && reason != "" {
+			return fmt.Sprintf("%.1fs (%s)", d.Seconds(), reason)
+		}
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 }
@@ -203,6 +209,24 @@ func assertClosedSet() {
 	if got := len(StageLabels()); got != StageOrderClosedSet {
 		panic(fmt.Sprintf("pkg/dashboard/stages: StageLabels()=%d, StageOrderClosedSet=%d (closed set drift — labels MUST match order)", got, StageOrderClosedSet))
 	}
+}
+
+// openStageDurationMs is how long the open stage has run. A finished
+// deployment's open stage stops at terminalAt, or adds nothing without it, so
+// a stage a terminal write left open cannot grow forever (issue #2696).
+func openStageDurationMs(startedAt *time.Time, status string, terminalAt time.Time) int64 {
+	if startedAt == nil {
+		return 0
+	}
+	end := time.Now()
+	switch state.DeploymentStatus(status) {
+	case state.DeployLive, state.DeployFailed, state.DeploySuperseded, state.DeployCancelled:
+		if terminalAt.IsZero() {
+			return 0
+		}
+		end = terminalAt
+	}
+	return max(0, end.Sub(*startedAt).Milliseconds())
 }
 
 // RenderSummaryText writes the closed 6-stage summary block for a
@@ -292,12 +316,7 @@ func RenderSummaryText(w io.Writer, ss state.StageState, status string, terminal
 			// The active stage hasn't been pushed to history yet;
 			// render it as in_progress with the started-at delta.
 			rowStatus = stageStatusInProgress
-			if ss.CurrentStartedAt != nil {
-				durMs = time.Since(*ss.CurrentStartedAt).Milliseconds()
-				if durMs < 0 {
-					durMs = 0
-				}
-			}
+			durMs = openStageDurationMs(ss.CurrentStartedAt, status, terminalAt)
 		case ok:
 			rowStatus = item.Status
 			durMs = item.DurationMs
@@ -431,12 +450,7 @@ func RenderSummaryHTML(ss state.StageState, status string, terminalAt time.Time)
 		switch {
 		case !ok && ss.Current == name:
 			rowStatus = stageStatusInProgress
-			if ss.CurrentStartedAt != nil {
-				durMs = time.Since(*ss.CurrentStartedAt).Milliseconds()
-				if durMs < 0 {
-					durMs = 0
-				}
-			}
+			durMs = openStageDurationMs(ss.CurrentStartedAt, status, terminalAt)
 		case ok:
 			rowStatus = item.Status
 			durMs = item.DurationMs

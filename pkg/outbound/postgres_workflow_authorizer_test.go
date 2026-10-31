@@ -130,6 +130,21 @@ func TestWorkflowOutboundPostgresAuthorization(t *testing.T) {
 	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); err != nil {
 		t.Fatal(err)
 	}
+	// A rehearsal-enrolled app never reaches the real provider with live
+	// credentials from a workflow step (ADR-20261019180000).
+	if _, err := pool.Exec(ctx, `insert into scenario_test_action_policies(app_id, account_id, run_id, webhook_mode) values ($1::uuid, $2::uuid, $3, 'capture')`,
+		app.ID, account.ID, "abababababababababababababababab"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); !errors.Is(err, ErrWorkflowNotAuthorized) {
+		t.Fatalf("rehearsal app reached a live provider: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `delete from scenario_test_action_policies where app_id = $1::uuid`, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authorizer.AuthorizeWorkflow(ctx, token, offer.ID, "POST", "/v1/contacts", "", body); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.UnbindOutboundIntegration(ctx, account.ID, app.ID, offer.ID); err != nil {
 		t.Fatal(err)
 	}

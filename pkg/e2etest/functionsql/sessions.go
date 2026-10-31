@@ -41,3 +41,29 @@ func (f *Fixture) Sessions(ctx context.Context, t *testing.T) []functionmigratio
 	}
 	return sessions
 }
+
+// Activity summarizes each worker's backends for a failure message. It names
+// workers by their application_name and never includes the private role.
+func (f *Fixture) Activity(ctx context.Context) string {
+	rows, err := f.Admin.Query(ctx, `SELECT a.application_name,coalesce(a.state,''),coalesce(a.wait_event_type,''),coalesce(a.wait_event,'') FROM pg_stat_activity a WHERE a.usename=$1 ORDER BY a.application_name,a.pid`, f.Role)
+	if err != nil {
+		return "unreadable: " + err.Error()
+	}
+	defer rows.Close()
+	var sessions []string
+	for rows.Next() {
+		var application, state, waitType, wait string
+		if err := rows.Scan(&application, &state, &waitType, &wait); err != nil {
+			return "unreadable: " + err.Error()
+		}
+		session := strings.TrimPrefix(application, "gregale-function-") + ":" + state
+		if waitType != "" {
+			session += "/" + waitType + ":" + wait
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return "unreadable: " + err.Error()
+	}
+	return "[" + strings.Join(sessions, " ") + "]"
+}

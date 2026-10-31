@@ -303,6 +303,8 @@ func TestJailerCommand_Mega4(t *testing.T) {
 		if !containsKV(with, "memory.max=1024") {
 			t.Errorf("memory.max=1024 missing: %v", with)
 		}
+		// adr: 1027 — only database VMs throttle at memory.high below
+		// memory.max (the §11 amendment); app VMs keep memory.max alone.
 		if containsKV(with, "memory.high=") {
 			t.Errorf("app VMs carry no memory.high: %v", with)
 		}

@@ -64,7 +64,7 @@ func followCronFireNowRequest(parent context.Context, client *Client, cronID, re
 			}
 			if latest == nil && isNotFound(err) {
 				if cron, cronErr := client.GetCron(ctx, requestID); cronErr == nil && cron.ID != "" {
-					err = fmt.Errorf("%s is a cron rule, not a fire-now request; submit it with gregale crons run %s", requestID, requestID)
+					err = fmt.Errorf("%s is a cron rule, not a fire-now request; submit it with gregale cron run %s", requestID, requestID)
 				}
 			}
 			return finish("error", 1, err)
@@ -92,6 +92,9 @@ func followCronFireNowRequest(parent context.Context, client *Client, cronID, re
 				}
 				if status == fireNowStatusSucceeded {
 					PrintProgress(osStdout, "Fire-now request completed; inspect the resulting run for execution details.")
+				}
+				if status == fireNowStatusFailed && progress.Error != nil && cronRunRouteMissing(*progress.Error) {
+					printCronRouteMissingHint(ctx, client, cronID, 1, 1)
 				}
 			}
 			code := 1

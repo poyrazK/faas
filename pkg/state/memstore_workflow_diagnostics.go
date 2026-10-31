@@ -23,11 +23,7 @@ func (m *MemStore) workflowRecoveryTargetLocked(run WorkflowRun) workflowRecover
 		target.liveDeployment = target.liveDeployment || dep.Scope == "default"
 		target.pinnedDeployment = target.pinnedDeployment || dep.ID == run.DeploymentID && dep.DeletedAt == nil
 	}
-	for _, other := range m.workflowRuns {
-		if other.AppID == run.AppID && workflowGuardRunActive(other.Status) {
-			target.activeRuns++
-		}
-	}
+	target.activeRuns = m.workflowAdmissionLocked(run.AppID, target.plan.WorkflowMaxParkedRuns())
 	return target
 }
 

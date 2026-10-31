@@ -16,11 +16,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 )
 
-const canarySimulateUsage = "usage: gregale canary simulate <slug> [--canary-preset PRESET]"
+const canarySimulateUsage = "usage: gregale release canary simulate <slug> [--canary-preset PRESET]"
 
 func cmdCanary(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale canary simulate <slug> [--canary-preset PRESET]", "canary")
+		PrintUsage(os.Stderr, "usage: gregale release canary simulate <slug> [--canary-preset PRESET]", "canary")
 		return 1
 	}
 	switch args[0] {
@@ -32,7 +32,7 @@ func cmdCanary(args []string) int {
 		return cmdCanarySimulate(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown canary subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "canary", nestedCliCommand("canary"), args[0])
 	}
 }
 

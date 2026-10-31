@@ -1,5 +1,6 @@
 // adr: 1151 — forwards resume a quiet-paused instance before dialing it, and
-// Stats reports quiet pause so schedd can leave paused vCPUs out of admission.
+// Stats reports quiet pause so schedd can leave paused vCPUs out of admission
+// and record completed pauses in the billing ledger (ADR-20261023171905).
 package vmmdgrpc
 
 import (
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -17,8 +19,7 @@ type quietStubVMM struct {
 	stubVMM
 	resumeErr error
 	resumed   []string
-	paused    bool
-	since     time.Time
+	report    fcvm.QuietPauseReport
 }
 
 func (q *quietStubVMM) QuietResume(_ context.Context, instance string) error {
@@ -26,8 +27,8 @@ func (q *quietStubVMM) QuietResume(_ context.Context, instance string) error {
 	return q.resumeErr
 }
 
-func (q *quietStubVMM) QuietPauseState(string) (bool, time.Time) {
-	return q.paused, q.since
+func (q *quietStubVMM) QuietPauseReport(string) fcvm.QuietPauseReport {
+	return q.report
 }
 
 func TestResumeQuiet(t *testing.T) {
@@ -62,14 +63,21 @@ func TestResumeQuietWithoutCapability(t *testing.T) {
 
 func TestAddQuietPauseState(t *testing.T) {
 	since := time.Unix(1_700_000_000, 0)
+	lastStarted, lastEnded := since.Add(-time.Minute), since.Add(-50*time.Second)
+	completed := fcvm.QuietPauseReport{LastStarted: lastStarted, LastEnded: lastEnded, PausedTotal: 10 * time.Second}
+	open := completed
+	open.Paused, open.Since = true, since
 	for _, tc := range []struct {
 		name      string
 		vmm       VmmdAPI
 		wantPause bool
 		wantSince bool
+		wantLast  bool
 	}{
-		{name: "paused", vmm: &quietStubVMM{paused: true, since: since}, wantPause: true, wantSince: true},
-		{name: "running", vmm: &quietStubVMM{}},
+		{name: "paused, never resumed", vmm: &quietStubVMM{report: fcvm.QuietPauseReport{Paused: true, Since: since}}, wantPause: true, wantSince: true},
+		{name: "running after a pause", vmm: &quietStubVMM{report: completed}, wantLast: true},
+		{name: "paused again", vmm: &quietStubVMM{report: open}, wantPause: true, wantSince: true, wantLast: true},
+		{name: "running, never paused", vmm: &quietStubVMM{}},
 		{name: "no capability", vmm: stubVMM{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,6 +89,18 @@ func TestAddQuietPauseState(t *testing.T) {
 			}
 			if tc.wantSince && !row.GetQuietPausedSince().AsTime().Equal(since) {
 				t.Fatalf("quiet_paused_since = %v, want %v", row.GetQuietPausedSince().AsTime(), since)
+			}
+			gotLast := row.GetQuietLastPauseStartedAt() != nil
+			if gotLast != tc.wantLast || (row.GetQuietLastPauseEndedAt() != nil) != tc.wantLast || (row.GetQuietPausedNsTotal() != nil) != tc.wantLast {
+				t.Fatalf("last pause = [%v, %v] total %v, want present=%v", row.GetQuietLastPauseStartedAt(), row.GetQuietLastPauseEndedAt(), row.GetQuietPausedNsTotal(), tc.wantLast)
+			}
+			if tc.wantLast {
+				if !row.GetQuietLastPauseStartedAt().AsTime().Equal(lastStarted) || !row.GetQuietLastPauseEndedAt().AsTime().Equal(lastEnded) {
+					t.Fatalf("last pause = [%v, %v], want [%v, %v]", row.GetQuietLastPauseStartedAt().AsTime(), row.GetQuietLastPauseEndedAt().AsTime(), lastStarted, lastEnded)
+				}
+				if got := row.GetQuietPausedNsTotal().GetValue(); got != (10 * time.Second).Nanoseconds() {
+					t.Fatalf("quiet_paused_ns_total = %d, want %d", got, (10 * time.Second).Nanoseconds())
+				}
 			}
 		})
 	}

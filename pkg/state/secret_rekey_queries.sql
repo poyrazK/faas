@@ -63,3 +63,17 @@ SELECT generation FROM release_secret_key_retirement_fence WHERE singleton;
 -- name: CompareAndSwapPromotionSecretCapture :execrows
 UPDATE project_environment_promotion_release_config SET payload=sqlc.arg(replacement)::jsonb
 WHERE promotion_id=sqlc.arg(document_id)::text::uuid AND payload=sqlc.arg(previous)::jsonb;
+
+-- name: ListSecretBindingDocuments :many
+-- Every rekey document with the account that owns it (ADR-20261023173624):
+-- the id prefix, or the deployment's app or the promotion for kinds whose id
+-- carries no account. The binding is sealed inside each envelope, so the
+-- binding pass reads every document; it is an operator command, not a hot path.
+SELECT d.kind::text AS kind,d.id::text AS id,d.payload::jsonb AS payload,
+ coalesce(CASE d.kind
+  WHEN 'deployment' THEN (SELECT a.account_id::text FROM deployments dep JOIN apps a ON a.id=dep.app_id WHERE dep.id=d.id::uuid)
+  WHEN 'promotion' THEN (SELECT p.account_id::text FROM project_environment_promotions p WHERE p.id=d.id::uuid)
+  ELSE split_part(d.id,'/',1) END,'')::text AS account_id
+FROM release_secret_rekey_documents d
+WHERE d.kind||'|'||d.id > sqlc.arg(after_cursor)::text
+ORDER BY d.kind,d.id LIMIT sqlc.arg(batch_limit)::integer;

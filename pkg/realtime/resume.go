@@ -162,13 +162,15 @@ type resumeSignalRate struct {
 
 type resumeSubscription struct {
 	authorization channelAuthorization
-	filter        map[string]string
-	cancel        context.CancelFunc
-	wake          chan struct{}
-	durableName   string
-	lastSent      int64 // guarded by connection.mu
-	lastAck       int64 // guarded by connection.mu
-	resyncing     bool  // guarded by connection.mu
+	// presence decides presence state and signals, beyond reading.
+	presence    channelAuthorization
+	filter      map[string]string
+	cancel      context.CancelFunc
+	wake        chan struct{}
+	durableName string
+	lastSent    int64 // guarded by connection.mu
+	lastAck     int64 // guarded by connection.mu
+	resyncing   bool  // guarded by connection.mu
 }
 
 func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
@@ -317,16 +319,73 @@ func (m *Manager) resumeDirectMessageAck(ctx context.Context, c *connection, fra
 	m.queueResumeControl(ctx, c, resumeServerFrame{Type: "direct_message_acknowledged", MessageID: frame.MessageID})
 }
 
-func (m *Manager) reserveResume() bool {
+// reserveResume takes one of the node's resume, inbox and SSE subscription
+// slots for the endpoint's account. An account holds at most
+// RealtimeAccountNodeSharePercent of them, as with connections: at 8 per
+// connection, 32 connections of one tenant otherwise took every slot on the
+// node. With fair use its plan's allowance may be smaller (ADR-1323). A nil
+// state (no endpoint) is held only to the node cap.
+func (m *Manager) reserveResume(state *endpointState) bool {
+	var account *accountConnections
+	share := int64(max(1, maxResumeSubscriptions*api.RealtimeAccountNodeSharePercent/100))
+	if state != nil {
+		account = state.account
+		if allowance := int64(m.resumeAllowance(state)); allowance > 0 && allowance < share {
+			share = allowance
+		}
+	}
+	if account != nil {
+		for {
+			current := account.resume.Load()
+			if current >= share {
+				return false
+			}
+			if account.resume.CompareAndSwap(current, current+1) {
+				break
+			}
+		}
+	}
 	for {
 		current := m.resumeCount.Load()
 		if current >= maxResumeSubscriptions {
+			if account != nil {
+				account.resume.Add(-1)
+			}
 			return false
 		}
 		if m.resumeCount.CompareAndSwap(current, current+1) {
 			return true
 		}
 	}
+}
+
+// resumeAllowance is the plan's resume subscriptions per node for the
+// endpoint's account, or 0 without fair use or an allowance from apid.
+func (m *Manager) resumeAllowance(state *endpointState) int {
+	if !m.cfg.FairUse {
+		return 0
+	}
+	endpoint := state.config.Load()
+	if endpoint == nil {
+		return 0
+	}
+	return api.RealtimeResumeSubscriptionsPerNodeFor(endpoint.AccountMaxConnections)
+}
+
+// releaseResume returns a slot reserveResume granted to account.
+func (m *Manager) releaseResume(account *accountConnections) {
+	m.resumeCount.Add(-1)
+	if account != nil {
+		account.resume.Add(-1)
+	}
+}
+
+// account is the per-account counter of the endpoint c connected to.
+func (c *connection) account() *accountConnections {
+	if c == nil || c.state == nil {
+		return nil
+	}
+	return c.state.account
 }
 
 func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resumeClientFrame) {
@@ -358,20 +417,27 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 		count++
 	}
 	c.mu.RUnlock()
-	if exists || count >= maxResumePerConnection || !m.reserveResume() {
+	if exists || count >= maxResumePerConnection || !m.reserveResume(c.state) {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "subscription_limit"})
 		return
 	}
 	release := true
 	defer func() {
 		if release {
-			m.resumeCount.Add(-1)
+			m.releaseResume(c.account())
 		}
 	}()
-	subscription := &resumeSubscription{}
+	subscription := &resumeSubscription{presence: channelAuthorization{presence: true}}
 	if subscription.authorization.check(ctx, c, frame.Channel) != channelAuthorizationAllowed {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "not_authorized"})
 		return
+	}
+	// Reading lets a connection join the channel's presence; setting a state
+	// needs the presence permission. Without it the connection joins with an
+	// empty state and is told why.
+	presenceDenied := !presenceStateEmpty(presenceState) && subscription.presence.check(ctx, c, frame.Channel) != channelAuthorizationAllowed
+	if presenceDenied {
+		presenceState = json.RawMessage(`{}`)
 	}
 	after := frame.After
 	if frame.Subscription != "" {
@@ -579,6 +645,9 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	}
 	m.syncFleetPresence(ctx, key)
 	release = false
+	if presenceDenied {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "presence_not_authorized"})
+	}
 	m.watchSubscriptionOccupancy(ctx, c, frame)
 	go m.pumpResumeSubscription(subCtx, c, frame.Channel, subscription, page)
 }
@@ -586,7 +655,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 // watchSubscriptionOccupancy starts live occupancy frames when the subscribe
 // frame asked for them and the preview is on (ADR-1324).
 func (m *Manager) watchSubscriptionOccupancy(ctx context.Context, c *connection, frame resumeClientFrame) {
-	if frame.Occupancy && m.cfg.OccupancyPreview && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
+	if frame.Occupancy && c.endpointConfig().occupancyOn(m.cfg) && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "occupancy_limit"})
 	}
 }
@@ -603,6 +672,13 @@ func normalizeResumePresenceState(raw json.RawMessage) (json.RawMessage, bool) {
 		return nil, false
 	}
 	return append(json.RawMessage(nil), raw...), true
+}
+
+// presenceStateEmpty reports whether a normalized presence state sets no
+// field, which joining a channel needs no presence permission for.
+func presenceStateEmpty(state json.RawMessage) bool {
+	var value map[string]json.RawMessage
+	return json.Unmarshal(state, &value) == nil && len(value) == 0
 }
 
 func fleetPresenceErrorCode(err error) string {
@@ -647,7 +723,8 @@ func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame
 		return
 	}
 	c.mu.RLock()
-	if c.resumeSubs[frame.Channel] == nil {
+	subscription := c.resumeSubs[frame.Channel]
+	if subscription == nil {
 		c.mu.RUnlock()
 		m.mu.RUnlock()
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "not_subscribed"})
@@ -665,6 +742,10 @@ func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame
 	presenceScope := member.presenceScope
 	c.mu.RUnlock()
 	m.mu.RUnlock()
+	if subscription.presence.check(ctx, c, frame.Channel) != channelAuthorizationAllowed {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "presence_not_authorized"})
+		return
+	}
 
 	c.mu.Lock()
 	now := time.Now()
@@ -737,13 +818,19 @@ func (m *Manager) resumeSignal(ctx context.Context, c *connection, frame resumeC
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "invalid_signal"})
 		return
 	}
-	now := time.Now()
-	c.mu.Lock()
-	if c.resumeSubs[frame.Channel] == nil {
-		c.mu.Unlock()
+	c.mu.RLock()
+	subscription := c.resumeSubs[frame.Channel]
+	c.mu.RUnlock()
+	if subscription == nil {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "not_subscribed"})
 		return
 	}
+	if subscription.presence.check(ctx, c, frame.Channel) != channelAuthorizationAllowed {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "presence_not_authorized"})
+		return
+	}
+	now := time.Now()
+	c.mu.Lock()
 	if c.signalWindow.IsZero() || now.Sub(c.signalWindow) >= time.Second {
 		c.signalWindow = now
 		c.signalCount = 0
@@ -868,11 +955,17 @@ func (m *Manager) authorizeResumeChannel(ctx context.Context, c *connection, cha
 	return authorization.check(ctx, c, channel) == channelAuthorizationAllowed
 }
 
-func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel string, endpoint *Endpoint) (bool, error) {
+// checkResumeChannel asks whether c may read channel or, with presence, also
+// set presence state and send signals on it (ADR-369, amendment of
+// 2026-10-27): channel rules first, then the authorize callback.
+func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel string, endpoint *Endpoint, presence bool) (bool, error) {
 	if !c.accessAllows(ctx, channel) {
 		return false, nil
 	}
 	if c.ticketToken != "" {
+		return !presence, nil
+	}
+	if c.identity != nil && channelRulesAllow(endpoint, c.identity.identity, channel, presence) {
 		return true, nil
 	}
 	authorizer, ok := m.hooks.(ChannelAuthorizer)
@@ -898,6 +991,9 @@ func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel
 		event.ActivityScope = scope
 		event.Permission = "read_activity"
 	}
+	if presence {
+		event.Permission = "presence"
+	}
 	authCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
 	allowed, err := authorizer.AuthorizeChannel(authCtx, event)
 	if err == nil {
@@ -908,7 +1004,7 @@ func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel
 }
 
 func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription, page state.ManagedRealtimeChannelHistory) {
-	defer m.resumeCount.Add(-1)
+	defer m.releaseResume(c.account())
 	defer m.removeResumeSubscription(ctx, c, channel, subscription)
 	ticker := time.NewTicker(m.cfg.ResumePollInterval)
 	defer ticker.Stop()

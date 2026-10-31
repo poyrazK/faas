@@ -3,6 +3,7 @@ package meter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"sync"
@@ -12,6 +13,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/canary"
+	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -43,6 +46,7 @@ type Loop struct {
 	// health heartbeat active while provider delivery is intentionally paused.
 	billingDisabled       bool
 	financialBudgets      bool
+	quietPauseRelease     func(platformflags.Subject) bool
 	notif                 Notifier
 	quotaWarningRequested func() bool
 	quotaWarningCommands  QuotaWarningCommands
@@ -112,6 +116,11 @@ type Loop struct {
 	// lastTickErr records the latest error for each timer. A failed billing
 	// pass must not leave /healthz green merely because the ticker fired.
 	lastTickErr map[string]string
+
+	// pricedTerms maps an account to the month and terms whose price
+	// snapshots recordFinancialPricing last confirmed stored. Only the sample
+	// goroutine touches it.
+	pricedTerms map[string]string
 }
 
 // NewLoop wires the loop. The interfaces are local to pkg/meter so the
@@ -247,6 +256,15 @@ func (l *Loop) WithCanaryProgression(p *canary.Progression) *Loop {
 	return l
 }
 
+// WithQuietPauseRelease decides which accounts quiet_pause_unbilled = "on"
+// subtracts paused seconds for (ADR-20261023171905): cmd/meterd passes the
+// quiet_pause_unbilled platform flag. Without it on mode applies to every
+// account.
+func (l *Loop) WithQuietPauseRelease(released func(platformflags.Subject) bool) *Loop {
+	l.quietPauseRelease = released
+	return l
+}
+
 // WithSafeDeploy attaches the safedeploy orchestrator tick
 // runtime (issue #976 / ADR-122 / SAFE-RELEASES-F). cmd/meterd
 // calls this when FAAS_SAFEDEPLOY_TOKEN is set so the goroutine
@@ -283,7 +301,16 @@ func (l *Loop) Run(ctx context.Context) error {
 	} else {
 		sampler = NewSampler(l.store, l.cpu, l.now)
 	}
+	sampler.WithRollSettle(api.MeterRollSettle)
+	if mode, err := ParseQuietPauseMode(l.cfg.QuietPauseUnbilled); err != nil {
+		l.log.Warn("meter: quiet pause billing stays off", "err", err)
+	} else if mode != QuietPauseOff {
+		sampler.WithQuietPause(mode, l.ops.Registry()).WithQuietPauseRelease(l.quietPauseRelease)
+		l.log.Info("meter: quiet pause billing (ADR-20261023171905)", "mode", mode,
+			"per_account_flag", l.quietPauseRelease != nil)
+	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
+	finalLag := newUsageFinalLagGauge(l.ops.Registry())
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.
 	errc := make(chan error, 12)
@@ -319,8 +346,11 @@ func (l *Loop) Run(ctx context.Context) error {
 				l.log.Warn("meter: job sampler tick failed",
 					slog.String("err", jerr.Error()))
 			}
-			sampleErr := errors.Join(err, jerr, pricingErr)
-			return errors.Join(sampleErr, l.recordFinancialSample(c, sampler, observedAt, sampleErr))
+			sampleErr := errors.Join(err, jerr)
+			if first := sampler.FirstIncompleteMinute(); !first.IsZero() {
+				finalLag.Set(observedAt.Sub(first).Seconds())
+			}
+			return errors.Join(sampleErr, pricingErr, l.recordFinancialSample(c, sampler, observedAt, sampleErr, pricingErr))
 		}, "sample")
 	}()
 	go func() { errc <- l.runQuotaTicks(ctx) }()
@@ -573,23 +603,18 @@ type AlertsEvaluator = alerts.Evaluator
 // is runQuotaTicks.
 //
 // Issue #279 PR A: a per-account overage cap (`accounts.overage_cap_cents`,
-// opt-in) sits in front of the existing free/paid ladder. The cap is
-// loaded once per tick (one round-trip) and consulted per account;
-// accounts at-or-past the cap skip the overage-row insert path
-// inside EnforceQuota and the meterd_billing_cap_exceeded_total
-// counter is incremented with the plan label. The cap is advisory
-// for overage only — in-budget usage continues to accumulate and
-// the Free hard-stop / paid warning ladder is unchanged.
+// opt-in) is loaded once per tick (one round-trip). For each capped account
+// the tick compares the month's combined billable overage, compute plus every
+// live provider meter plus the live object-storage charge apid has billed
+// (ADR-20261027093220), with the cap: at or past it the
+// meterd_billing_cap_exceeded_total counter is incremented with the plan
+// label and the account's spend cap hold is recorded for schedd, which knows
+// only compute (ADR-20261026120843); below it the hold is cleared. The
+// Free hard-stop / paid warning ladder runs for every account either way.
 //
-// Concurrency note: this loop is the only writer to usage_minutes
-// (spec §6.1) and runs as a single meterd process today, so the
-// (capCache read → CurrentMonthOverageCents → EnforceQuota) sequence
-// is race-free against itself. A future meterd-replica deploy would
-// race here — at worst one minute's overage-row insert slips past
-// the cap per replica. The follow-up is to wrap the per-account
-// section in `SELECT … FOR UPDATE` on the `accounts` row (precedent
-// pgstore.go:380-381, :668); today's behaviour is acceptable per
-// the cap's documented "advisory for the overage row only" contract.
+// Concurrency note: holds are recomputed from durable usage every tick, so
+// two meterd replicas converge on the same row; a hold written for a cap the
+// customer has since changed is ignored by schedd until the next tick.
 func (l *Loop) runQuotaOnce(ctx context.Context) {
 	accounts, err := state.ListBillingResourceAccounts(ctx, l.store)
 	if err != nil {
@@ -610,17 +635,8 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			l.log.Warn("meter: quota usage_by_month", "account", acct.ID, "err", err)
 			continue
 		}
-		capCents, ok := capCache[acct.ID]
-		if ok && capCents >= 0 {
-			monthCents, err := l.store.CurrentMonthOverageCents(ctx, acct.ID)
-			if err != nil {
-				l.log.Warn("meter: overage read failed", "account", acct.ID, "err", err)
-			} else if meterCents, meterErr := liveMeterOverageCents(ctx, l.store, l.pusher, acct, now, state.BillingMeterEgress); meterErr != nil {
-				l.log.Warn("meter: secondary overage read failed", "account", acct.ID, "err", meterErr)
-			} else if saturatedAdd(monthCents, meterCents) >= capCents {
-				l.ops.BillingCapExceededTotal(string(acct.Plan))
-				continue
-			}
+		if capCents, ok := capCache[acct.ID]; ok && capCents >= 0 {
+			l.recordSpendCapHold(ctx, acct, now, capCents)
 		}
 		used := MonthlyUsageGB(usages)
 		if _, err := (QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands}).Enforce(ctx, acct, used, now); err != nil {
@@ -631,6 +647,76 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			}
 			l.log.Warn("meter: enforce_quota", "account", acct.ID, "err", err)
 		}
+	}
+}
+
+// recordSpendCapHold compares the account's combined billable overage this
+// UTC month with its cap and records or clears the hold schedd enforces
+// (ADR-20261026120843). A read failure keeps the previous hold.
+func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now time.Time, capCents int64) {
+	monthCents, err := l.store.CurrentMonthOverageCents(ctx, acct.ID)
+	if err != nil {
+		l.log.Warn("meter: overage read failed", "account", acct.ID, "err", err)
+		return
+	}
+	meterCents, err := liveMeterOverageCents(ctx, l.store, l.pusher, acct, now, state.BillingMeterEgress)
+	if err != nil {
+		l.log.Warn("meter: secondary overage read failed", "account", acct.ID, "err", err)
+		return
+	}
+	// apid bills object storage in daily steps under the same cap
+	// (ADR-20261027093220); a part cent counts as reached. A pending step's
+	// reservation is an upper bound, not a charge, so it never parks.
+	objectStorage, _, err := liveObjectStorageCharge(ctx, l.store, acct.ID, now)
+	if err != nil {
+		l.log.Warn("meter: object storage charge read failed", "account", acct.ID, "err", err)
+		return
+	}
+	objectStorageCents := objectStorage/api.MillicentsPerCent + min(objectStorage%api.MillicentsPerCent, 1)
+	observed := saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents)
+	holds, hasHolds := l.store.(state.SpendCapHoldStore)
+	if observed < capCents {
+		if hasHolds {
+			if err := holds.ClearSpendCapHold(ctx, acct.ID); err != nil {
+				l.log.Warn("meter: clear spend cap hold failed", "account", acct.ID, "err", err)
+			}
+		}
+		return
+	}
+	l.ops.BillingCapExceededTotal(string(acct.Plan))
+	if !hasHolds {
+		return
+	}
+	at := now.UTC()
+	hold := state.SpendCapHold{AccountID: acct.ID, Month: time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC),
+		CapCents: capCents, ObservedCents: observed}
+	// The hold engages when none is recorded for this month and cap; that is
+	// when the customer is told (ADR-20261030093512). A failed read sends
+	// nothing rather than mailing on every tick.
+	prior, held, readErr := holds.GetSpendCapHold(ctx, acct.ID)
+	engaged := readErr == nil && (!held || !prior.Month.Equal(hold.Month) || prior.CapCents != capCents)
+	if err := holds.PutSpendCapHold(ctx, hold); err != nil {
+		l.log.Warn("meter: record spend cap hold failed", "account", acct.ID, "err", err)
+		return
+	}
+	if engaged {
+		l.sendSpendCapMail(ctx, acct, hold, now)
+	}
+}
+
+func (l *Loop) sendSpendCapMail(ctx context.Context, acct state.Account, hold state.SpendCapHold, now time.Time) {
+	if acct.Email == "" {
+		return
+	}
+	subject, body := mail.SpendCapReachedBody(acct.Email, string(acct.Plan), hold.CapCents, hold.ObservedCents, now)
+	msg := mail.Message{
+		To: []string{acct.Email}, Subject: subject, TextBody: body,
+		// One notice per account, month and cap: a second meterd that saw
+		// the same transition dedupes at the provider.
+		MessageID: fmt.Sprintf("%s:spend_cap_reached:%s:%d", acct.ID, hold.Month.Format("2006-01"), hold.CapCents),
+	}
+	if err := l.mailer.Send(ctx, msg); err != nil {
+		l.log.Warn("meter: spend cap mail", "account", acct.ID, "err", err)
 	}
 }
 

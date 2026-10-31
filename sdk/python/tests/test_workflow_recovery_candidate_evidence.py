@@ -1,4 +1,4 @@
-from faas_sdk.models.workflow_recovery_history_entry import WorkflowRecoveryHistoryEntry
+from faas_sdk.preview.models.workflow_recovery_history_entry import WorkflowRecoveryHistoryEntry
 
 
 def test_durable_candidate_facts_roundtrip():

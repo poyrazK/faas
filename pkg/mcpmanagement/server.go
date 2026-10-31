@@ -46,12 +46,29 @@ type Options struct {
 	// AllowedApps binds consented slugs to app identities; nil allows the account.
 	AllowedApps map[string]string
 	// Environments is nil for local account access. Remote grants always set it.
-	Environments  *EnvironmentConsent
-	planStore     *StateStore
+	Environments *EnvironmentConsent
+	// LocalCLI enables the local deploy and env tools on local connections.
+	// On a hosted grant it runs only provisioning, as the grant.
+	LocalCLI LocalCLI
+	// Capabilities are the scopes a remote grant's consent added beyond
+	// inspection and writes: secrets:request, storage:manage and
+	// postgres:manage. A remote grant lists only their tools
+	// (ADR-20261026195952).
+	Capabilities []string
+	// Toolsets limits the listed tools (see ParseToolsets); nil lists all.
+	Toolsets  []string
+	planStore *StateStore
+	// uploads is the hosted bridge's upload store (ADR-20261026195952).
+	uploads       *uploadStore
 	planNamespace string
 	auditLogger   *slog.Logger
 	accountID     string
 	grantID       string
+	// agentKey marks a hosted connection authenticated by an agent key
+	// (ADR-20261029085359): account-wide like a local connection, but its
+	// tools follow its scopes like a remote grant's and it gets no
+	// local-directory tools.
+	agentKey bool
 }
 
 type management struct {
@@ -67,6 +84,7 @@ type management struct {
 	mu               sync.Mutex
 	plans            map[string]*releasePlan
 	environmentPlans map[string]*environmentPlan
+	secretRequests   map[string]*secretRequest
 }
 
 // NewServer constructs a management server without making API calls.
@@ -76,6 +94,10 @@ func NewServer(client *api.Client, opts Options) (*mcp.Server, error) {
 	s, _, err := newManagementServer(client, opts)
 	return s, err
 }
+
+// remote reports whether tools are listed as for a remote grant: an OAuth
+// grant (environment consent) or an agent key.
+func (m *management) remote() bool { return m.opts.Environments != nil || m.opts.agentKey }
 
 func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *management, error) {
 	if client == nil {
@@ -99,6 +121,13 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	}
 	if opts.Version == "" {
 		opts.Version = "dev"
+	}
+	if opts.Toolsets != nil {
+		toolsets, err := ParseToolsets(strings.Join(opts.Toolsets, ","))
+		if err != nil {
+			return nil, nil, err
+		}
+		opts.Toolsets = toolsets
 	}
 	if opts.AllowedApps != nil {
 		apps := make(map[string]string, len(opts.AllowedApps))
@@ -131,7 +160,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	if opts.Lifecycle == nil {
 		opts.Lifecycle = NewLifecycle()
 	}
-	m := &management{grantLifecycle: NewLifecycle(), lifecycle: opts.Lifecycle, toolWrites: map[string]bool{}, toolNames: map[string]bool{}, admission: newRequestAdmission(opts.Telemetry), client: client, opts: opts, plans: make(map[string]*releasePlan), environmentPlans: make(map[string]*environmentPlan)}
+	m := &management{grantLifecycle: NewLifecycle(), lifecycle: opts.Lifecycle, toolWrites: map[string]bool{}, toolNames: map[string]bool{}, admission: newRequestAdmission(opts.Telemetry), client: client, opts: opts, plans: make(map[string]*releasePlan), environmentPlans: make(map[string]*environmentPlan), secretRequests: make(map[string]*secretRequest)}
 	if err := m.restorePlans(); err != nil {
 		return nil, nil, err
 	}
@@ -161,6 +190,10 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerPerformanceDiagnostics(s, m)
 	registerResidencyDiagnostics(s, m)
 	registerReleases(s, m)
+	registerLocalReleases(s, m)
+	registerSecretEntry(s, m)
+	registerLocalProvisioning(s, m)
+	registerUploadDeploys(s, m)
 	registerEnvironments(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
@@ -174,13 +207,25 @@ func register[In any](s *mcp.Server, m *management, name, description string, ha
 }
 
 func registerTool[In any](s *mcp.Server, m *management, name, description string, readOnly bool, handle func(context.Context, In) (any, error)) {
+	if !m.toolListed(name) {
+		return
+	}
 	m.toolNames[name] = true
 	m.toolWrites[name] = !readOnly
 	destructive := !readOnly
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: description, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: !readOnly}},
 		func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
-			ctx, cancel := context.WithTimeout(ctx, m.opts.Timeout)
+			timeout := m.opts.Timeout
+			switch name {
+			case "gregale_apply_local_deploy", "gregale_plan_upload_deploy", "gregale_apply_upload_deploy":
+				timeout = localDeployTimeout // the source upload, or unpacking one
+			case "gregale_apply_provision":
+				timeout = provisionTimeout // a database can take minutes
+			}
+			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
+			// Tools that ask the user something (SEP-2322 input requests) read the call.
+			ctx = context.WithValue(ctx, toolRequestKey{}, req)
 			if err := m.authorizeToolArgs(ctx, args, !readOnly); err != nil {
 				return m.toolError(err), nil, nil
 			}
@@ -192,6 +237,9 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 				}
 			}
 			output, err := handle(ctx, args)
+			if pending, ok := output.(*needsInput); ok && err == nil {
+				return &mcp.CallToolResult{InputRequests: pending.requests, RequestState: pending.state}, nil, nil
+			}
 			if !readOnly && m.opts.auditLogger != nil {
 				m.opts.auditLogger.InfoContext(ctx, "management MCP mutation", "event", "mcp.tool", "tool", name, "grant_id", m.opts.grantID, "account_id", m.opts.accountID, "succeeded", err == nil)
 			}

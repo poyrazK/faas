@@ -17,6 +17,7 @@ package reconcile
 import (
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -96,6 +97,13 @@ func workloadDiff(
 	for _, a := range existing {
 		existingByName[a.WorkloadName] = a
 	}
+	// A renamed service updates its previous name's app in place
+	// (ADR-20261029090000), so that app is neither removed nor recreated.
+	renamed := RenamedWorkloads(scan.Workloads, existing)
+	for previous, current := range renamed {
+		existingByName[current] = existingByName[previous]
+		delete(existingByName, previous)
+	}
 
 	// Build the workload-name index of scan workloads.
 	scanByName := make(map[string]reposcan.Workload, len(scan.Workloads))
@@ -117,6 +125,7 @@ func workloadDiff(
 			})
 			continue
 		}
+		w = keepServingClass(w, a)
 		desired := resolveStartCommand(w)
 		changed := diffFieldsChanged(a, w, desired, availableServices)
 		if len(changed) == 0 {
@@ -134,6 +143,9 @@ func workloadDiff(
 
 	for _, a := range existing {
 		if _, ok := scanByName[a.WorkloadName]; ok {
+			continue
+		}
+		if _, ok := renamed[a.WorkloadName]; ok {
 			continue
 		}
 		removes = append(removes, Action{
@@ -278,6 +290,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if a.Manifest.DockerfileBuild.SHA256() != w.DockerfileBuild.SHA256() {
 		changed = append(changed, "dockerfile_build")
 	}
+	if a.Manifest.BuildGoCommand != w.GoCommand {
+		changed = append(changed, "go_command")
+	}
 	imageManifest := state.AppManifest{}
 	applyProjectImage(&imageManifest, w)
 	if a.Manifest.ProjectImage != imageManifest.ProjectImage {
@@ -289,9 +304,16 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !reflect.DeepEqual(a.Manifest.ProjectImageHealthcheck, imageManifest.ProjectImageHealthcheck) {
 		changed = append(changed, "image_healthcheck")
 	}
+	if !reflect.DeepEqual(a.Manifest.ProjectReadinessCheck, imageManifest.ProjectReadinessCheck) {
+		changed = append(changed, "readiness_check")
+	}
 	if !reflect.DeepEqual(a.Manifest.ProjectImageProcess, imageManifest.ProjectImageProcess) {
 		changed = append(changed, "image_process")
 	}
+	if !slices.Equal(a.Manifest.ProjectSecretFiles, imageManifest.ProjectSecretFiles) {
+		changed = append(changed, "secret_files")
+	}
+	changed = append(changed, composeResourcesChanged(a, w)...)
 	if !maps.Equal(a.Manifest.ProjectDependencyConditions, w.DependsOnConditions) {
 		changed = append(changed, "dependency_conditions")
 	}
@@ -312,7 +334,7 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !maps.Equal(a.Manifest.ServiceReliability, serviceReliabilityForWorkload(w, serviceNames, a.Manifest.ServiceReliability)) {
 		changed = append(changed, "service_reliability")
 	}
-	if a.Manifest.EffectiveServiceBindingPolicy() != serviceBindingPolicyForExistingWorkload(w, a.Manifest.ServiceBindingPolicy) {
+	if a.Manifest.EffectiveServiceBindingPolicy() != serviceBindingPolicyForExistingWorkload(w, a.Manifest.ServiceBindingPolicy).Effective() {
 		changed = append(changed, "service_binding_policy")
 	}
 	if a.Manifest.EffectiveServiceBindingTransport() != transport.Effective() {

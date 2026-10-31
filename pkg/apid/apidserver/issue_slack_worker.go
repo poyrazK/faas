@@ -11,10 +11,11 @@ import (
 )
 
 func openIssueSlackToken(blob []byte) (string, error) {
-	if mfaIdentities == nil {
+	ids := accountIdentities()
+	if len(ids) == 0 {
 		return "", errors.New("slack token keys unavailable")
 	}
-	return issueslack.OpenToken(mfaIdentities(), blob)
+	return issueslack.OpenToken(ids, blob)
 }
 func (s *server) startIssueSlackDelivery(ctx context.Context) {
 	store, ok := s.store.(state.IssueSlackStore)

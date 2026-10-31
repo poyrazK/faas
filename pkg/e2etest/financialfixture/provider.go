@@ -39,6 +39,15 @@ func (e Event) Quantity() (int64, error) {
 	return n, nil
 }
 
+// sameUsage reports whether a replayed event carries the usage the accepted one
+// did. meterd stamps an event when it sends it (ADR-20261028101500), so a
+// replay after a lost reply or a restart has a later timestamp; the customer,
+// meter and canonical quantities must never change.
+func sameUsage(a, b Event) bool {
+	a.Timestamp, b.Timestamp = "", ""
+	return reflect.DeepEqual(a, b)
+}
+
 type Snapshot struct {
 	Events    map[string]Event `json:"events"`
 	Attempts  map[string]int   `json:"attempts"`
@@ -99,6 +108,10 @@ func (p *Provider) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "fixture credential required", http.StatusUnauthorized)
 		return
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/" {
+		_, _ = w.Write([]byte(`{"items":[{"id":"fixture-org","subscription_settings":{"allow_multiple_subscriptions":false}}]}`))
+		return
+	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/products/") {
 		id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
 		plan := api.Plan(id)
@@ -152,12 +165,16 @@ func (p *Provider) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	old, duplicate := p.events[e.ExternalID]
-	if duplicate && !reflect.DeepEqual(old, e) {
+	if duplicate && !sameUsage(old, e) {
 		p.conflicts = append(p.conflicts, e.ExternalID)
 		http.Error(w, "external_id payload changed", http.StatusConflict)
 		return
 	}
-	p.events[e.ExternalID] = e
+	if !duplicate {
+		// Polar keeps the first event for an external_id and counts the
+		// rest as duplicates.
+		p.events[e.ExternalID] = e
+	}
 	if p.fault == "after" {
 		// Close after persisting acceptance, without an HTTP response. This
 		// also exercises net/http's possible transport replay of keyed POSTs.

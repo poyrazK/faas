@@ -20,6 +20,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 const (
@@ -27,6 +28,17 @@ const (
 	operatorSessionEnv   = "FAAS_OPERATOR_SESSION"
 	operatorSessionFile  = "FAAS_OPERATOR_SESSION_FILE"
 	operatorUserAgent    = "faas-cli/gregalectl"
+	// operatorStepUpTTL is apid's freshness window for an operator
+	// step-up (ADR-077, requireAdminMutationPolicy).
+	operatorStepUpTTL = 5 * time.Minute
+	// operatorStepUpFresh is how long after a step-up 'auth step-up'
+	// skips asking again: the code on screen may still be the one just
+	// used, which apid refuses a second time.
+	operatorStepUpFresh = time.Minute
+	// envSessionStepUpHint is the way out when a FAAS_OPERATOR_SESSION
+	// cookie needs a step-up: step-up re-issues the cookie, and the CLI
+	// cannot rewrite the caller's environment.
+	envSessionStepUpHint = "the session comes from FAAS_OPERATOR_SESSION, which step-up cannot refresh: unset it and run 'gregalectl auth login --email <email>'"
 )
 
 type operatorSession struct {
@@ -50,6 +62,8 @@ type operatorHTTPError struct {
 	Status int
 	Code   string
 	Detail string
+	// envSession marks a request made with a FAAS_OPERATOR_SESSION cookie.
+	envSession bool
 }
 
 type operatorAuthStatus struct {
@@ -64,7 +78,13 @@ type operatorAuthStatus struct {
 
 func (e *operatorHTTPError) Error() string {
 	if e.Code == api.CodeStepUpRequired {
+		if e.envSession {
+			return "operator step-up required; " + envSessionStepUpHint
+		}
 		return "operator step-up required; run 'gregalectl auth step-up'"
+	}
+	if e.Code == api.CodeMFAInvalidCode && e.Detail != "" {
+		return "TOTP code rejected: " + e.Detail
 	}
 	if e.Code != "" && e.Detail != "" {
 		return fmt.Sprintf("apid returned %d (%s): %s", e.Status, e.Code, e.Detail)
@@ -151,6 +171,7 @@ func cmdOperatorAuthLogin(args []string) int {
 func cmdOperatorAuthStepUp(args []string) int {
 	fs := flag.NewFlagSet("step-up", flag.ContinueOnError)
 	fs.SetOutput(osStderr)
+	force := fs.Bool("force", false, "verify a new code even when the last step-up is under a minute old")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -160,8 +181,13 @@ func cmdOperatorAuthStepUp(args []string) int {
 		return 1
 	}
 	if sess.fromEnv {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl auth step-up: cannot refresh a session supplied by FAAS_OPERATOR_SESSION; use 'auth login' with a session file")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl auth step-up:", envSessionStepUpHint)
 		return 1
+	}
+	if age := time.Since(sess.SteppedUpAt); !*force && !sess.SteppedUpAt.IsZero() && age >= 0 && age < operatorStepUpFresh {
+		_, _ = fmt.Fprintf(osStdout, "operator step-up already valid until %s; pass --force to verify a new code now\n",
+			sess.SteppedUpAt.Add(operatorStepUpTTL).Format(time.RFC3339))
+		return 0
 	}
 	totp, err := readOperatorSecret("TOTP code: ")
 	if err != nil {
@@ -196,7 +222,7 @@ func cmdOperatorAuthStatus(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl auth status:", err)
 		return 1
 	}
-	stepUpUntil := sess.SteppedUpAt.Add(5 * time.Minute)
+	stepUpUntil := sess.SteppedUpAt.Add(operatorStepUpTTL)
 	status := operatorAuthStatus{
 		BaseURL:        sess.BaseURL,
 		Email:          account.Email,
@@ -305,7 +331,7 @@ func (c *operatorHTTPClient) doJSONWithHeaders(ctx context.Context, method, path
 		}
 	}
 	if c.session != nil && c.session.Cookie != "" {
-		req.AddCookie(&http.Cookie{Name: "faas_sid", Value: c.session.Cookie})
+		sessioncookie.AddToRequest(req, c.session.Cookie)
 	}
 	for _, cookie := range extraCookies {
 		req.AddCookie(cookie)
@@ -315,10 +341,7 @@ func (c *operatorHTTPClient) doJSONWithHeaders(ctx context.Context, method, path
 		return fmt.Errorf("dial apid: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name != "faas_sid" {
-			continue
-		}
+	if cookie, ok := sessioncookie.FromResponse(resp); ok {
 		c.session.Cookie = cookie.Value
 		if cookie.MaxAge > 0 {
 			c.session.ExpiresAt = time.Now().UTC().Add(time.Duration(cookie.MaxAge) * time.Second)
@@ -333,7 +356,7 @@ func (c *operatorHTTPClient) doJSONWithHeaders(ctx context.Context, method, path
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var problem api.Problem
 		_ = json.Unmarshal(payload, &problem)
-		return &operatorHTTPError{Status: resp.StatusCode, Code: problem.Code, Detail: problem.Detail}
+		return &operatorHTTPError{Status: resp.StatusCode, Code: problem.Code, Detail: problem.Detail, envSession: c.session != nil && c.session.fromEnv}
 	}
 	if output != nil && len(bytes.TrimSpace(payload)) > 0 {
 		if err := json.Unmarshal(payload, output); err != nil {
@@ -460,7 +483,10 @@ func deleteOperatorSession() error {
 	return nil
 }
 
-func readOperatorSecret(prompt string) (string, error) {
+// readOperatorSecret prompts for a password or TOTP code; tests replace it.
+var readOperatorSecret = readTerminalSecret
+
+func readTerminalSecret(prompt string) (string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return "", errors.New("interactive terminal required")
 	}

@@ -166,7 +166,7 @@ func (s *Service) PutTenantSpendCap(w http.ResponseWriter, r *http.Request, acct
 	}
 	s.Host.Audit(r.Context(), "platform_tenant.spend_cap_set", acct.ID, map[string]any{"tenant_id": tenant.ID,
 		"currency": stored.Currency, "monthly_cap_millicents": stored.MonthlyCapMillicents})
-	if checked, err := s.checkTenant(r.Context(), stored); err == nil {
+	if checked, err := s.checkTenant(r.Context(), stored, true); err == nil {
 		stored = checked
 	}
 	httpkit.WriteJSON(w, http.StatusOK, tenantSpendCapResponse(stored))
@@ -222,7 +222,7 @@ func (s *Service) recheckTenant(ctx context.Context, accountID, tenantID string)
 		return
 	}
 	if c, err := caps.GetPlatformTenantSpendCap(ctx, accountID, tenantID); err == nil {
-		_, _ = s.checkTenant(ctx, c)
+		_, _ = s.checkTenant(ctx, c, true)
 	}
 }
 
@@ -238,7 +238,10 @@ func (s *Service) checkTenantsOnce(ctx context.Context) error {
 	}
 	var firstErr error
 	for _, c := range due {
-		if _, err := s.checkTenant(ctx, c); err != nil && firstErr == nil {
+		if !s.released(c.AccountID) {
+			continue // rechecked when its lease ends
+		}
+		if _, err := s.checkTenant(ctx, c, false); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -247,8 +250,9 @@ func (s *Service) checkTenantsOnce(ctx context.Context) error {
 
 // checkTenant prices the tenant's month to date, subtracts the credit that
 // pays it, and records whether the rest passes the cap. Like a consumer's,
-// a quote in another currency never caps.
-func (s *Service) checkTenant(ctx context.Context, c state.PlatformTenantSpendCap) (state.PlatformTenantSpendCap, error) {
+// a quote in another currency never caps, and an unforced check reuses the
+// last price while it holds.
+func (s *Service) checkTenant(ctx context.Context, c state.PlatformTenantSpendCap, force bool) (state.PlatformTenantSpendCap, error) {
 	credits, okCredits := s.Host.Store().(state.PlatformTenantCreditStore)
 	caps, okCaps := s.Host.Store().(state.PlatformTenantSpendCapStore)
 	if !okCredits || !okCaps {
@@ -256,6 +260,13 @@ func (s *Service) checkTenant(ctx context.Context, c state.PlatformTenantSpendCa
 	}
 	now := s.now()
 	monthStart := billing.MonthStart(now)
+	changes, okChanges := s.Host.Store().(state.SpendCapUsageChangeStore)
+	if !force && okChanges && lastPriceHolds(c.CheckedAt, c.MonthStart, c.AmountDueMillicents, c.UpdatedAt, monthStart, now,
+		func(windowFrom, since time.Time) (bool, error) {
+			return changes.PlatformTenantUsageChangedSince(ctx, c.AccountID, c.TenantID, windowFrom, since)
+		}) {
+		return s.recordTenantCheck(ctx, caps, c, monthStart, *c.AmountDueMillicents, *c.CheckedAt, now)
+	}
 	currency, usage, err := s.Host.QuoteTenantMonthUsage(ctx, c.AccountID, c.TenantID, now)
 	if err != nil {
 		return c, fmt.Errorf("quote tenant %s: %w", c.TenantID, err)
@@ -266,10 +277,17 @@ func (s *Service) checkTenant(ctx context.Context, c state.PlatformTenantSpendCa
 		if err != nil {
 			return c, fmt.Errorf("credit position %s: %w", c.TenantID, err)
 		}
-		due = max(0, usage-pos.AvailableMillicents-pos.AppliedInMonthMillicents)
+		due = max(0, usage-pos.AvailableMillicents-pos.AppliedToUsageInMonthMillicents)
 	}
+	return s.recordTenantCheck(ctx, caps, c, monthStart, due, now, now)
+}
+
+// recordTenantCheck records a tenant's amount due as priced at checkedAt,
+// capped against the cap as it is now, and audits a change.
+func (s *Service) recordTenantCheck(ctx context.Context, caps state.PlatformTenantSpendCapStore, c state.PlatformTenantSpendCap,
+	monthStart time.Time, due int64, checkedAt, now time.Time) (state.PlatformTenantSpendCap, error) {
 	capped := due > c.MonthlyCapMillicents
-	was, err := caps.RecordPlatformTenantSpendCheck(ctx, c.TenantID, monthStart, due, capped, now, now.Add(api.ConsumerSpendCapCheckInterval))
+	was, err := caps.RecordPlatformTenantSpendCheck(ctx, c.TenantID, monthStart, due, capped, checkedAt, now.Add(api.ConsumerSpendCapCheckInterval))
 	if err != nil {
 		return c, fmt.Errorf("record tenant spend check %s: %w", c.TenantID, err)
 	}
@@ -281,7 +299,7 @@ func (s *Service) checkTenant(ctx context.Context, c state.PlatformTenantSpendCa
 		s.Host.Audit(ctx, event, c.AccountID, map[string]any{"tenant_id": c.TenantID, "currency": c.Currency,
 			"monthly_cap_millicents": c.MonthlyCapMillicents, "amount_due_millicents": due})
 	}
-	month, at := monthStart, now
+	month, at := monthStart, checkedAt
 	c.Capped, c.MonthStart, c.AmountDueMillicents, c.CheckedAt = capped, &month, &due, &at
 	return c, nil
 }

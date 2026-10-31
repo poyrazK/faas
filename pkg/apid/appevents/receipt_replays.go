@@ -91,6 +91,10 @@ func (s *Service) GetEventReceiptReplays(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInternal("event receipt replay store"))
 		return
 	}
+	if err := s.checkEventAccess(r.Context(), acct, source, id, subscriptionID); err != nil {
+		s.WriteEventReceiptError(w, r, err)
+		return
+	}
 	history, err := store.EventReceiptReplays(r.Context(), acct.ID, source, id, subscriptionID, cursor, limit)
 	if err != nil {
 		s.WriteEventReceiptError(w, r, err)

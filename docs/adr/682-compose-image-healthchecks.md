@@ -38,7 +38,8 @@
   is not guaranteed to prevent promotion of every single-workload image.
   Compose dependency conditions remain name-only project edges. Source-built
   Compose workloads retain their artifact healthchecks and warn that Compose
-  overrides are not applied. No database migration, new VM lifecycle owner,
+  overrides are not applied (ADR-20261019195000 later applies and enforces
+  them). No database migration, new VM lifecycle owner,
   or host execution of image commands is introduced.
 
 Portable tests cover declaration validation, exact timing and image inheritance,

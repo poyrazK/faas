@@ -1,0 +1,394 @@
+# ADR 20261022184531 · Wake failover away from a node that is up but not ready
+
+- **Status:** accepted (design approved by the owner, 2026-10-22). Built in
+  five steps, one PR each; this ADR is updated as each step lands.
+- **Date:** 2026-10-22
+- **Related:** ADR-005 (cold boot always works), ADR-025 (placement),
+  ADR-028 (remote routing), ADR-062 (per-node schedd), ADR-137 (node
+  lifecycle), ADR-199 (rollout concurrency grant), ADR-421 (ownership
+  recovery), ADR-510 (snapshot backing identity), ADR-909 (measured
+  admission), ADR-1344 §6 (zero-downtime contract), ADR-1527/1528
+  (generation-fenced node admission), issue #299 (scan gate), spec §4.3,
+  §6.2, §12
+
+## Context
+
+On 2026-10-22, 15:32–15:40 UTC, every new wake placed on fsn-3 in
+production-us returned 503. The rc.290 rollout had upgraded the control
+plane and fsn-2. fsn-2's imaged published a new shared base generation
+(`base-minimal` 5ca69ea…). fsn-3's drain then timed out and the job
+restored fsn-3 to rc.288, whose vmmd expects generation db529ed…. From then
+on, vmmd on fsn-3 refused every wake before starting a VM:
+
+```
+503 scan_critical runtime base generation unavailable:
+runtime base "…" could not adopt its configured generation: …
+```
+
+fsn-3 kept answering heartbeats. Placement kept choosing it: fsn-3's schedd
+prefers its own node, and warm affinity prefers the node of the last wake.
+Nothing retried the wake on fsn-2, which was healthy. Service came back only
+when an operator drained fsn-3 by hand.
+
+Gregale fails over today only when a node is unreachable or dead:
+
+| Failure | Detected by | Effect |
+|---|---|---|
+| gatewayd on a node does not answer | gatewayd-public's compute gateway pool (dial error) | the request goes to the next node |
+| vmmd does not answer Ping | schedd heartbeat, 3 failed probes / 90 s | `lifecycle=unavailable`; ownership recovery (ADR-421) re-homes apps; `ReconcileDeadNodeInstances` fails rows after 120 s |
+| vmmd answers Ping but refuses every wake | nothing | every wake placed there fails |
+
+The third row is the gap this ADR closes.
+
+## Decision
+
+A wake that a node refuses before the VM starts moves to another node inside
+the same gateway hold. The node's readiness becomes state that has to be
+proven, and placement prefers proven nodes. The five steps below are ordered
+so that each one is useful on its own. Step 1 alone would have turned the
+incident into slower wakes instead of failed ones.
+
+### 1. schedd re-places a refused wake
+
+`Engine.admitAndDispatchWithOptions` is the single admission-to-vmmd
+pipeline behind `Wake`, `EnsureWake`, `AdmitInstance`, burst siblings and
+explicit-deployment admissions. It now runs each admission as an *attempt*.
+When vmmd refuses an attempt with a **node refusal** (below), schedd:
+
+1. releases that attempt exactly as the existing boot-error path does: the
+   ledger reservation is released and the row moves to FAILED with
+   `wake_boot_error`/`vmm_boot_failed`. A restore RPC error stays terminal
+   for its attempt. ADR-005's cold-boot fallback still lives in vmmd.
+2. counts the refusal against the node (`schedd_wake_failover_total`, and
+   from step 3 the node's breaker);
+3. excludes the node and runs a new attempt for the same wake. Placement
+   skips excluded nodes the same way it skips nodes without headroom.
+
+Bounds, all in `pkg/api/limits.go`:
+
+- `WakeFailoverMaxAlternates = 2`: at most two alternate nodes, three
+  attempts in total.
+- `WakeFailoverMinRemaining = 2 s`: an alternate starts only while at least
+  this much of the caller's deadline remains. The gateway's coordinated
+  wake runs under the 30 s wake hold (`WakeQueueTTLSeconds`), and every
+  attempt inherits that deadline, so failover never extends the hold. The
+  gateway sees a slower success.
+
+When no other node fits, or the bounds are spent, the wake fails with the
+node's refusal. It is the useful error; "no capacity" would hide it.
+
+**Node refusals** form a closed set. They are failures that vmmd reports
+before any guest code runs, and they depend on the node rather than on the
+app or its artifacts:
+
+| vmmd Problem | Failover reason |
+|---|---|
+| `scan_critical` "runtime base generation unavailable" (the incident) | `base_generation` |
+| `scan_critical` "scan sidecar generation mismatch" | `base_generation` |
+| `scan_critical` "scan sidecar missing" (read through the node's cache) | `scan_sidecar_missing` |
+
+Not node refusals:
+
+- `scan_critical` "Fixable CRITICAL vulnerability" and "scan sidecar
+  incomplete". vmmd re-reads the canonical sidecar before refusing, so
+  every node gives the same verdict. The scan gate (#299) is unchanged.
+- The customer's `app_startup_timeout`, `app_startup_crash`,
+  `app_not_listening` and `app_loopback_bound`. Customer code ran; running it
+  again elsewhere would repeat its startup side effects and fail the same way.
+- `internal`, deadline expiry, and transport `Unavailable`. vmmd may have
+  started the VM before the error, so a second VM could exist. Step 3 adds
+  an explicit pre-start marker from vmmd so jailer, netns, cgroup and disk
+  failures can join the set without guessing.
+
+Titles are matched by prefix, because a peer older than grpcerr's split
+title/detail fields sends `title: detail` in the status message.
+
+An alternate attempt is the same logical wake, so it skips three gates that
+the first attempt has already passed or armed:
+
+- the wake-rate limiter: the token was spent once;
+- the scale-out cooldown: the first attempt stamped it;
+- the snapshot-miss backoff gate, and recording another miss.
+
+It keeps every gate that protects capacity or money: the app concurrency cap
+and rollout grant (ledger), the RAM, vCPU and CPU ceilings including
+ADR-909's measured charge (ledger), the account spend cap, node lifecycle,
+and ADR-1528 generation fencing. Mirror admissions never fail over: they are
+best-effort shadows with their own deadline.
+
+**Invariants.** Each attempt releases its reservation before the next
+admits, and every admission goes through `NodeLedger.Admit`, so:
+
+- §6.2 invariant 1 (≤ `max_concurrency` + `RolloutConcurrencyGrant` live
+  instances) holds;
+- invariant 2 (per-node RAM ceiling, and ADR-909's measured-admission
+  bounds) holds.
+
+A property test drives random fleets, refusal patterns and concurrent wakes,
+and checks both invariants and the release of every refused attempt.
+
+### 2. Node readiness is proven state
+
+`compute_nodes.readiness` (expand-only migration with a CHECK) takes the
+values `ready`, `degraded`, `unavailable` and `draining`. schedd's heartbeat
+is its only writer. `ready` requires all of:
+
+- a fresh heartbeat;
+- vmmd's Ping reports that it can adopt the fleet's current base
+  generation. This is an additive Ping field; a vmmd too old to report it
+  does not block `ready`, so a mixed fleet keeps placing;
+- recent wakes on the node succeeding (the step 3 breaker is closed).
+
+`unavailable` and `draining` mirror `lifecycle`, so one column and one gauge
+answer "can this node take a wake now". `lifecycle` remains the authority for
+operator and recovery states, and readiness never overrides it. A degraded
+node is not `lifecycle=unavailable`, because that starts the recovery arbiter
+and moves running instances. In the incident, fsn-3's running VMs were fine.
+
+Placement uses `ready` nodes, and `degraded` nodes only when no ready node
+has capacity. The column defaults to `ready`, so behaviour is unchanged until
+the evaluator writes.
+
+As built (step 2):
+
+- **Columns.** `readiness text NOT NULL DEFAULT 'ready'` with
+  `compute_nodes_readiness_chk`, and a nullable `readiness_reason`. The
+  migration adds the CHECK `NOT VALID` and validates it in its own
+  transaction.
+- **Writer.** Whichever schedd probes a node writes its readiness after each
+  probe: the owner's schedd on a per-node fleet, or the fleet-wide schedd
+  where there is no owner. The write is a conditional `UPDATE` that matches
+  only a changed verdict, so `compute_node_changed` fires, and every schedd's
+  node registry refreshes, only on a change. Writing `unavailable` waits
+  until the failure threshold marks the node unavailable.
+- **vmmd's report.** Ping carries one verdict per configured base. It uses
+  the activation gate's own judgment (`imaged.JudgeBaseAdoption`,
+  ADR-20261024191249): only `stale` (neither the node's cache nor shared
+  storage holds the configured generation, or the shared copy has no commit
+  marker) is not adoptable. The judgment reads the shared copy through
+  `storage.GetCanonical`, which never installs or replaces a cache entry,
+  so a probe never moves a node off a generation it still serves. It runs in
+  the background at most every `BaseGenerationReadinessCheckIntervalSeconds`
+  (30 s), bounded by `BaseGenerationReadinessCheckTimeoutSeconds` (10 s), and
+  Ping returns the last verdict without waiting. A base vmmd cannot judge
+  counts as adoptable: the wake path still refuses on its own evidence, and
+  step 1 re-places the wake. ADR-20261024191249 gates a node's *activation*
+  on the same verdict; this report catches a node that becomes stale while
+  serving, as fsn-3 did when another node published a newer generation.
+- **Placement.** The chooser first runs over every node except degraded ones,
+  then over all nodes if nothing fits. Warm affinity and snapshot locality
+  never pull a wake onto a degraded node while a ready one fits.
+- `schedd_compute_node_readiness{node,state}` is one-hot per node.
+- The third input, recent wakes succeeding, arrives with step 3's breaker.
+
+### 3. A per-node wake breaker
+
+`NodeWakeBreakerFailures` (3) consecutive platform-attributable wake failures
+within `NodeWakeBreakerWindow` (60 s) mark the node `degraded`. After
+`NodeWakeBreakerCooldown` (30 s) the breaker is half-open: one wake may probe
+the node. Success closes the breaker and the node becomes `ready`; failure
+opens it again.
+
+Only platform-attributable failures count: the step 1 node refusals, plus
+failures that vmmd marks as pre-start and platform-caused (new ErrorInfo
+metadata, `wake_stage=pre_start`). That metadata lets jailer, netns, cgroup,
+disk-full and vmmd-side capacity failures count. The customer's crashes,
+readiness timeouts and OOMs never count.
+
+Each schedd keeps its own breaker in memory and writes the verdict to
+`compute_nodes.readiness`, so peer schedds place by it. A platform-owned
+canary wake per node per minute, which proves readiness without customer
+traffic, is optional and stays behind a flag until its cost is measured.
+
+As built (step 3):
+
+- **Durable breaker.** The breaker lives in two new nullable columns,
+  `wake_breaker_open_until` and `wake_breaker_reason`. It is not written
+  into `readiness`, which stays the heartbeat's Ping-derived verdict. If the
+  breaker were folded into `readiness`, the heartbeat and every schedd's
+  breaker would overwrite one another.
+  - A node is degraded while `now < wake_breaker_open_until`. Every schedd
+    sees this through `compute_node_changed`, so one schedd's breaker
+    degrades the node fleet-wide.
+  - Once that time passes, the breaker is half-open, and the node takes
+    wakes again. The first platform failure there reopens it at once (no
+    count needed). The first successful wake closes it (`NULL`).
+- **Counting.** Each schedd counts in memory the consecutive
+  platform-attributable failures on each node within
+  `NodeWakeBreakerWindowSeconds`. A successful wake on the node resets the
+  count.
+  - Customer failures neither count nor reset it.
+  - Ambiguous errors (`internal`, deadline) are ignored.
+- **The vmmd marker** covers only the failures that are certainly node-local
+  and certainly before guest code: jail lease acquisition and network setup.
+  They wrap `fcvm.ErrWakeNotStarted`. The wake RPCs send ErrorInfo metadata
+  `wake_stage=pre_start`, and schedd lifts it into `ErrVMMWakeNotStarted`.
+  Jailer start, cgroup and disk-full failures happen inside the VMM's boot,
+  where "did the VM start" is not yet provable. They stay out until the VMM
+  reports its own boundary.
+  - The same marker makes those failures re-placeable by step 1, under
+    `reason="node_setup"`.
+  - schedd never forwards the marker: the gateway sees the same Problem as
+    before.
+- **Limits** (`pkg/api/limits.go`): `NodeWakeBreakerFailures` 3,
+  `NodeWakeBreakerWindowSeconds` 60, `NodeWakeBreakerCooldownSeconds` 30.
+- **Observability.**
+  - `schedd_node_wake_breaker_total{transition}`, with transition `opened`,
+    `reopened` or `closed`.
+  - The readiness gauge reads degraded while the breaker is open.
+  - `FaasComputeNodeDegraded` (warn, 5 m) and `FaasNoComputeNodeReady`
+    (page, 2 m), with a promtool fixture and a runbook.
+- **Beside ADR-20261029085904's boot breaker.** That breaker is
+  process-local: each schedd counts its own node-caused boot failures (three
+  from three apps) and treats the node as degraded for itself. It covers the
+  ambiguous failures this breaker ignores, because three different apps make
+  an app fault unlikely. This breaker is durable and counts only refusals
+  vmmd proves are node-local. Placement avoids a node either one marks.
+  - A `vmmd_unreachable` refusal is re-placed (step 1), but it does not count
+    here. One schedd failing to reach a vmmd says nothing about the others,
+    so only that schedd's boot breaker counts it.
+- **Not built:** the canary wake.
+
+### 4. The previous base generation stays adoptable
+
+This was the root cause of the incident. A node rolled back in the middle of
+a release must still serve:
+
+- imaged keeps the previous shared base generation;
+- vmmd adopts its configured generation from the retained copy when the
+  canonical key already holds a newer one.
+
+The scan gate is not weakened. The retained generation needs its own scan
+sidecar naming that generation, and the fixable-CRITICAL refusal applies to
+it unchanged. ADR-510's backing identity (digest sidecar) is checked the same
+way. The step 4 PR records the storage layout here after reading imaged's
+publication path.
+
+As built (step 4): delivered by
+[ADR-20261026181418](20261026181418-generation-addressed-runtime-base-keys.md)
+(#5587), which this ADR's step 4 does not duplicate.
+
+- Each gated runtime base generation has its own shared keys. A release
+  reads and writes only the keys of the generation it configures, so a node
+  rolled back in the middle of a release, or on N-1 beside N, still adopts
+  its configured generation.
+- vmmd adopts that generation's scan sidecar first, as the commit marker,
+  then its base and digest sidecar under the base's logical cache names. It
+  falls back to the legacy logical keys only when the generation's own scan
+  does not exist, and only while the legacy scan names the generation.
+- Nodes keep the logical names for the cache entry, drive0 and snapshots, so
+  the scan gate and ADR-510's backing identity judge the adopted group as
+  before.
+- A narrower implementation of this step (retained copies beside the single
+  logical key) was built and metal-tested, then dropped as superseded.
+
+### 5. gatewayd-public retries responses that were never dispatched
+
+gatewayd-internal marks a response as *not dispatched* when it failed before
+any request byte reached the guest app:
+
+- a wake refusal from schedd;
+- a wake hold that expired on that node;
+- a proxy connection that was refused.
+
+The marker is an internal response header that gatewayd-public strips.
+gatewayd-public may retry such a response through another node only when:
+
+- the request body is replayable: there is none, it was not read, or it is
+  buffered and at most `GatewayFailoverMaxBufferedBodyBytes`;
+- a global retry budget allows it (`GatewayFailoverRetryBudgetPct`, 10 % of
+  requests);
+- the retry uses at most 2 extra nodes.
+
+Nothing that reached customer code is retried, so POSTs stay at-most-once.
+This is the "retries requests that were refused before any byte reached a
+guest" mechanism that ADR-1344 §6 requires.
+
+As built (step 5):
+
+- **The marker cannot be forged.** gatewayd-public sends a random per-request
+  nonce in `X-Faas-Dispatch-Nonce`. gatewayd-internal moves it into the
+  request context on entry, and every gatewayd-internal release strips
+  `x-faas-*` request headers before the guest, so a guest never sees it.
+  gatewayd-internal answers `X-Faas-Not-Dispatched: <reason>; nonce=<nonce>`,
+  and the edge acts only on its own nonce. gatewayd-internal also drops a
+  guest's copy of the header, and the edge strips the marker from every
+  response. A gatewayd-internal before this change never marks, so the edge
+  is safe beside N-1.
+- **What gatewayd-internal marks:**
+  - `wake_refused`: a wake schedd refused with `scan_critical` or an internal
+    error, after schedd's own failover (step 1) found no node.
+  - `wake_hold_expired`: the wake hold expired with no wake in progress. A
+    wake still in progress is answered as before, without a marker.
+  - `proxy_refused`: a forward proven undelivered (ADR-1133). This gateway
+    has no client for the target's vmmd, the forward stream could not be
+    opened, or vmmd refused the instance before dialing its guest.
+- **What it does not mark:** customer outcomes (an app that failed to
+  start, the app's concurrency limits and queues), this gateway's own wake
+  queues, and fleet capacity. Every node asks the same schedd, so a capacity
+  retry only adds load exactly when capacity is short.
+- **The edge retries on another node.** The compute pool and a compute
+  edge's local-first dialer record which node each attempt reached, and a
+  retry excludes the nodes already tried (`gateway.DialRecord`). A dialer
+  that cannot name the node it reached (a fixed unix socket, a fixed TCP
+  target) gets no retry. The edge retries only when every condition holds:
+  - the body is absent or buffered (at most
+    `GatewayFailoverMaxBufferedBodyBytes`, 64 KiB, the internal hop's
+    existing buffer);
+  - at most `GatewayFailoverMaxExtraNodes` (2) other nodes;
+  - `WakeFailoverMinRemainingMs` (2 s) of the request budget is left;
+  - the retry budget allows it: every request deposits
+    `GatewayFailoverRetryBudgetPct` (10 %) of a token, a retry spends one,
+    and the bank holds at most `GatewayFailoverRetryBudgetBurst` (10).
+
+  The edge holds each refusal, at most `GatewayFailoverMaxRefusalBodyBytes`,
+  so it can still answer with it if every retry fails at the transport.
+- **Off by default.** `FAAS_GATEWAY_WAKE_FAILOVER=1` on gatewayd-public turns
+  it on. The marker and nonce cost nothing while it is off.
+- **Observability.** `gateway_wake_failover_total{reason,outcome}`. Outcome
+  is how a retry ended (`succeeded`, `refused_again`, `failed`) or why the
+  edge did not retry (`max_nodes`, `body_not_replayable`, `out_of_time`,
+  `node_unknown`, `no_alternate`, `no_budget`, `refusal_too_large`). The
+  `outcome` label is added to the name the owner's brief gave, so a refusal
+  the edge could not retry is visible.
+
+## Observability (spec §12)
+
+| Metric | Step | Alert |
+|---|---|---|
+| `schedd_wake_failover_total{reason,outcome}` (counter; `outcome` ∈ `succeeded`, `refused_again`, `no_alternate`, `out_of_time`, `failed`) | 1 | none. A diagnostic: `outcome="succeeded"` is a wake the incident would have failed |
+| `schedd_compute_node_readiness{node,state}` (one-hot gauge) | 2 | — |
+| `FaasComputeNodeDegraded` | 3 | `state="degraded"` for 5 m warn; no node `ready` for 2 m page |
+| `gateway_wake_failover_total{reason,outcome}` (gatewayd-public) | 5 | none yet; collect before setting a threshold |
+
+The owner's brief named `gateway_wake_failover_total{reason}`. Step 1's
+failover happens in schedd, which names its metrics `schedd_*`, so it gets
+its own counter. The gateway name is kept for step 5's cross-node retry,
+which does happen in the gateway.
+
+## Consequences
+
+- A node that answers heartbeats but refuses wakes costs one extra vmmd round
+  trip per wake (step 1) until the breaker degrades it (step 3). After that
+  it costs nothing.
+- A refused attempt leaves a FAILED row with its own `wake_id`. The gateway
+  receives the `wake_id` of the attempt that succeeded.
+- A fleet-wide refusal (every node on the bad generation) costs up to two
+  fast extra refusals per wake before the original error returns.
+- Placement and node lifecycle change, but no new owner appears: schedd still
+  writes instances and node state; vmmd still alone touches Firecracker.
+
+## Rejected alternatives
+
+- **Retry in gatewayd-internal by calling Wake again.** The gateway does not
+  know which node refused, and schedd would place on the same node again
+  (owner preference plus warm affinity).
+- **Mark the node `unavailable` on the first refusal.** One bad artifact
+  would drain a node, and the recovery arbiter would move running instances
+  that were fine.
+- **Re-place on every vmmd error.** A customer startup crash would run
+  twice and fail twice. An ambiguous transport error could leave two VMs for
+  one wake.
+- **Fail over only in gatewayd-public (step 5 alone).** It would work only
+  for requests whose body can be replayed, and it costs a full extra hop. The
+  schedd re-place happens inside the hold, for every request.

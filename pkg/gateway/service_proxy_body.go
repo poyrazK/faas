@@ -33,9 +33,13 @@ func bufferReplayableServiceBody(w http.ResponseWriter, r *http.Request) bool {
 		(mediaType == "application/grpc" || strings.HasPrefix(mediaType, "application/grpc+")) {
 		return true // ADR-428: native gRPC exchanges messages before request EOF
 	}
-	body := make([]byte, r.ContentLength)
-	_, err := io.ReadFull(r.Body, body)
+	// Grow with the bytes received: allocating the declared length up front
+	// let a caller pin the whole buffer by declaring a body and stalling.
+	body, err := io.ReadAll(io.LimitReader(r.Body, r.ContentLength))
 	_ = r.Body.Close()
+	if err == nil && int64(len(body)) < r.ContentLength {
+		err = io.ErrUnexpectedEOF
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrRequestBodyReadFailed())
 		return false

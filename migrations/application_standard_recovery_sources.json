@@ -492,6 +492,24 @@
       "filename": "20261012080000001_application_standard_shared_base_read_fences.sql",
       "sha256": "7e32b6e6d00fc1a7660ebc3fb1914ad077db761b7ccd7951765e7ab0c2184f28",
       "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261023084252389,
+      "filename": "20261023084252389_application_standard_rebinds.sql",
+      "sha256": "746526a0b8ad66e156a19b720fe28a8ce2cb6e7de512b815281c9dde9614edb5",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261023084253491,
+      "filename": "20261023084253491_application_standard_rebind_promotions.sql",
+      "sha256": "c79b45839bdf8a4b2d80f4f3468e73b0635b95b08bcf84716af9867afe3112fd",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261023084254597,
+      "filename": "20261023084254597_application_standard_snapshot_producer.sql",
+      "sha256": "c8d282cab3acaf1775bd17335e2da44e4cc3a5464586f043c5e273f5a4c12ded",
+      "postcondition": "ddl-only"
     }
   ]
 }

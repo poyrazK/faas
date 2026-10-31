@@ -128,8 +128,7 @@ def sync_detailed(
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
      Wire-friendly mirror of the dashboard's per-app wake-timeline
-    HTML page (`/dashboard/apps/{slug}/wake-timeline`,
-    cmd/apid/handlers_dashboard.go:2548 renderAppWakeTimeline).
+    HTML page (`/dashboard/apps/{slug}/wake-timeline`).
     The HTML page keeps its pre-rendered HTML chips; this endpoint
     emits the same data as JSON so a separate frontend agent can
     render without re-parsing HTML.
@@ -142,14 +141,14 @@ def sync_detailed(
 
       - 24h cutoff descending-break: the moment a row's
         `started_at` falls before the trailing-24h instant, the
-        loop breaks (no further iteration). Pre-ADR-123 fleet
+        loop breaks (no further iteration). Older
         rows with no `started_at` are not eligible for the break
         (always in scope).
       - Two-denominator rule for `at_capacity_pct`: numerator is
         the count of rows where the events join succeeded AND
         the at_capacity flag is true; denominator is the count
         of rows where the events join succeeded
-        (`wake_count_with_meta`). Pre-PR-A fleet rows contribute
+        (`wake_count_with_meta`). Older rows contribute
         to `wake_count_24h` but not the denominator — same
         posture as the HTML page.
 
@@ -213,8 +212,7 @@ def sync(
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
      Wire-friendly mirror of the dashboard's per-app wake-timeline
-    HTML page (`/dashboard/apps/{slug}/wake-timeline`,
-    cmd/apid/handlers_dashboard.go:2548 renderAppWakeTimeline).
+    HTML page (`/dashboard/apps/{slug}/wake-timeline`).
     The HTML page keeps its pre-rendered HTML chips; this endpoint
     emits the same data as JSON so a separate frontend agent can
     render without re-parsing HTML.
@@ -227,14 +225,14 @@ def sync(
 
       - 24h cutoff descending-break: the moment a row's
         `started_at` falls before the trailing-24h instant, the
-        loop breaks (no further iteration). Pre-ADR-123 fleet
+        loop breaks (no further iteration). Older
         rows with no `started_at` are not eligible for the break
         (always in scope).
       - Two-denominator rule for `at_capacity_pct`: numerator is
         the count of rows where the events join succeeded AND
         the at_capacity flag is true; denominator is the count
         of rows where the events join succeeded
-        (`wake_count_with_meta`). Pre-PR-A fleet rows contribute
+        (`wake_count_with_meta`). Older rows contribute
         to `wake_count_24h` but not the denominator — same
         posture as the HTML page.
 
@@ -293,8 +291,7 @@ async def asyncio_detailed(
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
      Wire-friendly mirror of the dashboard's per-app wake-timeline
-    HTML page (`/dashboard/apps/{slug}/wake-timeline`,
-    cmd/apid/handlers_dashboard.go:2548 renderAppWakeTimeline).
+    HTML page (`/dashboard/apps/{slug}/wake-timeline`).
     The HTML page keeps its pre-rendered HTML chips; this endpoint
     emits the same data as JSON so a separate frontend agent can
     render without re-parsing HTML.
@@ -307,14 +304,14 @@ async def asyncio_detailed(
 
       - 24h cutoff descending-break: the moment a row's
         `started_at` falls before the trailing-24h instant, the
-        loop breaks (no further iteration). Pre-ADR-123 fleet
+        loop breaks (no further iteration). Older
         rows with no `started_at` are not eligible for the break
         (always in scope).
       - Two-denominator rule for `at_capacity_pct`: numerator is
         the count of rows where the events join succeeded AND
         the at_capacity flag is true; denominator is the count
         of rows where the events join succeeded
-        (`wake_count_with_meta`). Pre-PR-A fleet rows contribute
+        (`wake_count_with_meta`). Older rows contribute
         to `wake_count_24h` but not the denominator — same
         posture as the HTML page.
 
@@ -376,8 +373,7 @@ async def asyncio(
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
      Wire-friendly mirror of the dashboard's per-app wake-timeline
-    HTML page (`/dashboard/apps/{slug}/wake-timeline`,
-    cmd/apid/handlers_dashboard.go:2548 renderAppWakeTimeline).
+    HTML page (`/dashboard/apps/{slug}/wake-timeline`).
     The HTML page keeps its pre-rendered HTML chips; this endpoint
     emits the same data as JSON so a separate frontend agent can
     render without re-parsing HTML.
@@ -390,14 +386,14 @@ async def asyncio(
 
       - 24h cutoff descending-break: the moment a row's
         `started_at` falls before the trailing-24h instant, the
-        loop breaks (no further iteration). Pre-ADR-123 fleet
+        loop breaks (no further iteration). Older
         rows with no `started_at` are not eligible for the break
         (always in scope).
       - Two-denominator rule for `at_capacity_pct`: numerator is
         the count of rows where the events join succeeded AND
         the at_capacity flag is true; denominator is the count
         of rows where the events join succeeded
-        (`wake_count_with_meta`). Pre-PR-A fleet rows contribute
+        (`wake_count_with_meta`). Older rows contribute
         to `wake_count_24h` but not the denominator — same
         posture as the HTML page.
 

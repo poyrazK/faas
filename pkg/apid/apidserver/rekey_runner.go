@@ -167,6 +167,9 @@ func NewRunner(opts RunnerOpts) (*Runner, error) {
 	if len(opts.Identities) == 0 || opts.Identities[0] == nil {
 		return nil, errors.New("rekey runner: empty identities")
 	}
+	if err := runtimeSealDomainBlocksRekey(); err != nil {
+		return nil, fmt.Errorf("rekey runner: %w", err)
+	}
 	rp, err := rekey.New(opts.Store, opts.Identities, opts.HostHMACKey, opts.Config)
 	if err != nil {
 		return nil, fmt.Errorf("rekey runner: build replayer: %w", err)

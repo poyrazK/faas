@@ -199,3 +199,30 @@ func TestApplyEdgeRuleWAFInline(t *testing.T) {
 		})
 	}
 }
+
+// adr: 831 amendment 12 — a skipped in-path check is counted by reason, so a
+// capacity shortfall (busy) is told apart from an app over its budget.
+func TestApplyEdgeRuleWAFInlineCountsSkipReasons(t *testing.T) {
+	inline := &fakeWAFInline{}
+	rule := &EdgeRuleWAFResolved{ID: "rule-1", AccountID: "acct-1", ParanoiaLevel: 1, AnomalyThreshold: 5, Mode: api.EdgeWAFModeBlock}
+	h := &Handler{edgeRules: wafRuleMatcher{rule: rule}, wafInline: inline, metrics: NewMetrics()}
+	for _, reason := range []string{WAFInlineSkipBusy, WAFInlineSkipBudget, WAFInlineSkipBudget, ""} {
+		inline.result = WAFInlineResult{Outcome: WAFInlineSkipped, SkipReason: reason}
+		r := httptest.NewRequest(http.MethodGet, "http://app.example.test/admin/", nil)
+		rec := &statusRecorder{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK, request: r}
+		if handled, _ := h.applyEdgeRuleWAF(rec, r, App{ID: "app-1", AccountID: "acct-1"}, rec); handled {
+			t.Fatal("a skipped check blocked the request")
+		}
+	}
+	body := bodyForCounter(t, h.metrics)
+	for _, want := range []string{
+		`gateway_waf_inline_checks_total{app="app-1",outcome="skipped"} 4`,
+		`gateway_waf_inline_skips_total{app="app-1",reason="budget"} 2`,
+		// A checker that gives no reason counts as busy.
+		`gateway_waf_inline_skips_total{app="app-1",reason="busy"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics missing %s", want)
+		}
+	}
+}

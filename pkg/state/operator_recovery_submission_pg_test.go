@@ -6,8 +6,6 @@ package state_test
 import (
 	"bytes"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -90,8 +88,7 @@ func TestOperatorRecoverySubmissionPostgresRetainedEvidence(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), `DELETE FROM operator_intents WHERE id=$1`, receipt.IntentID); err == nil {
 		t.Fatal("intent deletion erased replay boundary")
 	}
-	_, source, _, _ := runtime.Caller(0)
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../migrations/20261017110000001_operator_recovery_submissions.sql"))
+	data, err := os.ReadFile("../../migrations/20261017110000001_operator_recovery_submissions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

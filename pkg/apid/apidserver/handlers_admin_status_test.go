@@ -12,6 +12,7 @@ import (
 )
 
 func TestAdminStatusCreateUpdateResolveAndList(t *testing.T) {
+	withIdempotencyHostKey(t)
 	e := apidserver.Setup(t, api.PlanPro)
 	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -32,12 +33,20 @@ func TestAdminStatusCreateUpdateResolveAndList(t *testing.T) {
 		t.Fatalf("created event = %#v", event)
 	}
 
-	replay := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
+	// ADR-20261022204036: the key is bound to the first request; another
+	// body is refused, and the original request still replays.
+	reused := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
 		"kind": "incident", "title": "Different retry body", "impact": "major_outage",
 		"components": []string{"networking"}, "state": "monitoring", "starts_at": now,
 		"message": "Different retry body.",
 	}, headers)
-	if replay.Code != http.StatusCreated {
+	apidserver.AssertProblem(t, reused, http.StatusUnprocessableEntity, api.CodeIdempotencyKeyReused)
+	replay := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
+		"kind": "incident", "title": "Elevated API errors", "impact": "degraded",
+		"components": []string{"api_console"}, "state": "investigating", "starts_at": now,
+		"message": "We are investigating elevated API errors.",
+	}, headers)
+	if replay.Code != http.StatusCreated || replay.Header().Get("Idempotent-Replayed") != "true" {
 		t.Fatalf("replay status=%d body=%s", replay.Code, replay.Body.String())
 	}
 	var replayEvent api.PublicStatusEvent

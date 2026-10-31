@@ -1,0 +1,277 @@
+# Live queries (ADR-20261016151947): each faas_live_queries alert fires on its
+# failure shape and stays quiet on a healthy series beside it. Generated from
+# the rules; regenerate rather than hand-edit the expected annotations.
+
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 30s
+tests:
+- name: hub down fires; a scraped hub stays quiet
+  interval: 1m
+  input_series:
+  - series: up{job="livequeryd",instance="127.0.0.1:9471"}
+    values: '0x20'
+  - series: up{job="livequeryd",instance="127.0.0.1:9472"}
+    values: 1x20
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasLiveQueryHubDown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+      exp_annotations:
+        summary: The live-query hub is down on 127.0.0.1:9471
+        description: Prometheus has not scraped livequeryd for 5m, so no live query on this control plane receives new results.
+          Check systemctl status faas-livequeryd and its journal; systemd stops restarting a hub that fails five times in
+          a minute.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+- name: a database without a running hub fires; a served one stays quiet
+  interval: 1m
+  input_series:
+  - series: livequery_hub_up{job="livequeryd",instance="127.0.0.1:9471",database="db_b"}
+    values: '0x20'
+  - series: livequery_hub_up{job="livequeryd",instance="127.0.0.1:9471",database="db_a"}
+    values: 1x20
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasLiveQueryDatabaseNotServed
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+        database: db_b
+      exp_annotations:
+        summary: Live queries are not served for database db_b
+        description: 'livequeryd has not run the database''s hub for 5m: opening the database, its slot or its checkpoint
+          keeps failing, and realtimed gets 503 for it. The hub retries with backoff up to once a minute. GET /databases on
+          the hub''s metrics listener shows its state; the journal shows the error.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+- name: a hub restarting three times in 30m fires; a steady one stays quiet
+  interval: 1m
+  input_series:
+  - series: livequery_hub_restarts_total{job="livequeryd",instance="127.0.0.1:9471",database="db_b"}
+    values: 0+1x40
+  - series: livequery_hub_restarts_total{job="livequeryd",instance="127.0.0.1:9471",database="db_a"}
+    values: 1x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasLiveQueryHubRestarting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+        database: db_b
+      exp_annotations:
+        summary: The live-query hub for database db_b keeps restarting
+        description: Serving the database failed at least three times in 30m. Each restart drops its subscribers until realtimed
+          resubscribes them. Read the hub's journal for the error that stops it.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+- name: failed resumes while released fire; a hub that reconnected stays quiet
+  interval: 1m
+  input_series:
+  - series: livequery_resumes_total{job="livequeryd",instance="127.0.0.1:9471",database="db_b",reason="failed"}
+    values: 0+1x40
+  - series: livequery_released{job="livequeryd",instance="127.0.0.1:9471",database="db_b"}
+    values: 1x40
+  - series: livequery_resumes_total{job="livequeryd",instance="127.0.0.1:9471",database="db_a",reason="failed"}
+    values: 0+1x40
+  - series: livequery_released{job="livequeryd",instance="127.0.0.1:9471",database="db_a"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasLiveQueryResumeFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+        database: db_b
+      exp_annotations:
+        summary: A released live-query hub cannot reconnect to database db_b
+        description: The hub released the database so it could scale to zero, and every attempt to reconnect for 10m has failed.
+          Commits made meanwhile reach subscribers only after it reconnects. Check the database's compute state and the replication
+          slot.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+- name: slot lag over 1 GiB fires; a small lag stays quiet
+  interval: 1m
+  input_series:
+  - series: livequery_slot_lag_bytes{job="livequeryd",instance="127.0.0.1:9471",database="db_b"}
+    values: 2000000000x40
+  - series: livequery_slot_lag_bytes{job="livequeryd",instance="127.0.0.1:9471",database="db_a"}
+    values: 1000000x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasLiveQuerySlotLagHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+        database: db_b
+      exp_annotations:
+        summary: The live-query slot of database db_b retains more than 1 GiB of WAL
+        description: The replication slot holds back WAL the hub has not confirmed for 15m. The database's storage grows until
+          it does; a hub that stopped decoding, or a database the hub stopped serving, leaves its slot behind.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+- name: a lost slot fires; schema-change resnapshots stay quiet
+  interval: 1m
+  input_series:
+  - series: livequery_resnapshots_total{job="livequeryd",instance="127.0.0.1:9471",database="db_b",reason="slot_lost"}
+    values: 0 0 0 5 5 5 5 5 5 5
+  - series: livequery_resnapshots_total{job="livequeryd",instance="127.0.0.1:9471",database="db_a",reason="schema_changed"}
+    values: 0+1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasLiveQuerySlotLost
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+        database: db_b
+      exp_annotations:
+        summary: The live-query slot of database db_b was lost
+        description: 'The hub restored from its checkpoint but its replication slot was gone, so every live query was read
+          again from scratch. Find what dropped the slot: a database restore, a branch reset, or an operator.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+- name: key reads failing with no success fire, with or without an ok series; mixed results stay quiet
+  interval: 1m
+  input_series:
+  - series: livequery_key_refreshes_total{job="livequeryd",instance="127.0.0.1:9471",database="db_b",result="error"}
+    values: 0+1x40
+  - series: livequery_key_refreshes_total{job="livequeryd",instance="127.0.0.1:9471",database="db_b",result="ok"}
+    values: 3x40
+  - series: livequery_key_refreshes_total{job="livequeryd",instance="127.0.0.1:9471",database="db_c",result="error"}
+    values: 0+1x40
+  - series: livequery_key_refreshes_total{job="livequeryd",instance="127.0.0.1:9471",database="db_a",result="error"}
+    values: 0+1x40
+  - series: livequery_key_refreshes_total{job="livequeryd",instance="127.0.0.1:9471",database="db_a",result="ok"}
+    values: 0+1x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasLiveQueryKeysUnreadable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+        database: db_b
+      exp_annotations:
+        summary: The live-query hub cannot read the live keys of database db_b
+        description: Every read of the database's live keys from the control plane failed for 15m. The hub keeps the keys
+          it has, so existing seals still open, but new and rotated keys are not picked up and revocations do not apply. Check
+          the hub's read-only control-plane connection.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+        database: db_c
+      exp_annotations:
+        summary: The live-query hub cannot read the live keys of database db_c
+        description: Every read of the database's live keys from the control plane failed for 15m. The hub keeps the keys
+          it has, so existing seals still open, but new and rotated keys are not picked up and revocations do not apply. Check
+          the hub's read-only control-plane connection.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+- name: a p95 above 1s fires; fast results stay quiet
+  interval: 1m
+  input_series:
+  - series: livequery_commit_to_delta_seconds_bucket{job="livequeryd",instance="127.0.0.1:9471",database="db_b",le="0.1"}
+    values: '0x40'
+  - series: livequery_commit_to_delta_seconds_bucket{job="livequeryd",instance="127.0.0.1:9471",database="db_b",le="1"}
+    values: '0x40'
+  - series: livequery_commit_to_delta_seconds_bucket{job="livequeryd",instance="127.0.0.1:9471",database="db_b",le="2.5"}
+    values: 0+10x40
+  - series: livequery_commit_to_delta_seconds_bucket{job="livequeryd",instance="127.0.0.1:9471",database="db_b",le="+Inf"}
+    values: 0+10x40
+  - series: livequery_commit_to_delta_seconds_bucket{job="livequeryd",instance="127.0.0.1:9471",database="db_a",le="0.1"}
+    values: 0+10x40
+  - series: livequery_commit_to_delta_seconds_bucket{job="livequeryd",instance="127.0.0.1:9471",database="db_a",le="1"}
+    values: 0+10x40
+  - series: livequery_commit_to_delta_seconds_bucket{job="livequeryd",instance="127.0.0.1:9471",database="db_a",le="2.5"}
+    values: 0+10x40
+  - series: livequery_commit_to_delta_seconds_bucket{job="livequeryd",instance="127.0.0.1:9471",database="db_a",le="+Inf"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: FaasLiveQueryCommitToDeltaSlow
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+        database: db_b
+      exp_annotations:
+        summary: Live-query results for database db_b lag commits
+        description: For 15m, 5% of transactions took more than 1s from commit to their live-query frames; the ADR measured
+          p95 near 100ms. Look at livequery_round_duration_seconds, statements per round and slot lag on the live-queries
+          dashboard.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+- name: a slow consumer cut off fires; none stays quiet
+  interval: 1m
+  input_series:
+  - series: livequery_slow_consumers_total{job="livequeryd",instance="127.0.0.1:9471",database="db_b"}
+    values: 0 0 0 1 1 1 1 1 1 1
+  - series: livequery_slow_consumers_total{job="livequeryd",instance="127.0.0.1:9471",database="db_a"}
+    values: '0x10'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasLiveQuerySlowConsumer
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: livequeryd
+        family: live_queries
+        job: livequeryd
+        instance: 127.0.0.1:9471
+        database: db_b
+      exp_annotations:
+        summary: The live-query hub cut off a slow connection for database db_b
+        description: A connection fell too far behind its frames and was closed. realtimed carries every client of a database
+          over one connection, so its subscribers resubscribe. Check realtimed's health and the network between it and the
+          hub.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md
+- name: hub connections dropping fire; a steady node stays quiet
+  interval: 1m
+  input_series:
+  - series: realtimed_live_upstream_drops_total{job="realtimed",instance="fsn-2:9107"}
+    values: 0+1x40
+  - series: realtimed_live_upstream_drops_total{job="realtimed",instance="fsn-3:9107"}
+    values: 2x40
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: FaasLiveQueryUpstreamFlapping
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: realtimed
+        family: live_queries
+        job: realtimed
+        instance: fsn-2:9107
+      exp_annotations:
+        summary: realtimed on fsn-2:9107 keeps losing its live-query hub connections
+        description: More than three hub connections dropped in 15m. Subscriptions go stale until realtimed redials and resubscribes
+          them. Check the hub's health, its TLS certificates and the network path to it.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md

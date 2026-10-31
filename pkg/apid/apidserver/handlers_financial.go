@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -20,7 +21,7 @@ func (s *server) getFinancialCosts(w http.ResponseWriter, r *http.Request, acct 
 	}
 	report, err := billing.ReadFinancialCosts(r.Context(), s.store, acct.ID, start, now)
 	if err != nil {
-		api.WriteProblem(w, financialProblem(err))
+		api.WriteProblem(w, s.financialFailure(r, "costs", err))
 		return
 	}
 	invoices, err := s.store.ListInvoicesForAccount(r.Context(), acct.ID, &start, time.Time{}, api.MaxFOCUSExportInvoices+1)
@@ -48,11 +49,13 @@ func (s *server) getFinancialForecast(w http.ResponseWriter, r *http.Request, ac
 	}
 	report, err := billing.ReadFinancialCosts(r.Context(), s.store, acct.ID, start, now)
 	if err != nil {
-		api.WriteProblem(w, financialProblem(err))
+		api.WriteProblem(w, s.financialFailure(r, "forecast", err))
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
-	writeJSON(w, http.StatusOK, api.FinancialForecastResponse{PeriodStart: report.PeriodStart, PeriodEnd: report.PeriodEnd, AsOf: report.AsOf, Currency: report.Currency, Meters: report.Meters, MissingBillComponents: report.MissingBillComponents})
+	subtotal := billing.ProjectedSubtotal(acct.Plan, report.Meters)
+	writeJSON(w, http.StatusOK, api.FinancialForecastResponse{PeriodStart: report.PeriodStart, PeriodEnd: report.PeriodEnd, AsOf: report.AsOf, Currency: report.Currency, Meters: report.Meters,
+		ProjectedSubtotalMillicents: subtotal, MissingBillComponents: billing.ForecastMissingComponents(report.MissingBillComponents, subtotal)})
 }
 
 func financialMonth(r *http.Request, now time.Time) (time.Time, *api.Problem) {
@@ -74,6 +77,18 @@ func financialMonth(r *http.Request, now time.Time) (time.Time, *api.Problem) {
 		return time.Time{}, api.ErrValidation("expected a current or historical month in YYYY-MM format")
 	}
 	return start, nil
+}
+
+// financialFailure logs an unclassified financial read error before it
+// becomes a generic 503. The response cannot name the cause, and without this
+// line nothing records it: October's pre-switch EUR price snapshots failed
+// every cost report this way, invisibly.
+func (s *server) financialFailure(r *http.Request, operation string, err error) *api.Problem {
+	problem := financialProblem(err)
+	if problem.Status >= http.StatusInternalServerError && !errors.Is(err, billing.ErrFinancialUnavailable) {
+		s.log.WarnContext(r.Context(), "financial read failed", slog.String("operation", operation), slog.String("err", err.Error()))
+	}
+	return problem
 }
 
 func financialProblem(err error) *api.Problem {
@@ -104,7 +119,7 @@ func (s *server) previewFinancialBudget(w http.ResponseWriter, r *http.Request, 
 	}
 	preview, err := billing.PreviewFinancialBudget(r.Context(), s.store, acct.ID, req.Spec, time.Now().UTC())
 	if err != nil {
-		api.WriteProblem(w, financialProblem(err))
+		api.WriteProblem(w, s.financialFailure(r, "budget_preview", err))
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")

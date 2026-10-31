@@ -36,6 +36,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // DefaultHeartbeatInterval is the per-node liveness cadence. Defined
@@ -97,6 +98,9 @@ type Heartbeat struct {
 	// unavailable.
 	takeoverGuard TakeoverGuard
 	store         state.Store
+	// notices: a node whose vmmd is restarting under a planned notice
+	// (vmmd restart adoption ADR §3) has its failed pings ignored.
+	notices *RestartNotices
 	// dialer is the per-tick fresh-dial path (issue #120). The
 	// heartbeat dials a fresh *VMMClient per node per tick instead
 	// of reusing the VMMRouter's cached conn, matching the
@@ -141,6 +145,8 @@ type Heartbeat struct {
 	// now means Task #66's commits are diff-only — no struct
 	// change required when the emit sites land.
 	events *events.Platform
+	// ops exports schedd_compute_node_readiness (ADR-20261022184531).
+	ops *wire.OpsMetrics
 	// Concurrency bounds simultaneous node probes. Zero uses the default.
 	Concurrency int
 	// ProbeTimeout bounds each dial + Ping. Zero uses the default.
@@ -189,6 +195,13 @@ type Heartbeat struct {
 // staleness gate (MarkComputeNodeInactive on a stale node) still
 // applies — a dead vmmd on this schedd's own node gets flipped
 // inactive and the chooser skips it on the next wake.
+// WithRestartNotices ignores failed pings to a node restarting under a
+// planned notice.
+func (h *Heartbeat) WithRestartNotices(n *RestartNotices) *Heartbeat {
+	h.notices = n
+	return h
+}
+
 func (h *Heartbeat) WithOwnerNodeID(nodeID string) *Heartbeat {
 	if h == nil {
 		return h
@@ -590,7 +603,13 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 	// false failure, rebalancing its apps back onto itself, and
 	// rejecting customer wakes during the recovery cycle.
 	wasUnavailable := n.Lifecycle == state.NodeLifecycleUnavailable
-	if _, err := h.heartbeatPing(ctx, n); err != nil {
+	ping, err := h.heartbeatPing(ctx, n)
+	if err != nil {
+		if !wasUnavailable && h.notices.Active(ctx, n.ID) {
+			h.log.Info("heartbeat: ping failed while vmmd restarts under a notice; not counted",
+				"node_id", n.ID, "node_name", n.Name, "err", err)
+			return
+		}
 		if failures, threshold := h.noteProbeFailure(n.ID), h.failureThreshold(); !wasUnavailable && failures < threshold {
 			h.log.Warn("heartbeat: ping failed; node stays in rotation below the failure threshold",
 				"node_id", n.ID, "node_name", n.Name, "failures", failures, "threshold", threshold, "err", err)
@@ -609,6 +628,8 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		if markUnavailableIfEligible() && !wasUnavailable {
 			h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
 		}
+		readiness, reason := evaluateNodeReadiness(n, nil)
+		h.recordReadiness(ctx, n, readiness, reason)
 		// Remember it so the sweep keeps probing. Without this the
 		// node is gone for good: the sweep enumerates ACTIVE nodes,
 		// so a row it just flipped is never looked at again and can
@@ -642,6 +663,8 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 			}
 		}
 	}
+	readiness, reason := evaluateNodeReadiness(n, ping)
+	h.recordReadiness(ctx, n, readiness, reason)
 	if err := h.store.HeartbeatComputeNode(ctx, n.ID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			// Row vanished between ActiveComputeNodes and

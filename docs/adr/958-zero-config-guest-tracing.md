@@ -76,8 +76,8 @@ SDK default; the debugger keys spans by trace, not service name.
 Runner images for Node 22/24 and Python 3.12/3.13 contain pinned OTel SDKs and
 auto-instrumentation under `/opt/gregale/tracing`, installed from lockfiles
 like the ADR-819 profiling collectors (Node: `@opentelemetry/sdk-node`
-0.222.0 with `auto-instrumentations-node` 0.80.0; Python: SDK 1.44.0 with
-0.65b0 instrumentations for WSGI/ASGI frameworks, PostgreSQL drivers,
+0.222.0 with `auto-instrumentations-node` 0.80.0; Python: SDK 1.45.1 with
+0.66b1 instrumentations for WSGI/ASGI frameworks, PostgreSQL drivers,
 SQLAlchemy, Redis, MongoDB and HTTP clients). Instrumentation loads before the
 init snapshot, so restored instances pay no startup cost; only cold boots do.
 Custom images, Dockerfile builds and Go apps still benefit from §2: any OTel
@@ -122,7 +122,8 @@ On that shared listener any active compute node can submit spans for any
 account, exactly as gatewayd-internal on the same node already can through
 `WriteSpansSummary`. Binding each export to an instance scheduled on the
 authenticated node (via `NodeIdentityResolver`) would tighten both producers
-together and is left to a follow-up.
+together and is left to a follow-up. (Guest exports are bound since the
+2026-10-28 amendment below.)
 
 apid checks the account's plan (`DebugTelemetryEnabled`), takes from the
 existing per-account `DebugTelemetryRequestsPerMinute` bucket, bounds buffered
@@ -215,6 +216,26 @@ placeholders, `IN` lists and multi-row `VALUES` folded, and are bounded to
 unchanged. The suspected dependency gains `query`, the pattern that
 regressed, and the synthesis names it.
 
+**OTel logs (amendment, 2026-10-14).** The guest bridge also serves
+`POST /v1/logs`. A log export is framed like a trace export, with
+`TraceCodecLogsSignal` (0x20) set in the codec byte; a vmmd that predates
+logs rejects that unknown codec, which SDKs do not retry. vmmd routes log
+frames to `IngestGuestLogs` (same request message, logs bit cleared, same
+host-owned identity and tracing gate). guest-init points OTel log export at
+the bridge (`OTEL_LOGS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
+http/protobuf) unless the app sets its own logs exporter or endpoint, which
+also opts it out. Python's SDK configurator then attaches its logging handler
+(`OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED`), which the bootstrap
+moves off the root logger and feeds from `Logger.callHandlers`: a root
+handler would disable logging's last-resort stderr output and the implicit
+`basicConfig()` of `logging.warning()`, dropping an unconfigured app's
+console lines from its runtime logs. NodeSDK builds its log record processor
+from the same `OTEL_LOGS_*` env (the bootstrap passes none of its own), so
+the pino and bunyan instrumentations send records with the active trace
+context. Plain `console.log` and winston (which needs a separate transport
+package) are not forwarded. apid writes the records as ADR-213 runtime log
+events.
+
 ## Consequences
 
 - Opted-in managed-runtime apps get DB, cache and HTTP client spans on the
@@ -280,6 +301,137 @@ and its HTTP client span reached the evidence classified as
 VM resources behind. The Node bundle adds about 111 MB (uncompressed) to the
 shared read-only runner base; per-app layers are unaffected.
 
-Still pending: the same checks on a dedicated native host, the Python
-preload inside a VM (validated outside a VM only), and the split-box mTLS
-path on a two-node layout.
+Still pending: the same checks on a dedicated native host and the Python
+preload inside a VM (validated outside a VM only). The split-box mTLS path
+is covered by the 2026-10-28 amendment's validation.
+
+## Amendment (2026-10-22): a tracing package for Go apps
+
+### Context
+
+§3 instruments Node and Python by preloading OpenTelemetry before the app
+starts. A Go app is a static binary: nothing can be loaded into it, so a Go
+app reached the debugger only if it shipped and configured an OpenTelemetry
+SDK itself, although Gregale offers Go runner images. The Go SDK
+(`github.com/poyrazK/faas/sdk/go`) is deliberately standard-library only, and
+the full OpenTelemetry Go SDK would add a large dependency tree to every app
+that wants request evidence.
+
+### Decision
+
+The Go SDK gains `github.com/poyrazK/faas/sdk/go/tracing`, standard library
+only:
+
+- `Start()` is a no-op unless guest-init stamped `FAAS_TRACING_ENABLED=1`
+  (§2). It honours the stamped `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+  `OTEL_TRACES_SAMPLER`/`_ARG` (the `TraceIDRatioBased` decision on the trace
+  ID, ignoring the parent's sampled flag as §2 requires) and
+  `OTEL_SERVICE_NAME`.
+- `Handler` records a server span that continues the gateway's
+  `traceparent`, named after the matched `ServeMux` pattern. `Transport`
+  records an HTTP client span (`http.request.method`, `server.address`,
+  `url.full` without query string or credentials) and injects `traceparent`.
+  `Open`/`WrapConnector`/`WrapDriver` wrap any `database/sql` driver and
+  record a client span per query (`db.system.name`, `db.operation.name`,
+  `db.query.text` bounded to 1 KiB). These are the §5 attributes, so the
+  spans classify as `app_dependency` with no debugger change.
+- Spans are exported as standard OTLP/HTTP JSON to the bridge, which already
+  accepts JSON (§2); apid decodes it with the public endpoint's codec. A
+  batch goes out after 256 spans or one second; a full queue (2048) drops
+  spans rather than blocking the app. Span and trace IDs come from
+  `crypto/rand`, so instances restored from one snapshot do not repeat them.
+- Spans are linked through `context.Context`; calls made without the
+  request's context start their own trace.
+
+### Consequences
+
+- Go apps get request, HTTP and database evidence with one `Start` call and
+  three wrappers, and the same binary runs unchanged outside Gregale.
+- The package covers HTTP and `database/sql` only. Redis, gRPC and messaging
+  clients still need an OpenTelemetry SDK (§2), or `StartSpan` with the §5
+  attributes.
+- Log correlation (ADR-213 runtime adapter) is not part of this package.
+- The encoding is pinned by `sdk/go/tracing/testdata/otlp_export.json`, which
+  `pkg/gateway`'s guest-ingest test decodes with the real codec.
+
+### Validation
+
+Unit: `sdk/go/tracing` (no-op without the stamp, gateway trace continuation,
+client span and header, panics as 500s, sampler, `database/sql` context,
+skip and legacy paths, argument checking kept, golden export) with `-race`;
+`pkg/gateway` decodes the golden export. Metal (2026-10-23,
+`gregale-internal-test-1`, nested KVM): `TestGuestTracingGoHelperMetal`
+passed. A scratch image built only on the package, deployed with
+`tracing.enabled` and woken from its init snapshot by one request with an
+unsampled `traceparent`, put its `SELECT orders` (`postgresql`) and loopback
+`http` client spans on the request evidence as `app_dependency`. The run left
+no VM resources behind.
+
+## Amendment (2026-10-28): guest exports are bound to the sending node
+
+### Context
+
+§4 left the shared mTLS listener unbound: a compute node's `vmmd/apid-client`
+leaf could submit guest spans, and since the ADR-213 runtime adapter guest
+log records, for any account. Guest logs land in the customer's log stream,
+so a frame forged for another tenant would be visible in their dashboard and
+log search. ADR-20261018083536 slice B already binds vmmd's runtime log lines
+to the caller's node through `NodeIdentityResolver`.
+
+### Decision
+
+On the mTLS listener apid accepts an `IngestGuestSpans` or `IngestGuestLogs`
+frame only when its instance belongs to the frame's app and deployment, the
+app to the frame's account, and the instance runs on the node the caller's
+certificate names, or ran there before it migrated
+(`MigrationInstanceByID`). Otherwise:
+
+- another node's, an unknown or a non-UUID instance, or a mismatched app,
+  deployment or account, answers `invalid`, which vmmd turns into a permanent
+  refusal so the SDK does not retry;
+- a certificate that names no registered node answers `Unauthenticated`;
+- a failed lookup answers `unavailable`, so the SDK retries.
+
+Decisions are cached per node and principal: an accepted one for a minute, a
+refusal for five seconds (a migrating instance's new node may export before
+its row names it), at most 50,000 entries. A steady exporter therefore costs
+no database read per frame. The local Unix socket (single box) and an apid
+without a node resolver are unchanged. The code is
+`pkg/apid/receivers/guest_ingest_binding.go`, wired in apidserver beside the
+runtime log binding.
+
+### Consequences
+
+- No compute node certificate can write another node's apps' guest spans or
+  logs.
+- gatewayd-internal's `WriteSpansSummary` and request telemetry stay unbound
+  by design: a gateway routes every app's traffic, so its telemetry is not
+  tied to instances on its own node.
+- Refused frames log a warning once per cache window, naming the node and
+  instance.
+
+### Validation
+
+Unit (`pkg/apid/receivers`, `-race`): own and migrated instances accepted;
+another node's instance, another deployment, app or account, an unknown and a
+non-UUID instance refused, for spans and logs; an unregistered node
+`Unauthenticated`; local socket and unbound apid unchanged; cache hit, expiry,
+refusal expiry after migration, lookup errors not cached, and the bound.
+
+Split-box path (2026-10-30, `gregale-internal-test-1`, nested KVM, revision
+4195bf562a): `TestGuestTracingSplitBoxMetal` passed. apid opened its private
+mTLS listener on loopback TCP with the node verifier on; vmmd had no local
+spans socket and sent the guest exports with an `apid-client` leaf whose CN
+is the instance's compute node. The app's `SELECT orders` span reached the
+request evidence after a snapshot-restore wake. With real certificates, apid
+then answered `invalid` to spans and logs from that leaf for an instance its
+node does not run and for its running instance under another account, and
+refused a leaf whose CN names no compute node. Leakcheck clean. This covers
+§4's split-box mTLS path on one host; only the network distance differs from
+two machines.
+
+The run found that an apid started without `apid.toml` ignored
+`FAAS_NODE_NAME`, so it never built the node verifier and the binding stayed
+off. `LoadConfig` now applies it on that path too, as it already did the role
+and the listener's TLS paths. Production apid reads a TOML file and was not
+affected.

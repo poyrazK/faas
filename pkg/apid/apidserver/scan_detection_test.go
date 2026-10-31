@@ -54,9 +54,9 @@ func TestScanDetectionTraceMapsToPlanResponse(t *testing.T) {
 	}
 }
 
-func TestPlanWorkloadNewProjectDefaultsDeclared(t *testing.T) {
+func TestPlanWorkloadNewProjectDefaultsProject(t *testing.T) {
 	workload := apidserver.ToPlanWorkload(reposcan.Workload{Name: "frontend"})
-	if workload.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
-		t.Fatalf("new workload policy = %q, want declared", workload.ServiceBindingPolicy)
+	if workload.ServiceBindingPolicy != api.ServiceBindingPolicyProject {
+		t.Fatalf("new workload policy = %q, want project", workload.ServiceBindingPolicy)
 	}
 }

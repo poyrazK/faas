@@ -74,7 +74,7 @@ def sync_detailed(
     body: RaiseOverageCapRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[AccountResponse | Problem]:
-    r"""Set or clear the account's spend cap (issue
+    r"""Set or clear the account's spend cap.
 
      Sets accounts.overage_cap_cents in integer cents. Body shape:
 
@@ -82,21 +82,20 @@ def sync_detailed(
 
     Pass `null` (or omit the field) to clear the cap (NULL).
     Pass 0 to set \"no overage allowed.\" Passing a positive integer
-    sets the monthly ceiling. The migration CHECK constraint at
-    `migrations/00054_account_credits.sql` pins
+    sets the monthly ceiling. The migration CHECK constraint pins
     `overage_cap_cents IS NULL OR overage_cap_cents >= 0`; a
-    negative value is rejected at the apid validator before the
+    negative value is rejected at the API validator before the
     store ever sees it, returning 400 `validation_failed`.
 
-    Once current-month overage meets/exceeds the cap, schedd refuses
+    Once current-month overage meets/exceeds the cap, the scheduler refuses
     new wakes with `code: admission_refused` (HTTP 402). The cap is
-    account-self-scoped (no admin scope required) and the response
+    account-self-scoped (admin scope required) and the response
     is the post-update account state. Audit row
     `overage.cap_changed` is emitted on every successful call.
 
     Args:
         idempotency_key (str | Unset):
-        body (RaiseOverageCapRequest): Spend-cap payload (issue #561). *int64 so a missing/null
+        body (RaiseOverageCapRequest): Spend-cap payload. *int64 so a missing/null
             field round-trips as NULL (no cap). 0 is a valid write and
             means "no overage allowed". Negative values are rejected at
             the validator before reaching the store (the migration CHECK
@@ -128,7 +127,7 @@ def sync(
     body: RaiseOverageCapRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> AccountResponse | Problem | None:
-    r"""Set or clear the account's spend cap (issue
+    r"""Set or clear the account's spend cap.
 
      Sets accounts.overage_cap_cents in integer cents. Body shape:
 
@@ -136,21 +135,20 @@ def sync(
 
     Pass `null` (or omit the field) to clear the cap (NULL).
     Pass 0 to set \"no overage allowed.\" Passing a positive integer
-    sets the monthly ceiling. The migration CHECK constraint at
-    `migrations/00054_account_credits.sql` pins
+    sets the monthly ceiling. The migration CHECK constraint pins
     `overage_cap_cents IS NULL OR overage_cap_cents >= 0`; a
-    negative value is rejected at the apid validator before the
+    negative value is rejected at the API validator before the
     store ever sees it, returning 400 `validation_failed`.
 
-    Once current-month overage meets/exceeds the cap, schedd refuses
+    Once current-month overage meets/exceeds the cap, the scheduler refuses
     new wakes with `code: admission_refused` (HTTP 402). The cap is
-    account-self-scoped (no admin scope required) and the response
+    account-self-scoped (admin scope required) and the response
     is the post-update account state. Audit row
     `overage.cap_changed` is emitted on every successful call.
 
     Args:
         idempotency_key (str | Unset):
-        body (RaiseOverageCapRequest): Spend-cap payload (issue #561). *int64 so a missing/null
+        body (RaiseOverageCapRequest): Spend-cap payload. *int64 so a missing/null
             field round-trips as NULL (no cap). 0 is a valid write and
             means "no overage allowed". Negative values are rejected at
             the validator before reaching the store (the migration CHECK
@@ -177,7 +175,7 @@ async def asyncio_detailed(
     body: RaiseOverageCapRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[AccountResponse | Problem]:
-    r"""Set or clear the account's spend cap (issue
+    r"""Set or clear the account's spend cap.
 
      Sets accounts.overage_cap_cents in integer cents. Body shape:
 
@@ -185,21 +183,20 @@ async def asyncio_detailed(
 
     Pass `null` (or omit the field) to clear the cap (NULL).
     Pass 0 to set \"no overage allowed.\" Passing a positive integer
-    sets the monthly ceiling. The migration CHECK constraint at
-    `migrations/00054_account_credits.sql` pins
+    sets the monthly ceiling. The migration CHECK constraint pins
     `overage_cap_cents IS NULL OR overage_cap_cents >= 0`; a
-    negative value is rejected at the apid validator before the
+    negative value is rejected at the API validator before the
     store ever sees it, returning 400 `validation_failed`.
 
-    Once current-month overage meets/exceeds the cap, schedd refuses
+    Once current-month overage meets/exceeds the cap, the scheduler refuses
     new wakes with `code: admission_refused` (HTTP 402). The cap is
-    account-self-scoped (no admin scope required) and the response
+    account-self-scoped (admin scope required) and the response
     is the post-update account state. Audit row
     `overage.cap_changed` is emitted on every successful call.
 
     Args:
         idempotency_key (str | Unset):
-        body (RaiseOverageCapRequest): Spend-cap payload (issue #561). *int64 so a missing/null
+        body (RaiseOverageCapRequest): Spend-cap payload. *int64 so a missing/null
             field round-trips as NULL (no cap). 0 is a valid write and
             means "no overage allowed". Negative values are rejected at
             the validator before reaching the store (the migration CHECK
@@ -229,7 +226,7 @@ async def asyncio(
     body: RaiseOverageCapRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> AccountResponse | Problem | None:
-    r"""Set or clear the account's spend cap (issue
+    r"""Set or clear the account's spend cap.
 
      Sets accounts.overage_cap_cents in integer cents. Body shape:
 
@@ -237,21 +234,20 @@ async def asyncio(
 
     Pass `null` (or omit the field) to clear the cap (NULL).
     Pass 0 to set \"no overage allowed.\" Passing a positive integer
-    sets the monthly ceiling. The migration CHECK constraint at
-    `migrations/00054_account_credits.sql` pins
+    sets the monthly ceiling. The migration CHECK constraint pins
     `overage_cap_cents IS NULL OR overage_cap_cents >= 0`; a
-    negative value is rejected at the apid validator before the
+    negative value is rejected at the API validator before the
     store ever sees it, returning 400 `validation_failed`.
 
-    Once current-month overage meets/exceeds the cap, schedd refuses
+    Once current-month overage meets/exceeds the cap, the scheduler refuses
     new wakes with `code: admission_refused` (HTTP 402). The cap is
-    account-self-scoped (no admin scope required) and the response
+    account-self-scoped (admin scope required) and the response
     is the post-update account state. Audit row
     `overage.cap_changed` is emitted on every successful call.
 
     Args:
         idempotency_key (str | Unset):
-        body (RaiseOverageCapRequest): Spend-cap payload (issue #561). *int64 so a missing/null
+        body (RaiseOverageCapRequest): Spend-cap payload. *int64 so a missing/null
             field round-trips as NULL (no cap). 0 is a valid write and
             means "no overage allowed". Negative values are rejected at
             the validator before reaching the store (the migration CHECK

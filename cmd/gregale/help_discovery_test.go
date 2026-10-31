@@ -52,7 +52,7 @@ func TestExpandedCommandHelpRetainsEveryOption(t *testing.T) {
 					t.Errorf("expanded help wraps at 80 columns: %q", line)
 				}
 			}
-			for _, flag := range command.Flags {
+			for _, flag := range main.CliTreeFlagsForDisplay(command.Flags) { // help shows canonical spellings
 				// A flag's own entry appears exactly once, even when other
 				// descriptions mention it as a prerequisite or exclusion.
 				entry := "  " + main.MdFlagLabel(flag)

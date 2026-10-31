@@ -163,8 +163,12 @@ func TestRuntimeConnectionReportRejectsUnboundedAndStaleInputs(t *testing.T) {
 		t.Fatal("valid report rejected")
 	}
 	for _, change := range []func(*RuntimeConnectionReport){
-		func(r *RuntimeConnectionReport) { r.EngineConnections = 3 },
-		func(r *RuntimeConnectionReport) { r.RefreshConnections = 1 },
+		func(r *RuntimeConnectionReport) { r.EngineConnections = 0 },
+		func(r *RuntimeConnectionReport) { r.EngineConnections = api.DataAPIMaxPoolConnections + 1 },
+		func(r *RuntimeConnectionReport) {
+			r.EngineConnections, r.RefreshConnections = api.DataAPIMaxPoolConnections, 1
+		},
+		func(r *RuntimeConnectionReport) { r.RefreshConnections = 2 },
 		func(r *RuntimeConnectionReport) { r.RuntimeModel = "unqualified" },
 		func(r *RuntimeConnectionReport) { r.ObservedAt = now.Add(time.Second) },
 		func(r *RuntimeConnectionReport) { r.ObservedAt = now.Add(-api.DataAPIConnectionBudgetMaxAge) },
@@ -176,6 +180,14 @@ func TestRuntimeConnectionReportRejectsUnboundedAndStaleInputs(t *testing.T) {
 		change(&r)
 		if r.valid(a, now) {
 			t.Fatal("invalid report accepted", r)
+		}
+	}
+	// adr: 20261021180534 — configured pools report 1 to 8 connections.
+	for _, pool := range [][2]int32{{1, 0}, {3, 1}, {api.DataAPIMaxPoolConnections, 0}, {api.DataAPIMaxPoolConnections - 1, 1}} {
+		r := base
+		r.EngineConnections, r.RefreshConnections = pool[0], pool[1]
+		if !r.valid(a, now) {
+			t.Fatal("configured pool rejected", pool)
 		}
 	}
 	a.TokenExpiresAt = now

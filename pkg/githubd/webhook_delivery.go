@@ -374,7 +374,9 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 				}
 				continue
 			}
-			dead := delivery.Attempts >= webhookMaxAttempts
+			// A payload that cannot be decoded or routed fails identically on
+			// every attempt; dead-letter it now so the alert fires at once.
+			dead := delivery.Attempts >= webhookMaxAttempts || errors.Is(dispatchErr, errUnprocessableWebhook)
 			delay := time.Second << min(delivery.Attempts, 8)
 			if delay > 5*time.Minute {
 				delay = 5 * time.Minute
@@ -384,6 +386,9 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 			}
 			log.Warn("githubd: webhook delivery failed", "delivery_id", delivery.DeliveryID,
 				"event", delivery.EventType, "attempt", delivery.Attempts, "dead", dead, "err", dispatchErr)
+			if dead {
+				service.ReportUndeliverablePullRequest(ctx, delivery)
+			}
 		}
 
 		select {

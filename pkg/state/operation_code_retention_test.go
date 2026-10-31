@@ -175,7 +175,7 @@ func TestMemOperationCodeSurvivesAutoRollback(t *testing.T) {
 	nextOp := admitMemOperationCode(t, s, app, next, tenant)
 	expireMemOperationCode(t, s, oldOp)
 	expireMemOperationCode(t, s, nextOp)
-	if target, err := s.LatestSupersededDeployment(t.Context(), app.ID); err != nil || target.ID != old.ID {
+	if target, err := s.LatestSupersededDeployment(t.Context(), app.ID, DefaultEnvScope); err != nil || target.ID != old.ID {
 		t.Fatalf("retained old revision cannot be selected: %+v %v", target, err)
 	}
 	if id, err := s.AutoRollbackDeploymentsTx(t.Context(), app.ID, next.ID); err != nil || id != old.ID {

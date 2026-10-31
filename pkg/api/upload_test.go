@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -115,6 +116,27 @@ func TestResumableUploadClient_WireContract(t *testing.T) {
 		if methods[i] != wantMethods[i] {
 			t.Errorf("methods[%d] = %q, want %q", i, methods[i], wantMethods[i])
 		}
+	}
+}
+
+// An apid from before deploy tokens could open upload sessions answers them
+// 403. The CLI falls back to the legacy endpoint for a deploy token only; an
+// account key's 403 is a real refusal.
+func TestStartUpload_DeployToken403OnOlderServerFallsBack(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		WriteProblem(w, NewProblem(http.StatusForbidden, CodeForbidden, "Deploy token scope is app-bound",
+			"this token may only access routes under /v1/apps/{slug}"))
+	}))
+	defer srv.Close()
+	deployToken := DeployTokenPrefix + strings.Repeat("a", apiKeyRandomBytes*2)
+	if !ValidDeployTokenFormat(deployToken) {
+		t.Fatal("test token does not have the deploy-token shape")
+	}
+	if _, err := NewClient(srv.URL, deployToken).StartUpload(context.Background(), "demo", 1, ""); !errors.Is(err, ErrResumableUploadUnsupported) {
+		t.Fatalf("deploy token StartUpload error = %v, want ErrResumableUploadUnsupported", err)
+	}
+	if _, err := NewClient(srv.URL, "fp_live_account").StartUpload(context.Background(), "demo", 1, ""); err == nil || errors.Is(err, ErrResumableUploadUnsupported) {
+		t.Fatalf("account key StartUpload error = %v, want the 403 reported", err)
 	}
 }
 

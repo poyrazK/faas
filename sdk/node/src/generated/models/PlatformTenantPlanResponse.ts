@@ -17,14 +17,14 @@ export type PlatformTenantPlanResponse = {
   route_weights?: Record<string, number>;
   request_budget?: PlatformTenantPlanBudget;
   /**
-   * What the plan's card prices (ADR-1310, ADR-1319).
+   * What the plan's card prices.
    */
   unit?: string;
   base_fee_millicents_per_month?: number;
   minimum_millicents_per_month?: number;
   prorate_monthly_fees?: boolean;
   /**
-   * How the plan's ladder prices a month (ADR-1309).
+   * How the plan's ladder prices a month.
    */
   tier_mode?: 'graduated' | 'volume';
   created_at: string;

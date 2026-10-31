@@ -10,6 +10,7 @@ import (
 var _ OrgActivityAPIKeyMutationStore = (*MemStore)(nil)
 
 func (m *MemStore) CreateOrgAPIKeyWithActivity(_ context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string, activity OrgActivity) (APIKey, int64, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	activity, err := normalizeOrgActivity(activity, time.Now())
 	if err != nil {
 		return APIKey{}, 0, err
@@ -73,6 +74,7 @@ func (m *MemStore) RevokeOrgAPIKeyWithActivity(_ context.Context, orgID, keyID s
 }
 
 func (m *MemStore) RotateOrgAPIKeyWithActivity(_ context.Context, orgID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration, createdIP, createdUA string, parent *string, activity OrgActivity) (APIKey, APIKey, int64, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	activity, err := normalizeOrgActivity(activity, time.Now())
 	if err != nil {
 		return APIKey{}, APIKey{}, 0, err
@@ -103,7 +105,7 @@ func (m *MemStore) RotateOrgAPIKeyWithActivity(_ context.Context, orgID, oldKeyI
 	newKey := APIKey{
 		ID: newID(), AccountID: old.AccountID, OrgID: old.OrgID,
 		RunsPrincipalID: old.RunsPrincipalID,
-		Hash:            append([]byte(nil), newHash...), Label: newLabel, Scopes: append([]string(nil), old.Scopes...),
+		Hash:            append([]byte(nil), newHash...), Label: newLabel, Scopes: append([]string(nil), old.Scopes...), ExpiresAt: cloneTimePtr(old.ExpiresAt),
 		CreatedAt: time.Now(), Status: string(APIKeyStatusActive), RotatedFromID: &rotatedFrom,
 		CreatedIP: createdIP, CreatedUA: createdUA, ParentKeyID: parent,
 	}

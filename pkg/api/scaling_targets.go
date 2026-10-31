@@ -177,6 +177,9 @@ func ValidateScalingTargets(field string, targets []ScalingTarget) *Problem {
 				fmt.Sprintf("%s[%d].value must be <= 100 for %s (it is a percentage); got %v.",
 					field, i, ScalingMetricCPU, t.Value))
 		}
+		if p := queueTargetTooLarge(fmt.Sprintf("%s[%d]", field, i), t); p != nil {
+			return p
+		}
 	}
 	return nil
 }
@@ -226,7 +229,23 @@ func ValidateLegacyScalingTarget(t *ScalingTarget) *Problem {
 			"Invalid scaling policy",
 			fmt.Sprintf("target.value must be > 0 for %s; got %v.", t.Metric, t.Value))
 	}
+	if p := queueTargetTooLarge("target", *t); p != nil {
+		return p
+	}
 	return nil
+}
+
+// queueTargetTooLarge refuses a queue_depth or queue_lag value above
+// ScalingQueueTargetMax messages per worker.
+func queueTargetTooLarge(field string, t ScalingTarget) *Problem {
+	if (t.Metric != ScalingMetricQueueDepth && t.Metric != ScalingMetricQueueLag) || t.Value <= ScalingQueueTargetMax {
+		return nil
+	}
+	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+		"Invalid scaling policy",
+		fmt.Sprintf("%s.value for %s is the messages one worker takes, at most %d; got %v.", field, t.Metric, ScalingQueueTargetMax, t.Value)).
+		WithLimit(ScalingQueueTargetMax, int64(math.Ceil(t.Value))).
+		WithDocs(docsBase + "/workers#scale-on-the-backlog")
 }
 
 // ErrScalingTargetConflict rejects a policy that sets both the singular
@@ -236,6 +255,21 @@ func ErrScalingTargetConflict() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
 		"Invalid scaling policy",
 		"scaling policy sets both target and targets; use targets (target is the single-signal form of the same field).")
+}
+
+// ValidatePerInstanceConcurrency bounds scaling_policy.per_instance_concurrency
+// (ADR-20261022203523) to [0, the plan's concurrency_per_vm]. Zero means the
+// plan bound. The problem carries the limit and the requested value.
+func ValidatePerInstanceConcurrency(plan Plan, requested int) *Problem {
+	limit := plan.ConcurrencyPerVMBound()
+	if requested >= 0 && requested <= limit {
+		return nil
+	}
+	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+		"Invalid scaling policy",
+		fmt.Sprintf("per_instance_concurrency must be between 0 and %d (the %s plan's concurrency_per_vm); got %d. 0 uses the plan bound.", limit, plan, requested)).
+		WithLimit(int64(limit), int64(requested)).
+		WithDocs(docsBase + "/scaling-policy#requests-per-instance")
 }
 
 // validCustomMetricName mirrors the app_custom_metrics_name_shape CHECK in

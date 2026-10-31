@@ -114,6 +114,14 @@ func (s *server) autoAdvanceFeatureFlagRollout(ctx context.Context, candidate st
 		}
 		return err
 	}
+	// An unfinished promotion completes or rolls back only while the version
+	// it wrote is still the head; advancing it would strand that promotion.
+	if holds, ok := s.store.(state.FeatureFlagPromotionHoldReader); ok {
+		held, err := holds.FeatureFlagVersionHeldByPromotion(ctx, candidate.Scope, current.Version)
+		if err != nil || held {
+			return err
+		}
+	}
 	account, err := s.store.AccountByID(ctx, candidate.Scope.AccountID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -121,7 +129,13 @@ func (s *server) autoAdvanceFeatureFlagRollout(ctx context.Context, candidate st
 		}
 		return err
 	}
-	if !s.platformFlagEnabled(platformflags.CustomerFlags, account) {
+	// Decide as the project's organization, as management and runtime reads
+	// do (ADR 20261021080640); a project lookup is fine in a worker.
+	subject := platformflags.Subject{AccountID: account.ID, Plan: string(account.Plan)}
+	if project, err := s.store.ProjectByID(ctx, candidate.Scope.ProjectID); err == nil {
+		subject.OrgID = project.OrgID
+	}
+	if !s.platformFlagFor(platformflags.CustomerFlags, subject) {
 		return nil
 	}
 	limits := api.MustLimitsFor(account.Plan)

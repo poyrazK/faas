@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 )
 
 // Surface says who owns a response's security-header policy (ADR-830).
@@ -27,23 +29,31 @@ func (s Surface) CustomerOwned() bool { return s != SurfacePlatform }
 // customer's other subdomains and must not pin them to HTTPS (ADR-830).
 const ValueHSTSCustomDomain = "max-age=31536000"
 
-// ClassifyHost maps a Host header to its Surface. The apps domain apex, the
-// api. and operations. hosts, localhost, IP literals, and every host when no
-// apps domain is configured are platform-owned (mirrors apid.IsPlatformHost);
-// other hosts below the apps domain are app hosts; anything else is a custom
-// domain.
+// ClassifyHost maps a Host header to its Surface for a deployment whose
+// platform and apps share one domain (the layout before
+// ADR-20261026100000). An empty domain makes every host a platform host.
 func ClassifyHost(rawHost, appsDomain string) Surface {
-	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(appsDomain)), ".")
+	return ClassifyHostIn(rawHost, hostidentity.Domains{Platform: appsDomain, Apps: appsDomain})
+}
+
+// ClassifyHostIn maps a Host header to its Surface. The platform apex, its
+// api. and operations. hosts, localhost, IP literals, and every host when no
+// platform domain is configured are platform-owned (mirrors
+// apid.IsPlatformHost); other hosts under a domain the deployment owns
+// (apps domains and their aliases, the deployment-preview domain, the
+// platform zone) are app hosts; anything else is a custom domain.
+func ClassifyHostIn(rawHost string, d hostidentity.Domains) Surface {
 	host := strings.TrimSpace(rawHost)
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
 	host = strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
+	platform := strings.Trim(strings.ToLower(strings.TrimSpace(d.Platform)), ".")
+	d.Platform = platform
 	switch {
-	case domain == "", host == "localhost", net.ParseIP(host) != nil,
-		host == domain, host == "api."+domain, host == "operations."+domain:
+	case platform == "", host == "localhost", net.ParseIP(host) != nil, d.IsPlatformHost(host):
 		return SurfacePlatform
-	case strings.HasSuffix(host, "."+domain):
+	case d.Owns(host):
 		return SurfaceAppHost
 	default:
 		return SurfaceCustomDomain

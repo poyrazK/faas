@@ -26,7 +26,7 @@ HugePages_Total:       0
 		t.Fatal(err)
 	}
 	want := Stats{
-		MemTotal: 1009204 << 10, MemFree: 812340 << 10, Buffers: 2048 << 10,
+		MemTotal: 1009204 << 10, MemFree: 812340 << 10, MemAvailable: 900000 << 10, Buffers: 2048 << 10,
 		Cached: 120000 << 10, Shmem: 1024 << 10, AnonPages: 60000 << 10,
 		Slab: 12000 << 10, SReclaimable: 5000 << 10, KernelStack: 1200 << 10,
 		PageTables: 800 << 10,

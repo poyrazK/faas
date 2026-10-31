@@ -98,6 +98,9 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 		return nil, runErr
 	}
 	spec.RehearsalRunID = runID
+	if runID != "" {
+		spec.APIEnv = appendRehearsalPlatformAPI(spec.APIEnv)
+	}
 	if captureErr != nil {
 		return nil, applicationStandardRuntimeProblem(captureErr)
 	}

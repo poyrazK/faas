@@ -56,7 +56,7 @@ func (h PreflightHandler) Serve(w http.ResponseWriter, r *http.Request, account 
 
 func PreflightView(p domain.CutoverPreflight, c domain.Cutover, now time.Time) api.ManagedPostgresCutoverPreflight {
 	out := api.ManagedPostgresCutoverPreflight{CutoverID: p.CutoverID, State: p.State, Revision: p.Revision,
-		Stale:      p.SourceSessionsChanged || p.RuntimeDrainChanged || p.State != "blocked" || p.CheckedAt.IsZero() || now.Before(p.CheckedAt) || !now.Before(p.ExpiresAt) || !p.CutoverUpdatedAt.Equal(c.UpdatedAt) || c.State == domain.CutoverCancelling || c.State == domain.CutoverCancelled,
+		Stale:      p.SourceSessionsChanged || p.RuntimeDrainChanged || p.State != "blocked" || p.CheckedAt.IsZero() || now.Before(p.CheckedAt) || !now.Before(p.ExpiresAt) || !p.CutoverUpdatedAt.Equal(c.UpdatedAt) || c.State == domain.CutoverCancelling || c.State.Closed(),
 		BindingIDs: append([]string{}, p.BindingIDs...), Blockers: append([]string{}, p.Blockers...), VerificationFresh: p.VerificationFresh,
 		SourceMatches: p.SourceMatches, TargetMatches: p.TargetMatches, BindingsMatch: p.BindingsMatch, CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: p.UpdatedAt.UTC().Format(time.RFC3339Nano)}
 	if p.SourceSessions != nil {

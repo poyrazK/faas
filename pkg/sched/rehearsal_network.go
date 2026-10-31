@@ -4,14 +4,26 @@ package sched
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
 func (e *Engine) rehearsalNetworkRun(ctx context.Context, appID string) (string, error) {
 	return e.store.ScenarioRehearsalNetworkRun(ctx, appID)
+}
+
+// appendRehearsalPlatformAPI points a contained guest's platform API client at
+// the run-local endpoint, where queue work is captured (ADR-20261021090000).
+// Containment blocks the public API, so a customer value could never be used.
+// The entry follows customer entries, so it wins over plaintext env; a secret
+// of the same name still wins in the guest and its calls stay blocked.
+func appendRehearsalPlatformAPI(env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	return append(env[:len(env):len(env)], fcvm.APIEnvEntry{Key: api.ScenarioPlatformAPIURLEnv,
+		Value: fmt.Sprintf("http://%s:%d", api.ScenarioPlatformAPIHost, api.ServiceBindingPort)})
 }
 
 func (c *VMMClient) confirmRehearsalNetwork(ctx context.Context, app AppSpec, instance string, resp *vmmdpb.WakeResponse) error {

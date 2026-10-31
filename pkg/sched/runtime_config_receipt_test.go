@@ -4,6 +4,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -158,6 +159,70 @@ func TestRuntimeConfigReceiptInputReadFailureRollsBackAdmission(t *testing.T) {
 				if state.State(instance.State).CountsForRAM() {
 					t.Fatalf("failed preparation retained a resident row: %+v", instance)
 				}
+			}
+		})
+	}
+}
+
+// receiptRequiredCountingStore counts the heavier of the two receipt reads.
+type receiptRequiredCountingStore struct {
+	MemStore *state.MemStore
+	calls    *atomic.Int32
+}
+
+func (s receiptRequiredCountingStore) RuntimeConfigReceiptRequired(ctx context.Context, appID, scope string) (bool, error) {
+	s.calls.Add(1)
+	return s.MemStore.RuntimeConfigReceiptRequired(ctx, appID, scope)
+}
+
+// A restored snapshot that carries its runtime-config receipt is judged by the
+// receipt alone: whether a receipt is required is read only for a snapshot
+// without one. On production-us that read cost a restore 7-26 ms for an
+// answer it discarded.
+func TestSnapshotRuntimeConfigFreshReadsRequiredOnlyWithoutReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		withReceipt  bool
+		wantRequired int32
+	}{
+		{name: "capture with receipt", withReceipt: true, wantRequired: 0},
+		{name: "capture without receipt", withReceipt: false, wantRequired: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := state.NewMemStore()
+			_, app, deployment := seedApp(t, mem, api.PlanPro, 256, 5)
+			calls := &atomic.Int32{}
+			engine := newEngine(t, statetest.NewMem(receiptRequiredCountingStore{MemStore: mem, calls: calls}), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+			result, err := engine.Wake(t.Context(), app.ID, deployment.ID, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, err := mem.InstanceByID(t.Context(), result.InstanceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snap := state.Snapshot{
+				DeploymentID: deployment.ID, FCVersion: "1.10.0", Tier: state.SnapshotTierInit,
+				StorageKey: state.SnapshotCaptureMemKey(deployment.ID, state.SnapshotTierInit, uuid.NewString()),
+			}
+			if tc.withReceipt {
+				snap, err = mem.PublishSnapshotIfRuntimeFresh(t.Context(), snap, source.ID, source.StartedAt)
+			} else {
+				snap, err = mem.CreateSnapshot(t.Context(), snap)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, exists, err := mem.SnapshotRuntimeConfigReceipt(t.Context(), snap.ID); err != nil || exists != tc.withReceipt {
+				t.Fatalf("fixture receipt exists=%v err=%v, want %v", exists, err, tc.withReceipt)
+			}
+			calls.Store(0)
+			fresh, err := engine.snapshotRuntimeConfigFreshFor(t.Context(), snap, &deployment, nil)
+			if err != nil || !fresh {
+				t.Fatalf("fresh=%v err=%v, want a fresh snapshot", fresh, err)
+			}
+			if got := calls.Load(); got != tc.wantRequired {
+				t.Fatalf("RuntimeConfigReceiptRequired calls = %d, want %d", got, tc.wantRequired)
 			}
 		})
 	}

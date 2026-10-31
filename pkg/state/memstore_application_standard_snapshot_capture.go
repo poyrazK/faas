@@ -18,7 +18,8 @@ func (m *MemStore) lockStandardSnapshotCaptureLocked(ctx context.Context, id, ex
 	if err != nil || ins.StartedAt.IsZero() || runtimeadmission.CheckSnapshotParent(parent) != nil {
 		return ins, runtimeadmission.Receipt{}, time.Time{}, ErrApplicationStandardRuntimeStale
 	}
-	if validateStandardBootBinding(parent.Binding, capture, m.computeNodeRuntimeIncarnations[ins.NodeID], m.computeNodeRuntimeProtocols[ins.NodeID], time.Unix(0, parent.CompletedAtUnixNano)) != nil {
+	held := m.heldStandardIncarnationLocked(ins.ID, ins.NodeID, parent.Binding.Incarnation)
+	if validateStandardBootBinding(parent.Binding, capture, held, m.computeNodeRuntimeProtocols[ins.NodeID], time.Unix(0, parent.CompletedAtUnixNano)) != nil {
 		return ins, runtimeadmission.Receipt{}, time.Time{}, ErrApplicationStandardRuntimeStale
 	}
 	deadline, err := m.standardNativeArtifactDeadlineLocked(ctx, capture)
@@ -124,7 +125,8 @@ func (m *MemStore) PublishApplicationStandardSnapshotCapture(ctx context.Context
 		return ErrApplicationStandardRuntimeStale
 	}
 	owned := ack.Clone()
-	r.Acknowledgment, r.ReceivedAt = &owned, now
+	// The lock required the source's effective incarnation to be the node's.
+	r.Acknowledgment, r.ReceivedAt, r.ProducerIncarnation = &owned, now, m.computeNodeRuntimeIncarnations[ins.NodeID]
 	m.applicationStandardSnapshotCaptures[r.Grant.Token] = r
 	return nil
 }

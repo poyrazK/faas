@@ -10,7 +10,7 @@ business code and grants no recovery claim.
 
 First install or upgrade the application-owned intent table using the
 [budget schema order](event-acknowledgment-retry-budgets.md#install-and-roll-out).
-Then explicitly install `faas.EventAcknowledgmentIntentBudgetAdoptionSchema`.
+Then explicitly install `preview.EventAcknowledgmentIntentBudgetAdoptionSchema`.
 It creates `public.gregale_event_ack_intent_budget_adoptions`, an optional
 application-owned ledger separate from v1 policy adoption and budget resume.
 Existing staging/recovery and those earlier commands do not require this table.
@@ -38,24 +38,24 @@ Durably save the command UUID, owner/key and **all original options** before
 issuing the command. Copy pointed-to policy metadata when retaining the command.
 
 ```go
-options := faas.EventAcknowledgmentIntentAdoptRetryBudgetOptions{
+options := preview.EventAcknowledgmentIntentAdoptRetryBudgetOptions{
     CommandID: commandID,
     ExpectedUpdatedAt: selected.UpdatedAt,
     ExpectedDeliveryAttempts: selected.DeliveryAttempts,
-    Budget: faas.EventAcknowledgmentIntentRetryBudget{
+    Budget: preview.EventAcknowledgmentIntentRetryBudget{
         MaxDeliveryAttempts: 8,
     },
 }
 if selected.RetryPolicy != nil {
     expected := *selected.RetryPolicy
     options.ExpectedPolicy = &expected
-    options.Budget.Policy = faas.EventAcknowledgmentIntentRetryPolicy{
+    options.Budget.Policy = preview.EventAcknowledgmentIntentRetryPolicy{
         InitialBackoff: time.Duration(expected.InitialBackoffMS) * time.Millisecond,
         MaxBackoff: time.Duration(expected.MaxBackoffMS) * time.Millisecond,
     }
 }
 // Authorize and durably save options and this owner/key BEFORE calling.
-receipt, err := faas.AdoptEventAcknowledgmentIntentRetryBudget(ctx, db,
+receipt, err := preview.AdoptEventAcknowledgmentIntentRetryBudget(ctx, db,
     accountID, appID, selected.InvocationID, selected.ReplayGeneration,
     selected.Attempt, options)
 ```

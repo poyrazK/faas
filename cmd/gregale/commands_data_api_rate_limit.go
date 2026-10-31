@@ -22,7 +22,7 @@ func validateDataAPIRateLimit(record dataAPIRequestRecord) error {
 		}
 		return nil
 	}
-	if record.Code == nil || *record.Code != "data_api_rate_limited" || !dataAPIDiagnosticAllowed(record.Outcome, "rejected", "aborted") || (record.Status != nil && *record.Status != 429) || !dataAPIDiagnosticAllowed(record.Route, "rest", "rpc", "schema", "openapi") || !dataAPIDiagnosticAllowed(r.Reason, "subject", "tracking_capacity") {
+	if record.Code == nil || *record.Code != "data_api_rate_limited" || !dataAPIDiagnosticAllowed(record.Outcome, "rejected", "aborted") || (record.Status != nil && *record.Status != 429) || !dataAPIDiagnosticAllowed(record.Route, "rest", "rpc", "schema", "openapi") || !dataAPIDiagnosticAllowed(r.Reason, "subject", "tracking_capacity", "server_key") {
 		return errors.New("inconsistent rate-limit metadata")
 	}
 	if r.PerSecond == nil || *r.PerSecond < 1 || *r.PerSecond > api.DataAPIRateLimitMaxPerSecond || r.Burst == nil || *r.Burst < 1 || *r.Burst > api.DataAPIRateLimitMaxBurst || r.RetryAfterSeconds == nil || *r.RetryAfterSeconds != 1 {

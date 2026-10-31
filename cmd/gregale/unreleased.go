@@ -24,11 +24,13 @@ func applicationAuthCLI() bool {
 }
 
 // visibleCliCommands is the manifest every discovery surface reads: without
-// unreleased Auth commands and flags, or API monetization's verbs and flags
-// (monetization.go), unless they are turned on.
+// unreleased Auth commands and flags, API monetization's verbs and flags
+// (monetization.go), the realtime preview's (realtime_preview.go), or full
+// environment clones (fullclone.go), unless they are turned on.
 func visibleCliCommands() []cliCommand {
 	auth, monetization := applicationAuthCLI(), monetizationCLI()
-	if auth && monetization {
+	realtimePreview, fullClone := realtimePreviewCLI(), fullEnvironmentCloneCLI()
+	if auth && monetization && realtimePreview && fullClone {
 		return cliCommands
 	}
 	visible := make([]cliCommand, 0, len(cliCommands))
@@ -42,6 +44,12 @@ func visibleCliCommands() []cliCommand {
 		}
 		if !monetization {
 			command = withoutMonetization(command)
+		}
+		if !realtimePreview {
+			command = withoutRealtimePreview(command)
+		}
+		if !fullClone {
+			command = withoutFullEnvironmentClone(command)
 		}
 		visible = append(visible, command)
 	}
@@ -94,5 +102,5 @@ func dataAPICreateUsage() string {
 	if applicationAuthCLI() {
 		return "usage: gregale data-api create NAME --database DATABASE (--auth AUTH_APP | --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE) [--scope SCOPE] [--origins ORIGINS] [--public-read SCHEMA.RELATION[,...]] [--public-rpc SCHEMA.FUNCTION[,...]] [--aggregates] [--migrations DIR [--release-command COMMAND]]"
 	}
-	return "usage: gregale data-api create NAME --database DATABASE --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE [--scope SCOPE] [--origins ORIGINS] [--public-read SCHEMA.RELATION[,...]] [--public-rpc SCHEMA.FUNCTION[,...]] [--aggregates] [--migrations DIR [--release-command COMMAND]]"
+	return "usage: gregale data-api create NAME --database DATABASE --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE [--env SCOPE] [--origins ORIGINS] [--public-read SCHEMA.RELATION[,...]] [--public-rpc SCHEMA.FUNCTION[,...]] [--aggregates] [--migrations DIR [--release-command COMMAND]]"
 }

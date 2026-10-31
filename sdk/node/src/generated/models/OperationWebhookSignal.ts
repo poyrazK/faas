@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One provider event type and the operation event a waiting workflow step receives for it (ADR-20261016100929).
+ * One provider event type and the operation event a waiting workflow step receives for it.
  */
 export type OperationWebhookSignal = {
   provider_event: string;

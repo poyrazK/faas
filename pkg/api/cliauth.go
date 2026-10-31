@@ -33,11 +33,18 @@ type CliAuthCodeResponse struct {
 	Code      string `json:"code"`
 	URL       string `json:"url"`
 	ExpiresAt string `json:"expires_at"` // RFC3339
+	// DeviceCode is set when the request asked for one (Device): 32 random
+	// bytes, hex, that only this CLI holds. Exchange then accepts only it,
+	// never Code, so guessing the short code a user approves yields nothing
+	// (bug hunt 2026-10-28 H67).
+	DeviceCode string `json:"device_code,omitempty"`
 }
 
-// CliAuthExchangeRequest is the CLI's poll body.
+// CliAuthExchangeRequest is the CLI's poll body: DeviceCode for a code
+// minted with one, else Code (CLIs that predate device codes).
 type CliAuthExchangeRequest struct {
-	Code string `json:"code"`
+	Code       string `json:"code,omitempty"`
+	DeviceCode string `json:"device_code,omitempty"`
 }
 
 // CliAuthExchangeResponse is the only response the CLI writes to disk.
@@ -53,10 +60,33 @@ type CliAuthExchangeResponse struct {
 // Empty Purpose preserves the normal CLI login contract.
 type CliAuthCodeRequest struct {
 	Purpose string `json:"purpose,omitempty"`
+	// Scopes, with purpose "mcp" only, adds MCPGrantableScopes to apps:read.
+	Scopes []string `json:"scopes,omitempty"`
+	// Device asks for a CLI login code bound to a device code
+	// (CliAuthCodeResponse.DeviceCode).
+	Device bool `json:"device,omitempty"`
 }
 
 const CliAuthPurposeMCPRead = "mcp-read"
 const CliAuthPurposeMCPWrite = "mcp-write"
+
+// CliAuthPurposeMCP mints a code for apps:read plus the requested scopes
+// (ADR-20261026195952). The scope set is part of the code and its stored
+// hash, so neither the browser nor exchange can widen it.
+const CliAuthPurposeMCP = "mcp"
+
+// MCPGrantableScopes are the scopes an MCP consent may add to apps:read, in
+// the bit order of the code's scope digit. postgres:manage brings
+// postgres:read with it.
+var MCPGrantableScopes = []string{ScopeDeployWrite, ScopeSecretsRequest, ScopeStorageManage, ScopeManagedPostgresManage}
+
+// MintScopedMCPAuthCode mints a browser code for apps:read plus scopes, each
+// one of MCPGrantableScopes.
+func (c *Client) MintScopedMCPAuthCode(ctx context.Context, scopes []string) (CliAuthCodeResponse, error) {
+	var out CliAuthCodeResponse
+	err := c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Purpose: CliAuthPurposeMCP, Scopes: scopes}, &out)
+	return out, err
+}
 
 // MintMCPAuthCode uses the existing dashboard sign-in and account-bound consent.
 func (c *Client) MintMCPAuthCode(ctx context.Context, writes bool) (CliAuthCodeResponse, error) {

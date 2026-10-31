@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -32,7 +33,7 @@ type releaseAcceptanceCredential struct {
 
 func cmdReleaseAcceptanceDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl release-acceptance: missing subcommand; want mint-token|revoke-token")
+		fmt.Fprintln(os.Stderr, "gregalectl release-acceptance: missing subcommand; want mint-token|revoke-token|verify-placement|verify-node")
 		return 2
 	}
 	switch args[0] {
@@ -42,6 +43,8 @@ func cmdReleaseAcceptanceDispatch(args []string) int {
 		return cmdReleaseAcceptanceRevokeToken(args[1:])
 	case "verify-placement":
 		return cmdReleaseAcceptanceVerifyPlacement(args[1:])
+	case "verify-node":
+		return cmdReleaseAcceptanceVerifyNode(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance: unknown subcommand %q\n", args[0])
 		return 2
@@ -93,29 +96,15 @@ func cmdReleaseAcceptanceVerifyPlacement(args []string) int {
 	for _, node := range nodes {
 		byNode[node.ID] = &coverage{}
 	}
-	seen := make(map[string]struct{})
-	for _, rawSlug := range strings.Split(*slugsCSV, ",") {
-		slug := strings.TrimSpace(rawSlug)
-		if slug == "" {
-			continue
-		}
-		if _, duplicate := seen[slug]; duplicate {
-			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: duplicate slug %q\n", slug)
-			return 1
-		}
-		seen[slug] = struct{}{}
-		app, appErr := st.AppBySlug(ctx, slug)
-		if appErr != nil || app.AccountID != account.ID {
-			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q is unavailable or not acceptance-owned: %v\n", slug, appErr)
-			return 1
-		}
-		deployment, depErr := st.LiveDeployment(ctx, app.ID)
-		if depErr != nil {
-			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q has no live deployment: %v\n", slug, depErr)
-			return 1
-		}
-		if app.Type != state.AppTypeApp && app.Type != state.AppTypeFunction {
-			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q has unexpected type %q\n", slug, app.Type)
+	slugs, err := parseReleaseAcceptanceSlugs(*slugsCSV)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: %v\n", err)
+		return 1
+	}
+	for _, slug := range slugs {
+		app, deployment, err := releaseAcceptanceLiveApp(ctx, st, account.ID, slug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: %v\n", err)
 			return 1
 		}
 		instances, instErr := st.ListInstancesForApp(ctx, app.ID)
@@ -173,6 +162,155 @@ func cmdReleaseAcceptanceVerifyPlacement(args []string) int {
 	return 0
 }
 
+// parseReleaseAcceptanceSlugs splits a --slugs list, refusing duplicates.
+func parseReleaseAcceptanceSlugs(csv string) ([]string, error) {
+	var slugs []string
+	seen := make(map[string]struct{})
+	for _, raw := range strings.Split(csv, ",") {
+		slug := strings.TrimSpace(raw)
+		if slug == "" {
+			continue
+		}
+		if _, duplicate := seen[slug]; duplicate {
+			return nil, fmt.Errorf("duplicate slug %q", slug)
+		}
+		seen[slug] = struct{}{}
+		slugs = append(slugs, slug)
+	}
+	return slugs, nil
+}
+
+// releaseAcceptanceLiveApp returns an acceptance-owned app or function and
+// its live deployment.
+func releaseAcceptanceLiveApp(ctx context.Context, st state.Store, accountID, slug string) (state.App, state.Deployment, error) {
+	app, err := st.AppBySlug(ctx, slug)
+	if err != nil {
+		return state.App{}, state.Deployment{}, fmt.Errorf("app %q is unavailable: %w", slug, err)
+	}
+	if app.AccountID != accountID {
+		return state.App{}, state.Deployment{}, fmt.Errorf("app %q is not acceptance-owned", slug)
+	}
+	deployment, err := st.LiveDeployment(ctx, app.ID)
+	if err != nil {
+		return state.App{}, state.Deployment{}, fmt.Errorf("app %q has no live deployment: %w", slug, err)
+	}
+	if app.Type != state.AppTypeApp && app.Type != state.AppTypeFunction {
+		return state.App{}, state.Deployment{}, fmt.Errorf("app %q has unexpected type %q", slug, app.Type)
+	}
+	return app, deployment, nil
+}
+
+// releaseAcceptanceNodeReport says whether the acceptance apps prove one
+// node: a live deployment's instance running or parked there, and a
+// successful build whose provenance names that node's builder.
+type releaseAcceptanceNodeReport struct {
+	Node     string `json:"node"`
+	NodeID   string `json:"node_id"`
+	Instance bool   `json:"instance"`
+	Build    bool   `json:"build"`
+	Ready    bool   `json:"ready"`
+}
+
+// cmdReleaseAcceptanceVerifyNode is the per-node canary's check. cd-platform
+// activates compute nodes one at a time; placement and build claims are
+// fleet-wide, so the canary deploys fresh acceptance apps until this reports
+// the just-activated node both serving one and having built one. Exit 3 means
+// not yet.
+func cmdReleaseAcceptanceVerifyNode(args []string) int {
+	fs := flag.NewFlagSet("release-acceptance verify-node", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	nodeName := fs.String("node", "", "compute node name (manifest or registry form)")
+	slugsCSV := fs.String("slugs", "", "comma-separated acceptance app slugs")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 || strings.TrimSpace(*nodeName) == "" || strings.TrimSpace(*slugsCSV) == "" {
+		fmt.Fprintln(os.Stderr, "usage: gregalectl release-acceptance verify-node --node NAME --slugs SLUG[,SLUG...]")
+		return 2
+	}
+	slugs, err := parseReleaseAcceptanceSlugs(*slugsCSV)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-node: %v\n", err)
+		return 1
+	}
+	st, closeFn, err := releaseAcceptanceStoreOpener()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-node: %v\n", err)
+		return 1
+	}
+	defer closeFn()
+	report, err := releaseAcceptanceVerifyNode(context.Background(), st, strings.TrimSpace(*nodeName), slugs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-node: %v\n", err)
+		return 1
+	}
+	if err := json.NewEncoder(osStdout).Encode(report); err != nil {
+		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-node: encode: %v\n", err)
+		return 1
+	}
+	if !report.Ready {
+		return 3
+	}
+	return 0
+}
+
+func releaseAcceptanceVerifyNode(ctx context.Context, st state.Store, name string, slugs []string) (releaseAcceptanceNodeReport, error) {
+	node, err := st.ComputeNodeByName(ctx, name)
+	if errors.Is(err, state.ErrNotFound) {
+		node, err = st.ComputeNodeByName(ctx, canonicalComputeNodeName(name, roleComputeOnly))
+	}
+	if err != nil {
+		return releaseAcceptanceNodeReport{}, fmt.Errorf("node %q: %w", name, err)
+	}
+	if !node.Active {
+		return releaseAcceptanceNodeReport{}, fmt.Errorf("node %q is not active", node.Name)
+	}
+	account, err := st.AccountByEmail(ctx, releaseAcceptanceAccountEmail)
+	if err != nil {
+		return releaseAcceptanceNodeReport{}, fmt.Errorf("account: %w", err)
+	}
+	report := releaseAcceptanceNodeReport{Node: node.Name, NodeID: node.ID}
+	for _, slug := range slugs {
+		app, deployment, err := releaseAcceptanceLiveApp(ctx, st, account.ID, slug)
+		if err != nil {
+			return releaseAcceptanceNodeReport{}, err
+		}
+		instances, err := st.ListInstancesForApp(ctx, app.ID)
+		if err != nil {
+			return releaseAcceptanceNodeReport{}, fmt.Errorf("app %q instances: %w", slug, err)
+		}
+		for _, instance := range instances {
+			if instance.NodeID == node.ID && instance.DeploymentID == deployment.ID &&
+				(instance.State == string(state.StateRunning) || instance.State == string(state.StateParked)) {
+				report.Instance = true
+			}
+		}
+		build, err := st.BuildByDeployment(ctx, deployment.ID)
+		if errors.Is(err, state.ErrNotFound) {
+			continue // an image deployment builds nothing
+		}
+		if err != nil {
+			return releaseAcceptanceNodeReport{}, fmt.Errorf("app %q build: %w", slug, err)
+		}
+		if build.Status != state.BuildSucceeded {
+			continue
+		}
+		provenance, err := st.BuildProvenanceByBuildID(ctx, build.ID)
+		if errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return releaseAcceptanceNodeReport{}, fmt.Errorf("app %q build provenance: %w", slug, err)
+		}
+		// builderd stamps its node name (FAAS_NODE_NAME), not the row id.
+		if provenance.BuilderNodeID == node.Name || provenance.BuilderNodeID == node.ID {
+			report.Build = true
+		}
+	}
+	report.Ready = report.Instance && report.Build
+	return report, nil
+}
+
 func releaseAcceptanceMutationFlags(fs *flag.FlagSet) (*bool, *string) {
 	yes := fs.Bool("yes", false, "acknowledge the direct production database mutation")
 	reason := fs.String("reason", "", "required fixed audit reason")
@@ -202,6 +340,14 @@ func cmdReleaseAcceptanceMintToken(args []string) int {
 		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance mint-token: %v\n", err)
 		return 2
 	}
+	// The key is written as apid would write it, under apid's credential
+	// configuration when the environment carries it (ADR 20261029202403).
+	policy, err := credhash.LoadAccountPolicy(os.Getenv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance mint-token: %v\n", err)
+		return 1
+	}
+	credhash.SetAccount(policy)
 
 	st, closeFn, err := releaseAcceptanceStoreOpener()
 	if err != nil {

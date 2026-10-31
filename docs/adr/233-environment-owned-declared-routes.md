@@ -47,6 +47,12 @@ the API requires MFA and deploy-write scope. The database rejects an enabled
 gate with an empty explicit list, so direct store writes cannot accidentally
 restore a shared OpenAPI fallback.
 
+Protected environments other than production refuse this direct edit (409),
+as they refuse direct workload settings edits: their route contracts change
+through an approved project plan or an environment promotion, which carries the
+source stage's contract. Production, protected by default, keeps the direct
+edit, as it keeps the unscoped application settings edit.
+
 ## Follow-up: stable platform URL for a named environment
 
 Each registered project environment now has a stable platform URL per public
@@ -90,3 +96,8 @@ closed if its policy store is unavailable. Application-wide `route` rules may
 not substitute the stable URL's encoded workload before identity resolution.
 Other edge-rule kinds, ordinary app hostnames, and custom domains remain
 application-owned and are still listed as shared resources.
+
+ADR-570's environment-scoped custom-domain follow-up extends the workload app
+filter and headers/CORS replacement to explicitly bound custom domains. Its
+public compiler selects the environment from the actual binding in the same
+authoritative snapshot.

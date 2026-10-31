@@ -11,12 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deadLetterInvocationWorkExpired = `-- name: DeadLetterInvocationWorkExpired :one
+SELECT (work_policy_name IS NOT NULL AND work_expires_at IS NOT NULL AND work_expires_at<=now())::boolean
+FROM invocations WHERE id=$1::uuid
+`
+
+// ADR-20261031101000: replay resets attempts, so a keyed row whose pending
+// deadline has passed would only expire again.
+func (q *Queries) DeadLetterInvocationWorkExpired(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, deadLetterInvocationWorkExpired, invocationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deadLetterReplayCandidateIDs = `-- name: DeadLetterReplayCandidateIDs :many
-SELECT id::text FROM production_dead_letter_events
-WHERE account_id=$1::uuid AND replayed_at IS NULL
-  AND ($2::uuid IS NULL OR app_id=$2::uuid)
-  AND ($3::uuid IS NULL OR id=$3::uuid)
-ORDER BY last_failed_at DESC,id DESC LIMIT $4::integer
+SELECT d.id::text FROM production_dead_letter_events d
+WHERE d.account_id=$1::uuid AND d.replayed_at IS NULL AND d.source<>'event_route'
+  AND ($2::uuid IS NULL OR d.app_id=$2::uuid)
+  AND ($3::uuid IS NULL OR d.id=$3::uuid)
+  AND ($3::uuid IS NOT NULL OR d.source<>'invocation' OR NOT EXISTS (
+    SELECT 1 FROM invocations i WHERE i.id=d.source_id
+      AND i.work_policy_name IS NOT NULL AND i.work_expires_at<=now()))
+ORDER BY d.last_failed_at DESC,d.id DESC LIMIT $4::integer
 `
 
 type DeadLetterReplayCandidateIDsParams struct {
@@ -26,6 +43,10 @@ type DeadLetterReplayCandidateIDsParams struct {
 	CandidateLimit  int32
 }
 
+// event_route entries cannot be replayed (DeadLetterReplayable), so they never
+// take a page from replay-all. Neither does keyed work whose pending deadline
+// has passed (ADR-20261031101000); replaying one entry by id still reaches it,
+// so the refusal names the deadline.
 func (q *Queries) DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error) {
 	rows, err := db.Query(ctx, deadLetterReplayCandidateIDs,
 		arg.AccountID,
@@ -39,11 +60,11 @@ func (q *Queries) DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg
 	defer rows.Close()
 	items := []string{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var d_id string
+		if err := rows.Scan(&d_id); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, d_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

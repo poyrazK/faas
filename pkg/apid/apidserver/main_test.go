@@ -118,6 +118,9 @@ func withTestHMACFiles(t *testing.T) {
 	// Most in-process tests should not bind the production default under
 	// /run/faas. The startup integration test opts in with a temp socket.
 	t.Setenv("FAAS_OTEL_SPANS_WRITER_ENABLED", "false")
+	// The auth RPC runs whether or not app errors are on (ADR
+	// 20261029202403) and binds /run/faas/auth.sock by default.
+	t.Setenv("FAAS_AUTH_RPC_ENABLED", "false")
 }
 
 // --- seedDevAccount --------------------------------------------------------
@@ -207,6 +210,7 @@ func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
 		nil,
 		discardLogger(),
 		true,
+		nil,
 		nil,
 		nil,
 		nil,

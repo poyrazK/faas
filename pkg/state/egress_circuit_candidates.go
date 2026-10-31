@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// EgressCircuitCandidate is one opted-in upstream plus its newest probe
+// EgressCircuitCandidate is one opted-in upstream plus its recent probe
 // verdict.
 //
 // Host is the plaintext value schedd resolves locally to write an nftables
@@ -41,7 +41,7 @@ type EgressCircuitCandidate struct {
 // ListEgressCircuitCandidates (ADR-201 §3) — MemStore stub, Postgres-only.
 //
 // Mirrors every other ADR-098 data_upstreams method on MemStore: the feed
-// reads a partitioned probe table with a DISTINCT ON join, and a hand-rolled
+// reads grouped recent history from a partitioned probe table, and a hand-rolled
 // in-memory imitation of that is exactly the kind of divergence that produced
 // the always-zero uppercase-state-literal queries. A unit test that reaches
 // this should run against pgtest instead.
@@ -50,7 +50,7 @@ func (m *MemStore) ListEgressCircuitCandidates(_ context.Context, _ time.Time) (
 }
 
 // ListEgressCircuitCandidates returns every opted-in upstream joined to its
-// newest probe verdict no older than `since`.
+// recent probe verdict no older than `since`.
 func (s *PgStore) ListEgressCircuitCandidates(ctx context.Context, since time.Time) ([]EgressCircuitCandidate, error) {
 	rows, err := s.dataUpstreamsQueries().ListEgressCircuitCandidates(ctx, s.pool, pgtype.Timestamptz{Time: since, Valid: true})
 	if err != nil {
@@ -83,7 +83,7 @@ func (s *PgStore) ListEgressCircuitCandidates(ctx context.Context, since time.Ti
 		// cutting an app off from it.
 		if r.SampledAt.Valid {
 			c.Sampled = r.SampledAt.Time
-			c.OK = r.Ok.Valid && r.Ok.Bool
+			c.OK = r.Ok
 		}
 		out = append(out, c)
 	}

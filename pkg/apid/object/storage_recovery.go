@@ -47,6 +47,7 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 	defer cancel()
 	owned := false
 	backend, err := s.Host.ObjectStorage().Resolve(b.BackendID, b.BackendFingerprint)
+	resolved := err == nil
 	if err != nil {
 		err = objectstorage.ErrConfiguration
 	} else if b.State == "provisioning" {
@@ -72,6 +73,14 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 				err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
 			}
 		}
+	}
+	// Only the provider's own refusal says the credentials are bad; a bucket
+	// fenced by a changed backend fingerprint fails Resolve instead.
+	switch {
+	case resolved && errors.Is(err, objectstorage.ErrConfiguration):
+		s.health.markConfigurationFailure(b.BackendID, time.Now())
+	case resolved && err == nil:
+		s.health.markSuccess(b.BackendID)
 	}
 	notEmpty := b.State == "deleting" && errors.Is(err, objectstorage.ErrNotEmpty)
 	if err != nil && (!notEmpty || owned) {

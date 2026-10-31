@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -64,7 +65,12 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 	if err = admit(ctx); err != nil {
 		return err
 	}
-	if err = loadProjectEnvironmentCloneWorkerKeys(os.Getenv); err != nil {
+	if err = loadCloneWorkerSealing(os.Getenv, log); err != nil {
+		return err
+	}
+	// ADR 20261022111812: clone values are account values; the worker seals
+	// and opens them as apid does.
+	if err = loadAccountDomain(os.Getenv, log); err != nil {
 		return err
 	}
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid-clone-worker")
@@ -76,8 +82,19 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 		return fmt.Errorf("clone worker: migrate: %w", err)
 	}
 	openapidiff.RegisterStateCapture()
+	domains, err := cfg.Domains(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("clone worker: %w", err)
+	}
+	hostidentity.Configure(domains)
 	store := state.NewPgStore(pool)
-	srv := newServer(store, log, cfg.GetAppsDomain(os.Getenv), pgNotifier{pool: pool, log: log}).WithCompanionImages(cfg.CompanionImages)
+	uninstallRuntimeSigner, err := installRuntimeSigner(ctx, os.Getenv, store, log)
+	if err != nil {
+		return err
+	}
+	defer uninstallRuntimeSigner()
+	srv := newServer(store, log, cfg.GetAppsDomain(os.Getenv), pgNotifier{pool: pool, log: log}).WithCompanionImages(cfg.CompanionImages).
+		WithPlatformDomain(platformDomainFromConfig(cfg, os.Getenv))
 	srv.clonePostgresContentsReadPool, srv.cloneWorkerAdmission = reads, admit
 	srv.WithRuntimeConfigManager(newRuntimeConfigManager(os.Getenv)).WithDataPlacement(dataPlacementEnabledFromEnv(os.Getenv))
 	objects, err := objectstorage.Load(os.Getenv)
@@ -85,7 +102,7 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 		return errors.New("clone worker: object provider configuration unavailable")
 	}
 	srv.WithObjectStorage(objects)
-	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(pool, os.Getenv, log)
+	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(pool, os.Getenv, log, nil)
 	if err != nil {
 		return errors.New("clone worker: PostgreSQL provider configuration unavailable")
 	}
@@ -107,6 +124,17 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 		}
 		return srv.runtimeConfig.reconcile(ctx, store)
 	}, func() { live.Beat("clone_coordinator") })
+}
+
+// loadCloneWorkerSealing loads what the clone worker seals with. A clone
+// checkpoint seals an app secret, so the worker seals it as apid does: to
+// the runtime domain once writes moved there, bound to the account once
+// binding is on (ADR 20261022111812, ADR-20261023173624).
+func loadCloneWorkerSealing(getenv func(string) string, log *slog.Logger) error {
+	if err := loadProjectEnvironmentCloneWorkerKeys(getenv); err != nil {
+		return err
+	}
+	return loadRuntimeSealDomain(getenv, log)
 }
 
 func loadProjectEnvironmentCloneWorkerKeys(getenv func(string) string) error {

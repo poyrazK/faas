@@ -114,6 +114,27 @@ func TestCheckPointsToGregale_OK(t *testing.T) {
 	}
 }
 
+// adr: 20261026100000 — a custom domain whose CNAME names the apex of an
+// earlier apps domain (still owned, still routed) is not drifted.
+func TestCheckPointsToGregale_OwnedApexAfterMove(t *testing.T) {
+	withSeams(t, nil, nil, nil, "gregale.app")
+	prevCNAME, prevOwned := cnameLookupFunc, ownedDomainsFunc
+	t.Cleanup(func() { cnameLookupFunc, ownedDomainsFunc = prevCNAME, prevOwned })
+	ownedDomainsFunc = func() []string { return []string{"gregale.dev", "gregale.app"} }
+	for cname, want := range map[string]probeStatus{
+		"gregale.dev.":       probeOK,
+		"Gregale.App.":       probeOK,
+		"shop.gregale.dev.":  probeFail,
+		"gregale.dev.evil.":  probeFail,
+		"wrong.example.com.": probeFail,
+	} {
+		cnameLookupFunc = func(context.Context, string) (string, error) { return cname, nil }
+		if res := checkPointsToGregale(context.Background(), "www.customer.example"); res.Status != want {
+			t.Errorf("CNAME %s: status = %q, want %q (%s)", cname, res.Status, want, res.Detail)
+		}
+	}
+}
+
 func TestCheckPointsToGregale_Mismatch(t *testing.T) {
 	withSeams(t, nil, nil, nil, "edge.gregale.dev")
 	prevCNAME := cnameLookupFunc

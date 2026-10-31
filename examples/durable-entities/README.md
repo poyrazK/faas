@@ -366,7 +366,7 @@ it through an authorized backend.
 The Go SDK exposes the same operation:
 
 ```go
-result, err := client.InvokeDurableEntity(ctx, "counter", faas.DurableEntityInvokeRequest{
+result, err := client.InvokeDurableEntity(ctx, "counter", preview.DurableEntityInvokeRequest{
     Namespace: "counters", Key: "document:123", RequestID: "increment-001",
     Payload: json.RawMessage(`{"delta":1}`),
 })

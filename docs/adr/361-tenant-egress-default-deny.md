@@ -37,3 +37,7 @@
   - Host-namespace filtering. Per-plan and per-app policy already lives in the per-instance chain.
   - Proxy-only egress. It breaks raw TCP clients and TLS pinning.
   - A feature flag.
+
+## Amendment (2026-10-26)
+
+- [ADR-20261026150000](20261026150000-managed-database-binding-egress.md): a managed PostgreSQL binding opens its database's port to that database's own resolved addresses on every plan, through a per-netns `egress_db` set accepted before the port policy. `apps.egress_ports` and its plan gate are unchanged.

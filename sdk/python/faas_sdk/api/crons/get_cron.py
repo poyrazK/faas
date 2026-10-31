@@ -70,8 +70,7 @@ def sync_detailed(
 ) -> Response[CronResponse | Problem]:
     """Get one cron trigger.
 
-     Single-row read for one cron (issue #791 PR-E / ADR-090
-    closure). Backs `gregale crons info <id>` and any dashboard
+     Single-row read for one cron (closure). Backs `gregale crons info <id>` and any dashboard
     drill-down. The wire shape matches `CronResponse` so SDK
     clients decode it with the existing struct.
 
@@ -104,8 +103,7 @@ def sync(
 ) -> CronResponse | Problem | None:
     """Get one cron trigger.
 
-     Single-row read for one cron (issue #791 PR-E / ADR-090
-    closure). Backs `gregale crons info <id>` and any dashboard
+     Single-row read for one cron (closure). Backs `gregale crons info <id>` and any dashboard
     drill-down. The wire shape matches `CronResponse` so SDK
     clients decode it with the existing struct.
 
@@ -133,8 +131,7 @@ async def asyncio_detailed(
 ) -> Response[CronResponse | Problem]:
     """Get one cron trigger.
 
-     Single-row read for one cron (issue #791 PR-E / ADR-090
-    closure). Backs `gregale crons info <id>` and any dashboard
+     Single-row read for one cron (closure). Backs `gregale crons info <id>` and any dashboard
     drill-down. The wire shape matches `CronResponse` so SDK
     clients decode it with the existing struct.
 
@@ -165,8 +162,7 @@ async def asyncio(
 ) -> CronResponse | Problem | None:
     """Get one cron trigger.
 
-     Single-row read for one cron (issue #791 PR-E / ADR-090
-    closure). Backs `gregale crons info <id>` and any dashboard
+     Single-row read for one cron (closure). Backs `gregale crons info <id>` and any dashboard
     drill-down. The wire shape matches `CronResponse` so SDK
     clients decode it with the existing struct.
 

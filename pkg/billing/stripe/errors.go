@@ -4,6 +4,8 @@ import (
 	"errors"
 
 	stripe "github.com/stripe/stripe-go"
+
+	"github.com/onebox-faas/faas/pkg/billing/stripe/pushresult"
 )
 
 // Push error classification — maps a Stripe push failure to a short,
@@ -50,17 +52,17 @@ import (
 // with no separate success branch — code=="" would mean "skip", which
 // is a different semantic the dashboard labels differently.
 const (
-	labelOK               = "ok"
-	labelNoAPIKey         = "no-api-key"
-	labelNegativeQuantity = "negative-quantity"
-	labelOther            = "other"
-	labelAPIConnection    = "api-connection"
-	labelAPIError         = "api-error"
-	labelAuthError        = "auth-error"
-	labelPermission       = "permission"
-	labelCardError        = "card-error"
-	labelInvalidRequest   = "invalid-request"
-	labelRateLimit        = "rate-limit"
+	labelOK               = pushresult.OK
+	labelNoAPIKey         = pushresult.NoAPIKey
+	labelNegativeQuantity = pushresult.NegativeQuantity
+	labelOther            = pushresult.Other
+	labelAPIConnection    = pushresult.APIConnection
+	labelAPIError         = pushresult.APIError
+	labelAuthError        = pushresult.AuthError
+	labelPermission       = pushresult.Permission
+	labelCardError        = pushresult.CardError
+	labelInvalidRequest   = pushresult.InvalidRequest
+	labelRateLimit        = pushresult.RateLimit
 )
 
 func ClassifyPushError(err error) string {
@@ -119,21 +121,11 @@ func ClassifyPushError(err error) string {
 // dashboard's panel render as "no data" until at least one push
 // happened — a real-world ops hazard.
 //
-// Adding a new label requires editing this function AND the dashboard's
-// panel config; do not extend ClassifyPushError's switch arms without
-// also adding the label here. Documented in ADR-024 §"Consequences".
+// The set lives in pkg/billing/stripe/pushresult so pkg/wire can read it
+// without linking stripe-go. Adding a new label requires editing
+// pushresult.Labels AND the dashboard's panel config; do not extend
+// ClassifyPushError's switch arms without also adding the label there.
+// Documented in ADR-024 §"Consequences".
 func PushResultLabels() []string {
-	return []string{
-		labelOK,
-		labelNoAPIKey,
-		labelNegativeQuantity,
-		labelAPIConnection,
-		labelAPIError,
-		labelAuthError,
-		labelPermission,
-		labelCardError,
-		labelInvalidRequest,
-		labelRateLimit,
-		labelOther,
-	}
+	return pushresult.Labels()
 }

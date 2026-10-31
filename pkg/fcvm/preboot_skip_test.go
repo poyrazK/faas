@@ -3,6 +3,7 @@
 package fcvm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -20,9 +21,9 @@ func v2CaptureKey(id string) string {
 }
 
 // A restore of a capture whose drive already holds identical pre-boot files
-// skips the loop mount; any other restore writes exactly as before.
+// skips the drive session; any other restore writes exactly as before.
 func TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures(t *testing.T) {
-	fakeLoopMounts(t)
+	fakeDriveImages(t)
 	v := newStagingVMM(t, "cold")
 	secrets, env, resolver := []byte(`{"S":"x"}`), []byte(`{"K":"v"}`), "10.100.0.1"
 
@@ -49,7 +50,7 @@ func TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures(t *testing.T) {
 		{name: "cold boot path", captureKey: "", secrets: secrets, env: env, resolver: resolver},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sessions, _ := fakeLoopMounts(t) // a fresh drive per restore
+			sessions, _ := fakeDriveImages(t) // a fresh drive per restore
 			inst := "restore-" + tc.name
 			v2 := newStagingVMMFrom(t, v, inst)
 			before := *sessions
@@ -61,7 +62,7 @@ func TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures(t *testing.T) {
 				t.Fatalf("skipped = %v, want %v", skipped, tc.wantSkip)
 			}
 			if mounted := *sessions - before; mounted != map[bool]int{true: 0, false: 1}[tc.wantSkip] {
-				t.Fatalf("loop mount sessions = %d (skipped=%v)", mounted, skipped)
+				t.Fatalf("drive sessions = %d (skipped=%v)", mounted, skipped)
 			}
 		})
 	}
@@ -79,7 +80,7 @@ func newStagingVMMFrom(t *testing.T, v *JailerVMM, instance string) *JailerVMM {
 // A skipped restore passes its digest on, so a capture taken from the
 // restored instance is itself skippable on the next restore.
 func TestPreBootLedger_ChainsThroughSkippedRestores(t *testing.T) {
-	sessions, _ := fakeLoopMounts(t)
+	sessions, _ := fakeDriveImages(t)
 	v := newStagingVMM(t, "a")
 	if err := v.stagePreBootFiles("a", nil, nil, nil, "10.100.0.1", false); err != nil {
 		t.Fatal(err)
@@ -96,7 +97,7 @@ func TestPreBootLedger_ChainsThroughSkippedRestores(t *testing.T) {
 		t.Fatalf("restore of a capture from a skipped restore: skipped=%v err=%v", skipped, err)
 	}
 	if *sessions != before {
-		t.Fatal("chained restore still mounted drive1")
+		t.Fatal("chained restore still opened drive1")
 	}
 }
 
@@ -186,7 +187,7 @@ type preBootInputs struct {
 
 var learnInputs = preBootInputs{secrets: []byte(`{"S":"x"}`), env: []byte(`{"K":"v"}`), resolver: "10.100.0.1"}
 
-func (in preBootInputs) writers(t *testing.T) ([]preBootFileWriter, string) {
+func (in preBootInputs) writers(t *testing.T) ([]driveFile, string) {
 	t.Helper()
 	w, d, err := preBootFileWriters(nil, in.secrets, in.env, in.resolver, false)
 	if err != nil {
@@ -195,12 +196,12 @@ func (in preBootInputs) writers(t *testing.T) ([]preBootFileWriter, string) {
 	return w, d
 }
 
-// After a vmmd restart the first restore of a capture mounts, finds the files
+// After a vmmd restart the first restore of a capture opens the drive, finds the files
 // already there, writes nothing and records the capture; the next restore of
-// it skips the mount. Parks reuse snapshots, so without this the skip never
+// it skips the session. Parks reuse snapshots, so without this the skip never
 // fired in production.
 func TestStagePreBootFilesUnless_LearnsCaptureAfterRestart(t *testing.T) {
-	sessions, mountRoot := fakeLoopMounts(t)
+	sessions, mountRoot := fakeDriveImages(t)
 	v := newStagingVMM(t, "first")
 	// An earlier vmmd wrote the files onto the drive that was then captured.
 	if err := v.stagePreBootFiles("first", nil, learnInputs.secrets, learnInputs.env, learnInputs.resolver, false); err != nil {
@@ -217,7 +218,7 @@ func TestStagePreBootFilesUnless_LearnsCaptureAfterRestart(t *testing.T) {
 	before := *sessions
 	skipped, err := v.stagePreBootFilesUnless("first", key, nil, learnInputs.secrets, learnInputs.env, learnInputs.resolver, false)
 	if err != nil || skipped || *sessions-before != 1 {
-		t.Fatalf("first restore after restart: skipped=%v err=%v mounts=%d, want one mount", skipped, err, *sessions-before)
+		t.Fatalf("first restore after restart: skipped=%v err=%v sessions=%d, want one session", skipped, err, *sessions-before)
 	}
 	for _, rel := range []string{secretsEnvPath, apiEnvPath, serviceDiscoveryResolverPath} {
 		if info, err := os.Lstat(filepath.Join(*mountRoot, rel)); err != nil || !info.ModTime().Equal(old) {
@@ -232,27 +233,27 @@ func TestStagePreBootFilesUnless_LearnsCaptureAfterRestart(t *testing.T) {
 	before = *sessions
 	skipped, err = next.stagePreBootFilesUnless("second", key, nil, learnInputs.secrets, learnInputs.env, learnInputs.resolver, false)
 	if err != nil || !skipped || *sessions != before {
-		t.Fatalf("second restore: skipped=%v err=%v mounts=%d, want a skip without a mount", skipped, err, *sessions-before)
+		t.Fatalf("second restore: skipped=%v err=%v sessions=%d, want a skip without a session", skipped, err, *sessions-before)
 	}
 
-	// The record is keyed on the inputs too: a rotated secret still mounts
+	// The record is keyed on the inputs too: a rotated secret still opens the drive
 	// and writes (onto a fresh drive; the test user cannot rewrite 0400
 	// files the way root vmmd does).
-	sessions, _ = fakeLoopMounts(t)
+	sessions, _ = fakeDriveImages(t)
 	rotated := newStagingVMMFrom(t, v, "rotated")
 	if skipped, err := rotated.stagePreBootFilesUnless("rotated", key, nil, []byte(`{"S":"y"}`), learnInputs.env, learnInputs.resolver, false); err != nil || skipped || *sessions != 1 {
-		t.Fatalf("rotated secret: skipped=%v err=%v mounts=%d, want one mount that writes", skipped, err, *sessions)
+		t.Fatalf("rotated secret: skipped=%v err=%v sessions=%d, want one session that writes", skipped, err, *sessions)
 	}
 }
 
 // A drive missing the files is written as before and never recorded.
 func TestStagePreBootFilesUnless_DoesNotLearnFromADriveWithoutTheFiles(t *testing.T) {
-	sessions, mountRoot := fakeLoopMounts(t)
+	sessions, mountRoot := fakeDriveImages(t)
 	v := newStagingVMM(t, "empty")
 	key := v2CaptureKey("empty")
 	skipped, err := v.stagePreBootFilesUnless("empty", key, nil, learnInputs.secrets, learnInputs.env, learnInputs.resolver, false)
 	if err != nil || skipped || *sessions != 1 {
-		t.Fatalf("skipped=%v err=%v mounts=%d, want one mount that writes", skipped, err, *sessions)
+		t.Fatalf("skipped=%v err=%v sessions=%d, want one session that writes", skipped, err, *sessions)
 	}
 	if _, err := os.Stat(filepath.Join(*mountRoot, apiEnvPath)); err != nil {
 		t.Fatalf("env.json not written: %v", err)
@@ -267,7 +268,7 @@ func TestStagePreBootFilesUnless_DoesNotLearnFromADriveWithoutTheFiles(t *testin
 func TestStagePreBootFilesUnless_NonV2RestoresAlwaysWrite(t *testing.T) {
 	for _, key := range []string{"", "snap/dep-1/mem"} {
 		t.Run("key="+key, func(t *testing.T) {
-			_, mountRoot := fakeLoopMounts(t)
+			_, mountRoot := fakeDriveImages(t)
 			v := newStagingVMM(t, "i")
 			if err := v.stagePreBootFiles("i", nil, learnInputs.secrets, learnInputs.env, learnInputs.resolver, false); err != nil {
 				t.Fatal(err)
@@ -318,7 +319,7 @@ func TestPreBootLedger_LearnsOnlyV2Captures(t *testing.T) {
 
 // Presence means exactly what the write would leave. The drive is
 // tenant-writable, so links are never followed — not even ones that stay
-// inside the mount — and nothing outside the mount is ever read.
+// inside the drive — and nothing outside the drive is ever read.
 func TestPreBootFilesPresent_OnlyExactFiles(t *testing.T) {
 	outside := t.TempDir()
 	replace := func(t *testing.T, path string, blob []byte, mode os.FileMode) {
@@ -370,18 +371,16 @@ func TestPreBootFilesPresent_OnlyExactFiles(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mountRoot := t.TempDir()
 			writers, _ := learnInputs.writers(t)
-			for _, w := range writers {
-				must(t, w.write(mountRoot))
-			}
+			writeDrive(t, mountRoot, writers)
 			if tc.tamper != nil {
 				tc.tamper(t, mountRoot)
 			}
-			if got := preBootFilesPresent(mountRoot, writers); got != tc.want {
+			if got := presentOn(t, mountRoot, writers); got != tc.want {
 				t.Fatalf("present = %v, want %v", got, tc.want)
 			}
 		})
 	}
-	if preBootFilesPresent(t.TempDir(), nil) {
+	if driveFilesPresent(driveLayout{}, nil) {
 		t.Fatal("no writers reported as present")
 	}
 }
@@ -409,21 +408,31 @@ func TestPreBootFileWriters_WhatTheyWriteIsPresent(t *testing.T) {
 			if len(writers) != 7 {
 				t.Fatalf("writers = %d, want 7 (update this test with the new writer)", len(writers))
 			}
-			if preBootFilesPresent(mountRoot, writers) {
+			if presentOn(t, mountRoot, writers) {
 				t.Fatal("empty drive reported as holding the files")
 			}
-			for _, w := range writers {
-				must(t, w.write(mountRoot))
-			}
-			if !preBootFilesPresent(mountRoot, writers) {
+			writeDrive(t, mountRoot, writers)
+			if !presentOn(t, mountRoot, writers) {
 				for _, w := range writers {
-					if !preBootFilesPresent(mountRoot, []preBootFileWriter{w}) {
+					if !presentOn(t, mountRoot, []driveFile{w}) {
 						t.Errorf("%s: written file not recognised (path %q)", w.what, w.path)
 					}
 				}
 			}
 		})
 	}
+}
+
+// writeDrive stages files onto a directory drive the way a session does.
+func writeDrive(t *testing.T, root string, files []driveFile) {
+	t.Helper()
+	must(t, stageDriveFiles(context.Background(), &dirDriveImage{root: root}, layoutOf(t, root, files), files))
+}
+
+// presentOn runs a restore's presence check against a directory drive.
+func presentOn(t *testing.T, root string, files []driveFile) bool {
+	t.Helper()
+	return driveFilesPresent(layoutOf(t, root, files), files)
 }
 
 func must(t *testing.T, err error) {
@@ -438,7 +447,7 @@ func must(t *testing.T, err error) {
 // instance. The skip ignores those keys, and still writes when anything else
 // in env.json changes.
 func TestStagePreBootFilesUnless_IgnoresPlacementIdentity(t *testing.T) {
-	fakeLoopMounts(t)
+	fakeDriveImages(t)
 	v := newStagingVMM(t, "cold")
 	envFor := func(instance, node, mode string) []byte {
 		return []byte(fmt.Sprintf(`{"APP_MODE":%q,%q:%q,%q:%q}`, mode, api.PlatformInstanceIDEnv, instance, api.PlatformNodeIDEnv, node))
@@ -459,7 +468,7 @@ func TestStagePreBootFilesUnless_IgnoresPlacementIdentity(t *testing.T) {
 		{"changed app env", envFor("restore-2", "n1", "staging"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sessions, _ := fakeLoopMounts(t)
+			sessions, _ := fakeDriveImages(t)
 			inst := "restore-" + strings.ReplaceAll(tc.name, " ", "-")
 			restored := newStagingVMMFrom(t, v, inst)
 			skipped, err := restored.stagePreBootFilesUnless(inst, capture, nil, nil, tc.env, resolver, false)
@@ -476,7 +485,7 @@ func TestStagePreBootFilesUnless_IgnoresPlacementIdentity(t *testing.T) {
 // After a vmmd restart, a capture whose drive holds another instance's
 // identity is learned on the first restore and skipped on the next.
 func TestStagePreBootFilesUnless_LearnsCaptureAcrossInstanceIdentity(t *testing.T) {
-	sessions, _ := fakeLoopMounts(t)
+	sessions, _ := fakeDriveImages(t)
 	v := newStagingVMM(t, "first")
 	envFor := func(instance string) []byte {
 		return []byte(fmt.Sprintf(`{"K":"v",%q:%q,%q:"n1"}`, api.PlatformInstanceIDEnv, instance, api.PlatformNodeIDEnv))

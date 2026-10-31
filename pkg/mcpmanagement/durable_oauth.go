@@ -27,6 +27,11 @@ type storedGrant struct {
 	AvailableApps         []api.AppResponse
 	Environments          *EnvironmentConsent
 	AvailableEnvironments []EnvironmentGrant
+	Capabilities          []string
+	// Renewable marks an mcp-login key apid slides while used, issued at
+	// CredentialIssued (ADR-20261028205920).
+	Renewable        bool      `json:",omitempty"`
+	CredentialIssued time.Time `json:",omitzero"`
 }
 
 type oauthSnapshot struct {
@@ -40,15 +45,32 @@ type oauthSnapshot struct {
 	UsedRefresh map[string]string
 }
 
+// snapshotLocked copies the records it returns: durableHandler marshals the
+// snapshot after releasing r.mu while handlers keep changing the live ones
+// (holdClientLocked extends a client's Expires).
 func (r *remoteServer) snapshotLocked() oauthSnapshot {
-	snapshot := oauthSnapshot{Format: stateFormat, APIBase: r.opts.APIBase, ResourceURL: r.opts.ResourceURL, Clients: r.clients, Requests: r.requests, Codes: r.codes, Grants: map[string]storedGrant{}, UsedRefresh: map[string]string{}}
+	snapshot := oauthSnapshot{Format: stateFormat, APIBase: r.opts.APIBase, ResourceURL: r.opts.ResourceURL, Clients: cloneRecords(r.clients), Requests: cloneRecords(r.requests), Codes: cloneRecords(r.codes), Grants: map[string]storedGrant{}, UsedRefresh: map[string]string{}}
 	for id, g := range r.grants {
-		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.server != nil, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments}
+		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.approved, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments, Capabilities: g.capabilities, Renewable: g.renewable, CredentialIssued: g.credentialIssued}
 	}
 	for hash, grant := range r.usedRefresh {
 		snapshot.UsedRefresh[hash] = grant.id
 	}
 	return snapshot
+}
+
+// cloneRecords copies a record map and each record. The records' slices are
+// replaced, never changed in place, so sharing them is safe.
+func cloneRecords[T any](records map[string]*T) map[string]*T {
+	out := make(map[string]*T, len(records))
+	for key, record := range records {
+		if record != nil {
+			copied := *record
+			record = &copied
+		}
+		out[key] = record
+	}
+	return out
 }
 
 func (r *remoteServer) restoreOAuth() error {
@@ -65,10 +87,21 @@ func (r *remoteServer) restoreOAuth() error {
 	if snapshot.Format != stateFormat || snapshot.APIBase != r.opts.APIBase || snapshot.ResourceURL != r.opts.ResourceURL {
 		return errors.New("stored OAuth endpoint binding mismatch")
 	}
-	if len(snapshot.Clients) > maxOAuthEntries || len(snapshot.Requests) > maxOAuthEntries || len(snapshot.Codes) > maxOAuthEntries || len(snapshot.Grants) > maxOAuthEntries || len(snapshot.UsedRefresh) > maxRefreshHistory {
+	if len(snapshot.Clients) > r.capacity() || len(snapshot.Requests) > r.capacity() || len(snapshot.Codes) > r.capacity() || len(snapshot.Grants) > r.capacity() || len(snapshot.UsedRefresh) > maxRefreshHistory {
 		return errors.New("stored OAuth capacity is invalid")
 	}
+	// A client lasts as long as the grants it holds; older journals let
+	// clients lapse first and lost those grants on restart.
+	held := map[string]time.Time{}
+	for _, record := range snapshot.Grants {
+		if record.Expires.After(held[record.ClientID]) {
+			held[record.ClientID] = record.Expires
+		}
+	}
 	for id, client := range snapshot.Clients {
+		if until := held[id]; client != nil && until.After(client.Expires) {
+			client.Expires = until
+		}
 		if client.ID != id {
 			return errors.New("stored client identity mismatch")
 		}
@@ -95,18 +128,14 @@ func (r *remoteServer) restoreOAuth() error {
 		client := r.apiClient(record.Key)
 		g := &oauthGrant{id: id, clientID: record.ClientID, accountID: record.AccountID, scopes: record.Scopes, client: client, expires: record.Expires, credentialExpires: record.CredentialExpires, accessExpires: record.AccessExpires, accessHash: record.AccessHash, refreshHash: record.RefreshHash, allowedApps: record.AllowedApps, availableApps: record.AvailableApps}
 		g.environments, g.availableEnvironments = record.Environments, record.AvailableEnvironments
+		g.capabilities, g.renewable, g.credentialIssued = record.Capabilities, record.Renewable, record.CredentialIssued
 		// Journals written before environment consent had default release access;
 		// restoring them must never grant named environments implicitly.
 		if g.environments == nil {
 			g.environments = &EnvironmentConsent{DefaultWrite: slices.Contains(g.scopes, scopeWrite), Named: map[string]EnvironmentGrant{}}
 		}
-		if record.Active {
-			var err error
-			g.server, g.management, err = newManagementServer(client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), AllowedApps: g.allowedApps, Environments: g.environments, planStore: r.opts.StateStore, planNamespace: id})
-			if err != nil {
-				return err
-			}
-		}
+		// An approved connection's server is built on its first request.
+		g.approved = record.Active
 		r.grants[id] = g
 		if g.accessHash != "" {
 			r.access[g.accessHash] = g
@@ -151,9 +180,15 @@ func (r *remoteServer) durableHandler(next http.Handler) http.Handler {
 		}
 		reply := &bufferedResponse{header: make(http.Header)}
 		next.ServeHTTP(reply, req)
+		// Snapshot under the lock, commit outside it: holding r.mu across
+		// the CP write serialized every hosted request behind its latency
+		// (bug hunt 2026-10-28 B16). The sequence keeps a snapshot that
+		// commits late from replacing a newer one.
 		r.mu.Lock()
-		err := r.opts.StateStore.update("oauth", r.snapshotLocked())
+		r.snapshotSeq++
+		snapshot, seq := r.snapshotLocked(), r.snapshotSeq
 		r.mu.Unlock()
+		err := r.opts.StateStore.updateSnapshot("oauth", snapshot, seq)
 		if err != nil {
 			setPrivateHeaders(w)
 			oauthError(w, 503, "temporarily_unavailable", "Authorization storage could not be committed")

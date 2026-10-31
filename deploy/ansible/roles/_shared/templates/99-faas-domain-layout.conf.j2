@@ -1,0 +1,16 @@
+# Managed by Ansible. ADR-20261026100000: the platform, deployment-preview
+# and alias apps domains. Each line is written only when its variable is set;
+# with none set every daemon keeps the shared layout under the apps domain.
+[Service]
+{% if faas_platform_domain | default('') %}
+Environment=FAAS_PLATFORM_DOMAIN={{ faas_platform_domain }}
+{% endif %}
+{% if faas_deploy_domain | default('') %}
+Environment=FAAS_DEPLOY_DOMAIN={{ faas_deploy_domain }}
+{% endif %}
+{% if faas_apps_domain_aliases | default([]) | length > 0 %}
+Environment=FAAS_APPS_DOMAIN_ALIASES={{ faas_apps_domain_aliases | join(',') }}
+{% endif %}
+{% if faas_apps_domain_alias_mode | default('') %}
+Environment=FAAS_APPS_DOMAIN_ALIAS_MODE={{ faas_apps_domain_alias_mode }}
+{% endif %}

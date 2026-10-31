@@ -89,6 +89,30 @@ func TestFireCronNow_HappyPath(t *testing.T) {
 	}
 }
 
+// adr: 20261026201726 — a cron holds at most CronFireNowActivePerCron manual
+// runs waiting or running; the next request is a 429, not unbounded work for
+// the owning scheduler.
+func TestFireCronNow_BusyCronIs429(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	cronID, _ := seedCron(t, e, "fire-cron-busy", "0 3 * * *")
+	for i := range api.CronFireNowActivePerCron {
+		if rec := e.Do(t, "POST", "/v1/crons/"+cronID+"/run", nil, nil); rec.Code != http.StatusAccepted {
+			t.Fatalf("request %d: status = %d, want 202; body=%s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	rec := e.Do(t, "POST", "/v1/crons/"+cronID+"/run", nil, nil)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429; body=%s", rec.Code, rec.Body.String())
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeCronFireNowBusy || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("problem = %+v, Retry-After %q; want %s with a retry hint", problem, rec.Header().Get("Retry-After"), api.CodeCronFireNowBusy)
+	}
+}
+
 // adr: 099 — scheduled command crons can be fired immediately as a queued task.
 func TestFireCronNow_CommandCronIsAccepted(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)

@@ -7,17 +7,22 @@ import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
 import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ProfilingConfig } from './ProfilingConfig.js';
+import type { SecretFile } from './SecretFile.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
- * App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure).
+ * App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag. The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure).
  */
 export type AppManifest = {
   profiling?: ProfilingConfig;
   tracing?: TracingConfig;
+  /**
+   * Dormant on-demand profile collectors stamped by the image service.
+   */
+  profiling_on_demand?: boolean;
   entrypoint: Array<string>;
   env?: Record<string, string>;
   /**
@@ -31,48 +36,52 @@ export type AppManifest = {
    */
   service_binding_transport?: ServiceBindingTransport;
   /**
-   * Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries remain available for in-task discovery (ADR-165, ADR-176).
+   * Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries remain available for in-task discovery.
    */
   ports?: Array<WorkloadPort>;
   healthz?: string | null;
   user?: string | null;
   healthcheck?: AppManifestHealthcheck;
   /**
-   * OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2.
+   * OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow.
    */
   stop_signal?: string | null;
   /**
-   * Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Main and long-running sidecar images opt in independently, including deployments with companions; each workload reloads only its own granted secrets. Must differ from stop_signal (ADR-222).
+   * Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Main and long-running sidecar images opt in independently, including deployments with companions; each workload reloads only its own granted secrets. Must differ from stop_signal.
    */
   secret_reload_signal?: 'SIGHUP' | 'SIGUSR1' | 'SIGUSR2';
   /**
-   * Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506).
+   * Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently.
    */
   secret_reload_readiness?: boolean;
   /**
-   * OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4.
+   * App secrets guest-init writes to /run/secrets for the main workload. Set from the app's Compose service secrets.
+   */
+  secret_files?: Array<SecretFile>;
+  /**
+   * OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate.
    */
   stop_grace_period?: string | null;
   /**
-   * Lifecycle contract for this app (ADR-137 §Decision 1). Default 'request' preserves today's behaviour.
+   * Lifecycle contract for this app. Default 'request' preserves today's behaviour.
    */
   execution_mode?: 'request' | 'service' | 'worker' | 'job';
   /**
-   * Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for worker/service, no for job, on-failure for request.
+   * Restart behaviour when the main workload exits. Default is mode-derived: always for worker/service, no for job, on-failure for request.
    */
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
   /**
-   * The app's declared pause tier (ADR-1151). Absent means the default for its type: between_requests for a function, when_idle for a request-mode app.
+   * The app's declared pause tier. Absent means the default for its type: between_requests for a function, when_idle for a request-mode app.
    */
   pause?: 'between_requests' | 'when_idle' | 'never';
   /**
-   * Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0 means 'use plan default'.
+   * Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate. Default 0 means 'use plan default'.
    */
   startup_deadline_s?: number | null;
   /**
-   * Consecutive restart-attempt cap (ADR-138 §Decision 3). Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0 means 'use plan default'.
+   * Consecutive restart-attempt cap. Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0 means 'use plan default'.
    */
   max_retries?: number | null;
   /**
@@ -80,7 +89,7 @@ export type AppManifest = {
    */
   request_timeout_s?: number | null;
   /**
-   * Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY (ADR-1342). 0 or 1 means one request per worker.
+   * Per-worker request concurrency the image service stamps into the function's build as FAAS_FUNCTION_CONCURRENCY. 0 or 1 means one request per worker.
    */
   function_concurrency?: number | null;
   service_replicas?: ServiceReplicas;
@@ -127,11 +136,11 @@ export type AppManifest = {
    */
   revision_pin_ttl_seconds?: number;
   /**
-   * Effective default rollout for production releases (ADR-1446, ADR-1450).
+   * Effective default rollout for production releases.
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**
-   * Paths the default rollout probe checks; absent means / (ADR-1449).
+   * Paths the default rollout probe checks; absent means /.
    */
   release_probe_paths?: Array<string>;
 };

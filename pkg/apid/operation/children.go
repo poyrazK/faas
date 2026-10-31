@@ -17,7 +17,7 @@ import (
 // account. A closed account sees the routes as absent.
 func (s *Service) childStore(w http.ResponseWriter, accountID string) (state.OperationChildStore, bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !api.OperationChildrenEnabled(accountID) {
+	if !s.childrenOpen(accountID) {
 		httpkit.NoSuchRoute(w)
 		return nil, false
 	}
@@ -227,7 +227,7 @@ func (s *Service) writeChildren(w http.ResponseWriter, r *http.Request, store st
 // lock, so none starts after that commit; repeating the parent's cancel
 // finishes a cascade this process did not.
 func (s *Service) cancelOperationChildren(ctx context.Context, store state.OperationStore, accountID, tenantID, parentID string) {
-	if !api.OperationChildrenEnabled(accountID) {
+	if !s.childrenOpen(accountID) {
 		return
 	}
 	children, ok := s.Host.Store().(state.OperationChildStore)

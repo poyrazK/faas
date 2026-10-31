@@ -136,16 +136,10 @@ func (m *MemStore) AppendManagedRealtimeBatchConditional(ctx context.Context, ep
 	}
 	hkey := managedRealtimeHistoryKey{endpointID: ep, channel: ch}
 	h := m.managedRealtimeHistory[hkey]
+	if err := m.checkRetainedChannelMem(ep, ch); err != nil {
+		return nil, err
+	}
 	if h == nil {
-		channels := 0
-		for key := range m.managedRealtimeHistory {
-			if key.endpointID == ep {
-				channels++
-			}
-		}
-		if channels >= 32 {
-			return nil, ErrManagedRealtimeHistoryLimit
-		}
 		h = &managedRealtimeHistoryState{next: 1, oldest: 1}
 		m.managedRealtimeHistory[hkey] = h
 	}
@@ -222,17 +216,8 @@ func (s *PgStore) AppendManagedRealtimeBatchConditional(ctx context.Context, ep,
 	if count >= 256 {
 		return nil, ErrManagedRealtimeBatchLimit
 	}
-	var exists bool
-	if err = tx.QueryRow(ctx, `select exists(select 1 from managed_realtime_channel_heads where endpoint_id=$1 and channel=$2)`, ep, ch).Scan(&exists); err != nil {
+	if err = checkRetainedChannelPG(ctx, tx, ep, ch); err != nil {
 		return nil, err
-	}
-	if !exists {
-		if err = tx.QueryRow(ctx, `select count(*) from managed_realtime_channel_heads where endpoint_id=$1`, ep).Scan(&count); err != nil {
-			return nil, err
-		}
-		if count >= 32 {
-			return nil, ErrManagedRealtimeHistoryLimit
-		}
 	}
 	if _, err = tx.Exec(ctx, `insert into managed_realtime_channel_heads(endpoint_id,channel) values($1,$2) on conflict do nothing`, ep, ch); err != nil {
 		return nil, err
@@ -252,7 +237,7 @@ func (s *PgStore) AppendManagedRealtimeBatchConditional(ctx context.Context, ep,
 		floor = expired
 	}
 	for i, item := range items {
-		if err := validateEventSchemaPG(ctx, tx, ep, ch, item.Data, item.Binary, item.Metadata); err != nil {
+		if err := validateEventSchemaPG(ctx, tx, s.realtimeEventSchemas, ep, ch, item.Data, item.Binary, item.Metadata); err != nil {
 			var detail *ManagedRealtimeEventSchemaError
 			if errors.As(err, &detail) {
 				detail.Item = i

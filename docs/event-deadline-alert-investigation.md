@@ -14,7 +14,7 @@ the selected page.
 ```go
 // alert is an EventDeliveryHealthAlert loaded from a saved Go/CLI alert stream.
 result, err := client.InvestigateEventDeadlineAlert(ctx, "orders", alert,
-    faas.EventDeadlineInvestigationOptions{Limit: 25})
+    preview.EventDeadlineInvestigationOptions{Limit: 25})
 if err != nil {
     return err
 }
@@ -26,7 +26,7 @@ for _, row := range result.Page.Recipients {
 }
 if result.Page.HasMore {
     next, err := client.InvestigateEventDeadlineAlert(ctx, "orders", alert,
-        faas.EventDeadlineInvestigationOptions{
+        preview.EventDeadlineInvestigationOptions{
             Limit: 25,
             Cursor: result.Page.NextCursor,
         })

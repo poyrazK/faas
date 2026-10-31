@@ -11,21 +11,37 @@ import (
 
 func TestMigrateUpScopesIssuedStandardsFunctions(t *testing.T) {
 	pool := pgtest.Open(t)
-	if err := db.MigrateUp(t.Context(), pool); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{
+	names := []string{
 		"application_standard_runtime_default_base",
 		"application_standard_exception_deadline", "application_standard_enroll_app",
 		"application_standard_lock_native_boot", "application_standard_runtime_snapshot",
 		"application_standard_runtime_inputs_match", "application_standard_instance_runtime_guard",
 		"application_standard_native_residency_guard", "application_standard_native_publication_guard",
 		"application_standard_enrollment_generation_guard", "application_standard_native_artifact_protocol",
-	} {
-		var scoped, escaped bool
+	}
+	// The test database is shared: a daemon test that migrates its public
+	// schema leaves these functions there. Only a function this run put in
+	// public escaped its schema.
+	inPublic := func(name string) bool {
+		var found bool
+		if err := pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+            WHERE p.proname=$1 AND n.nspname='public')`, name).Scan(&found); err != nil {
+			t.Fatal(err)
+		}
+		return found
+	}
+	before := map[string]bool{}
+	for _, name := range names {
+		before[name] = inPublic(name)
+	}
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		var scoped bool
 		err := pool.QueryRow(t.Context(), `SELECT
-            EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.proname=$1 AND n.nspname=current_schema()),
-            EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.proname=$1 AND n.nspname='public')`, name).Scan(&scoped, &escaped)
+            EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.proname=$1 AND n.nspname=current_schema())`, name).Scan(&scoped)
+		escaped := !before[name] && inPublic(name)
 		if err != nil || !scoped || escaped {
 			t.Fatalf("function %s: scoped=%v escaped=%v err=%v", name, scoped, escaped, err)
 		}

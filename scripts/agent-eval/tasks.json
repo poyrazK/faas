@@ -1,0 +1,62 @@
+[
+  {
+    "id": "deploy-starter",
+    "title": "Deploy a project and confirm it serves",
+    "template": "hello-node",
+    "setup": [],
+    "prompt": "Deploy the project in this directory to Gregale as a new app named {app}. When it is live, confirm that its URL responds and report the URL.",
+    "checks": [
+      {"kind": "http", "path": "/", "status": 200, "contains": "hello from gregale"}
+    ],
+    "budget_usd": 3.0,
+    "timeout_s": 900
+  },
+  {
+    "id": "fix-failed-deploy",
+    "title": "Find why a deploy fails, fix the code and redeploy",
+    "template": "hello-node",
+    "setup": [
+      {"kind": "replace", "file": "handler.js", "old": "import express from \"express\";", "new": "import express from \"express\";\nimport { settings } from \"./settings.js\";"}
+    ],
+    "prompt": "Deploy the project in this directory to Gregale as the app {app}. If the deployment fails, use Gregale to find out why, fix the code, and deploy again until the app serves. Report the cause in one sentence.",
+    "checks": [
+      {"kind": "http", "path": "/", "status": 200, "contains": "hello from gregale"}
+    ],
+    "budget_usd": 4.0,
+    "timeout_s": 1500
+  },
+  {
+    "id": "rollback-bad-release",
+    "title": "Restore service after a bad release without editing code",
+    "template": "hello-node",
+    "setup": [
+      {"kind": "deploy"},
+      {"kind": "replace", "file": "handler.js", "old": "  res.json({\n    message: \"hello from gregale\",", "new": "  res.status(500).json({\n    message: \"broken release\","},
+      {"kind": "deploy"}
+    ],
+    "prompt": "The app {app} on Gregale started returning errors on / after its latest release. Restore service without editing any files, then report what you did.",
+    "checks": [
+      {"kind": "http", "path": "/", "status": 200, "contains": "hello from gregale"},
+      {"kind": "file_contains", "file": "handler.js", "text": "broken release"},
+      {"kind": "serving", "expect": "not_latest"}
+    ],
+    "budget_usd": 3.0,
+    "timeout_s": 900
+  },
+  {
+    "id": "diagnose-failure",
+    "title": "Name the root cause of a failed deploy without changing anything",
+    "template": "hello-node",
+    "setup": [
+      {"kind": "replace", "file": "handler.js", "old": "import express from \"express\";", "new": "import express from \"express\";\nimport { settings } from \"./settings.js\";"},
+      {"kind": "deploy", "expect": "failure"}
+    ],
+    "prompt": "The latest deployment of the app {app} on Gregale failed. Find the root cause using Gregale and explain it in one sentence. Do not change any files or deploy anything.",
+    "checks": [
+      {"kind": "answer", "pattern": "settings\\.js|ERR_MODULE_NOT_FOUND|Cannot find module"},
+      {"kind": "file_contains", "file": "handler.js", "text": "./settings.js"}
+    ],
+    "budget_usd": 2.0,
+    "timeout_s": 600
+  }
+]

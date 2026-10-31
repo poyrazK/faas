@@ -55,7 +55,7 @@ func (h *Handler) resolveCaller(w http.ResponseWriter, r *http.Request) *objectC
 	app, deployment, e := h.Resolve(r.Context(), r.RemoteAddr)
 	if e != nil || app == "" || deployment == "" {
 		if e != nil {
-			h.Collector.Fail()
+			h.lookupFailed(r)
 		}
 		objectError(w, 403, "AccessDenied")
 		return nil
@@ -63,7 +63,7 @@ func (h *Handler) resolveCaller(w http.ResponseWriter, r *http.Request) *objectC
 	resource, e := h.Catalog.ScenarioObjectsForApp(r.Context(), app)
 	if e != nil {
 		if !errors.Is(e, state.ErrNotFound) {
-			h.Collector.Fail()
+			h.lookupFailed(r)
 		}
 		objectError(w, 403, "AccessDenied")
 		return nil
@@ -110,7 +110,7 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request) *objectCa
 	freshApp, freshDeployment, e := h.Resolve(r.Context(), r.RemoteAddr)
 	if e != nil || freshApp != c.app || freshDeployment != c.deployment {
 		if e != nil {
-			h.Collector.Fail()
+			h.lookupFailed(r)
 		}
 		h.failAuthentication(r.Context(), c.resource, c.app)
 		objectError(w, 403, "AccessDenied")
@@ -121,7 +121,12 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request) *objectCa
 func (h *Handler) admit(w http.ResponseWriter, r *http.Request, c *objectCaller) (string, bool) {
 	id := uuid.NewString()
 	admitted := false
-	_, e := h.Catalog.UpdateScenarioObjects(r.Context(), c.resource.AccountID, c.resource.RunID, c.app, func(v *rehearsalobj.Resource) error {
+	// A caller abort must not interrupt the admission transaction: an
+	// ambiguous commit could journal a pending attempt nobody finishes, and
+	// any error left here is then a genuine collector failure.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	_, e := h.Catalog.UpdateScenarioObjects(ctx, c.resource.AccountID, c.resource.RunID, c.app, func(v *rehearsalobj.Resource) error {
 		if v.ID != c.resource.ID || v.CollectorID != h.Collector.ID || v.CollectorClosed {
 			return state.ErrConflict
 		}
@@ -196,6 +201,18 @@ func (h *Handler) executeRequest(w http.ResponseWriter, r *http.Request, c *obje
 	}
 	writeObjectResult(w, r, input, result)
 }
+
+// lookupFailed records a failed pre-admission read. Collector failure is
+// sticky for every namespace this collector serves, so a read that failed
+// only because the caller abandoned its own request must not trip it: nothing
+// durable exists before admission (ADR-20261019120000).
+func (h *Handler) lookupFailed(r *http.Request) {
+	if r.Context().Err() != nil {
+		return
+	}
+	h.Collector.Fail()
+}
+
 func (h *Handler) failAuthentication(ctx context.Context, r rehearsalobj.Resource, app string) {
 	failedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()

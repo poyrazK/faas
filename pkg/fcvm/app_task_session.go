@@ -189,6 +189,12 @@ func (v *JailerVMM) dialGuestSession(ctx context.Context, lease Lease, window ti
 }
 
 func completeAppTaskConnect(ctx context.Context, conn net.Conn) error {
+	return completeVsockConnect(ctx, conn, apptaskproto.VsockPort)
+}
+
+// completeVsockConnect performs Firecracker's host-initiated CONNECT
+// handshake to guest port.
+func completeVsockConnect(ctx context.Context, conn net.Conn, port uint32) error {
 	deadline := time.Now().Add(appTaskDialTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
@@ -196,8 +202,8 @@ func completeAppTaskConnect(ctx context.Context, conn net.Conn) error {
 	if err := conn.SetDeadline(deadline); err != nil {
 		return err
 	}
-	if err := writeExecutionConnect(conn, apptaskproto.VsockPort); err != nil {
-		return fmt.Errorf("write CONNECT %d: %w", apptaskproto.VsockPort, err)
+	if err := writeExecutionConnect(conn, port); err != nil {
+		return fmt.Errorf("write CONNECT %d: %w", port, err)
 	}
 	ack, err := readConnectAck(conn)
 	if err != nil {

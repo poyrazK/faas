@@ -8,6 +8,11 @@ import (
 	"net/url"
 )
 
+// MaxLogGrepPatternBytes caps LogFilter.Grep. It lives here, not in
+// pkg/apislogs, so clients such as the MCP management tools can check it
+// without linking the gateway's log streaming code.
+const MaxLogGrepPatternBytes = 256
+
 // LogFilter narrows the per-instance log stream by substring (Grep),
 // timestamp lower-bound (Since, RFC3339), and severity floor (Level,
 // one of info|warn|error). Issue #309 closes the tier-2 DX gap that
@@ -32,7 +37,7 @@ type LogFilter struct {
 	// surface the peer review of PR #728 flagged.
 	//
 	// Embedded newlines and patterns longer than
-	// apislogs.MaxGrepPatternBytes are rejected by the gateway
+	// MaxLogGrepPatternBytes are rejected by the gateway
 	// validator (apislogs.ValidateLogFilters).
 	Grep string
 	// Since is an RFC3339 timestamp lower-bound on the line timestamp.

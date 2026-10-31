@@ -1,6 +1,7 @@
 package livekeys_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -34,13 +35,15 @@ func open(t *testing.T) *pgxpool.Pool {
 			access text NOT NULL DEFAULT 'read_write', provider_identity_id text, state text NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(), deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261017121336518_managed_postgres_live_keys.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	up, _, _ := strings.Cut(string(raw), "-- +goose Down")
-	if _, err := pool.Exec(ctx, up); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql", "20261028161544217_managed_postgres_live_signatures.sql", "20261028161546331_managed_postgres_live_signatures_validate.sql"} {
+		raw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, _, _ := strings.Cut(string(raw), "-- +goose Down")
+		if _, err := pool.Exec(ctx, up); err != nil {
+			t.Fatalf("apply migration %s: %v", name, err)
+		}
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_databases (id, account_id, state) VALUES ($1, $2, 'ready')`, dbID, account); err != nil {
 		t.Fatal(err)
@@ -76,13 +79,13 @@ func TestStoreLifecycle(t *testing.T) {
 	if err := store.Rotate(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), time.Hour); !errors.Is(err, livekeys.ErrDisabled) {
 		t.Fatalf("rotate before enable: %v, want ErrDisabled", err)
 	}
-	if err := store.Enable(ctx, other, dbID, key("aaaaaaaaaaaaaaaa")); !errors.Is(err, livekeys.ErrNotFound) {
+	if err := store.Enable(ctx, other, dbID, key("aaaaaaaaaaaaaaaa"), nil); !errors.Is(err, livekeys.ErrNotFound) {
 		t.Fatalf("enable from another account: %v, want ErrNotFound", err)
 	}
-	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa")); err != nil {
+	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Enable(ctx, account, dbID, key("bbbbbbbbbbbbbbbb")); !errors.Is(err, livekeys.ErrEnabled) {
+	if err := store.Enable(ctx, account, dbID, key("bbbbbbbbbbbbbbbb"), nil); !errors.Is(err, livekeys.ErrEnabled) {
 		t.Fatalf("second enable: %v, want ErrEnabled", err)
 	}
 
@@ -128,14 +131,14 @@ func TestStoreLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removed, err := store.Disable(ctx, account, dbID)
+	removed, err := store.Disable(ctx, account, dbID, nil)
 	if err != nil || !removed {
 		t.Fatalf("disable = %v, %v", removed, err)
 	}
 	if got := ring(); len(got) != 0 {
 		t.Fatalf("ring after disable = %v", got)
 	}
-	if removed, err := store.Disable(ctx, account, dbID); err != nil || removed {
+	if removed, err := store.Disable(ctx, account, dbID, nil); err != nil || removed {
 		t.Fatalf("second disable = %v, %v", removed, err)
 	}
 }
@@ -150,7 +153,7 @@ func TestStoreRefusesMalformedKeys(t *testing.T) {
 		{KID: "aaaaaaaaaaaaaaaa", Sealed: []byte("x"), Recipient: "not-a-recipient"},
 	}
 	for _, k := range bad {
-		if err := store.Enable(ctx, account, dbID, k); err == nil {
+		if err := store.Enable(ctx, account, dbID, k, nil); err == nil {
 			t.Fatalf("enable accepted %+v", k)
 		}
 	}
@@ -191,7 +194,7 @@ func TestStoreRoutes(t *testing.T) {
 		}
 		return strings.Join(kids(got, func(r livekeys.Route) string { return r.KID + "@" + r.DatabaseID + "/" + r.BackendID }), ",")
 	}
-	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa")); err != nil {
+	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), nil); err != nil {
 		t.Fatal(err)
 	}
 	bind(app, dbID, "provisioning")
@@ -243,5 +246,244 @@ func TestStoreRoutes(t *testing.T) {
 	login(otherApp, dbID, "read_only", "gregale_ro_other")
 	if got := roles(); got != "gregale_ro_1|gregale_api_1" {
 		t.Fatalf("roles with a read-only binding = %q", got)
+	}
+}
+
+// adr: 20261016151947 — a database enabled with a login is one livequeryd
+// discovers on its backend, until live queries are disabled or the database
+// is deleted; the login's sealed connection string and slot come with it.
+func TestStoreLogins(t *testing.T) {
+	pool := open(t)
+	store := livekeys.New(pool)
+	ctx := context.Background()
+	discover := func(backends ...string) []livekeys.LiveDatabase {
+		t.Helper()
+		dbs, err := store.LiveDatabases(ctx, backends)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return dbs
+	}
+	login := &livekeys.Login{Sealed: []byte("sealed-login"), Recipient: recipient, Identity: "gregale_live_ab12", Slot: "gregale_live_db", Awake: "neon:proj-1/ep-a"}
+	if _, ok, err := store.LoginOf(ctx, account, dbID); err != nil || ok {
+		t.Fatalf("login before enable: %v, %v", ok, err)
+	}
+	issue := func(context.Context) (*livekeys.Login, error) { return login, nil }
+	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), issue); err != nil {
+		t.Fatal(err)
+	}
+	got := discover("native-a", "neon-b")
+	if len(got) != 1 || got[0].DatabaseID != dbID || got[0].BackendID != "native-a" || string(got[0].Sealed) != "sealed-login" ||
+		got[0].Recipient != recipient || got[0].Slot != "gregale_live_db" || got[0].Awake != "neon:proj-1/ep-a" {
+		t.Fatalf("discovered %+v", got)
+	}
+	if got := discover("neon-b"); len(got) != 0 {
+		t.Fatalf("another backend discovered %+v", got)
+	}
+	if l, ok, err := store.LoginOf(ctx, account, dbID); err != nil || !ok || l.Identity != "gregale_live_ab12" || l.Slot != "gregale_live_db" || l.Sealed != nil {
+		t.Fatalf("login of = %+v, %v, %v", l, ok, err)
+	}
+	if _, ok, err := store.LoginOf(ctx, other, dbID); err != nil || ok {
+		t.Fatalf("another account read the login: %v, %v", ok, err)
+	}
+	// Rotation keeps the login.
+	if err := store.Rotate(ctx, account, dbID, key("bbbbbbbbbbbbbbbb"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := discover("native-a"); len(got) != 1 {
+		t.Fatalf("after rotation discovered %+v", got)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_databases SET state='deleting' WHERE id=$1`, dbID); err != nil {
+		t.Fatal(err)
+	}
+	if got := discover("native-a"); len(got) != 0 {
+		t.Fatalf("a deleting database was discovered: %+v", got)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_databases SET state='ready' WHERE id=$1`, dbID); err != nil {
+		t.Fatal(err)
+	}
+	refuse := func(context.Context, livekeys.Login) error { return errors.New("provider unavailable") }
+	if _, err := store.Disable(ctx, account, dbID, refuse); err == nil {
+		t.Fatal("disable succeeded although revoking the login failed")
+	}
+	if got := discover("native-a"); len(got) != 1 {
+		t.Fatalf("a failed revoke removed the database: %+v", got)
+	}
+	var revoked []livekeys.Login
+	if _, err := store.Disable(ctx, account, dbID, func(_ context.Context, l livekeys.Login) error { revoked = append(revoked, l); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(revoked) != 1 || revoked[0].Identity != "gregale_live_ab12" || revoked[0].Slot != "gregale_live_db" {
+		t.Fatalf("revoked %+v", revoked)
+	}
+	if got := discover("native-a"); len(got) != 0 {
+		t.Fatalf("a disabled database was discovered: %+v", got)
+	}
+	if _, ok, err := store.LoginOf(ctx, account, dbID); err != nil || ok {
+		t.Fatalf("login after disable: %v, %v", ok, err)
+	}
+	bad := *login
+	bad.Slot = "Bad Slot"
+	if err := store.Enable(ctx, account, dbID, key("cccccccccccccccc"), func(context.Context) (*livekeys.Login, error) { return &bad, nil }); err == nil {
+		t.Error("a malformed slot name was stored")
+	}
+	// A login that cannot be issued leaves live queries off.
+	if err := store.Enable(ctx, account, dbID, key("dddddddddddddddd"), func(context.Context) (*livekeys.Login, error) {
+		return nil, errors.New("provider unavailable")
+	}); err == nil {
+		t.Fatal("enable succeeded although issuing the login failed")
+	}
+	if keys, err := store.Keys(ctx, account, dbID); err != nil || len(keys) != 0 {
+		t.Fatalf("a failed issue stored keys %v, %v", keys, err)
+	}
+}
+
+// The operator re-seal pages every key and login and swaps a seal only while
+// the row still holds the one it read, so a rotation or a revocation made
+// meanwhile wins (ADR-20261016151947, at-rest binding, release 2).
+func TestStoreResealSwapsOnlyTheSealItRead(t *testing.T) {
+	pool := open(t)
+	store := livekeys.New(pool)
+	ctx := context.Background()
+	login := &livekeys.Login{Sealed: []byte("sealed-login"), Recipient: recipient, Identity: "gregale_live_ab12", Slot: "gregale_live_db"}
+	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), func(context.Context) (*livekeys.Login, error) { return login, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Rotate(ctx, account, dbID, key("bbbbbbbbbbbbbbbb"), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := store.SealedKeysAfter(ctx, "", 1)
+	if err != nil || len(keys) != 1 || keys[0].ID != "aaaaaaaaaaaaaaaa" || keys[0].DatabaseID != dbID || string(keys[0].Blob) != "sealed-aaaaaaaaaaaaaaaa" || keys[0].Recipient != recipient {
+		t.Fatalf("first key page = %+v, %v", keys, err)
+	}
+	next, err := store.SealedKeysAfter(ctx, keys[0].ID, 10)
+	if err != nil || len(next) != 1 || next[0].ID != "bbbbbbbbbbbbbbbb" {
+		t.Fatalf("second key page = %+v, %v; want the retiring and the active key across pages", next, err)
+	}
+	if swapped, err := store.ResealKey(ctx, keys[0], []byte("bound-a")); err != nil || !swapped {
+		t.Fatalf("re-seal key = %v, %v", swapped, err)
+	}
+	if swapped, err := store.ResealKey(ctx, keys[0], []byte("bound-again")); err != nil || swapped {
+		t.Fatalf("re-seal from a stale read = %v, %v; want it refused", swapped, err)
+	}
+	// A re-seal sealed to the recipient it read; a row now naming another
+	// recipient is not overwritten with it.
+	redirected := next[0]
+	redirected.Recipient = "age1" + strings.Repeat("q", 58)
+	if swapped, err := store.ResealKey(ctx, redirected, []byte("bound-b")); err != nil || swapped {
+		t.Fatalf("re-seal under another recipient = %v, %v; want it refused", swapped, err)
+	}
+	ring, err := store.Ring(ctx, dbID)
+	if err != nil || len(ring) != 2 || string(ring[0].Sealed) != "bound-a" || string(ring[1].Sealed) != "sealed-bbbbbbbbbbbbbbbb" {
+		t.Fatalf("ring after re-seal = %+v, %v", ring, err)
+	}
+
+	logins, err := store.SealedLoginsAfter(ctx, "", 10)
+	if err != nil || len(logins) != 1 || logins[0].ID != dbID || logins[0].DatabaseID != dbID || string(logins[0].Blob) != "sealed-login" {
+		t.Fatalf("login page = %+v, %v", logins, err)
+	}
+	if rest, err := store.SealedLoginsAfter(ctx, logins[0].ID, 10); err != nil || len(rest) != 0 {
+		t.Fatalf("login page after the last = %+v, %v", rest, err)
+	}
+	stale := logins[0]
+	stale.Blob = []byte("another-login")
+	if dropped, err := store.DropLegacyLogin(ctx, stale); err != nil || dropped {
+		t.Fatalf("drop login from a stale read = %v, %v; want it refused", dropped, err)
+	}
+	if missing, err := store.DatabasesWithoutLogin(ctx, 10); err != nil || len(missing) != 0 {
+		t.Fatalf("databases without a login before the drop = %+v, %v", missing, err)
+	}
+	if dropped, err := store.DropLegacyLogin(ctx, logins[0]); err != nil || !dropped {
+		t.Fatalf("drop legacy login = %v, %v", dropped, err)
+	}
+	// The database keeps its keys and has no login: apid issues one.
+	missing, err := store.DatabasesWithoutLogin(ctx, 10)
+	if err != nil || len(missing) != 1 || missing[0].DatabaseID != dbID || missing[0].AccountID != account {
+		t.Fatalf("databases without a login = %+v, %v", missing, err)
+	}
+	issued, err := store.IssueMissingLogin(ctx, account, dbID, func(context.Context) (*livekeys.Login, error) {
+		return &livekeys.Login{Sealed: []byte("bound-login"), Recipient: recipient, Identity: "gregale_live_x", Slot: "slot"}, nil
+	})
+	if err != nil || !issued {
+		t.Fatalf("issue the missing login = %v, %v", issued, err)
+	}
+	again, err := store.IssueMissingLogin(ctx, account, dbID, func(context.Context) (*livekeys.Login, error) {
+		t.Fatal("a database that has a login was issued another")
+		return nil, nil
+	})
+	if err != nil || again {
+		t.Fatalf("issue for a database that has a login = %v, %v", again, err)
+	}
+	dbs, err := store.LiveDatabases(ctx, []string{"native-a"})
+	if err != nil || len(dbs) != 1 || string(dbs[0].Sealed) != "bound-login" {
+		t.Fatalf("discovered after the new login = %+v, %v", dbs, err)
+	}
+}
+
+// A key or login stores its writer signature beside the ciphertext, and the
+// readers get it back (ADR 20261028161502). A re-seal changes the
+// ciphertext, so it clears the key's signature; the backfill signs an
+// unsigned row only while the row still holds what it read.
+func TestStoreKeepsWriterSignatures(t *testing.T) {
+	pool := open(t)
+	store := livekeys.New(pool)
+	ctx := context.Background()
+	sig := func(b byte) []byte { return bytes.Repeat([]byte{b}, 64) }
+	signed := key("aaaaaaaaaaaaaaaa")
+	signed.Signature = sig(1)
+	login := &livekeys.Login{Sealed: []byte("sealed-login"), Recipient: recipient, Identity: "gregale_live_ab12", Slot: "gregale_live_db", Signature: sig(2)}
+	if err := store.Enable(ctx, account, dbID, signed, func(context.Context) (*livekeys.Login, error) { return login, nil }); err != nil {
+		t.Fatal(err)
+	}
+	ring, err := store.Ring(ctx, dbID)
+	if err != nil || len(ring) != 1 || !bytes.Equal(ring[0].Signature, sig(1)) {
+		t.Fatalf("ring = %+v, %v; want the key's signature", ring, err)
+	}
+	dbs, err := store.LiveDatabases(ctx, []string{"native-a"})
+	if err != nil || len(dbs) != 1 || !bytes.Equal(dbs[0].Signature, sig(2)) {
+		t.Fatalf("discovered = %+v, %v; want the login's signature", dbs, err)
+	}
+
+	keys, err := store.SealedKeysAfter(ctx, "", 10)
+	if err != nil || len(keys) != 1 || !bytes.Equal(keys[0].Signature, sig(1)) {
+		t.Fatalf("key page = %+v, %v", keys, err)
+	}
+	if swapped, err := store.ResealKey(ctx, keys[0], []byte("bound-a")); err != nil || !swapped {
+		t.Fatalf("re-seal = %v, %v", swapped, err)
+	}
+	keys, err = store.SealedKeysAfter(ctx, "", 10)
+	if err != nil || len(keys) != 1 || len(keys[0].Signature) != 0 {
+		t.Fatalf("key after re-seal = %+v, %v; want its signature cleared", keys, err)
+	}
+	stale := keys[0]
+	stale.Blob = []byte("other")
+	if ok, err := store.SignKey(ctx, stale, sig(3)); err != nil || ok {
+		t.Fatalf("sign from a stale read = %v, %v; want it refused", ok, err)
+	}
+	if ok, err := store.SignKey(ctx, keys[0], sig(3)); err != nil || !ok {
+		t.Fatalf("sign the unsigned key = %v, %v", ok, err)
+	}
+	if ok, err := store.SignKey(ctx, keys[0], sig(4)); err != nil || ok {
+		t.Fatalf("sign a signed key = %v, %v; want it refused", ok, err)
+	}
+	logins, err := store.SealedLoginsAfter(ctx, "", 10)
+	if err != nil || len(logins) != 1 || !bytes.Equal(logins[0].Signature, sig(2)) {
+		t.Fatalf("login page = %+v, %v", logins, err)
+	}
+	staleLogin := logins[0]
+	staleLogin.Signature = sig(9)
+	if ok, err := store.SignLogin(ctx, staleLogin, sig(5)); err != nil || ok {
+		t.Fatalf("re-sign from a stale signature = %v, %v; want it refused", ok, err)
+	}
+	// A key rotation signs a signed row again, compared on the signature read.
+	if ok, err := store.SignLogin(ctx, logins[0], sig(5)); err != nil || !ok {
+		t.Fatalf("re-sign the login = %v, %v", ok, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_live_logins SET sealed_login_sig=NULL`); err != nil {
+		t.Fatal(err)
+	}
+	logins[0].Signature = nil
+	if ok, err := store.SignLogin(ctx, logins[0], sig(6)); err != nil || !ok {
+		t.Fatalf("sign the unsigned login = %v, %v", ok, err)
 	}
 }

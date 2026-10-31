@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -50,11 +51,21 @@ const (
 	subRestart = "restart"
 )
 
+// previewCLISlugMaxLen is the longest PR preview slug the CLI accepts: one
+// DNS label.
+const previewCLISlugMaxLen = 63
+
 // validCLISlug matches the server-side validSlug regex in cmd/apid/handlers.go.
 // Duplicated here so the CLI can reject malformed slugs before paying a
 // network round-trip — the server still re-validates as defence in depth.
+// A PR preview slug is pr-<N>- plus its parent's slug of up to 40
+// characters, so it may run past 40; it still fits one DNS label.
 func validCLISlug(s string) bool {
-	if len(s) < 3 || len(s) > 40 {
+	maxLen := 40
+	if api.IsPreviewAppSlug(s) {
+		maxLen = previewCLISlugMaxLen
+	}
+	if len(s) < 3 || len(s) > maxLen {
 		return false
 	}
 	for i, r := range s {
@@ -86,12 +97,12 @@ func cmdPS(args []string) int {
 	app := fs.String("app", "", appSlugFlagUsage)
 	flags, positional := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil || len(positional) > 1 {
-		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]", "ps")
+		PrintUsage(os.Stderr, "usage: gregale app instances [--all] [<app>]", "ps")
 		return 1
 	}
 	positional, err := mergeAppFlag(positional, *app, 1)
 	if err != nil {
-		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]\nerror: "+err.Error(), "ps")
+		PrintUsage(os.Stderr, "usage: gregale app instances [--all] [<app>]\nerror: "+err.Error(), "ps")
 		return 1
 	}
 	slug := ""
@@ -102,7 +113,7 @@ func cmdPS(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>] (or run `gregale link <project-slug>`)", "ps")
+				PrintUsage(os.Stderr, "usage: gregale app instances [--all] [<app>] (or run `gregale link <project-slug>`)", "ps")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -213,12 +224,26 @@ func humanizeInstanceState(state string) string {
 func cmdStatus(args []string) int {
 	fs := newFlagSet(statusLiteral, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit the raw status page as JSON")
+	platform := fs.Bool("platform", false, "show Gregale's platform status")
+	app := fs.String("app", "", "show this app instead of the linked one")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale status [--json]", "status")
+	if fs.NArg() != 0 || *platform && *app != "" {
+		PrintUsage(os.Stderr, "usage: gregale status [--app SLUG] | --platform [--json]", "status")
 		return 1
+	}
+	if !*platform {
+		target, ok, err := statusTarget(*app)
+		if err != nil {
+			return printErr("Could not read the linked project", err)
+		}
+		if ok {
+			if *asJSON {
+				jsonOutput = true
+			}
+			return cmdStatusCheckout(target)
+		}
 	}
 	// Use the raw Client (not authedClient) so the public endpoint
 	// works without a stored token. The Client still sends the bearer
@@ -246,7 +271,11 @@ func cmdStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%%\n", page.BuildSuccessPct)
 	_, _ = fmt.Fprintf(osStdout, "as of:        %s\n", page.AsOf.Format("2006-01-02 15:04:05 UTC"))
-	_, _ = fmt.Fprintf(osStdout, "source:       %s\n", page.Source)
+	// A healthy page's source names the telemetry backend, which is noise for
+	// customers; a degraded one carries the reason the numbers are partial.
+	if reason, degraded := strings.CutPrefix(page.Source, appmetrics.SourceDegradedPrefix); degraded {
+		_, _ = fmt.Fprintf(osStdout, "degraded:     %s\n", reason)
+	}
 	return 0
 }
 
@@ -259,8 +288,12 @@ func cmdStatus(args []string) int {
 // flow as `gregale secrets set`; `--restart` opts into an immediate
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>", "env")
+	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() {
+		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
+		if fullEnvironmentCloneCLI() {
+			usage = "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>"
+		}
+		PrintUsage(os.Stderr, usage, "env")
 		return 1
 	}
 	switch args[0] {
@@ -286,7 +319,9 @@ func cmdEnv(args []string) int {
 		return envDiff(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
-	return 1
+	// `env list` named no verb (Hunt 14 H14-63).
+	parent, _ := lookupCliCommand("env")
+	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
 }
 
 func envPull(args []string) int {
@@ -307,7 +342,7 @@ func envPull(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--scope <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--env <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
@@ -464,7 +499,7 @@ func envPush(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--scope <name>] [-f .env | --from-stdin] [--restart] [--dry-run] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--env <name>] [-f .env | --from-stdin] [--restart] [--dry-run] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
@@ -587,7 +622,7 @@ func envPush(args []string) int {
 			}
 			return printErr("Secret scan rejected the push",
 				&StrictSecretScanError{Findings: wireFindings,
-					Hint: "move detected secrets to `gregale secrets set` (see " + cliDocsURL + ")"})
+					Hint: "move detected secrets to `gregale env set` (see " + cliDocsURL + ")"})
 		}
 		if len(findings) > 0 {
 			renderEnvPushScanWarnings(findings, osStderr)
@@ -635,6 +670,7 @@ func envPush(args []string) int {
 		receipt.UpdatedKeyCount++
 		if !jsonOutput {
 			PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
+			warnPlatformOwnedEnvKey(p.k)
 		}
 	}
 	printConfigGuardNotice(context.Background(), client, *app, *scope)
@@ -802,13 +838,18 @@ func cmdAppScale(slug string, args []string) int {
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
-	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
+	conc := fs.Int("max-concurrency", 0, "update the maximum instances (replicas) the app scales to")
 	concurrencyOverflow := fs.String("concurrency-overflow", "", "saturated concurrency behavior: queue|drop")
 	maxQueueDepth := fs.Int("max-queue-depth", 0, "maximum queued requests at warm saturation (0 = plan default)")
 	maxQueueWait := fs.Duration("max-queue-wait", 0, "maximum warm-saturation wait as a duration, for example 750ms or 2s (0 = plan default)")
 	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	wakeMaxQueueDepth := fs.Int("wake-max-queue-depth", 0, "per-app cold-wake waiter cap (0 = plan default)")
 	wakeMaxQueueWaitSeconds := fs.Int("wake-max-queue-wait-seconds", 0, "per-app cold-wake wait budget in seconds (0 = plan default, max 60)")
+	// ADR-20261022203523 dark launch: a hidden flag. It parses, but stays
+	// out of help, completions, man pages and the generated reference until
+	// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS admits every account; apid
+	// answers an unlisted account as for an unknown field.
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
@@ -903,7 +944,10 @@ func cmdAppScale(slug string, args []string) int {
 		v := *conc
 		req.MaxConcurrency = &v
 	}
-	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
+	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] || explicit["per-instance-concurrency"] {
+		if explicit["per-instance-concurrency"] && *perInstanceConcurrency < 0 {
+			return printErr("Invalid concurrency policy", errNegativePerInstanceConcurrency(*perInstanceConcurrency))
+		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
@@ -911,6 +955,9 @@ func cmdAppScale(slug string, args []string) int {
 		policy, err := cliScalingPolicyPatchWithQueues(context.Background(), environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
+		}
+		if explicit["per-instance-concurrency"] {
+			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
 		req.ScalingPolicy = policy
 	}
@@ -1037,7 +1084,11 @@ func cmdAppScale(slug string, args []string) int {
 			revision := workloadRevision
 			expectedWorkloadRevision = &revision
 		}
-		return cmdAppScalePlan(client, appClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
+		// The preview's read pins its own revision, so a change since the
+		// merge reads above shows up as a different one.
+		observed := int64(-1)
+		previewClient := environmentAppClient{Client: client, environment: *environment, revision: &observed}
+		return cmdAppScalePlan(client, previewClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
 	}
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := appClient.UpdateApp(context.Background(), slug, req)
@@ -1048,6 +1099,11 @@ func cmdAppScale(slug string, args []string) int {
 		return jsonOut(writeJSON(updated))
 	}
 	printAppSettingsReceipt(slug, *environment, req)
+	if explicit["min"] && *min > 0 && updated.Status == "evicted_cold" {
+		// A parked app keeps parked until a real wake (H5-54), so the floor
+		// does not start an instance on its own (Hunt 14 H14-94).
+		PrintOK(osStdout, "%s", parkedMinInstancesNote(slug, *min))
+	}
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure (mid-rotation token, transient
 		// API blip). The cost echo is a transparency affordance;
@@ -1058,6 +1114,12 @@ func cmdAppScale(slug string, args []string) int {
 		}
 	}
 	return 0
+}
+
+// parkedMinInstancesNote tells the owner that a floor set on a parked app
+// waits for the next wake.
+func parkedMinInstancesNote(slug string, floor int) string {
+	return fmt.Sprintf("App is parked; the floor of %d starts holding after its next wake. Run gregale app wake %s to start it now.", floor, slug)
 }
 
 // cmdAppRename swaps an app's slug atomically. The server validates the
@@ -1106,10 +1168,13 @@ func cmdAppRename(slug, newSlug string) int {
 // Pulled out of main.go so the switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|traffic-status|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
 		return 1
 	}
 	slug := args[0]
+	if code, ok := cmdAppConditions(slug, args[1:]); ok {
+		return code
+	}
 	if len(args) >= 2 {
 		switch args[1] {
 		case subHealth:
@@ -1142,6 +1207,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppEgressPorts(slug, args[2:])
 		case subNetwork:
 			return cmdAppNetwork(slug, args[2:])
+		case "traffic-status":
+			return cmdAppTrafficStatus(slug, args[2:])
 		case subRoutes:
 			return cmdAppsRoutes(slug, args[2:])
 		case subTCPListeners:
@@ -1182,7 +1249,7 @@ func cmdPlan(args []string) int {
 	}
 	args = fs.Args()
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale plan <free|hobby|pro|scale>", "plan")
+		PrintUsage(os.Stderr, "usage: gregale billing plan <free|hobby|pro|scale>", "plan")
 		return 1
 	}
 	target := api.Plan(args[0])
@@ -1269,7 +1336,7 @@ func cmdDashboard(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale dashboard [--stateless]", "dashboard")
+		PrintUsage(os.Stderr, "usage: gregale open dashboard [--stateless]", "dashboard")
 		return 1
 	}
 	if _, err := authedClient(); err != nil {
@@ -1470,6 +1537,7 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 // --payload semantics (inline JSON / @file / stdin).
 func cmdQueueSend(args []string) int {
 	fs := newFlagSet("queue send", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	payload := fs.String("payload", "", "JSON payload (inline | @file | -)")
 	environment := fs.String("environment", "", "registered project environment with an enabled queue binding")
 	queueName := fs.String("queue-name", "", "logical queue name (optional when the app has one active binding)")
@@ -1479,6 +1547,10 @@ func cmdQueueSend(args []string) int {
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
@@ -1541,9 +1613,14 @@ func queueWorkFromFlags(policy, key, fairnessKey string) (*api.InvokeWork, error
 // same signal.NotifyContext wiring.
 func cmdQueueReceive(args []string) int {
 	fs := newFlagSet("queue receive", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale queue receive <slug>", "queue")
@@ -1599,9 +1676,14 @@ func cmdQueueReceive(args []string) int {
 // Read-only; safe to call on a hot path.
 func cmdQueueState(args []string) int {
 	fs := newFlagSet("queue state", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale queue state <slug>", "queue")
@@ -1634,6 +1716,7 @@ func cmdQueueState(args []string) int {
 // Cursor pagination via --before mirrors cmdAuditEventsList.
 func cmdQueuePeek(args []string) int {
 	fs := newFlagSet("queue peek", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
 	fs.StringVar(before, "cursor", "", "alias for --before")
@@ -1641,6 +1724,10 @@ func cmdQueuePeek(args []string) int {
 	flags, pos := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(os.Stderr, "usage: gregale queue peek <slug> [--limit N] [--cursor C] [--all]", "queue")
@@ -1687,6 +1774,7 @@ func cmdQueuePeek(args []string) int {
 // pagination shape as cmdQueuePeek (cursor via --before).
 func cmdQueueDeadLetter(args []string) int {
 	fs := newFlagSet("queue dead-letter", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor")
 	fs.StringVar(before, "cursor", "", "alias for --before")
@@ -1695,12 +1783,16 @@ func cmdQueueDeadLetter(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
+	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--cursor C] [--all]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> [--limit N] [--cursor C] [--all]", "queue")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> --limit N (1 <= N <= 100)", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> --limit N (1 <= N <= 100)", "queue")
 		return 1
 	}
 	slug := pos[0]
@@ -1741,9 +1833,14 @@ func cmdQueueDeadLetter(args []string) int {
 // row before the lease expires.
 func cmdQueueAck(args []string) int {
 	fs := newFlagSet("queue ack", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 2)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale queue ack <slug> <row-id>", "queue")
@@ -1894,12 +1991,18 @@ func cmdTailContext(ctx context.Context, args []string) int {
 	fs := newFlagSet("tail", flag.ContinueOnError)
 	onlySlug := fs.String("app", "", "filter to a single app slug (optional)")
 	includeStateless := fs.Bool("include-stateless", false, "also print stateless.advisory frames (default: hide)")
-	if err := fs.Parse(args); err != nil {
+	// `tail <slug>` failed with a usage error although logs, ps and invoke
+	// take the slug positionally (Hunt 12 H12-45).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale tail [--app <slug>] [--include-stateless]", "tail")
+	slugArg, rest := peelLeadingSlug(fs.Args())
+	if len(rest) != 0 {
+		PrintUsage(os.Stderr, "usage: gregale invocation watch [<slug> | --app <slug>] [--include-stateless]", "tail")
 		return 1
+	}
+	if err := mergeLeadingSlug(onlySlug, slugArg); err != nil {
+		return printErr("Invalid tail arguments", err)
 	}
 	resolvedApp, resolveErr := resolveAppFlagOrContext(*onlySlug)
 	if resolveErr == nil {
@@ -2158,11 +2261,21 @@ func writeRawTailFrame(e api.Event) error {
 // the UX surface for queues without forcing the customer to learn
 // long-poll semantics.
 func cmdQueueTail(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue tail <slug>", "queue")
+	fs := newFlagSet("queue tail", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
+	flags, pos := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	slug := args[0]
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
+	}
+	if len(pos) != 1 {
+		PrintUsage(os.Stderr, "usage: gregale queue watch <slug>", "queue")
+		return 1
+	}
+	slug := pos[0]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

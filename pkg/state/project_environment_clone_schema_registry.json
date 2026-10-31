@@ -27,6 +27,34 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_spend_cap_holds",
+    "columns": [
+      "account_id",
+      "month",
+      "cap_cents",
+      "observed_cents",
+      "reached_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "alert_test_sends",
+    "columns": [
+      "id",
+      "account_id",
+      "kind",
+      "subject_id",
+      "event",
+      "state",
+      "claim_token",
+      "claimed_until",
+      "result",
+      "created_at",
+      "completed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "financial_budget_alert_channel_deliveries",
     "columns": [
       "account_id",
@@ -109,7 +137,12 @@
       "channel_id",
       "policy_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "financial_budget_evaluations",
@@ -339,6 +372,7 @@
       "billing_mail_revision",
       "business_name",
       "created_at",
+      "deletion_includes_managed_postgres",
       "deletion_requested_at",
       "deployment_mail_revision",
       "egress_allowlist_extra",
@@ -352,6 +386,7 @@
       "mfa_required",
       "mfa_revision",
       "mfa_secret_encrypted",
+      "mfa_totp_last_step",
       "overage_cap_cents",
       "password_reset_revision",
       "past_due_at",
@@ -414,6 +449,20 @@
     "kind": "operational"
   },
   {
+    "table": "alert_episodes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "id",
+      "opened_at",
+      "resolved_at",
+      "rule_id",
+      "rule_metric",
+      "rule_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_historical_rollback_claims",
     "columns": [
       "deployment_id",
@@ -458,7 +507,18 @@
       "channel_id",
       "rule_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "alert_rules",
@@ -469,6 +529,7 @@
       "comparison",
       "cooldown_minutes",
       "created_at",
+      "created_by_account_id",
       "custom_metric_name",
       "edge_rule_id",
       "enabled",
@@ -477,11 +538,13 @@
       "id",
       "last_evaluated_at",
       "last_fired_at",
+      "log_query",
       "mcp_for_minutes",
       "mcp_min_calls",
       "mcp_readiness_scope",
       "metric",
       "name",
+      "notify_resolved",
       "org_id",
       "post_deploy_rollback_window_seconds",
       "slo_id",
@@ -493,7 +556,11 @@
       "webhook_url",
       "window_spec"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_billing_policies",
@@ -504,7 +571,11 @@
       "created_at",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_credit_applications",
@@ -582,7 +653,11 @@
       "id",
       "plan_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_plans",
@@ -597,7 +672,11 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_rate_cards",
@@ -619,7 +698,11 @@
       "tiers",
       "unit"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_route_usage_minutes",
@@ -662,6 +745,54 @@
       "ends_at",
       "starts_at",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_signup_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "customer_closing",
+      "customer_plan_changes",
+      "daily_limit",
+      "display_name",
+      "enabled",
+      "key_scopes",
+      "plan_ids",
+      "provider",
+      "return_url",
+      "terms_url",
+      "trial_days",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "api_consumer_signups",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkout_session_id",
+      "claim_hash",
+      "completed_at",
+      "consumer_id",
+      "created_at",
+      "email",
+      "expires_at",
+      "id",
+      "key_id",
+      "livemode",
+      "name",
+      "plan_id",
+      "provider",
+      "provider_customer_id",
+      "status"
     ],
     "kind": "operational"
   },
@@ -771,7 +902,11 @@
       "status",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_keys",
@@ -834,7 +969,12 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "strategy": "shared"
+    }
   },
   {
     "table": "app_binding_promotion_revisions",
@@ -860,7 +1000,11 @@
       "scope",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_binding_release_policy_history",
@@ -871,7 +1015,11 @@
       "revision",
       "scope"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_config_guard_secrets",
@@ -954,7 +1102,27 @@
       "domain",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "strategy": "target_identity"
+    }
+  },
+  {
+    "table": "app_egress_circuits",
+    "columns": [
+      "app_id",
+      "revision",
+      "targets",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "strategy": "shared"
+    }
   },
   {
     "table": "app_egress_policy_node_status",
@@ -982,7 +1150,12 @@
       "scope",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "app_environment_secret_ref_suppressions",
@@ -995,7 +1168,14 @@
       "scope",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "materialize"
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "app_environment_secret_refs",
@@ -1009,7 +1189,14 @@
       "secret_name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "materialize"
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "app_environment_workload_intents",
@@ -1027,7 +1214,12 @@
       "updated_at",
       "variables"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "app_envs",
@@ -1041,7 +1233,17 @@
       "updated_at",
       "value"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_error_requests",
@@ -1097,6 +1299,60 @@
     "kind": "operational"
   },
   {
+    "table": "app_fork_execs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command",
+      "command_shell",
+      "created_at",
+      "exit_code",
+      "failure_code",
+      "failure_message",
+      "finished_at",
+      "fork_id",
+      "id",
+      "max_output_bytes",
+      "output_truncated",
+      "requested_by",
+      "started_at",
+      "status",
+      "stderr",
+      "stdout",
+      "timeout_seconds",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_forks",
+    "columns": [
+      "access_token_hash",
+      "account_id",
+      "app_id",
+      "cancel_requested_at",
+      "crash_capture_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "failure_code",
+      "failure_message",
+      "finished_at",
+      "id",
+      "instance_id",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "requested_by",
+      "snapshot_id",
+      "started_at",
+      "status",
+      "ttl_seconds",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_health_collection_state",
     "columns": [
       "account_id",
@@ -1132,7 +1388,11 @@
       "revision",
       "rules"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_frequency_alert_policies",
@@ -1141,7 +1401,11 @@
       "revision",
       "rules"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_impact_alert_policies",
@@ -1150,7 +1414,11 @@
       "minimum_customers",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_lifecycle_alert_policies",
@@ -1160,7 +1428,11 @@
       "environments",
       "revision"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_ownership_rules",
@@ -1175,7 +1447,11 @@
       "source_path_prefix",
       "tag_filter"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_saved_views",
@@ -1289,13 +1565,18 @@
       "app_id",
       "auth_header_sealed",
       "created_at",
+      "created_by_account_id",
       "enabled",
       "id",
       "kind",
       "target_url",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_mcp_readiness_policies",
@@ -1304,7 +1585,11 @@
       "policy",
       "scope"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_mcp_readiness_policy_history",
@@ -1315,7 +1600,11 @@
       "revision",
       "scope"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_mcp_task_compatibility",
@@ -1341,7 +1630,11 @@
       "source",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_park_transitions",
@@ -1384,7 +1677,11 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_registry_credentials",
@@ -1399,7 +1696,11 @@
       "updated_at",
       "username"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_release_gates",
@@ -1420,7 +1721,11 @@
       "slo_id",
       "threshold"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_route_priorities",
@@ -1430,7 +1735,11 @@
       "routes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_route_removal_policies",
@@ -1445,7 +1754,11 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_runtime_config_changes",
@@ -1578,7 +1891,16 @@
       "updated_at",
       "value_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify"
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_service_address_cursors",
@@ -1596,7 +1918,11 @@
       "enabled",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_slo_hourly",
@@ -1622,7 +1948,11 @@
       "updated_at",
       "window_days"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_task_attach_sessions",
@@ -1712,7 +2042,11 @@
       "tls_mode",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_trusted_signers",
@@ -1724,7 +2058,11 @@
       "cosign_public_key",
       "signer_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_udp_listeners",
@@ -1740,7 +2078,11 @@
       "public_port",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_wake_transitions",
@@ -1813,6 +2155,7 @@
       "account_id",
       "app_id",
       "created_at",
+      "created_by_account_id",
       "delivery_format",
       "enabled",
       "event_filter",
@@ -1826,7 +2169,11 @@
       "target_url",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_work_policies",
@@ -1843,7 +2190,15 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
+    "clone": {
+      "owner": "app",
+      "unavailable": "work_activation_unavailable"
+    }
   },
   {
     "table": "application_standard_assignments",
@@ -1860,7 +2215,12 @@
       "standard_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "application_standard_control_backups",
@@ -1871,7 +2231,11 @@
       "field",
       "logical_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "application_standard_control_bindings",
@@ -1881,7 +2245,11 @@
       "physical_id",
       "resource_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "application_standard_egress_observations",
@@ -1912,7 +2280,11 @@
       "value",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "application_standard_ledger_recoveries",
@@ -1980,7 +2352,12 @@
       "org_id",
       "target_url"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "application_standard_log_health",
@@ -2070,7 +2447,12 @@
       "org_id",
       "public_key_der"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "application_standard_review_plans",
@@ -2103,6 +2485,7 @@
       "memory_key",
       "node_id",
       "parent_token",
+      "producer_incarnation",
       "received_at",
       "token"
     ],
@@ -2120,7 +2503,12 @@
       "standard_id",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "application_standards",
@@ -2131,7 +2519,12 @@
       "org_id",
       "slug"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "apps",
@@ -2229,7 +2622,15 @@
       "workload_class",
       "workload_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
+    "clone": {
+      "owner": "app",
+      "column": "id"
+    }
   },
   {
     "table": "audit_event_outbox",
@@ -2262,6 +2663,21 @@
       "id",
       "kind",
       "received_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "audit_log_anchors",
+    "columns": [
+      "created_at",
+      "key_id",
+      "mac",
+      "prev_mac",
+      "row_count",
+      "rows_digest",
+      "seq",
+      "window_end",
+      "window_start"
     ],
     "kind": "operational"
   },
@@ -2664,7 +3080,11 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "ci_automation_branches",
@@ -2752,7 +3172,12 @@
       "profile_id",
       "push_branches"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "ci_automation_pull_requests",
@@ -2828,7 +3253,12 @@
       "state",
       "templates"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "ci_executions",
@@ -2870,7 +3300,12 @@
       "repository_id",
       "revision_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "ci_github_checks",
@@ -2985,7 +3420,12 @@
       "id",
       "name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "ci_run_events",
@@ -3059,11 +3499,20 @@
       "account_id",
       "consumed_at",
       "created_at",
+      "device_hash",
       "expires_at",
       "status",
       "token_hash"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "clone_checkpoint_admission_guard",
+    "columns": [
+      "generation",
+      "id"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "cluster_signing_keys",
@@ -3146,7 +3595,11 @@
       "relay_status",
       "sealed_connection"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "compute_node_heartbeat_hourly",
@@ -3195,9 +3648,13 @@
       "active",
       "admission_ceiling_mb",
       "cert_fingerprint",
+      "cpu_model",
+      "cpu_pressure_until",
+      "cpu_template",
       "created_at",
       "drain_completed_at",
       "drain_initiated_at",
+      "edge_listener_heartbeat_at",
       "gateway_target_url",
       "generation",
       "host_certificate",
@@ -3213,6 +3670,8 @@
       "overlay_ip",
       "public_ip",
       "public_ip_set_at",
+      "readiness",
+      "readiness_reason",
       "recovery_initiated_at",
       "region",
       "release_id",
@@ -3222,8 +3681,14 @@
       "target_url",
       "vcpu_budget",
       "vmmd_admission_protocol",
+      "vmmd_epoch",
+      "vmmd_epoch_incarnation",
       "vmmd_incarnation",
+      "vmmd_predecessor_incarnation",
+      "vmmd_restart_notice_until",
       "vpcpus",
+      "wake_breaker_open_until",
+      "wake_breaker_reason",
       "zone"
     ],
     "kind": "platform_configuration"
@@ -3245,7 +3710,11 @@
       "scopes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "container_host_port_leases",
@@ -3300,7 +3769,55 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "crash_captures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "captured_at",
+      "deployment_id",
+      "encrypted_at",
+      "expires_at",
+      "failure_code",
+      "failure_message",
+      "fc_version",
+      "finished_at",
+      "id",
+      "instance_id",
+      "mem_bytes",
+      "plaintext_state",
+      "reason",
+      "requested_at",
+      "route",
+      "sealed_key",
+      "status",
+      "status_code",
+      "storage_key",
+      "trigger",
+      "updated_at",
+      "vmstate_storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "crash_snapshot_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "credit_ledger",
@@ -3352,13 +3869,18 @@
       "retry_backoff_seconds",
       "retry_max",
       "schedule",
+      "schedule_anchor_at",
       "schedule_policy",
       "schedule_revision",
       "skip_if_running",
       "suspended_reason",
       "timezone"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "custom_domain_tls_hosts",
@@ -3389,7 +3911,14 @@
       "verification_next_check_at",
       "verified_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "diff"
+    ],
+    "clone": {
+      "owner": "app",
+      "strategy": "target_identity"
+    }
   },
   {
     "table": "customer_operation_approval_forms",
@@ -3468,7 +3997,11 @@
       "spec",
       "workflow_snapshot"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "customer_operation_delivery_retries",
@@ -3662,7 +4195,11 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "customer_operation_webhook_receipts",
@@ -3833,6 +4370,23 @@
     "kind": "operational"
   },
   {
+    "table": "dashboards",
+    "columns": [
+      "account_id",
+      "created_at",
+      "id",
+      "name",
+      "updated_at",
+      "widgets"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
     "table": "data_api_runtime_connection_observations",
     "columns": [
       "account_id",
@@ -3946,7 +4500,12 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "data_pipeline_connections",
@@ -4031,7 +4590,12 @@
       "verified_at",
       "verify_requested"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "data_repair_rehearsals",
@@ -4086,7 +4650,11 @@
       "scope",
       "source"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "dead_letter_events",
@@ -4163,7 +4731,11 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_artifact_scan_current",
@@ -4361,7 +4933,11 @@
       "truncated",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_openapi_snapshots",
@@ -4374,7 +4950,12 @@
       "sha256",
       "snapshot"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment",
+      "strategy": "derived"
+    }
   },
   {
     "table": "deployment_project_release_workers",
@@ -4392,7 +4973,11 @@
       "deployment_id",
       "urls"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_recovery_lineage",
@@ -4448,7 +5033,14 @@
     "columns": [
       "deployment_id",
       "values_json"
-    ]
+    ],
+    "capabilities": [
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_release_secret_snapshots",
@@ -4457,7 +5049,14 @@
       "created_at",
       "deployment_id",
       "values_json"
-    ]
+    ],
+    "capabilities": [
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_revision_pins",
@@ -4514,7 +5113,12 @@
       "sha256",
       "snapshot"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment",
+      "strategy": "derived"
+    }
   },
   {
     "table": "deployment_runtime_environment_owners",
@@ -4616,7 +5220,24 @@
       "slug",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "deployment_sidecar_env_reseals",
+    "columns": [
+      "ciphertext",
+      "deployment_id",
+      "env_key",
+      "kid",
+      "resealed_at",
+      "sidecar_name",
+      "source_sha256"
+    ],
+    "kind": "operational"
   },
   {
     "table": "deployment_sidecar_layers",
@@ -4629,7 +5250,15 @@
       "storage_key",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "promote"
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_sidecar_secret_reload_signals",
@@ -4763,7 +5392,17 @@
       "traffic_percent_explicit",
       "workflows"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "dev_bridge_sessions",
@@ -4873,6 +5512,18 @@
     "kind": "operational"
   },
   {
+    "table": "edge_penalty_boxes",
+    "columns": [
+      "app_id",
+      "boxed_until",
+      "client",
+      "created_at",
+      "id",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "edge_rule_change_log",
     "columns": [
       "account_ids",
@@ -4929,7 +5580,23 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "edge_crawler_ip_ranges",
+    "columns": [
+      "crawler",
+      "fetched_at",
+      "prefixes",
+      "source_created_at",
+      "source_url"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "edge_rule_set_versions",
@@ -4942,7 +5609,11 @@
       "rules_sha256",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "edge_rules",
@@ -4961,6 +5632,7 @@
       "match_expr",
       "match_headers",
       "match_host",
+      "match_host_scope",
       "match_methods",
       "match_path",
       "mode",
@@ -4969,7 +5641,11 @@
       "updated_at",
       "validate_mode"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "egress_flow_log",
@@ -5068,7 +5744,18 @@
       "id",
       "source_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "project",
+      "via": [
+        [
+          "source_id",
+          "environment_git_sources",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "environment_external_field_owners",
@@ -5078,7 +5765,12 @@
       "manager_id",
       "resource"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "environment_git_revision_approvals",
@@ -5135,7 +5827,11 @@
       "suspended",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "project"
+    }
   },
   {
     "table": "environment_gitops_effects",
@@ -5190,7 +5886,18 @@
       "resource",
       "source_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "binding_id",
+          "queue_bindings",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "environment_gitops_resources",
@@ -5201,7 +5908,11 @@
       "logical_name",
       "source_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "environment_gitops_runs",
@@ -5252,7 +5963,12 @@
       "source_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "environment_management_overrides",
@@ -5266,7 +5982,12 @@
       "reason",
       "resource"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "environment_qualification_config_receipts",
@@ -5352,6 +6073,48 @@
     "kind": "operational"
   },
   {
+    "table": "environment_qualification_object_storage_receipts",
+    "columns": [
+      "attempt",
+      "credential_id",
+      "deliveries",
+      "mode",
+      "permission",
+      "prefix",
+      "recorded_at",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_outbound_receipts",
+    "columns": [
+      "attempt",
+      "integration_id",
+      "method",
+      "path",
+      "recorded_at",
+      "request_id",
+      "revision",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_postgres_receipts",
+    "columns": [
+      "access",
+      "attempt",
+      "binding_id",
+      "credential_generation",
+      "delivery_version",
+      "environment_key",
+      "recorded_at",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_qualification_service_receipts",
     "columns": [
       "attempt",
@@ -5428,7 +6191,12 @@
       "revision_id",
       "source_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "environment_workload_qualification_requests",
@@ -5450,7 +6218,11 @@
       "resource",
       "worker_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "environment_workload_retirements",
@@ -5623,6 +6395,7 @@
       "account_id",
       "app_id",
       "invocation_id",
+      "live",
       "subscription_id"
     ],
     "kind": "operational"
@@ -5839,6 +6612,15 @@
     "kind": "operational"
   },
   {
+    "table": "event_receipt_usage",
+    "columns": [
+      "account_id",
+      "retained_bytes",
+      "retained_events"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_recovery_execution_results",
     "columns": [
       "attempts",
@@ -5911,7 +6693,9 @@
       "execution_notification_captured",
       "execution_notification_next_at",
       "expires_at",
+      "failure_count",
       "id",
+      "last_failure",
       "last_progress_at",
       "next_attempt_at",
       "notification_receipts",
@@ -5975,10 +6759,13 @@
       "cutoff_at",
       "duplicate_policy",
       "earliest_retained_at",
+      "failure_count",
       "filtered_count",
       "from_at",
       "id",
+      "last_failure",
       "matched_count",
+      "next_attempt_at",
       "recipient",
       "scan_complete",
       "scanned_count",
@@ -6035,7 +6822,12 @@
       "source",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "event_storage_admission",
@@ -6119,7 +6911,13 @@
       "policy_name",
       "subscription_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture"
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "event_subscriptions",
@@ -6137,7 +6935,11 @@
       "type",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "events",
@@ -6228,7 +7030,12 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "exclusive_work_submissions",
@@ -6255,7 +7062,11 @@
       "trigger_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "execution_artifact_grants",
@@ -6379,7 +7190,18 @@
       "restored_from",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "qualify",
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "financial_budget_policies",
@@ -6392,7 +7214,12 @@
       "spec",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "financial_budget_revisions",
@@ -6405,7 +7232,12 @@
       "revision",
       "spec"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "financial_evidence_coverage",
@@ -6552,6 +7384,37 @@
     "kind": "operational"
   },
   {
+    "table": "gateway_traffic_policy_observations",
+    "columns": [
+      "boot_id",
+      "generation",
+      "last_change_id",
+      "node_name",
+      "observed_at",
+      "policy_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "gateway_traffic_runtime_observations",
+    "columns": [
+      "boot_id",
+      "deadline_signing",
+      "generation",
+      "managed_circuit",
+      "managed_http",
+      "node_name",
+      "policy_snapshot",
+      "rate_counter_mode",
+      "reported_at",
+      "retry_backend_id",
+      "retry_counter_mode",
+      "retry_enabled",
+      "security_revocation"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "gdpr_requests",
     "columns": [
       "account_email",
@@ -6599,13 +7462,19 @@
       "scope",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "project"
+    }
   },
   {
     "table": "github_deploy_policies",
     "columns": [
       "account_id",
       "ignored_paths",
+      "preview_bot_prs",
+      "preview_draft_prs",
       "preview_enabled",
       "preview_service_policy",
       "preview_ttl_hours",
@@ -6614,7 +7483,11 @@
       "root_dir",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "project"
+    }
   },
   {
     "table": "github_deployments",
@@ -6668,6 +7541,7 @@
     "columns": [
       "installation_id",
       "secret_value",
+      "secret_sealed",
       "upgraded_at",
       "upgraded_by"
     ],
@@ -6696,6 +7570,18 @@
       "version_id"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "honeytokens",
+    "columns": [
+      "id",
+      "kind",
+      "token_digest",
+      "label",
+      "planted_at",
+      "retired_at"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "hosting_automation_credentials",
@@ -6759,7 +7645,12 @@
       "site_id",
       "state"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "hosting_oidc_trusts",
@@ -6829,7 +7720,18 @@
       "site_id",
       "state"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "project",
+      "via": [
+        [
+          "site_id",
+          "hosting_sites",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "hosting_retention_policies",
@@ -6841,7 +7743,18 @@
       "staged_age_seconds",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "project",
+      "via": [
+        [
+          "site_id",
+          "hosting_sites",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "hosting_route_publications",
@@ -6875,7 +7788,11 @@
       "status",
       "suspended"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "project"
+    }
   },
   {
     "table": "idempotency_keys",
@@ -6904,7 +7821,27 @@
       "token_hash",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "incident_notes",
+    "columns": [
+      "account_id",
+      "alert_episode_id",
+      "author",
+      "body",
+      "created_at",
+      "id",
+      "incident_id",
+      "kind",
+      "route_incident_id",
+      "status_incident_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "instance_application_standard_admissions",
@@ -6916,6 +7853,19 @@
       "instance_id",
       "native_input_hash",
       "node_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "instance_application_standard_rebinds",
+    "columns": [
+      "created_at",
+      "from_incarnation",
+      "instance_id",
+      "node_id",
+      "observed",
+      "to_incarnation",
+      "vmmd_epoch"
     ],
     "kind": "operational"
   },
@@ -6952,6 +7902,26 @@
       "id",
       "instance_id",
       "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "instance_quiet_pauses",
+    "columns": [
+      "ended_at",
+      "instance_id",
+      "node_id",
+      "recorded_at",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "quiet_pause_watermarks",
+    "columns": [
+      "covered_until",
+      "node_id",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -7442,6 +8412,18 @@
     "kind": "operational"
   },
   {
+    "table": "invocation_backlog_counters",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bytes",
+      "pending",
+      "slot",
+      "source"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "invocation_environment_queue_admissions",
     "columns": [
       "account_id",
@@ -7689,7 +8671,11 @@
       "team_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_application_reminder_policies",
@@ -7701,7 +8687,11 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_application_reminders",
@@ -7731,7 +8721,11 @@
       "skipped_deliveries",
       "unrouted_alerts"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_application_triage",
@@ -7835,7 +8829,11 @@
       "revoked_at",
       "token_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "issue_lifecycle_alert_receipts",
@@ -7909,7 +8907,11 @@
       "workspace_id",
       "workspace_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_slack_interaction_policies",
@@ -7921,7 +8923,11 @@
       "slack_app_id",
       "workspace_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_slack_link_challenges",
@@ -7959,7 +8965,11 @@
       "revision",
       "rules"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_source_map_artifacts",
@@ -8046,7 +9056,11 @@
       "token_sealed",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_team_slack_threads",
@@ -8087,7 +9101,11 @@
       "source_state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_callback_diagnostics",
@@ -8155,7 +9173,11 @@
       "webhook_enabled",
       "workspace_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_linear_oauth_flows",
@@ -8206,7 +9228,11 @@
       "team_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_sync_history",
@@ -8259,7 +9285,11 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_sync_notifications",
@@ -8291,7 +9321,11 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_sync_triage",
@@ -8334,7 +9368,12 @@
       "updated_at",
       "username"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "job_run_attach_sessions",
@@ -8479,7 +9518,12 @@
       "task_timeout_s",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "layer_artifact_retention",
@@ -8517,6 +9561,42 @@
       "trace_id"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "log_archive_erasure_instances",
+    "columns": [
+      "account_id",
+      "erased_at",
+      "instance_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "log_archive_erasures",
+    "columns": [
+      "account_id",
+      "deletion_requested_at",
+      "snapshotted_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "log_saved_searches",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "name",
+      "query",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "strategy": "shared"
+    }
   },
   {
     "table": "login_tokens",
@@ -8584,6 +9664,30 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_account_overage",
+    "columns": [
+      "enabled",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "managed_postgres_cap_events",
+    "columns": [
+      "allowance_unit_seconds",
+      "ceiling_unit_seconds",
+      "mail_intent_id",
+      "overage_enabled",
+      "period_start",
+      "reached_at",
+      "subject_id",
+      "threshold",
+      "used_unit_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_bindings",
     "columns": [
       "access",
@@ -8612,7 +9716,14 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "managed_postgres_checkpoint_maintenance",
@@ -8839,6 +9950,16 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_database_endpoints",
+    "columns": [
+      "database_id",
+      "host",
+      "port",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_databases",
     "columns": [
       "account_id",
@@ -8863,6 +9984,7 @@
       "org_id",
       "postgres_major",
       "provider_resource_id",
+      "purge_after",
       "region",
       "restore_point_in_time",
       "restore_source_database_id",
@@ -8875,7 +9997,15 @@
       "storage_limit_bytes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "managed_postgres_health",
@@ -8907,7 +10037,23 @@
       "kid",
       "recipient",
       "retires_at",
-      "sealed_secret"
+      "sealed_secret",
+      "sealed_secret_sig"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_live_logins",
+    "columns": [
+      "account_id",
+      "awake",
+      "created_at",
+      "database_id",
+      "provider_identity_id",
+      "recipient",
+      "sealed_login",
+      "sealed_login_sig",
+      "slot"
     ],
     "kind": "operational"
   },
@@ -9020,6 +10166,15 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_usage_waivers",
+    "columns": [
+      "database_id",
+      "waived_from",
+      "waived_until"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_channel_batches",
     "columns": [
       "batch_id",
@@ -9030,7 +10185,18 @@
       "message_count",
       "payload_hash"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_heads",
@@ -9040,7 +10206,18 @@
       "next_sequence",
       "oldest_sequence"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_messages",
@@ -9058,7 +10235,18 @@
       "target_message_id",
       "version"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_reducers",
@@ -9072,7 +10260,18 @@
       "sequence",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_route_generation",
@@ -9122,7 +10321,18 @@
       "endpoint_id",
       "node_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_snapshots",
@@ -9135,7 +10345,18 @@
       "sequence",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_webhook_filters",
@@ -9145,7 +10366,18 @@
       "metadata",
       "webhook_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_commit_receipts",
@@ -9189,7 +10421,23 @@
       "oldest_pending_seconds",
       "unassigned_threshold"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "group_id",
+          "managed_realtime_consumer_groups",
+          "id"
+        ],
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_consumer_group_messages",
@@ -9217,7 +10465,23 @@
       "token_hash",
       "worker"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "group_id",
+          "managed_realtime_consumer_groups",
+          "id"
+        ],
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_consumer_groups",
@@ -9266,7 +10530,18 @@
       "throttled_claim_requests",
       "trigger_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_direct_message_deliveries",
@@ -9341,7 +10616,18 @@
       "subscription",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_endpoints",
@@ -9360,6 +10646,7 @@
       "auth_token_sealed",
       "callback_auth_token_sealed",
       "callback_url",
+      "channel_rules",
       "connect_path",
       "created_at",
       "disconnect_path",
@@ -9369,9 +10656,14 @@
       "max_connections",
       "max_message_bytes",
       "message_path",
+      "slug",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "managed_realtime_event_schemas",
@@ -9383,7 +10675,18 @@
       "schema",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_group_delivery_history",
@@ -9446,7 +10749,18 @@
       "subscription",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_inbox_fallbacks",
@@ -9464,7 +10778,18 @@
       "priority",
       "sequence"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_inbox_heads",
@@ -9474,7 +10799,18 @@
       "next_sequence",
       "oldest_sequence"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_inbox_message_expirations",
@@ -9485,7 +10821,18 @@
       "sequence",
       "ttl_seconds"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_inbox_messages",
@@ -9511,7 +10858,18 @@
       "target_message_id",
       "version"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_message_expirations",
@@ -9522,7 +10880,18 @@
       "sequence",
       "ttl_seconds"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_notification_timeline",
@@ -9583,7 +10952,18 @@
       "sessions_revoked_before",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_publisher_credentials",
@@ -9609,7 +10989,18 @@
       "revoked_at",
       "token_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_publisher_receipts",
@@ -9656,7 +11047,18 @@
       "updated_at",
       "version"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_push_devices",
@@ -9671,7 +11073,18 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_push_preferences",
@@ -9681,7 +11094,18 @@
       "principal",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_push_providers",
@@ -9692,7 +11116,18 @@
       "sealed",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_push_rate_reservations",
@@ -9714,7 +11149,18 @@
       "stream",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_replay_jobs",
@@ -9795,7 +11241,18 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_subscription_tickets",
@@ -9826,7 +11283,23 @@
       "token_hash",
       "use_count"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "group_id",
+          "managed_realtime_consumer_groups",
+          "id"
+        ],
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_worker_heartbeats",
@@ -9840,6 +11313,27 @@
       "ready",
       "status_code",
       "worker"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_bridge_leases",
+    "columns": [
+      "bridge",
+      "epoch",
+      "expires_at",
+      "holder"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_bridge_state",
+    "columns": [
+      "bridge",
+      "epoch",
+      "namespace",
+      "sealed",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -9894,7 +11388,18 @@
       "webhook_secret_sealed",
       "webhook_url"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "mcp_readiness_incident_attention",
@@ -9975,7 +11480,11 @@
       "scope",
       "starts_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "mcp_readiness_notification_actions",
@@ -10022,7 +11531,18 @@
       "sync_unacknowledgements",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "mcp_readiness_pagerduty_policies",
@@ -10034,7 +11554,18 @@
       "rule_id",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "mcp_readiness_reminder_defaults",
@@ -10044,7 +11575,18 @@
       "rule_id",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "meter_gateway_usage_events",
@@ -10259,7 +11801,11 @@
       "source_deployment_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "mirror_slot_leases",
@@ -10356,7 +11902,12 @@
       "target_sealed",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "notification_outbox",
@@ -10389,6 +11940,27 @@
     "kind": "account_identity"
   },
   {
+    "table": "object_bucket_cors",
+    "columns": [
+      "bucket_id",
+      "revision",
+      "rules",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
+  },
+  {
     "table": "object_bucket_encryption",
     "columns": [
       "account_id",
@@ -10404,7 +11976,11 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "object_bucket_lifecycle",
@@ -10415,7 +11991,18 @@
       "rules",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "object_bucket_mutations",
@@ -10441,7 +12028,18 @@
       "revision",
       "rules"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "object_bucket_object_lock",
@@ -10463,7 +12061,11 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "object_bucket_versioning",
@@ -10483,7 +12085,18 @@
       "updated_at",
       "versions_required"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "object_bucket_write_fences",
@@ -10524,7 +12137,15 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
+    "clone": {
+      "owner": "app",
+      "unavailable": "data_checkpoint_unavailable"
+    }
   },
   {
     "table": "object_deletions",
@@ -10637,7 +12258,12 @@
       "created_at",
       "id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "object_s3_copy_source_grants",
@@ -10651,7 +12277,12 @@
       "source_bucket_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "object_storage_access_grants",
@@ -10663,7 +12294,15 @@
       "permission",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "object_storage_authorizations",
@@ -10710,6 +12349,22 @@
       "storage_millicents_per_gib_month",
       "stored_byte_hours",
       "total_millicents"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_storage_billing_progress",
+    "columns": [
+      "account_id",
+      "credited_millicents",
+      "delivered_millicents",
+      "mode",
+      "pending_fixed",
+      "pending_millicents",
+      "period_start",
+      "provider",
+      "updated_at",
+      "version"
     ],
     "kind": "operational"
   },
@@ -10792,6 +12447,20 @@
     "kind": "operational"
   },
   {
+    "table": "object_storage_inventory_scans",
+    "columns": [
+      "after_key",
+      "bucket_id",
+      "complete",
+      "listed_bytes",
+      "listed_keys",
+      "pages",
+      "progress_at",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_storage_key_grants",
     "columns": [
       "bucket_id",
@@ -10800,7 +12469,18 @@
       "max_bytes",
       "reclaimable"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "object_storage_multipart_part_grants",
@@ -10869,6 +12549,17 @@
     "kind": "operational"
   },
   {
+    "table": "object_storage_gateway_storage",
+    "columns": [
+      "accrued_from",
+      "accrued_through",
+      "bucket_id",
+      "period_start",
+      "stored_byte_hours"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_storage_request_metrics",
     "columns": [
       "bucket_id",
@@ -10906,7 +12597,25 @@
       "url_receipt_id",
       "url_request"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "object_storage_timeline_acceptance",
+    "columns": [
+      "accepted_at",
+      "accepted_by",
+      "singleton",
+      "timeline"
+    ],
+    "kind": "operational"
   },
   {
     "table": "object_storage_upload_grants",
@@ -11048,7 +12757,11 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "object_version_protection",
@@ -11071,7 +12784,11 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "object_version_references",
@@ -11083,7 +12800,18 @@
       "object_key",
       "versions_observed"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "oidc_exchanged_tokens",
@@ -11304,6 +13032,14 @@
     "kind": "operational"
   },
   {
+    "table": "org_app_quota_fences",
+    "columns": [
+      "generation",
+      "org_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "org_invitations",
     "columns": [
       "accepting_account_id",
@@ -11348,6 +13084,7 @@
       "last_quota_warning_at",
       "name",
       "object_storage_owned_from",
+      "overage_cap_cents",
       "past_due_at",
       "personal_org",
       "personal_owner_account_id",
@@ -11370,6 +13107,7 @@
       "ai_reserved_cost_millicents",
       "ai_reserved_tokens",
       "ai_tags",
+      "ai_trace_id",
       "binding_app_id",
       "created_at",
       "expires_at",
@@ -11466,6 +13204,23 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_deployment_minutes",
+    "columns": [
+      "app_id",
+      "calls",
+      "cost_millicents",
+      "deployment_id",
+      "error_calls",
+      "flagged_calls",
+      "input_tokens",
+      "minute",
+      "output_tokens",
+      "ttfb_calls",
+      "ttfb_ms_total"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_evaluation_items",
     "columns": [
       "baseline_cost_millicents",
@@ -11550,7 +13305,12 @@
       "output_millicents_per_mtok",
       "price_list_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_price_lists",
@@ -11560,7 +13320,12 @@
       "id",
       "integration_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_prompt_prefixes",
@@ -11569,6 +13334,63 @@
       "prefix_hash",
       "previous_seen_at",
       "seen_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_traces",
+    "columns": [
+      "caller",
+      "calls",
+      "cost_millicents",
+      "end_user",
+      "error_calls",
+      "first_at",
+      "input_tokens",
+      "integration_id",
+      "last_at",
+      "models",
+      "output_tokens",
+      "repeated_tool_calls",
+      "tool_calls",
+      "tool_signature",
+      "trace_id",
+      "usage_unknown_calls"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_trace_days",
+    "columns": [
+      "integration_id",
+      "traces",
+      "usage_date"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_online_evaluation_days",
+    "columns": [
+      "evaluations",
+      "integration_id",
+      "usage_date"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_quality_alerts",
+    "columns": [
+      "account_id",
+      "baseline_count",
+      "baseline_value",
+      "current_count",
+      "current_value",
+      "detected_at",
+      "id",
+      "integration_id",
+      "metric",
+      "model",
+      "usage_date"
     ],
     "kind": "operational"
   },
@@ -11638,15 +13460,24 @@
       "created_at",
       "duration_ms",
       "end_user",
+      "evaluation_claimed_at",
+      "evaluation_score",
+      "evaluation_state",
+      "feedback",
+      "feedback_at",
+      "feedback_label",
       "id",
       "input_tokens",
       "integration_id",
       "model",
       "outcome",
       "output_tokens",
+      "quality_flags",
       "route_id",
       "status",
       "tags",
+      "tool_calls",
+      "trace_id",
       "ttfb_ms"
     ],
     "kind": "operational"
@@ -11691,7 +13522,12 @@
       "route_id",
       "weight"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_routes",
@@ -11705,7 +13541,12 @@
       "strategy",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_settlements",
@@ -11724,7 +13565,12 @@
       "integration_id",
       "tag"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_tag_usage_daily",
@@ -11745,6 +13591,7 @@
     "table": "outbound_ai_usage_daily",
     "columns": [
       "audio_seconds",
+      "bad_feedback",
       "cache_saved_millicents",
       "cache_write_tokens",
       "cached_input_tokens",
@@ -11753,17 +13600,26 @@
       "characters",
       "code_session_gb",
       "cost_millicents",
+      "empty_requests",
       "error_requests",
+      "evaluated_requests",
+      "evaluation_errors",
+      "evaluation_score_sum",
       "file_searches",
+      "good_feedback",
       "images",
       "input_audio_tokens",
       "input_tokens",
       "integration_id",
+      "invalid_json_requests",
       "model",
       "output_audio_tokens",
       "output_tokens",
       "prompt_cache_saved_millicents",
+      "refused_requests",
       "requests",
+      "tool_error_requests",
+      "truncated_requests",
       "updated_at",
       "usage_date",
       "usage_unknown_requests",
@@ -11817,7 +13673,11 @@
       "daily_request_limit",
       "integration_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "outbound_integration_apps",
@@ -11826,7 +13686,11 @@
       "created_at",
       "integration_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "outbound_integration_credential_keys",
@@ -11838,7 +13702,12 @@
       "integration_id",
       "label"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_integration_credentials",
@@ -11848,7 +13717,12 @@
       "integration_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_integration_probe_policies",
@@ -11859,7 +13733,12 @@
       "method",
       "path"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_integrations",
@@ -11882,7 +13761,12 @@
       "ai_moderation_model",
       "ai_moderation_on_error",
       "ai_monthly_cost_limit_millicents",
+      "ai_online_eval_judge_integration_id",
+      "ai_online_eval_model",
+      "ai_online_eval_percent",
+      "ai_online_eval_rubric",
       "ai_provider",
+      "ai_quality_alerts",
       "ai_request_log_content",
       "ai_request_log_enabled",
       "ai_response_blocked_terms",
@@ -11891,6 +13775,9 @@
       "ai_response_moderation",
       "ai_response_payment_card",
       "ai_response_secret",
+      "ai_trace_max_calls",
+      "ai_trace_max_cost_millicents",
+      "ai_trace_max_repeated_tool_calls",
       "ai_user_daily_cost_limit_millicents",
       "ai_user_daily_token_limit",
       "allowed_methods",
@@ -11917,7 +13804,12 @@
       "token_hash",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "paddle_overage_dedupe",
@@ -12023,11 +13915,30 @@
     "kind": "operational"
   },
   {
+    "table": "platform_release_activations",
+    "columns": [
+      "actor",
+      "commit_sha",
+      "detail",
+      "finished_at",
+      "host",
+      "id",
+      "kind",
+      "previous_release_id",
+      "release_id",
+      "services",
+      "started_at",
+      "status"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "platform_mail_producer_outbox",
     "columns": [
       "account_id",
       "account_restored_revision",
       "account_suspended_revision",
+      "agent_delivery_id",
       "attempts",
       "code",
       "created_at",
@@ -12089,7 +14000,12 @@
       "scopes",
       "token_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_billing_policies",
@@ -12099,7 +14015,12 @@
       "created_at",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_consumer_provisioning_policies",
@@ -12110,7 +14031,12 @@
       "tenant_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_credential_policies",
@@ -12121,7 +14047,12 @@
       "tenant_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_credit_applications",
@@ -12159,7 +14090,12 @@
       "tenant_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_meter_usage_minutes",
@@ -12210,7 +14146,12 @@
       "rate_card_id",
       "tenant_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_plans",
@@ -12233,7 +14174,12 @@
       "unit",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_rate_cards",
@@ -12254,7 +14200,12 @@
       "tiers",
       "unit"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_reconciliation_receipts",
@@ -12281,7 +14232,12 @@
       "tenant_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_source_route_usage_minutes",
@@ -12345,7 +14301,11 @@
       "authorization_rule_id",
       "statement_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "platform_tenant_statement_surfaces",
@@ -12438,7 +14398,12 @@
       "status",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "postgres_capacity_reservations",
@@ -12508,6 +14473,7 @@
       "pr_number",
       "repo_full_name",
       "root_app_id",
+      "setup_error",
       "updated_at"
     ],
     "kind": "operational"
@@ -12543,7 +14509,12 @@
       "owner_id",
       "owner_type"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "private_network_peerings",
@@ -12558,7 +14529,12 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "private_networks",
@@ -12575,7 +14551,12 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "product_control_billing_documents",
@@ -12615,12 +14596,20 @@
       "account_id",
       "app_id",
       "auth_organization_id",
+      "payment_method_at",
       "plan",
       "revision",
       "suspended",
-      "tenant_id"
+      "tenant_id",
+      "trial_ends_at",
+      "trial_resolved_at",
+      "trial_starts_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_email_deliveries",
@@ -12731,7 +14720,11 @@
       "app_id",
       "revision"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_help_requests",
@@ -12752,7 +14745,11 @@
       "updated_at",
       "version"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_invoice_handoffs",
@@ -12820,7 +14817,11 @@
       "created_at",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_plan_changes",
@@ -12878,7 +14879,11 @@
       "revision",
       "spec"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_waivers",
@@ -12954,7 +14959,11 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "profile_investigations",
@@ -13019,6 +15028,7 @@
     "columns": [
       "account_id",
       "approval_token_hash",
+      "approved_by_account_id",
       "consumed_at",
       "created_at",
       "environment_slug",
@@ -14104,7 +16114,19 @@
       "project_id",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "environment",
+      "slug_column": "environment_slug"
+    }
   },
   {
     "table": "project_environment_secrets",
@@ -14120,7 +16142,15 @@
       "updated_at",
       "value_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "materialize",
+      "qualify"
+    ],
+    "clone": {
+      "owner": "environment",
+      "slug_column": "environment_slug"
+    }
   },
   {
     "table": "project_environment_edge_policies",
@@ -14133,7 +16163,15 @@
       "rules",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff"
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "project_environment_promotion_controls",
@@ -14347,7 +16385,17 @@
       "project_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote"
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "project_environment_workload_deployment_specs",
@@ -14355,7 +16403,18 @@
       "deployment_id",
       "spec_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "project_environment_workload_heads",
@@ -14364,7 +16423,19 @@
       "environment_id",
       "spec_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id",
+      "strategy": "derived"
+    }
   },
   {
     "table": "project_environment_workload_specs",
@@ -14377,7 +16448,19 @@
       "revision",
       "settings"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "project_environments",
@@ -14390,7 +16473,16 @@
       "slug",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "materialize",
+      "diff"
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "id",
+      "strategy": "derived"
+    }
   },
   {
     "table": "project_migration_contracts",
@@ -14490,7 +16582,18 @@
       "deployment_id",
       "release_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "project_release_secret_bundles",
@@ -14520,7 +16623,19 @@
       "rollback_source_release_id",
       "ttl_seconds"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ],
+    "clone": {
+      "owner": "environment",
+      "slug_column": "environment_slug"
+    }
   },
   {
     "table": "project_release_stages",
@@ -14599,7 +16714,13 @@
       "slug",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "project",
+      "column": "id",
+      "strategy": "shared"
+    }
   },
   {
     "table": "provisioned_static_egress_ips",
@@ -14608,7 +16729,12 @@
       "created_at",
       "customer_ip"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "queue_binding_canaries",
@@ -14649,7 +16775,15 @@
       "updated_at",
       "workload_class"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
+    "clone": {
+      "owner": "app",
+      "unavailable": "work_activation_unavailable"
+    }
   },
   {
     "table": "realtime_node_connection_syncs",
@@ -14722,6 +16856,7 @@
       "kind",
       "lifted_at",
       "lifted_by",
+      "org_id",
       "reason",
       "source",
       "source_deployment_id",
@@ -14870,7 +17005,18 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "lease_id",
+          "reserved_ip_leases",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "reserved_ip_leases",
@@ -14887,7 +17033,11 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "resource_namespaces",
@@ -14931,7 +17081,11 @@
       "routes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "route_health_history",
@@ -14957,6 +17111,15 @@
       "deployment_id",
       "status",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_insight_evaluations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "evaluated_at"
     ],
     "kind": "operational"
   },
@@ -15030,7 +17193,11 @@
       "routes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "route_policy_receipts",
@@ -15144,7 +17311,12 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "platform",
+      "strategy": "shared"
+    }
   },
   {
     "table": "runtime_config_operations",
@@ -15540,7 +17712,63 @@
       "sha256",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "scenario_captured_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "data",
+      "event_id",
+      "id",
+      "oversized",
+      "run_id",
+      "schema_version",
+      "source",
+      "type"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_captured_platform_calls",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "idempotency_key",
+      "kind",
+      "message",
+      "name",
+      "oversized",
+      "run_id",
+      "target"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_captured_queue_messages",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "kind",
+      "message",
+      "oversized",
+      "queue_name",
+      "run_id",
+      "schedule",
+      "scheduled_at",
+      "target"
+    ],
+    "kind": "operational"
   },
   {
     "table": "scenario_cold_preparations",
@@ -15781,6 +18009,16 @@
     "kind": "operational"
   },
   {
+    "table": "seal_domain_probe",
+    "columns": [
+      "domain",
+      "recipient",
+      "sealed_blob",
+      "updated_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "service_caller_key_history",
     "columns": [
       "key_id",
@@ -15928,6 +18166,8 @@
     "columns": [
       "application_standard_capture_token",
       "base_image_version",
+      "cpu_model",
+      "cpu_template",
       "created_at",
       "delete_pending",
       "deployment_id",
@@ -15937,6 +18177,7 @@
       "mem_bytes",
       "recovery_generation",
       "stale",
+      "stale_at",
       "storage_key",
       "stored_bytes",
       "tier"
@@ -16053,7 +18294,11 @@
       "timeout_ms",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "tenant_hostnames",
@@ -16068,7 +18313,18 @@
       "surface_id",
       "verified_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "surface_id",
+          "tenant_surfaces",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "tenant_surfaces",
@@ -16087,7 +18343,33 @@
       "status",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "traffic_retry_counters",
+    "columns": [
+      "app_id",
+      "expires_at",
+      "originals",
+      "retries"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "traffic_security_epochs",
+    "columns": [
+      "reason",
+      "revision",
+      "revoked",
+      "scope_id",
+      "scope_kind",
+      "updated_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "trigger_consumer_health",
@@ -16155,12 +18437,19 @@
       "policy_name",
       "trigger_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [
+      "capture"
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "triggers",
     "columns": [
       "account_id",
+      "agent",
       "app_id",
       "batch_size_max",
       "batch_window_ms",
@@ -16182,7 +18471,11 @@
       "source",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "upload_commit_outcomes",
@@ -16304,6 +18597,7 @@
       "customer",
       "days_until_due",
       "due_at",
+      "handoff_reserved",
       "hosted_invoice_url",
       "id",
       "livemode",
@@ -16369,7 +18663,11 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_automation_failure_guards",
@@ -16410,7 +18708,11 @@
       "version",
       "window_seconds"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_automation_live_baseline_promotions",
@@ -16479,7 +18781,11 @@
       "mode",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_automation_publish_receipts",
@@ -16508,7 +18814,11 @@
       "recorded_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_callback_webhook_bindings",
@@ -16521,7 +18831,26 @@
       "run_id",
       "step_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "inbound_webhook_endpoints",
+          "id"
+        ]
+      ]
+    }
+  },
+  {
+    "table": "workflow_code_admission_guard",
+    "columns": [
+      "app_id",
+      "generation"
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_code_pins",
@@ -16691,7 +19020,11 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_recovery_policy_controls",
@@ -16898,7 +19231,18 @@
       "version",
       "workflow_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "inbound_webhook_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "workflow_webhook_receipts",
@@ -16915,6 +19259,329 @@
       "workflow_name"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "app_release_approval_policies",
+    "columns": [
+      "account_id",
+      "after_stage",
+      "allow_self_approval",
+      "app_id",
+      "approvers",
+      "created_at",
+      "notify_channel_ids",
+      "required_approvals",
+      "timeout_minutes",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "deployment_release_approvals",
+    "columns": [
+      "account_id",
+      "app_id",
+      "approver",
+      "approver_account_id",
+      "approver_role",
+      "comment",
+      "created_at",
+      "decision",
+      "deployment_id",
+      "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_approval_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "channel_ids",
+      "created_at",
+      "delivered_at",
+      "deployment_id",
+      "event",
+      "id",
+      "last_error",
+      "next_attempt_at",
+      "payload",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scheduled_releases",
+    "columns": [
+      "account_id",
+      "app_id",
+      "canary",
+      "created_at",
+      "deployment_id",
+      "id",
+      "notify_channel_ids",
+      "outcome_code",
+      "outcome_detail",
+      "override_freeze",
+      "override_freeze_ids",
+      "release_at",
+      "scheduled_by",
+      "started_at",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_database_switches",
+    "columns": [
+      "account_id",
+      "activated_at",
+      "app_id",
+      "attempt_count",
+      "cancel_requested_at",
+      "created_at",
+      "cutover_id",
+      "drain_blocked",
+      "drain_parked",
+      "drain_pending",
+      "drain_requested_at",
+      "drain_retired",
+      "failure_code",
+      "failure_detail",
+      "fenced_at",
+      "finished_at",
+      "from_deployment_id",
+      "id",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "phase",
+      "phase_started_at",
+      "release_switched_at",
+      "requested_by",
+      "restore_point",
+      "retry_at",
+      "scope",
+      "source_database_id",
+      "target_database_id",
+      "target_deployment_id",
+      "target_name",
+      "undone_deployment_ids",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_capture_data",
+    "columns": [
+      "capture_id",
+      "kind",
+      "process_id",
+      "profile",
+      "seq"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_captures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "capture",
+      "claimed_at",
+      "completed_at",
+      "created_at",
+      "expires_at",
+      "id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agents",
+    "columns": [
+      "account_id",
+      "created_at",
+      "deleted_at",
+      "description",
+      "id",
+      "latest_version",
+      "name",
+      "state",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "agent_versions",
+    "columns": [
+      "account_id",
+      "agent_id",
+      "ai_budget_millicents",
+      "created_at",
+      "deliveries",
+      "harness_image",
+      "harness_models",
+      "harness_preset",
+      "harness_run",
+      "model_integrations",
+      "pause_during_model_calls",
+      "prompt_template",
+      "ram_mb",
+      "timeout_sec",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "agent_runs",
+    "columns": [
+      "account_id",
+      "agent_id",
+      "agent_version",
+      "ai_budget_millicents",
+      "attempt",
+      "boot_ms",
+      "cancel_requested_at",
+      "checkout_commit",
+      "checkout_installation_id",
+      "checkout_repository",
+      "dedupe_key",
+      "exit_code",
+      "finished_at",
+      "github_installation_id",
+      "github_number",
+      "github_repository",
+      "id",
+      "inputs",
+      "instance_id",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "node_id",
+      "outcome_code",
+      "outcome_message",
+      "prompt",
+      "queued_at",
+      "ram_mb",
+      "running_at",
+      "signal",
+      "started_at",
+      "state",
+      "tenant_id",
+      "timeout_sec",
+      "trigger",
+      "updated_at",
+      "workflow_event",
+      "workflow_run_id",
+      "workflow_step"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_outputs",
+    "columns": [
+      "account_id",
+      "created_at",
+      "files",
+      "log_tail",
+      "log_truncated",
+      "result",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_ai_spend",
+    "columns": [
+      "account_id",
+      "calls",
+      "run_id",
+      "spent_millicents",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_ai_reservations",
+    "columns": [
+      "created_at",
+      "expires_at",
+      "lease_id",
+      "reserved_millicents",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_deliveries",
+    "columns": [
+      "account_id",
+      "attempts",
+      "body",
+      "body_truncated",
+      "bucket_app_id",
+      "bucket_id",
+      "created_at",
+      "deadline_at",
+      "destination",
+      "external_id",
+      "external_url",
+      "finished_at",
+      "id",
+      "idempotency_key",
+      "installation_id",
+      "lease_expires_at",
+      "lease_token",
+      "next_attempt_at",
+      "number",
+      "object_prefix",
+      "ordinal",
+      "outcome_code",
+      "outcome_message",
+      "repository",
+      "run_id",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_agent_run_capture",
+    "columns": [
+      "namespace",
+      "producer_id",
+      "recovery_id",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_agent_run_observations",
+    "columns": [
+      "account_id",
+      "delivery_id",
+      "disposition",
+      "intent_id",
+      "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_secret_signatures",
+    "columns": [
+      "ciphertext_sha256",
+      "created_at",
+      "signature"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "database_nodes",

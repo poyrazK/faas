@@ -80,8 +80,9 @@ const (
 	// understand the result protocol. Handlers should require value "1".
 	ManagedOperationResultVersionHeader = "X-Gregale-Operation-Result-Version"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
-	// response body. Edge adapters use it to distinguish a Gregale timeout
-	// from a genuine CDN/origin failure.
+	// response body. Every problem WriteProblem renders carries it, and
+	// gatewayd-internal drops a guest's copy, so the public edge can tell a
+	// platform 502/504 from an app's own (ADR-20261030115139).
 	ErrorCodeHeader = "X-Faas-Error-Code"
 	// QueueWaitHeader reports warm saturation delay for a successfully
 	// admitted request. It is customer-facing diagnostic metadata; Server-
@@ -195,7 +196,23 @@ func ClearGuestIdentityHeaders(h http.Header) {
 // IsWorkflowStepHeader reports one of the workflow step headers.
 func IsWorkflowStepHeader(name string) bool {
 	return strings.EqualFold(name, WorkflowRunIDHeader) || strings.EqualFold(name, WorkflowStepHeader) ||
-		strings.EqualFold(name, WorkflowAttemptHeader)
+		strings.EqualFold(name, WorkflowAttemptHeader) || strings.EqualFold(name, WorkflowCodeModeHeader)
+}
+
+// IsPlatformStampedHeader reports a header the gateway authors on the hop it
+// forwards: the guest identity set plus the vmmd bridge hints. A sender
+// cannot make one hop-by-hop by naming it in Connection, because the gateway
+// stamps it after reading the sender's headers.
+func IsPlatformStampedHeader(name string) bool {
+	if IsGuestIdentityHeader(name) {
+		return true
+	}
+	switch strings.ToLower(name) {
+	case "x-faas-app", "x-faas-instance", "x-faas-node":
+		return true
+	default:
+		return false
+	}
 }
 
 func IsGuestIdentityHeader(name string) bool {

@@ -73,9 +73,10 @@ func cmdBillingBudgets(args []string) int {
 		return printErr("Invalid budget arguments", errors.New("history bounds or operation key exceeded"))
 	}
 	if verb == "channels" {
-		return runBillingBudgetChannels(id, set, clear, *asJSON)
+		return runBillingBudgetChannels(id, set, clear, *asJSON || jsonOutput)
 	}
-	return runBillingBudget(verb, id, file, key, expected, after, limit, *asJSON)
+	// The global --json is consumed before dispatch (Hunt 12 H12-42).
+	return runBillingBudget(verb, id, file, key, expected, after, limit, *asJSON || jsonOutput)
 }
 
 // runBillingBudgetChannels shows or replaces a budget's alert channels

@@ -6,7 +6,7 @@
  * A change that would let the app park.
  */
 export type RouteAwakeSuggestion = {
-  kind: 'edge_cache' | 'call_less_often';
+  kind: 'edge_cache' | 'call_less_often' | 'run_less_often';
   message: string;
 };
 

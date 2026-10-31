@@ -1,7 +1,35 @@
 name: managed storage Node starter
 
+# ci-light.yml called this on every pull request push and every merge to main
+# without it being a required check
+# (docs/adr/20261029121500-light-pull-request-ci.md). Pull requests now run it
+# only when the storage starter's own inputs change; ci.yml runs it nightly.
 on:
+  pull_request:
+    paths:
+      - "cmd/gregale/templates/object-storage-node/**"
+      - "cmd/gregale/templates/object-storage-python/**"
+      - "cmd/gregale/templates/node_storage_recovery_test.go"
+      - "sdk/node/src/object-storage-runtime.ts"
+      - "sdk/node/scripts/sync-storage-starter.mjs"
+      - "sdk/node/package*.json"
+      - "pkg/s3gateway/**"
+      - "pkg/e2etest/storagestarter/**"
+      - "pkg/e2etest/storagefixture/**"
+      - "pkg/e2etest/storage_*"
+      - "scripts/test-storage-node-starter.sh"
+      - "scripts/test-object-storage-native.sh"
+      - "scripts/ci/object-storage-native-*"
+      - ".github/workflows/storage-node-starter.yml"
+  # Nightly and on dispatch: ci.yml calls this workflow.
   workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
+  group: storage-node-starter-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -17,10 +45,10 @@ jobs:
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
-      GO_VERSION: '1.26.9'
+      GO_VERSION: '1.26.10'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache/restore@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -31,11 +59,11 @@ jobs:
             go-light-test-3-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: npm

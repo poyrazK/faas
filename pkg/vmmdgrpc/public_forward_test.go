@@ -70,7 +70,7 @@ func TestPublicForwardContextFailsClosedAndPrivateIsExplicit(t *testing.T) {
 func TestPublicForwardCommandsDoNotEnterGuestNamespace(t *testing.T) {
 	ctx := withPublicTarget(t.Context(), testPublicForwardTarget(t))
 	for _, bridge := range []string{"vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge"} {
-		cmd := namespaceOrPublicCommand(ctx, 4242, "/opt/faas/current/bin/"+bridge, 9090)
+		cmd := namespaceOrPublicCommand(ctx, bridgeIdentity{}, 4242, "/opt/faas/current/bin/"+bridge, 9090)
 		if cmd.Args[0] != "/opt/faas/current/bin/"+bridge || cmd.Args[1] != "127.0.0.1" || cmd.Args[2] != "9090" {
 			t.Fatalf("public bridge entered namespace: %v", cmd.Args)
 		}
@@ -78,7 +78,7 @@ func TestPublicForwardCommandsDoNotEnterGuestNamespace(t *testing.T) {
 			t.Fatal("public helper lost original generation")
 		}
 	}
-	cmd := namespaceOrPublicCommand(t.Context(), 4242, "/opt/faas/current/bin/vmmd-tcp-bridge", 9090)
+	cmd := namespaceOrPublicCommand(t.Context(), bridgeIdentity{}, 4242, "/opt/faas/current/bin/vmmd-tcp-bridge", 9090)
 	if cmd.Args[0] != "nsenter" || strings.Contains(strings.Join(cmd.Env, "\n"), "FAAS_PUBLIC_FORWARD_TARGET=") {
 		t.Fatalf("private namespace command: %v", cmd.Args)
 	}
@@ -127,7 +127,7 @@ func TestPublicForwardPersistentPoolsKeepPrivateAndGenerationSeparate(t *testing
 		env                   []string
 	}
 	var records []spawnRecord
-	manager.spawn = func(ctx context.Context, _, namespace, socket, ip string, _ uint32, _ string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
+	manager.spawn = func(ctx context.Context, _, namespace string, _ bridgeIdentity, socket, ip string, _ uint32, _ string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
 		records = append(records, spawnRecord{namespace, ip, socket, env})
 		cmd := exec.CommandContext(ctx, "sleep", "60")
 		if err := cmd.Start(); err != nil {
@@ -139,7 +139,7 @@ func TestPublicForwardPersistentPoolsKeepPrivateAndGenerationSeparate(t *testing
 	target := testPublicForwardTarget(t)
 	acquire := func(ctx context.Context) {
 		t.Helper()
-		lease, err := manager.acquire(ctx, req, "fc-instance-pools")
+		lease, err := manager.acquire(ctx, req, "fc-instance-pools", bridgeIdentity{})
 		if err != nil {
 			t.Fatal(err)
 		}

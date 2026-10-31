@@ -18,7 +18,7 @@ T = TypeVar("T", bound="BillingStatusResponse")
 
 @_attrs_define
 class BillingStatusResponse:
-    """Provider-independent customer billing status (issue"""
+    """Provider-independent customer billing status."""
 
     mode: BillingStatusResponseMode
     enabled: bool

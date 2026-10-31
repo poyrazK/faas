@@ -118,11 +118,12 @@ func resolveManagedInventoryEdge(ctx context.Context, store ServiceExplanationSt
 		if route.RequireHTTPS {
 			item.Transport = string(api.ServiceBindingTransportHTTPS)
 		}
-		if probeStore, ok := store.(state.ManagedServiceProbeStore); ok && route.RequireHTTPS {
+		// ADR-20261019200059: HTTP edges are probed over the plaintext proxy.
+		if probeStore, ok := store.(state.ManagedServiceProbeStore); ok {
 			spec, err := state.ResolveManagedServiceProbe(ctx, probeStore, app.ID, dep.ID, binding.Workload)
 			if err == nil {
 				c.Revision, c.ReleaseID, item.ServiceTargetDeploymentID = spec.ContextRevision, spec.ReleaseID, spec.TargetDeploymentID
-				c.VerificationSupported, c.VerificationContract, c.VerificationReason = true, api.ManagedServiceProbeContract, ""
+				c.VerificationSupported, c.VerificationContract, c.VerificationReason = true, spec.Contract(), ""
 				item.VerificationStatus = "unknown"
 			} else if !errors.Is(err, state.ErrConflict) {
 				issue := serviceInventoryIssue("managed_probe_context_unavailable")

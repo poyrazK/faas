@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
@@ -47,7 +46,7 @@ func validateLogs(args logsArgs) error {
 	if args.Level != "" && !api.IsValidLogLevel(args.Level) {
 		return invalid("invalid_argument", "level must be info, warn, or error")
 	}
-	if len(args.Grep) > apislogs.MaxGrepPatternBytes || strings.ContainsAny(args.Grep, "\r\n\x00") {
+	if len(args.Grep) > api.MaxLogGrepPatternBytes || strings.ContainsAny(args.Grep, "\r\n\x00") {
 		return invalid("invalid_argument", "grep must be a single line of at most 256 bytes")
 	}
 	if args.Since != "" {

@@ -19,12 +19,12 @@ type MCPReadinessPagerDutyPolicy struct {
 	IntegrationKeyMasked string `json:"integration_key_masked,omitempty"`
 }
 
-func (c *Client) GetMCPReadinessPagerDuty(ctx context.Context, app, rule string) (MCPReadinessPagerDutyPolicy, error) {
+func (c *PreviewClient) GetMCPReadinessPagerDuty(ctx context.Context, app, rule string) (MCPReadinessPagerDutyPolicy, error) {
 	var out MCPReadinessPagerDutyPolicy
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/alerts/"+url.PathEscape(rule)+"/mcp-readiness-pagerduty", nil, &out)
 	return out, err
 }
-func (c *Client) SetMCPReadinessPagerDuty(ctx context.Context, app, rule string, r SetMCPReadinessPagerDutyRequest) (MCPReadinessPagerDutyPolicy, error) {
+func (c *PreviewClient) SetMCPReadinessPagerDuty(ctx context.Context, app, rule string, r SetMCPReadinessPagerDutyRequest) (MCPReadinessPagerDutyPolicy, error) {
 	var out MCPReadinessPagerDutyPolicy
 	err := c.do(ctx, "PUT", "/v1/apps/"+url.PathEscape(app)+"/alerts/"+url.PathEscape(rule)+"/mcp-readiness-pagerduty", r, &out)
 	return out, err

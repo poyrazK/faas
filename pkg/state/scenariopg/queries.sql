@@ -33,4 +33,6 @@ WHERE id=sqlc.arg(id)::uuid AND status=sqlc.arg(expected_status) AND owner_id=sq
 RETURNING *;
 
 -- name: Expired :many
-SELECT * FROM scenario_postgres_fixtures WHERE expires_at<now() AND status NOT IN ('complete','deleted') ORDER BY expires_at LIMIT 16;
+-- Random order: rows whose drop keeps failing must not occupy every batch and
+-- starve newer expiries (ADR-20261019120000).
+SELECT * FROM scenario_postgres_fixtures WHERE expires_at<now() AND status NOT IN ('complete','deleted') ORDER BY random() LIMIT 16;

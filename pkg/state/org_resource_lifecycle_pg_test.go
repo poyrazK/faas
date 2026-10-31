@@ -250,39 +250,57 @@ VALUES ($1,$2,'unreviewed','{}'::jsonb)`, f.actor.ID, f.app.ID); err != nil {
 	}
 }
 
-func TestPostgresOrgResourceUnreviewedRehearsalBlocksErasure(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
-	store := state.NewPgStore(pool)
-	f := setupOffboarding(t, store)
-	ctx := t.Context()
-	if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_rehearsal_guard"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_rehearsal_guard"); err != nil {
-		t.Fatal(err)
-	}
-	id := uuid.NewString()
-	run := strings.ReplaceAll(id, "-", "")
-	// A completed fixture can be purged by the rehearsal service. Identity
-	// erasure must still retain its unreviewed company evidence.
-	if _, err := pool.Exec(ctx, `INSERT INTO scenario_postgres_fixtures
+// Rehearsal evidence follows its run and its preview app, so it no longer
+// blocks identity erasure; a fixture that still holds a database does, until
+// its cleanup finishes (ADR-20261022155043, settling ADR-202610171904).
+func TestPostgresOrgResourceRehearsalFixtureBlocksErasureOnlyWhileLive(t *testing.T) {
+	for _, tc := range []struct {
+		status  string
+		blocked bool
+	}{
+		{"complete", false},
+		{"provisioning", true},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			pool := pgtest.OpenMigrated(t)
+			store := state.NewPgStore(pool)
+			f := setupOffboarding(t, store)
+			ctx := t.Context()
+			if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_rehearsal_guard"); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_rehearsal_guard"); err != nil {
+				t.Fatal(err)
+			}
+			id := uuid.NewString()
+			run := strings.ReplaceAll(id, "-", "")
+			if _, err := pool.Exec(ctx, `INSERT INTO scenario_postgres_fixtures
 (id,account_id,run_id,app_id,owner_id,database_name,role_name,status,spec,expires_at,backend_sha256)
-VALUES ($1,$2,$3,$4,$1,$5,$5,'complete','{}'::jsonb,clock_timestamp()+interval '1 hour',$6)`,
-		id, f.actor.ID, run, f.app.ID, "grpg_"+run, strings.Repeat("a", 64)); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
-		t.Fatalf("unreviewed rehearsal allowed erasure: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
-		t.Fatal("raw account deletion bypassed rehearsal ownership guard")
-	}
-	var exists bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM scenario_postgres_fixtures WHERE id=$1)`, id).Scan(&exists); err != nil || !exists {
-		t.Fatalf("rehearsal ownership guard discarded the fixture: %v", err)
+VALUES ($1,$2,$3,$4,$1,$5,$5,$7,'{}'::jsonb,clock_timestamp()+interval '1 hour',$6)`,
+				id, f.actor.ID, run, f.app.ID, "grpg_"+run, strings.Repeat("a", 64), tc.status); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+				t.Fatal(err)
+			}
+			err := store.MarkAccountDeletionPending(ctx, f.actor.ID)
+			if !tc.blocked {
+				if err != nil {
+					t.Fatalf("completed rehearsal evidence blocked erasure: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, state.ErrOrgAppOwnershipPending) {
+				t.Fatalf("a live fixture allowed erasure: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
+				t.Fatal("raw account deletion bypassed the live fixture guard")
+			}
+			var exists bool
+			if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM scenario_postgres_fixtures WHERE id=$1)`, id).Scan(&exists); err != nil || !exists {
+				t.Fatalf("erasure discarded a live fixture journal: %v", err)
+			}
+		})
 	}
 }
 

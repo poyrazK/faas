@@ -156,7 +156,7 @@ func cmdAlertUpdateInteractive(slug string) int {
 	defer cancel()
 	updated, err := client.UpdateAlertRule(writeCtx, slug, rule.ID, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update alert rule", err)
 	}
 	PrintOK(osStdout, "Alert rule %s updated.", updated.ID)
 	return 0

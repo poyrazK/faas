@@ -37,6 +37,7 @@ type FrameworkReadyReceiver struct {
 	mgr                                 *fcvm.Manager
 	emitter                             SidecarEventEmitter
 	eventPublisher                      GuestEventPublisher
+	eventCapturer                       GuestEventCapturer
 	qualificationFrameworkReadyRecorder QualificationFrameworkReadyRecorder
 }
 
@@ -44,6 +45,9 @@ type FrameworkReadyReceiver struct {
 // always-compiled WithEventPublisher method remains source-compatible on
 // development hosts without AF_VSOCK.
 type GuestEventPublisher func(context.Context, string, []byte) error
+
+// GuestEventCapturer mirrors the Linux receiver's capture callback type.
+type GuestEventCapturer func(ctx context.Context, instance, appID, accountID, runID string, body []byte) error
 
 // Close is a no-op on non-linux platforms.
 func (r *FrameworkReadyReceiver) Close() {
@@ -53,6 +57,7 @@ func (r *FrameworkReadyReceiver) Close() {
 		_ = r.mgr
 		_ = r.emitter
 		_ = r.eventPublisher
+		_ = r.eventCapturer
 		_ = r.qualificationFrameworkReadyRecorder
 	}
 }

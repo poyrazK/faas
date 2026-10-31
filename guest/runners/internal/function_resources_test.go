@@ -255,6 +255,13 @@ func TestFunctionResourcesDrainEveryInterpreterBeforeAcknowledgement(t *testing.
 }
 
 func resourceHook(f *backgroundFunction, path, kind string) int {
+	code, _ := resourceHookReply(f, path, kind)
+	return code
+}
+
+// resourceHookReply also returns the response body, which names why the
+// runner refused a hook (for example, workers that have not quiesced).
+func resourceHookReply(f *backgroundFunction, path, kind string) (int, string) {
 	req := httptest.NewRequest(http.MethodPost, path, nil)
 	req.RemoteAddr = "127.0.0.1:1234"
 	header := "X-Faas-Before-Checkpoint"
@@ -264,7 +271,7 @@ func resourceHook(f *backgroundFunction, path, kind string) int {
 	req.Header.Set(header, "1")
 	rec := httptest.NewRecorder()
 	Serve(rec, req, f.cfg)
-	return rec.Code
+	return rec.Code, strings.TrimSpace(rec.Body.String())
 }
 
 func TestFunctionResourcesRecoveryWaitsForEveryProbe(t *testing.T) {

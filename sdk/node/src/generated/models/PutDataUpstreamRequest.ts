@@ -12,7 +12,7 @@
  */
 export type PutDataUpstreamRequest = {
   /**
-   * Closed vocabulary (ADR-098 §D1). Adding a new kind requires an ADR.
+   * Closed vocabulary. Adding a new kind requires an ADR.
    */
   kind: 'postgres' | 'redis' | 'mongo' | 'cassandra' | 'clickhouse' | 'elasticsearch' | 'opensearch' | 'rabbitmq' | 'kafka' | 'nats' | 'minio' | 'memcached' | 'etcd' | 's3' | 'https_api';
   /**
@@ -21,11 +21,11 @@ export type PutDataUpstreamRequest = {
   host: string;
   port: number;
   /**
-   * ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Omitted = default scope.
+   * Deployment-scope filter (1..40 chars, lowercase alnum + dash). Omitted = default scope.
    */
   scope?: string;
   /**
-   * ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (1..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp.
+   * Widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (1..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp.
    */
   deployment_scope?: string;
 };

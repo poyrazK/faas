@@ -31,10 +31,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/oauthpkce"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -107,24 +108,9 @@ func (s *server) renderGitHubAuthRedirect(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     githubAuthStateCookie,
-		Value:    stateToken,
-		Path:     githubCallbackPath,
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     githubAuthPKCECookie,
-		Value:    codeVerifier,
-		Path:     githubCallbackPath,
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes
-	})
+	setOAuthFlowCookie(w, r, githubAuthStateCookie, stateToken, githubCallbackPath)
+	setOAuthFlowCookie(w, r, githubAuthPKCECookie, codeVerifier, githubCallbackPath)
+	setOAuthNext(w, r, githubCallbackPath)
 
 	redirectURI := s.oauthConfig.GitHub.RedirectURI
 	if redirectURI == "" {
@@ -152,7 +138,7 @@ func (s *server) renderGitHubAuthRedirect(w http.ResponseWriter, r *http.Request
 // Verifies state, exchanges the code, fetches the profile + verified
 // email, and signs the user in.
 func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	stateCookie, err := r.Cookie(githubAuthStateCookie)
+	stateCookie, err := oauthFlowCookie(r, githubAuthStateCookie)
 	if err != nil || stateCookie.Value == "" {
 		// Issue #286: OAuth callback failure path that lands
 		// before any customer-supplied identity is known — the
@@ -198,7 +184,7 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 			"GitHub sign-in is not available for this Gregale installation. Use email sign-in or contact support.")
 		return
 	}
-	pkceCookie, err := r.Cookie(githubAuthPKCECookie)
+	pkceCookie, err := oauthFlowCookie(r, githubAuthPKCECookie)
 	if err != nil || !oauthpkce.ValidVerifier(pkceCookie.Value) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_pkce", "Invalid OAuth Request", "missing or invalid OAuth PKCE verifier cookie"))
 		return
@@ -293,7 +279,11 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// §11 anti-takeover invariant is the same regardless of the
 	// provider. GitHub's user id is int64; the oauth_links PK is
 	// keyed on the string form (decimal).
-	acct, err := s.provisionOrFetchOAuthAccount(r.Context(), "github", githubUserEmailID(githubUser), email, githubUser)
+	acct, err := s.provisionOrFetchOAuthAccount(r, "github", githubUserEmailID(githubUser), email, signupSource(oauthNext(r)))
+	if errors.Is(err, errSignupNetworkCap) {
+		writeSignupNetworkCap(w)
+		return
+	}
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "complete GitHub sign-in",
 			"Gregale could not finish setting up your account.",
@@ -317,15 +307,14 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	//
 	// IAM-3 (ADR-039) goes through the unified helper so the sessions
 	// row is created + auth.session.created is emitted.
-	cookie, _, err := s.issueDashboardSessionWithGithub(r.Context(), r, acct.ID, mfaSessionPending(acct), "github", githubUser.Login)
+	cookie, _, err := s.issueDashboardSessionWithGithub(r.Context(), r, acct.ID, s.sessionMFAPending(acct), "github", githubUser.Login)
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "create GitHub dashboard session",
 			"Gregale could not start your dashboard session.",
 			"Return to sign in and try connecting GitHub again.", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,
@@ -348,11 +337,7 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 		"login":  githubUser.Login,
 	})
 
-	redirectTarget := os.Getenv("WEBSITE_URL")
-	if redirectTarget == "" {
-		redirectTarget = "/"
-	}
-	http.Redirect(w, r, redirectTarget, http.StatusFound)
+	finishOAuthSignIn(w, r, githubCallbackPath)
 }
 
 // githubUserEmailID converts a GitHub user-id (int64) into the
@@ -465,7 +450,8 @@ func fetchGitHubVerifiedPrimaryEmail(ctx context.Context, accessToken string) (s
 // The Google flow calls this with info.ProviderID (or equivalently
 // the GoogleUserInfo.ID), the GitHub flow with the GitHubUserInfo.ID
 // cast to string. The sub is what the oauth_links PK is keyed on.
-func (s *server) provisionOrFetchOAuthAccount(ctx context.Context, provider, sub, email string, _ any) (state.Account, error) {
+func (s *server) provisionOrFetchOAuthAccount(r *http.Request, provider, sub, email, source string) (state.Account, error) {
+	ctx := r.Context()
 	email = strings.TrimSpace(strings.ToLower(email))
 
 	// 1. Sub-first lookup.
@@ -489,7 +475,7 @@ func (s *server) provisionOrFetchOAuthAccount(ctx context.Context, provider, sub
 	}
 
 	// 3. Fresh account.
-	res, err := s.store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+	res, err := s.createSignupAccount(r, provider, source, state.CreateAccountWithPersonalOrgParams{
 		Email: email,
 		Plan:  api.PlanFree,
 	})

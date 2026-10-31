@@ -122,9 +122,7 @@ func TestAfterRestoreMetal(t *testing.T) {
 			} else if !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("read previous snapshot: %v", err)
 			}
-			if body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
-				t.Fatalf("park: status=%d body=%s", status, body)
-			}
+			parkApp(t, h, key, slug)
 			snapshotID = waitAfterRestoreSnapshot(t, store, depID, previousID)
 			ackBefore := strings.Count(h.VmmdLogs(), "application after_restore failed (ack=13)")
 			wake(t, "cold_boot", "restored=0 hooks=0")
@@ -196,7 +194,7 @@ http.createServer((req, res) => {
   if (req.url === '/healthz') { res.writeHead(200); res.end('ready'); return; }
   res.writeHead(200);
   res.end('restored=' + (hooks > 0 ? '1' : '0') + ' hooks=' + hooks);
-}).listen(8080, '0.0.0.0');`
+}).listen(Number(process.env.PORT || 8080), '0.0.0.0');`
 	return buildTarGz(t, map[string]string{
 		"package.json":     packageJSON,
 		"index.js":         indexJS,

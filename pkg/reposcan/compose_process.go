@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -100,28 +101,6 @@ func composeGraceSeconds(value any) (int, error) {
 		return 0, fmt.Errorf("stop_grace_period must be at most %s", api.MaxAppManifestStopGracePeriod)
 	}
 	return int(math.Ceil(duration.Seconds())), nil
-}
-
-// composeProcessKeys names the process keys a service declares, for the
-// warning on source-built services, where the Dockerfile owns them.
-func composeProcessKeys(s composeCandidate) []string {
-	var keys []string
-	if s.Entrypoint != nil {
-		keys = append(keys, "entrypoint")
-	}
-	if s.User != nil {
-		keys = append(keys, "user")
-	}
-	if strings.TrimSpace(s.WorkingDir) != "" {
-		keys = append(keys, "working_dir")
-	}
-	if strings.TrimSpace(s.StopSignal) != "" {
-		keys = append(keys, "stop_signal")
-	}
-	if s.StopGracePeriod != nil {
-		keys = append(keys, "stop_grace_period")
-	}
-	return keys
 }
 
 // composeEnvFileKeys returns the variable names declared by a service's
@@ -285,4 +264,46 @@ func mergeEnvKeys(groups ...[]string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// builtServiceProcess folds a built service's entrypoint override into its
+// start command (ADR-20261022160000). A built service's command already
+// replaces the image's process, so Docker's entrypoint-then-command argv is
+// that command: the entrypoint alone when there is no command (an override
+// drops the image CMD), the entrypoint followed by the command otherwise, and
+// the command alone for an empty entrypoint. A shell-form command is appended
+// as shell words. The remaining process keys stay for imaged.
+func builtServiceProcess(process *api.ComposeProcess, command []string, shell bool) ([]string, bool, *api.ComposeProcess) {
+	if process == nil || process.Entrypoint == nil {
+		return command, shell, process
+	}
+	entrypoint := *process.Entrypoint
+	rest := process.Clone()
+	rest.Entrypoint = nil
+	if rest.IsZero() {
+		rest = nil
+	}
+	switch {
+	case len(entrypoint) == 0:
+		return command, shell, rest
+	case len(command) == 0:
+		return slices.Clone(entrypoint), false, rest
+	case !shell:
+		return append(slices.Clone(entrypoint), command...), false, rest
+	}
+	words := make([]string, len(entrypoint))
+	for i, word := range entrypoint {
+		words[i] = shellWord(word)
+	}
+	return []string{strings.Join(words, " ") + " " + command[0]}, true, rest
+}
+
+// shellWord quotes one argument for a /bin/sh -c start command.
+func shellWord(arg string) string {
+	if arg != "" && strings.IndexFunc(arg, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("_@%+=:,./-", r)
+	}) == -1 {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", `'"'"'`) + "'"
 }

@@ -75,7 +75,7 @@ func TestEdgeRulesMaintenance_E2E_MatchReturns503(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-maintenance.apps.test.example"
+	synthHost := "edgectl-maintenance.edge-e2e.example"
 
 	// Precondition: kind=route substitute (synthetic host → real test app).
 	seedRouteSubstitute(t, context.Background(), pool,
@@ -157,7 +157,7 @@ func TestEdgeRulesMaintenance_E2E_DefaultRetryAfter(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-maintenance-default.apps.test.example"
+	synthHost := "edgectl-maintenance-default.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
@@ -215,7 +215,7 @@ func TestEdgeRulesMaintenance_E2E_CrossAccountFallsThrough(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-maintenance-cross.apps.test.example"
+	synthHost := "edgectl-maintenance-cross.edge-e2e.example"
 
 	// kind=route substitute on the host owned by account A.
 	seedRouteSubstitute(t, context.Background(), pool,

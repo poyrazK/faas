@@ -39,8 +39,7 @@ func (s *server) startGitLabOAuth(w http.ResponseWriter, r *http.Request) {
 	config := gitLabOAuthConfig()
 	redirect, redirectErr := url.Parse(config.RedirectURI)
 	if !config.Valid() || redirectErr != nil || redirect.Path != gitLabOAuthCallbackPath || redirect.RawQuery != "" ||
-		hostHMACKey == nil || len(hostHMACKeyBytes()) == 0 || setSecretRecipient == nil || hostSecretRecipient() == nil ||
-		hostIdentitiesForUnseal == nil || len(hostIdentitiesForUnseal(r.Context())) == 0 {
+		hostHMACKey == nil || len(hostHMACKeyBytes()) == 0 || !gitLabSealingReady(r.Context()) {
 		api.WriteProblem(w, api.ErrCapacity("GitLab OAuth is not configured."))
 		return
 	}

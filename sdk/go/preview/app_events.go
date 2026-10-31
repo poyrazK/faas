@@ -1,0 +1,24 @@
+package preview
+
+import "github.com/poyrazK/faas/sdk/go/internal/api"
+
+// Application-scoped producer keys recover original retained acceptance receipts.
+type (
+	AppEventAcceptanceGuard         = api.AppEventAcceptanceGuard
+	AppEventPublicationVerification = api.AppEventPublicationVerification
+	AppEventPublishStatusQuery      = api.AppEventPublishStatusQuery
+	AppEventPublishStatusResponse   = api.AppEventPublishStatusResponse
+	AppEventPublishStatusEvidence   = api.AppEventPublishStatusEvidence
+	AppPublishEventRequest          = api.AppPublishEventRequest
+	AppPublishEventResponse         = api.AppPublishEventResponse
+	AppPublishedEventReceipt        = api.AppPublishedEventReceipt
+)
+
+// Account-level publication: Client.PublishEvent and Client.PublishEventBatch.
+type (
+	PublishEventRequest       = api.PublishEventRequest
+	PublishEventResponse      = api.PublishEventResponse
+	PublishEventBatchRequest  = api.PublishEventBatchRequest
+	PublishEventBatchResult   = api.PublishEventBatchResult
+	PublishEventBatchResponse = api.PublishEventBatchResponse
+)

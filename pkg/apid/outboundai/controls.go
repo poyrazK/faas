@@ -206,6 +206,14 @@ func (s *Service) ListRequestLog(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	entries, err := store.ListOutboundAIRequestLog(r.Context(), acct.ID, integrationID, before, limit)
+	var visible map[string]bool
+	if err == nil {
+		callers := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			callers = append(callers, entry.Caller)
+		}
+		visible, err = s.visibleCallers(r, acct, callers)
+	}
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		httpkit.NotFound(w, "outbound integration not found")
@@ -213,13 +221,18 @@ func (s *Service) ListRequestLog(w http.ResponseWriter, r *http.Request, acct st
 		problem(w, http.StatusServiceUnavailable, "outbound_ai_unavailable", "The outbound AI request log is unavailable")
 	default:
 		w.Header().Set("Cache-Control", "no-store")
-		httpkit.WriteJSON(w, http.StatusOK, requestLogResponse(entries, limit))
+		httpkit.WriteJSON(w, http.StatusOK, requestLogResponse(entries, visible, limit))
 	}
 }
 
-func requestLogResponse(entries []state.OutboundAIRequestLogEntry, limit int) api.OutboundAIRequestLogList {
+// requestLogResponse lists the entries whose caller is visible; the cursor
+// follows the whole page, so a withheld call never ends the listing early.
+func requestLogResponse(entries []state.OutboundAIRequestLogEntry, visible map[string]bool, limit int) api.OutboundAIRequestLogList {
 	out := api.OutboundAIRequestLogList{Items: make([]api.OutboundAIRequestLogEntry, 0, len(entries))}
 	for _, entry := range entries {
+		if !visible[entry.Caller] {
+			continue
+		}
 		item := api.OutboundAIRequestLogEntry{
 			ID: entry.ID, CreatedAt: entry.CreatedAt, Caller: entry.Caller, Model: entry.Model, Status: entry.Status,
 			Outcome: entry.Outcome, InputTokens: entry.InputTokens, CachedInputTokens: entry.CachedInputTokens,
@@ -227,6 +240,14 @@ func requestLogResponse(entries []state.OutboundAIRequestLogEntry, limit int) ap
 			DurationMS: entry.DurationMS, TimeToFirstByteMS: copyInt64(entry.TTFBMS), Attempts: entry.Attempts,
 			ContentCaptured: entry.ContentCaptured, Tags: append([]string{}, entry.Tags...),
 		}
+		if entry.TraceID != "" {
+			traceID := entry.TraceID
+			item.TraceID = &traceID
+		}
+		if len(entry.ToolCalls) > 0 {
+			item.ToolCalls = append([]string{}, entry.ToolCalls...)
+		}
+		qualityFields(&item, entry)
 		if entry.RouteID != "" {
 			routeID := entry.RouteID
 			item.RouteID = &routeID

@@ -32,6 +32,24 @@ const (
 	credentialKeySecret = "credential-key"
 )
 
+// EnabledEnv is apid's operator switch for the native backend (ADR-1027).
+// It is off by default: until it is "1", apid refuses to load a
+// configuration that lists a firecracker backend.
+const EnabledEnv = "FAAS_MANAGED_POSTGRES_NATIVE_ENABLED"
+
+// GatedFactory is Factory behind EnabledEnv, for apid. The qualification
+// tool uses Factory, so an operator can qualify a backend before switching
+// it on.
+func GatedFactory(pool *pgxpool.Pool) managedpostgres.Factory {
+	factory := Factory(pool)
+	return func(backend managedpostgres.BackendConfig, getenv func(string) string) (managedpostgres.Provider, error) {
+		if getenv == nil || getenv(EnabledEnv) != "1" {
+			return nil, fmt.Errorf("firecracker: the native backend is switched off; set %s=1 in apid's environment to load it", EnabledEnv)
+		}
+		return factory(backend, getenv)
+	}
+}
+
 // Factory returns the managedpostgres.Factory for this backend. It dials
 // schedd with apid's client certificate and publishes role verifiers
 // through pool, the control-plane database apid already owns.

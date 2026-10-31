@@ -4,8 +4,7 @@
 /* eslint-disable */
 import type { ConsumedCreditRow } from './ConsumedCreditRow.js';
 /**
- * Returned by POST /v1/invoices/{id}/consume-credits (issue
- * #279 PR-C). consumed_cents is the floored integer cents of
+ * Returned by POST /v1/invoices/{id}/consume-credits. consumed_cents is the floored integer cents of
  * overage drained against this invoice. remaining_credits_cents
  * is the sum of cents_remaining across the account's active
  * credits after the call. already_consumed_for_invoice is true

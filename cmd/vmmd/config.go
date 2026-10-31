@@ -6,6 +6,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -42,9 +43,56 @@ type Config struct {
 	// directory for native image and snapshot output claims. Configure it
 	// before native recovery; it does not enable qualification capture.
 	NativeImageStagingRoot string `toml:"native_image_staging_root"`
+	// NativeRuntimeCapture runs ordinary park and warm captures through the
+	// native producer instead of refusing them (ADR 20261022184951). It
+	// requires native process recovery and both private roots above, and
+	// stays off until native capture acceptance passes.
+	NativeRuntimeCapture bool `toml:"native_runtime_capture"`
+	// NativeRuntimeSnapshotRoot is the pre-created tree native runtime
+	// captures publish to (ADR 20261022184951 amendment 1): owned by vmmd's
+	// uid, no group write and no access for others (production
+	// /srv/fc/native-snap, 2750 root:faas). NativeRuntimeCapture requires it.
+	// Keep it configured after turning capture off: restores and collection
+	// still read the snapshots it holds.
+	NativeRuntimeSnapshotRoot string `toml:"native_runtime_snapshot_root"`
+	// NativeLaunchOwnerRecords publishes ordinary native launches as
+	// version-three records naming this vmmd incarnation, so a restarted
+	// vmmd can prove it exited and clean up after it (ADR-2026101710
+	// Amendment 1). Older vmmd binaries refuse such a journal: enable it only
+	// once every compute node and any rollback target can read version three.
+	NativeLaunchOwnerRecords bool `toml:"native_launch_owner_records"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
+	// ResourceJournalVolatileDir keeps tmpfs copies of journal records for a
+	// restart on the same boot (ADR-20261026113920). It defaults to
+	// /run/faas/vmmd-resources, and to none when
+	// FAAS_VMMD_RESOURCE_JOURNAL_DIR moves the journal, so a private test
+	// journal never reads another vmmd's copies.
+	// FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR overrides both; "" disables it.
+	ResourceJournalVolatileDir string `toml:"resource_journal_volatile_dir"`
+	// ResourceJournalVolatileWrites sends volatile journal commits only to
+	// the tmpfs copies, so they skip the disk fsync (ADR-20261026113920). Off
+	// by default. Older vmmd binaries ignore the copies, so turn it on only
+	// where the rollback target is this release or later.
+	// FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES overrides TOML.
+	ResourceJournalVolatileWrites bool `toml:"resource_journal_volatile_writes"`
+	// AdoptionRecord writes version-7 adoption blocks into the resource
+	// journal (vmmd restart adoption ADR, slice 1). Older vmmd binaries
+	// refuse to open a journal holding version 7, so turn it on only after
+	// every compute node, and any rollback target, runs a version-7 reader.
+	// Ignored with native_process_recovery.
+	AdoptionRecord bool `toml:"adoption_record"`
+	// AdoptRunningVMs adopts restart survivors whose records prove ownership
+	// instead of quarantining them (vmmd restart adoption ADR, slice 2).
+	// Requires adoption_record, so the next restart can adopt too.
+	// Experimental until the fsn-4 adoption acceptance (slice 5) passes.
+	AdoptRunningVMs bool `toml:"adopt_running_vms"`
+	// AdoptAdmittedRuntimes also adopts guests booted under an ADR-595
+	// runtime-admission receipt; schedd then re-binds their admission to
+	// this process (docs/adr/20261018-runtime-admission-rebind.md). Off,
+	// they are refused and re-admitted. Requires adopt_running_vms.
+	AdoptAdmittedRuntimes bool `toml:"adopt_admitted_runtimes"`
 	// FailureReportDir is persistent root-owned storage for liveness/OOM
 	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
@@ -69,11 +117,81 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// RestoreReseedThread boots app VMs whose Node processes answer the
+	// restore reseed barrier from a native thread instead of their event
+	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
+	// overrides TOML.
+	RestoreReseedThread bool `toml:"restore_reseed_thread"`
+	// CPUTemplate is the Firecracker CPU template every guest boots with
+	// (ADR-20261024225612), e.g. "T2CL" for a cell that mixes Cascade
+	// Lake and Ice Lake nodes. Empty (the default) boots with the host's
+	// CPUID. vmmd refuses to start when the host CPU is not one the
+	// template is documented as safe on. FAAS_CPU_TEMPLATE overrides TOML.
+	CPUTemplate string `toml:"cpu_template"`
 	// QuietPause enables ADR-1151 quiet pause: vmmd pauses an eligible
 	// instance's vCPUs between requests and resumes it on the next one.
-	// Off by default; schedd decides which instances are eligible.
-	// FAAS_QUIET_PAUSE overrides TOML.
+	// On by default (ADR-1151 amendment 2026-10-27); schedd decides which
+	// instances are eligible. FAAS_QUIET_PAUSE overrides TOML.
 	QuietPause bool `toml:"quiet_pause"`
+	// QuietPauseObserve runs quiet pause in observe mode: vmmd measures the
+	// pauses it would make (vmmd_quiet_pause_observed_*) and pauses nothing,
+	// so a node's traffic can be measured before quiet_pause is turned on.
+	// quiet_pause wins when both are set. Off by default.
+	// FAAS_QUIET_PAUSE_OBSERVE overrides TOML.
+	QuietPauseObserve bool `toml:"quiet_pause_observe"`
+	// AgentWaitPause enables the model-wait pause of agent runs
+	// (ADR-20261027090012): vmmd pauses a run VM while it waits on the
+	// outbound relay and nothing else, and resumes it on the relay's next
+	// bytes. schedd marks which runs are eligible. Off by default.
+	AgentWaitPause bool `toml:"agent_wait_pause"`
+	// InvokeHookBackoff stops per-request invoke extension events to an
+	// instance for extension.InvokeUnavailableBackoff after its guest reports
+	// that no extension endpoint is listening (ADR-20261025150000). On by
+	// default (amendment 2026-10-27); FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
+	InvokeHookBackoff bool `toml:"invoke_hook_backoff"`
+	// BridgeStreamHeadroom lets vmmd open another HTTP/2 connection to an
+	// instance's stream bridge when one is at its stream cap instead of
+	// queueing requests, sizes the bridge's guest pool to that cap and
+	// shortens its guest dial timeout (ADR-20261026120000). On by default
+	// (amendment 2026-10-27); FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
+	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
+	// StreamBridgeGOMAXPROCS and StreamBridgeGOGC set GOMAXPROCS and GOGC
+	// for the stream bridges vmmd starts from now on, one per instance.
+	// 0 keeps Go's default (one P per host CPU, GOGC=100). A bridge relays a
+	// single VM capped at one core, and Go's scheduler was 26–33% of the
+	// request path's daemon profiles on 2026-10-25, so a node A/B measures
+	// these before they get defaults. FAAS_STREAM_BRIDGE_GOMAXPROCS and
+	// FAAS_STREAM_BRIDGE_GOGC override TOML.
+	StreamBridgeGOMAXPROCS int `toml:"stream_bridge_gomaxprocs"`
+	StreamBridgeGOGC       int `toml:"stream_bridge_gogc"`
+	// LocalDataSocket serves this node's gatewayd-internal on
+	// api.VmmdLocalDataSocket: no TLS, only the gateway's uid by peer
+	// credentials and only its forwarding RPCs (ADR-20261030230157). Off by
+	// default; off also removes a socket an earlier run left, so the gateway
+	// goes back to mTLS. FAAS_VMMD_LOCAL_DATA_SOCKET overrides TOML.
+	LocalDataSocket bool `toml:"local_data_socket"`
+	// RequireSecretBinding refuses runtime secret envelopes that carry no
+	// account binding (ADR-20261023173624, contract step). Off by default;
+	// the seal_domains role turns it on once every stored envelope is
+	// bound. FAAS_RUNTIME_SECRET_BINDING_REQUIRED overrides TOML.
+	RequireSecretBinding bool `toml:"require_secret_binding"`
+	// RuntimeSecretSignatureKeysFile holds the public keys apid's runtime
+	// secret signatures verify against (ADR 20261028161502, amendment 1).
+	// Set, vmmd refuses a runtime secret whose signature does not verify.
+	// It needs the compute-node database the signatures live in.
+	// FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE overrides TOML.
+	RuntimeSecretSignatureKeysFile string `toml:"runtime_secret_signature_keys_file"`
+	// RequireRuntimeSecretSignatures also refuses unsigned runtime secrets
+	// (the contract step). It needs RuntimeSecretSignatureKeysFile.
+	// FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED overrides TOML.
+	RequireRuntimeSecretSignatures bool `toml:"require_runtime_secret_signatures"`
+	// RuntimeSealDomainContracted drops the fleet and host identities
+	// (ADR 20261022111812, contract step): vmmd opens runtime secrets with
+	// the runtime seal domain alone and registry passwords with the build
+	// domain alone, and refuses to start without both. The seal_domains
+	// role sets it once `seal-domain migrate --check` passes for both.
+	// FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED overrides TOML.
+	RuntimeSealDomainContracted bool `toml:"runtime_seal_domain_contracted"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
 	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
@@ -284,6 +402,11 @@ type Config struct {
 // fallback (legacy default-local single-box path) is
 // `unix://`+SocketPath.
 type ComputeNodeConfig struct {
+	// CPUTemplate and CPUModel are not configuration: resolveCPUIdentity
+	// fills them from cpu_template and the probed host CPU before
+	// registration (ADR-20261024225612).
+	CPUTemplate        string `toml:"-"`
+	CPUModel           string `toml:"-"`
 	NodeName           string `toml:"name"`                 // defaults to short hostname when empty
 	TargetURL          string `toml:"target_url"`           // dial target written to compute_nodes.target_url
 	VPCPUs             int    `toml:"vpcpus"`               // total vCPUs this box offers
@@ -510,10 +633,11 @@ func LoadConfig(path string) (*Config, error) {
 		"non_tenant_reserve_mb", sizing.NonTenantReserveMB,
 		"vcpu_slots", sizing.VCPUSlots)
 	c := &Config{
-		ResourceJournalDir: "/var/lib/faas/vmmd-resources",
-		FailureReportDir:   "/var/lib/faas/vmmd-failures",
-		SocketPath:         "/run/faas/vmmd.sock",
-		RestoreConcurrency: 3,
+		ResourceJournalDir:         "/var/lib/faas/vmmd-resources",
+		ResourceJournalVolatileDir: "/run/faas/vmmd-resources",
+		FailureReportDir:           "/var/lib/faas/vmmd-failures",
+		SocketPath:                 "/run/faas/vmmd.sock",
+		RestoreConcurrency:         3,
 		// ADR-149 (amended 2026-10-12): on unless vmmd.toml or
 		// FAAS_PREPARED_NETWORKS sets 0, or native recovery is on
 		// (below), so a node does not depend on an Ansible drop-in to
@@ -523,6 +647,15 @@ func LoadConfig(path string) (*Config, error) {
 		// default. Bases without the pmem label, filesystems without
 		// reflink and native recovery all keep virtio-blk.
 		PmemBaseDir: fcvm.PmemBaseDirAuto,
+		// On by default since the 2026-10-27 production measurements
+		// (ADR-1151, ADR-20261025150000 and ADR-20261026120000
+		// amendments): release rollouts re-render vmmd.toml from the
+		// manifest, so a node-local TOML edit could not keep them on.
+		// vmmd.toml or FAAS_QUIET_PAUSE / FAAS_INVOKE_HOOK_BACKOFF /
+		// FAAS_BRIDGE_STREAM_HEADROOM = false turns one off.
+		QuietPause:           true,
+		InvokeHookBackoff:    true,
+		BridgeStreamHeadroom: true,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from storagekey.Kernel(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
@@ -585,15 +718,44 @@ func LoadConfig(path string) (*Config, error) {
 		preparedNetworksSet = md.IsDefined("prepared_networks")
 	}
 	c.PreparedNetworksExplicit = preparedNetworksSet
+	// The restart adoption switches can also come from the unit environment,
+	// so a rollout turns them on per node without editing vmmd.toml
+	// (ansible vmmd_adoption_record, vmmd_adopt_running_vms,
+	// vmmd_adopt_admitted_runtimes). A set variable overrides the TOML.
+	for _, sw := range []struct {
+		env string
+		dst *bool
+	}{
+		{"FAAS_VMMD_ADOPTION_RECORD", &c.AdoptionRecord},
+		{"FAAS_VMMD_ADOPT_RUNNING_VMS", &c.AdoptRunningVMs},
+		{"FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES", &c.AdoptAdmittedRuntimes},
+	} {
+		if v := os.Getenv(sw.env); v != "" {
+			on, perr := strconv.ParseBool(v)
+			if perr != nil {
+				return nil, fmt.Errorf("vmmd: %s must be a boolean (got %q)", sw.env, v)
+			}
+			*sw.dst = on
+		}
+	}
 	// Native recovery refuses the cache until its claims are journaled
 	// (ADR-568), so the default must not stop such a node from starting.
 	if c.NativeProcessRecovery && !preparedNetworksSet {
 		c.PreparedNetworks = 0
 	}
+	if c.AdoptAdmittedRuntimes && !c.AdoptRunningVMs {
+		return nil, errors.New("vmmd: adopt_admitted_runtimes requires adopt_running_vms = true")
+	}
+	if err := validateAdoptionConfig(c.AdoptionRecord, c.AdoptRunningVMs, c.NativeProcessRecovery); err != nil {
+		return nil, err
+	}
 	if err := validateNativeSnapshotPublicationConfig(c.NativeProcessRecovery, c.NativeSnapshotPublicationRoot); err != nil {
 		return nil, err
 	}
 	if err := validateNativeImageStagingConfig(c.NativeProcessRecovery, c.NativeImageStagingRoot); err != nil {
+		return nil, err
+	}
+	if err := validateNativeRuntimeCaptureConfig(c); err != nil {
 		return nil, err
 	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
@@ -623,7 +785,6 @@ func LoadConfig(path string) (*Config, error) {
 			"tenant_budget_mb", computeSizing.TenantBudgetMB,
 			"admission_ceiling_mb", computeSizing.AdmissionCeilingMB,
 			"single_box_admission_ceiling_mb", sizing.AdmissionCeilingMB)
-		sizing = computeSizing
 	}
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): env-var overlay for
 	// [compute_node].name so the systemd drop-in (deploy/ansible/
@@ -769,6 +930,99 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.QuietPause = enabled
 	}
+	if v := os.Getenv("FAAS_QUIET_PAUSE_OBSERVE"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE_OBSERVE must be a boolean (got %q)", v)
+		}
+		c.QuietPauseObserve = enabled
+	}
+	if v := os.Getenv("FAAS_VMMD_AGENT_WAIT_PAUSE"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_AGENT_WAIT_PAUSE must be a boolean (got %q)", v)
+		}
+		c.AgentWaitPause = enabled
+	}
+	if v, ok := os.LookupEnv("FAAS_CPU_TEMPLATE"); ok {
+		c.CPUTemplate = strings.TrimSpace(v)
+	}
+	if !fcvm.ValidCPUTemplate(c.CPUTemplate) {
+		return nil, fmt.Errorf("vmmd: cpu_template %q is not one of %s (empty for none)", c.CPUTemplate, strings.Join(fcvm.CPUTemplateNames(), ", "))
+	}
+	if v := os.Getenv("FAAS_RUNTIME_SECRET_BINDING_REQUIRED"); v != "" {
+		required, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_BINDING_REQUIRED must be a boolean (got %q)", v)
+		}
+		c.RequireSecretBinding = required
+	}
+	if v, ok := os.LookupEnv("FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE"); ok {
+		c.RuntimeSecretSignatureKeysFile = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED"); v != "" {
+		required, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED must be a boolean (got %q)", v)
+		}
+		c.RequireRuntimeSecretSignatures = required
+	}
+	if v := os.Getenv("FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED"); v != "" {
+		contracted, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED must be a boolean (got %q)", v)
+		}
+		c.RuntimeSealDomainContracted = contracted
+	}
+	if c.RequireRuntimeSecretSignatures && c.RuntimeSecretSignatureKeysFile == "" {
+		return nil, errors.New("vmmd: requiring runtime secret signatures needs runtime_secret_signature_keys_file (FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE)")
+	}
+	if v := os.Getenv("FAAS_BRIDGE_STREAM_HEADROOM"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_BRIDGE_STREAM_HEADROOM must be a boolean (got %q)", v)
+		}
+		c.BridgeStreamHeadroom = enabled
+	}
+	for _, knob := range []struct {
+		env, key string
+		value    *int
+	}{
+		{"FAAS_STREAM_BRIDGE_GOMAXPROCS", "stream_bridge_gomaxprocs", &c.StreamBridgeGOMAXPROCS},
+		{"FAAS_STREAM_BRIDGE_GOGC", "stream_bridge_gogc", &c.StreamBridgeGOGC},
+	} {
+		if v := os.Getenv(knob.env); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil {
+				return nil, fmt.Errorf("vmmd: %s must be an integer (got %q)", knob.env, v)
+			}
+			*knob.value = n
+		}
+		if *knob.value < 0 {
+			return nil, fmt.Errorf("vmmd: %s (%s) must be 0 for Go's default or a positive integer (got %d)", knob.key, knob.env, *knob.value)
+		}
+	}
+	if v := os.Getenv("FAAS_VMMD_LOCAL_DATA_SOCKET"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_LOCAL_DATA_SOCKET must be a boolean (got %q)", v)
+		}
+		c.LocalDataSocket = enabled
+	}
+	if v := os.Getenv("FAAS_INVOKE_HOOK_BACKOFF"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_INVOKE_HOOK_BACKOFF must be a boolean (got %q)", v)
+		}
+		c.InvokeHookBackoff = enabled
+	}
+	if v := os.Getenv("FAAS_RESTORE_RESEED_THREAD"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_RESEED_THREAD must be a boolean (got %q)", v)
+		}
+		c.RestoreReseedThread = enabled
+	}
 	if v, ok := os.LookupEnv("FAAS_PMEM_BASE_DIR"); ok {
 		c.PmemBaseDir = v
 	}
@@ -787,6 +1041,23 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_VMMD_RESOURCE_JOURNAL_DIR must be absolute (got %q)", v)
 		}
 		c.ResourceJournalDir = v
+		c.ResourceJournalVolatileDir = ""
+	}
+	if v, ok := os.LookupEnv("FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR"); ok {
+		if v != "" && !filepath.IsAbs(v) {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR must be absolute (got %q)", v)
+		}
+		c.ResourceJournalVolatileDir = v
+	}
+	if v := os.Getenv("FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES must be a boolean (got %q)", v)
+		}
+		c.ResourceJournalVolatileWrites = enabled
+	}
+	if c.ResourceJournalVolatileWrites && c.ResourceJournalVolatileDir == "" {
+		return nil, errors.New("vmmd: resource_journal_volatile_writes needs resource_journal_volatile_dir")
 	}
 	if c.RestoreConcurrency < 1 || c.RestoreConcurrency > 64 {
 		return nil, fmt.Errorf("vmmd: restore_concurrency must be between 1 and 64 (got %d)", c.RestoreConcurrency)
@@ -913,8 +1184,36 @@ func LoadConfig(path string) (*Config, error) {
 	return c, nil
 }
 
+func validateAdoptionConfig(record, adopt, nativeRecovery bool) error {
+	if adopt && !record {
+		return errors.New("vmmd: adopt_running_vms requires adoption_record = true")
+	}
+	if adopt && nativeRecovery {
+		return errors.New("vmmd: adopt_running_vms is not available with native_process_recovery")
+	}
+	return nil
+}
+
 func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) error {
 	return validateNativePrivateRootConfig(nativeRecovery, root, "native_snapshot_publication_root")
+}
+
+// The native producer needs its publication journal and persistent output
+// staging; without them every capture would refuse at preflight.
+func validateNativeRuntimeCaptureConfig(c *Config) error {
+	if root := c.NativeRuntimeSnapshotRoot; root != "" && (!filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator)) {
+		return errors.New("vmmd: native_runtime_snapshot_root must be a clean absolute non-root path")
+	}
+	if c.NativeLaunchOwnerRecords && !c.NativeProcessRecovery {
+		return errors.New("vmmd: native_launch_owner_records requires native_process_recovery = true")
+	}
+	if !c.NativeRuntimeCapture {
+		return nil
+	}
+	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" || c.NativeRuntimeSnapshotRoot == "" {
+		return errors.New("vmmd: native_runtime_capture requires native_process_recovery = true, native_snapshot_publication_root, native_image_staging_root and native_runtime_snapshot_root")
+	}
+	return nil
 }
 
 func validateNativeImageStagingConfig(nativeRecovery bool, root string) error {
@@ -1118,4 +1417,13 @@ func vpcpusDefault(sizing api.NodeSizing) int {
 		return sizing.HostCPUs
 	}
 	return api.VCPUSlots
+}
+
+// resourceJournal locates the resource journal and its tmpfs copies.
+func (c *Config) resourceJournal() fcvm.ResourceJournalConfig {
+	return fcvm.ResourceJournalConfig{
+		Dir:            c.ResourceJournalDir,
+		VolatileDir:    c.ResourceJournalVolatileDir,
+		VolatileWrites: c.ResourceJournalVolatileWrites,
+	}
 }

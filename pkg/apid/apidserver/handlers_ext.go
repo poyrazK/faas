@@ -25,10 +25,13 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -147,6 +150,24 @@ func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
 		return api.ErrValidation(fmt.Sprintf("idle_timeout_s must be 0 (plan default) or %d..%d; got %d", floor, ceiling, v))
 	}
 	return nil
+}
+
+// validatePerInstanceConcurrency gates and bounds
+// scaling_policy.per_instance_concurrency (ADR-20261022203523). Until the
+// account is listed in FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS the field is
+// answered exactly like the unknown field it is to an N-1 apid. Keeping the
+// stored value, or clearing it to 0, is always allowed, so a read-modify-write
+// of another policy field never fails for an account that was delisted.
+func validatePerInstanceConcurrency(requested int, acct state.Account, app state.App) *api.Problem {
+	stored := 0
+	if app.ScalingPolicy != nil {
+		stored = app.ScalingPolicy.PerInstanceConcurrency
+	}
+	if requested != 0 && requested != stored && !api.PerInstanceConcurrencyEnabled(acct.ID) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid scaling policy", "unknown field(s): per_instance_concurrency")
+	}
+	return api.ValidatePerInstanceConcurrency(acct.Plan, requested)
 }
 
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
@@ -303,6 +324,13 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			prefix, err := netip.ParsePrefix(raw)
 			if err != nil || prefix.Bits() == 0 {
 				return api.ErrInvalidEgressAllowlist(raw, errOrZero("parse failed", err))
+			}
+			// Allowlisted destinations skip the SMTP block, the port
+			// policy and the DNS gate, so 0.0.0.0/1 plus 128.0.0.0/1
+			// lifted every abuse control for the whole internet (bug hunt
+			// 2026-10-28 H51). Entries may be at most a v4 /8 or v6 /32.
+			if prefix.Addr().Is4() && prefix.Bits() < 8 || !prefix.Addr().Is4() && !prefix.Addr().Is4In6() && prefix.Bits() < 32 {
+				return api.ErrInvalidEgressAllowlist(raw, errors.New("prefix is broader than a v4 /8 or v6 /32"))
 			}
 			// v4-mapped v6 → v4. RFC 4291 §2.5.5.2: ::ffff:0:0/96
 			// is the v4-mapped block; any prefix inside that block
@@ -788,6 +816,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Invalid scaling policy",
 				fmt.Sprintf("wake_max_queue_wait_seconds must be between 0 and %d", api.WakeQueueMaxWaitSeconds))
 		}
+		if problem := validatePerInstanceConcurrency(sp.PerInstanceConcurrency, acct, app); problem != nil {
+			return problem
+		}
 		// Worker-class carve-out (PR-D): live here in the validator
 		// (rather than at the call site in updateApp) so an
 		// unknown-field error surfaces before the workload-class
@@ -803,10 +834,16 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass("concurrent_requests")
 				}
 			case "queue_depth", "queue_lag":
+				// A request that also makes the app a worker or job is judged
+				// on that mode (ADR-20261018101500 amendment 2026-10-27).
+				mode := app.Manifest.ExecutionMode
+				if req.ExecutionMode != nil {
+					mode = *req.ExecutionMode
+				}
 				if app.WorkloadClass != state.WorkloadClassWorker &&
 					app.WorkloadClass != state.WorkloadClassJob &&
-					app.Manifest.ExecutionMode != api.ExecutionModeWorker &&
-					app.Manifest.ExecutionMode != api.ExecutionModeJob {
+					mode != api.ExecutionModeWorker &&
+					mode != api.ExecutionModeJob {
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass(sp.Target.Metric)
 				}
 			}
@@ -979,9 +1016,13 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, environmentProblem)
 		return
 	}
-	var req api.UpdateAppRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+	req, decodeErr := httpkit.DecodeUpdateAppRequest(r)
+	if decodeErr != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", decodeErr.Error()))
+		return
+	}
+	if problem := s.appUpdateSettingsProblem(r, acct, app, req); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
@@ -1038,6 +1079,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, serviceTransportProblem)
 		return
 	}
+	if problem := api.PrivateServiceHTTPSTransportProblem(serviceTransport, s.privateServiceHTTPS(acct)); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	selectedBindings := app.Manifest.ServiceBindings
 	if req.ServiceBindingTargets != nil {
 		selectedBindings = bindings
@@ -1085,7 +1130,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
 		return
 	}
-	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingFor(acct) {
 		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
 		return
 	}
@@ -1150,7 +1195,13 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// is either nil, 'best_effort' (always allowed), or 'reserved'
 	// (plan unlocked). The cap only triggers when the value is
 	// 'reserved' AND the current app is not already reserved — a
-	// no-op PATCH on a reserved app must not exhaust the cap.
+	// no-op PATCH on a reserved app must not exhaust the cap. acct.Plan
+	// is the app's billing subject's plan, so the count is that
+	// subject's reserved apps (ADR-202610171904): a company's once it
+	// adopted billing, whoever created them, else the creator's. With
+	// ?environment= the app here carries that environment's settings and
+	// the PATCH writes only its workload spec, so an app counts once
+	// whether its row or any environment reserves it.
 	//
 	// The cap is advisory (no FOR UPDATE lock); a racing PATCH from
 	// the same account could land one extra reserved app. The
@@ -1159,17 +1210,15 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.EvictionPriority != nil && *req.EvictionPriority == string(api.EvictionPriorityReserved) && app.EvictionPriority != string(api.EvictionPriorityReserved) {
 		cap := acct.Plan.ReservedConcurrencyPerAccount()
 		if cap > 0 {
-			n, err := s.store.CountAppsWithEvictionPriority(r.Context(), acct.ID, string(api.EvictionPriorityReserved))
+			n, err := s.store.CountOtherBillingSubjectAppsWithEvictionPriority(r.Context(), app.ID, string(api.EvictionPriorityReserved))
 			if err != nil {
 				writeCustomerInternalProblem(w, r, s.log, "count reserved applications",
 					"Gregale could not check this account's reserved application limit.",
 					"Retry the request in a moment; if it continues, contact support.", err)
 				return
 			}
-			// n excludes the current app already (CountAppsWithEvictionPriority
-			// counts the full set; the current app is reserved if and only
-			// if app.EvictionPriority == 'reserved'). The flip-up direction
-			// adds 1 to the post-PATCH count.
+			// n excludes the current app, which counts once after the
+			// PATCH whether or not another environment already reserves it.
 			if n+1 > cap {
 				api.WriteProblem(w, api.ErrPlanEvictionPriorityReservedQuota(acct.Plan, n+1, cap))
 				return
@@ -1187,8 +1236,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// a previous PATCH doesn't reach a fresh request.
 	var publicAuthSealed []byte
 	if req.PublicAuth != nil && req.PublicAuth.Mode == api.AppPublicAuthModeBasic {
-		recipient := hostSecretRecipient()
-		if recipient == nil {
+		// ADR 20261022111812: sealed to the edge domain (and the fleet
+		// recipient until it is in domain mode); gatewayd-internal opens it.
+		recipients, recipientErr := edgeCredentialRecipients()
+		if recipientErr != nil {
 			api.WriteProblem(w, customerCapacityProblem(s.log, "update app public authentication", "App settings temporarily unavailable",
 				"Gregale could not securely update these app settings.",
 				"Retry in a few seconds; if it still fails, contact support.", nil))
@@ -1201,7 +1252,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// splits on the first newline and treats both
 		// halves as required.
 		plaintext := []byte(req.PublicAuth.BasicUser + "\n" + req.PublicAuth.BasicPass)
-		sealed, err := secretbox.SealBytes(recipient, api.AppPublicAuthBasicSealNamespace, plaintext, api.AppPublicAuthBasicMaxBytes)
+		sealed, err := secretbox.SealBytesTo(recipients, api.AppPublicAuthBasicSealNamespace, plaintext, api.AppPublicAuthBasicMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
 				api.WriteProblem(w, prob)
@@ -1546,22 +1597,21 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
+		fallback := api.ErrCapacity("could not update app")
 		if problem := deploySettingsUpdateProblem(err); problem != nil {
-			api.WriteProblem(w, problem)
+			fallback = problem
 		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
-			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+			fallback = serviceBindingPlanConflictProblem()
 		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
-			api.WriteProblem(w, problem)
-		} else {
+			fallback = problem
+		} else if s.log != nil {
 			// The caller only sees a generic 503; keep the cause. Under load,
 			// h4-edge's no-op idle updates and one deploy's app update failed
 			// intermittently here with nothing logged (production-us hunt #5,
 			// H5-42).
-			if s.log != nil {
-				s.log.Error("app update failed", "app", app.ID, "slug", logsanitize.Field(app.Slug), "err", err)
-			}
-			api.WriteProblem(w, api.ErrCapacity("could not update app"))
+			s.log.Error("app update failed", "app", app.ID, "slug", logsanitize.Field(app.Slug), "err", err)
 		}
+		api.WriteProblem(w, trafficproblem.Policy(err, fallback))
 		return
 	}
 	if req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil {
@@ -1923,6 +1973,16 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	// A PR preview is one workload of its PR environment. Deleted alone it
+	// left its siblings serving to the end of their lease and stayed
+	// restorable; delete tears down the whole environment, as
+	// POST /v1/preview/{slug}/destroy does.
+	if app.PreviewOfSlug != "" && app.PreviewPrNumber > 0 {
+		if s.tearDownPreviewEnvironment(w, r, acct, app, "preview.destroyed_by_customer") {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
 	if st, ok := s.store.(state.ObjectBucketStore); ok {
 		buckets, err := st.ListObjectBuckets(r.Context(), acct.ID, app.ID)
 		if err != nil {
@@ -1949,7 +2009,7 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not delete app")))
 		return
 	}
 	for _, inv := range pending {
@@ -2178,6 +2238,13 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	// ADR-20261020085706: a release waiting for approval cannot gain traffic.
+	if req.TrafficPercent > d.TrafficPercent {
+		if p := s.releaseApprovalTrafficProblem(r, app, d); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2323,6 +2390,18 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
+	if req.RestoreDatabases {
+		// The switch belongs to postgres-restore (ADR-20261023181931): while
+		// that capability is off for the caller, the field answers as the
+		// unknown field it is to them, like its hidden routes.
+		if !s.capabilityEnabledFor("postgres-restore", acct, app) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid rollback request", `json: unknown field "restore_databases"`))
+			return
+		}
+		s.startDatabaseSwitch(w, r, acct, app, req)
+		return
+	}
 	if req.ExpectedCurrentDeploymentID != nil {
 		s.startCheckedRollback(w, r, acct, app, req)
 		return
@@ -2374,38 +2453,79 @@ func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string
 	return out
 }
 
-// trafficSplitEarlierRelease reports whether more than one deployment of a
+// plainRollbackScope picks the environment a plain rollback restores. The
+// request names no environment, so it is production whenever production
+// serves, otherwise the app's only serving environment. A rollback chosen
+// across environments rolled back staging while the bad production release
+// kept serving. ok is false when several non-production environments serve
+// and production does not: the caller must name the target.
+func (s *server) plainRollbackScope(ctx context.Context, appID string) (string, bool) {
+	rows, err := s.store.LiveDeployments(ctx, appID)
+	if err != nil {
+		return state.DefaultEnvScope, true
+	}
+	production := state.ProductionRoutingDeployments(rows)
+	for _, d := range production {
+		if d.TrafficPercent > 0 {
+			return d.Scope, true
+		}
+	}
+	others := map[string]bool{}
+	for _, d := range rows {
+		if d.TrafficPercent > 0 && !state.IsProductionScope(d.Scope) {
+			others[d.Scope] = true
+		}
+	}
+	switch {
+	case len(others) == 1:
+		for scope := range others {
+			return scope, true
+		}
+	case len(others) > 1:
+		return "", false
+	case len(production) > 0:
+		return production[0].Scope, true
+	}
+	return state.DefaultEnvScope, true
+}
+
+func rollbackEnvironmentAmbiguousProblem(appSlug string) *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
+		"More than one environment serves this app",
+		fmt.Sprintf("the app serves in several environments and none is production, so a plain rollback cannot tell which one to restore. Name the release: gregale rollback %s --to <deployment|vN>", appSlug)).
+		WithDocs("https://gregale.dev/docs/deploys#rollback")
+}
+
+// trafficSplitEarlierRelease reports whether more than one deployment of the
 // scope serves a share of traffic, and the oldest of them as a retypeable
 // ref. A plain rollback then has no single previous release: the latest
 // superseded row is one nobody serves, so `rollback` re-activated a release
 // the customer had rolled away from while the split stayed in place (H10-10).
-func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID string) (string, bool) {
-	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 50, 0)
+// A split in another environment does not block this one's rollback.
+func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID, scope string) (string, bool) {
+	deployments, err := s.store.LiveDeployments(ctx, appID)
 	if err != nil {
 		return "", false
 	}
-	serving := map[string][]state.Deployment{}
+	var rows []state.Deployment
 	for _, d := range deployments {
-		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 {
-			serving[d.Scope] = append(serving[d.Scope], d)
+		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 && recoveryScope(d.Scope) == recoveryScope(scope) {
+			rows = append(rows, d)
 		}
 	}
-	for _, rows := range serving {
-		if len(rows) < 2 {
-			continue
-		}
-		earliest := rows[0]
-		for _, d := range rows[1:] {
-			if d.CreatedAt.Before(earliest.CreatedAt) {
-				earliest = d
-			}
-		}
-		if earliest.Revision > 0 {
-			return fmt.Sprintf("v%d", earliest.Revision), true
-		}
-		return earliest.ID, true
+	if len(rows) < 2 {
+		return "", false
 	}
-	return "", false
+	earliest := rows[0]
+	for _, d := range rows[1:] {
+		if d.CreatedAt.Before(earliest.CreatedAt) {
+			earliest = d
+		}
+	}
+	if earliest.Revision > 0 {
+		return fmt.Sprintf("v%d", earliest.Revision), true
+	}
+	return earliest.ID, true
 }
 
 func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
@@ -2421,6 +2541,13 @@ func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
 // two entry points cannot drift. It also opens the ADR-1446 outcome ledger
 // row; the returned receipt is nil only when that write failed, and the
 // rollback itself still proceeds.
+// rollbackTargetArtifactsReclaimed refuses a rollback whose target's layers
+// were reclaimed: it could not cold boot, and its readiness prime would only
+// fail later (Hunt 21 H21-1).
+func rollbackTargetArtifactsReclaimed() *api.Problem {
+	return api.ErrRollbackTargetIneligible("the rollback target's build artifacts were reclaimed, so it cannot start; redeploy that release instead")
+}
+
 func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest, trigger string) (state.Deployment, *api.RollbackOperation, *api.Problem) {
 	ctx := r.Context()
 	alertRuleID := uuid.Nil
@@ -2429,97 +2556,22 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			alertRuleID = parsed
 		}
 	}
-	var target state.Deployment
-	var err error
-	mode := "latest_superseded"
-	if req.TargetDeploymentID != nil && *req.TargetDeploymentID != "" {
-		mode = "explicit"
-		// ADR-198 — accept the customer-facing `v42` handle (or a bare
-		// `42`) in place of a uuid. Resolved here, inside the app scope,
-		// so a revision can only ever address a deployment of the app
-		// named in the request path; the IDOR posture is unchanged.
-		// Every downstream error message keeps echoing the original
-		// reference so the operator sees the string they typed.
-		resolved, problem := s.resolveDeploymentRef(ctx, app.ID, *req.TargetDeploymentID)
-		if problem != nil {
-			return state.Deployment{}, nil, problem
-		}
-		req.TargetDeploymentID = &resolved
-		target, err = s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, *req.TargetDeploymentID)
-		if err != nil {
-			switch {
-			case errors.Is(err, state.ErrNoRollbackTarget):
-				return state.Deployment{}, nil, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
-			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
-				candidate, readErr := s.store.DeploymentByID(ctx, *req.TargetDeploymentID)
-				if readErr != nil {
-					return state.Deployment{}, nil, customerCapacityProblem(s.log, "load rollback target state", "Deployment temporarily unavailable",
-						"Gregale could not load the rollback target right now.",
-						"Retry the request in a moment; if it continues, contact support.", readErr)
-				}
-				if candidate.Status == state.DeployLive {
-					return state.Deployment{}, nil, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
-				}
-				return state.Deployment{}, nil, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
-			default:
-				return state.Deployment{}, nil, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
-					"Gregale could not load the rollback target right now.",
-					"Retry the request in a moment; if it continues, contact support.", err)
-			}
-		}
-	} else {
-		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID); split {
-			return state.Deployment{}, nil, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
-		}
-		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
-		if err != nil {
-			return state.Deployment{}, nil, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
-		}
-	}
-	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
-		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
-		if err != nil {
-			return state.Deployment{}, nil, api.ErrCapacity("could not read rollback release policy")
-		}
-		if policy.Mode == "enforce" {
-			return state.Deployment{}, nil, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
-		}
-	}
-	crossed, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases)
+	plan, problem := s.planRollback(r, acct, app, req)
 	if problem != nil {
 		return state.Deployment{}, nil, problem
 	}
-
-	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
-		return state.Deployment{}, nil, problem
-	}
-	if problem := s.durable.ValidatorReleaseProblem(ctx, app, target); problem != nil {
-		return state.Deployment{}, nil, problem
-	}
-	var current state.Deployment
-	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
-	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return state.Deployment{}, nil, customerCapacityProblem(s.log, "load current deployment for rollback", "Deployment temporarily unavailable",
-			"Gregale could not load the current deployment right now.",
-			"Retry the request in a moment; if it continues, contact support.", err)
-	}
-	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
-		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
-		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
-			return state.Deployment{}, nil, api.ErrCapacity("could not evaluate API contract")
-		}
-		if check.Diff.Blocking() {
-			problem := contractGateProblem(check.Diff)
-			return state.Deployment{}, nil, problem
-		}
-	}
+	target, current, mode, crossed := plan.target, plan.current, plan.mode, plan.crossed
+	var err error
 	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
+		if errors.Is(err, state.ErrLayerArtifactRetired) {
+			return state.Deployment{}, nil, rollbackTargetArtifactsReclaimed()
+		}
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 			return state.Deployment{}, nil, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
 		}
-		return state.Deployment{}, nil, api.ErrCapacity("could not prepare rollback target")
+		return state.Deployment{}, nil, trafficproblem.Policy(err, api.ErrCapacity("could not prepare rollback target"))
 	}
 	primePayload, marshalErr := json.Marshal(map[string]string{
 		"app_id": app.ID, "deployment_id": target.ID,
@@ -2578,9 +2630,118 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	}
 	s.recordAppActivity(ctx, r, acct, app, activity)
 	if trigger != state.RollbackTriggerManual {
-		s.freezeAfterAutomaticRollback(ctx, acct.ID, app, current.ID, automaticRollbackCause(trigger, current))
+		s.freezeAfterAutomaticRollback(ctx, app, current.ID, automaticRollbackCause(trigger, current))
 	}
 	return target, s.plainRollbacks().Record(ctx, acct, app, target, current.ID, trigger), nil
+}
+
+// rollbackPlan is a checked rollback target: the deployment to restore, the
+// one serving now in its scope, how it was chosen, and the release commands
+// the rollback crosses (ADR-1448).
+type rollbackPlan struct {
+	target, current state.Deployment
+	mode            string
+	crossed         []state.ReleaseRun
+}
+
+// planRollback resolves and checks a rollback's target without changing
+// anything. Plain rollbacks prepare the target next; a rollback that
+// restores the database hands the plan to a database switch
+// (ADR-20261023181931).
+func (s *server) planRollback(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) (rollbackPlan, *api.Problem) {
+	ctx := r.Context()
+	var target state.Deployment
+	var err error
+	mode := "latest_superseded"
+	if req.TargetDeploymentID != nil && *req.TargetDeploymentID != "" {
+		mode = "explicit"
+		// ADR-198 — accept the customer-facing `v42` handle (or a bare
+		// `42`) in place of a uuid. Resolved here, inside the app scope,
+		// so a revision can only ever address a deployment of the app
+		// named in the request path; the IDOR posture is unchanged.
+		// Every downstream error message keeps echoing the original
+		// reference so the operator sees the string they typed.
+		resolved, problem := s.resolveDeploymentRef(ctx, app.ID, *req.TargetDeploymentID)
+		if problem != nil {
+			return rollbackPlan{}, problem
+		}
+		req.TargetDeploymentID = &resolved
+		target, err = s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, *req.TargetDeploymentID)
+		if err != nil {
+			switch {
+			case errors.Is(err, state.ErrNoRollbackTarget):
+				return rollbackPlan{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
+			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
+				candidate, readErr := s.store.DeploymentByID(ctx, *req.TargetDeploymentID)
+				if readErr != nil {
+					return rollbackPlan{}, customerCapacityProblem(s.log, "load rollback target state", "Deployment temporarily unavailable",
+						"Gregale could not load the rollback target right now.",
+						"Retry the request in a moment; if it continues, contact support.", readErr)
+				}
+				if candidate.Status == state.DeployLive {
+					return rollbackPlan{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
+				}
+				return rollbackPlan{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
+			default:
+				return rollbackPlan{}, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
+					"Gregale could not load the rollback target right now.",
+					"Retry the request in a moment; if it continues, contact support.", err)
+			}
+		}
+	} else {
+		scope, ok := s.plainRollbackScope(ctx, app.ID)
+		if !ok {
+			return rollbackPlan{}, rollbackEnvironmentAmbiguousProblem(app.Slug)
+		}
+		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID, scope); split {
+			return rollbackPlan{}, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
+		}
+		target, err = s.store.LatestSupersededDeployment(ctx, app.ID, scope)
+		if err != nil {
+			return rollbackPlan{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
+		}
+	}
+	if problem := s.rollbackTargetApprovalProblem(ctx, app, target); problem != nil {
+		return rollbackPlan{}, problem
+	}
+	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
+		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
+		if err != nil {
+			return rollbackPlan{}, api.ErrCapacity("could not read rollback release policy")
+		}
+		if policy.Mode == "enforce" {
+			return rollbackPlan{}, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
+		}
+	}
+	crossed, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases)
+	if problem != nil {
+		return rollbackPlan{}, problem
+	}
+
+	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
+		return rollbackPlan{}, problem
+	}
+	if problem := s.durable.ValidatorReleaseProblem(ctx, app, target); problem != nil {
+		return rollbackPlan{}, problem
+	}
+	var current state.Deployment
+	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return rollbackPlan{}, customerCapacityProblem(s.log, "load current deployment for rollback", "Deployment temporarily unavailable",
+			"Gregale could not load the current deployment right now.",
+			"Retry the request in a moment; if it continues, contact support.", err)
+	}
+	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
+		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
+		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
+			return rollbackPlan{}, api.ErrCapacity("could not evaluate API contract")
+		}
+		if check.Diff.Blocking() {
+			problem := contractGateProblem(check.Diff)
+			return rollbackPlan{}, problem
+		}
+	}
+	return rollbackPlan{target: target, current: current, mode: mode, crossed: crossed}, nil
 }
 
 func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.Deployment) *api.Problem {
@@ -2846,6 +3007,20 @@ func (s *server) enqueueExplicitAppWake(ctx context.Context, acct state.Account,
 // withdrawing old VMs and never captures their old process environment. The
 // fresh variant uses a durable notification so an accepted secret rotation
 // cannot be lost across a LISTEN interruption.
+// appRestartRefusal explains why a restart was refused. A parked app has
+// nothing running to restart, and its next wake already boots with the
+// current secrets and settings; `secrets set` pointed at restart --fresh and
+// got only "only an active app can be restarted" (Hunt 14 H14-83).
+func appRestartRefusal(app state.App) *api.Problem {
+	if app.Status == state.AppEvictedCold {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "App is parked",
+			fmt.Sprintf("%s is parked, so nothing is running to restart; its next request or wake boots it with the current secrets and settings", app.Slug)).
+			WithHint("No restart is needed. To start it now, run gregale wake " + app.Slug + ".")
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict,
+		"App is not active", "only an active app can be restarted")
+}
+
 func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	fresh := false
 	if raw := r.URL.Query().Get("fresh"); raw != "" {
@@ -2861,8 +3036,7 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	if app.Status != state.AppActive {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"App is not active", "only an active app can be restarted"))
+		api.WriteProblem(w, appRestartRefusal(app))
 		return
 	}
 	claimed, err := claimAppRestart(r.Context(), s.store, app.ID)
@@ -3007,6 +3181,14 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	// A preview's slug is its identity (pr-<N>-<app>): renamed, the next
+	// PR head no longer finds it and reserves a second preview while this
+	// one holds its slot until the lease ends.
+	if app.PreviewOfSlug != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Preview cannot be renamed", "a preview app's name is derived from its production app; rename the production app instead"))
+		return
+	}
 	var req api.RenameAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -3031,41 +3213,29 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
 		return
 	}
-	updated, err := s.store.RenameApp(r.Context(), acct.ID, oldSlug, req.NewSlug)
-	if err != nil {
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppRenameFailed,
-				"Slug taken",
-				fmt.Sprintf("another app already uses slug %q", req.NewSlug)))
-			return
-		}
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-				"App not found", "no app with the given slug exists"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not rename app"))
+	// Route rules name their target by slug: fence their hosts, rename, and
+	// point them at the new slug before the fence lifts (ADR-091 amendment
+	// 2026-10-30).
+	routeEdit := s.edgeRules.RouteTargetRenameEdit(acct.ID, oldSlug)
+	convergences, release, prob := s.edgeRules.PrepareReferencedEdit(r.Context(), routeEdit)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
-	// F-04: renamed emit now carries app_id. The old appsRoot/<oldSlug>/
-	// directory becomes orphan (renamed app is the new slug); the cleanup
-	// is left to imaged's GC, which removes stale snapshot rows and their
-	// files. We do NOT scrub the old slug directory on rename — that
-	// race-conditions with concurrent deploys that still reference the
-	// old slug in their deployment.app_id-to-slug lookup.
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		string(safetext.JSONObject(struct {
-			Kind  string `json:"kind"`
-			AppID string `json:"app_id"`
-			From  string `json:"from"`
-			To    string `json:"to"`
-		}{Kind: "renamed", AppID: app.ID, From: oldSlug, To: req.NewSlug})))
-	// CodeQL go/log-injection (CWE-117): oldSlug came from the
-	// apps.slug column (regex-validated at create) and req.NewSlug
-	// passed the same validSlug check on this request's body. Wrap
-	// both so a future relax of validSlug (or a hostile migration)
-	// cannot smuggle CR/LF into the audit line.
-	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(req.NewSlug), "account", acct.ID)
+	defer release(context.WithoutCancel(r.Context()))
+	updated, err := s.store.RenameApp(r.Context(), acct.ID, oldSlug, req.NewSlug)
+	if err != nil {
+		edgerules.AbortEdgeRuleConvergences(r.Context(), convergences)
+		api.WriteProblem(w, appRenameWriteProblem(err, req.NewSlug))
+		return
+	}
+	if retargeted, err := s.edgeRules.RetargetRouteRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
+		s.log.Error("app renamed but its route rules still name the old slug", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "retargeted", retargeted, "err", err)
+	}
+	if prob := s.edgeRules.ApplyReferencedEdit(r.Context(), w, routeEdit, updated.ID, convergences); prob != nil {
+		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)
+	}
+	s.notifyAppRenamed(r.Context(), acct, updated, oldSlug, req.NewSlug)
 	// A rename moves the app's public hostname and frees the old one for any
 	// tenant; it belongs in the account's audit trail, not only the daemon
 	// log (production-us hunt #9: four renames left no audit event).
@@ -3118,6 +3288,24 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 
 // --- custom domains --------------------------------------------------------
 
+// domainOutsideForeignWildcard refuses a domain below another account's
+// verified wildcard (state.ForeignVerifiedWildcard) and reports whether the
+// create may continue.
+func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.ResponseWriter, domain, accountID string) bool {
+	wildcard, err := state.ForeignVerifiedWildcard(ctx, s.store, domain, accountID)
+	if err != nil {
+		s.log.Warn("create domain: wildcard ownership check failed", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain ownership"))
+		return false
+	}
+	if wildcard != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken",
+			fmt.Sprintf("%s is below the verified wildcard domain %s, which belongs to another account", domain, wildcard)))
+		return false
+	}
+	return true
+}
+
 func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateCustomDomainRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -3130,19 +3318,30 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	domain := strings.ToLower(strings.TrimSpace(req.Domain))
+	if problem := s.domainSettingsProblem(r, acct, domain); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if err := state.ValidateCustomDomainName(domain); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid domain", err.Error()))
 		return
 	}
-	app, err := s.store.AppByID(r.Context(), req.AppID)
-	if err != nil {
-		// The public CLI documents --app as an app slug. Keep accepting IDs
-		// for existing API clients, but resolve the documented slug form too.
-		app, err = s.store.AppBySlug(r.Context(), req.AppID)
+	// The public CLI documents --app as an app slug. Keep accepting IDs
+	// for existing API clients, but resolve the documented slug form too.
+	app, acct, prob := s.namedAppAs(r, acct, req.AppID, true)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
-	if err != nil || app.AccountID != acct.ID {
-		s.notFound(w, "no such app")
+	// A preview is torn down with its pull request or lease; a domain on it
+	// would stop serving then and keep its slot until the purge.
+	if app.PreviewOfSlug != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Previews cannot have custom domains", "attach the domain to the production app; a preview answers on its own pr-<N>-<app> host"))
+		return
+	}
+	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, acct.ID) {
 		return
 	}
 	environmentID := ""
@@ -3214,6 +3413,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		Data: activityData(map[string]any{"app_id": app.ID, "environment": req.Environment}),
 	}
 	var d state.CustomDomain
+	var err error
 	var activityOutboxID int64
 	var activityMutationAtomic bool
 	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
@@ -3231,6 +3431,14 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	} else {
 		d, err = createDomain(r.Context())
 	}
+	if errors.Is(err, state.ErrConflict) {
+		// Another account's unverified claim yields to DNS proof
+		// (ADR-20261020090500). The takeover records its activity below,
+		// outside the create's activity transaction.
+		if d, err = s.takeOverDomainClaim(r.Context(), acct, app, domain, environmentID, perApp, perAccount, err); err == nil {
+			activityOutboxID, activityMutationAtomic = 0, false
+		}
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
@@ -3241,11 +3449,15 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Domain taken", err.Error()))
+			problem := api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken", err.Error())
+			var pending *claimPendingError
+			if errors.As(err, &pending) {
+				problem.Hint = pending.hint()
+			}
+			api.WriteProblem(w, problem)
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not create domain"))
+		api.WriteProblem(w, domainPublicationWriteProblem(err))
 		return
 	}
 	if activityOutboxID > 0 {
@@ -3370,19 +3582,13 @@ func (s *server) deleteDomain(w http.ResponseWriter, r *http.Request, acct state
 		ResourceLabel: d.Domain, SourceType: "domain.removed", SourceID: activitySourceID(r, d.Domain),
 		Data: activityData(map[string]any{"app_id": d.AppID}),
 	}
-	var activityOutboxID int64
-	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
-		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
-		if prepareErr == nil {
-			activityOutboxID, err = mutationStore.DeleteCustomDomainWithActivity(r.Context(), domain, prepared)
-		} else {
-			err = s.store.DeleteCustomDomain(r.Context(), domain)
-		}
-	} else {
-		err = s.store.DeleteCustomDomain(r.Context(), domain)
-	}
+	activityOutboxID, err := s.deleteDomainIntent(r, acct, app, domain, activity)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete domain"))
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such domain")
+		} else {
+			api.WriteProblem(w, trafficproblem.DomainRemoval(err))
+		}
 		return
 	}
 	if activityOutboxID > 0 {
@@ -3671,7 +3877,8 @@ func (s *server) getDomainDoctor(w http.ResponseWriter, r *http.Request, acct st
 	}
 	report, err := s.buildDoctorReport(r.Context(), d)
 	if err != nil {
-		api.WriteProblem(w, api.ErrDoctorUnavailable(d.Domain, err.Error()))
+		logCustomerFailure(s.log, "build domain doctor report", err)
+		api.WriteProblem(w, api.ErrDoctorUnavailable(d.Domain, "a probe could not run"))
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
@@ -3698,9 +3905,13 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 		// Stale: fall through to a synchronous re-probe so
 		// the next reader gets fresh data. The re-probe
 		// shares the dns_poller's helper path (runDoctorForDomain
-		// is the load-bearing engine).
+		// is the load-bearing engine). A refreshed observation
+		// is fresh; only a failed refresh or reload reports the
+		// old row as stale (issue #2659).
 		if refreshErr := s.refreshDoctorObservation(ctx, d.Domain); refreshErr == nil {
-			obs, _ = s.store.GetDoctorObservation(ctx, d.Domain)
+			if fresh, reloadErr := s.store.GetDoctorObservation(ctx, d.Domain); reloadErr == nil {
+				return doctorReportFromObs(d, fresh, false), nil
+			}
 		}
 		return doctorReportFromObs(d, obs, true), nil
 	}
@@ -3714,7 +3925,7 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 	if err != nil {
 		return api.DomainDoctorReport{}, err
 	}
-	return doctorReportFromObs(d, obs, true), nil
+	return doctorReportFromObs(d, obs, false), nil
 }
 
 // refreshDoctorObservation is the synchronous re-probe
@@ -3938,6 +4149,12 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
 		return
 	}
+	if req.Path != "" {
+		if problem := api.ValidateCronPath(req.Path); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	var cronCommand []string
 	var commandShell bool
 	var commandTimeoutSeconds, commandMaxOutputBytes int
@@ -3988,19 +4205,24 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	// a migration that wrote a stale plan value — surfaces as a clean
 	// 402 rather than a process panic → 500. Fail-closed: an unknown
 	// plan is treated as if crons weren't unlocked.
+	//
+	// The plan is the app's resource account's (bug hunt 2026-10-28 B9): a
+	// company app's crons follow the organization's plan, whoever adds them.
+	// An app the caller cannot see is judged on the caller's own plan; a
+	// member the organization refuses is told so first.
+	app, acct, appProblem := s.namedAppAs(r, acct, req.AppID, true)
+	if appProblem != nil && appProblem.Status != http.StatusNotFound {
+		api.WriteProblem(w, appProblem)
+		return
+	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.CronLimitPerApp == 0 {
 		api.WriteProblem(w, api.ErrPlanCronsNotAllowed(acct.Plan))
 		return
 	}
-	app, err := s.store.AppByID(r.Context(), req.AppID)
-	if err != nil || app.AccountID != acct.ID {
-		if a, aerr := s.store.AppBySlug(r.Context(), req.AppID); aerr == nil && a.AccountID == acct.ID {
-			app = a
-		} else {
-			s.notFound(w, "no such app")
-			return
-		}
+	if appProblem != nil {
+		api.WriteProblem(w, appProblem)
+		return
 	}
 	enabled := true
 	if req.Enabled != nil {
@@ -4068,6 +4290,10 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
 		if !ok {
 			s.notFound(w, "no such app")
+			return
+		}
+		if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 		apps = []state.App{app}
@@ -4148,6 +4374,12 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.Path != nil && len(c.Command) > 0 {
 		api.WriteProblem(w, api.ErrValidation("command crons do not have an HTTP path; delete and recreate the cron to change its kind"))
 		return
+	}
+	if req.Path != nil {
+		if problem := api.ValidateCronPath(*req.Path); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	var retryOptions []state.CronOptions
 	if req.RetryMax != nil || req.RetryBackoffSeconds != nil {
@@ -4486,6 +4718,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var expiresAt *time.Time
 	if !slices.Contains(scopes, api.ScopeAdmin) {
 		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
+		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
+		if slices.Contains(scopes, api.ScopeAgent) {
+			t = time.Now().UTC().Add(api.AgentKeyLifetime)
+		}
 		expiresAt = &t
 	}
 	// PR 6 (issue #190 / IAM-6) dual-write: the legacy /v1/keys
@@ -4635,6 +4871,13 @@ func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // both entry points produce the same authentication-cache invalidation and
 // key.revoked event.
 func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (state.APIKey, error) {
+	return s.revokeAPIKeyWithReason(r, acct, id, "manual")
+}
+
+// revokeAPIKeyWithReason is revokeAPIKey with the audit reason named:
+// "manual" for the customer's own revocation, "password_change" and
+// "sign_in_rotated" for keys apid retires on the customer's behalf.
+func (s *server) revokeAPIKeyWithReason(r *http.Request, acct state.Account, id, reason string) (state.APIKey, error) {
 	ctx := r.Context()
 	prior, err := s.store.GetAPIKey(ctx, acct.ID, id)
 	if err != nil {
@@ -4647,7 +4890,7 @@ func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (s
 	// is a "update if not revoked" and returns the row either way.
 	var updated state.APIKey
 	if prior.OrgID != "" {
-		activity := newOrgAPIKeyActivity(r, acct, prior.OrgID, "api_key.revoked", map[string]any{"reason": "manual"})
+		activity := newOrgAPIKeyActivity(r, acct, prior.OrgID, "api_key.revoked", map[string]any{"reason": reason})
 		updated, err = s.revokeOrgAPIKeyWithActivity(ctx, prior.OrgID, id, activity)
 	} else {
 		updated, err = s.store.MarkAPIKeyRevoked(ctx, acct.ID, id)
@@ -4665,7 +4908,7 @@ func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (s
 	s.audit.Emit(ctx, "key.revoked", &acct.ID, map[string]any{
 		"key_id": updated.ID,
 		"scopes": updated.Scopes,
-		"reason": "manual",
+		"reason": reason,
 	})
 	return updated, nil
 }
@@ -4988,6 +5231,10 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	// Free while Polar continues charging the previous paid subscription. The
 	// provider webhook is the only source of truth for the eventual local plan.
 	if acct.Plan != plan {
+		if problem := s.planDowngradeProblem(r.Context(), acct, plan); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		billingAcct, identityErr := s.accountForActiveBillingProvider(r.Context(), acct)
 		if identityErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("billing identity temporarily unavailable"))
@@ -5108,6 +5355,12 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrInternal("could not update overage cap"))
 		return
 	}
+	if acct.ResourceOrgID != "" {
+		// POST /v1/orgs/{slug}/overage-cap: an organization has no account
+		// body to return (ADR-20261030093512).
+		writeJSON(w, http.StatusOK, api.AccountOverageCapResponse{OverageCapCents: req.OverageCapCents})
+		return
+	}
 	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), updated, r))
 }
 
@@ -5126,7 +5379,7 @@ func (s *server) raiseOverageCapSvc(ctx context.Context, acct state.Account, cen
 	if err := s.store.UpdateAccountOverageCapCents(ctx, acct.ID, cents); err != nil {
 		return acct, err
 	}
-	updated, err := s.store.AccountByID(ctx, acct.ID)
+	updated, err := state.BillingResourceAccount(ctx, s.store, acct.ID)
 	if err != nil {
 		return acct, err
 	}
@@ -5713,7 +5966,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 	case billing.EventPaymentSucceeded:
-		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested())
+		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested() && !orgBillingSubject(acct))
 	case billing.EventSubscriptionUpdated:
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
@@ -5983,6 +6236,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 	if len(d.OverrideCmd) > 0 {
 		resp.OverrideCmd = d.OverrideCmd
 	}
+	resp.ScheduledRelease = s.deploymentScheduleView(parent, d, app)
 	if len(d.OverrideEnv) > 0 {
 		// Decode the jsonb map to surface the KEYS only. Values are
 		// never echoed (ADR-053 §Decision 4). Stable order: sorted
@@ -6124,6 +6378,14 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 	}
 	if len(d.Workflows) > 0 && string(d.Workflows) != "null" {
 		_ = json.Unmarshal(d.Workflows, &resp.Workflows)
+	}
+	if len(d.Sidecars) > 0 && string(d.Sidecars) != "null" {
+		// Environment values are sealed and never echoed; the summary
+		// carries only identity, image, port and size.
+		var companions api.Sidecars
+		if json.Unmarshal(d.Sidecars, &companions) == nil {
+			resp.Companions = companions.Summaries()
+		}
 	}
 	return resp
 }
@@ -6820,12 +7082,17 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 
 	if s.managedPostgres != nil {
 		if limits, ok := api.ManagedPostgresLimitsFor(acct.Plan); ok && limits.DatabasesMax > 0 {
-			usage, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, now, managedPostgresUsageCeilings(limits))
+			overage, err := s.managedPostgresOverageOn(r.Context(), acct, acct.ID)
 			if err != nil {
 				managedPostgresProblem(w, err)
 				return
 			}
-			view := managedPostgresUsageView(usage, limits)
+			usage, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, now, managedPostgresUsageCeilings(limits, overage))
+			if err != nil {
+				managedPostgresProblem(w, err)
+				return
+			}
+			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode, overage)
 			out.ManagedPostgres = &view
 		}
 	}
@@ -6933,7 +7200,32 @@ func (s *server) usageStorage(w http.ResponseWriter, r *http.Request, acct state
 // payload, not the status. The CLI branches on the empty string to
 // print a friendly "portal not configured" hint.
 func (s *server) getBillingPortal(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	writeJSON(w, http.StatusOK, api.BillingPortalResponse{URL: s.billingPortalURLForProvider(r.Context(), acct)})
+	writeJSON(w, http.StatusOK, api.BillingPortalResponse{
+		URL:           s.billingPortalURLForProvider(r.Context(), acct),
+		PaymentMethod: s.paymentMethodSummary(r.Context(), acct),
+	})
+}
+
+// paymentMethodSummary asks the active provider for the card on file, so
+// `gregale billing payment-method` and the dashboard can show it (issues
+// #279, #280); nothing called Provider.PaymentMethodSummary before. No card,
+// a provider that keeps card details in its own portal (Polar), or a
+// provider error leaves the field out, and the portal URL still answers.
+func (s *server) paymentMethodSummary(ctx context.Context, acct state.Account) *api.PaymentMethodSummary {
+	if s.billingProvider == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	pm, err := s.billingProvider.PaymentMethodSummary(ctx, acct)
+	if err != nil {
+		s.log.Warn("billing: payment method summary unavailable", "account", acct.ID, "err", err)
+		return nil
+	}
+	if pm.Brand == "" && pm.Last4 == "" {
+		return nil
+	}
+	return &api.PaymentMethodSummary{Brand: pm.Brand, Last4: pm.Last4, ExpMonth: pm.ExpMonth, ExpYear: pm.ExpYear}
 }
 
 // listInvoices serves GET /v1/invoices — issue #259 invoice history.
@@ -7558,13 +7850,8 @@ func (s *server) getBuildSbom(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
-	var f io.ReadCloser
-	var err error
-	if s.sbomStorage != nil {
-		f, err = s.sbomStorage.Get(r.Context(), sbomKey)
-	} else if s.sbomRoot != "" {
-		f, err = os.Open(filepath.Join(s.sbomRoot, sbomKey)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
-	} else {
+	f, err := s.openBuildSBOM(r.Context(), sbomKey)
+	if errors.Is(err, errSBOMStorageUnset) {
 		api.WriteProblem(w, api.ErrBuildSBOMUnavailable())
 		return
 	}
@@ -7604,11 +7891,36 @@ func (s *server) resolveSbomKey(r *http.Request, buildID string, acct state.Acco
 	if err != nil || prov.SBOMStorageKey == "" {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
-	clean := filepath.Clean(prov.SBOMStorageKey)
-	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
+	clean, ok := cleanSBOMKey(prov.SBOMStorageKey)
+	if !ok {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
 	return clean, nil
+}
+
+// errSBOMStorageUnset means apid has neither SBOM storage nor a local root.
+var errSBOMStorageUnset = errors.New("apid: SBOM storage is not configured")
+
+// cleanSBOMKey validates a database SBOM key before any storage backend
+// sees it: relative, inside the root.
+func cleanSBOMKey(key string) (string, bool) {
+	clean := filepath.Clean(key)
+	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
+		return "", false
+	}
+	return clean, true
+}
+
+// openBuildSBOM opens a validated SBOM key from shared storage, or from the
+// local root on a single box.
+func (s *server) openBuildSBOM(ctx context.Context, key string) (io.ReadCloser, error) {
+	if s.sbomStorage != nil {
+		return s.sbomStorage.Get(ctx, key)
+	}
+	if s.sbomRoot != "" {
+		return os.Open(filepath.Join(s.sbomRoot, key)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
+	}
+	return nil, errSBOMStorageUnset
 }
 
 // policyPtrFromReq converts the wire DTO `*api.ScalingPolicy` to the
@@ -7640,6 +7952,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 		MaxQueueDepth:           sp.MaxQueueDepth,
 		WakeMaxQueueDepth:       sp.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: sp.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  sp.PerInstanceConcurrency,
 	}
 	if sp.Target != nil {
 		out.Target = &state.ScalingTarget{
@@ -7677,4 +7990,36 @@ func derefIntSlice(p *[]int) []int {
 		return nil
 	}
 	return *p
+}
+
+func appRenameWriteProblem(err error, newSlug string) *api.Problem {
+	if errors.Is(err, state.ErrConflict) {
+		return api.NewProblem(http.StatusConflict, api.CodeAppRenameFailed, "Slug taken", fmt.Sprintf("another app already uses slug %q", newSlug))
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "App not found", "no app with the given slug exists")
+	}
+	return trafficproblem.Policy(err, api.ErrCapacity("could not rename app"))
+}
+
+func (s *server) notifyAppRenamed(ctx context.Context, acct state.Account, updated state.App, oldSlug, newSlug string) {
+	// F-04: renamed emit now carries app_id. The old appsRoot/<oldSlug>/
+	// directory becomes orphan (renamed app is the new slug); the cleanup
+	// is left to imaged's GC, which removes stale snapshot rows and their
+	// files. We do NOT scrub the old slug directory on rename — that
+	// race-conditions with concurrent deploys that still reference the
+	// old slug in their deployment.app_id-to-slug lookup.
+	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+		string(safetext.JSONObject(struct {
+			Kind  string `json:"kind"`
+			AppID string `json:"app_id"`
+			From  string `json:"from"`
+			To    string `json:"to"`
+		}{Kind: "renamed", AppID: updated.ID, From: oldSlug, To: newSlug})))
+	// CodeQL go/log-injection (CWE-117): oldSlug came from the
+	// apps.slug column (regex-validated at create) and newSlug
+	// passed the same validSlug check on this request's body. Wrap
+	// both so a future relax of validSlug (or a hostile migration)
+	// cannot smuggle CR/LF into the audit line.
+	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(newSlug), "account", acct.ID)
 }

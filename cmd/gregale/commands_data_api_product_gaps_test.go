@@ -123,16 +123,19 @@ func TestDataAPIConfigureStoresSettingsAndRestarts(t *testing.T) {
 	server := newSettingsAPI(t)
 	out, restore := captureStdout(t)
 	defer restore()
-	if code := cmdDataAPIConfigure([]string{"shop-data", "--public-read", "api.products,api.categories", "--aggregates", "on"}); code != 0 {
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--public-read", "api.products,api.categories", "--aggregates", "on", "--allow-without-rls", "api.countries"}); code != 0 {
 		t.Fatalf("exit = %d, output %s", code, out.String())
 	}
-	want := []string{"PUT /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ", "PUT /v1/apps/shop-data/secrets/DATA_API_SQL_DEADLINE", "PUT /v1/apps/shop-data/secrets/DATA_API_AGGREGATES"}
+	want := []string{"PUT /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ", "PUT /v1/apps/shop-data/secrets/DATA_API_SQL_DEADLINE", "PUT /v1/apps/shop-data/secrets/DATA_API_AGGREGATES", "PUT /v1/apps/shop-data/secrets/DATA_API_ALLOW_WITHOUT_RLS"}
 	calls := server.calls()
-	if len(calls) != 4 || strings.Join(calls[:3], "|") != strings.Join(want, "|") || !strings.Contains(calls[3], "restart") {
+	if len(calls) != 5 || strings.Join(calls[:4], "|") != strings.Join(want, "|") || !strings.Contains(calls[4], "restart") {
 		t.Fatalf("calls = %v", calls)
 	}
 	if !strings.Contains(server.bodyFor("/DATA_API_PUBLIC_READ"), "api.products,api.categories") {
 		t.Fatalf("public read value not stored: %s", server.bodyFor("/DATA_API_PUBLIC_READ"))
+	}
+	if !strings.Contains(server.bodyFor("/DATA_API_ALLOW_WITHOUT_RLS"), "api.countries") {
+		t.Fatalf("row-level security exemption not stored: %s", server.bodyFor("/DATA_API_ALLOW_WITHOUT_RLS"))
 	}
 	if !strings.Contains(out.String(), "SQL deadline functions") {
 		t.Fatalf("aggregates on must point at the SQL deadline installation: %s", out.String())
@@ -144,11 +147,11 @@ func TestDataAPIConfigureDisablesWithoutRestartWhenAsked(t *testing.T) {
 	server := newSettingsAPI(t)
 	out, restore := captureStdout(t)
 	defer restore()
-	if code := cmdDataAPIConfigure([]string{"shop-data", "--no-public-read", "--aggregates", "off", "--no-restart"}); code != 0 {
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--no-public-read", "--aggregates", "off", "--no-allow-without-rls", "--no-restart"}); code != 0 {
 		t.Fatalf("exit = %d, output %s", code, out.String())
 	}
 	calls := server.calls()
-	if strings.Join(calls, "|") != "GET /v1/apps/shop-data/secrets|GET /v1/apps/shop-data/edge-rules|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ|DELETE /v1/apps/shop-data/secrets/DATA_API_AGGREGATES" {
+	if strings.Join(calls, "|") != "GET /v1/apps/shop-data/secrets|GET /v1/apps/shop-data/edge-rules|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ|DELETE /v1/apps/shop-data/secrets/DATA_API_AGGREGATES|DELETE /v1/apps/shop-data/secrets/DATA_API_ALLOW_WITHOUT_RLS" {
 		t.Fatalf("calls = %v (an absent setting must count as removed, and no restart)", calls)
 	}
 	if !strings.Contains(out.String(), "data-api refresh shop-data") {
@@ -168,6 +171,8 @@ func TestDataAPIConfigureRejectsInvalidFlags(t *testing.T) {
 		{"shop-data", "--public-rpc", "api.search", "--no-public-rpc"},
 		{"shop-data", "--public-rpc", "api.Search"},
 		{"shop-data", "--public-rpc", "search"},
+		{"shop-data", "--allow-without-rls", "api.countries", "--no-allow-without-rls"},
+		{"shop-data", "--allow-without-rls", "countries"},
 	} {
 		if code := cmdDataAPIConfigure(args); code != 1 {
 			t.Fatalf("%v exit = %d", args, code)

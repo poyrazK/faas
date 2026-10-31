@@ -2,9 +2,9 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.operations import get_workflow_operation_execution_control
+from faas_sdk.preview.api.operations import get_workflow_operation_execution_control
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.operation_workflow_control_response import OperationWorkflowControlResponse
+from faas_sdk.preview.models.operation_workflow_control_response import OperationWorkflowControlResponse
 
 
 def test_native_control_uses_workload_and_workflow_proof_without_an_invocation_claim():

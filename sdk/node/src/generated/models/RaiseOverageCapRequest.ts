@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Spend-cap payload (issue #561). *int64 so a missing/null
+ * Spend-cap payload. *int64 so a missing/null
  * field round-trips as NULL (no cap). 0 is a valid write and
  * means "no overage allowed". Negative values are rejected at
  * the validator before reaching the store (the migration CHECK

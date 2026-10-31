@@ -1,0 +1,5 @@
+# ADR-20261025114554: Docker Hub limits anonymous pulls per IP. imaged and
+# every builder VM's BuildKit try these mirrors (comma-separated hosts, for
+# example mirror.gcr.io) before Docker Hub. Empty pulls from Docker Hub.
+[Service]
+Environment=FAAS_DOCKER_HUB_MIRRORS={{ faas_docker_hub_mirrors | default('') }}

@@ -1,0 +1,1453 @@
+package main
+
+// cli_tree.go — ADR-20261026145832.
+//
+// The new command tree: singular nouns, standard verbs, at most three words
+// before the target. cliTreeAliases maps each path in that tree to the
+// command that implements it today, and run() rewrites a new path before
+// dispatch, capability gating and help. A path that names one of today's
+// commands is never rewritten, so existing scripts, agents and CI keep their
+// meaning. The one exception is `app`: the tree puts the verb first
+// (`app scale api`), so a tree verb wins over an app slug spelled the same.
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+
+	"golang.org/x/term"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+// cliTreeNoun is one top-level noun of the new tree.
+type cliTreeNoun struct {
+	Name   string
+	Short  string
+	Family string
+}
+
+// cliTreeNouns lists the tree's nouns in help order. Shortcuts (deploy, logs,
+// run, …) are today's top-level commands and need no entry.
+var cliTreeNouns = []cliTreeNoun{
+	{"release", "Inspect releases and control rollouts: canary, traffic, approvals", "Ship"},
+	{"preview", "Manage pull-request preview environments", "Ship"},
+	{"environment", "Manage project environments, promotions and rollbacks", "Ship"},
+	{"project", "Inspect and recover repository projects", "Ship"},
+	{"build", "Inspect builds, their provenance and SBOMs", "Ship"},
+	{"github", "Connect GitHub and bind apps to repositories", "Ship"},
+	{"registry", "Manage registry credentials, signing keys and published images", "Ship"},
+	{"test", "Run scenario suites, lifecycle checks, load tests and chaos", "Ship"},
+	{"app", "Inspect, change, scale and operate apps", "Run"},
+	{"sandbox", "Run code in disposable sandboxes and inspect past runs", "Run"},
+	{"invocation", "List, inspect, wait on and watch invocations", "Run"},
+	{"env", "Set, list and sync an app's sealed variables", "Configure"},
+	{"domain", "Manage custom domains", "Configure"},
+	{"edge", "Manage edge rules, rule lists, caching and CORS", "Configure"},
+	{"api", "Manage your API: routes, OpenAPI spec, consumers and tenants", "Configure"},
+	{"flag", "Roll out feature flags to selected customers", "Configure"},
+	{"postgres", "Manage PostgreSQL databases: usage, overage and capabilities", "Data"},
+	{"bucket", "Manage object storage buckets", "Data"},
+	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
+	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
+	{"ai", "Configure the AI gateway", "Data"},
+	{"realtime", "Manage realtime endpoints, channels and connections", "Data"},
+	{"cron", "Schedule requests and commands", "Work"},
+	{"trigger", "Run apps from message brokers", "Work"},
+	{"job", "Manage jobs that run to completion", "Work"},
+	{"worker", "Inspect and scale background worker pools", "Work"},
+	{"workflow", "Manage durable workflows", "Work"},
+	{"operation", "Inspect your customers' operations and their deliveries", "Work"},
+	{"automation", "Build, monitor and recover automations", "Work"},
+	{"event", "Publish and send events, manage subscriptions and replays", "Work"},
+	{"webhook", "Register webhooks and deliver events to them", "Work"},
+	{"queue", "Inspect and feed an app's queues", "Work"},
+	{"dlq", "Inspect, replay or purge items that failed delivery", "Work"},
+	{"metric", "Show app metrics, request breakdowns and the service map", "Observe"},
+	{"debug", "Inspect requests, traces, issues, profiles and regressions", "Observe"},
+	{"dashboard", "Save dashboards across apps", "Observe"},
+	{"audit", "Search your account's audit log", "Observe"},
+	{"alert", "Manage alert rules, channels, incidents, SLOs and checks", "Observe"},
+	{"mcp", "Connect agents, host MCP servers, or call MCP tools", "Agents"},
+	{"account", "Manage your account, MFA and data exports", "Account"},
+	{"org", "Manage orgs, members and invitations", "Account"},
+	{"key", "Manage your account's API keys", "Account"},
+	{"billing", "Manage plan, payment, usage, invoices and spend cap", "Account"},
+	{"feature", "See Gregale features and join early access", "Account"},
+	{"config", "Manage local CLI settings, profiles and presets", "Account"},
+}
+
+// cliTreeAlias maps a path in the new tree to today's command path. When the
+// old path has verbs of its own, the new path is a noun and today's verbs
+// follow it, with cliTreeVerbSynonyms filling in standard spellings.
+type cliTreeAlias struct {
+	New string
+	Old string
+}
+
+var cliTreeAliases = []cliTreeAlias{
+	// Ship.
+	{"release list", "deployments"},
+	{"release get", "deploys status"},
+	{"release stages", "deploys show"},
+	{"release summary", "deployment summary"},
+	{"release attempt get", "deploy status"},
+	{"release attempt cancel", "deploy abort"},
+	{"release attempt retry", "deploy retry"},
+	{"release logs", "deploys logs"},
+	{"release wait", "deployment wait"},
+	{"release status", "deployment status"},
+	{"release cancel", "deploys cancel"},
+	{"release retry", "deploys retry"},
+	{"release resume", "deploy resume"},
+	{"release recover", "deploy recover"},
+	{"release diff", "deployment diff"},
+	{"release hide", "deploys clear"},
+	{"release prune", "deploys clear-obsolete"},
+	{"release reorder", "deploys reorder"},
+	{"release runtime", "deployment runtime"},
+	{"release rollback", "rollback"},
+	{"release alias", "deployments alias"},
+	{"release contract run", "deploy contract"},
+	{"release contract resolve", "deploy resolve-contract"},
+	{"release canary", "canary"},
+	{"release traffic", "traffic"},
+	{"release approval", "approvals"},
+	{"release approve", "approvals approve"},
+	{"release reject", "approvals reject"},
+	{"release freeze", "freeze"},
+	{"release gate", "release-gates"},
+	{"release schedule", "scheduled-releases"},
+	{"release mirror", "mirror"},
+	{"preview", "preview"},
+	{"environment migration recover", "projects environments recover-migration"},
+	{"environment", "projects environments"},
+	{"project", "projects"},
+	{"build", "build"},
+	{"github", "github"},
+	{"github connect", "connect github"},
+	{"github link", "github bind"},
+	{"registry", "registry"},
+	{"registry key", "trusted-publishers"},
+	{"registry deploy", "registry published"},
+	{"test", "test"},
+	{"test chaos", "chaos inject"},
+
+	// Run. `app` verbs that live in today's `app <slug> <verb>` form are
+	// handled by rewriteAppPath.
+	{"app list", "apps"},
+	{"app delete", "apps rm"},
+	{"app restore", "apps restore"},
+	{"app instances", "ps"},
+	{"app park", "park"},
+	{"app wake", "wake"},
+	{"app wake-ahead", "wake-ahead"},
+	{"app wake-timeline", "wake-timeline"},
+	{"app binding", "bindings"},
+	{"app deploy-token", "deploy-tokens"},
+	{"app streaming-cap", "apps streaming-cap"},
+	{"sandbox run", "run"},
+	{"sandbox", "runs"},
+	{"invocation watch", "tail"},
+	{"invocation", "invocations"},
+
+	// Configure.
+	{"env set", "secrets set"},
+	{"env unset", "secrets unset"},
+	{"env list", "secrets list"},
+	{"env rotate", "secrets rotate"},
+	{"env audit", "secrets audit"},
+	{"env check", "secrets check"},
+	{"env ref", "secrets refs"},
+	{"env requirement", "secrets requirements"},
+	// Today's env verbs that sync variables; `env create` and
+	// `env clone-status` clone project environments and are not listed here.
+	{"env pull", "env pull"},
+	{"env push", "env push"},
+	{"env diff", "env diff"},
+	{"env history", "env history"},
+	{"env rollback", "env rollback"},
+	{"domain default set", "domains set-default"},
+	{"domain", "domains"},
+	{"edge rule", "edge-rules"},
+	{"edge rule-list", "edge-rule-lists"},
+	{"edge cache", "cache"},
+	{"edge cors", "cors"},
+	{"api route", "routes"},
+	{"api spec", "openapi"},
+	{"api consumer", "consumers"},
+	{"api tenant", "platform-tenants"},
+	{"flag", "flags"},
+
+	// Data.
+	{"postgres", "postgres"},
+	{"bucket multipart get", "bucket uploads status"},
+	{"bucket multipart", "bucket uploads"},
+	{"bucket version delete", "bucket version-delete"},
+	{"bucket version", "bucket versions"},
+	{"bucket deletion create", "bucket deletions start"},
+	{"bucket deletion get", "bucket deletions status"},
+	{"bucket deletion", "bucket deletions"},
+	{"bucket encryption set", "bucket encryption"},
+	{"bucket object-lock set", "bucket object-lock"},
+	{"bucket inventory get", "bucket reconcile status"},
+	{"bucket inventory", "bucket reconcile"},
+	{"bucket", "bucket"},
+	{"pipeline", "pipeline"},
+	{"data-api", "data-api"},
+	{"ai", "ai"},
+	{"realtime", "realtime"},
+
+	// Work.
+	{"cron", "crons"},
+	{"trigger", "triggers"},
+	// Exclusive keyed work is --lock on job runs, crons and triggers; its
+	// policies live under job until a broader home is needed.
+	{"job lock-policy list", "operations policy list"},
+	{"job lock-policy set", "operations policy upsert"},
+	{"job lock-policy delete", "operations policy retire"},
+	{"job artifact download", "jobs artifact-download"},
+	{"job", "jobs"},
+	{"worker", "workers"},
+	{"workflow", "workflows"},
+	{"operation delivery get", "customer-operations delivery"},
+	{"operation delivery attempts", "customer-operations delivery-attempts"},
+	{"operation delivery retry", "customer-operations retry-delivery"},
+	{"operation attention list", "customer-operations attention"},
+	{"operation attention summary", "customer-operations attention-summary"},
+	{"operation outcome summary", "customer-operations outcome-summary"},
+	{"operation binding generate", "customer-operations bindings"},
+	{"operation", "customer-operations"},
+	{"automation recovery health", "automations recovery-health"},
+	{"automation recovery suppress", "automations recovery-suppress"},
+	{"automation recovery create", "automations recovery-start"},
+	{"automation recovery cancel", "automations recovery-cancel"},
+	{"automation recovery run", "automations recovery-plan"},
+	{"automation failure list", "automations failures"},
+	{"automation failure policy", "automations failure-policy"},
+	{"automation failure resume", "automations failure-resume"},
+	{"automation policy publish", "automations publish-policy"},
+	{"automation", "automations"},
+	{"event send", "send"},
+	{"event subscription list", "events subscriptions"},
+	{"event subscription get", "events subscription-status"},
+	{"event subscription pause", "events subscription-pause"},
+	{"event subscription resume", "events subscription-resume"},
+	{"event subscription health", "events subscription-health"},
+	{"event subscription-version get", "events subscription-versions-status"},
+	{"event subscription-version set", "events subscription-versions-set"},
+	{"event subscription-version reset", "events subscription-versions-reset"},
+	{"event subscription-retry get", "events subscription-retry-status"},
+	{"event subscription-retry set", "events subscription-retry-set"},
+	{"event subscription-retry reset", "events subscription-retry-reset"},
+	{"event subscription-circuit get", "events subscription-circuit-status"},
+	{"event subscription-circuit set", "events subscription-circuit-set"},
+	{"event subscription-circuit disable", "events subscription-circuit-disable"},
+	{"event subscription-circuit reset", "events subscription-circuit-reset"},
+	{"event subscription-capacity set", "events subscription-capacity"},
+	{"event subscription-capacity list", "events subscription-capacity-commands"},
+	{"event subscription-capacity get", "events subscription-capacity-command"},
+	{"event backfill create", "events backfill"},
+	{"event backfill get", "events backfill-status"},
+	{"event backfill items", "events backfill-items"},
+	{"event backfill retry", "events backfill-retry"},
+	{"event backfill cancel", "events backfill-cancel"},
+	{"event recovery list", "events recovery-list"},
+	{"event recovery get", "events recovery-status"},
+	{"event recovery create", "events recovery-create"},
+	{"event recovery health", "events recovery-health"},
+	{"event recovery history", "events recovery-history"},
+	{"event recovery items", "events recovery-items"},
+	{"event recovery pause", "events recovery-pause"},
+	{"event recovery resume", "events recovery-resume"},
+	{"event recovery update", "events recovery-rate"},
+	{"event recovery cancel", "events recovery-cancel"},
+	{"event delivery retry", "events delivery-retry"},
+	{"event", "events"},
+	{"webhook secret rotate", "webhooks rotate-secret"},
+	{"webhook deliver", "deliver"},
+	{"webhook", "webhooks"},
+	{"queue watch", "queue tail"},
+	{"queue", "queue"},
+	{"dlq", "dlq"},
+
+	// Observe.
+	{"metric requests", "analytics"},
+	{"metric", "metrics"},
+	{"debug trace", "trace"},
+	{"debug issue", "issues"},
+	{"debug explain", "debug rollout"},
+	{"debug", "debug"},
+	{"dashboard", "dashboards"},
+	{"open dashboard", "dashboard"},
+	{"audit", "audit-events"},
+	{"logs drain", "log-drains"},
+	// MCP readiness alerting folds into the alert family on the CLI; its
+	// backend stays separate (ADR-20261026145832).
+	{"alert maintenance list", "mcp readiness maintenance list"},
+	{"alert maintenance create", "mcp readiness maintenance create"},
+	{"alert maintenance cancel", "mcp readiness maintenance cancel"},
+	{"alert pagerduty get", "mcp readiness pagerduty get"},
+	{"alert pagerduty set", "mcp readiness pagerduty set"},
+	{"alert pagerduty disable", "mcp readiness pagerduty disable"},
+	{"alert secret rotate", "alerts rotate-secret"},
+	{"alert channel", "channels"},
+	{"alert incident", "incidents"},
+	{"alert slo", "slos"},
+	{"alert check", "synthetics"},
+	{"alert", "alerts"},
+
+	// Agents. Hosting verbs and client verbs sit directly under `mcp` today.
+	{"mcp serve", "mcp serve"},
+	{"mcp connection", "mcp connections"},
+	{"mcp server", "mcp"},
+	{"mcp client tools", "mcp tools"},
+	{"mcp client call", "mcp call"},
+	{"mcp client complete", "mcp complete"},
+	{"mcp client prompts", "mcp prompts"},
+	{"mcp client render", "mcp prompt-get"},
+	{"mcp client resources", "mcp resources"},
+	{"mcp client read", "mcp resource-read"},
+	{"mcp client watch", "mcp resource-watch"},
+	{"mcp client status", "mcp task-get"},
+	{"mcp client wait", "mcp task-wait"},
+	{"mcp client cancel", "mcp task-cancel"},
+
+	// Account.
+	{"account mfa", "mfa"},
+	{"account", "account"},
+	{"org invitation accept", "invitations accept"},
+	{"org invitation peek", "invitations peek"},
+	{"org invitation", "orgs invitations"},
+	{"org", "orgs"},
+	{"key", "keys"},
+	{"billing plan", "plan"},
+	{"billing usage", "usage"},
+	{"billing invoices", "invoices"},
+	{"billing spend-cap", "overage-cap"},
+	{"billing", "billing"},
+	{"feature list", "capabilities"},
+	{"feature join", "previews join"},
+	{"feature leave", "previews leave"},
+	{"config profile", "profile"},
+	{"config preset", "context presets"},
+	{"config upload-cache", "upload-cache"},
+	{"config", "config"},
+
+	// Verb renames decided 2026-10-28: a hyphenated verb chain becomes a
+	// subnoun and a standard verb (rule 6).
+	{"account billing-run schedule delete", "account billing-run schedule-delete"},
+	{"account billing-run schedule set", "account billing-run schedule-set"},
+	{"api consumer billing-policy get", "consumers billing-policy"},
+	{"api consumer billing-policy delete", "consumers billing-policy-delete"},
+	{"api consumer billing-policy set", "consumers billing-policy-set"},
+	{"api consumer credit grant", "consumers credit-grant"},
+	{"api consumer credit void", "consumers credit-void"},
+	{"api consumer key create", "consumers key-create"},
+	{"api consumer key revoke", "consumers key-revoke"},
+	{"api consumer overdue-hold list", "consumers overdue-holds"},
+	{"api consumer plan create", "consumers plan-create"},
+	{"api consumer plan update", "consumers plan-update"},
+	{"api consumer plan list", "consumers plans"},
+	{"api consumer rate-card create", "consumers rate-card-create"},
+	{"api consumer rate-card list", "consumers rate-cards"},
+	{"api consumer plan set", "consumers set-plan"},
+	{"api consumer signup get", "consumers signup"},
+	{"api consumer signup delete", "consumers signup-delete"},
+	{"api consumer signup set", "consumers signup-set"},
+	{"api consumer spend-cap delete", "consumers spend-cap-delete"},
+	{"api consumer spend-cap set", "consumers spend-cap-set"},
+	{"api consumer statement draft", "consumers statement-draft"},
+	{"api consumer statement export", "consumers statement-export"},
+	{"api consumer statement finalize", "consumers statement-finalize"},
+	{"api consumer statement handoff", "consumers statement-handoff"},
+	{"api consumer statement get", "consumers statement-show"},
+	{"api consumer trial get", "consumers trial"},
+	{"api consumer trial end", "consumers trial-end"},
+	{"api consumer trial set", "consumers trial-set"},
+	{"api tenant billing-policy get", "platform-tenants billing-policy"},
+	{"api tenant billing-policy delete", "platform-tenants billing-policy-delete"},
+	{"api tenant billing-policy set", "platform-tenants billing-policy-set"},
+	{"api tenant credentials apply", "platform-tenants credentials-apply"},
+	{"api tenant credentials list", "platform-tenants credentials-list"},
+	{"api tenant credit grant", "platform-tenants credit-grant"},
+	{"api tenant credit void", "platform-tenants credit-void"},
+	{"api tenant consumer link", "platform-tenants link-consumer"},
+	{"api tenant surface link", "platform-tenants link-surface"},
+	{"api tenant overdue-hold list", "platform-tenants overdue-holds"},
+	{"api tenant plan create", "platform-tenants plan-create"},
+	{"api tenant plan update", "platform-tenants plan-update"},
+	{"api tenant plan list", "platform-tenants plans"},
+	{"api tenant rate-card create", "platform-tenants rate-card-create"},
+	{"api tenant rate-card list", "platform-tenants rate-cards"},
+	{"api tenant plan set", "platform-tenants set-plan"},
+	{"api tenant spend-cap delete", "platform-tenants spend-cap-delete"},
+	{"api tenant spend-cap set", "platform-tenants spend-cap-set"},
+	{"api tenant statement draft", "platform-tenants statement-draft"},
+	{"api tenant statement export", "platform-tenants statement-export"},
+	{"api tenant statement finalize", "platform-tenants statement-finalize"},
+	{"api tenant statement handoff", "platform-tenants statement-handoff"},
+	{"api tenant statement get", "platform-tenants statement-show"},
+	{"api tenant trial get", "platform-tenants trial"},
+	{"api tenant trial end", "platform-tenants trial-end"},
+	{"api tenant trial set", "platform-tenants trial-set"},
+	{"automation event recover", "automations event-recover"},
+	{"automation event-recovery start", "automations event-recovery-start"},
+	{"automation failure-recovery review", "automations failure-recovery-review"},
+	{"automation recovery-policy evaluate", "automations recovery-policy-evaluate"},
+	{"automation recovery-response apply", "automations recovery-response-apply"},
+	{"automation recovery-response status", "automations recovery-response-status"},
+	{"debug issue releases compare", "issues compare-releases"},
+	{"debug issue token create", "issues create-token"},
+	{"debug issue token revoke", "issues revoke-token"},
+	{"edge rule waf review", "edge-rules waf-review"},
+	{"environment release-sets stage cancel", "projects environments release-sets cancel-stage"},
+	{"environment release-sets deactivation prepare", "projects environments release-sets prepare-deactivation"},
+	{"environment release-sets stage status", "projects environments release-sets stage-status"},
+	{"event deadline-alert investigate", "events deadline-alert-investigate"},
+	{"event notification-retry apply", "events notification-retry-apply"},
+	{"event notification-retry reconcile", "events notification-retry-reconcile"},
+	{"event recovery-notification retry", "events recovery-notification-retry"},
+	{"webhook account secret rotate", "webhooks account rotate-secret"},
+
+	// Decided 2026-10-29 (rounds 8 and 9): event lineage repair is a customer
+	// subnoun, publication checks and execution reconciliation get subnouns,
+	// MCP readiness sits directly under mcp, and a preflight is `check`.
+	// Dry runs, views and alternative inputs are flag folds
+	// (cli_tree_flag_folds.go).
+	{"event lineage case list", "events subscription-lineage-cases"},
+	{"event lineage case retry", "events subscription-lineage-retry"},
+	{"event lineage case export", "events subscription-lineage-retry-export"},
+	{"event lineage case check", "events subscription-lineage-retry-preflight"},
+	{"event lineage scan get", "events subscription-lineage-case-backfill"},
+	{"event lineage scan create", "events subscription-lineage-case-backfill-request"},
+	{"event lineage scan pause", "events subscription-lineage-case-backfill-pause"},
+	{"event lineage scan resume", "events subscription-lineage-case-backfill-resume"},
+	{"event lineage scan cancel", "events subscription-lineage-case-backfill-cancel"},
+	{"event lineage job list", "events subscription-lineage-retry-jobs"},
+	{"event lineage job get", "events subscription-lineage-retry-job"},
+	{"event lineage job create", "events subscription-lineage-retry-job-create"},
+	{"event lineage job pause", "events subscription-lineage-retry-job-pause"},
+	{"event lineage job resume", "events subscription-lineage-retry-job-resume"},
+	{"event lineage job cancel", "events subscription-lineage-retry-job-cancel"},
+	{"event lineage job watch", "events subscription-lineage-retry-job-watch"},
+	{"event lineage job export", "events subscription-lineage-retry-job-export"},
+	{"event lineage receipt list", "events subscription-lineage-retry-job-controls"},
+	{"event lineage receipt get", "events subscription-lineage-retry-job-controls-inspect"},
+	{"event lineage receipt export", "events subscription-lineage-retry-job-controls-export"},
+	{"event lineage control export", "events subscription-lineage-retry-control-plan-export"},
+	{"event lineage control apply", "events subscription-lineage-retry-control-plan-apply"},
+	{"event lineage control check", "events subscription-lineage-retry-control-plan-preflight"},
+	{"event lineage control reconcile", "events subscription-lineage-retry-control-plan-reconcile"},
+	{"event publication get", "events publish-app-status"},
+	{"event publication verify", "events publish-app-verify"},
+	{"event subscription reconciliation get", "events subscription-execution-reconciliation"},
+	{"event subscription reconciliation create", "events subscription-reconcile-execution"},
+	{"event recovery check", "events recovery-preflight"},
+	{"event fanout history", "events fanout-history"},
+	{"event notification-retry list", "events notification-retry-backlog"},
+	{"event recovery-notification list", "events recovery-notifications"},
+	{"event recovery-notification history", "events recovery-notification-retry-history"},
+	{"event schema check", "events schema-rollout-preview"},
+	{"mcp readiness", "mcp readiness"},
+	{"mcp readiness notification", "mcp readiness notifications"},
+	{"mcp readiness reminder", "mcp readiness reminder-defaults"},
+	{"mcp server export", "mcp config"},
+	{"mcp server monitor check", "mcp monitor provider-check"},
+	{"mcp server retirements ack", "mcp retirements acknowledge-manual"},
+	{"mcp server tasks deploy", "mcp tasks release"},
+	{"mcp observer", "mcp tasks observer"},
+	{"environment check", "projects environments preflight"},
+	{"environment cancel", "projects environments abort"},
+	{"environment gitops promotion create", "projects environments gitops promotion-pr"},
+	{"environment gitops recovery create", "projects environments gitops rollback-pr"},
+	{"environment gitops override delete", "projects environments gitops remove-override"},
+	{"environment release-sets stage create", "projects environments release-sets stage"},
+	{"environment release-sets verification", "projects environments release-sets verification-runs"},
+	{"data-api rotation check", "data-api rotation preflight"},
+	{"data-api migration check", "data-api migration preview"},
+	{"data-api migration explain", "data-api migration guide"},
+	{"data-api serve", "data-api dev"},
+	{"data-api fixture export", "data-api fixture build"},
+	{"data-api storage export", "data-api storage sql"},
+	{"data-api release verify", "data-api verify release"},
+
+	// Proposed 2026-10-29 for review (round 9: one-off verbs).
+	{"account dpa get", "account dpa"},
+	{"account billing-run schedule get", "account billing-run schedule"},
+	{"ai quality-alert list", "ai quality-alerts"},
+	{"api consumer plan history", "consumers plan-history"},
+	{"api tenant plan history", "platform-tenants plan-history"},
+	{"api consumer quote get", "consumers quote"},
+	{"api consumer alerts", "consumers usage-alerts"},
+	{"api route health profiles", "routes health profile-history"},
+	{"api route lifecycle prepare", "routes lifecycle prepare-approval"},
+	{"api route migration check", "routes migration gate"},
+	{"api route migration verify", "routes migration server-check"},
+	{"app binding call", "bindings smoke"},
+	{"app binding probe-policy set", "bindings probe-policy"},
+	{"app binding verification", "bindings verification-runs"},
+	{"automation failure-recovery evidence", "automations failure-recovery-evidence"},
+	{"automation failure-recovery list", "automations failure-recovery-reviews"},
+	{"automation recovery evidence", "automations recovery-retry-evidence"},
+	{"automation recovery-policy history", "automations recovery-policy-reviews"},
+	{"automation recovery-response check", "automations recovery-response-preview"},
+	{"automation live check", "automations live gate"},
+	{"automation live run", "automations live suite"},
+	{"billing payment-method get", "billing payment-method"},
+	{"bucket copy-source", "bucket copy-sources"},
+	{"bucket encryption keys", "bucket encryption-keys"},
+	{"bucket object-lock clear", "bucket object-lock clear-default"},
+	{"config upload-cache prune", "upload-cache cleanup"},
+	{"debug capture diff", "debug capture-diff"},
+	{"edge rule attack-mode set", "edge-rules attack-mode"},
+	{"edge rule recipe apply", "edge-rules recipe"},
+	{"job artifact get", "jobs artifact-url"},
+	{"job replay", "jobs replay-failed"},
+	{"key grace-window set", "keys grace-window"},
+	{"org members update", "orgs members change-role"},
+	{"org owner set", "orgs transfer-ownership"},
+	{"org usage", "orgs seat-usage"},
+	{"org standards operation cancel", "orgs standards operation abort"},
+	{"realtime drain status", "realtime drain-status"},
+	{"release approval disable", "approvals off"},
+	{"release canary evidence", "canary gate"},
+	{"release rollback status", "rollback switch"},
+	{"test coverage report", "test coverage-trend"},
+	{"test recovery report", "test recovery-trend"},
+	{"trigger dlq list", "triggers dlq"},
+	{"workflow recover", "workflows resume-wait"},
+	{"workflow schedule history", "workflows schedule-history"},
+	{"workflow schedule replay", "workflows schedule-history replay"},
+	{"workflow schedule simulate", "workflows schedules preview"},
+	{"config context get", "context"},
+	{"config context set", "context set"},
+	{"config preset create", "context save"},
+	{"config preset apply", "context use"},
+
+	// Decided 2026-10-29 (round 10, review of the remaining baseline).
+	{"api route activity", "routes awake"},
+	{"billing portal open", "billing portal"},
+	{"bucket usage", "usage object-storage"},
+	{"cron run get", "crons fire-now"},
+	{"queue dlq list", "queue dead-letter"},
+	{"event delivery fail", "events delivery-dead-letter"},
+	{"event delivery alerts", "events delivery-health-alerts"},
+	{"mcp readiness attention reopen", "mcp readiness attention release"},
+	{"alert pagerduty ack-sync", "mcp readiness pagerduty acknowledgements"},
+	{"org standards adoption get", "orgs standards application"},
+	{"org standards local set", "orgs standards local-intent"},
+	// A command that shows a setting without flags and changes it with
+	// them gets both verbs; each runs today's command.
+	{"ai content-policy get", "ai content-policy"},
+	{"ai content-policy set", "ai content-policy"},
+	{"ai tag-limit get", "ai tag-limits"},
+	{"ai tag-limit set", "ai tag-limits"},
+	{"ai app-limit get", "ai app-limit"},
+	{"ai app-limit set", "ai app-limit"},
+	{"api tenant activation get", "platform-tenants activation"},
+	{"api tenant activation wait", "platform-tenants activation"},
+	{"automation recovery-policy get", "automations recovery-policy"},
+	{"automation recovery-policy set", "automations recovery-policy"},
+	{"bucket protection legal-hold get", "bucket protection legal-hold"},
+	{"bucket protection legal-hold set", "bucket protection legal-hold"},
+	{"bucket protection event-hold set", "bucket protection event-hold"},
+	{"debug issue impact-alert get", "issues impact-alert"},
+	{"debug issue impact-alert set", "issues impact-alert"},
+	{"debug issue lifecycle-alert get", "issues lifecycle-alerts"},
+	{"debug issue lifecycle-alert set", "issues lifecycle-alerts"},
+	{"debug issue ownership-rule get", "issues ownership-rules"},
+	{"debug issue ownership-rule set", "issues ownership-rules"},
+	{"debug issue compound-alert get", "issues compound-alerts"},
+	{"debug issue compound-alert set", "issues compound-alerts"},
+	{"debug issue source-map get", "issues source-maps"},
+	{"debug issue source-map publish", "issues source-maps"},
+	{"edge rule attack-mode get", "edge-rules attack-mode"},
+	// Round 11 (2026-10-31): the last customer paths in the baseline. A
+	// WAF exclusion change updates the rule's WAF beside `waf review`;
+	// billing-connection's modes are manifest verbs, and status reads a
+	// stored record.
+	{"edge rule waf update", "edge-rules waf-exclude"},
+	{"account billing-connection get", "account billing-connection status"},
+	// Round 12 (2026-10-31): the postgres verbs. Overage shows or sets a
+	// setting, so it gets both verbs; a compute policy is set, and the
+	// progress of a policy change or a resize is read with status.
+	{"postgres overage get", "postgres overage"},
+	{"postgres overage set", "postgres overage"},
+	{"postgres compute-policy set", "postgres compute-policy"},
+	{"postgres compute-policy status", "postgres compute-policy-status"},
+	{"postgres resize status", "postgres resize-status"},
+
+	// Operator tools live under the hidden admin command (rule 7) and keep
+	// their names; the naming rules cover the customer tree.
+	{"admin sites", "sites"},
+	{"admin data-repair", "data-repair"},
+	{"admin commit", "commit"},
+	{"admin entities", "entities"},
+	{"admin product", "product"},
+	{"admin tenant-surfaces", "tenant-surfaces"},
+	{"admin rollouts", "rollouts"},
+	{"admin github-webhook-secret", "github-webhook-secret"},
+	{"admin mail", "mail"},
+	{"admin postgres reconcile", "postgres reconcile"},
+	{"admin postgres usage-import", "postgres usage-import"},
+	{"admin postgres diagnostics", "postgres diagnostics"},
+	{"admin billing refresh-invoice", "billing refresh-invoice"},
+	{"admin billing backfill-invoices", "billing backfill-invoices"},
+}
+
+// cliTreeShorts summarize tree paths whose command today does more than
+// the path names.
+var cliTreeShorts = map[string]string{
+	"mcp server": "Scaffold, deploy and check the MCP servers you host",
+}
+
+// cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a
+// command may use instead (ADR-20261026145832 rule 3).
+var cliTreeVerbSynonyms = map[string][]string{
+	"list":   {"ls"},
+	"get":    {"info", "show", "inspect"},
+	"create": {"add"},
+	"update": {"replace"},
+	"delete": {"rm", "remove", "destroy"},
+	"ack":    {"acknowledge"},
+}
+
+// cliTreeStandardVerb is the reverse of cliTreeVerbSynonyms, for help.
+func cliTreeStandardVerb(verb string) string {
+	for standard, spellings := range cliTreeVerbSynonyms {
+		if slices.Contains(spellings, verb) {
+			return standard
+		}
+	}
+	return verb
+}
+
+// cliTreeVerbFor spells a verb of siblings in its standard form. A synonym
+// whose standard verb is also a sibling (`rm` beside `delete`) is not
+// listed: the standard verb runs the sibling.
+func cliTreeVerbFor(verb string, siblings []cliSub) (string, bool) {
+	standard := cliTreeStandardVerb(verb)
+	if standard != verb && slices.ContainsFunc(siblings, func(sub cliSub) bool { return sub.Name == standard }) {
+		return "", false
+	}
+	return standard, true
+}
+
+func lookupCliTreeNoun(name string) (cliTreeNoun, bool) {
+	for _, noun := range cliTreeNouns {
+		if noun.Name == name {
+			return noun, true
+		}
+	}
+	return cliTreeNoun{}, false
+}
+
+// cliTreeNode is a manifest command or verb reached by a path of words.
+type cliTreeNode struct {
+	Short string
+	Subs  []cliSub
+	Flags []cliFlag
+	// AfterPositionals marks `app <slug> <verb>`-shaped families, whose next
+	// word is data rather than a verb.
+	AfterPositionals bool
+}
+
+// lookupCliPath walks the manifest along words. Aliases count as their verb.
+func lookupCliPath(words []string) (cliTreeNode, bool) {
+	if len(words) == 0 {
+		return cliTreeNode{}, false
+	}
+	command, ok := lookupCliCommand(words[0])
+	if !ok {
+		return cliTreeNode{}, false
+	}
+	return walkCliTreeNode(command, words[1:])
+}
+
+// walkCliTreeNode follows words from command through its verbs.
+func walkCliTreeNode(command cliCommand, words []string) (cliTreeNode, bool) {
+	node := cliTreeNode{Short: command.Short, Subs: command.Subcommands, Flags: command.Flags, AfterPositionals: command.SubcommandsAfterPositionals}
+	for _, word := range words {
+		sub, ok := findCliSubcommand(node.Subs, word)
+		if !ok {
+			return cliTreeNode{}, false
+		}
+		node = cliTreeNode{Short: sub.Short, Subs: sub.Subcommands, Flags: sub.Flags, AfterPositionals: sub.SubcommandsAfterPositionals}
+	}
+	return node, true
+}
+
+// leadingTreeWords returns up to four words before the first flag: a tree
+// path is at most four words long (ADR-20261026145832 rule 1).
+func leadingTreeWords(args []string) []string {
+	var words []string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") || len(words) == 4 {
+			break
+		}
+		words = append(words, arg)
+	}
+	return words
+}
+
+// oldPathDepth counts the leading words of args that name one of today's
+// commands and verbs. It stops at a flag, at an unknown word, and before the
+// data word of a slug-first family.
+func oldPathDepth(args []string) int {
+	if len(args) == 0 {
+		return 0
+	}
+	command, ok := lookupCliCommand(args[0])
+	if !ok {
+		return 0
+	}
+	subs, afterPositionals := command.Subcommands, command.SubcommandsAfterPositionals
+	depth := 1
+	for depth < len(args) && !afterPositionals && !strings.HasPrefix(args[depth], "-") {
+		sub, ok := findCliSubcommand(subs, args[depth])
+		if !ok {
+			break
+		}
+		subs, afterPositionals = sub.Subcommands, sub.SubcommandsAfterPositionals
+		depth++
+	}
+	return depth
+}
+
+// matchCliTreeAlias finds the longest tree path that prefixes args.
+func matchCliTreeAlias(args []string) (cliTreeAlias, int, bool) {
+	words := leadingTreeWords(args)
+	for n := len(words); n > 0; n-- {
+		if alias, ok := cliTreeAliasIndex()[strings.Join(words[:n], " ")]; ok {
+			return alias, n, true
+		}
+	}
+	return cliTreeAlias{}, 0, false
+}
+
+// cliTreeAliasIndex maps each tree path to its first alias; help and the
+// reference look paths up thousands of times.
+var cliTreeAliasIndex = sync.OnceValue(func() map[string]cliTreeAlias {
+	index := make(map[string]cliTreeAlias, len(cliTreeAliases))
+	for _, alias := range cliTreeAliases {
+		if _, seen := index[alias.New]; !seen {
+			index[alias.New] = alias
+		}
+	}
+	return index
+})
+
+// rewriteTreePath replaces a new-tree path at the start of args with the
+// path of the command that implements it today. It returns args unchanged
+// when they name today's command or no tree path.
+func rewriteTreePath(args []string) ([]string, error) {
+	if len(args) == 0 {
+		return args, nil
+	}
+	if args[0] == appSlugFallback {
+		return rewriteAppPath(args)
+	}
+	if folded, ok := rewriteFlagFold(args); ok {
+		return folded, nil
+	}
+	alias, used, ok := matchCliTreeAlias(args)
+	if !ok {
+		return args, nil
+	}
+	// Today's path wins wherever it reaches at least as far as the tree path;
+	// a word after it that today's command does not know still goes to the
+	// tree (`bucket get` → `bucket info`, `dashboard list` → `dashboards`).
+	depth := oldPathDepth(args)
+	if used > depth || (used == depth && len(args) > depth && !strings.HasPrefix(args[depth], "-")) {
+		return joinTreeRewrite(alias, args[used:]), nil
+	}
+	return args, nil
+}
+
+// joinTreeRewrite builds today's argv for alias, mapping a standard verb to
+// the spelling today's command uses.
+func joinTreeRewrite(alias cliTreeAlias, rest []string) []string {
+	out := strings.Fields(alias.Old)
+	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+		if node, ok := lookupCliPath(out); ok && len(node.Subs) > 0 && !node.AfterPositionals {
+			if _, known := findCliSubcommand(node.Subs, rest[0]); !known {
+				for _, spelling := range cliTreeVerbSynonyms[rest[0]] {
+					if _, found := findCliSubcommand(node.Subs, spelling); found {
+						rest = append([]string{spelling}, rest[1:]...)
+						break
+					}
+				}
+			}
+		}
+	}
+	return append(out, rest...)
+}
+
+var errAppTarget = errors.New("name the app: gregale app <verb> <app>, --app <app>, or run it in a linked checkout")
+
+// rewriteAppPath maps the tree's verb-first `app <verb> [<app>]` to today's
+// `app <app> <verb>` or to the command that owns the verb today. Today's
+// slug-first form keeps working when its first word is not a tree verb.
+func rewriteAppPath(args []string) ([]string, error) {
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return args, nil
+	}
+	if alias, used, ok := matchCliTreeAlias(args); ok {
+		return joinTreeRewrite(alias, args[used:]), nil
+	}
+	verb := args[1]
+	if verb == "listener" {
+		return rewriteAppListener(args)
+	}
+	if verb == "get" || verb == "update" {
+		app, rest, err := takeAppTarget(args[2:])
+		if err != nil && hasHelpFlag(args) {
+			return []string{appSlugFallback, "--help"}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return append([]string{appSlugFallback, app}, rest...), nil
+	}
+	command, ok := lookupCliCommand(appSlugFallback)
+	if !ok {
+		return args, nil
+	}
+	sub, ok := findCliSubcommand(command.Subcommands, verb)
+	if !ok {
+		return args, nil
+	}
+	chain := []string{verb}
+	rest := args[2:]
+	if len(rest) > 0 && len(sub.Subcommands) > 0 {
+		if _, nested := findCliSubcommand(sub.Subcommands, rest[0]); nested {
+			chain, rest = append(chain, rest[0]), rest[1:]
+		}
+	}
+	app, rest, err := takeAppTarget(rest)
+	if err != nil {
+		// Help needs no app; without one it stays today's `app` help.
+		if hasHelpFlag(args) {
+			return args, nil
+		}
+		return nil, err
+	}
+	out := append([]string{appSlugFallback, app}, chain...)
+	return append(out, rest...), nil
+}
+
+// rewriteAppListener maps `app listener <verb> [<app>] [--protocol tcp|udp]`
+// to today's `app <app> tcp|udp <verb>`; TCP is the default.
+func rewriteAppListener(args []string) ([]string, error) {
+	protocol := "tcp"
+	rest := make([]string, 0, len(args))
+	for i := 2; i < len(args); i++ {
+		name, value, hasValue := strings.Cut(args[i], "=")
+		if name != "--protocol" {
+			rest = append(rest, args[i])
+			continue
+		}
+		if !hasValue && i+1 < len(args) {
+			i++
+			value = args[i]
+		}
+		protocol = strings.ToLower(value)
+	}
+	if protocol != "tcp" && protocol != "udp" {
+		return nil, fmt.Errorf("--protocol must be tcp or udp; got %q", protocol)
+	}
+	if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
+		if hasHelpFlag(args) {
+			return []string{appSlugFallback, "--help"}, nil
+		}
+		return nil, fmt.Errorf("name a listener verb: gregale app listener <list|create|delete|enable|disable> <app> [--protocol tcp|udp]")
+	}
+	verb := rest[0]
+	if command, ok := lookupCliCommand(appSlugFallback); ok {
+		if family, ok := findCliSubcommand(command.Subcommands, protocol); ok {
+			if _, known := findCliSubcommand(family.Subcommands, verb); !known {
+				for _, spelling := range cliTreeVerbSynonyms[verb] {
+					if _, found := findCliSubcommand(family.Subcommands, spelling); found {
+						verb = spelling
+						break
+					}
+				}
+			}
+		}
+	}
+	app, tail, err := takeAppTarget(rest[1:])
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{appSlugFallback, app, protocol, verb}, tail...), nil
+}
+
+// takeAppTarget returns the app a tree `app` verb addresses: the first
+// argument when it is slug-shaped, else --app, else the linked app.
+func takeAppTarget(args []string) (string, []string, error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			break
+		}
+		value, isApp := appFlagValue(args, i)
+		if !isApp {
+			continue
+		}
+		if value == "" {
+			return "", nil, errAppTarget
+		}
+		rest := append(append([]string{}, args[:i]...), args[i+1:]...)
+		if !strings.Contains(args[i], "=") {
+			rest = append(append([]string{}, args[:i]...), args[i+2:]...)
+		}
+		if len(rest) > 0 && rest[0] == value {
+			rest = rest[1:]
+		}
+		return value, rest, nil
+	}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") && api.ValidAppSlug(args[0]) {
+		return args[0], args[1:], nil
+	}
+	app, err := resolveAppFlagOrContext("")
+	if err != nil || app == "" {
+		return "", nil, errAppTarget
+	}
+	return app, args, nil
+}
+
+// rewriteCliTree applies rewriteTreePath to a command, or to the topic of
+// `gregale help <path>`. A request for tree help is left for
+// cliTreeHelpTopic, so `gregale cron` lists the tree's verbs.
+func rewriteCliTree(args []string) ([]string, error) {
+	if _, ok := cliTreeHelpTopic(args); ok {
+		return args, nil
+	}
+	if len(args) > 1 && args[0] == "help" {
+		topic, err := rewriteTreePath(args[1:])
+		if err != nil {
+			return nil, err
+		}
+		return append([]string{"help"}, topic...), nil
+	}
+	return rewriteTreePath(args)
+}
+
+// cliTreeTopic is a path whose help lists the tree's verbs and subnouns: a
+// noun, or a subnoun only the tree has (`mcp client`).
+type cliTreeTopic struct {
+	Path  []string
+	Short string
+}
+
+// cliTreeHelpTopic reports a request for tree help: `help <topic>`,
+// `<topic> --help`, or a bare topic that is not also one of today's
+// commands, whose bare run keeps its meaning. `--help --all` asks for
+// every option, which today's command help lists.
+func cliTreeHelpTopic(args []string) (cliTreeTopic, bool) {
+	if len(args) > 1 && args[0] == "help" {
+		words := leadingTreeWords(args[1:])
+		if len(words) != len(args)-1 {
+			return cliTreeTopic{}, false
+		}
+		return lookupCliTreeTopic(words, true)
+	}
+	words := leadingTreeWords(args)
+	rest := args[len(words):]
+	for _, arg := range rest {
+		if arg != "--help" && arg != "-h" {
+			return cliTreeTopic{}, false
+		}
+	}
+	return lookupCliTreeTopic(words, len(rest) > 0)
+}
+
+// lookupCliTreeTopic returns the tree topic words name. A noun that only
+// passes today's command through (`preview`) keeps today's fuller help, and
+// a subnoun the tree maps to one of today's commands gets that command's.
+func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
+	if len(words) == 0 {
+		return cliTreeTopic{}, false
+	}
+	noun, ok := lookupCliTreeNoun(words[0])
+	if !ok {
+		return cliTreeTopic{}, false
+	}
+	if !cliCommandAvailable(cliTreeNounCommand(noun.Name)) {
+		return cliTreeTopic{}, false
+	}
+	// A bare path that runs one of today's commands (`mcp server tasks`)
+	// keeps running it; only --help lists the tree's verbs.
+	if !help && len(words) > 1 {
+		if today, err := rewriteTreePath(words); err == nil && !slices.Equal(today, words) && oldPathDepth(today) == len(today) {
+			return cliTreeTopic{}, false
+		}
+	}
+	today := oldPathDepth(words) == len(words)
+	if today && !help {
+		return cliTreeTopic{}, false
+	}
+	if len(words) == 1 {
+		if today && !cliTreeReshapes(noun.Name) {
+			return cliTreeTopic{}, false
+		}
+		return cliTreeTopic{Path: words, Short: noun.Short}, true
+	}
+	path := strings.Join(words, " ")
+	if today || !cliTreeHasPathUnder(path) {
+		return cliTreeTopic{}, false
+	}
+	for _, alias := range cliTreeAliases {
+		if alias.New == path {
+			return cliTreeTopic{}, false
+		}
+	}
+	return cliTreeTopic{Path: words, Short: "Commands under gregale " + path}, true
+}
+
+// cliTreeReshapes reports a noun whose tree verbs differ from today's
+// command of the same name: it adds or renames verbs, or reorders `app`.
+func cliTreeReshapes(noun string) bool {
+	if noun == appSlugFallback {
+		return true
+	}
+	for _, alias := range cliTreeAliases {
+		if alias.New != alias.Old && strings.Fields(alias.New)[0] == noun {
+			return true
+		}
+	}
+	return false
+}
+
+func cliTreeHasPathUnder(path string) bool {
+	for _, alias := range cliTreeAliases {
+		if strings.HasPrefix(alias.New, path+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// cliTreeEntry is one verb or subnoun listed in a topic's help.
+type cliTreeEntry struct {
+	Name  string
+	Short string
+	Runs  string
+}
+
+// cliTreeDiscovery is the discoverable manifest, read once per help screen.
+type cliTreeDiscovery struct {
+	commands map[string]cliCommand
+}
+
+func newCliTreeDiscovery() cliTreeDiscovery {
+	return cliTreeDiscoveryOf(discoverableCliCommands())
+}
+
+// cliTreeDiscoveryOf indexes manifest, for a surface that documents more
+// than this account can see.
+func cliTreeDiscoveryOf(manifest []cliCommand) cliTreeDiscovery {
+	commands := map[string]cliCommand{}
+	for _, command := range manifest {
+		if cliCommandAvailable(command.Name) {
+			commands[command.Name] = command
+		}
+	}
+	return cliTreeDiscovery{commands: commands}
+}
+
+// node walks the discoverable customer manifest; a verb whose capability is
+// hidden for the account is not found, as in today's help
+// (ADR-20261023115741), and an operator command stays out of the tree.
+func (d cliTreeDiscovery) node(path string) (cliTreeNode, bool) {
+	words := strings.Fields(path)
+	command, ok := d.commands[words[0]]
+	if !ok || command.Audience != cliAudienceCustomer {
+		return cliTreeNode{}, false
+	}
+	return walkCliTreeNode(command, words[1:])
+}
+
+// entries lists the verbs and subnouns under prefix that this account can
+// see, with the command each one runs today.
+func (d cliTreeDiscovery) entries(prefix []string) []cliTreeEntry {
+	var entries []cliTreeEntry
+	seen := map[string]bool{}
+	add := func(name, short, runs string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		entries = append(entries, cliTreeEntry{Name: name, Short: short, Runs: runs})
+	}
+	// A verb with a tree name of its own is listed under that name only.
+	renamed := map[string]bool{}
+	for _, alias := range cliTreeAliases {
+		if alias.New != alias.Old {
+			renamed[alias.Old] = true
+		}
+	}
+	for _, alias := range cliTreeAliases {
+		path := strings.Fields(alias.New)
+		if len(path) < len(prefix) || !slices.Equal(path[:len(prefix)], prefix) {
+			continue
+		}
+		node, ok := d.node(alias.Old)
+		if !ok {
+			continue
+		}
+		if len(path) > len(prefix) {
+			short := node.Short
+			if tree, ok := cliTreeShorts[alias.New]; ok {
+				short = tree
+			}
+			add(strings.Join(path[len(prefix):], " "), short, alias.Old)
+			continue
+		}
+		if node.AfterPositionals {
+			continue
+		}
+		for _, sub := range node.Subs {
+			verb, ok := cliTreeVerbFor(sub.Name, node.Subs)
+			if old := alias.Old + " " + sub.Name; ok && !renamed[old] {
+				add(verb, sub.Short, old)
+			}
+		}
+	}
+	if slices.Equal(prefix, []string{appSlugFallback}) {
+		d.appEntries(add)
+	}
+	return groupCliTreeEntries(entries)
+}
+
+// appEntries lists today's `app <app> <verb>` verbs in the tree's
+// verb-first form (rewriteAppPath).
+func (d cliTreeDiscovery) appEntries(add func(name, short, runs string)) {
+	command, ok := d.commands[appSlugFallback]
+	if !ok {
+		return
+	}
+	add("get", "Show an app's settings and status", appSlugFallback)
+	add("update", "Change an app's settings", appSlugFallback)
+	for _, sub := range command.Subcommands {
+		runs := appSlugFallback + " " + sub.Name
+		if sub.Name == "tcp" || sub.Name == "udp" {
+			add("listener", "Manage TCP and UDP listeners (--protocol tcp|udp)", runs)
+			continue
+		}
+		// rewriteAppPath dispatches today's spelling of an app verb.
+		add(sub.Name, sub.Short, runs)
+	}
+}
+
+// groupCliTreeEntries folds multi-word entries into their subnoun, so a noun
+// lists `client` once instead of every `client <verb>`.
+func groupCliTreeEntries(entries []cliTreeEntry) []cliTreeEntry {
+	single := map[string]bool{}
+	for _, entry := range entries {
+		if !strings.Contains(entry.Name, " ") {
+			single[entry.Name] = true
+		}
+	}
+	grouped := make([]cliTreeEntry, 0, len(entries))
+	at := map[string]int{}
+	for _, entry := range entries {
+		head, rest, multi := strings.Cut(entry.Name, " ")
+		switch {
+		case !multi:
+			grouped = append(grouped, entry)
+		case single[head]:
+		case at[head] > 0:
+			grouped[at[head]-1].Short += " · " + rest
+		default:
+			grouped = append(grouped, cliTreeEntry{Name: head, Short: rest, Runs: entry.Runs})
+			at[head] = len(grouped)
+		}
+	}
+	return grouped
+}
+
+// printCliTreeHelp writes help for a tree topic. A topic the tree maps to
+// one of today's commands also lists that command's own flags.
+func printCliTreeHelp(w io.Writer, topic cliTreeTopic) {
+	name := strings.Join(topic.Path, " ")
+	discovery := newCliTreeDiscovery()
+	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  gregale %s <command> [flags]\n\nCommands:\n", topic.Short, name)
+	for _, entry := range discovery.entries(topic.Path) {
+		printHelpEntry(w, entry.Name, entry.Short)
+	}
+	for _, alias := range cliTreeAliases {
+		if alias.New != name {
+			continue
+		}
+		if node, ok := discovery.node(alias.Old); ok && len(node.Flags) > 0 {
+			printLocalHelpFlags(w, node.Flags, false)
+		}
+		break
+	}
+	_, _ = fmt.Fprintf(w, "\nRun 'gregale %s <command> --help' for command details.\nDocs: %s\n", name, docsURL)
+}
+
+// cliTreeSpelling returns args in the tree's names: the tree path whose
+// rewrite runs exactly args today. It reports false when args already use
+// the tree's names or have no tree spelling.
+func cliTreeSpelling(args []string) ([]string, bool) {
+	// A tree path rewrites to today's path; it is spelled as that path's
+	// tree spelling when the tree has since named it differently.
+	rewritten, err := rewriteCliTree(args)
+	if err != nil {
+		return nil, false
+	}
+	if slices.Equal(rewritten, args) {
+		return cliTreeSpellToday(args)
+	}
+	if again, err := rewriteCliTree(rewritten); err != nil || !slices.Equal(again, rewritten) {
+		return nil, false
+	}
+	canonical, ok := cliTreeSpellToday(rewritten)
+	if !ok && cliTreeKeepsPath(rewritten) {
+		// `mcp server readiness` runs `mcp readiness`, which the table
+		// names where it is.
+		canonical, ok = rewritten, true
+	}
+	if !ok || slices.Equal(canonical, args) {
+		return nil, false
+	}
+	return canonical, true
+}
+
+// cliTreeNounCommand is today's command a noun runs.
+func cliTreeNounCommand(noun string) string {
+	if old, ok := cliTreeOldPath(noun); ok {
+		return strings.Fields(old)[0]
+	}
+	return noun
+}
+
+// cliTreeTopicHidden reports a topic whose noun runs a command hidden for
+// the account (ADR-20261023115741): `realtime --help` is unknown while
+// realtime is. Only run() asks, so the capability read takes no context.
+func cliTreeTopicHidden(topic cliTreeTopic) bool {
+	return capabilityHiddenForRun(cliPathCapability(cliTreeNounCommand(topic.Path[0])), true)
+}
+
+// cliTreeKeepsPath reports a path of today's under a multi-word identity
+// alias (`mcp readiness`): the tree names it as it is.
+func cliTreeKeepsPath(path []string) bool {
+	for _, alias := range cliTreeAliases {
+		words := strings.Fields(alias.New)
+		if alias.New == alias.Old && len(words) > 1 && len(words) <= len(path) && slices.Equal(words, path[:len(words)]) {
+			return true
+		}
+	}
+	return false
+}
+
+// cliTreeSpellPath spells a command path a message names in the tree's
+// names, or returns it as it is when the tree has no spelling for it.
+func cliTreeSpellPath(path string) string {
+	if spelled, ok := cliTreeSpelling(strings.Fields(path)); ok {
+		return strings.Join(spelled, " ")
+	}
+	return path
+}
+
+// cliTreeSpellToday spells today's path args in the tree's names.
+func cliTreeSpellToday(args []string) ([]string, bool) {
+	var candidate []string
+	appSlug := len(args) > 1 && args[0] == appSlugFallback && !cliTreeAppVerb(args[1]) && api.ValidAppSlug(args[1])
+	switch {
+	case appSlug && len(args) == 2:
+		candidate = []string{appSlugFallback, "get", args[1]}
+	case appSlug && !strings.HasPrefix(args[2], "-"):
+		candidate = cliTreeAppSpelling(args[1], args[2:])
+	case appSlug:
+		return nil, false
+	default:
+		alias, ok := cliTreeAliasFrom(args)
+		if !ok {
+			return nil, false
+		}
+		old := strings.Fields(alias.Old)
+		candidate = append(strings.Fields(alias.New), args[len(old):]...)
+		if rest := args[len(old):]; len(rest) > 0 {
+			if node, ok := lookupCliPath(old); ok && !node.AfterPositionals {
+				if verb, ok := cliTreeVerbFor(rest[0], node.Subs); ok && verb != rest[0] {
+					candidate[len(strings.Fields(alias.New))] = verb
+				}
+			}
+		}
+	}
+	if slices.Equal(candidate, args) {
+		return nil, false
+	}
+	if rewritten, err := rewriteCliTree(candidate); err != nil || !slices.Equal(rewritten, args) {
+		return nil, false
+	}
+	return candidate, true
+}
+
+// cliTreeHintTerminal reports whether stderr, where the hint goes, is a
+// terminal. Tests swap it.
+var cliTreeHintTerminal = func() bool { return term.IsTerminal(int(os.Stderr.Fd())) }
+
+// printCliTreeHint names the tree path of a command run by its earlier
+// name, on stderr in a terminal; help, --json and --non-interactive runs
+// print nothing extra (ADR-20261026145832 step 5).
+func printCliTreeHint(w io.Writer, typed []string) {
+	if jsonOutput || nonInteractive || !cliTreeHintTerminal() || len(typed) == 0 || typed[0] == "help" || hasHelpFlag(typed) {
+		return
+	}
+	if path, fold, ok := cliTreeFold(typed); ok {
+		_, _ = fmt.Fprintf(w, "Tip: 'gregale %s' is now 'gregale %s'; the earlier name keeps working.\n", path, fold)
+		return
+	}
+	spelled, ok := cliTreeSpelling(typed)
+	if !ok {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Tip: 'gregale %s' is now 'gregale %s'; the earlier name keeps working.\n", leadingWords(typed), leadingWords(spelled))
+}
+
+// cliTreeAppSpelling spells today's `app <slug> <verb> [<verb>]` as the
+// tree's `app <verb> [<verb>] <slug>`, with tcp and udp listeners under
+// `app listener`.
+func cliTreeAppSpelling(slug string, words []string) []string {
+	chain, rest := words[:1], words[1:]
+	var family []cliSub
+	if command, ok := lookupCliCommand(appSlugFallback); ok {
+		if sub, ok := findCliSubcommand(command.Subcommands, words[0]); ok && len(sub.Subcommands) > 0 && len(rest) > 0 {
+			if _, nested := findCliSubcommand(sub.Subcommands, rest[0]); nested {
+				chain, rest, family = words[:2], words[2:], sub.Subcommands
+			}
+		}
+	}
+	tail := append([]string{slug}, rest...)
+	if protocol := chain[0]; (protocol == "tcp" || protocol == "udp") && len(chain) == 2 {
+		verb := chain[1]
+		if standard, ok := cliTreeVerbFor(verb, family); ok {
+			verb = standard
+		}
+		spelled := append([]string{appSlugFallback, "listener", verb}, tail...)
+		if protocol == "udp" {
+			spelled = append(spelled, "--protocol", "udp")
+		}
+		return spelled
+	}
+	return append(append([]string{appSlugFallback}, chain...), tail...)
+}
+
+// cliTreeAliasFrom returns the customer alias whose today's path is the
+// longest prefix of args. A path the tree keeps (`mcp serve`) matches its
+// own alias, and a shortcut keeps its name (`run` is also `sandbox run`).
+func cliTreeAliasFrom(args []string) (cliTreeAlias, bool) {
+	var best cliTreeAlias
+	bestLen := 0
+	for _, alias := range cliTreeAliases {
+		old := strings.Fields(alias.Old)
+		if strings.HasPrefix(alias.New, "admin ") || slices.Contains(cliTreeShortcutCommands, alias.Old) {
+			continue
+		}
+		if len(old) > len(args) || len(old) <= bestLen || !slices.Equal(old, args[:len(old)]) {
+			continue
+		}
+		best, bestLen = alias, len(old)
+	}
+	// A command two tree verbs run (`ai content-policy get|set`) has no
+	// single tree spelling.
+	if bestLen > 0 && cliTreeVerbsSharing(best.Old) > 1 {
+		return cliTreeAlias{}, false
+	}
+	return best, bestLen > 0
+}
+
+// cliTreeVerbsSharing counts the tree paths that run today's path old.
+func cliTreeVerbsSharing(old string) int {
+	n := 0
+	for _, alias := range cliTreeAliases {
+		if alias.Old == old {
+			n++
+		}
+	}
+	return n
+}
+
+// cliTreeAppVerb reports a word the tree's `app` takes as its verb.
+func cliTreeAppVerb(word string) bool {
+	if _, _, ok := matchCliTreeAlias([]string{appSlugFallback, word}); ok {
+		return true
+	}
+	if word == "get" || word == "update" || word == "listener" {
+		return true
+	}
+	command, ok := lookupCliCommand(appSlugFallback)
+	if !ok {
+		return false
+	}
+	_, ok = findCliSubcommand(command.Subcommands, word)
+	return ok
+}
+
+// cliTreeHelpRename returns the path help shows in place of today's when
+// run() rewrote typed to args: today's path, with the verb it reached, and
+// the tree path typed in its place.
+func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
+	if len(typed) > 0 && typed[0] == "help" && len(args) > 0 && args[0] == "help" {
+		typed, args = typed[1:], args[1:]
+	}
+	if slices.Equal(typed, args) {
+		// Help reached by an earlier name is spelled in the tree too.
+		words := typed[:oldPathDepth(typed)]
+		spelled, ok := cliTreeSpelling(words)
+		if !ok {
+			return "", "", false
+		}
+		return strings.Join(words, " "), strings.Join(spelled, " "), true
+	}
+	alias, used, ok := matchCliTreeAlias(typed)
+	if !ok {
+		return "", "", false
+	}
+	old := strings.Fields(alias.Old)
+	if len(args) < len(old) || !slices.Equal(args[:len(old)], old) {
+		return "", "", false
+	}
+	from, to = alias.Old, alias.New
+	if used < len(typed) && len(old) < len(args) && !strings.HasPrefix(typed[used], "-") && typed[used] != args[len(old)] {
+		from += " " + args[len(old)]
+		to += " " + typed[used]
+	}
+	return from, to, true
+}
+
+// renameHelpPath spells `gregale <from>` as `gregale <to>` in help text. Its
+// "See also" line goes: it points at today's names the tree replaces.
+func renameHelpPath(text, from, to string) string {
+	lines := strings.SplitAfter(text, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "See also: ") {
+			kept = append(kept, line)
+		}
+	}
+	text = strings.Join(kept, "")
+	// A tree path that extends today's (`mcp` → `mcp server`) leaves text
+	// already spelled in the tree alone, or it would read `mcp server server`.
+	const spelled = "\x00tree\x00"
+	extends := regexp.MustCompile(regexp.QuoteMeta("gregale "+to) + `([^a-z0-9-]|$)`)
+	if strings.HasPrefix(to, from+" ") {
+		text = extends.ReplaceAllStringFunc(text, func(match string) string {
+			return spelled + strings.TrimPrefix(match, "gregale "+to)
+		})
+	}
+	pattern := regexp.MustCompile(regexp.QuoteMeta("gregale "+from) + `([^a-z0-9-]|$)`)
+	text = pattern.ReplaceAllStringFunc(text, func(match string) string {
+		return "gregale " + to + strings.TrimPrefix(match, "gregale "+from)
+	})
+	return strings.ReplaceAll(text, spelled, "gregale "+to)
+}

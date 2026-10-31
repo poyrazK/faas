@@ -57,6 +57,14 @@ type RuntimePublicationBookkeeping struct {
 type RuntimeInstancePublicationStore interface {
 	PublishOwnedInstanceRuntime(context.Context, RuntimeInstancePublication) (Instance, error)
 	InstanceRuntimeConfigFence(context.Context, string, string, string) (RuntimeAppConfigFence, error)
+	// RecordObservedWorkloadClass sets the workload class a cold boot of the
+	// instance observed (ADR-051, amendment 2026-10-22). The class is part of
+	// the runtime configuration, and the boot published its config proof
+	// before the class was known. When nothing else changed since that
+	// publication, the same transaction moves the instance's proof to the
+	// fingerprint the new class gives and it reports true; otherwise only the
+	// class is written. Arguments: account, app, instance, class.
+	RecordObservedWorkloadClass(context.Context, string, string, string, WorkloadClass) (bool, error)
 }
 
 func validateRuntimeInstancePublication(p RuntimeInstancePublication) error {

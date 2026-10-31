@@ -207,6 +207,16 @@ LEFT JOIN instances i ON i.id=sqlc.narg(instance_id)::uuid AND i.app_id=a.id
 LEFT JOIN deployments d ON d.app_id=a.id AND d.id=COALESCE(i.deployment_id,sqlc.narg(deployment_id)::uuid)
 WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid;
 
+-- name: FinancialComputeAppPolicies :many
+-- The account's budgets with the app's project, the one scope an app's
+-- budget check needs without a deployment. An account without budgets reads
+-- no app row; every admission of its apps runs this.
+SELECT sqlc.embed(p), COALESCE(a.project_id::text,'')::text AS project_id
+FROM financial_budget_policies p
+LEFT JOIN apps a ON a.account_id=p.account_id AND a.id=sqlc.arg(app_id)::uuid
+WHERE p.account_id=sqlc.arg(account_id)::uuid AND p.deleted_at IS NULL
+ORDER BY p.id LIMIT sqlc.arg(page_size)::integer;
+
 -- name: FinancialComputeProjectEnvironments :many
 SELECT id::text AS id FROM project_environments WHERE project_id=sqlc.arg(project_id)::uuid AND account_id=sqlc.arg(account_id)::uuid ORDER BY id;
 

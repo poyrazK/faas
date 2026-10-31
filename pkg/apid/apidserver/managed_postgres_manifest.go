@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,6 +37,9 @@ type resolvedProjectManifest struct {
 	PostgresBindings   []resolvedManagedPostgresBinding
 	AsyncRoutes        []gregalemanifest.AsyncRoute
 	AsyncRoutesPresent bool
+	// Routes carry the same presence distinction (ADR-20261021223225).
+	Routes        []gregalemanifest.PathRoute
+	RoutesPresent bool
 }
 
 // loadAndResolveProjectManifest validates the manifest and resolves every
@@ -60,6 +64,9 @@ func (s *server) loadAndResolveProjectManifest(
 	if _, shared := projectaccess.From(ctx); shared && manifest.AsyncRoutes != nil {
 		return resolvedProjectManifest{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization async bindings unavailable", "deploy application workloads with environment configuration; async-route bindings require separate organization ownership support")
 	}
+	if _, shared := projectaccess.From(ctx); shared && manifest.Routes != nil {
+		return resolvedProjectManifest{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization routes unavailable", "manifest routes are not yet supported for organization-owned projects; create them with `gregale edge-rules create --kind route`")
+	}
 	_, sharedProject := projectaccess.From(ctx)
 	_, sharedApp := appaccess.FromContext(ctx)
 	if len(manifest.Databases) > 0 && (sharedProject || sharedApp) {
@@ -67,7 +74,7 @@ func (s *server) loadAndResolveProjectManifest(
 			return resolvedProjectManifest{}, p
 		}
 	}
-	if prob := validateManifestAgainstPlan(manifest, acct.Plan); prob != nil {
+	if prob := validateManifestAgainstPlan(manifest, acct.Plan, s.agentStepsAllowed(acct)); prob != nil {
 		return resolvedProjectManifest{}, prob
 	}
 	if err := manifest.ValidateForPlan(acct.Plan); err != nil {
@@ -82,6 +89,8 @@ func (s *server) loadAndResolveProjectManifest(
 		PostgresBindings:   bindings,
 		AsyncRoutes:        manifest.AsyncRoutes,
 		AsyncRoutesPresent: manifest.AsyncRoutes != nil,
+		Routes:             manifest.Routes,
+		RoutesPresent:      manifest.Routes != nil,
 	}, nil
 }
 
@@ -166,10 +175,14 @@ func (s *server) resolveManifestPostgresBindings(
 		}
 		environmentKey := dependency.EffectiveEnvironmentKey()
 		access := managedpostgres.CredentialAccess(dependency.EffectiveAccess())
+		subject := platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: managedpostgres.Organization(ctx)}
 		// Application Auth is a dark launch: without it the mode is unknown.
-		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(acct) {
+		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(subject) {
 			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 				"Invalid manifest", fmt.Sprintf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access))
+		}
+		if problem := s.dataAPIAccessProblem(subject, access, fmt.Sprintf(`database[%d]: access "data_api"`, i)); problem != nil {
+			return nil, problem
 		}
 		targetKey := strings.Join([]string{appSlug, scope, environmentKey}, "\x00")
 		if _, duplicate := seenTargets[targetKey]; duplicate {
