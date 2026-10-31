@@ -51,7 +51,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"edge", "Manage edge rules, rule lists, caching and CORS", "Configure"},
 	{"api", "Manage your API: routes, OpenAPI spec, consumers and tenants", "Configure"},
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
-	{"postgres", "Manage PostgreSQL databases: usage, overage and capabilities", "Data"},
+	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
 	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
@@ -574,6 +574,14 @@ var cliTreeAliases = []cliTreeAlias{
 	// stored record.
 	{"edge rule waf update", "edge-rules waf-exclude"},
 	{"account billing-connection get", "account billing-connection status"},
+	// Round 12 (2026-10-31): the postgres verbs. Overage shows or sets a
+	// setting, so it gets both verbs; a compute policy is set, and the
+	// progress of a policy change or a resize is read with status.
+	{"postgres overage get", "postgres overage"},
+	{"postgres overage set", "postgres overage"},
+	{"postgres compute-policy set", "postgres compute-policy"},
+	{"postgres compute-policy status", "postgres compute-policy-status"},
+	{"postgres resize status", "postgres resize-status"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
@@ -589,6 +597,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin postgres reconcile", "postgres reconcile"},
 	{"admin postgres usage-import", "postgres usage-import"},
 	{"admin postgres diagnostics", "postgres diagnostics"},
+	// Sealed live queries stay an operator preview (ADR-20261016151947);
+	// customers read live through `data-api live`.
+	{"admin postgres live", "postgres live"},
 	{"admin billing refresh-invoice", "billing refresh-invoice"},
 	{"admin billing backfill-invoices", "billing backfill-invoices"},
 }

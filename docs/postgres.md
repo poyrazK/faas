@@ -4,8 +4,8 @@ Managed PostgreSQL gives an app its own PostgreSQL database. Gregale creates
 the database, delivers its connection URL to your app as a secret, keeps a
 point-in-time restore window, and stops the compute while the database is idle.
 
-Managed PostgreSQL is a preview, enabled per account. To see whether your
-account and a region can create databases, and what they support, run:
+Every plan includes managed PostgreSQL. To see what your plan and a region
+support, run:
 
 ```sh
 gregale postgres capabilities --region eu-central-1
@@ -28,6 +28,9 @@ Operators: see the [operator guide](managed-postgres.md).
   these plans.
 - Storage and compute are limits. Nothing past them is billed while managed
   PostgreSQL has no invoicing.
+- A database runs in a single zone. Gregale makes no high-availability
+  promise for it; point-in-time restore and the 7-day undo of a delete are the
+  recovery paths.
 
 ## Create a database
 
@@ -40,7 +43,9 @@ The database starts in `provisioning` and moves to `ready`. Options:
 
 - `--class development|burstable|production`: the compute class your plan
   allows. The default is `development`.
-- `--postgres-major N`: the PostgreSQL major version.
+- `--postgres-major N`: the PostgreSQL major version, 15 to 18. The default is
+  16. PostgreSQL 14 reaches its end of life in November 2026, so new databases
+  cannot choose it.
 - `--storage-bytes N` and `--restore-window-seconds N`: default to your plan's
   allowance.
 
@@ -141,15 +146,21 @@ gregale postgres attach orders-before-import my-api --env RESTORED_DATABASE_URL
 ```
 
 Attach the restored database under its own environment key when you want an
-app to read it. A source cannot
-be deleted while a database restored from it exists.
+app to read it. A source cannot be deleted while a database restored from it
+exists.
+
+The restored database counts toward your plan's database limit, so restoring
+needs room for one more database: Pro and Scale. Free and Hobby allow one
+database, so they cannot restore; the 7-day undo of a delete still applies.
 
 ## Change the compute class
+
+Resizing is in beta.
 
 ```sh
 REQUEST_ID=$(uuidgen | tr A-Z a-z)
 gregale postgres resize orders --class burstable --request-id "$REQUEST_ID"
-gregale postgres resize-status orders "$REQUEST_ID"
+gregale postgres resize status orders "$REQUEST_ID"
 ```
 
 - Keep the request ID, a lowercase UUID: repeating it returns the same
@@ -218,7 +229,7 @@ delete and bind with the CLI or the API.
 ## API and SDKs
 
 Every command uses the public API under `/v1/postgres/*`, and the SDKs cover
-the same operations. Company databases use
+the same operations. Company databases, in beta, use
 `/v1/orgs/{organization}/postgres/databases`.
 - API keys need `postgres:read` to read databases and usage.
 - They need `postgres:manage` to create, restore, resize, delete, undelete or

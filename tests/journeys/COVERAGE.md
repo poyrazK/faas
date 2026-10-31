@@ -37,6 +37,7 @@ covered. Update this table when a journey or a GA row changes.
 | 66 | Service bindings, verification and probes | `TestMultiServiceProject`: `call_by_injected_url` (`GREGALE_SERVICE_<NAME>_URL` from `depends_on`), `explain_authorization` (`gregale app binding service explain`), `declared_policy_allows_the_declared_call`, `declared_policy_refuses_an_undeclared_call`, `allowlist_refuses_other_callers` | call scopes, `gregale bindings verify`, project previews (need a multi-service GitHub fixture) |
 | 77 | App access control | `TestMaintenanceAndAccess` (require-authn, basic auth, IP allowlist) | public bearer auth |
 | 92 | Crons, fire-now | `TestCronDelivery`: `manual_run` (followed to `succeeded`), `scheduled_fire`, `trigger_inventory` (refuses `--kind cron`) | command crons (preview) |
+| 109 | Managed Postgres: create, bind, point-in-time restore, delete, recover, purge | `TestManagedPostgres`: `postgres_available` (provisioning open, region, database limit), `create_database`, `deploy_app` (`testdata/postgres-probe`, a dependency-free PostgreSQL client), `attach_database` (binding ready, fresh restart), `binding_verify`, `write_and_read` (rows through the delivered URL), `restore_point_in_time` (a point between two writes, read through a second binding; skipped when the plan allows one database), `purge_restored`, `scheduled_delete` (undo window about 7 days, name stays taken), `recover` (rows back), `purge` | resize and compute policy (beta), organization databases (beta), credential rotation, `gregale.yaml` databases and `add postgres`, the pooler's transaction-mode limits, compute and storage caps (would need a month's usage), read-only and migration access |
 | 118 | Logs, tail, archive | `TestServeAndObserve` (runtime and HTTP logs), `TestTailAnalyticsAndMetrics/tail`, `TestLogArchive` | HTTP request logs while the production debugger (ADR-127) is not released for the account: the step skips on the CLI's explanation |
 | 121 | Metrics, request analytics | `TestServeAndObserve/metrics`, `TestTailAnalyticsAndMetrics` | service metrics |
 | 136 | Wake timeline | `TestWakeTimelineAndCosts/wake_timeline` | — |
@@ -53,7 +54,7 @@ covered. Update this table when a journey or a GA row changes.
 | 159 | Public OpenAPI spec and capabilities endpoint | `TestPublicSurface/openapi_spec`, `TestAccountAndKeys/capabilities` | — |
 | 161 | Docs site and trust pages | `TestDocsPages` (every route not marked `unpublished` in `docs/customer-pages.json`), `TestPublicSurface/security_txt` | pages of preview and internal capabilities, which are deliberately unpublished |
 
-44 of the 46 GA rows have at least one journey; 143 and 157 need a test
+45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
 ## GA candidates

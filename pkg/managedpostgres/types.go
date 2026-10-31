@@ -68,8 +68,8 @@ func QuotaProblem(err error) (status int, code, title string) {
 // ProvisioningClosedDetail and UnavailableDetail are the customer-facing
 // explanations for ErrProvisioningClosed and a real provider outage.
 const (
-	ProvisioningClosedDetail = "Managed PostgreSQL is an operator preview and provisioning is not open for this account right now. Existing databases and bindings keep working; ask the platform operator to open provisioning."
-	UnavailableDetail        = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
+	ProvisioningClosedDetail = "New managed PostgreSQL databases, bindings, restores and resizes are not open for this account right now. Existing databases and bindings keep working; retry later or contact support."
+	UnavailableDetail        = "The managed PostgreSQL provider is temporarily unavailable. Existing databases keep running; retry later or contact support."
 )
 
 // UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A

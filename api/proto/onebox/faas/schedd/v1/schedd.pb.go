@@ -3311,9 +3311,13 @@ type AgentRunStart struct {
 	Relay         *AgentRunRelay         `protobuf:"bytes,8,opt,name=relay,proto3" json:"relay,omitempty"`
 	// input_key is the storage key of the run's input drive, the checkout
 	// image agentd prepared (ADR-20261027090010 §3). Empty: no input drive.
-	InputKey      string `protobuf:"bytes,9,opt,name=input_key,json=inputKey,proto3" json:"input_key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	InputKey string `protobuf:"bytes,9,opt,name=input_key,json=inputKey,proto3" json:"input_key,omitempty"`
+	// pause_during_model_calls is the version's model-wait pause opt-in
+	// (ADR-20261027090012 §1). false (a version that opted out, or an older
+	// agentd) keeps the run's VM running while it waits on the model.
+	PauseDuringModelCalls bool `protobuf:"varint,10,opt,name=pause_during_model_calls,json=pauseDuringModelCalls,proto3" json:"pause_during_model_calls,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *AgentRunStart) Reset() {
@@ -3407,6 +3411,13 @@ func (x *AgentRunStart) GetInputKey() string {
 		return x.InputKey
 	}
 	return ""
+}
+
+func (x *AgentRunStart) GetPauseDuringModelCalls() bool {
+	if x != nil {
+		return x.PauseDuringModelCalls
+	}
+	return false
 }
 
 // AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010
@@ -4336,7 +4347,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x06cancel\x18\x02 \x01(\v2%.onebox.faas.schedd.v1.AgentRunCancelH\x00R\x06cancel\x12B\n" +
 	"\aproceed\x18\x03 \x01(\v2&.onebox.faas.schedd.v1.AgentRunProceedH\x00R\aproceedB\a\n" +
 	"\x05frame\"\x11\n" +
-	"\x0fAgentRunProceed\"\x96\x02\n" +
+	"\x0fAgentRunProceed\"\xcf\x02\n" +
 	"\rAgentRunStart\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1d\n" +
 	"\n" +
@@ -4347,7 +4358,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x0ecpu_millicores\x18\x06 \x01(\x05R\rcpuMillicores\x12\x10\n" +
 	"\x03run\x18\a \x01(\fR\x03run\x12:\n" +
 	"\x05relay\x18\b \x01(\v2$.onebox.faas.schedd.v1.AgentRunRelayR\x05relay\x12\x1b\n" +
-	"\tinput_key\x18\t \x01(\tR\binputKey\"\x8d\x01\n" +
+	"\tinput_key\x18\t \x01(\tR\binputKey\x127\n" +
+	"\x18pause_during_model_calls\x18\n" +
+	" \x01(\bR\x15pauseDuringModelCalls\"\x8d\x01\n" +
 	"\rAgentRunRelay\x12\x1f\n" +
 	"\vlease_token\x18\x01 \x01(\tR\n" +
 	"leaseToken\x12\x1b\n" +

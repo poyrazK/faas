@@ -2129,7 +2129,7 @@ Conventions (agents: treat as lint): errors wrapped with `%w` + operation contex
 |---|---|---|
 | Custom domains at launch or Gate B? | M4 (gatewayd-public) | Ship mechanism, gate behind Pro flag |
 | Log retention & pricing (10 MB ring enough?) | M7 | Ring only in v1; object-storage archive as Pro add-on later |
-| Postgres for customers (managed PG as a product)? | post-GA | No — stay a compute company until Gate C |
+| Postgres for customers (managed PG as a product)? | post-GA | **Decided (ADR-20261031091607):** GA as plan allowances (ADR-1430), not a separate price; single zone, Neon backend behind the provider-neutral API |
 | Regional expansion = FSN + HEL pair at Gate A? | Gate A | Yes, matches founding doc R3 |
 | Windows of scheduled maintenance vs live-migrate? | Gate A | Maintenance windows; snapshots make drain cheap |
 | WebSocket/streaming for functions | M7 | Apps only in v1 |

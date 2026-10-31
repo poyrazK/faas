@@ -673,6 +673,9 @@ const (
 	// CodeNotificationChannelInUse marks a channel delete refused because the
 	// channel is the only destination of alert rules (ADR-20261029203000).
 	CodeNotificationChannelInUse = "notification_channel_in_use"
+	// CodeAlertPresetTestRateLimited marks an account that sent more preset
+	// test alerts than a minute allows (ADR-20261030214500).
+	CodeAlertPresetTestRateLimited = "alert_preset_test_rate_limited"
 	// CodeEventPublishRateLimited marks a publication beyond the account's
 	// event publish rate (EventPublishLimits); retry after Retry-After.
 	CodeEventPublishRateLimited = "event_publish_rate_limited"
@@ -3057,6 +3060,21 @@ func ErrNotificationChannelTestRateLimited(limit, retryAfterS int) *Problem {
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
+// ErrAlertPresetTestRateLimited is a 429 for an account past
+// AlertPresetTestsPerAccountMinute (ADR-20261030214500): each test is a real
+// webhook post.
+func ErrAlertPresetTestRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeAlertPresetTestRateLimited,
+		"Alert preset test rate limited",
+		fmt.Sprintf("This account has sent %d preset test alerts in the last minute.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/alerts")
 }
 
 // ErrNotificationChannelInUse is a 409 for deleting a channel that is the only
