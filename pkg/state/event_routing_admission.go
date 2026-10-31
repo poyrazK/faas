@@ -81,6 +81,21 @@ type eventAdmissionPlan struct {
 	reaccepted bool
 }
 
+// unsubscribe settles a recipient whose subscription was disabled or removed
+// after the event was accepted as filtered: it is not delivered and not
+// retried (ADR-20261031130000). It carries no filter reason, because the
+// routing history's filter_reason column admits none for it.
+func (p *eventAdmissionPlan) unsubscribe() {
+	p.matched = false
+}
+
+// eventAdmissionChecksSubscription reports whether admission must confirm the
+// recipient's subscription is still enabled: an application subscription
+// matched by this event, with no delivery already created for it.
+func eventAdmissionChecksSubscription(p eventAdmissionPlan) bool {
+	return p.matched && !p.prior && isEventSubscriptionUUID(p.recipient.ID)
+}
+
 func routingRecipient(receipt *PublishedEventWork, claim PublishedEventRoutingClaim) (PublishedEventRecipient, error) {
 	r, err := capturedRoutingRecipient(receipt, claim)
 	if err == nil && (r.ObjectNotification != nil || len(r.Workflow) != 0) {
@@ -146,6 +161,12 @@ func newEventAdmissionPlan(ctx context.Context, receipt *PublishedEventWork, cla
 	headerMap := propagation.MapCarrier{"x-gregale-event-id": envelope.ID, "x-gregale-event-source": envelope.Source,
 		"x-gregale-event-type": envelope.Type, "x-gregale-event-subscription-id": r.ID,
 		"x-gregale-event-acceptance-id": strconv.FormatInt(receipt.ID, 10)}
+	// ADR-1411: a subscription with an acknowledgment lease gets
+	// it on every delivery, so the scheduler issues the consumer a token.
+	// Only the legacy routeSubscription path stamped it before.
+	if receipt.ID > 0 && r.AcknowledgmentLeaseSeconds > 0 {
+		headerMap[eventAcknowledgmentSecondsHeader] = strconv.Itoa(r.AcknowledgmentLeaseSeconds)
+	}
 	otel.GetTextMapPropagator().Inject(traceContext, headerMap)
 	if span := trace.SpanContextFromContext(traceContext); span.IsValid() {
 		headerMap[api.TraceIDHeader] = span.TraceID().String()
