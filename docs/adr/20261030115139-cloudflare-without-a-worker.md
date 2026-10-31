@@ -18,8 +18,10 @@ when parallel changes pick the next number.
 ## Context
 
 Since 2026-09 the public-timeout Worker
-(`deploy/cloudflare/public-timeout-worker`) runs on `gregale.dev/*`,
-`api.gregale.dev/*` and `*.gregale.dev/*`, so it handles every public request.
+(`deploy/cloudflare/public-timeout-worker`) runs on `api.gregale.dev/*`,
+`*.gregale.dev/*` and `*.apps.gregale.dev/*` (zone routes, 2026-10-31), so it
+handles every API and app request. The apex and `operations.` are on Vercel
+and do not pass through it.
 It does two jobs:
 
 - **It chooses the origin.** Every request is fetched with
@@ -88,7 +90,8 @@ This is ADR-1343 §3 as first written.
   - to the control-plane origin, to keep it on the control plane after the
     wildcard moves.
 - **Platform hosts.** The apex, `api.`, `operations.` and `s3.` keep explicit
-  proxied records to their current origin. The list is ADR-1343 §3's: it comes
+  records to whatever serves them today (the apex and `operations.` are on
+  Vercel). The list is ADR-1343 §3's: it comes
   from `apid.IsPlatformHost` plus `s3.` and is checked in CI. A new platform
   host needs its explicit record before it serves traffic.
 - **Alias apps domains** (ADR-20261026100000). Each alias zone gets the same
@@ -196,11 +199,11 @@ Units release independently, so each step works with the step before it.
 
 ## Open questions
 
-- **The apex's DNS record.** The Worker README says the apex keeps a Pages
-  origin, but the account has no Pages project (checked 2026-10-30), and the
-  live Worker (version `165ecd0c`, 2026-09-12) sends every host, apex
-  included, to `origin.gregale.dev`. The apex is therefore served by the
-  control-plane origin. Its record must point there before its route is
-  removed.
+- **The apex's origin.** Answered 2026-10-31 from the zone's records: the
+  apex and `operations.` are on Vercel (an A record to Vercel and a DNS-only
+  CNAME), and no Worker route covers the apex. `api.` and `s3.` are A records
+  to the control plane. Every platform host already has its own record, so
+  the wildcard can move without touching any of them; the DNS script's
+  `platform` step only fills a missing record and never repoints one.
 - **The account's Workers plan.** On the Free plan the 100,000-a-day cap
   applies until step 5.

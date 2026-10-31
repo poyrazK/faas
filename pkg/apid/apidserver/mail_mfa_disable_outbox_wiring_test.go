@@ -33,14 +33,18 @@ func (r *mfaDisableInlineRecorder) Send(_ context.Context, message apidserver.Me
 	return nil
 }
 
-func TestMFADisableOutboxPageDefaultOff(t *testing.T) {
+// With the outbox off, the legacy inline path mails the confirmation page, so
+// the page is served; it used to 404 while the mail linked the POST-only
+// endpoint (bug hunt 2026-10-28 B38). It still answers only GET and HEAD.
+func TestMFADisableEmailPageServesLegacyLinks(t *testing.T) {
 	env := apidserver.SetupWithMFA(t, api.PlanPro, false, false)
 	handler := (*env.Srv()).Handler()
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodOptions} {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, httptest.NewRequest(method, "https://dashboard.example.test/auth/reset/mfa?token=invalid", nil))
-		if w.Code != http.StatusNotFound || len(w.Result().Cookies()) != 0 {
-			t.Fatal("disabled page performed authentication or exposed a method", method, w.Code)
+		read := method == http.MethodGet || method == http.MethodHead
+		if read && w.Code == http.StatusNotFound || !read && (w.Code != http.StatusMethodNotAllowed || len(w.Result().Cookies()) != 0) {
+			t.Fatal("legacy confirmation page hidden or exposed a method", method, w.Code)
 		}
 	}
 }
@@ -163,13 +167,23 @@ func TestMFADisableOutboxPublicIssuanceConfirmationAndRollback(t *testing.T) {
 				}
 				var token string
 				for _, field := range strings.Fields(recorder.messages[0].TextBody) {
-					if strings.Contains(field, "/disable-email/confirm?token=") {
+					if strings.Contains(field, "/auth/reset/mfa?token=") {
 						link, err := url.Parse(field)
 						if err != nil {
 							t.Fatal(err)
 						}
 						token = link.Query().Get("token")
 					}
+				}
+				// The mailed link opens the confirmation page (bug hunt
+				// 2026-10-28 B38), which consumes nothing.
+				pageRequest := httptest.NewRequest(http.MethodGet, "https://dashboard.example.test/auth/reset/mfa?token="+token, nil)
+				pageRequest.Header.Set("User-Agent", "mfa-disable-test")
+				pageRequest.AddCookie(&http.Cookie{Name: "faas_sid", Value: cookie})
+				page := httptest.NewRecorder()
+				handler.ServeHTTP(page, pageRequest)
+				if token == "" || page.Code != http.StatusOK || !strings.Contains(page.Body.String(), token) {
+					t.Fatal("legacy link did not open the confirmation page", page.Code)
 				}
 				if token == "" || mfaDisableEmailPost(t, handler, manager, accountID, cookie, token, true, true).Code != http.StatusTooEarly {
 					t.Fatal("legacy cooldown changed")
@@ -220,10 +234,13 @@ func TestMFADisableOutboxPublicIssuanceConfirmationAndRollback(t *testing.T) {
 			if err := server.ConfigureMailOutbox(t.Context(), pool, func(k string) string { return flags[k] }); err != nil {
 				t.Fatal(err)
 			}
-			hidden := httptest.NewRecorder()
-			handler.ServeHTTP(hidden, pageRequest.Clone(t.Context()))
-			if hidden.Code != http.StatusNotFound || strings.Contains(hidden.Body.String(), token) {
-				t.Fatal("rollback exposed the new confirmation page")
+			// Rollback returns issuance to the legacy path, which mails the
+			// same page (bug hunt 2026-10-28 B38), so a saved durable link
+			// keeps opening it without consuming the token.
+			kept := httptest.NewRecorder()
+			handler.ServeHTTP(kept, pageRequest.Clone(t.Context()))
+			if kept.Code != http.StatusOK {
+				t.Fatal("rollback hid the page legacy links open", kept.Code)
 			}
 			apidserver.SetMFAIdentity(func() *age.X25519Identity { return nil })
 			apidserver.SetMFAIdentities(func() []*age.X25519Identity { return nil })

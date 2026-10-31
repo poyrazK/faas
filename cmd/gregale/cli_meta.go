@@ -603,12 +603,16 @@ var cliCommands = []cliCommand{
 				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
-			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago; connect reads the key from stdin."}, Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
-				{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)", Value: "URL"},
-				{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe, Paddle), charge charges the saved payment method (Stripe, Lago) (connect; default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
-				{Name: "days-until-due", Short: "days until a sent invoice is due (connect --collection send; default 30)", Value: "N"},
-				{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only)"},
-			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
+			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago."}, Subcommands: []cliSub{
+				{Name: "connect", Short: "Connect a billing provider key", Notes: []string{"Reads the key from stdin, so it never appears in shell history or the process list."}, Positionals: []string{"{stripe|paddle|lago}"}, Flags: []cliFlag{
+					{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (default https://api.getlago.com)", Value: "URL"},
+					{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe, Paddle), charge charges the saved payment method (Stripe, Lago) (default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
+					{Name: "days-until-due", Short: "days until a sent invoice is due (--collection send; default 30)", Value: "N"},
+					{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (Stripe only)"},
+				}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
+				{Name: "status", Short: "Show a billing provider connection", Positionals: []string{"{stripe|paddle|lago}"}},
+				{Name: "disconnect", Short: "Disconnect a billing provider key", Positionals: []string{"{stripe|paddle|lago}"}},
+			}},
 			{Name: "billing-run", Short: "Bill an ended month for every API customer", Notes: []string{"Drafts, checks and finalizes each statement, and optionally exports it."}, Subcommands: []cliSub{
 				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
 					{Name: "month", Short: "UTC calendar month to bill (default: last month)", Value: "YYYY-MM"},
@@ -1699,6 +1703,15 @@ var cliCommands = []cliCommand{
 		},
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
+			{Name: subStatus, Short: "Show the app's Ready, Progressing and Degraded conditions (preview)", Notes: []string{"Conditions are derived from the health assessment; `app health` shows the evidence."}, Examples: []string{"gregale app status my-api", "gregale app status my-api --json"}, Flags: []cliFlag{
+				{Name: "environment", Short: "read this project environment's conditions instead of the default scope", Value: "SLUG"},
+			}},
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout."}, Examples: []string{"gregale app wait my-api", "gregale app wait my-api --for Progressing=False --timeout 10m"}, Flags: []cliFlag{
+				{Name: "for", Short: "TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "environment", Short: "wait on this project environment's conditions instead of the default scope", Value: "SLUG"},
+				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
 				{Name: "wait", Short: "wait for a fresh healthy default-scope assessment", Bool: true},
@@ -2773,8 +2786,12 @@ var cliCommands = []cliCommand{
 				{Name: "interactive", Short: "choose a release from app history and show its summary", Bool: true},
 				{Name: "app", Short: "app slug (defaults to linked context or interactive picker)", Value: "SLUG"},
 			}},
+			{Name: subStatus, Short: "Show a release's Ready, Progressing and RolledOut conditions (preview)", Examples: []string{"gregale release status v42 --app my-api", "gregale release status latest --json"}, Positionals: []string{"<id|vN|latest>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug for vN or latest outside a linked project", Value: "SLUG"},
+			}},
 			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Examples: []string{"gregale release wait <id|vN> --app my-api", "gregale release wait 00000000000000000000000000000001", "gregale release wait 00000000000000000000000000000001 --rollout --progress"}, Positionals: []string{"<id|vN|latest>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug for vN or latest outside a linked project", Value: "SLUG"},
+				{Name: "for", Short: "wait for a condition instead (Ready, Progressing, RolledOut; TYPE=True|False|Unknown); exits 0 holds, 1 terminal, 3 timeout, 4 not found (preview)", Value: "CONDITION"},
 				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
 				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},
 				{Name: "timeout", Short: "maximum wait (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},
@@ -4118,8 +4135,8 @@ var cliCommands = []cliCommand{
 				{Name: "since", Short: "how far back, e.g. 24h or 7d (default 7d, clamped to the plan window)", Value: "DURATION"},
 			}},
 			{Name: "waf-exclude", Short: "Add or remove CRS rule IDs on a kind=waf rule's exclusions", Notes: []string{"Keeps the rest of the rule's WAF action and its penalty."}, Positionals: []string{"<rule-id>"}, Examples: []string{
-				"gregale edge rule waf-exclude RULE_ID --add 942190",
-				"gregale edge rule waf-exclude RULE_ID --remove 942100",
+				"gregale edge rule waf update RULE_ID --add 942190",
+				"gregale edge rule waf update RULE_ID --remove 942100",
 			}, Flags: []cliFlag{
 				{Name: "add", Short: "CRS rule IDs to exclude, comma-separated", Value: "IDS"},
 				{Name: "remove", Short: "CRS rule IDs to stop excluding, comma-separated", Value: "IDS"},
@@ -5741,8 +5758,8 @@ var cliCommands = []cliCommand{
 			{Name: "delete", Short: "Delete a managed PostgreSQL database; it can be undone for 7 days", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "purge", Short: "delete at once with its restore history; cannot be undone"},
 				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"},
-			}, Notes: []string{"The database stops at once; `gregale postgres undelete` brings it back until its restorable_until.", "A deleted database still counts toward the plan's database limit until it is purged."}, Examples: []string{"gregale postgres delete orders", "gregale postgres delete orders --purge"}},
-			{Name: "undelete", Short: "Bring back a deleted managed PostgreSQL database", Positionals: []string{"<database>"}, Notes: []string{"Works until the database's restorable_until, 7 days after the delete; a purged database is gone."}, Examples: []string{"gregale postgres undelete orders"}},
+			}, Notes: []string{"The database stops at once; `gregale postgres recover` brings it back until its restorable_until.", "A deleted database still counts toward the plan's database limit until it is purged."}, Examples: []string{"gregale postgres delete orders", "gregale postgres delete orders --purge"}},
+			{Name: "recover", Short: "Bring back a deleted managed PostgreSQL database", Positionals: []string{"<database>"}, Notes: []string{"Works until the database's restorable_until, 7 days after the delete; a purged database is gone."}, Examples: []string{"gregale postgres recover orders"}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},

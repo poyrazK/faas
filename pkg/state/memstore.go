@@ -11853,12 +11853,16 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 	if !ok || app.AccountID != accountID {
 		return ErrNotFound
 	}
-	if _, ok := m.accounts[accountID]; !ok {
+	if _, ok := m.accounts[accountID]; !ok || app.Status == AppDeleted {
 		return ErrNotFound
 	}
+	// The allowance belongs to the app's billing subject
+	// (ADR-202610171904): a company's once it adopted billing, whichever
+	// member's app holds the import.
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	observed := 0
 	for _, r := range m.openAPIImports {
-		if r.AccountID == accountID {
+		if m.countsTowardQuotaSubjectLocked(r.AccountID, r.AppID, subject) {
 			observed++
 		}
 	}
@@ -18881,13 +18885,10 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		Data:    append([]byte(nil), data...),
 	}
 	if kind == "event.published" {
-		created, err := m.enqueuePublishedEventLocked(subj, data, at)
-		if err != nil {
-			return err
-		}
-		if !created && customerPublishedEvent(kind, data) {
-			return nil
-		}
+		// ADR-20261030170000: the receipt is the event's one copy, as the
+		// Postgres fanout trigger skips the events row.
+		_, err := m.enqueuePublishedEventLocked(subj, data, at)
+		return err
 	}
 	m.events = append(m.events, e)
 	return nil
@@ -20491,7 +20492,7 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
 // from the UTC month start, removes the month's included allowance (the
-// largest plan grant recorded this month, ADR-1162), and converts the
+// time-weighted plan grant this month, ADR-20261030093512), and converts the
 // remainder to integer cents. Integer math only — never float on money
 // (CLAUDE.md).
 //
@@ -20506,6 +20507,8 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 	var plan api.Plan
 	if acct, ok := m.accounts[accountID]; ok {
 		plan = acct.Plan
+	} else if org, ok := m.orgs[accountID]; ok && !org.Personal {
+		plan = org.Plan
 	}
 	var mbSeconds int64
 	for _, u := range m.usage {

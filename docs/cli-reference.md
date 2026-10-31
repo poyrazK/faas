@@ -1552,11 +1552,12 @@ gregale release logs v42 --app my-api
 
 Wait until a deployment is live (or safe rollout completes)
 
-`gregale release wait [--app <SLUG>] [--rollout] [--progress] [--timeout <SECONDS|DURATION>] <id|vN|latest>`
+`gregale release wait [--app <SLUG>] [--for <CONDITION>] [--rollout] [--progress] [--timeout <SECONDS|DURATION>] <id|vN|latest>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug for vN or latest outside a linked project |  |
+| `--for <CONDITION>` | wait for a condition instead (Ready, Progressing, RolledOut; TYPE=True\|False\|Unknown); exits 0 holds, 1 terminal, 3 timeout, 4 not found (preview) |  |
 | `--rollout` | wait for safe rollout to reach 100% traffic |  |
 | `--progress` | print rollout transitions while waiting (human output only) |  |
 | `--timeout <SECONDS|DURATION>` | maximum wait (seconds, or a duration such as 10m) |  |
@@ -1567,6 +1568,23 @@ Examples:
 gregale release wait <id|vN> --app my-api
 gregale release wait 00000000000000000000000000000001
 gregale release wait 00000000000000000000000000000001 --rollout --progress
+```
+
+### release status
+
+Show a release&#39;s Ready, Progressing and RolledOut conditions (preview)
+
+`gregale release status [--app <SLUG>] <id|vN|latest>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug for vN or latest outside a linked project |  |
+
+Examples:
+
+```sh
+gregale release status v42 --app my-api
+gregale release status latest --json
 ```
 
 ### release cancel
@@ -4521,6 +4539,47 @@ Change an app&#39;s settings
 | `--ip-allowlist <CIDR>` | allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist |  |
 | `--overflow-node <NAME>` | set or clear the preferred overflow compute node |  |
 
+### app status
+
+Show the app&#39;s Ready, Progressing and Degraded conditions (preview)
+
+`gregale app status [--env <SLUG>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SLUG>` | read this project environment&#39;s conditions instead of the default scope (also --environment) |  |
+
+Examples:
+
+```sh
+gregale app status my-api
+gregale app status my-api --json
+```
+
+Conditions are derived from the health assessment; `app health` shows the evidence.
+
+### app wait
+
+Wait until a condition holds (preview)
+
+`gregale app wait [--for <CONDITION>] [--env <SLUG>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--for <CONDITION>` | TYPE or TYPE=True\|False\|Unknown (default Ready) |  |
+| `--env <SLUG>` | wait on this project environment&#39;s conditions instead of the default scope (also --environment) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m) |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+
+Examples:
+
+```sh
+gregale app wait my-api
+gregale app wait my-api --for Progressing=False --timeout 10m
+```
+
+Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout.
+
 ### app health
 
 Check serving health and readiness
@@ -5608,7 +5667,7 @@ Manage edge rules, rule lists, caching and CORS
 
 Route, rewrite, protect or rate-limit an app&#39;s requests at the edge
 
-`gregale edge rule <waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|waf-exclude|rollback> [--app <slug>] [--kind <value>]`
+`gregale edge rule <waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|rollback> [--app <slug>] [--kind <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5617,9 +5676,9 @@ Route, rewrite, protect or rate-limit an app&#39;s requests at the edge
 
 #### edge rule waf
 
-review
+review · update
 
-`gregale edge rule waf <review>`
+`gregale edge rule waf <review|update>`
 
 ##### edge rule waf review
 
@@ -5643,6 +5702,26 @@ gregale edge rule waf review --app my-api --rule RULE_ID --since 24h
 Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.
 
 Detections are sampled, so counts are lower bounds.
+
+##### edge rule waf update
+
+Add or remove CRS rule IDs on a kind=waf rule&#39;s exclusions
+
+`gregale edge rule waf update [--add <IDS>] [--remove <IDS>] <rule-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--add <IDS>` | CRS rule IDs to exclude, comma-separated |  |
+| `--remove <IDS>` | CRS rule IDs to stop excluding, comma-separated |  |
+
+Examples:
+
+```sh
+gregale edge rule waf update RULE_ID --add 942190
+gregale edge rule waf update RULE_ID --remove 942100
+```
+
+Keeps the rest of the rule&#39;s WAF action and its penalty.
 
 #### edge rule attack-mode
 
@@ -6186,26 +6265,6 @@ gregale edge rule events --app my-site --request-id REQUEST_ID
 ```
 
 Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days.
-
-#### edge rule waf-exclude
-
-Add or remove CRS rule IDs on a kind=waf rule&#39;s exclusions
-
-`gregale edge rule waf-exclude [--add <IDS>] [--remove <IDS>] <rule-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--add <IDS>` | CRS rule IDs to exclude, comma-separated |  |
-| `--remove <IDS>` | CRS rule IDs to stop excluding, comma-separated |  |
-
-Examples:
-
-```sh
-gregale edge rule waf-exclude RULE_ID --add 942190
-gregale edge rule waf-exclude RULE_ID --remove 942100
-```
-
-Keeps the rest of the rule&#39;s WAF action and its penalty.
 
 #### edge rule rollback
 

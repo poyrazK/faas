@@ -87,7 +87,7 @@ RULES = [
     (r"/v1/internal/(apps|services)/", "INFRA"),
     (r"/v1/apps/\{slug\}/diff|^diff$", "Affected-workload preview"),
     (r"apps/\{slug\}/env/|app-envs?$", "Env vars:"),
-    (r"health/history", "App health assessment"),
+    (r"health/history|^apps/status status$|^conditions$", "App health assessment"),
     (r"policy/status", "Plans, usage, invoices"),
     (r"apps/\{slug\}/product|apps/ /product", "Product control"),
     (r"apps/\{slug\}/security|apps/ /security", "Signed deploys"),

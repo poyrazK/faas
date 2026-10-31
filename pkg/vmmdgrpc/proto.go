@@ -870,9 +870,11 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 		NetnsTapMs:   inst.NetnsTapMs,
 		GuestReadyMs: inst.GuestReadyMs,
 	}
-	if requestMethod == vmmdpb.WakeMethod_WAKE_RESTORE && inst.Method == fcvm.WakeColdBoot &&
-		inst.RestoreFallbackReason == fcvm.WakeReasonAfterRestoreFailed {
-		resp.RestoreFallbackReason = fcvm.WakeReasonAfterRestoreFailed
+	if requestMethod == vmmdpb.WakeMethod_WAKE_RESTORE && inst.Method == fcvm.WakeColdBoot {
+		switch inst.RestoreFallbackReason {
+		case fcvm.WakeReasonAfterRestoreFailed, fcvm.RestoreFallbackNodeLocal:
+			resp.RestoreFallbackReason = inst.RestoreFallbackReason
+		}
 	}
 	if inst.Method == fcvm.WakeColdBoot {
 		if structVal, ok := characterizationToStruct(inst.Characterization); ok {

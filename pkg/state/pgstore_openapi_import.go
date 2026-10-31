@@ -226,30 +226,20 @@ func (s *PgStore) UpsertAppOpenAPIDocIfUnderQuota(ctx context.Context, appID, ac
 		return fmt.Errorf("state: openapi import quota tx begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	// Lock the account row. If the account doesn't exist this
-	// returns ErrNoRows and we bail with ErrNotFound — the apid
-	// caller treats that as a generic load failure (the loadApp
-	// path will have already validated, but defence-in-depth).
-	var acctOK string
-	if err := tx.QueryRow(ctx,
-		`select id from accounts where id = $1 for update`, accountID,
-	).Scan(&acctOK); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("state: openapi import quota lock account: %w", err)
+	// The allowance belongs to the app's billing subject
+	// (ADR-202610171904). Its lock serializes every import that spends
+	// it, whichever member's app it lands on, so the count holds until
+	// the upsert commits. A missing or deleted app, or one in another
+	// account's namespace, is not found.
+	subject, appAccountID, err := lockQuotaSubjectTx(ctx, tx, appID)
+	if err != nil {
+		return err
 	}
-	var appOK string
-	if err := tx.QueryRow(ctx,
-		`select id from apps where id = $1 and account_id = $2`, appID, accountID,
-	).Scan(&appOK); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("state: openapi import parent check: %w", err)
+	if appAccountID != accountID {
+		return ErrNotFound
 	}
 	quota, err := sqlc.New().ReadOpenAPIImportQuota(ctx, tx, sqlc.ReadOpenAPIImportQuotaParams{
-		AccountID: uuidToPgtype(accountID), AppID: uuidToPgtype(appID)})
+		Subject: uuidToPgtype(subject), AppID: uuidToPgtype(appID)})
 	if err != nil {
 		return fmt.Errorf("state: openapi import quota count: %w", mapErr(err))
 	}

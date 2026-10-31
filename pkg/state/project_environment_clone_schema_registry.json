@@ -13078,6 +13078,7 @@
       "last_quota_warning_at",
       "name",
       "object_storage_owned_from",
+      "overage_cap_cents",
       "past_due_at",
       "personal_org",
       "personal_owner_account_id",

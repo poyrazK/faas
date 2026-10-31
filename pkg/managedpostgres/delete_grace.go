@@ -37,6 +37,27 @@ type DeletionHoldProvider interface {
 	ReleaseDeletionHold(ctx context.Context, providerResourceID string) error
 }
 
+// DeletionHoldProber is the qualification-only proof of a DeletionHoldProvider
+// on a disposable resource: the hold stops the compute and refuses a new
+// connection, and the release lets the next connection in.
+type DeletionHoldProber interface {
+	ProbeDeletionHold(ctx context.Context, providerResourceID string, material CredentialMaterial) (DeletionHoldEvidence, error)
+}
+
+// DeletionHoldEvidence is what a qualification run observed of the hold.
+type DeletionHoldEvidence struct {
+	SuspendedWhileHeld  bool `json:"suspended_while_held"`
+	RefusedWhileHeld    bool `json:"refused_while_held"`
+	ResumedAfterRelease bool `json:"resumed_after_release"`
+}
+
+func (e DeletionHoldEvidence) Validate() error {
+	if !e.SuspendedWhileHeld || !e.RefusedWhileHeld || !e.ResumedAfterRelease {
+		return ErrUnavailable
+	}
+	return nil
+}
+
 // ScheduleDelete is the customer's delete. A ready database is held and kept
 // for api.ManagedPostgresDeleteGracePeriod; any other database is deleted at
 // once, as before: one that never became ready has nothing to keep, and a

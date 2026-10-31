@@ -756,6 +756,7 @@
         "/v1/invoices",
         "/v1/orgs/{}/billing",
         "/v1/orgs/{}/invoices",
+        "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
         "/v1/orgs/{}/seat_usage",
         "/v1/orgs/{}/usage",
@@ -1892,7 +1893,8 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_lists_test.go::TestEdgeRuleListLifecycle",
       "parent": "edge-rules",
       "routes": [
-        "/v1/edge-rule-lists"
+        "/v1/edge-rule-lists",
+        "/dashboard/apps/{}/edge-rule-lists"
       ],
       "cli": [
         "edge-rule-lists"
@@ -4737,6 +4739,31 @@
       "acceptance_test": "pkg/state/memstore_test.go::TestEvictionPriorityOrBestEffort",
       "settings": [
         "app.eviction_priority=reserved"
+      ]
+    },
+    {
+      "id": "resource-conditions",
+      "name": "Resource conditions",
+      "category": "observability",
+      "description": "Read an app's or a deployment's Ready, Progressing and Degraded or RolledOut conditions, and wait for one.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/app-health",
+      "acceptance_test": "pkg/apid/apidserver/handlers_resource_status_test.go::TestResourceStatusAPI",
+      "parent": "app-health",
+      "routes": [
+        "/v1/apps/{}/status",
+        "/v1/deployments/{}/status"
+      ],
+      "cli": [
+        "app status",
+        "app wait",
+        "deployment status"
       ]
     },
     {

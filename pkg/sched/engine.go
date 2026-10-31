@@ -751,6 +751,10 @@ type Engine struct {
 	// min-floor is a wake-shape concern, the cap is a budget
 	// concern, separated in time so the audit row is unambiguous).
 	overage OverageChecker
+	// capSubjects remembers, per organization, whether it is its apps'
+	// billing subject, so the spend cap gate reads the right cap without a
+	// store read per wake (ADR-20261030093512).
+	capSubjects spendCapSubjects
 	// (obs, cap) cents ride on the (outcome, obs, cap) tuple
 	// admitGate returns. The earlier field-on-Engine shape was
 	// racy across goroutines hitting the cap-reached branch.
@@ -4394,7 +4398,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// park re-snapshots. Best-effort — failure here doesn't block the
 	// RUNNING transition (the stale snapshot also gets the next-park
 	// treatment from snapshotAndPark).
-	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT && out.RestoreFallbackReason == fcvm.RestoreFallbackNodeLocal {
+		// The restore failed for this node's reasons (a full disk, an image or
+		// identity it could not read, jail setup): the snapshot is still good
+		// for every other node, so it stays live (bug hunt 2026-10-28 B12).
+		e.log.Info("wake: restore fell back to cold boot on this node; snapshot kept", "app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "node", bootInput.nodeID, "snapshot", bootInput.snapID, "wake_id", logsanitize.Field(bootInput.wakeID))
+	} else if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		// A catalog-bound fallback still validates its selected capture through
 		// receipt acknowledgment and publication. Invalidate after that attempt
 		// so our own cache retirement cannot reject a verified cold runtime.
@@ -10763,14 +10772,15 @@ func (e *Engine) admitSpendCap(ctx context.Context, app *state.App) (bool, int64
 	if e.overage == nil {
 		return false, 0, 0
 	}
-	status, observedCents, capCents, _ := e.overage.Check(ctx, app.AccountID)
+	subject := e.spendCapSubject(ctx, *app)
+	status, observedCents, capCents, _ := e.overage.Check(ctx, subject)
 	if status != OverageReached {
 		return false, 0, 0
 	}
 	if e.ops != nil {
 		e.ops.ObserveScaleUp(app.ID, "overage_cap_reached")
 	}
-	e.overage.RecordReached(ctx, app.AccountID, observedCents, capCents)
+	e.overage.RecordReached(ctx, subject, observedCents, capCents)
 	return true, observedCents, capCents
 }
 

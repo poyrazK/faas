@@ -299,6 +299,11 @@ var ReadWakeRPC = readWakeRPC
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
 func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget() }
 
+// XSpendCapSubject is the billing subject whose spend cap governs app.
+func (e *Engine) XSpendCapSubject(ctx context.Context, app state.App) string {
+	return e.spendCapSubject(ctx, app)
+}
+
 // XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
 // benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).
 // adr: 647 — the sweep admits independently routed recipients.

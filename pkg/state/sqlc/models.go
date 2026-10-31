@@ -10240,6 +10240,8 @@ type Org struct {
 	TaxID                    string
 	ObjectStorageOwnedFrom   pgtype.Timestamptz
 	AsyncQuotaPooledAt       pgtype.Timestamptz
+	// Monthly spend cap in cents for an organization that owns its resources; NULL = no cap (ADR-20261030093512).
+	OverageCapCents pgtype.Int8
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only

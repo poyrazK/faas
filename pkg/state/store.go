@@ -3336,10 +3336,12 @@ type Store interface {
 	UpsertAppOpenAPIDoc(ctx context.Context, appID, accountID string, doc []byte, endpointCount int, openapiVersion string) error
 	// UpsertAppOpenAPIDocIfUnderQuota bundles the per-account quota
 	// gate (count + lock + check) with the upsert so a TOCTOU race
-	// between two concurrent imports under the same account can't
-	// slip past the cap. The PgStore impl runs the count + upsert
-	// inside a transaction with a row lock on the account; the
-	// MemStore impl serialises under m.mu. Returns
+	// between two concurrent imports can't slip past the cap. The
+	// allowance and the count belong to the app's billing subject
+	// (ADR-202610171904). The PgStore impl runs the count + upsert
+	// inside a transaction under the subject's lock
+	// (lockQuotaSubjectTx); the MemStore impl serialises under m.mu.
+	// Returns
 	// ErrOpenAPIImportsPerAccountQuotaReached when count>=limit;
 	// ErrNotFound when the parent app row is missing or the
 	// caller's accountID does not match.
