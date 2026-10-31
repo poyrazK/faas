@@ -301,6 +301,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	} else {
 		sampler = NewSampler(l.store, l.cpu, l.now)
 	}
+	sampler.WithRollSettle(api.MeterRollSettle)
 	if mode, err := ParseQuietPauseMode(l.cfg.QuietPauseUnbilled); err != nil {
 		l.log.Warn("meter: quiet pause billing stays off", "err", err)
 	} else if mode != QuietPauseOff {

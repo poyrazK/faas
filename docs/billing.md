@@ -54,7 +54,9 @@ Raising or clearing the cap, or the start of the next month, lets workloads
 wake again on the next request or scheduler tick. If you change plans during
 a month, each plan's included GB-RAM-hours count for the share of the month
 you held it: a whole month on Pro includes 1,000 GB-h, and half a month on
-Hobby then half on Pro includes 600 GB-h.
+Hobby then half on Pro includes 600 GB-h. The daily overage warning starts
+above that allowance too. A move to Free is the exception: Free stops
+workloads at its own allowance, counting the month's usage so far.
 
 An organization that owns its resources is billed apart from its members and
 has its own cap, with the same defaults. Its owner sets it with
