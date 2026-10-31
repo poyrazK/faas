@@ -556,7 +556,8 @@ type DaemonConfig struct {
 
 	// RateLimitLease is gatewayd-internal's [ratelimit] lease (ADR-1520):
 	// central counters are spent from local leases instead of one Postgres
-	// consult per request. Omitted renders false. Requires central mode.
+	// consult per request. Omitted renders true in central mode (ADR-1520
+	// amendment 1); false turns it off. Requires central mode.
 	RateLimitLease *bool `yaml:"ratelimit_lease,omitempty"`
 
 	// FrozenTierEarlyFreezeAfterS is schedd's

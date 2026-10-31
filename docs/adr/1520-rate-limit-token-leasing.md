@@ -1,6 +1,6 @@
 # ADR-1520 · Rate-limit token leasing
 
-- **Status:** proposed. Built behind `[ratelimit] lease`, off by default
+- **Status:** proposed. Built behind `[ratelimit] lease`, on by default in central mode since amendment 1
   (see Implementation).
 - **Date:** 2026-10-15
 - **Amends:** ADR-104 amendment 5 (central rate-limit mode) and ADR-040
@@ -215,3 +215,19 @@ Two choices the design left open:
   the control plane, and still a network round trip on every request.
 - **Larger coalescing windows:** delaying requests to batch them adds
   latency to every request and still scales writes with traffic.
+
+## Amendment 1 (2026-10-31): leasing is the default in central mode
+
+Production has run with `lease = true` since 2026-10-25 (the GCP manifest
+opts in), while a deployment built from the binary or Ansible defaults still
+wrote an app and an account counter to control-plane Postgres for every
+rate-limited request. During a Postgres stall or outage those requests
+waited for the counter, and past ADR-20261027173012's 5-minute grace they
+were refused (bug hunt 2026-10-28 H39).
+
+- In central mode `[ratelimit] lease` now defaults to on in the binary, the
+  Ansible role (`gatewayd_ratelimit_lease: true`) and the manifest (omitted
+  renders true). `lease = false` still turns it off; local mode is unchanged
+  and an explicit `lease = true` with local mode is still refused.
+- Nothing else in this ADR changes: tunables, metrics, the accuracy bound and
+  ADR-20261027173012's outage decision stay as they are.
