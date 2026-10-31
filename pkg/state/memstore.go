@@ -11853,12 +11853,16 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 	if !ok || app.AccountID != accountID {
 		return ErrNotFound
 	}
-	if _, ok := m.accounts[accountID]; !ok {
+	if _, ok := m.accounts[accountID]; !ok || app.Status == AppDeleted {
 		return ErrNotFound
 	}
+	// The allowance belongs to the app's billing subject
+	// (ADR-202610171904): a company's once it adopted billing, whichever
+	// member's app holds the import.
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	observed := 0
 	for _, r := range m.openAPIImports {
-		if r.AccountID == accountID {
+		if m.countsTowardQuotaSubjectLocked(r.AccountID, r.AppID, subject) {
 			observed++
 		}
 	}
