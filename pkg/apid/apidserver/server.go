@@ -1875,6 +1875,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.resizeManagedPostgresDatabase)))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresResize))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresDatabase))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getDatabaseStatus))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/undelete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.undeleteManagedPostgresDatabase))))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))
@@ -3153,6 +3154,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/domains/{domain}/default", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.setDefaultDomain)))))
 	mux.HandleFunc("POST /v1/domains/{domain}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.retryDomainVerification)))))
 	mux.HandleFunc("GET /v1/domains/{domain}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomain))))
+	mux.HandleFunc("GET /v1/domains/{domain}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomainStatus))))
 	// ADR-120: per-domain doctor surface for `gregale domains doctor`.
 	// Read-only; returns the latest observation row from
 	// domain_doctor_observations plus a synchronous re-probe if
@@ -3176,6 +3178,7 @@ func (s *server) handler() http.Handler {
 	// deleteCron all use requireMFA, so getCron is the lone exception
 	// if we skip it. code-review finding A4.
 	mux.HandleFunc("GET /v1/crons/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCron))))
+	mux.HandleFunc("GET /v1/crons/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCronStatus))))
 	// Per-cron execution history (issue #791). Read surface, so
 	// ScopesReadSurface and no idempotency wrapper.
 	mux.HandleFunc("GET /v1/crons/{id}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCronRuns))))
@@ -3253,6 +3256,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobRuns))))
 	mux.HandleFunc("GET /v1/jobs/{name}/occurrences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobScheduleOccurrences))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJobRun))))
+	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJobRunStatus))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelJobRun))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs/{id}/replay-failed", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayFailedJobRun)))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobRunTasks))))
