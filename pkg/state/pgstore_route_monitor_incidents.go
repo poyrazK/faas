@@ -193,14 +193,15 @@ func pgBuildRouteMonitorEvidence(ctx context.Context, db sqlc.DBTX, accountID, s
 	for _, w := range windows {
 		out.Windows = append(out.Windows, api.RouteHealthInvestigationWindow{Start: w.Start, End: w.End})
 	}
-	if err := pgInvestigationExamples(ctx, db, accountID, slug, &out); err != nil {
+	// The monitor's latency stays end to end, cold boots included.
+	if err := pgInvestigationExamples(ctx, db, accountID, slug, &out, false); err != nil {
 		return api.RouteMonitorEvidence{}, err
 	}
 	for j := range out.Windows {
 		out.Windows[j].Stable = api.RouteHealthInvestigationSide{Examples: []api.RouteHealthInvestigationExample{}}
 	}
 	if signal == "latency" {
-		if err := pgInvestigationLatency(ctx, db, accountID, slug, &out); err != nil {
+		if err := pgInvestigationLatency(ctx, db, accountID, slug, &out, false); err != nil {
 			return api.RouteMonitorEvidence{}, err
 		}
 	}

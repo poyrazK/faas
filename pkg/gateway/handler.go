@@ -8393,7 +8393,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// the time.Since(startTime(r)) call here would yield the same result
 	// but recomputes; `elapsed` was already measured above.
 	requestLog := h.log
-	if decision := trafficDecisionEvidence(r.Context(), status, false); decision.path != "" && requestLog != nil {
+	decision := trafficDecisionEvidence(r.Context(), status, false)
+	if decision.path != "" && requestLog != nil {
 		requestLog = requestLog.With(decision.logAttribute())
 	}
 	if revision := TrafficPolicyRevision(r.Context()); revision != "" && requestLog != nil {
@@ -8506,6 +8507,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
+				PlatformRefusal:                      decision.platformRefusal(status),
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {

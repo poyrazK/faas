@@ -47,6 +47,10 @@ type RouteHealthCounts struct {
 	ErrorRate    float64 `json:"error_rate"`
 	// P95LatencyMS estimates weighted telemetry representatives; nil is unavailable.
 	P95LatencyMS *float64 `json:"p95_latency_ms,omitempty"`
+	// LatencyRequests counts the requests P95LatencyMS ranked when they are
+	// fewer than Requests: the canary guard ranks only requests that did not
+	// cold boot (ADR-20261028110044 amendment 3). Nil means every request.
+	LatencyRequests *int64 `json:"latency_requests,omitempty"`
 	// Unauthenticated counts synthetic probe responses rejected by customer
 	// auth gates (401/403); it is zero for organic telemetry (ADR-847).
 	Unauthenticated int64 `json:"unauthenticated,omitempty"`

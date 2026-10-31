@@ -499,6 +499,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		WakeID:                      pgtype.Text{String: req.GetWakeId(), Valid: req.GetWakeId() != ""},
 		InstanceID:                  pgtype.Text{String: req.GetInstanceId(), Valid: req.GetInstanceId() != ""},
 		TraceInferred:               req.GetTraceInferred() && req.GetTraceId() != "", // ADR-1138: only meaningful on a trace id
+		PlatformRefusal:             req.GetPlatformRefusal() && req.GetHttpStatus() >= 500,
 		GuestDurationMs:             int32(req.GetGuestDurationMs()),
 		GuestCpuTimeMs:              int32(req.GetGuestCpuTimeMs()),
 		GuestPeakRssMb:              int32(req.GetGuestPeakRssMb()),

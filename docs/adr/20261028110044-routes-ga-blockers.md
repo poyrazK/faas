@@ -218,3 +218,62 @@ A third review found these gaps, two of them in this ADR's own changes.
   with `capability_not_released`.
 - A route health report read while the enforced guard holds the canary adds
   `hold.since` and `hold.aborts_at`. The CLI prints them.
+
+## Amendment 3 (2026-10-29): warm latency and platform refusals
+
+A fourth review found that route evidence charged the candidate for things it
+did not cause.
+
+1. **Cold boots biased the latency check.** A scale-to-zero canary with a small
+   traffic share cold boots far more often than the stable deployment, and
+   schedd keeps only service canaries warm. The guard's p95 included cold boot
+   time, so a healthy function canary could look slower than stable, be held
+   and then aborted at the hold deadline.
+2. **Platform refusals counted as release errors.** A 5xx the gateway returned
+   because a Gregale dependency could not admit the request (node admission,
+   traffic policy, rate-limit or revocation state unavailable) counted as a
+   server error for whichever deployment was selected. A control-plane blip
+   during a canary or after a release could hold a canary or roll back a
+   production release.
+3. **Published alert docs linked to unpublished pages.** `docs/alerts.md` is
+   published; its route alert section linked to the unpublished route
+   monitoring and route health pages and did not say the features are a
+   preview.
+
+**Decision.**
+
+- The canary guard ranks latency only over requests that did not cold boot:
+  aggregate evidence, pooled windows, customer cohorts, investigation examples
+  and latency diagnostics all use the same warm requests. Each latency window
+  reports the count as `latency_requests`, and the 100-request latency minimum
+  applies to it. Error counts and rates still include every request. Cold-boot
+  latency stays compared by Safe Deploy's circuit breaker
+  (`abort_cold_boot_p95`), which compares cold boots with cold boots. The
+  production monitor keeps end-to-end latency, cold boots included: it checks
+  a budget the customer chose, with no stable deployment to skew against.
+- The gateway marks a request telemetry row `platform_refusal` when it answered
+  with a 5xx, its traffic decision was `refused`, and the refusal reason is
+  `node_admission_unavailable`, `policy_unavailable`, `rate_limit_unavailable`
+  or `security_unavailable`. Route health, its customer cohorts, client-error
+  signals, investigations and the production monitor skip these rows.
+  Deadlines, open circuits, `capacity`, `node_capacity` (a 429 at the app's own
+  request limit) and failed wakes or boots still count: a candidate can cause
+  each of them. The column is an expand-only migration with a `false` default;
+  apid stores the flag only on a 5xx.
+- The alerts page names the route alerts as a preview and links neither
+  unpublished page until the features are promoted.
+
+**Consequences.**
+
+- Until a node's gatewayd runs this release, its platform refusals still count.
+- Saved history and reports from before this amendment have no
+  `latency_requests` and are evaluated over all requests, as they were made.
+- Route health latency investigations (ADR-497) now show no cold boots and no
+  wake boot timings: the requests they explain did not cold boot. Production
+  monitor incident diagnostics keep both.
+- A route whose traffic is mostly cold boots on either side may lack 100 warm
+  requests and stay unknown on latency, which holds an enforced canary until the
+  hold deadline. Synthetic probes (ADR-847), which keep the canary warm, make
+  that less likely.
+- The dashboard has no production route monitoring page yet; that is
+  frontend work tracked outside this ADR.
