@@ -5697,6 +5697,12 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 		}
 		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
+	// A refusal below rolls the retirement back with the rest of the delete.
+	if retireBranch {
+		if err := retireProjectEnvironmentBranchDeploymentsTx(ctx, tx, accountID, projectID, slug); err != nil {
+			return ProjectEnvironmentCleanupJob{}, err
+		}
+	}
 	if slug == "production" || slug == DefaultEnvScope || protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
@@ -5712,11 +5718,6 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 	}
 	if hasBranches {
 		return ProjectEnvironmentCleanupJob{}, ErrProjectEnvironmentBranchChildren
-	}
-	if retireBranch {
-		if err := retireProjectEnvironmentBranchDeploymentsTx(ctx, tx, accountID, projectID, slug); err != nil {
-			return ProjectEnvironmentCleanupJob{}, err
-		}
 	}
 
 	var hasLiveRelease bool

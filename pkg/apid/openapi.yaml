@@ -37710,6 +37710,72 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/branches:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the environment.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Parent environment to branch from or list branches of.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: createProjectEnvironmentBranch
+      summary: Branch a project environment.
+      description: |
+        Creates a new environment that copies the parent's configuration and
+        publishes each of the parent's live workloads from its existing build.
+        Nothing starts until a workload is called: its first request starts it
+        cold. The branch is deleted when its time to live ends. Parents that
+        bind managed PostgreSQL or object storage cannot be branched yet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentBranchRequest' }
+      responses:
+        '201':
+          description: The branch exists and its workloads are published.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The plan's environment branch limit is reached.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, the slug is taken, the branch would be too deep, or the parent binds managed data.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    get:
+      tags: [projects]
+      operationId: listProjectEnvironmentBranches
+      summary: List the branches of a project environment.
+      responses:
+        '200':
+          description: The environment's direct branches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentBranchListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/gitops:
     parameters:
     - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
@@ -104920,6 +104986,68 @@ components:
         cloned_from: { type: string }
         clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
         clone_operation: { $ref: '#/components/schemas/ProjectEnvironmentCloneOperationResponse' }
+        branch: { $ref: '#/components/schemas/ProjectEnvironmentBranchResponse' }
+
+    CreateProjectEnvironmentBranchRequest:
+      description: A new branch of the environment named in the path.
+      type: object
+      required: [slug]
+      properties:
+        slug:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: Slug of the new environment.
+        ttl:
+          type: string
+          description: Time to live, a duration such as 24h between 1h and 720h. Defaults to 168h.
+        egress:
+          type: string
+          enum: [live]
+          description: Outbound traffic from the branch. Only live is available.
+
+    ProjectEnvironmentBranchResponse:
+      description: How an environment branches from its parent.
+      type: object
+      required: [parent, branch_point, expires_at, egress, depth]
+      properties:
+        parent: { type: string, description: Slug of the parent environment. }
+        branch_point: { type: string, format: date-time, description: The moment the branch copied its parent. }
+        expires_at: { type: string, format: date-time, description: When the branch is deleted. }
+        egress: { type: string }
+        depth: { type: integer, minimum: 1, description: 1 for a branch of an ordinary environment, 2 for a branch of a branch. }
+        workloads:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBranchWorkload' }
+
+    ProjectEnvironmentBranchWorkload:
+      description: One workload the branch published from its parent's build. It starts on its first request.
+      type: object
+      required: [workload, deployment_id, source_deployment_id, status]
+      properties:
+        workload: { type: string }
+        deployment_id: { type: string }
+        source_deployment_id: { type: string, description: The parent deployment whose build the branch reuses. }
+        status: { type: string }
+
+    ProjectEnvironmentBranchListResponse:
+      type: object
+      required: [branches]
+      properties:
+        branches:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBranchSummary' }
+
+    ProjectEnvironmentBranchSummary:
+      type: object
+      required: [slug, parent, branch_point, expires_at, egress, depth, created_at]
+      properties:
+        slug: { type: string }
+        parent: { type: string }
+        branch_point: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        egress: { type: string }
+        depth: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
 
     PutAppSecretReferenceRequest:
       description: Named sealed source selected within the exact registered project environment; contains no secret value.

@@ -1308,6 +1308,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/projects/{slug}/environment-clones":                                                "CreateFullProjectEnvironmentClone",
 	"GET /v1/projects/{slug}/environment-clones/{clone}":                                         "GetProjectEnvironmentCloneOperation",
 	"GET /v1/projects/{slug}/environments/{environment}":                                         "GetProjectEnvironment",
+	"POST /v1/projects/{slug}/environments/{environment}/branches":                               "CreateProjectEnvironmentBranch",
+	"GET /v1/projects/{slug}/environments/{environment}/branches":                                "ListProjectEnvironmentBranches",
 	"PATCH /v1/projects/{slug}/environments/{environment}":                                       "UpdateProjectEnvironment",
 	"POST /v1/projects/{slug}/environments/{environment}/qualifications":                         "CreateProjectEnvironmentQualification",
 	"GET /v1/projects/{slug}/environments/{environment}/releases":                                "GetProjectEnvironmentReleases",

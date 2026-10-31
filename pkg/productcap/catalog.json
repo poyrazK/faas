@@ -2171,6 +2171,23 @@
       ]
     },
     {
+      "id": "environment-branches",
+      "name": "Environment branches",
+      "category": "delivery",
+      "description": "Branch a project environment in one step: configuration is copied and each workload reuses the parent's build, activating on its first request.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261031193635-environment-branches",
+      "acceptance_test": "pkg/apid/apidserver/handlers_project_environment_branches_test.go::TestEnvironmentBranchPublishesParentBuilds",
+      "parent": "environments",
+      "routes": [
+        "/v1/projects/{}/environments/{}/branches"
+      ],
+      "cli": [
+        "projects environments branch"
+      ]
+    },
+    {
       "id": "environment-clones",
       "name": "Environment clones",
       "category": "delivery",

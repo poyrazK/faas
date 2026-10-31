@@ -577,6 +577,10 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
+	// ADR-20261031193635: a branch retires its own deployments on delete.
+	if s.deleteProjectEnvironmentBranch(w, r, acct, project, environment) {
+		return
+	}
 	resourceCleanup, err := s.planProjectEnvironmentManagedResourceCleanup(r.Context(), acct, project, environmentSlug)
 	if err != nil {
 		if errors.Is(err, managedpostgres.ErrUnavailable) || errors.Is(err, managedpostgres.ErrConflict) ||
@@ -614,6 +618,8 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		case errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "environment_work_ownership_conflict",
 				"Environment work ownership conflict", "work ownership is inconsistent; the environment was not deleted"))
+		case errors.Is(err, state.ErrProjectEnvironmentBranchChildren):
+			api.WriteProblem(w, environmentHasBranchesProblem(environmentSlug))
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 				"Project environment cannot be deleted",

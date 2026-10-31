@@ -1413,7 +1413,7 @@ type MemStore struct {
 	projectEnvironmentSecrets                 map[string]ProjectEnvironmentSecret
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
-	projectEnvironmentBranches                map[string]ProjectEnvironmentBranch            // environment ID
+	projectEnvironmentBranches                map[string]ProjectEnvironmentBranch           // environment ID
 	projectEnvironmentBranchDeployments       map[string]projectEnvironmentBranchDeployment // deployment ID
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
 	projectEnvironmentPromotionFlags          map[string]promotionFeatureFlags

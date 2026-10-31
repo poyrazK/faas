@@ -1,9 +1,26 @@
 package api
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"time"
 )
+
+// CreateProjectEnvironmentBranch branches environmentSlug into req.Slug.
+func (c *Client) CreateProjectEnvironmentBranch(ctx context.Context, projectSlug, environmentSlug string, req CreateProjectEnvironmentBranchRequest) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/branches"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// ListProjectEnvironmentBranches lists the direct branches of environmentSlug.
+func (c *Client) ListProjectEnvironmentBranches(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentBranchListResponse, error) {
+	var out ProjectEnvironmentBranchListResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/branches"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
 
 // Environment branches (ADR-20261031193635): a lazy copy of a project
 // environment. Creating one copies configuration and publishes the parent's

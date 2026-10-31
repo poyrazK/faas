@@ -125,6 +125,8 @@ type contractTestStore interface {
 	state.ProjectEnvironmentCloneValuesStore
 	state.ProjectEnvironmentCloneWorkerLeaseStore
 	state.ProjectEnvironmentCloneWorkloadStore
+	state.ProjectEnvironmentBranchStore
+	state.EnvironmentBranchDeploymentReader
 	state.ProjectEnvironmentPromotionFeatureFlagStore
 	state.ProjectEnvironmentPromotionReleaseSetStore
 	state.ProjectEnvironmentPromotionWorkloadSpecStore
