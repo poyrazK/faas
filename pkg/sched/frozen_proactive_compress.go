@@ -45,40 +45,56 @@ func (e *Engine) EnableFrozenProactiveCompress() {
 // FrozenCompressMinAgeSeconds, longest frozen first, at most
 // FrozenCompressPerNodePerTick, until the charges it freed bring the node
 // under FrozenCompressLowWaterPercent. Each VM is asked once. An unavailable
-// answer backs the node off for FrozenCompressUnavailableBackoffSeconds; no
-// outcome parks a VM. Runs on the reaper tick.
+// answer backs the node off for FrozenCompressUnavailableBackoffSeconds.
+// Compression never parks a VM; when it has nothing left to try on a node
+// still over the low-water mark, or the node cannot compress, frozen VMs
+// yield their memory to admission (yieldNodeFrozen, ADR 20261031190030).
+// Runs on the reaper tick.
 func (e *Engine) CompressFrozenForDensity(ctx context.Context, now time.Time) {
 	if e == nil || !e.frozenProactiveCompress {
 		return
 	}
 	minAge := time.Duration(api.FrozenCompressMinAgeSeconds) * time.Second
-	for nodeID, ids := range e.ledger.FrozenCompressCandidates(now, minAge) {
-		if e.frozenCompressBackedOff(nodeID, now) {
-			continue
-		}
+	compressible := e.ledger.FrozenCompressCandidates(now, minAge)
+	for nodeID, aged := range e.ledger.FrozenOldestFirst(now, minAge) {
 		used, ceiling, ok := e.ledger.FrozenCompressNeed(nodeID)
 		if !ok || ceiling <= 0 || used*100 < ceiling*api.FrozenCompressHighWaterPercent {
 			continue
 		}
 		target := ceiling * api.FrozenCompressLowWaterPercent / 100
-		for i, id := range ids {
-			if i == api.FrozenCompressPerNodePerTick || used < target {
-				break
-			}
-			before, _ := e.ledger.FrozenChargeOf(id)
-			outcome := e.compressFrozenProactive(ctx, id)
-			if outcome == frozenCompressUnavailable {
-				e.backOffFrozenCompress(nodeID, now)
-				break
-			}
-			e.ledger.MarkFrozenCompressTried(id)
-			// Under measured admission the node's usage changes only with
-			// its next sample, so count what this pass freed.
-			if after, ok := e.ledger.FrozenChargeOf(id); ok && after < before {
-				used -= before - after
-			}
+		backedOff := e.frozenCompressBackedOff(nodeID, now)
+		if !backedOff {
+			used, backedOff = e.compressNodeFrozen(ctx, nodeID, compressible[nodeID], used, target, now)
+		}
+		if used >= target && (backedOff || !e.ledger.HasUntriedFrozen(nodeID)) {
+			e.yieldNodeFrozen(ctx, aged, used, target)
 		}
 	}
+}
+
+// compressNodeFrozen compresses one node's candidates, longest frozen first,
+// at most FrozenCompressPerNodePerTick, until used is under target. It
+// returns the node's usage less what the pass freed, and whether the node
+// answered that it cannot compress (it is then backed off).
+func (e *Engine) compressNodeFrozen(ctx context.Context, nodeID string, ids []string, used, target int, now time.Time) (int, bool) {
+	for i, id := range ids {
+		if i == api.FrozenCompressPerNodePerTick || used < target {
+			break
+		}
+		before, _ := e.ledger.FrozenChargeOf(id)
+		outcome := e.compressFrozenProactive(ctx, id)
+		if outcome == frozenCompressUnavailable {
+			e.backOffFrozenCompress(nodeID, now)
+			return used, true
+		}
+		e.ledger.MarkFrozenCompressTried(id)
+		// Under measured admission the node's usage changes only with
+		// its next sample, so count what this pass freed.
+		if after, ok := e.ledger.FrozenChargeOf(id); ok && after < before {
+			used -= before - after
+		}
+	}
+	return used, false
 }
 
 // compressFrozenProactive compresses one frozen VM under its app lock. It

@@ -2881,6 +2881,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 
 	l.parkExpiredFrozen(ctx, snapshot, now)
+	l.settleSeededFrozen(snapshot, activityByInstance)
 	// ADR 20261031143521: compress frozen VMs on nodes near their RAM
 	// ceiling before eviction looks at nodes over it.
 	l.engine.CompressFrozenForDensity(ctx, now)
