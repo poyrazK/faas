@@ -196,7 +196,7 @@ that throws (the runner answers 500), any other 5xx, a timeout, and a handler
 that answers `408` or `429`. Any other 4xx means the handler refused the
 event, so it is not retried but moves straight to the dead-letter queue, where
 you can replay it after a fix
-([ADR 20261031100000](adr/20261031100000-event-delivery-failures.md)). Retries
+([ADR 20261031100001](adr/20261031100001-event-delivery-failures.md)). Retries
 are paced by the app's `retry_policy` in `gregale.yaml` when it sets one,
 waiting at most 5 minutes between attempts, otherwise 5 seconds
 doubling to 5 minutes, with ±20 % jitter. The plan limits the attempts (3 on

@@ -37,7 +37,13 @@ func memoryShadow(instances []state.Instance, rows []InstanceStat, bridgeMB map[
 		}
 		s := out[in.NodeID]
 		s.ReservedMB += api.BillableRAMMB(in.RAMMB)
-		s.MeasuredMB += api.MeasuredChargeMB(in.RAMMB, sample)
+		if state.State(in.State) == state.StateFrozen {
+			// A paused VM cannot grow; its floor is FrozenChargeFloorMB
+			// (ADR 20261031143521).
+			s.MeasuredMB += api.FrozenChargeMB(in.RAMMB, sample)
+		} else {
+			s.MeasuredMB += api.MeasuredChargeMB(in.RAMMB, sample)
+		}
 		out[in.NodeID] = s
 	}
 	for node, mb := range bridgeMB {

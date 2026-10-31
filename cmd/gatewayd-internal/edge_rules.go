@@ -91,6 +91,7 @@ type gatewaydEdgeRules struct {
 	store            edgeRuleStore
 	cache            *gateway.EdgeRuleCache
 	ownerSets        *edgeRuleOwnerSets
+	compiledLists    *edgeRuleCompiledLists
 	log              *slog.Logger
 	validate         validateCompiler
 	metrics          *gateway.Metrics
@@ -157,13 +158,14 @@ type validateCompiler interface {
 // gatewayd-internal Prometheus registry via run.go).
 func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate validateCompiler, metrics *gateway.Metrics) *gatewaydEdgeRules {
 	return &gatewaydEdgeRules{
-		store:     store,
-		cache:     gateway.NewEdgeRuleCache(gateway.EdgeRuleCacheCap),
-		ownerSets: newEdgeRuleOwnerSets(),
-		log:       log,
-		validate:  validate,
-		metrics:   metrics,
-		fences:    make(map[edgeRuleFenceKey]edgeRuleFence),
+		store:         store,
+		cache:         gateway.NewEdgeRuleCache(gateway.EdgeRuleCacheCap),
+		ownerSets:     newEdgeRuleOwnerSets(),
+		compiledLists: newEdgeRuleCompiledLists(),
+		log:           log,
+		validate:      validate,
+		metrics:       metrics,
+		fences:        make(map[edgeRuleFenceKey]edgeRuleFence),
 	}
 }
 
@@ -367,11 +369,54 @@ func (g *gatewaydEdgeRules) hostStoreRules(ctx context.Context, host string) ([]
 	if err != nil {
 		return nil, "", err
 	}
+	if rules, err = g.scopeEdgeRules(ctx, gateway.EdgeRuleApp(ctx), rules); err != nil {
+		return nil, "", err
+	}
 	inherited, err := g.previewInheritedRules(ctx)
 	if err != nil {
 		return nil, "", err
 	}
 	return state.MergeEdgeRulesInOrder(rules, inherited), owner, nil
+}
+
+// scopeEdgeRules keeps the rules whose app shares the serving app's
+// edge-rule scope (ADR-091 amendment 2026-10-31, round 6): a company app and
+// its creator's personal apps share an account, so the owner filter alone let
+// a "*" or host-pattern rule on either side apply to the other. The serving
+// app's own rules always stay. Without a serving app or a scope-aware store
+// the rules are kept as read.
+func (g *gatewaydEdgeRules) scopeEdgeRules(ctx context.Context, appID string, rules []state.EdgeRule) ([]state.EdgeRule, error) {
+	store, ok := g.store.(state.EdgeRuleScopeStore)
+	if !ok || appID == "" || len(rules) == 0 {
+		return rules, nil
+	}
+	ids := []string{appID}
+	seen := map[string]struct{}{appID: {}}
+	for _, r := range rules {
+		if _, dup := seen[r.AppID]; !dup {
+			seen[r.AppID] = struct{}{}
+			ids = append(ids, r.AppID)
+		}
+	}
+	if len(ids) == 1 {
+		return rules, nil
+	}
+	scopes, err := store.EdgeRuleScopes(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("edge rule scopes for app %s: %w", appID, err)
+	}
+	want, known := scopes[appID]
+	out := make([]state.EdgeRule, 0, len(rules))
+	for _, r := range rules {
+		if r.AppID == appID {
+			out = append(out, r)
+			continue
+		}
+		if scope, ok := scopes[r.AppID]; known && ok && scope == want {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // previewInheritedRules returns the production app's app-wide rules a PR
@@ -1174,11 +1219,13 @@ func (g *gatewaydEdgeRules) InvalidateAccountHosts(accountID, appID string, patt
 }
 
 // dropOwnerSets runs after the cache invalidation it belongs to: that moved
-// the cache generation, so a load still in flight cannot cache its set.
+// the cache generation, so a load still in flight cannot cache its set. The
+// account's compiled lists go with it: a list edit invalidates through here.
 func (g *gatewaydEdgeRules) dropOwnerSets(accountID string) {
 	if g.ownerSets != nil {
 		g.ownerSets.drop(accountID)
 	}
+	g.compiledLists.drop(accountID)
 }
 
 // warnPathGlobErrs logs every path-glob parse error the loader

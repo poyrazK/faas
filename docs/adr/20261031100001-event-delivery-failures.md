@@ -1,4 +1,4 @@
-# ADR: Failed event deliveries retry or dead-letter; held apps step aside
+# ADR-20261031100001: Failed event deliveries retry or dead-letter; held apps step aside
 
 Date: 2026-10-31
 Status: Accepted

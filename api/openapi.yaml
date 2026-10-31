@@ -32351,6 +32351,24 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/timeline:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getReleaseTimeline
+      summary: Show a release's phase and history.
+      description: "Composes what Gregale recorded about one release into a phase, a one-line summary and its events, oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and gate results behind it, holds, completion, the post-release watch, abort or rollback, and the release that replaced it. Reads at most 500 audit rows; truncated=true means older history was left out."
+      responses:
+        '200':
+          description: The release timeline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseTimeline' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/deployments/{id}/schedule:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -111440,16 +111458,19 @@ components:
       required: [name, kind, min_samples, created_by, created_at]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change] }
         slo: { type: string, description: "slo gates: the SLO judged." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: the burn rate that fails the gate." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: new error groups allowed." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: events before a group counts." }
-        metric: { type: string, description: "custom_metric gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
-        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails." }
+        metric: { type: string, description: "custom_metric and metric_change gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails; metric_change gates: which direction of change fails." }
         threshold: { type: number, description: "custom_metric gates: the bound on the metric's average." }
         max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: the largest increase over the baseline, in percent." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
+        check: { type: string, description: "synthetic gates: the synthetic check probed on the canary and its stable revision." }
+        max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: the share of the candidate's probes that may fail." }
+        max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: how far the metric may move from its average before the rollout, in percent." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, probes, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
     CreateReleaseGateRequest:
@@ -111458,16 +111479,19 @@ components:
       required: [name, kind]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change] }
         slo: { type: string, description: "slo gates: the name of one of the app's SLOs." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: default 10." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: default 0." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: default 3." }
-        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
-        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold." }
+        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric and metric_change gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold. metric_change gates: fail when the average fell (below) or rose (above) too far." }
         threshold: { type: number, description: "custom_metric gates: the bound." }
         max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: fail when the release's metric is this many percent above its baseline's, and above a floor (1 percentage point, 50 ms or 1 millicent). Default 50." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20." }
+        check: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$', description: "synthetic gates: the name of one of the app's synthetic checks." }
+        max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: default 10." }
+        max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: the change, in percent of the average before the rollout, that fails the gate." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20; 6 probes for synthetic gates." }
     ListReleaseGatesResponse:
       description: "An app's release gates, by name."
       type: object
@@ -111634,6 +111658,54 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalStatus' } }
+    ReleaseTimeline:
+      description: "One release's phase and what happened to it."
+      type: object
+      required: [deployment_id, app, status, phase, summary, traffic_percent, created_at, events]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        app: { type: string }
+        revision: { type: integer, minimum: 0 }
+        scope: { type: string }
+        status: { type: string, description: "The deployment's status, such as live or superseded." }
+        phase:
+          type: string
+          enum: [building, failed, cancelled, rolled_back, scheduled, awaiting_approval, superseded, held, rolling_out, watching, released]
+          description: "Where the release is, matched in this order."
+        summary: { type: string, description: "One line, such as \"Rolling out: step 2 of 4, 10% of traffic\"." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        canary_step: { type: integer, minimum: 0, description: "Zero-based current canary step." }
+        canary_total_steps: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        deployed_by: { type: string }
+        commit_sha: { type: string }
+        pr_number: { type: integer, minimum: 0 }
+        tag: { type: string }
+        reason: { type: string }
+        stable_deployment_id: { type: string, format: uuid, description: "The release this one replaces; an abort returns traffic to it." }
+        stable_revision: { type: integer, minimum: 0 }
+        replaced_by_deployment_id: { type: string, format: uuid, description: "The newer release of the same scope that took over." }
+        replaced_by_revision: { type: integer, minimum: 0 }
+        watch_until: { type: string, format: date-time, description: "When the post-release watch stops judging the release." }
+        approval: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        schedule: { $ref: '#/components/schemas/ScheduledRelease' }
+        gates: { type: array, items: { $ref: '#/components/schemas/ReleaseGateResult' }, description: "The results of the newest decision that judged release gates." }
+        events: { type: array, items: { $ref: '#/components/schemas/ReleaseTimelineEvent' } }
+        truncated: { type: boolean, description: "Older audit history was left out." }
+    ReleaseTimelineEvent:
+      description: "One thing that happened to a release."
+      type: object
+      required: [at, summary, kind]
+      properties:
+        at: { type: string, format: date-time }
+        kind:
+          type: string
+          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, superseded, note]
+        summary: { type: string, description: "What happened, in one sentence." }
+        actor: { type: string, description: "A person's email, or Gregale for automatic steps." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100, description: "The release's traffic share after this event." }
+        repeats: { type: integer, minimum: 0, description: "Further holds with the same rule this event stands for." }
+        decision: { $ref: '#/components/schemas/RolloutDecision' }
     ReleaseDiff:
       description: "What changed between two releases of one app."
       type: object
@@ -111728,12 +111800,13 @@ components:
       required: [name, kind, passed, summary, observed, bound, samples]
       properties:
         name: { type: string }
-        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change] }
         passed: { type: boolean }
-        observed: { type: number, description: "The burn rate, new error groups, metric average, or the release's AI metric." }
+        observed: { type: number, description: "The burn rate, new error groups, metric average, the release's AI metric, failed-probe percentage, or signed change in percent." }
         bound: { type: number, description: "The value that fails the gate." }
-        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, metric values or AI calls." }
+        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, probes, metric values or AI calls." }
         baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
+        baseline: { type: number, description: "synthetic gates: the stable revision's failed-probe percentage; metric_change gates: the metric's average before the rollout." }
         error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
         summary: { type: string, description: "What the gate measured, in one line." }
         not_judged: { type: boolean, description: "True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says what it was waiting for." }

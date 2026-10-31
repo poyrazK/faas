@@ -28,6 +28,24 @@ python3 -P -E scripts/experiments/frozen-tier-economics/show.py /tmp/results.jso
 `FUNCTIONS=1` treats every app as a function app, which idles out after
 30 s on every plan (ADR-974) instead of the plan's idle timeout.
 
+`PLAN_TABLE` picks the plans, prices and included GB-h: `adr1430` (the
+default) is today's `pkg/api/limits.go` table in US dollars (ADR-1430);
+`eur-2026-10-12` is the euro table ADR-906, ADR-1151 and
+ADR-20261023171905 were first simulated with, so their numbers reproduce.
+Policies `E` and `G` compare quiet pause billed and unbilled
+(ADR-20261023171905), with production's 10 min `FrozenTTL` as well as the
+1 h one. Each policy also reports resident GB-h (RAM held running or
+quiet-paused, which compute COGS follows whether billed or not) at the COGS
+report's 0.003 per GB-h, overage by plan and the share of apps over their
+included GB-h.
+
+Free usage past its included GB-h is never billed: meterd hard-stops the
+account (spec §4.7), so a Free app over its included GB-h is one that would
+be stopped, and its overage is not revenue. `FREE_OVERAGE=1` counts it as
+revenue, as the ADR-906, ADR-1151 and ADR-20261023171905 tables did, to
+reproduce them. The 2026-10-31 re-run is in
+`docs/ops/evidence/20261031-quiet-pause-economics/`.
+
 `occupancy.py apps.npz` prints the active vCPU, booked vCPU, resident and
 frozen VM counts per instant under ADR-1151's policy (quiet pause plus
 freeze at the idle timeout).
