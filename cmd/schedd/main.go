@@ -1784,6 +1784,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.FrozenTierEarlyFreezeAfterS > 0 {
 			engine.EnableEarlyFreeze(time.Duration(cfg.FrozenTierEarlyFreezeAfterS) * time.Second)
 		}
+		if cfg.FrozenProactiveCompress {
+			engine.EnableFrozenProactiveCompress()
+			log.Info("proactive frozen compression enabled (ADR 20261031143521)",
+				"high_water_percent", api.FrozenCompressHighWaterPercent,
+				"low_water_percent", api.FrozenCompressLowWaterPercent,
+				"min_age_seconds", api.FrozenCompressMinAgeSeconds,
+				"per_node_per_tick", api.FrozenCompressPerNodePerTick)
+		}
 		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
 			"early_freeze_after_s", cfg.FrozenTierEarlyFreezeAfterS,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)

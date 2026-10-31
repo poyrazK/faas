@@ -538,7 +538,9 @@ func (s *Service) ReconcileManagedRealtimeEndpoints(ctx context.Context) error {
 // /__gregale/realtime/ before hostname lookup (ADR-156), so it never sees the
 // app's lifecycle: without this gate a deleted app, or a suspended account
 // whose apps are parked, kept serving WebSockets and relaying callbacks.
-// past_due keeps serving because its apps keep running (spec §4.7).
+// past_due keeps serving because its apps keep running (spec §4.7). A plan
+// without realtime (Free, where a cancelled subscription lands) stops serving
+// too: its limits are zero, which realtimed reads as no account cap.
 // accountServing memoizes account lookups across one pass.
 func (s *Service) realtimeEndpointOwnerServing(ctx context.Context, row state.ManagedRealtimeEndpoint, accountServing map[string]bool) (bool, error) {
 	app, err := s.Host.Store().AppByID(ctx, row.AppID)
@@ -562,7 +564,8 @@ func (s *Service) realtimeEndpointOwnerServing(ctx context.Context, row state.Ma
 	case err != nil:
 		return false, err
 	default:
-		serving = acct.Active()
+		_, planAllows := s.realtimePlanLimits(acct)
+		serving = acct.Active() && planAllows
 	}
 	accountServing[row.AccountID] = serving
 	return serving, nil

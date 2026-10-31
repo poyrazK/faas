@@ -244,6 +244,12 @@ type Config struct {
 	// thaw it before booting a new one. Off by default and ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_WORKERS overrides it.
 	FrozenTierWorkers bool `toml:"frozen_tier_workers"`
+	// FrozenProactiveCompress (ADR 20261031143521) compresses frozen VMs
+	// into memory-only swap on nodes near their RAM ceiling, longest frozen
+	// first, so the RAM they free goes back to admission. On by default; a
+	// node without the zswap role answers unavailable and is left alone.
+	// FAAS_FROZEN_PROACTIVE_COMPRESS overrides it either way.
+	FrozenProactiveCompress bool `toml:"frozen_proactive_compress"`
 	// FrozenTierEarlyFreezeAfterS (ADR-20261021215353) freezes a quiet
 	// between_requests instance this many seconds after its last request
 	// instead of at its idle timeout, so it stops accruing usage soon after
@@ -526,9 +532,12 @@ func LoadConfig(path string) (*Config, error) {
 		// pressure backstop. Release rollouts re-render schedd.toml from the
 		// manifest, so only a binary default keeps them on; each stays an
 		// opt-out (= false in schedd.toml).
-		QuietPauseAdmission:  true,
-		MeasuredCPUAdmission: true,
-		CPUPressureBackstop:  true,
+		QuietPauseAdmission: true,
+		// ADR 20261031143521: zswap (the role's canary list) gates it per
+		// node.
+		FrozenProactiveCompress: true,
+		MeasuredCPUAdmission:    true,
+		CPUPressureBackstop:     true,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go
@@ -652,6 +661,7 @@ func LoadConfig(path string) (*Config, error) {
 		{"FAAS_QUIET_PAUSE_ADMISSION", &c.QuietPauseAdmission},
 		{"FAAS_MEASURED_CPU_ADMISSION", &c.MeasuredCPUAdmission},
 		{"FAAS_CPU_PRESSURE_BACKSTOP", &c.CPUPressureBackstop},
+		{"FAAS_FROZEN_PROACTIVE_COMPRESS", &c.FrozenProactiveCompress},
 	} {
 		if v := os.Getenv(sw.env); v != "" {
 			enabled, err := strconv.ParseBool(v)

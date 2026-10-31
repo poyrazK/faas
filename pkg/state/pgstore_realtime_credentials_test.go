@@ -130,6 +130,41 @@ func TestPgStoreRealtimePublisherCredentialPublishes(t *testing.T) {
 	}
 }
 
+// A cancelled subscription moves an active account to Free, which has no
+// realtime: its publisher and worker credentials stop working with it.
+func TestPgStoreRealtimeCredentialsRefusedWithoutRealtimePlan(t *testing.T) {
+	s, ctx, ep := realtimeGroupFixture(t, "-rt-cred-free", 0)
+	group, err := s.CreateRealtimeConsumerGroup(ctx, ep, "orders", "billing", state.RealtimeConsumerGroupConfig{AfterSequence: "0"})
+	if err != nil {
+		t.Fatalf("CreateRealtimeConsumerGroup: %v", err)
+	}
+	worker, err := s.IssueRealtimeWorkerCredential(ctx, ep, "orders", "billing", state.RealtimeWorkerCredentialRequest{Name: "billing-worker", Permissions: []string{"claim"}})
+	if err != nil {
+		t.Fatalf("IssueRealtimeWorkerCredential: %v", err)
+	}
+	publisher, err := s.IssueRealtimePublisherCredential(ctx, ep, state.RealtimePublisherCredentialRequest{Name: "orders-service", Channels: []string{"orders"}, EventTypes: []string{"order.created"}})
+	if err != nil {
+		t.Fatalf("IssueRealtimePublisherCredential: %v", err)
+	}
+	req := state.RealtimePublisherMessageRequest{EventType: "order.created", DataBase64: base64.StdEncoding.EncodeToString([]byte(`{"id":1}`))}
+	if _, err := s.PublishRealtimeWithCredential(ctx, ep, "orders", publisher.Credential, req, uuid.NewString()); err != nil {
+		t.Fatalf("publish on Pro: %v", err)
+	}
+	endpoint, err := s.ManagedRealtimeEndpointByID(ctx, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateAccountPlan(ctx, endpoint.AccountID, api.PlanFree); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PublishRealtimeWithCredential(ctx, ep, "orders", publisher.Credential, req, uuid.NewString()); !errors.Is(err, state.ErrRealtimePublisherCredentialDenied) {
+		t.Fatalf("publish on Free err = %v, want denied", err)
+	}
+	if _, err := s.AuthenticateRealtimeWorkerCredential(ctx, group.GroupID, worker.Credential); !errors.Is(err, state.ErrRealtimeWorkerCredentialDenied) {
+		t.Fatalf("worker on Free err = %v, want denied", err)
+	}
+}
+
 // Ticket endpoints need not use OIDC, so access controls must accept any
 // endpoint the handler admits (ADR-1117).
 func TestRealtimeSubscriptionTicketHonorsAccessOnNonOIDCEndpoint(t *testing.T) {

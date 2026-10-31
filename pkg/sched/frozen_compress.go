@@ -25,48 +25,61 @@ func (e *Engine) EvictUnderPressure(ctx context.Context, instanceID string) erro
 		return e.Evict(ctx, instanceID)
 	}
 	defer e.unlockApp(frozen.AppID)
-	if !e.compressFrozenLocked(ctx, *frozen) {
+	if e.compressFrozenLocked(ctx, *frozen, frozenCompressPressure) != frozenCompressed {
 		e.parkFrozenLocked(ctx, *frozen, "memory_pressure")
 	}
 	return nil
 }
 
+// Outcomes of a frozen compression, and what asked for it: memory pressure
+// (EvictUnderPressure) or proactive compression (ADR 20261031143521).
+const (
+	frozenCompressed           = "compressed"
+	frozenCompressInsufficient = "insufficient"
+	frozenCompressUnavailable  = "unavailable"
+	frozenCompressError        = "error"
+	frozenCompressUnsupported  = "unsupported"
+	frozenCompressPressure     = "pressure"
+	frozenCompressProactive    = "proactive"
+)
+
 // compressFrozenLocked asks vmmd to compress a frozen VM's memory and
-// reports whether it freed enough to keep the VM. The reservation then
-// books the smaller footprint; the node's next measured report shows the
-// memory freed. A VM already compressed frees little the second time, so
-// continued pressure parks it. The caller holds the app lock.
-func (e *Engine) compressFrozenLocked(ctx context.Context, frozen state.Instance) bool {
+// returns the outcome; only frozenCompressed freed enough to keep the VM.
+// The reservation then books the smaller footprint; the node's next
+// measured report shows the memory freed. A VM already compressed frees
+// little the second time, so continued pressure parks it. The caller holds
+// the app lock.
+func (e *Engine) compressFrozenLocked(ctx context.Context, frozen state.Instance, trigger string) string {
 	freezer, ok := e.vmm.(FrozenVMM)
 	if !ok {
-		return false
+		return frozenCompressUnsupported
 	}
 	rpcCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), frozenRPCTimeout)
 	rep, err := freezer.FreezeInstance(rpcCtx, e.nodeForRoute(frozen.NodeID), frozen.ID, true)
 	cancel()
 	switch {
 	case err != nil && problemCode(err) == api.CodeFrozenCompressUnavailable:
-		e.observeFrozenCompress("unavailable")
-		return false
+		e.observeFrozenCompress(trigger, frozenCompressUnavailable)
+		return frozenCompressUnavailable
 	case err != nil:
-		e.log.Warn("sched: compress frozen instance", "instance", frozen.ID, "err", err)
-		e.observeFrozenCompress("error")
-		return false
+		e.log.Warn("sched: compress frozen instance", "instance", frozen.ID, "trigger", trigger, "err", err)
+		e.observeFrozenCompress(trigger, frozenCompressError)
+		return frozenCompressError
 	}
 	freed := rep.ResidentBytesBefore - rep.ResidentBytesAfter
 	if rep.ResidentBytesBefore <= 0 || freed < minFrozenCompressFreedBytes || freed*2 < rep.ResidentBytesBefore {
-		e.observeFrozenCompress("insufficient")
-		return false
+		e.observeFrozenCompress(trigger, frozenCompressInsufficient)
+		return frozenCompressInsufficient
 	}
 	e.ledger.ShrinkFrozenCharge(frozen.ID, frozenChargeMB(frozen.RAMMB, float64(rep.ResidentBytesAfter)/(1<<20)))
-	e.observeFrozenCompress("compressed")
-	e.log.Info("sched: compressed frozen instance under memory pressure", "instance", frozen.ID,
+	e.observeFrozenCompress(trigger, frozenCompressed)
+	e.log.Info("sched: compressed frozen instance", "instance", frozen.ID, "trigger", trigger,
 		"before_bytes", rep.ResidentBytesBefore, "after_bytes", rep.ResidentBytesAfter)
-	return true
+	return frozenCompressed
 }
 
-func (e *Engine) observeFrozenCompress(outcome string) {
+func (e *Engine) observeFrozenCompress(trigger, outcome string) {
 	if e != nil && e.ops != nil {
-		e.ops.FrozenCompressTotal(outcome).Inc()
+		e.ops.FrozenCompressTotal(trigger, outcome).Inc()
 	}
 }
