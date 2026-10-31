@@ -1543,6 +1543,9 @@ var previewFieldExclude = map[string]map[string]bool{
 	"WorkflowStepSpec":     {"agent": true},
 	"CreateTriggerRequest": {"agent": true},
 	"Trigger":              {"agent": true},
+	// ADR-20261031100025: app labels, behind the resource-labels capability;
+	// PATCH /v1/apps/{slug}/labels documents them until beta.
+	"AppResponse": {"labels": true},
 }
 
 func testSchemasParity(t *testing.T, root string, spec *specDoc) {

@@ -74,6 +74,7 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 		resp.URL = projectEnvironmentWorkloadURL(environment.ID, app.ID)
 		resp.CanonicalURL = resp.URL
+		resp.Labels = s.singleAppLabels(r, acct, app)
 		_, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, environment.Slug)
 		switch {
 		case err == nil:
@@ -88,6 +89,7 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		return
 	}
 	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
+	resp.Labels = s.singleAppLabels(r, acct, app)
 	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err == nil {
 		resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
 	} else if errors.Is(err, state.ErrNotFound) {
@@ -3557,6 +3559,11 @@ func (s *server) listDomains(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list domains"))
+		return
+	}
+	domains, problem := s.selectDomainsByLabels(r, acct, domains)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	out := make([]api.CustomDomainResponse, 0, len(domains))

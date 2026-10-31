@@ -90,7 +90,7 @@ RULES = [
     (r"health/history|^apps/status status$|^conditions$", "App health assessment"),
     # Labels are app metadata first (ADR-20261031100025); the resource-labels
     # capability gets its own row when its routes ship.
-    (r"^labels$", "Apps: create, update"),
+    (r"^labels$|^apps/labels labels$", "Apps: create, update"),
     (r"policy/status", "Plans, usage, invoices"),
     (r"apps/\{slug\}/product|apps/ /product", "Product control"),
     (r"apps/\{slug\}/security|apps/ /security", "Signed deploys"),
