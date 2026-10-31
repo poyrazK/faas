@@ -1194,7 +1194,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		return err
 	}
 	now := time.Now().UTC()
-	row, err := s.getDebugRequestTelemetry(ctx, acct.ID, app.ID, identifier, now.Add(-since), now, now)
+	row, err := s.getDebugRequestTelemetry(ctx, acct.ID, app.ID, identifier, now.Add(-since), now.Add(debugRequestJournalSkew), now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("request telemetry was not found or has aged out of retention")
 	}

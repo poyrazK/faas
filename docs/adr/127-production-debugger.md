@@ -339,3 +339,58 @@ Issue #517 closed the wake timeline. Issue #477 closed consumer_keys. The mirror
 - **PR-C**: LLM synthesis layer that takes a regression row + spans_summary and produces prose ("primary change is your DB query: 82→191ms; 31% affected; [Compare v80] [Replay] [Rollback]").
 - **Per-account OTel ingest auth**: currently validated against apid's `api_keys`; may need a separate `otel_ingest_keys` table if customer-side token rotation churn becomes a problem.
 - **Cross-app debugger view**: operator-only, surfaces regressions across the fleet (mirror the `gregale compute_nodes show` pattern from PR #1044).
+
+## Amendment (2026-10-31): exact samples, request resolution and the debugger's edges
+
+### Context
+
+A code review of the debugger on main found that the gateway's collapse
+(PR-B) kept only the first trace ID of each bucket: every later request in
+the same route, status, minute and latency bucket lost its trace. Its guest
+spans (ADR-958) found no row and were dropped after the flush retries, `debug
+requests get` with its public request ID answered `request_id_only`, and its
+evidence answered 404. A public request ID was resolved to its trace and then
+to the trace's newest row, so two requests sharing a trace (a propagated
+`traceparent`, retries) could answer with each other's route and status.
+Replay ignored the request-ID journal and could replay a route template
+literally; the dashboard's debugger page was not hidden with the production
+debugger preview; and `--route /checkout` matched nothing because route
+labels carry their method.
+
+### Decision
+
+1. **Exact samples.** A request the debugger is likely to be asked about, a
+   server error (5xx) or a request to an app with `tracing.enabled`, keeps its
+   own row: the gateway's collapse ships the first five such requests per
+   bucket per drained batch (at most 60 a minute per bucket with the 5 s
+   flush) with their own trace ID, time and exact latency; later ones fold
+   into the bucket as before. Count totals are unchanged, and the receiver's
+   per-account row budget (`DebugTelemetryRequestsPerMinute`) still bounds the
+   total. The gateway learns `tracing.enabled` from the app row it already
+   loads.
+2. **Request resolution.** A public request ID is resolved through the
+   request-ID journal first, and among the rows of its trace the request is
+   the one whose start (received_at minus latency) is nearest the journaled
+   start (`GetRequestTelemetryByAppTraceNearest`). Otherwise the identifier is
+   a row ID or a trace ID, as before. Get, evidence, replay and the dashboard
+   share this resolver, and all accept one minute of gateway clock skew.
+3. **Replay** accepts the public request ID and refuses a route label that is
+   a template (`{param}`, `:param`, `*`): the request's own path is not
+   retained, so the template would be requested literally.
+4. **Dashboard.** `/dashboard/apps/{slug}/debug` belongs to the
+   `production-debugger` capability, and the links to it are hidden with it,
+   like the API and CLI.
+5. **Route filter.** A filter that is a bare path matches the path under
+   every method; `METHOD /path` still matches one.
+6. **Regression cron.** When more apps have telemetry than one pass walks
+   (1000), each pass starts after the previous pass's last app and wraps.
+
+### Consequences
+
+- Traced apps and failing requests are drillable by request ID, and their
+  guest spans land; spans of folded requests beyond the sample are still
+  dropped, by design.
+- Rows of one trace still share the trace's spans summary: it is trace-level
+  evidence.
+- Low-traffic apps still need 100 affected requests in 30 minutes for a
+  latency regression; that threshold is unchanged.

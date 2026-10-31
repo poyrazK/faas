@@ -394,6 +394,13 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 //     the bucket, so the apid receiver doesn't have to
 //     re-truncate; lets the query plan match the (received_at
 //     DESC) index ordering exactly.
+//   - Exact samples (ADR-127 amendment 2026-10-31): the first
+//     requestTelemetryExactPerBucket rows marked exactSample (server
+//     errors, apps with in-guest tracing) in a bucket are shipped as
+//     their own rows with their own trace ID, exact time and exact
+//     latency, so a request ID resolves to that request and its guest
+//     spans have a row to merge into. Later ones fold into the bucket as
+//     before; Count totals are unchanged.
 //
 // Output ordering: insertion-order of the FIRST row per bucket.
 // Stable so tests can assert against the output slice without
@@ -401,6 +408,12 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 // the ship function streams in slice order, so the resulting
 // Postgres rows land in the same order — same query plan
 // every run, no flaky dashboard rendering.
+// requestTelemetryExactPerBucket bounds the exact samples kept per collapse
+// bucket in one drained batch. With the default 5 s flush that is at most 60
+// exact rows a minute per bucket; the receiver's per-account row budget
+// (DebugTelemetryRequestsPerMinute) still bounds the total.
+const requestTelemetryExactPerBucket = 5
+
 func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow {
 	if len(rows) == 0 {
 		return nil
@@ -409,6 +422,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 	// the output slice. Pre-size the map so the common case
 	// (single bucket dominating) avoids rehash.
 	bucketIdx := make(map[string]int, len(rows)/4+1)
+	var exactKept map[string]int
 	out := make([]RequestTelemetryRow, 0, len(rows)/4+1)
 	for _, row := range rows {
 		if row.EventID == uuid.Nil {
@@ -419,6 +433,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			out = append(out, row)
 			continue
 		}
+		exact := row
 		row.LatencyMS = requestTelemetryLatencyBucketUpperBound(row.LatencyMS)
 		row.GuestDurationMS = requestTelemetryLatencyBucketUpperBound(row.GuestDurationMS)
 		row.GuestCPUTimeMS = requestTelemetryCPUTimeBucketUpperBound(row.GuestCPUTimeMS)
@@ -460,6 +475,14 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			ContentOutcome:                       row.ContentOutcome,
 			bucket:                               bucket,
 		}.String()
+		if exact.exactSample && exactKept[key] < requestTelemetryExactPerBucket {
+			if exactKept == nil {
+				exactKept = make(map[string]int)
+			}
+			exactKept[key]++
+			out = append(out, exact)
+			continue
+		}
 		idx, ok := bucketIdx[key]
 		if !ok {
 			row.ReceivedAt = bucket

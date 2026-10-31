@@ -38,32 +38,78 @@ func (s *server) findDebugRequestJournal(ctx context.Context, accountID, appID, 
 	return state.RequestIDJournalEntry{}, false, nil
 }
 
-// getDebugRequestTelemetry finds one request's telemetry for evidence. The
-// identifier is matched as a telemetry row ID or trace ID first; only when
-// that misses is it resolved as a public request ID through the journal, so
-// row and trace IDs cost a single query. App errors record the public
-// request ID, so their links open the request's evidence. The lookup stays
-// app-scoped either way.
+// debugRequestResolution is one request identifier resolved for the
+// debugger's get, evidence and replay.
+type debugRequestResolution struct {
+	row   sqlc.GetRequestTelemetryByAppAndIdentifierRow
+	found bool // row holds the request's telemetry
+	// journal is set when the identifier is a public request ID the
+	// request-ID journal knows, even when its telemetry row was not kept.
+	journal   state.RequestIDJournalEntry
+	journaled bool
+}
+
+// resolveDebugRequest finds one request's telemetry. A public request ID
+// names exactly one request, so it is resolved through the request-ID
+// journal first: among the rows of its trace, the request is the one that
+// started nearest its journaled start (several requests can share a trace).
+// Otherwise the identifier is a telemetry row ID or a trace ID, matched
+// directly. App errors record the public request ID, so their links open
+// the request's evidence. The lookup stays app-scoped either way.
+func (s *server) resolveDebugRequest(ctx context.Context, accountID, appID, identifier string, from, until, now time.Time) (debugRequestResolution, error) {
+	journal, journaled, err := s.findDebugRequestJournal(ctx, accountID, appID, identifier, from, now)
+	if err != nil {
+		return debugRequestResolution{}, err
+	}
+	var row sqlc.GetRequestTelemetryByAppAndIdentifierRow
+	switch {
+	case journaled && journal.TraceID == "":
+		return debugRequestResolution{journal: journal, journaled: true}, nil
+	case journaled:
+		row, err = s.requestTelemetryForJournal(ctx, appID, journal, from, until)
+	default:
+		row, err = s.store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+			AppID: stringToPgUUID(appID), Identifier: identifier,
+			ReceivedFrom: pgtype.Timestamptz{Time: from, Valid: true}, ReceivedUntil: pgtype.Timestamptz{Time: until, Valid: true},
+		})
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return debugRequestResolution{journal: journal, journaled: journaled}, nil
+	}
+	if err != nil {
+		return debugRequestResolution{}, err
+	}
+	return debugRequestResolution{row: row, found: true, journal: journal, journaled: journaled}, nil
+}
+
+// requestTelemetryForJournal reads the journaled request's row: the row of
+// its trace that started nearest the journaled start, or the trace's newest
+// row on a store that cannot order by start.
+func (s *server) requestTelemetryForJournal(ctx context.Context, appID string, journal state.RequestIDJournalEntry, from, until time.Time) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
+	received := func(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
+	if resolver, ok := s.store.(state.RequestTelemetryTraceResolver); ok {
+		row, err := resolver.GetRequestTelemetryByAppTraceNearest(ctx, sqlc.GetRequestTelemetryByAppTraceNearestParams{
+			AppID: stringToPgUUID(appID), TraceID: journal.TraceID,
+			ReceivedFrom: received(from), ReceivedUntil: received(until), StartedAt: received(journal.ReceivedAt),
+		})
+		return sqlc.GetRequestTelemetryByAppAndIdentifierRow(row), err
+	}
+	return s.store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+		AppID: stringToPgUUID(appID), Identifier: journal.TraceID, ReceivedFrom: received(from), ReceivedUntil: received(until),
+	})
+}
+
+// getDebugRequestTelemetry is resolveDebugRequest for callers that need the
+// row itself: a request without one reads as pgx.ErrNoRows.
 func (s *server) getDebugRequestTelemetry(ctx context.Context, accountID, appID, identifier string, from, until, now time.Time) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
-	params := sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-		AppID:         stringToPgUUID(appID),
-		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: from, Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: until, Valid: true},
+	res, err := s.resolveDebugRequest(ctx, accountID, appID, identifier, from, until, now)
+	if err != nil {
+		return sqlc.GetRequestTelemetryByAppAndIdentifierRow{}, err
 	}
-	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(ctx, params)
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return row, err
+	if !res.found {
+		return sqlc.GetRequestTelemetryByAppAndIdentifierRow{}, pgx.ErrNoRows
 	}
-	journal, found, journalErr := s.findDebugRequestJournal(ctx, accountID, appID, identifier, from, now)
-	if journalErr != nil {
-		return row, journalErr
-	}
-	if !found || journal.TraceID == "" || journal.TraceID == identifier {
-		return row, err
-	}
-	params.Identifier = journal.TraceID
-	return s.store.GetRequestTelemetryByAppAndIdentifier(ctx, params)
+	return res.row, nil
 }
 
 // debugRequestIDCandidates returns the spellings of a request ID to look up.

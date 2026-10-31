@@ -1354,7 +1354,6 @@
       "docs_url": "/docs/cli",
       "acceptance_test": "pkg/apid/apidserver/handlers_debug_running_test.go::TestDebugRunning_IsPlanGated",
       "routes": [
-        "/dashboard/apps/{}/debug",
         "/v1/apps/{}/debug"
       ],
       "cli": [
@@ -4173,7 +4172,7 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_pgstore_test.go::TestPGHandler_DebuggerRequestAndRegressionReadPaths",
       "parent": "debug",
       "routes": [
-        "/dashboard/apps/{}/debug/requests",
+        "/dashboard/apps/{}/debug",
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
         "/v1/apps/{}/debug/requests",

@@ -57,7 +57,14 @@ type RequestTelemetryRow struct {
 	// preserveExact is set only for an authoritatively resolved scenario
 	// target. It retains per-request time/instance evidence without changing
 	// ordinary production aggregation or the bounded ring (ADR-429).
-	preserveExact    bool
+	preserveExact bool
+	// exactSample marks a request the debugger is likely to be asked about:
+	// a server error, or a request to an app with in-guest tracing. The
+	// collapse keeps the first requestTelemetryExactPerBucket of these per
+	// bucket as their own rows, so their trace ID, time and latency survive
+	// and guest spans have a row to merge into (ADR-127 amendment
+	// 2026-10-31).
+	exactSample      bool
 	FlagEvidenceJSON string
 	// ContentOutcome is how an anonymous GET body compared with the previous
 	// response for its URL (ADR-1188); empty when not observed.
@@ -373,6 +380,25 @@ func withAppAndAccount(r *http.Request, accountID, appID uuid.UUID) *http.Reques
 	ctx := context.WithValue(r.Context(), accountIDContextKey{}, accountID)
 	ctx = context.WithValue(ctx, appIDContextKey{}, appID)
 	return r.WithContext(ctx)
+}
+
+// exactRequestTelemetryKey marks a request whose telemetry row should keep
+// its own identity (the app has in-guest tracing).
+type exactRequestTelemetryKey struct{}
+
+// withExactRequestTelemetry marks r's telemetry row as an exact sample.
+func withExactRequestTelemetry(r *http.Request) *http.Request {
+	if r == nil {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), exactRequestTelemetryKey{}, true))
+}
+
+// exactRequestTelemetryFrom reports whether ctx was marked by
+// withExactRequestTelemetry.
+func exactRequestTelemetryFrom(ctx context.Context) bool {
+	exact, _ := ctx.Value(exactRequestTelemetryKey{}).(bool)
+	return exact
 }
 
 // accountIDFromContext reads the account_id stamped on ctx.

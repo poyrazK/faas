@@ -755,6 +755,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		// column DEFAULT (migration 00212).
 		RouteMetricsEnabled:     app.RouteMetricsEnabled,
 		OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
+		TracingEnabled:          app.Manifest.Tracing != nil && app.Manifest.Tracing.Enabled,
 		DeclaredRoutes:          gatewayDeclaredRoutes(app.DeclaredRoutes),
 		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag. Plumbed from apps.maintenance_mode so

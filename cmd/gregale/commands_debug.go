@@ -323,7 +323,7 @@ func cmdDebugRequestsEvidence(args []string) int {
 func cmdDebugRequestsList(args []string) int {
 	fs := newFlagSet("debug requests list", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
 	status := fs.Int("status", 0, "exact HTTP status filter (100..599)")
 	coldBoot := fs.String("cold-boot", "", "cold-start filter (true or false)")
@@ -391,7 +391,7 @@ func cmdDebugRequestsList(args []string) int {
 func cmdDebugRequestsExport(args []string) int {
 	fs := newFlagSet("debug requests export", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	format := fs.String("format", "ndjson", "export format (ndjson or csv)")
 	limit := fs.Int("limit", 10000, "max rows (1..10000)")
 	output := fs.String("output", "", "write to PATH instead of stdout (use - for stdout)")
@@ -789,7 +789,7 @@ func cmdDebugCompare(args []string) int {
 	fs := newFlagSet("debug compare", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	until := fs.String("until", "", "end of comparison window (RFC3339; default now)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	source := fs.String("source", "", "source deployment id")
 	mirror := fs.String("mirror", "", "mirror deployment id")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{

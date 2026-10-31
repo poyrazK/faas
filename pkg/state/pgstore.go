@@ -30782,6 +30782,12 @@ func (s *PgStore) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg
 	return s.appErrorsQueries().GetRequestTelemetryByAppAndIdentifier(ctx, s.pool, arg)
 }
 
+// GetRequestTelemetryByAppTraceNearest resolves a journaled public request ID
+// to the row of its trace that started nearest the journaled start.
+func (s *PgStore) GetRequestTelemetryByAppTraceNearest(ctx context.Context, arg sqlc.GetRequestTelemetryByAppTraceNearestParams) (sqlc.GetRequestTelemetryByAppTraceNearestRow, error) {
+	return s.appErrorsQueries().GetRequestTelemetryByAppTraceNearest(ctx, s.pool, arg)
+}
+
 // ListRequestTelemetryByAccountTrace backs the account-wide trace lookup.
 func (s *PgStore) ListRequestTelemetryByAccountTrace(ctx context.Context, arg sqlc.ListRequestTelemetryByAccountTraceParams) ([]sqlc.ListRequestTelemetryByAccountTraceRow, error) {
 	return s.appErrorsQueries().ListRequestTelemetryByAccountTrace(ctx, s.pool, arg)

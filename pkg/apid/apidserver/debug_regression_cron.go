@@ -34,7 +34,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -103,8 +105,12 @@ func startDebugRegressionCron(ctx context.Context, s *server, log *slog.Logger, 
 	go func() {
 		t := time.NewTicker(debugRegressionTickInterval)
 		defer t.Stop()
+		// cursor is the last app the previous pass reached, so a fleet over
+		// debugRegressionMaxApps is walked in turn rather than the same
+		// first apps every pass.
+		cursor := ""
 		if enabled() {
-			s.runRegressionOnce(ctx, log)
+			cursor = s.runRegressionOnce(ctx, log, cursor)
 		} else {
 			s.emitRegressionSkip(log)
 		}
@@ -114,7 +120,7 @@ func startDebugRegressionCron(ctx context.Context, s *server, log *slog.Logger, 
 				return
 			case <-t.C:
 				if enabled() {
-					s.runRegressionOnce(ctx, log)
+					cursor = s.runRegressionOnce(ctx, log, cursor)
 				} else {
 					s.emitRegressionSkip(log)
 				}
@@ -128,7 +134,7 @@ func startDebugRegressionCron(ctx context.Context, s *server, log *slog.Logger, 
 // the prior deployment to use as baseline, and upserts a row for
 // every (deployment, route) regression detected. Per-app errors
 // are logged + skipped; the loop never aborts on a bad app.
-func (s *server) runRegressionOnce(ctx context.Context, log *slog.Logger) {
+func (s *server) runRegressionOnce(ctx context.Context, log *slog.Logger, after string) string {
 	// Capture the pass-start timestamp at cron entry so the
 	// oldest-pass gauge measures wall-clock now() at emit time,
 	// not a frozen value from earlier in the pass.
@@ -140,13 +146,16 @@ func (s *server) runRegressionOnce(ctx context.Context, log *slog.Logger) {
 	if err != nil {
 		log.Warn("regression_cron: list apps failed", "err", err)
 		s.emitRegressionOldestPassGauge(ctx, log, lastPassAt)
-		return
+		return after
 	}
 	if len(appIDs) > debugRegressionMaxApps {
 		log.Warn("regression_cron: app cap hit",
 			"observed", len(appIDs),
 			"cap", debugRegressionMaxApps)
-		appIDs = appIDs[:debugRegressionMaxApps]
+	}
+	appIDs = regressionAppsAfter(appIDs, after, debugRegressionMaxApps)
+	if len(appIDs) > 0 {
+		after = appIDs[len(appIDs)-1].String()
 	}
 	for _, appID := range appIDs {
 		appCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -172,6 +181,27 @@ func (s *server) runRegressionOnce(ctx context.Context, log *slog.Logger) {
 	// cron loop so a stalled-loop alert fires when nothing else
 	// does.
 	s.emitRegressionOldestPassGauge(ctx, log, lastPassAt)
+	return after
+}
+
+// regressionAppsAfter orders apps by ID and returns at most limit of them,
+// starting with the first after the previous pass's last app and wrapping
+// around, so every app is walked when more than limit have telemetry.
+func regressionAppsAfter(appIDs []pgtype.UUID, after string, limit int) []pgtype.UUID {
+	sorted := slices.Clone(appIDs)
+	slices.SortFunc(sorted, func(a, b pgtype.UUID) int { return strings.Compare(a.String(), b.String()) })
+	start := 0
+	if after != "" {
+		start = sort.Search(len(sorted), func(i int) bool { return sorted[i].String() > after })
+		if start == len(sorted) {
+			start = 0
+		}
+	}
+	rotated := append(sorted[start:len(sorted):len(sorted)], sorted[:start]...)
+	if len(rotated) > limit {
+		rotated = rotated[:limit]
+	}
+	return rotated
 }
 
 // runRegressionForApp runs the per-app detector. Returns an error

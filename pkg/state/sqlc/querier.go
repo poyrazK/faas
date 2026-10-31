@@ -2050,6 +2050,13 @@ type Querier interface {
 	// the app_id tenant boundary. Prefer an exact row-id match if a future trace
 	// value happens to equal another row's UUID text.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIdentifierParams) (GetRequestTelemetryByAppAndIdentifierRow, error)
+	// Resolves a public x-faas-request-id after the request-ID journal mapped it
+	// to its trace and start time. Several requests can share one trace (a
+	// propagated traceparent, retries), so the newest row of the trace may be
+	// another request: take the row whose start (received_at minus latency) is
+	// nearest the journaled start instead. Same columns as
+	// GetRequestTelemetryByAppAndIdentifier, so callers convert the row.
+	GetRequestTelemetryByAppTraceNearest(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppTraceNearestParams) (GetRequestTelemetryByAppTraceNearestRow, error)
 	// One insight of an app, for applying its fix.
 	GetRouteInsight(ctx context.Context, db DBTX, arg GetRouteInsightParams) (GetRouteInsightRow, error)
 	// Route priorities (ADR-978). apid owns the rows; gatewayd-internal reads them.

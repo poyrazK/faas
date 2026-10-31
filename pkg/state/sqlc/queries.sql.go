@@ -27414,6 +27414,104 @@ func (q *Queries) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db 
 	return i, err
 }
 
+const getRequestTelemetryByAppTraceNearest = `-- name: GetRequestTelemetryByAppTraceNearest :one
+SELECT id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest, trace_inferred
+FROM request_telemetry
+WHERE app_id = $1
+  AND trace_id = $2::text
+  AND received_at >= $3
+  AND received_at <  $4
+ORDER BY abs(extract(epoch FROM (received_at - make_interval(secs => latency_ms / 1000.0)))
+             - extract(epoch FROM $5::timestamptz)),
+         received_at DESC
+LIMIT 1
+`
+
+type GetRequestTelemetryByAppTraceNearestParams struct {
+	AppID         pgtype.UUID
+	TraceID       string
+	ReceivedFrom  pgtype.Timestamptz
+	ReceivedUntil pgtype.Timestamptz
+	StartedAt     pgtype.Timestamptz
+}
+
+type GetRequestTelemetryByAppTraceNearestRow struct {
+	ID                  pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	Count               int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	SpansSummary        []byte
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+	TraceInferred       bool
+}
+
+// Resolves a public x-faas-request-id after the request-ID journal mapped it
+// to its trace and start time. Several requests can share one trace (a
+// propagated traceparent, retries), so the newest row of the trace may be
+// another request: take the row whose start (received_at minus latency) is
+// nearest the journaled start instead. Same columns as
+// GetRequestTelemetryByAppAndIdentifier, so callers convert the row.
+func (q *Queries) GetRequestTelemetryByAppTraceNearest(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppTraceNearestParams) (GetRequestTelemetryByAppTraceNearestRow, error) {
+	row := db.QueryRow(ctx, getRequestTelemetryByAppTraceNearest,
+		arg.AppID,
+		arg.TraceID,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.StartedAt,
+	)
+	var i GetRequestTelemetryByAppTraceNearestRow
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.Route,
+		&i.Method,
+		&i.Status,
+		&i.LatencyMs,
+		&i.Count,
+		&i.ColdBoot,
+		&i.TraceID,
+		&i.ReceivedAt,
+		&i.SpansSummary,
+		&i.WakeID,
+		&i.InstanceID,
+		&i.GuestDurationMs,
+		&i.GuestRuntime,
+		&i.GuestOutcome,
+		&i.GuestErrorClass,
+		&i.ConsumerID,
+		&i.NodeID,
+		&i.Region,
+		&i.CommitSha,
+		&i.DeploymentTag,
+		&i.DeploymentCreatedAt,
+		&i.ImageDigest,
+		&i.TraceInferred,
+	)
+	return i, err
+}
+
 const getRuntimeRelease = `-- name: GetRuntimeRelease :one
 SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE id=$1
 `
@@ -51038,7 +51136,10 @@ WHERE app_id = $1
   AND ($4::timestamptz IS NULL
        OR (received_at, id) < ($4::timestamptz,
                                $5::uuid))
-  AND ($6::text = '' OR route = $6::text)
+  -- Route labels carry their method ("GET /checkout"). A filter that is a
+  -- bare path ("/checkout") matches the path under every method.
+  AND ($6::text = '' OR route = $6::text
+       OR (left($6::text, 1) = '/' AND split_part(route, ' ', 2) = $6::text))
   -- Filters are explicit query parameters so sqlc keeps the generated
   -- params stable. The cursor stores the same values and the handler
   -- rejects a page walk when they change.
