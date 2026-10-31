@@ -57,7 +57,7 @@ func TestResourceStatusCommands(t *testing.T) {
 		api.Condition{Type: "Ready", Status: "True", Reason: "scheduled", Message: "The cron fires on schedule @daily."},
 		api.Condition{Type: "LastRunSucceeded", Status: "Unknown", Reason: "never_run", Message: "The cron has not run yet."})
 	resourceServer(t, map[string]any{
-		"/v1/postgres/databases": api.ManagedPostgresDatabaseList{Items: []api.ManagedPostgresDatabase{{ID: conditionsDatabaseID, Name: "orders"}}},
+		"/v1/postgres/databases":                                     api.ManagedPostgresDatabaseList{Items: []api.ManagedPostgresDatabase{{ID: conditionsDatabaseID, Name: "orders"}}},
 		"/v1/postgres/databases/" + conditionsDatabaseID + "/status": database,
 		"/v1/domains/shop.example.com/status":                        domain,
 		"/v1/crons/" + conditionsCronID + "/status":                  cron,
