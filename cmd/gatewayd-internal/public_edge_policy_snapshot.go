@@ -227,6 +227,11 @@ func (g *gatewaydEdgeRules) compilePublicOwnerPolicy(ctx context.Context, reader
 	if err != nil {
 		return nil, err
 	}
+	inherited, err := publicPreviewInheritedRules(ctx, reader, host, account, appID)
+	if err != nil {
+		return nil, err
+	}
+	rules = state.MergeEdgeRulesInOrder(rules, inherited)
 	bundle := &publicEdgeCompileStore{PublicHostPolicyReader: reader, rules: rules, presets: make(map[string]state.CorsPreset)}
 	compiler := &gatewaydEdgeRules{store: bundle, validate: g.validate, metrics: g.metrics}
 	rules, err = publicEnvironmentEdgeRules(ctx, reader, compiler, host, source, rules)
@@ -340,7 +345,11 @@ func publicHostAppEdgeRules(ctx context.Context, reader state.PublicHostPolicyRe
 	if err != nil {
 		return nil, err
 	}
-	return withAliasHostRules(rules, host, func(alias string) ([]state.EdgeRule, error) {
+	rules, err = withAliasHostRules(rules, host, func(alias string) ([]state.EdgeRule, error) {
 		return reader.PublicHostAppEdgeRules(ctx, alias, account, appID, routesOnly)
 	})
+	if err != nil {
+		return nil, err
+	}
+	return scopePublicHostRules(ctx, reader, appID, rules)
 }

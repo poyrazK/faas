@@ -11329,6 +11329,19 @@ paths:
       tags: [edge_rules]
       operationId: listEdgeRulesForApp
       summary: List every edge rule bound to one app.
+      parameters:
+        - name: covering
+          in: query
+          required: false
+          description: |
+            When true, also return the rules written on the account's other
+            apps with the same owner whose host pattern (anything but `@app`)
+            can cover this app's hosts. The gateway applies those to this
+            app's hosts too. Each rule carries its own `app_id`; the ETag
+            stays this app's rule set.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Edge rules for this app, ordered by priority ASC.

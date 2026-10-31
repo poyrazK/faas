@@ -47,7 +47,12 @@ attempting to access a teammate's app receives 409 `org_api_key_requires_org`.
 The first shared surface covers app detail/configuration, env and secret
 management, security/publishers, image or multipart deployment creation,
 deployment list/latest/summary/cancellation/retry, deployment/build evidence,
-and live/archive logs. The exact reviewed routes are in
+and live/archive logs, and edge rules: members who can read the app read its
+rules, history, events, stats and traces, and owners and admins create,
+change and delete them, roll them back and switch attack mode (purging cached
+responses takes the deploy permission). Edge-rule lists and CORS presets stay
+with the account that holds the app's rules; the app's dashboard page manages
+the lists its rules use. The exact reviewed routes are in
 [`routes.go`](../pkg/apid/appaccess/routes.go). Additional operations require a
 permission review before teammates can use them. Account-wide inventories remain
 creator-scoped and filter apps the caller can no longer read; select the

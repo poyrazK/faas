@@ -3739,6 +3739,16 @@ func (c *Client) ListEdgeRulesForApp(ctx context.Context, slug string) ([]EdgeRu
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules", nil, &out)
 }
 
+// ListCoveringEdgeRulesForApp is ListEdgeRulesForApp plus the rules of the
+// account's other apps whose host pattern can cover the app's hosts, which
+// the gateway applies there too (ADR-091 amendment 2026-10-31). Each rule
+// carries its own app_id. An apid that predates the parameter returns the
+// app's own rules.
+func (c *Client) ListCoveringEdgeRulesForApp(ctx context.Context, slug string) ([]EdgeRuleResponse, error) {
+	var out []EdgeRuleResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules?covering=true", nil, &out)
+}
+
 // CreateEdgeRule attaches a new rule to the slug's app. Plan-kind
 // gate (jwt|ip → 402 plan_edge_rule_kind_not_allowed) and per-app
 // quota (402 plan_limit_edge_rules) surface on this call. Action is

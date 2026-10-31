@@ -35,6 +35,12 @@ A rule applies to a request when every selector it sets matches.
 | `match_headers` | Up to 10 request headers that must be present with an exact value. Names compare case-insensitively; any value of a repeated header can match. |
 | `match` | An optional condition over more request fields, ANDed with the selectors above. |
 
+In an organization, members who can read an app read its rules, history,
+events and traces; owners and admins create, change and delete them, roll
+them back and switch attack mode, whoever created the app. Lists and CORS
+presets stay with the account that holds the app's rules; an organization
+app's dashboard page manages the lists its rules use.
+
 A rule only ever applies to hosts your account owns: another account's rule
 never runs on your traffic, even with `match_host` `*`. A host pattern other
 than `@app` covers every host it matches among the apps with the same owner
@@ -596,7 +602,11 @@ the same time.
 
 - `gregale edge rule trace` shows which rules a request would match and
   what each would do, and can compare a proposed change; see
-  [Reusable edge-rule trace scenarios](edge-rule-trace).
+  [Reusable edge-rule trace scenarios](edge-rule-trace). It includes the
+  `*` and host-pattern rules of your other apps with the same owner that
+  cover the host, as the gateway applies them; `GET
+  /v1/apps/{slug}/edge-rules?covering=true` lists them with each rule's
+  `app_id`.
 - Log mode counts what a rule would do without acting.
 - `gregale edge rule stats` shows match counts per rule for the last hour,
   day or week.
