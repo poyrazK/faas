@@ -17,7 +17,15 @@ import (
 func TestPurgedAppIncidentsStayReadable(t *testing.T) {
 	f := newFixture(t)
 	f.setState(t, state.AlertStateFiring, f.now.Add(-10*time.Minute))
-	if err := f.store.DeleteAppPermanently(context.Background(), f.rule.AppID); err != nil {
+	// Purge the way the grace sweep does: an expired tombstone, claimed.
+	ctx := context.Background()
+	if _, err := f.store.ScheduleAppDeletion(ctx, f.rule.AppID, time.Now().UTC().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.ClaimAppDeletion(ctx, f.rule.AppID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.DeleteAppPermanently(ctx, f.rule.AppID); err != nil {
 		t.Fatal(err)
 	}
 
