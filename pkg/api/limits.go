@@ -16306,6 +16306,20 @@ const (
 	DataRepairPurgeLockTimeoutMS       = 2000
 )
 
+// Resource labels (ADR-20261031100025) use Kubernetes label syntax and are the
+// same on every plan: labels hold no resources. A resource carries at most
+// LabelsPerResourceMax labels. A key is an optional DNS-subdomain prefix of at
+// most LabelKeyPrefixMax bytes, a slash, and a name of 1–LabelKeyNameMax bytes;
+// a value is 0–LabelValueMax bytes. A selector is at most LabelSelectorMaxBytes,
+// which bounds parsing and matching for one list request.
+const (
+	LabelsPerResourceMax  = 32
+	LabelKeyNameMax       = 63
+	LabelKeyPrefixMax     = 253
+	LabelValueMax         = 63
+	LabelSelectorMaxBytes = 4096
+)
+
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
 // surface. A Limits value built without the field (zero) falls back to the
 // verified cap rather than refusing every pending hostname.
