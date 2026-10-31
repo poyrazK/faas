@@ -1178,10 +1178,11 @@ func cmdAppDispatch(args []string) int {
 	if code, ok := cmdAppConditions(slug, args[1:]); ok {
 		return code
 	}
+	if code, ok := cmdAppLabels(slug, args[1:]); ok {
+		return code
+	}
 	if len(args) >= 2 {
 		switch args[1] {
-		case subLabel:
-			return cmdAppLabel(slug, args[2:])
 		case subHealth:
 			return cmdAppHealth(slug, args[2:])
 		case subChanges:

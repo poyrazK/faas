@@ -59,6 +59,16 @@ func selectedApps(ctx context.Context, client *Client, selector string) ([]api.A
 	return slices.DeleteFunc(apps, func(a api.AppResponse) bool { return !sel.Matches(a.Labels) }), nil
 }
 
+// cmdAppLabels runs `app <slug> label ...`, and reports false for any other
+// subcommand. It sits outside cmdAppDispatch's long switch, as
+// cmdAppConditions does.
+func cmdAppLabels(slug string, args []string) (int, bool) {
+	if len(args) == 0 || args[0] != subLabel {
+		return 0, false
+	}
+	return cmdAppLabel(slug, args[1:]), true
+}
+
 // cmdAppLabel runs `app <slug> label list|set|unset`.
 func cmdAppLabel(slug string, args []string) int {
 	usage := func() int {
