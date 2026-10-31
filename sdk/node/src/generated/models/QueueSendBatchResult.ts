@@ -9,7 +9,7 @@ import type { QueueSendResponse } from './QueueSendResponse.js';
  */
 export type QueueSendBatchResult = {
   /**
-   * Zero-based input position.
+   * Zero-based position of the message in the request's messages array.
    */
   index: number;
   status: 'accepted' | 'rejected' | 'not_attempted';

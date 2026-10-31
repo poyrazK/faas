@@ -116246,7 +116246,7 @@ components:
       required: [messages]
       properties:
         environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Target registered environment with an enabled scoped queue binding. Omission sends through the default environment." }
-        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional logical queue name. Required when an app has multiple enabled queue consumers." }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Logical queue that receives every message in the batch. Required when an app has multiple enabled queue consumers." }
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
@@ -116268,7 +116268,7 @@ components:
       type: object
       required: [index, status]
       properties:
-        index: { type: integer, minimum: 0, description: Zero-based input position. }
+        index: { type: integer, minimum: 0, description: "Zero-based position of the message in the request's messages array." }
         status: { type: string, enum: [accepted, rejected, not_attempted] }
         message: { $ref: '#/components/schemas/QueueSendResponse' }
         problem: { $ref: '#/components/schemas/Problem' }

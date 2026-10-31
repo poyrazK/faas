@@ -25,7 +25,7 @@ class QueueSendBatchResult:
     """
 
     index: int
-    """Zero-based input position."""
+    """Zero-based position of the message in the request's messages array."""
     status: QueueSendBatchResultStatus
     message: QueueSendResponse | Unset = UNSET
     """201 — body of a freshly-enqueued queue row."""

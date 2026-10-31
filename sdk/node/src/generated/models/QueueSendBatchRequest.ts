@@ -13,7 +13,7 @@ export type QueueSendBatchRequest = {
    */
   environment?: string;
   /**
-   * Optional logical queue name. Required when an app has multiple enabled queue consumers.
+   * Logical queue that receives every message in the batch. Required when an app has multiple enabled queue consumers.
    */
   queue_name?: string;
   /**

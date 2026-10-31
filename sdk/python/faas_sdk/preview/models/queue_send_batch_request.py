@@ -28,7 +28,8 @@ class QueueSendBatchRequest:
     """Target registered environment with an enabled scoped queue binding. Omission sends through the default
     environment."""
     queue_name: str | Unset = UNSET
-    """Optional logical queue name. Required when an app has multiple enabled queue consumers."""
+    """Logical queue that receives every message in the batch. Required when an app has multiple enabled queue
+    consumers."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
     """Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
