@@ -234,6 +234,9 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 	if !start.Before(end) {
 		return nil
 	}
+	if r.stampsUsageAtDelivery() {
+		return r.reconcileDelivered(ctx, acct, start, end)
+	}
 	// Pending delivery excludes minute rows before BillingFrom, but stamps
 	// the resulting event at the start of its hour. Keep the local boundary
 	// exact while including that first event in the provider-side query.
@@ -263,6 +266,41 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 	}
 	drift := local - pushed
 	r.emit(acct.ID, local, pushed, drift)
+	return nil
+}
+
+// stampsUsageAtDelivery reports whether the provider totals usage by the time
+// meterd sent it (Polar, ADR-20261028101500).
+func (r *Reconciler) stampsUsageAtDelivery() bool {
+	stamper, ok := r.Provider.(billing.DeliveryTimeStamper)
+	return ok && stamper.StampsUsageAtDelivery()
+}
+
+// reconcileDelivered compares what meterd delivered in the window, from its
+// delivery ledger, with what the provider counted in it. Both are bucketed by
+// delivery time. Comparing the provider's total with local usage by the hour
+// it was used showed the delivery lag, a new account's first day and every
+// meterd catch-up as several percent of drift (bug hunt 2026-10-28 B22).
+// Usage meterd has not delivered yet is the delivery alerts' concern
+// (FaasMeterdUsageDeliveryStalled, FaasMeterdBillingPushFailing).
+func (r *Reconciler) reconcileDelivered(ctx context.Context, acct state.Account, start, end time.Time) error {
+	ledger, ok := r.Store.(state.BillingUsageDeliveredSummer)
+	if !ok {
+		return &reconcileError{reason: "store", err: errors.New("store cannot sum delivered usage")}
+	}
+	local, err := ledger.SumBillingUsageDelivered(ctx, r.ProviderName, acct.ID, start, end)
+	if err != nil {
+		return &reconcileError{reason: "usage", err: fmt.Errorf("delivered usage: %w", err)}
+	}
+	pushed, err := r.Provider.ReconcileUsage(ctx, acct, start, end)
+	if err != nil {
+		if errors.Is(err, billing.ErrNotImplemented) {
+			r.supported.WithLabelValues(r.ProviderName).Set(0)
+			return &reconcileError{reason: "unsupported", err: fmt.Errorf("provider reconcile: %w", err)}
+		}
+		return &reconcileError{reason: "provider", err: fmt.Errorf("provider reconcile: %w", err)}
+	}
+	r.emit(acct.ID, local, pushed, local-pushed)
 	return nil
 }
 
