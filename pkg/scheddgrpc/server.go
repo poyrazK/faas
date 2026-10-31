@@ -1443,6 +1443,17 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 				}
 			}
 		}
+		// ADR 20261030100950: the node's CPU pressure readings, kept only
+		// when vmmd sent both.
+		if p, b := msg.GetTenantCpuPressureSomeAvg10(), msg.GetHostCpuBusyPercent(); p != nil && b != nil {
+			if provider, ok := s.engine.(interface {
+				CPUPressureSink() sched.CPUPressureSink
+			}); ok {
+				if sink := provider.CPUPressureSink(); sink != nil {
+					sink(report.NodeID, time.Now(), sched.NodeCPUPressure{SomeAvg10: p.GetValue(), BusyPercent: b.GetValue()})
+				}
+			}
+		}
 		// Only separately signed process inventories can drive destructive
 		// reconciliation. Legacy capacity signatures do not cover metrics IDs.
 		if observer, ok := s.engine.(interface {

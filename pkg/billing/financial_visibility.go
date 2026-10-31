@@ -161,7 +161,22 @@ func financialMeterCosts(account string, start, end, asOf, now, retained time.Ti
 		out.Coverage.Reasons = append(out.Coverage.Reasons, "legacy_currency_prices")
 	}
 	if len(prices) > 0 {
-		cost, err := financial.CostContracts(account, start, end, prices, entries)
+		var cost financial.ContractCosts
+		var err error
+		if meter == string(state.BillingMeterCompute) {
+			// The allowance the provider pusher bills against
+			// (ADR-20261030093512): each plan's for its share of the month.
+			var live []state.FinancialPriceSnapshot
+			for _, p := range byVersion {
+				if p.DeliveryMode == "live" {
+					live = append(live, p)
+				}
+			}
+			grant := state.MonthComputeIncludedMBSeconds("", live, asOf)
+			cost, err = financial.CostContractsWithGrant(account, start, end, prices, entries, grant)
+		} else {
+			cost, err = financial.CostContracts(account, start, end, prices, entries)
+		}
 		if err != nil {
 			return out, err
 		}

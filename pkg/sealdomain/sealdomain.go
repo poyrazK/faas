@@ -110,6 +110,9 @@ var registry = []Spec{
 		cols("managed_postgres_cutover_credentials", "ciphertext"),
 		cols("deployment_release_secret_snapshots", "values_json"),
 		cols("project_release_secret_bundles", "values_json"),
+		// Runtime-domain copies of the sidecar env sealed inside
+		// deployments.sidecars, which stays as apid wrote it.
+		cols("deployment_sidecar_env_reseals", "ciphertext"),
 		// ADR-733: a crash capture's per-capture age key. vmmd seals every
 		// capture at the source (schedd always asks it to), to the runtime
 		// domain once staged, and opens the key to restore a fork. imaged's
