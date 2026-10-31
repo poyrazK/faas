@@ -5647,7 +5647,38 @@ Show a domain&#39;s cert details
 
 ### domain status
 
-Show durable TLS status for all domains
+Show TLS status for all domains, or one domain&#39;s conditions
+
+`gregale domain status [<domain>]`
+
+Examples:
+
+```sh
+gregale domain status
+gregale domain status shop.example.com
+```
+
+With a domain, prints its Ready, Verified and CertificateReady conditions (preview).
+
+### domain wait
+
+Wait until a condition holds (preview)
+
+`gregale domain wait [--for <CONDITION>] [--timeout <DURATION>] [--poll-interval <DURATION>] <domain>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--for <CONDITION>` | Ready, Verified or CertificateReady; TYPE or TYPE=True\|False\|Unknown (default Ready) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m) |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+
+Examples:
+
+```sh
+gregale domain wait shop.example.com
+```
+
+Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found.
 
 ### domain doctor
 
@@ -7783,6 +7814,40 @@ gregale postgres create orders --region us-east-2 --class development --scale-to
 Show one managed PostgreSQL database
 
 `gregale postgres get <database>`
+
+### postgres status
+
+Show the database&#39;s conditions (preview)
+
+`gregale postgres status <database>`
+
+Examples:
+
+```sh
+gregale postgres status orders
+```
+
+Ready, Progressing and Degraded, from its state and cached health.
+
+### postgres wait
+
+Wait until a condition holds (preview)
+
+`gregale postgres wait [--for <CONDITION>] [--timeout <DURATION>] [--poll-interval <DURATION>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--for <CONDITION>` | Ready, Progressing or Degraded; TYPE or TYPE=True\|False\|Unknown (default Ready) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m) |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+
+Examples:
+
+```sh
+gregale postgres wait orders
+```
+
+Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found.
 
 ### postgres delete
 
@@ -10147,6 +10212,38 @@ gregale cron create --app my-api --in 30m --path /reminders
 
 With --at or --in, add schedules one request instead of a recurring cron and takes the flags of `gregale delayed-task add` (--payload, --method, --header, retries); --schedule and the command flags belong to recurring crons.
 
+### cron status
+
+Show the cron&#39;s Ready and LastRunSucceeded conditions (preview)
+
+`gregale cron status <id>`
+
+Examples:
+
+```sh
+gregale cron status CRON_ID
+```
+
+### cron wait
+
+Wait until a condition holds (preview)
+
+`gregale cron wait [--for <CONDITION>] [--timeout <DURATION>] [--poll-interval <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--for <CONDITION>` | Ready or LastRunSucceeded; TYPE or TYPE=True\|False\|Unknown (default Ready) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m) |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+
+Examples:
+
+```sh
+gregale cron wait CRON_ID
+```
+
+Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found.
+
 ### cron get
 
 Show one cron rule
@@ -10734,11 +10831,12 @@ Uses the saved Job by default.
 
 Read one exact or latest Job run summary
 
-`gregale job status [--check] [<name>] [<run-id|latest>]`
+`gregale job status [--check] [--conditions] [<name>] [<run-id|latest>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--check` | exit 0 only when the recorded run status is succeeded |  |
+| `--conditions` | print the run&#39;s Succeeded and Progressing conditions instead (preview) |  |
 
 Examples:
 
@@ -10776,10 +10874,11 @@ gregale job occurrences --interactive
 
 Follow a Job run (saved Job and latest by default)
 
-`gregale job wait [--interactive] [--out-dir <DIR>] [--include <GLOB>] [--exclude <GLOB>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<name>] [<run-id|latest>]`
+`gregale job wait [--for <CONDITION>] [--interactive] [--out-dir <DIR>] [--include <GLOB>] [--exclude <GLOB>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<name>] [<run-id|latest>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--for <CONDITION>` | wait for a run condition instead (Succeeded, Progressing; TYPE=True\|False\|Unknown); exits 0 holds, 1 terminal, 3 timeout, 4 not found (preview) |  |
 | `--interactive` | choose a Job and run |  |
 | `--out-dir <DIR>` | collect artifacts after success, verifying matching existing files; non-interactive target only |  |
 | `--include <GLOB>` | repeatable artifact-name glob for collection; requires --out-dir; quote patterns |  |
