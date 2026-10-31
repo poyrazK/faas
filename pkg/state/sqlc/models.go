@@ -3039,6 +3039,12 @@ type CustomDomain struct {
 	EnvironmentID                 pgtype.UUID
 }
 
+type CustomDomainTlsAllowedHost struct {
+	WildcardDomain interface{}
+	Name           interface{}
+	CreatedAt      pgtype.Timestamptz
+}
+
 type CustomDomainTlsHost struct {
 	Host           interface{}
 	WildcardDomain interface{}
