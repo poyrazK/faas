@@ -140,3 +140,45 @@ off. A full clone still could not happen for any project:
   already resolve only to production, and refusing stage-origin work (async
   routes, durable entities) would make a full-clone stage behave differently
   from a partial one.
+
+## Amendment 1 (2026-10-31): blockers found before admission opens
+
+A code audit of fully copyable stages (2026-10-30) found gaps that would bite
+once admission opens. All are fixed together; none changes what a clone copies.
+
+- **The inventory counts only rows a clone would copy.** A registry entry may
+  name `live` conditions on the probed table itself: a column that must be
+  NULL (`retired_at`, `revoked_at`, `deleted_at`), a state it must not hold
+  (`deleted`), or a scope that must be the source environment's. Deleted
+  buckets, retired queue bindings, revoked credentials and other
+  environments' rows no longer block a clone forever. The probe function
+  validates each condition, and the registry loader checks every named column
+  exists on the table.
+- **Admission decides on the stored switches.** Both switches have no
+  environment override, so a missing row is off. The capture transaction
+  share-locks the two `runtime_config_entries` rows and refuses unless both
+  are stored as true, and the switch-off guard reads the stored admission
+  switch rather than one replica's cache. Turning admission off therefore
+  waits for every admission already deciding on it, and the unfinished-clone
+  count that follows sees each operation it admitted. A replica whose cache
+  still says open cannot admit.
+- **Refusals name their cause.** A source workload without a live deployment,
+  a release-pinned deployment, shared environment secrets, legacy stage queue
+  bindings and unscoped work policies answer 409
+  `environment_full_clone_unavailable` with the field at fault. They no longer
+  answer 404 for an existing environment or a 503 that never clears.
+- **A failed or refused restore ends the clone at once** with
+  `target_database_failed` (the failed target is no longer read as a
+  conflict), rather than retrying to the deadline while restored copies bill.
+- **Every host that reaches a clone target's deployment honours the readiness
+  gate**, including deployment previews and aliases.
+- **An unfinished clone target cannot be protected**: the protection update
+  refuses it in the same statement, because publication refuses a protected
+  target and compensation would then delete it.
+- **A healthy step ends a failure streak**: a release keeps at most the
+  lease's attempt count, never below one (zero with no lease still means an
+  unleased legacy writer), so normal waits no longer push later failures to
+  the five-minute backoff.
+- Deleting a published full-clone stage removes the clone's restored
+  databases (a project with stages cannot be deleted; #6037). The dedicated
+  clone worker configures durable entities as the in-process coordinator does.
