@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -29,7 +30,29 @@ func (s *server) configureAgents(pool *pgxpool.Pool) {
 	if pool != nil {
 		h.Store = agentstore.New(pool)
 	}
+	s.configureAgentCallbacks(h)
 	s.agentAPI = h
+}
+
+// configureAgentCallbacks wires ADR-20261030125501 §3's callback URLs. The
+// signing key derives from the session key, which every apid replica shares;
+// a callback's account must have the agents capability when it posts.
+func (s *server) configureAgentCallbacks(h *agents.Handler) {
+	if inbox, ok := s.store.(agents.CallbackInbox); ok {
+		h.Inbox = inbox
+	}
+	if s.sessions != nil {
+		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
+			h.Callbacks = signer
+		} else {
+			s.log.Warn("agent callbacks disabled", "err", err)
+		}
+	}
+	h.CallbackBaseURL = "https://api." + strings.TrimPrefix(strings.TrimSpace(s.platformHost()), ".")
+	h.AgentsEnabled = func(ctx context.Context, accountID string) bool {
+		acct, err := s.store.AccountByID(ctx, accountID)
+		return err == nil && s.agentStepsAllowed(acct)
+	}
 }
 
 // agentsCapability is the product capability of the agent API, the
@@ -133,6 +156,24 @@ func (s *server) getAgentRunOutputs(w http.ResponseWriter, r *http.Request, acct
 	if h, ok := s.agentHandlers(w); ok {
 		h.GetRunOutputs(w, r, acct)
 	}
+}
+
+func (s *server) createAgentCallback(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if s.agentAPI == nil {
+		api.WriteProblem(w, api.ErrCapacity("the agent API is unavailable on this control-plane host"))
+		return
+	}
+	s.agentAPI.CreateCallback(w, r, acct)
+}
+
+// receiveAgentCallback serves the token-only callback route; it needs the
+// realtime store, not the agent store.
+func (s *server) receiveAgentCallback(w http.ResponseWriter, r *http.Request) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.ReceiveCallback(w, r)
 }
 
 func (s *server) cancelAgentRun(w http.ResponseWriter, r *http.Request, acct state.Account) {

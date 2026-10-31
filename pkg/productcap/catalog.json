@@ -75,6 +75,7 @@
       "docs_url": "/docs/adr/20261027090010-agent-runs-and-agent-step",
       "acceptance_test": "pkg/e2etest/agentchain/agentchain_metal_test.go::TestMetalAgentPRTriage",
       "routes": [
+        "/v1/agent-callbacks",
         "/v1/agent-runs",
         "/v1/agents"
       ],
