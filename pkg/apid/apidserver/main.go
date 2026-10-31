@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/certexpiry"
 	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
@@ -1664,6 +1665,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
 	srv.seedEnvPlatformFlags(deps.getenv) // ADR-1700 boot fallbacks for the gates above
 	registerPlatformFlagRetireBy(ops.Registry())
+
+	// Bug hunt 32 M6: the FaasTLSCertExpiry* alerts read edge certificate
+	// expiries; the domain doctor records them, nothing else can see them.
+	if expiryStore, ok := srv.store.(state.CustomDomainCertExpiryStore); ok {
+		ops.Registry().MustRegister(certexpiry.New(expiryStore, time.Now, srv.log))
+	}
 
 	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
 	srv.datadogIntegrationEnabled = deps.getenv("FAAS_DATADOG_INTEGRATION_ENABLED") == "1"
