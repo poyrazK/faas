@@ -42,7 +42,7 @@ func deploymentCleanupFixture(t *testing.T) (*state.PgStore, *pgxpool.Pool, stat
 }
 
 func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
-	for _, fault := range []string{"none", "write", "foreign_key", "submission_receipt", "release_env", "release_secrets", "soft", "partition", "drain_plan", "stale", "artifact", "sidecar", "sidecar_env_reseal", "runtime_owner", "missing_workload", "other_capture"} {
+	for _, fault := range []string{"none", "write", "foreign_key", "submission_receipt", "release_env", "release_secrets", "soft", "partition", "drain_plan", "stale", "artifact", "sidecar", "sidecar_env_reseal", "release_gate_probe", "runtime_owner", "missing_workload", "other_capture"} {
 		t.Run(fault, func(t *testing.T) {
 			s, pool, l, native := deploymentCleanupFixture(t)
 			id := native.Plan.Workloads[0].TargetDeploymentID
@@ -81,6 +81,13 @@ func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
 			case "sidecar_env_reseal":
 				// A runtime-domain copy (ADR-20261022111812) is not a copied sidecar: it blocks.
 				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_sidecar_env_reseals(deployment_id,sidecar_name,env_key,source_sha256,kid,ciphertext) VALUES($1,'agent','TOKEN',repeat('a',64),'age1'||repeat('q',58),'\\x01')", id)
+			case "release_gate_probe":
+				// A release gate's probe evidence (#6136) is the deployment's history: it blocks.
+				_, err = pool.Exec(t.Context(), `WITH gate AS (
+ INSERT INTO app_release_gates(id,account_id,app_id,name,kind,metric_name,comparison,max_change_percent,min_samples,created_by)
+ SELECT gen_random_uuid(),a.account_id,a.id,'probe','metric_change','error_rate','above',10,1,'retained' FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$1
+ RETURNING id,app_id)
+INSERT INTO release_gate_probe_results(gate_id,app_id,deployment_id,window_start,requests,failures) SELECT id,app_id,$1,date_trunc('minute',now()),1,0 FROM gate`, id)
 			case "runtime_owner":
 				_, err = pool.Exec(t.Context(), "UPDATE deployment_runtime_environment_owners SET environment_id=$2 WHERE deployment_id=$1", id, uuid.NewString())
 			case "missing_workload":

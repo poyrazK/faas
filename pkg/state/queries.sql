@@ -21532,6 +21532,7 @@ SELECT (jsonb_build_object(
     'project_environment_queue_runtime_sets_deployment_id_fkey', (SELECT count(*) FROM project_environment_queue_runtime_sets WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_environment_workload_deployment_spec_deployment_id_fkey', (SELECT count(*) FROM project_environment_workload_deployment_specs WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_release_members_deployment_id_fkey', (SELECT count(*) FROM project_release_members WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'release_gate_probe_results_deployment_id_fkey', (SELECT count(*) FROM release_gate_probe_results WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'route_check_history_deployment_id_fkey', (SELECT count(*) FROM route_check_history WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'route_health_history_deployment_id_fkey', (SELECT count(*) FROM route_health_history WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'route_health_notification_state_deployment_id_fkey', (SELECT count(*) FROM route_health_notification_state WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
