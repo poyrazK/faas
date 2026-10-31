@@ -1514,6 +1514,36 @@ returning id, account_id, app_id, source, type, filter, enabled,
 delete from event_subscriptions
 where id = $1 and account_id = $2 and app_id = $3;
 
+-- name: SetEventSubscriptionEnabled :execrows
+-- ADR-20261031130000: a deploy disables the subscriptions its manifest no
+-- longer declares; rolling the deploy back enables them again.
+update event_subscriptions set enabled = sqlc.arg(enabled)::boolean, updated_at = now()
+where id = sqlc.arg(id)::uuid and account_id = sqlc.arg(account_id)::uuid
+  and app_id = sqlc.arg(app_id)::uuid;
+
+-- name: CountEnabledEventSubscriptionsForQuota :one
+-- ADR-20261031130000: the enabled subscriptions of one app and of every app
+-- sharing its billing subject (the cron quota subject).
+with target as (
+  select (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) as subject
+  from apps a left join orgs o on o.id = a.org_id
+  where a.id = sqlc.arg(app_id)::uuid
+)
+select (count(*) filter (where s.app_id = sqlc.arg(app_id)::uuid))::int as app_count,
+       count(*)::int as account_count
+from target t
+join apps a on (a.account_id = t.subject or a.org_id = t.subject) and a.status <> 'deleted'
+left join orgs o on o.id = a.org_id
+join event_subscriptions s on s.app_id = a.id and s.enabled
+where (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) = t.subject;
+
+-- name: EventRoutingSubscriptionEnabled :one
+-- ADR-20261031130000: routing admits a recipient only while its subscription
+-- is still enabled.
+select enabled from event_subscriptions
+where id = sqlc.arg(id)::uuid and account_id = sqlc.arg(account_id)::uuid
+  and app_id = sqlc.arg(app_id)::uuid;
+
 -- name: ListEventsByWakeID :many
 -- issue #517 / PR-C / ADR-064 — wake-timeline read-side query.
 -- Filters on the jsonb expression index events_wake_id_idx

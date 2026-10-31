@@ -81,6 +81,21 @@ type eventAdmissionPlan struct {
 	reaccepted bool
 }
 
+// unsubscribe settles a recipient whose subscription was disabled or removed
+// after the event was accepted as filtered: it is not delivered and not
+// retried (ADR-20261031130000). It carries no filter reason, because the
+// routing history's filter_reason column admits none for it.
+func (p *eventAdmissionPlan) unsubscribe() {
+	p.matched = false
+}
+
+// eventAdmissionChecksSubscription reports whether admission must confirm the
+// recipient's subscription is still enabled: an application subscription
+// matched by this event, with no delivery already created for it.
+func eventAdmissionChecksSubscription(p eventAdmissionPlan) bool {
+	return p.matched && !p.prior && isEventSubscriptionUUID(p.recipient.ID)
+}
+
 func routingRecipient(receipt *PublishedEventWork, claim PublishedEventRoutingClaim) (PublishedEventRecipient, error) {
 	r, err := capturedRoutingRecipient(receipt, claim)
 	if err == nil && (r.ObjectNotification != nil || len(r.Workflow) != 0) {

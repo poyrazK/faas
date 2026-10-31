@@ -32,6 +32,11 @@ func (s *server) stageSourceDeploymentManifest(r *http.Request, acct state.Accou
 	// Never fall back to early cron writes if another deploy supersedes the
 	// prepared intent between preparation and manifest ingestion.
 	ctx = context.WithValue(ctx, sourceManifestSkipCronsKey{}, true)
+	// A production deploy's manifest is the app's whole set of event
+	// subscriptions (ADR-20261031130000); a stage deploy only adds.
+	if applyTriggers && m != nil && (rollout.Scope == "" || rollout.Scope == state.DefaultEnvScope) {
+		ctx = context.WithValue(ctx, sourceManifestReconcileEventsKey{}, true)
+	}
 	staged, problem := s.applySourceRefManifest(ctx, acct, app, m, rollout.Scope, applyTriggers)
 	staged.cronIntent = intent
 	return staged, problem
@@ -45,4 +50,13 @@ func (s *server) cancelSourceManifestCrons(ctx context.Context, staged sourceRef
 	r.Operation = "cancel"
 	_, err := s.store.(state.DeploymentCronStagingStore).ApplyDeploymentCronStaging(ctx, staged.appID, state.DeploymentCronStagingParams{AccountID: staged.accountID, Request: r})
 	return err
+}
+
+// sourceManifestReconcileEventsKey marks a deploy whose manifest replaces the
+// app's event subscriptions (ADR-20261031130000).
+type sourceManifestReconcileEventsKey struct{}
+
+func sourceManifestReconcilesEvents(ctx context.Context) bool {
+	reconcile, _ := ctx.Value(sourceManifestReconcileEventsKey{}).(bool)
+	return reconcile
 }

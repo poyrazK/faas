@@ -10484,6 +10484,35 @@ func (q *Queries) CountDeploymentCrons(ctx context.Context, db DBTX, arg CountDe
 	return i, err
 }
 
+const countEnabledEventSubscriptionsForQuota = `-- name: CountEnabledEventSubscriptionsForQuota :one
+with target as (
+  select (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) as subject
+  from apps a left join orgs o on o.id = a.org_id
+  where a.id = $1::uuid
+)
+select (count(*) filter (where s.app_id = $1::uuid))::int as app_count,
+       count(*)::int as account_count
+from target t
+join apps a on (a.account_id = t.subject or a.org_id = t.subject) and a.status <> 'deleted'
+left join orgs o on o.id = a.org_id
+join event_subscriptions s on s.app_id = a.id and s.enabled
+where (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) = t.subject
+`
+
+type CountEnabledEventSubscriptionsForQuotaRow struct {
+	AppCount     int32
+	AccountCount int32
+}
+
+// ADR-20261031130000: the enabled subscriptions of one app and of every app
+// sharing its billing subject (the cron quota subject).
+func (q *Queries) CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error) {
+	row := db.QueryRow(ctx, countEnabledEventSubscriptionsForQuota, appID)
+	var i CountEnabledEventSubscriptionsForQuotaRow
+	err := row.Scan(&i.AppCount, &i.AccountCount)
+	return i, err
+}
+
 const countEnvironmentQueueProducerDepth = `-- name: CountEnvironmentQueueProducerDepth :one
 WITH owned AS (
     SELECT invocation_id AS id FROM invocation_environment_queue_admissions
@@ -18156,6 +18185,27 @@ func (q *Queries) EventConsumerProcessingHealth(ctx context.Context, db DBTX, ar
 		&i.AcknowledgmentLatencyMaxSeconds,
 	)
 	return i, err
+}
+
+const eventRoutingSubscriptionEnabled = `-- name: EventRoutingSubscriptionEnabled :one
+select enabled from event_subscriptions
+where id = $1::uuid and account_id = $2::uuid
+  and app_id = $3::uuid
+`
+
+type EventRoutingSubscriptionEnabledParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261031130000: routing admits a recipient only while its subscription
+// is still enabled.
+func (q *Queries) EventRoutingSubscriptionEnabled(ctx context.Context, db DBTX, arg EventRoutingSubscriptionEnabledParams) (bool, error) {
+	row := db.QueryRow(ctx, eventRoutingSubscriptionEnabled, arg.ID, arg.AccountID, arg.AppID)
+	var enabled bool
+	err := row.Scan(&enabled)
+	return enabled, err
 }
 
 const exclusiveWorkAppScope = `-- name: ExclusiveWorkAppScope :one
@@ -98904,6 +98954,34 @@ type SetEnvironmentWorkloadServingTrafficParams struct {
 
 func (q *Queries) SetEnvironmentWorkloadServingTraffic(ctx context.Context, db DBTX, arg SetEnvironmentWorkloadServingTrafficParams) (int64, error) {
 	result, err := db.Exec(ctx, setEnvironmentWorkloadServingTraffic, arg.TrafficPercent, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setEventSubscriptionEnabled = `-- name: SetEventSubscriptionEnabled :execrows
+update event_subscriptions set enabled = $1::boolean, updated_at = now()
+where id = $2::uuid and account_id = $3::uuid
+  and app_id = $4::uuid
+`
+
+type SetEventSubscriptionEnabledParams struct {
+	Enabled   bool
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261031130000: a deploy disables the subscriptions its manifest no
+// longer declares; rolling the deploy back enables them again.
+func (q *Queries) SetEventSubscriptionEnabled(ctx context.Context, db DBTX, arg SetEventSubscriptionEnabledParams) (int64, error) {
+	result, err := db.Exec(ctx, setEventSubscriptionEnabled,
+		arg.Enabled,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+	)
 	if err != nil {
 		return 0, err
 	}
