@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 )
 
 // agentRunFake adds the agent run capability to the package's fake VMM.
@@ -32,6 +33,9 @@ type agentRunFake struct {
 	destroyed []string
 	cancelled bool
 	captures  []fcvm.AgentRunCapture
+	// usage and runErr are what RunAgent reports.
+	usage  *fcvm.AgentRunUsage
+	runErr error
 }
 
 func (f *agentRunFake) CaptureAgentRunSnapshot(_ context.Context, c fcvm.AgentRunCapture) (*fcvm.Snapshot, fcvm.SnapshotInfo, error) {
@@ -50,14 +54,17 @@ func (f *agentRunFake) WakeAgentRun(_ context.Context, req fcvm.AgentRunWakeRequ
 	return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance, Networkless: true}, Method: fcvm.WakeColdBoot}, nil
 }
 
-func (f *agentRunFake) RunAgent(ctx context.Context, instance string, req agentrunproto.Request, receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, error) {
+func (f *agentRunFake) RunAgent(ctx context.Context, instance string, req agentrunproto.Request, receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, *fcvm.AgentRunUsage, error) {
 	defer func() {
 		f.mu.Lock()
 		f.destroyed = append(f.destroyed, instance)
 		f.mu.Unlock()
 	}()
+	if f.runErr != nil {
+		return agentrunproto.Result{}, f.usage, f.runErr
+	}
 	if err := receive(ctx, "stdout", []byte("ran "+req.Command[0])); err != nil {
-		return agentrunproto.Result{}, err
+		return agentrunproto.Result{}, f.usage, err
 	}
 	if req.Command[0] == "wait-for-cancel" {
 		select {
@@ -65,12 +72,12 @@ func (f *agentRunFake) RunAgent(ctx context.Context, instance string, req agentr
 			f.mu.Lock()
 			f.cancelled = true
 			f.mu.Unlock()
-			return agentrunproto.Result{Status: agentrunproto.StatusCancelled, ExitCode: 143}, nil
+			return agentrunproto.Result{Status: agentrunproto.StatusCancelled, ExitCode: 143}, f.usage, nil
 		case <-time.After(5 * time.Second):
-			return agentrunproto.Result{Status: agentrunproto.StatusTimedOut, ExitCode: 124}, nil
+			return agentrunproto.Result{Status: agentrunproto.StatusTimedOut, ExitCode: 124}, f.usage, nil
 		}
 	}
-	return agentrunproto.Result{Status: agentrunproto.StatusSucceeded, Result: json.RawMessage(`{"ok":true}`)}, nil
+	return agentrunproto.Result{Status: agentrunproto.StatusSucceeded, Result: json.RawMessage(`{"ok":true}`)}, f.usage, nil
 }
 
 func newAgentRunServer(t *testing.T, fake *agentRunFake, enabled bool) vmmdpb.VmmdClient {
@@ -357,5 +364,44 @@ func TestCaptureAgentSnapshot(t *testing.T) {
 	}
 	if len(fake.captures) != 1 || fake.captures[0].Wake.AccountID == "" || fake.captures[0].Wake.MemSizeMiB != 1024 {
 		t.Fatalf("capture request %+v", fake.captures)
+	}
+}
+
+// The run's usage frame precedes its result, and a failed run still sends it
+// before the error ends the stream (ADR-20261027090011).
+func TestRunAgentSendsUsageBeforeTheEnd(t *testing.T) {
+	usage := &fcvm.AgentRunUsage{Method: 1, Samples: 9, ExpectedSamples: 10, MeasuredMillis: 10_000, PausedMillis: 4_000,
+		PrivateMBMillis: 3_000_000, UnpausedPrivateMBMillis: 1_800_000, BillableMBMillis: 1_848_000, PeakPrivateMB: 410, ColdBoot: true}
+	want := &vmmdpb.AgentRunUsage{Method: 1, Samples: 9, ExpectedSamples: 10, MeasuredMs: 10_000, PausedMs: 4_000,
+		PrivateMbMs: 3_000_000, UnpausedPrivateMbMs: 1_800_000, BillableMbMs: 1_848_000, PeakPrivateMb: 410, ColdBoot: true}
+	for _, tc := range []struct {
+		name   string
+		runErr error
+	}{{name: "succeeded"}, {name: "exchange failed", runErr: errors.New("vsock closed")}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &agentRunFake{fakeVMM: &fakeVMM{}, usage: usage, runErr: tc.runErr}
+			stream, err := newAgentRunServer(t, fake, true).RunAgent(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := stream.Send(agentRunStart(t, "codex")); err != nil {
+				t.Fatal(err)
+			}
+			_ = stream.CloseSend()
+			events, err := collect(t, stream)
+			if (tc.runErr != nil) != (err != nil) {
+				t.Fatalf("stream ended with %v", err)
+			}
+			last := len(events) - 1
+			if tc.runErr == nil {
+				last--
+				if events[len(events)-1].GetResult() == nil {
+					t.Fatalf("the last frame is not the result: %v", events)
+				}
+			}
+			if got := events[last].GetUsage(); !proto.Equal(got, want) {
+				t.Fatalf("usage frame %v, want %v", got, want)
+			}
+		})
 	}
 }

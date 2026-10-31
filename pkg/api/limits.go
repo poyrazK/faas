@@ -9323,6 +9323,14 @@ const (
 	// AgentWaitPauseAfterMaxMillis bounds the model-wait pause delay a run
 	// spec may carry (ADR-20261027090012 §1).
 	AgentWaitPauseAfterMaxMillis = 60_000
+	// AgentRunUsageFloorMB is the private memory an unpaused second of an
+	// agent run counts at when it uses less (ADR-20261027090011 floor,
+	// proposed; open questions 2 and 3). vmmd's usage record applies it to
+	// billable_mb_ms; nothing bills that yet (rollout step 2).
+	AgentRunUsageFloorMB = 256
+	// AgentRunUsageSampleMillis is how often vmmd samples an agent run VM's
+	// private memory (ADR-20261027090011 Measurement).
+	AgentRunUsageSampleMillis = 1000
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2

@@ -28877,6 +28877,43 @@ COMMENT ON TABLE public.agent_run_outputs IS 'ADR-20261027090010 agent run outpu
 
 
 --
+-- Name: agent_run_usage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_usage (
+    run_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    method smallint NOT NULL,
+    samples integer NOT NULL,
+    expected_samples integer NOT NULL,
+    measured_ms bigint NOT NULL,
+    paused_ms bigint NOT NULL,
+    private_mb_ms bigint NOT NULL,
+    unpaused_private_mb_ms bigint NOT NULL,
+    billable_mb_ms bigint NOT NULL,
+    peak_private_mb bigint NOT NULL,
+    cold_boot boolean NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_run_usage_billable_mb_ms_check CHECK ((billable_mb_ms >= 0)),
+    CONSTRAINT agent_run_usage_check CHECK ((expected_samples >= samples)),
+    CONSTRAINT agent_run_usage_check1 CHECK (((paused_ms >= 0) AND (paused_ms <= measured_ms))),
+    CONSTRAINT agent_run_usage_check2 CHECK (((unpaused_private_mb_ms >= 0) AND (unpaused_private_mb_ms <= private_mb_ms))),
+    CONSTRAINT agent_run_usage_measured_ms_check CHECK ((measured_ms >= 0)),
+    CONSTRAINT agent_run_usage_method_check CHECK ((method >= 1)),
+    CONSTRAINT agent_run_usage_peak_private_mb_check CHECK ((peak_private_mb >= 0)),
+    CONSTRAINT agent_run_usage_private_mb_ms_check CHECK ((private_mb_ms >= 0)),
+    CONSTRAINT agent_run_usage_samples_check CHECK ((samples >= 0))
+);
+
+
+--
+-- Name: TABLE agent_run_usage; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_usage IS 'ADR-20261027090011 measured private memory of agent run VMs, written by agentd from vmmd''s usage frame; not billed yet.';
+
+
+--
 -- Name: agent_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56926,6 +56963,14 @@ ALTER TABLE ONLY public.agent_run_outputs
 
 
 --
+-- Name: agent_run_usage agent_run_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_usage
+    ADD CONSTRAINT agent_run_usage_pkey PRIMARY KEY (run_id);
+
+
+--
 -- Name: agent_runs agent_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69369,6 +69414,13 @@ CREATE INDEX agent_run_ai_reservations_run_idx ON public.agent_run_ai_reservatio
 --
 
 CREATE INDEX agent_run_outputs_account_idx ON public.agent_run_outputs USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: agent_run_usage_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_run_usage_account_idx ON public.agent_run_usage USING btree (account_id, recorded_at DESC);
 
 
 --
@@ -86726,6 +86778,22 @@ ALTER TABLE ONLY public.agent_run_outputs
 
 ALTER TABLE ONLY public.agent_run_outputs
     ADD CONSTRAINT agent_run_outputs_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_usage agent_run_usage_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_usage
+    ADD CONSTRAINT agent_run_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_usage agent_run_usage_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_usage
+    ADD CONSTRAINT agent_run_usage_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
 
 
 --
