@@ -49,6 +49,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`api`](#api) | Manage your API: routes, OpenAPI spec, consumers and tenants |
 | [`flag`](#flag) | Roll out feature flags to selected customers |
+| [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
 | [`bucket`](#bucket) | Manage object storage buckets |
 | [`pipeline`](#pipeline) | Sync PostgreSQL sources into read-only mirrors |
 | [`data-api`](#data-api) | Generate an API from a PostgreSQL schema |
@@ -7740,6 +7741,338 @@ Promote a targeting rule rollout
 | `--key <key>` | flag key | required |
 | `--rule-id <ID>` | targeting rule ID | required |
 | `--expected-version <number>` | current configuration version | required |
+
+
+## postgres
+
+Create, attach and restore managed PostgreSQL databases
+
+`gregale postgres [<subcommand>]`
+
+### postgres overage
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage <get|set> [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+#### postgres overage get
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage get [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage get on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+#### postgres overage set
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage set [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage set on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+### postgres compute-policy
+
+Durably switch between idle suspension and always-on compute
+
+`gregale postgres compute-policy <set|status> --scale-to-zero <BOOL> --request-id <UUID> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scale-to-zero <BOOL>` | true for idle suspension, false for always-on | required; one of `true` · `false` |
+| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
+
+#### postgres compute-policy set
+
+Durably switch between idle suspension and always-on compute
+
+`gregale postgres compute-policy set --scale-to-zero <BOOL> --request-id <UUID> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scale-to-zero <BOOL>` | true for idle suspension, false for always-on | required; one of `true` · `false` |
+| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
+
+#### postgres compute-policy status
+
+Read compute policy change progress
+
+`gregale postgres compute-policy status <database> <request_uuid>`
+
+### postgres resize
+
+Durably resize compute; clients may disconnect
+
+`gregale postgres resize <status> --class <CLASS> --request-id <UUID> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--class <CLASS>` | target service class | required; one of `development` · `burstable` · `production` |
+| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
+
+#### postgres resize status
+
+Read compute resize progress
+
+`gregale postgres resize status <database> <request_uuid>`
+
+### postgres list
+
+List managed PostgreSQL databases
+
+### postgres capabilities
+
+Show plan and region PostgreSQL feature support
+
+`gregale postgres capabilities [--region <REGION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <REGION>` | region (defaults to configured region) |  |
+
+Examples:
+
+```sh
+gregale postgres capabilities --json
+```
+
+### postgres usage
+
+Show monthly managed PostgreSQL usage and guardrail state
+
+### postgres create
+
+Create a managed PostgreSQL database
+
+`gregale postgres create --region <REGION> [--postgres-major <N>] [--class <CLASS>] [--availability <MODE>] [--scale-to-zero] [--storage-bytes <N>] [--restore-window-seconds <N>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <REGION>` | provider-neutral region | required |
+| `--postgres-major <N>` | PostgreSQL major version |  |
+| `--class <CLASS>` | service class | one of `development` · `burstable` · `production` |
+| `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
+| `--scale-to-zero` | suspend compute when idle |  |
+| `--storage-bytes <N>` | storage limit in bytes |  |
+| `--restore-window-seconds <N>` | point-in-time restore window |  |
+
+Examples:
+
+```sh
+gregale postgres create orders --region us-east-2 --class development --scale-to-zero
+```
+
+### postgres get
+
+Show one managed PostgreSQL database
+
+`gregale postgres get <database>`
+
+### postgres status
+
+Show the database&#39;s conditions (preview)
+
+`gregale postgres status <database>`
+
+Examples:
+
+```sh
+gregale postgres status orders
+```
+
+Ready, Progressing and Degraded, from its state and cached health.
+
+### postgres wait
+
+Wait until a condition holds (preview)
+
+`gregale postgres wait [--for <CONDITION>] [--timeout <DURATION>] [--poll-interval <DURATION>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--for <CONDITION>` | Ready, Progressing or Degraded; TYPE or TYPE=True\|False\|Unknown (default Ready) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m) |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+
+Examples:
+
+```sh
+gregale postgres wait orders
+```
+
+Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found.
+
+### postgres delete
+
+Delete a managed PostgreSQL database; it can be undone for 7 days
+
+`gregale postgres delete [--purge] [--yes] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--purge` | delete at once with its restore history; cannot be undone |  |
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
+
+Examples:
+
+```sh
+gregale postgres delete orders
+gregale postgres delete orders --purge
+```
+
+The database stops at once; `gregale postgres recover` brings it back until its restorable_until.
+
+A deleted database still counts toward the plan&#39;s database limit until it is purged.
+
+### postgres recover
+
+Bring back a deleted managed PostgreSQL database
+
+`gregale postgres recover <database>`
+
+Examples:
+
+```sh
+gregale postgres recover orders
+```
+
+Works until the database&#39;s restorable_until, 7 days after the delete; a purged database is gone.
+
+### postgres restore
+
+Restore a database to a new database
+
+`gregale postgres restore --name <NAME> --point-in-time <TIMESTAMP> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | name for the restored database | required |
+| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
+
+### postgres cutover
+
+Stage and verify a restore target without moving workloads
+
+#### postgres cutover prepare
+
+Stage all source bindings for one app and scope
+
+`gregale postgres cutover prepare [--env <SCOPE>] <source> <target> <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+
+#### postgres cutover get
+
+Read cutover progress and SQL evidence
+
+`gregale postgres cutover get <id>`
+
+#### postgres cutover verify
+
+Queue control-plane SQL verification
+
+`gregale postgres cutover verify <id>`
+
+#### postgres cutover cancel
+
+Revoke staged credentials and release pins
+
+`gregale postgres cutover cancel <id>`
+
+### postgres bindings
+
+Manage app database bindings
+
+#### postgres bindings list
+
+List a database&#39;s bindings
+
+`gregale postgres bindings list <database>`
+
+#### postgres bindings create
+
+Bind a database to an app by app ID (attach takes slugs)
+
+`gregale postgres bindings create --app <APP_ID> --env <SCOPE> --environment-key <KEY> [--access <MODE>] <database_id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP_ID>` | app ID | required |
+| `--env <SCOPE>` | environment scope (also --scope) | required |
+| `--environment-key <KEY>` | environment variable name | required |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+
+#### postgres bindings get
+
+Show one binding
+
+`gregale postgres bindings get <id>`
+
+#### postgres bindings delete
+
+Delete a binding
+
+`gregale postgres bindings delete <id>`
+
+#### postgres bindings rotate
+
+Rotate a binding, optionally waiting for the old credential
+
+`gregale postgres bindings rotate [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the previous credential to retire |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
+
+Examples:
+
+```sh
+gregale postgres bindings rotate BINDING_ID --wait
+```
+
+Waits until the previous credential retires.
+
+### postgres attach
+
+Attach a database to an app
+
+`gregale postgres attach [--scope <SCOPE>] [--env <KEY>] [--access <MODE>] <database> <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope (defaults to linked project environment, otherwise default) |  |
+| `--env <KEY>` | connection environment variable |  |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+
+Examples:
+
+```sh
+gregale postgres attach orders my-api --env DATABASE_URL --access read_write
+```
 
 
 ## bucket

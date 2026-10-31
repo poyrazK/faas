@@ -138,7 +138,7 @@
       "name": "Capability acceptance: data",
       "category": "resources",
       "description": "Each released data capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["ai-access-tokens", "ai-content-policy", "ai-request-replay", "ai-routes", "ai-usage-limits", "application-auth", "bucket-access-grants", "bucket-cors", "bucket-encryption", "data-api", "durable-entities", "entity-backups", "entity-quotas", "entity-registry", "entity-sessions", "live-queries", "managed-postgres", "multipart-uploads", "object-lifecycle", "object-protection", "object-storage-compute", "object-versioning", "org-postgres", "outbound-integrations", "postgres-bindings", "postgres-compute-policy", "postgres-cutovers", "postgres-restore", "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy", "realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers", "s3-credentials", "signed-urls"],
+      "capabilities": ["ai-access-tokens", "ai-content-policy", "ai-request-replay", "ai-routes", "ai-usage-limits", "application-auth", "bucket-access-grants", "bucket-cors", "bucket-encryption", "data-api", "database-rollbacks", "durable-entities", "entity-backups", "entity-quotas", "entity-registry", "entity-sessions", "live-queries", "managed-postgres", "multipart-uploads", "object-lifecycle", "object-protection", "object-storage-compute", "object-versioning", "org-postgres", "outbound-integrations", "postgres-bindings", "postgres-compute-policy", "postgres-cutovers", "postgres-restore", "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy", "realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers", "s3-credentials", "signed-urls"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_bucket_versioning_test.go::TestBucketVersioningCLI"},
@@ -164,13 +164,12 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_slos_test.go::TestSLOLifecycle"},
         {"kind": "test", "locator": "pkg/apid/apidserver/object_signed_url_test.go::TestObjectSignedURLE2EPG"},
         {"kind": "test", "locator": "pkg/apid/apidserver/org_managed_postgres_pg_test.go::TestOrgManagedPostgresPostgresHTTP"},
+        {"kind": "test", "locator": "pkg/apid/databaseswitch/worker_test.go::TestDatabaseSwitchRestoresFencesDrainsSwitchesAndResumes"},
         {"kind": "test", "locator": "pkg/apid/livequeries/service_test.go::TestLiveQueriesLogins"},
         {"kind": "test", "locator": "pkg/apid/managedrealtime/handlers_tickets_test.go::TestRevokeRealtimeTicketHandlers"},
         {"kind": "test", "locator": "pkg/apid/receivers/realtime_occupancy_test.go::TestOccupancyOperationRPC"},
         {"kind": "test", "locator": "pkg/dashboard/tls_cutover_test.go::TestReadTLSCutoverState"},
         {"kind": "test", "locator": "pkg/durableentity/socket/quota_migration_test.go::TestQuotaMigrationPlanResumeVerifyAndFencing"},
-        {"kind": "test", "locator": "pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement"},
-        {"kind": "test", "locator": "pkg/objectstorage/snapshot_test.go::TestCaptureObjectManifestSelectsPointInTimeAcrossPages"},
         {"kind": "test", "locator": "pkg/outbound/ai_usage_test.go::TestAIUsageOutcome"},
         {"kind": "test", "locator": "pkg/s3gateway/bucket_cors_test.go::TestGatewayBucketCORS"},
         {"kind": "test", "locator": "pkg/state/object_bucket_access_test.go::TestObjectBucketAccessMem"},
@@ -178,7 +177,8 @@
         {"kind": "test", "locator": "pkg/state/pgstore_managed_realtime_channel_routes_test.go::TestPgStoreManagedRealtimeChannelRouteSnapshot"},
         {"kind": "test", "locator": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimePublisherCredentialPublishes"},
         {"kind": "test", "locator": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimeWorkerCredentialScopesOperations"},
-        {"kind": "test", "locator": "pkg/tcpd/supervisor_test.go::TestSupervisorRecreationCancelsPreviousIdentitySessions"}
+        {"kind": "test", "locator": "pkg/tcpd/supervisor_test.go::TestSupervisorRecreationCancelsPreviousIdentitySessions"},
+        {"kind": "test", "locator": "tests/journeys/postgres_test.go::TestManagedPostgres"}
       ]
     },
     {

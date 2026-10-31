@@ -51,7 +51,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"edge", "Manage edge rules, rule lists, caching and CORS", "Configure"},
 	{"api", "Manage your API: routes, OpenAPI spec, consumers and tenants", "Configure"},
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
-	{"postgres", "Manage PostgreSQL databases: usage, overage and capabilities", "Data"},
+	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
 	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
@@ -597,6 +597,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin postgres reconcile", "postgres reconcile"},
 	{"admin postgres usage-import", "postgres usage-import"},
 	{"admin postgres diagnostics", "postgres diagnostics"},
+	// Sealed live queries stay an operator preview (ADR-20261016151947);
+	// customers read live through `data-api live`.
+	{"admin postgres live", "postgres live"},
 	{"admin billing refresh-invoice", "billing refresh-invoice"},
 	{"admin billing backfill-invoices", "billing backfill-invoices"},
 }

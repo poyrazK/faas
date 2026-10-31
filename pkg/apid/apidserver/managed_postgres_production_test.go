@@ -27,8 +27,15 @@ func TestManagedPostgresProductionReleaseFollowsTheCapabilityFlag(t *testing.T) 
 	if err := srv.InstallCapabilityGate(); err != nil {
 		t.Fatal(err)
 	}
+	// managed-postgres is GA (ADR-20261031091607): released by default, and
+	// the GA rollout closes it with a stored definition until the owner's
+	// production test.
+	if !srv.ManagedPostgresReleased(ctx, account) {
+		t.Fatal("a GA capability is released by default")
+	}
+	srv.SeedPlatformFlag(capabilityFlag(t, "managed-postgres"), dataAPITestHidden)
 	if srv.ManagedPostgresReleased(ctx, account) {
-		t.Fatal("a preview capability is hidden by default")
+		t.Fatal("a stored default-off definition must close the account")
 	}
 	srv.SeedPlatformFlag(capabilityFlag(t, "managed-postgres"), dataAPITestReleased)
 	if !srv.ManagedPostgresReleased(ctx, account) {
