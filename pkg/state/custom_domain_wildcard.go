@@ -112,6 +112,12 @@ func CustomDomainChallengeName(domain string) string {
 	return "_faas-verify." + domain
 }
 
+// WildcardProbeLabel is the label DNS/TLS probes of a wildcard row query. Only
+// the customer's wildcard record answers it. Probing "www" revoked verified
+// wildcards whose zone kept www on another host, because an explicit www
+// record overrides the wildcard (bug hunt 32 M4).
+const WildcardProbeLabel = "gregale-wildcard-check"
+
 // WildcardProbeHost returns a deterministic concrete host for DNS/TLS probes
 // of a wildcard row. It exercises the customer's wildcard record without
 // querying the literal '*' label.
@@ -120,7 +126,7 @@ func WildcardProbeHost(domain string) (string, bool) {
 	if !ok {
 		return domain, false
 	}
-	return "www." + suffix, true
+	return WildcardProbeLabel + "." + suffix, true
 }
 
 // ForeignVerifiedWildcard returns the verified wildcard custom domain, held
