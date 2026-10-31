@@ -14,7 +14,8 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `faas_object_storage_backend_bucket_limit{region,backend}`,
 `faas_object_storage_region_full{region}`,
 `s3_gateway_read_admission_decisions_total{source}`,
-`s3_gateway_read_usage_flushes_total{outcome}`.
+`s3_gateway_read_usage_flushes_total{outcome}`,
+`s3_gateway_org_access_checks_total{source}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
 [ADR 20261030100835](../adr/20261030100835-object-storage-resumable-inventory.md) (resumable inventory),
 [ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),
@@ -63,7 +64,9 @@ Severity: warn.
    exporter's provider credentials.
 4. Read counts: `journalctl -u faas-s3-gatewayd | grep "read usage flush failed"`
    and `s3_gateway_read_admission_decisions_total{source="failed"|"stale"}`
-   for database reachability from the gateway.
+   for database reachability from the gateway;
+   `s3_gateway_org_access_checks_total{source="failed"}` for reads under
+   organization-fenced credentials.
 5. Capacity: `faas_object_storage_backend_buckets` against
    `faas_object_storage_backend_bucket_limit` per backend, and
    `journalctl -u faas-apid | grep "no backend with room"` for refusals.

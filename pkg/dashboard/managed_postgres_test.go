@@ -45,8 +45,8 @@ func TestRenderManagedPostgresScheduledDelete(t *testing.T) {
 		want, forbidden []string
 	}{
 		{name: "scheduled", restorableUntil: "2026-11-06T12:00:00Z",
-			want: []string{"Scheduled for deletion", "Undo before 2026-11-06T12:00:00Z", "gregale postgres undelete orders", "gregale postgres delete orders --purge"}},
-		{name: "ready", forbidden: []string{"Scheduled for deletion", "gregale postgres undelete orders"}},
+			want: []string{"Scheduled for deletion", "Undo before 2026-11-06T12:00:00Z", "gregale postgres recover orders", "gregale postgres delete orders --purge"}},
+		{name: "ready", forbidden: []string{"Scheduled for deletion", "gregale postgres recover orders"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := httptest.NewRecorder()

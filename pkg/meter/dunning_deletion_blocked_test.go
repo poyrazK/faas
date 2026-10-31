@@ -31,6 +31,7 @@ func (f *blockedCommandFake) Complete(context.Context, string, string, string) e
 // A suspended account past the deletion deadline that a deletion guard holds
 // stays suspended, is logged and counted by guard, and is not reported as an
 // outage. The gauge clears on the first sweep after the block is gone.
+// adr: 20261030120000
 func TestDunningNonpaymentDeletionBlockedIsCounted(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -77,8 +78,10 @@ VALUES($1,$2,$3,'eu',17,'development','single_zone','test',$4)`, uuid.NewString(
 				NonpaymentDeletionCommands:  fake,
 				Registerer:                  prometheus.NewRegistry(),
 			})
-			if err := d.RunOnce(ctx); err != nil {
-				t.Fatal(err)
+			// A deletion guard is not a failure; a command outage fails the
+			// tick so the dunning alert sees it (adr: 20261030120000).
+			if err, wantErr := d.RunOnce(ctx), tt.reason == ""; (err != nil) != wantErr {
+				t.Fatalf("RunOnce error = %v, want an error: %v", err, wantErr)
 			}
 			got, err := store.AccountByID(ctx, acct.ID)
 			if err != nil || got.Status != state.AccountSuspended {

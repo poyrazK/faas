@@ -26,7 +26,7 @@ func printRecoveryOverview(o *api.WorkflowRecoveryOverview, app string) {
 			_, _ = fmt.Fprintf(osStdout, "Inspect command: gregale automation failure-recovery review --app %s --review %s\n", automationCommandArgument(app), oneLine(i.ReviewID))
 		}
 		if i.Scope == "manual_retry" && i.ReviewID != "" {
-			_, _ = fmt.Fprintf(osStdout, "Inspect command: gregale automation recovery-policy-reviews --app %s --review %s --status\n", automationCommandArgument(app), oneLine(i.ReviewID))
+			_, _ = fmt.Fprintf(osStdout, "Inspect command: gregale automation recovery-policy history --app %s --review %s --status\n", automationCommandArgument(app), oneLine(i.ReviewID))
 		}
 	}
 }

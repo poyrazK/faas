@@ -17,7 +17,7 @@ func cmdEventsRecoveryNotifications(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale event recovery-notifications <job-id>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery-notification list <job-id>", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {

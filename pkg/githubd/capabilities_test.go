@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -84,5 +85,19 @@ func TestScanOptionsFollowKubernetesManifestsCapability(t *testing.T) {
 	off := &Service{CapabilityAllowed: capabilitiesOff(reposcan.KubernetesManifestsCapability)}
 	if off.scanOptions("acct-1").KubernetesManifests {
 		t.Error("capability off: KubernetesManifests = true, want false")
+	}
+}
+
+// TestScanOptionsFollowPrivateServiceHTTPSCapability — a push or preview scan
+// refuses the https service transport where private service HTTPS is off, as
+// apid's reviewed scan does (ADR-20261029230000).
+func TestScanOptionsFollowPrivateServiceHTTPSCapability(t *testing.T) {
+	t.Parallel()
+	if (&Service{}).scanOptions("acct-1").HTTPSTransportUnavailable {
+		t.Error("nil decider: HTTPSTransportUnavailable = true, want the transport released")
+	}
+	off := &Service{CapabilityAllowed: capabilitiesOff(api.PrivateServiceHTTPSCapability)}
+	if !off.scanOptions("acct-1").HTTPSTransportUnavailable {
+		t.Error("capability off: HTTPSTransportUnavailable = false, want refused")
 	}
 }

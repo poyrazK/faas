@@ -1346,7 +1346,7 @@ func cmdJobsReplayFailed(args []string) int {
 	}
 	args = fs.Args()
 	if len(args) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale job replay-failed [JOB] [RUN_ID|latest] [--dry-run] [--wait | --results] [--wait-timeout 10m] [--poll-interval 2s]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job replay [JOB] [RUN_ID|latest] [--dry-run] [--wait | --results] [--wait-timeout 10m] [--poll-interval 2s]", "jobs")
 		return 1
 	}
 	if len(args) == 0 {
@@ -1481,12 +1481,12 @@ func cmdJobsArtifactURL(args []string) int {
 		return cmdJobsArtifactURLInteractive()
 	}
 	if len(args) != 4 || (args[1] != "latest" && !jobRunIDPattern.MatchString(args[1])) || args[3] == "" {
-		PrintUsage(os.Stderr, "usage: gregale job artifact-url <name> <run-id|latest> <task-index> <artifact-name>", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job artifact get <name> <run-id|latest> <task-index> <artifact-name>", "jobs")
 		return 1
 	}
 	taskIdx, err := strconv.Atoi(args[2])
 	if err != nil || taskIdx < 0 {
-		PrintUsage(os.Stderr, "usage: gregale job artifact-url <name> <run-id|latest> <task-index> <artifact-name>   (task-index >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job artifact get <name> <run-id|latest> <task-index> <artifact-name>   (task-index >= 0)", "jobs")
 		return 1
 	}
 	if args[1] == "latest" && !jobSlugPattern.MatchString(args[0]) {

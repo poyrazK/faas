@@ -328,6 +328,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 // Enforce runs one sweep. A failure for one account never stops the others;
 // the returned error joins them.
 func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err error) {
+	ctx = WithBackgroundRequests(ctx)
 	summary.Mode, summary.StorageMode = e.mode, e.storageMode
 	defer func() {
 		summary.CompletedAt = e.now().UTC()

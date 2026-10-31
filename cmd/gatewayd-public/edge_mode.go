@@ -24,6 +24,7 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -106,7 +107,7 @@ func newEdgeMetrics() *edgeMetrics {
 		registry: prometheus.NewRegistry(),
 		fallbacks: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gatewayd_public_edge_local_fallback_total",
-			Help: "Upstream dials a compute-node edge sent to the compute pool because its own node's gatewayd-internal was unhealthy or refused the dial (ADR-1343).",
+			Help: "Requests a compute-node edge sent to the compute pool because its own node's gatewayd-internal was unhealthy or refused the dial (ADR-1343).",
 		}),
 		misdirected: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gatewayd_public_edge_misdirected_total",
@@ -211,6 +212,45 @@ func (d *localFirstDialer) DialContext(ctx context.Context, target string) (net.
 		return nil, fmt.Errorf("compute edge: local gateway unavailable and compute pool failed: %w", err)
 	}
 	return conn, nil
+}
+
+// localUpstreamKey keys the pooled connections to this node's own
+// gatewayd-internal socket.
+const localUpstreamKey = "local"
+
+// PickUpstream follows DialContext's routing for one attempt
+// (gateway.UpstreamPicker): this node's gatewayd-internal while it is healthy
+// and its dial has not failed, otherwise the compute pool. Only then is the
+// pool consulted, so a healthy local path never reads the registry. The pool
+// counts a fallback for each request it carries unless the route is planned
+// (a drain or a retry that excludes this node).
+func (d *localFirstDialer) PickUpstream(ctx context.Context, rec *gateway.DialRecord, failed []string) (gateway.Upstream, error) {
+	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
+	viaLocal := d.healthy.Load() && !localExcluded
+	if viaLocal && !slices.Contains(failed, localUpstreamKey) {
+		return gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}, nil
+	}
+	pool, ok := d.fallback.(gateway.UpstreamPicker)
+	if !ok {
+		return gateway.Upstream{}, fmt.Errorf("%w: compute edge: the compute pool cannot name its nodes", gateway.ErrNoComputeCapacity)
+	}
+	upstream, err := pool.PickUpstream(ctx, rec, failed)
+	if err != nil {
+		return gateway.Upstream{}, fmt.Errorf("compute edge: compute pool: %w", err)
+	}
+	if planned := !viaLocal && (d.drained.Load() || localExcluded); !planned {
+		upstream.Used = d.metrics.fallbacks.Inc
+	}
+	return upstream, nil
+}
+
+// dialLocal opens a new connection to this node's gatewayd-internal.
+func (d *localFirstDialer) dialLocal(ctx context.Context) (net.Conn, error) {
+	conn, err := d.local.DialContext(ctx, "")
+	if err != nil && ctx.Err() == nil {
+		d.log.Warn("gatewayd-public: local gatewayd-internal refused the dial; using the compute pool", "err", err)
+	}
+	return conn, err
 }
 
 // HasAlternate reports whether the compute pool holds a node a retry has

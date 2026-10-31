@@ -1695,12 +1695,15 @@ func (l *Loop) runWatchdog(ctx context.Context) {
 // dispatchWatchdog runs the sweep on the work pool: a stuck row's destroy
 // can wait 5 s, and a partitioned node's rows retry every tick
 // (ADR-20261028200212). The same tick watches the capacity streams this
-// scheduler receives (ADR-20261029085904).
+// scheduler receives (ADR-20261029085904) and the CPU pressure of the nodes
+// whose readings it receives (ADR 20261030100950).
 func (l *Loop) dispatchWatchdog(ctx context.Context) {
 	l.submitWork(workWatchdog, "tick", func() {
 		l.runWatchdog(ctx)
 		if l.engine != nil {
-			l.engine.ObserveCapacityStreams(ctx, time.Now())
+			now := time.Now()
+			l.engine.ObserveCapacityStreams(ctx, now)
+			l.engine.ObserveCPUPressure(ctx, now)
 		}
 	})
 }

@@ -583,14 +583,14 @@ func nextStepsFor(tpl string) []string {
 			"Install the approved matching SDK bundle:",
 			"  cd <dest> && gregale data-api install --bundle /path/to/data-api-bundle.json --client-directory client",
 			"Verify the client, team access and reliable save scenarios:",
-			"  gregale data-api dev --port 0 --once --check-types --check",
-			"Start the API with `gregale data-api dev --port 0 --check` and follow README.md for the dashboard.",
+			"  gregale data-api serve --port 0 --once --check-types --check",
+			"Start the API with `gregale data-api serve --port 0 --check` and follow README.md for the dashboard.",
 			"The seed identities are local test data; provision real membership through reviewed owner migrations.",
 		}
 	case "data-api-starter":
 		return []string{
 			"With Node.js 22+, npm and local Docker, run the starter scenarios:",
-			"  cd <dest> && gregale data-api dev --port 0 --once --replay data-api.requests.json",
+			"  cd <dest> && gregale data-api serve --port 0 --once --replay data-api.requests.json",
 			"Read README.md to reserve the migration app and attach its managed migration binding.",
 			"Pin the paired CLI and SDK with node tools/artifacts.mjs pin /path/to/bundle/data-api-bundle.json.",
 			"Create the Data API with your application JWT issuer, then automate changes:",

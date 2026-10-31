@@ -335,7 +335,14 @@ func TestPgTrafficScopedDomainRefusesUndeclaredChange(t *testing.T) {
 		if refused != scoped || !scoped && err != nil {
 			t.Fatalf("scoped=%v: commit err=%v", scoped, err)
 		}
-		if len(missed) != 1 || missed[0] != TrafficBindingScopeKindReservationPrimary {
+		// The fleet-wide guard finds the move in its diff of the reservations;
+		// the scoped guard in the capture, which names the app's old primary
+		// URL (ADR-20261029190349).
+		want := TrafficBindingScopeKindReservationPrimary
+		if scoped {
+			want = TrafficBindingScopeKindPrimary
+		}
+		if len(missed) == 0 || slices.ContainsFunc(missed, func(kind string) bool { return kind != want }) {
 			t.Fatalf("scoped=%v: missed=%v", scoped, missed)
 		}
 	}

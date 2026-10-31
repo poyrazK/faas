@@ -535,6 +535,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/orgs/{slug}/invoices":                                                                                     "ListOrgInvoices",
 	"GET /v1/orgs/{slug}/billing/portal":                                                                               "GetOrgBillingPortal",
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
+	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
+	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
 	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
 	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
 	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",
@@ -1458,6 +1460,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",
 	"GET /v1/deployments/{id}/logs":                                                   "StreamDeploymentLogs",
 	"GET /v1/deployments/{id}/scan":                                                   "GetDeploymentScan",                    // issue #464 / ADR-055; per-deploy grype CVE drill-down
+	"GET /v1/deployments/{id}/status":                                                 "GetDeploymentStatus",                  // ADR-20261030151810
 	"GET /v1/deployments/{id}/secret-scan":                                            "GetDeploymentSecretScan",              // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
 	"GET /v1/deployments/{id}/runtime":                                                "GetDeploymentRuntime",                 // ADR-736
 	"GET /v1/deployments/{id}/runtime/upgrade-preview":                                "PreviewRuntimeUpgrade",                // ADR-736
@@ -2422,6 +2425,7 @@ var methodRouteMap = map[string]string{
 	// names it GetAppMetrics to match the existing per-app methods
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/health":                "GetAppHealth",
+	"GET /v1/apps/{slug}/status":                "GetAppStatus",
 	"GET /v1/apps/{slug}/health/history":        "ListAppHealthHistory",
 	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
 	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",

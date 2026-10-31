@@ -125,7 +125,7 @@ func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
 		}
 	})
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *timeout <= 0 || (*wait && *requestID == "") || (timeoutSet && !*wait) || (statusSet && *requestID != "") {
-		PrintUsage(os.Stderr, "usage: gregale event recovery-notification-retry-history <job-id> [--status STATUS,... | --request-id UUID [--wait [--timeout 5m]]]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery-notification history <job-id> [--status STATUS,... | --request-id UUID [--wait [--timeout 5m]]]", "events")
 		return 1
 	}
 	if statusSet {
