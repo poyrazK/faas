@@ -25,6 +25,9 @@ const TrafficPolicyRevisionHeader = "X-Gregale-Traffic-Policy"
 type edgePolicySnapshot struct {
 	entry    HostEntry
 	revision string
+	// owner and inheritedApp are the sealed set's cache scope, which the JSON
+	// copy drops; UnchangedSince checks invalidations against them.
+	owner, inheritedApp string
 }
 
 type pinnedEdgePoliciesKey struct{}
@@ -69,7 +72,7 @@ func (e *HostEntry) SealPolicy() error {
 	if err != nil {
 		return fmt.Errorf("encode compiled host policy: %w", err)
 	}
-	sealed := &edgePolicySnapshot{revision: policyDigest(encoded)}
+	sealed := &edgePolicySnapshot{revision: policyDigest(encoded), owner: e.owner, inheritedApp: e.inheritedApp}
 	if err := json.Unmarshal(encoded, &sealed.entry); err != nil {
 		return fmt.Errorf("copy compiled host policy: %w", err)
 	}

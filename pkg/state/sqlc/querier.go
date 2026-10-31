@@ -620,6 +620,9 @@ type Querier interface {
 	// account_count is the per-account allowance's usage: the crons of the app's
 	// billing subject (ADR-202610171904, quotaSubjectSQL in pgstore_quota_subject.go).
 	CountDeploymentCrons(ctx context.Context, db DBTX, arg CountDeploymentCronsParams) (CountDeploymentCronsRow, error)
+	// ADR-20261031130000: the enabled subscriptions of one app and of every app
+	// sharing its billing subject (the cron quota subject).
+	CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error)
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
 	CountLiveOperationSchedules(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -1425,6 +1428,9 @@ type Querier interface {
 	EventRoutingRetrySet(ctx context.Context, db DBTX, arg EventRoutingRetrySetParams) error
 	EventRoutingRetryTarget(ctx context.Context, db DBTX, arg EventRoutingRetryTargetParams) (EventSubscription, error)
 	EventRoutingSettleSnapshot(ctx context.Context, db DBTX, id int64) (int64, error)
+	// ADR-20261031130000: routing admits a recipient only while its subscription
+	// is still enabled.
+	EventRoutingSubscriptionEnabled(ctx context.Context, db DBTX, arg EventRoutingSubscriptionEnabledParams) (bool, error)
 	// Scan a fixed number of recent account receipts, including unrelated types.
 	EventSchemaRolloutCandidates(ctx context.Context, db DBTX, arg EventSchemaRolloutCandidatesParams) ([]EventSchemaRolloutCandidatesRow, error)
 	EventSchemaRolloutPayloads(ctx context.Context, db DBTX, arg EventSchemaRolloutPayloadsParams) ([]EventSchemaRolloutPayloadsRow, error)
@@ -3653,6 +3659,9 @@ type Querier interface {
 	// settled; a parent that started none qualifies at once.
 	ListSettledChildParents(ctx context.Context, db DBTX, arg ListSettledChildParentsParams) ([]ListSettledChildParentsRow, error)
 	ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]string, error)
+	// Verified custom domains whose edge certificate the domain doctor observed,
+	// soonest expiry first: the source of the certificate-expiry alerts.
+	ListSoonestExpiringCustomDomainCerts(ctx context.Context, db DBTX, limit int32) ([]ListSoonestExpiringCustomDomainCertsRow, error)
 	// Deployment watchdog (ADR-20261024140100). An in-flight deployment that can
 	// no longer finish on its own: a build queued since before queued_before, or
 	// no queued or running build and no stage progress since stalled_before.
@@ -6675,6 +6684,9 @@ type Querier interface {
 	SetEnvironmentWorkloadQualificationContext(ctx context.Context, db DBTX, token string) (string, error)
 	SetEnvironmentWorkloadRetirementCutoverContext(ctx context.Context, db DBTX, token string) (string, error)
 	SetEnvironmentWorkloadServingTraffic(ctx context.Context, db DBTX, arg SetEnvironmentWorkloadServingTrafficParams) (int64, error)
+	// ADR-20261031130000: a deploy disables the subscriptions its manifest no
+	// longer declares; rolling the deploy back enables them again.
+	SetEventSubscriptionEnabled(ctx context.Context, db DBTX, arg SetEventSubscriptionEnabledParams) (int64, error)
 	SetExclusiveCaptureBarrier(ctx context.Context, db DBTX, arg SetExclusiveCaptureBarrierParams) error
 	SetFunctionMigrationCapturePermission(ctx context.Context, db DBTX, arg SetFunctionMigrationCapturePermissionParams) (int64, error)
 	SetFunctionMigrationDestination(ctx context.Context, db DBTX, arg SetFunctionMigrationDestinationParams) (int64, error)
