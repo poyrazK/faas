@@ -1892,6 +1892,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// Exec and destroy RPCs take schedd's certificate (bug hunt H17).
 		grpc.ChainUnaryInterceptor(vmmdgrpc.CallerPolicyUnaryInterceptor()),
 		grpc.ChainStreamInterceptor(vmmdgrpc.CallerPolicyStreamInterceptor()),
+		vmmdgrpc.StreamWorkers(),
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).

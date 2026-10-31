@@ -1288,6 +1288,7 @@ message AgentRunEvent {
     AgentRunBooted booted = 2;
     AgentRunOutput output = 3;
     AgentRunResult result = 4;
+    AgentRunUsage usage = 5;
   }
 }
 
@@ -1311,6 +1312,22 @@ message AgentRunOutput {
 // stdout and stderr the output frames already carried.
 message AgentRunResult {
   bytes result = 1;
+}
+
+// AgentRunUsage is vmmd's measured memory of the run VM (ADR-20261027090011),
+// forwarded as vmmd sent it: at most once, before the result or the error
+// that ends the stream. The fields mean what vmmd's AgentRunUsage says.
+message AgentRunUsage {
+  int32 method = 1;
+  int32 samples = 2;
+  int32 expected_samples = 3;
+  int64 measured_ms = 4;
+  int64 paused_ms = 5;
+  int64 private_mb_ms = 6;
+  int64 unpaused_private_mb_ms = 7;
+  int64 billable_mb_ms = 8;
+  int64 peak_private_mb = 9;
+  bool cold_boot = 10;
 }
 
 message ReportMemoryPressureRequest {

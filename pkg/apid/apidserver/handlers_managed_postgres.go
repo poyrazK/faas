@@ -71,7 +71,7 @@ func managedPostgresNotConfiguredProblem(w http.ResponseWriter) {
 		http.StatusServiceUnavailable,
 		"managed_postgres_unavailable",
 		"Managed PostgreSQL unavailable",
-		"Managed PostgreSQL is an operator preview and is not configured for this environment. The platform operator must qualify and configure a provider before this command can be used.",
+		"Managed PostgreSQL is not configured for this environment. The platform operator must configure a provider before this command can be used.",
 	).WithDocs("https://gregale.dev/docs/managed-postgres"))
 }
 
