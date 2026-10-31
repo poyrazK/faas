@@ -22450,10 +22450,16 @@ func (s *PgStore) CreateCreditLedgerEntry(ctx context.Context, e CreditLedgerEnt
 // sqlc-generated, mirroring the ListInvoicesForAccount pattern.
 // Single-row read with no parameters other than the account id; sqlc
 // would not add observability here.
+//
+// An organization that owns its resources is its own billing subject and
+// keeps its cap on its orgs row (ADR-20261030093512).
 func (s *PgStore) GetAccountOverageCapCents(ctx context.Context, accountID string) (int64, bool, error) {
 	var cents *int64
 	if err := s.pool.QueryRow(ctx,
-		`select overage_cap_cents from accounts where id = $1`,
+		`select overage_cap_cents from accounts where id = $1
+		 union all
+		 select overage_cap_cents from orgs where id = $1 and not personal_org
+		 limit 1`,
 		accountID).Scan(&cents); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Account row gone — treat as no cap so meterd does not
@@ -22484,8 +22490,15 @@ func (s *PgStore) GetAccountOverageCapCents(ctx context.Context, accountID strin
 // SQL NULL via its standard type codec; an empty-string or sentinel
 // compare is unnecessary.
 func (s *PgStore) UpdateAccountOverageCapCents(ctx context.Context, accountID string, cents *int64) error {
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`update accounts set overage_cap_cents = $2 where id = $1`,
+		accountID, cents)
+	if err != nil || tag.RowsAffected() > 0 {
+		return err
+	}
+	// An organization billing subject (ADR-20261030093512).
+	_, err = s.pool.Exec(ctx,
+		`update orgs set overage_cap_cents = $2, updated_at = now() where id = $1 and not personal_org`,
 		accountID, cents)
 	return err
 }
@@ -22835,7 +22848,9 @@ func sumActiveCents(ctx context.Context, tx pgx.Tx, accountID string) (int64, er
 // shape is meterd-internal and not on the sqlc public surface.
 func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, overage_cap_cents from accounts where overage_cap_cents is not null`)
+		`select id, overage_cap_cents from accounts where overage_cap_cents is not null
+		 union all
+		 select id, overage_cap_cents from orgs where overage_cap_cents is not null and not personal_org`)
 	if err != nil {
 		return nil, err
 	}
@@ -22854,7 +22869,7 @@ func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64,
 
 // CurrentMonthOverageCents returns the account's derived compute overage in
 // integer cents for the current UTC month. It removes the month's included
-// allowance (the largest plan grant recorded this month, ADR-1162) before
+// allowance (each plan's grant for its share of the month, ADR-20261030093512) before
 // converting the remainder to cents. Integer math only — never float on
 // money (CLAUDE.md).
 //
@@ -22877,7 +22892,8 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	var plan api.Plan
 	if err := s.pool.QueryRow(ctx,
 		`select COALESCE(SUM(u.mb_seconds), 0)::bigint,
-		        COALESCE((select a.plan from accounts a where a.id = $1), 'free')
+		        COALESCE((select a.plan from accounts a where a.id = $1),
+		                 (select o.plan from orgs o where o.id = $1 and not o.personal_org), 'free')
 		   from usage_minutes u
 		  where u.account_id = $1
 		    and u.minute >= $2`,
@@ -22889,16 +22905,6 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 		return 0, err
 	}
 	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
-}
-
-// monthOverageCents applies the month's recorded plan history (ADR-1162):
-// the largest grant activated so far, never less than the current plan's
-// allowance, whose activation may not be captured yet. This is the same
-// allowance the provider pusher removes, so the spend cap, the dashboard and
-// the provider agree.
-func monthOverageCents(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, mbSeconds int64) int64 {
-	included := max(MonthComputeIncludedMBSeconds(current, snapshots, now), api.IncludedMBSeconds(current))
-	return api.OverageCentsForBillableMBSeconds(api.BillableMBSecondsAbove(included, mbSeconds))
 }
 
 // UsageByHour returns per-app usage rolled up from the per-minute rows

@@ -47,9 +47,20 @@ When the month's overage reaches the cap:
   to what the cap still allows after the month's compute and egress overage.
   Object storage keeps serving within its plan limits.
 
+When the cap first stops your workloads in a month, Gregale emails the
+account with the cap and the month's overage.
+
 Raising or clearing the cap, or the start of the next month, lets workloads
 wake again on the next request or scheduler tick. If you change plans during
-a month, the month keeps the largest allowance any of its plans granted.
+a month, each plan's included GB-RAM-hours count for the share of the month
+you held it: a whole month on Pro includes 1,000 GB-h, and half a month on
+Hobby then half on Pro includes 600 GB-h.
+
+An organization that owns its resources is billed apart from its members and
+has its own cap, with the same defaults. Its owner sets it with
+`POST /v1/orgs/{slug}/overage-cap`; any member reads it with
+`GET /v1/orgs/{slug}/overage-cap`. The organization's apps stop at the
+organization's cap, not at the cap of the member who created them.
 
 ## Retained usage costs and forecasts
 
@@ -88,8 +99,9 @@ continues to use its existing source until correction reconciliation is accepted
 
 All amounts use integer millicents (1,000 millicents per cent). One shared
 account allowance applies to each usage meter for the month. When plans change,
-the largest recorded grant remains available for that month; its quantities are
-shared proportionally across price versions. Within each version, net cost and
+the compute allowance is each plan's grant for its share of the month, the
+allowance the provider bills against; other meters keep the largest recorded
+grant. Its quantities are shared proportionally across price versions. Within each version, net cost and
 allowance value are allocated by workload quantity using stable largest-remainder
 rounding. Allocated amounts sum exactly to the meter totals. Shadow and disabled
 egress contracts are reported as nonbillable quantities. The existing provider

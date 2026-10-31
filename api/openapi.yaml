@@ -63705,6 +63705,55 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/overage-cap:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgOverageCap
+      summary: Read the organization's monthly spend cap.
+      description: "Requires current organization membership and usage:read. Integer cents, zero when no overage is allowed, or null when no cap is set. An organization that owns its resources is billed, and capped, apart from its members."
+      responses:
+        '200':
+          description: The saved monthly spend cap.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountOverageCapResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [orgs]
+      operationId: setOrgOverageCap
+      summary: Set or clear the organization's monthly spend cap.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. `{"overage_cap_cents": <int|null>}`: null clears
+        the cap, 0 allows no overage. Once the organization's overage this month
+        meets the cap, the scheduler stops its apps' wakes (HTTP 402
+        `admission_refused`) until the cap is raised or the month ends. A paid
+        organization starts with its plan's default cap.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RaiseOverageCapRequest' }
+            example: {"overage_cap_cents": 10000}
+      responses:
+        '200':
+          description: The organization's spend cap after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountOverageCapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{organization}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'

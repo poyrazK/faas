@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,35 +38,98 @@ type FinancialPriceSnapshot struct {
 
 // MonthComputeIncludedMBSeconds returns the compute allowance (mb_seconds)
 // that applies to a calendar month's usage up to through, from that month's
-// recorded price activations (ADR-1162). It is the largest compute grant whose
-// activation precedes through, so a mid-month downgrade never shrinks the
-// month's allowance and an upgrade applies from its recorded activation, not
-// retroactively. Usage before the first recorded activation uses the earliest
-// one. With no recorded activation the current plan applies, which is the
-// legacy single-plan behaviour.
+// recorded price activations (ADR-1162, amended by ADR-20261030093512). Each
+// plan's monthly allowance counts for the share of the month it held, and the
+// plan active at through is taken to hold until the month ends: one plan all
+// month grants its whole allowance, while a few minutes on a larger plan grant
+// a few minutes' share of it. An activation applies from its recorded minute,
+// never retroactively, and the earliest one also covers the month before it.
+// With no recorded activation the current plan applies, which is the legacy
+// single-plan behaviour.
 func MonthComputeIncludedMBSeconds(current api.Plan, snapshots []FinancialPriceSnapshot, through time.Time) int64 {
-	var earliest *FinancialPriceSnapshot
-	best := int64(-1)
-	for i := range snapshots {
-		s := &snapshots[i]
-		if s.Price.Meter != "compute" {
-			continue
-		}
-		if earliest == nil || s.EffectiveFrom.Before(earliest.EffectiveFrom) {
-			earliest = s
-		}
-		if s.EffectiveFrom.Before(through) {
-			best = max(best, s.Price.IncludedQuantity)
+	var compute []FinancialPriceSnapshot
+	for _, s := range snapshots {
+		if s.Price.Meter == "compute" {
+			compute = append(compute, s)
 		}
 	}
-	switch {
-	case best >= 0:
-		return best
-	case earliest != nil:
-		return earliest.Price.IncludedQuantity
-	default:
+	if len(compute) == 0 {
 		return api.IncludedMBSeconds(current)
 	}
+	slices.SortStableFunc(compute, func(a, b FinancialPriceSnapshot) int {
+		if c := a.EffectiveFrom.Compare(b.EffectiveFrom); c != 0 {
+			return c
+		}
+		return a.RecordedAt.Compare(b.RecordedAt)
+	})
+	active := 1
+	for active < len(compute) && compute[active].EffectiveFrom.Before(through) {
+		active++
+	}
+	compute = compute[:active]
+	monthStart, monthEnd := compute[0].PeriodStart.UTC(), compute[0].PeriodEnd.UTC()
+	if monthStart.IsZero() {
+		first := compute[0].EffectiveFrom.UTC()
+		monthStart = time.Date(first.Year(), first.Month(), 1, 0, 0, 0, 0, time.UTC)
+	}
+	if !monthEnd.After(monthStart) {
+		monthEnd = monthStart.AddDate(0, 1, 0)
+	}
+	month := int64(monthEnd.Sub(monthStart) / time.Second)
+	// Whole seconds keep the products in int64: the largest allowance in
+	// mb_seconds times a month of seconds is below 1e17.
+	clamp := func(t time.Time) time.Time {
+		switch {
+		case t.Before(monthStart):
+			return monthStart
+		case t.After(monthEnd):
+			return monthEnd
+		}
+		return t.UTC()
+	}
+	var weighted int64
+	for i, s := range compute {
+		from, until := monthStart, monthEnd
+		if i > 0 {
+			from = clamp(s.EffectiveFrom)
+		}
+		if i+1 < len(compute) {
+			until = clamp(compute[i+1].EffectiveFrom)
+		}
+		if until.After(from) {
+			weighted += s.Price.IncludedQuantity * int64(until.Sub(from)/time.Second)
+		}
+	}
+	return weighted / month
+}
+
+// monthOverageCents applies the month's recorded plan history (ADR-1162,
+// ADR-20261030093512): each plan's allowance for its share of the month, the
+// same allowance the provider pusher removes, so the spend cap, the dashboard
+// and the provider agree. meterd records a plan change within a minute; until
+// it has, the current plan counts from now.
+func monthOverageCents(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, mbSeconds int64) int64 {
+	included := MonthComputeIncludedMBSeconds(current, withCurrentPlan(current, snapshots, now), now)
+	return api.OverageCentsForBillableMBSeconds(api.BillableMBSecondsAbove(included, mbSeconds))
+}
+
+// withCurrentPlan adds current as an activation just before now when the
+// latest recorded activation is another plan's.
+func withCurrentPlan(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time) []FinancialPriceSnapshot {
+	var latest *FinancialPriceSnapshot
+	for i := range snapshots {
+		s := &snapshots[i]
+		if s.Price.Meter == "compute" && s.EffectiveFrom.Before(now) && (latest == nil || !s.EffectiveFrom.Before(latest.EffectiveFrom)) {
+			latest = s
+		}
+	}
+	if latest == nil || latest.Plan == "" || latest.Plan == current {
+		return snapshots
+	}
+	activated := *latest
+	activated.Plan, activated.EffectiveFrom, activated.RecordedAt = current, now.Add(-time.Second), now
+	activated.Price = financial.Price{Meter: "compute", IncludedQuantity: api.IncludedMBSeconds(current)}
+	return append(slices.Clone(snapshots), activated)
 }
 
 // FinancialStore is the additive ADR-566 store seam. ThroughID fixes an
