@@ -190,8 +190,9 @@ type Config struct {
 	// QuietPauseAdmission (ADR-1151) makes the vCPU and CPU gates count only
 	// active instances: bookings less those vmmd reports quiet-paused, with
 	// all bookings capped at api.QuietPauseMaxVCPUOvercommitPercent of the
-	// budget. Off by default; turn it on together with vmmd's quiet_pause on
-	// the same nodes. A node without a fresh sample counts every booking.
+	// budget. On by default (ADR-1151 amendment 2026-10-31), as vmmd's
+	// quiet_pause is; quiet_pause_admission = false turns it off. A node
+	// without a fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
 
 	// MeasuredCPUAdmission (ADR 20261029151111) makes the vCPU and CPU gates
@@ -199,7 +200,8 @@ type Config struct {
 	// measured host CPU instead of its booking, never less than
 	// api.MeasuredCPUMinChargePercent of the booking, and stops counting its
 	// guest vCPUs; all bookings stay capped at
-	// api.MeasuredCPUMaxOvercommitPercent of the budget. Off by default.
+	// api.MeasuredCPUMaxOvercommitPercent of the budget. On by default
+	// (amendment 2026-10-31); measured_cpu_admission = false turns it off.
 	// A node without a fresh sample counts every booking.
 	MeasuredCPUAdmission bool `toml:"measured_cpu_admission"`
 
@@ -208,7 +210,8 @@ type Config struct {
 	// tasks wait for CPU (api.NodeCPUPressureStallPercent) and their CPUs
 	// are nearly all busy (api.NodeCPUPressureBusyPercent). Every schedd
 	// honours a hold: placement prefers other nodes and admission counts the
-	// node's bookings in full. Off by default; the readings' gauges are
+	// node's bookings in full. On by default (amendment 2026-10-31);
+	// cpu_pressure_backstop = false turns it off. The readings' gauges are
 	// published either way.
 	CPUPressureBackstop bool `toml:"cpu_pressure_backstop"`
 
@@ -512,6 +515,14 @@ func LoadConfig(path string) (*Config, error) {
 		// tier whenever frozen_tier is on. FAAS_FROZEN_TIER_APPS=false or
 		// frozen_tier_apps = false keeps the tier to functions.
 		FrozenTierApps: true,
+		// Amendments of 2026-10-31 to ADR-1151, ADR 20261029151111 and
+		// ADR 20261030100950: admit CPU by what instances use, with the
+		// pressure backstop. Release rollouts re-render schedd.toml from the
+		// manifest, so only a binary default keeps them on; each stays an
+		// opt-out (= false in schedd.toml).
+		QuietPauseAdmission:  true,
+		MeasuredCPUAdmission: true,
+		CPUPressureBackstop:  true,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go

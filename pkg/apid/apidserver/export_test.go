@@ -1939,3 +1939,6 @@ var SealOAuthCodeState = sealOAuthCodeState
 // ProjectReadinessOverrides exposes projectReadinessOverrides to the
 // external test package.
 var ProjectReadinessOverrides = projectReadinessOverrides
+
+// SetEventPublishClock pins the event publish rate limiter's clock.
+func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }

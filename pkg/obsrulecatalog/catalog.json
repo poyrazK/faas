@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "2a6b4c18e80aeda58b91f362dc3f001fbfd72352d8e097e004fe942c1db0f2b9",
+      "revision": "79199bb65253e85bfe7a9d8c313da519f4bca817a58c55434cdd765d40575680",
       "files": [
         "faas.rules.yml"
       ],
@@ -761,6 +761,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f1dcf8eacd89b2b89d8c5681800ed87879d70f9d665bc13c270976886ed92020"
+          }
+        },
+        {
+          "id": "19979251c1e29c6d85a4113fa354c74a72a79141874ac480006d0ee52943d5e6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanFailureHeld",
+          "definition": {
+            "expression_hash": "863c7c8a322b3ce3f2a5b5d6b5c7386be1ce3c19bd0369eb4357a137ae657687",
+            "labels_hash": "aebbad069ab89dcbd1f799806cb1f75efca90884a73ed3f9dd93efffe834eed8",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "bdd0bc8e78c6fe9da16b7962aaafc3abc39186d759097ecf734a87d6a1eb5417"
           }
         },
         {
@@ -6500,7 +6513,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "447f1a93b84f016bdeb64ead642083ded8dbc195b0bdbfdc3244d05ff558fbd2",
+      "revision": "a2ca37bfd6ac2c8cb5fe488829cbcf4d28e500c3674af24a14fc13bb63c32dd7",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7287,6 +7300,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f1dcf8eacd89b2b89d8c5681800ed87879d70f9d665bc13c270976886ed92020"
+          }
+        },
+        {
+          "id": "19979251c1e29c6d85a4113fa354c74a72a79141874ac480006d0ee52943d5e6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanFailureHeld",
+          "definition": {
+            "expression_hash": "863c7c8a322b3ce3f2a5b5d6b5c7386be1ce3c19bd0369eb4357a137ae657687",
+            "labels_hash": "aebbad069ab89dcbd1f799806cb1f75efca90884a73ed3f9dd93efffe834eed8",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "bdd0bc8e78c6fe9da16b7962aaafc3abc39186d759097ecf734a87d6a1eb5417"
           }
         },
         {

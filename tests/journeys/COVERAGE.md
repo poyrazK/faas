@@ -7,7 +7,7 @@ covered. Update this table when a journey or a GA row changes.
 | # | GA capability | Journeys and steps | Not covered |
 |---|---|---|---|
 | 1 | Apps: create, update, rename, delete, restore | `TestAppSettingsAndRename` (update, rename), `TestDeleteAndRestore`, every `deployProbe` | — |
-| 2 | Source deploys: local tree, tarball, Dockerfile, resumable uploads | `deployProbe` (local tree), `TestDockerfileTarballAndSecretReload` (tarball + Dockerfile) | resumable upload resume after an interrupted upload |
+| 2 | Source deploys: local tree, tarball, Dockerfile, resumable uploads | `deployProbe` (local tree), `TestDockerfileTarballAndSecretReload` (tarball + Dockerfile), `TestPythonSourceDeploys` (Python requirements.txt and `uv run` apps on the shared Python runner base) | resumable upload resume after an interrupted upload |
 | 3 | Builds in builder microVMs, build logs, cache | every source deploy (cache hits reported), `TestBuildsAndProvenance` (list, status, provenance, SBOM, build log) | — |
 | 4 | Container image deploys, image preflight | `TestImageRegistryAndDeployTokens/image_deploy`, `TestImagePreflight` | image-published deployments (`registry published`) need a project workload (preview) |
 | 5 | GitHub: install, push-to-deploy, Checks status | `TestGitHubDeploys` (bind, push_to_deploy, checks_status) | App installation itself (done once for the fixture); push-to-deploy is a known failure (no deployment on push, 2026-10-27) |

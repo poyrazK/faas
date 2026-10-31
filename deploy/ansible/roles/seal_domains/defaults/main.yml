@@ -83,6 +83,16 @@ faas_seal_domain_runtime_signing_pub_src: ""
 # to sign and nothing invalid. vmmd reads it at start.
 faas_seal_domain_runtime_signatures_required: false
 
+# The contract step: vmmd drops the fleet and host identities and opens
+# runtime secrets with the runtime domain alone and registry passwords with
+# the build domain alone. Needs writes=domain and
+# faas_seal_domain_build_contracted, and the role refuses it while
+# `gregalectl seal-domain migrate --domain runtime --check` finds a value
+# only a legacy identity opens. vmmd reads it at start and reports
+# faas_seal_domain_legacy_identities 0 once it runs contracted. host.age
+# stays on the node: the join check and other units still load it.
+faas_seal_domain_runtime_contracted: false
+
 # Operator-local files from `gregalectl seal-domain init --domain source`.
 # Control-plane hosts stage both: githubd reads the identity, apid seals to
 # the recipient.

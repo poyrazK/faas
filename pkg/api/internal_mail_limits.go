@@ -130,11 +130,14 @@ const (
 
 // MFA disable links allow one confirmation day after the existing one-day
 // cooldown. Delivery stops at that original cooldown; retries extend neither.
+// MFADisableLegacyTokenMaxBytes bounds the age-sealed token the legacy inline
+// path mails, which the confirmation page accepts beside the raw durable one.
 const (
-	MFADisableTokenBytes         = 32
-	MFADisableEmailCooldown      = 24 * time.Hour
-	MFADisableEmailConfirmWindow = 24 * time.Hour
-	InternalMailMFADisableTTL    = 24 * time.Hour
+	MFADisableTokenBytes          = 32
+	MFADisableLegacyTokenMaxBytes = 2048
+	MFADisableEmailCooldown       = 24 * time.Hour
+	MFADisableEmailConfirmWindow  = 24 * time.Hour
+	InternalMailMFADisableTTL     = 24 * time.Hour
 )
 
 const (

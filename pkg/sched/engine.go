@@ -4398,7 +4398,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// park re-snapshots. Best-effort — failure here doesn't block the
 	// RUNNING transition (the stale snapshot also gets the next-park
 	// treatment from snapshotAndPark).
-	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT && out.RestoreFallbackReason == fcvm.RestoreFallbackNodeLocal {
+		// The restore failed for this node's reasons (a full disk, an image or
+		// identity it could not read, jail setup): the snapshot is still good
+		// for every other node, so it stays live (bug hunt 2026-10-28 B12).
+		e.log.Info("wake: restore fell back to cold boot on this node; snapshot kept", "app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "node", bootInput.nodeID, "snapshot", bootInput.snapID, "wake_id", logsanitize.Field(bootInput.wakeID))
+	} else if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		// A catalog-bound fallback still validates its selected capture through
 		// receipt acknowledgment and publication. Invalidate after that attempt
 		// so our own cache retirement cannot reject a verified cold runtime.
