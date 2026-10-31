@@ -49,9 +49,14 @@ func (s *server) relayTestSend(ctx context.Context, accountID, kind, subjectID s
 	// outlives it answers "timed out, check the deliveries" rather than
 	// "cancelled" (bug hunt 2026-10-28 B35).
 	if budget, ok := ctx.Deadline(); ok {
-		wait = min(wait, time.Until(budget)-time.Second)
+		if left := time.Until(budget) - time.Second; left < wait {
+			wait = left
+		}
 	}
-	deadline := time.NewTimer(max(wait, 0))
+	if wait < 0 {
+		wait = 0
+	}
+	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	tick := time.NewTicker(testRelayPoll)
 	defer tick.Stop()
