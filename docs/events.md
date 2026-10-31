@@ -142,6 +142,19 @@ work. Running work continues; handlers should still protect external side
 effects with an idempotency key or version check. See
 [application work policies](work-policies.md) for the complete contract.
 
+### Keyed delivery deadlines
+
+`expires_after_ms` bounds how long a delivery may wait before it starts. A
+delivery that has not started by then expires and is not run. Once a delivery
+has started, its deadline no longer applies: a failed attempt keeps retrying
+until it succeeds or is dead-lettered, so a failure is never dropped silently
+([ADR 20261031101000](adr/20261031101000-keyed-expiry-spares-started-work.md)).
+A dead-lettered keyed delivery whose deadline has passed cannot be replayed
+from the dead-letter queue, because a replay starts it over and it would
+expire at once: replaying it answers `409 keyed_replay_expired`, and
+replay-all skips it. Publish the event again, with a new id, to deliver
+it with a fresh deadline.
+
 To preserve event acceptance order for one key, opt the subscription into
 ordered delivery and use a policy that keeps every item until it runs:
 

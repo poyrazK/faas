@@ -810,8 +810,13 @@ type Querier interface {
 	CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	DataRepairHealthSnapshot(ctx context.Context, db DBTX, arg DataRepairHealthSnapshotParams) ([]byte, error)
 	DeactivateProjectReleaseSets(ctx context.Context, db DBTX, arg DeactivateProjectReleaseSetsParams) error
+	// ADR-20261031101000: replay resets attempts, so a keyed row whose pending
+	// deadline has passed would only expire again.
+	DeadLetterInvocationWorkExpired(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
 	// event_route entries cannot be replayed (DeadLetterReplayable), so they never
-	// take a page from replay-all.
+	// take a page from replay-all. Neither does keyed work whose pending deadline
+	// has passed (ADR-20261031101000); replaying one entry by id still reaches it,
+	// so the refusal names the deadline.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
