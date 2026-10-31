@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261031110141930_managed_postgres_overage_deliveries.sql
+-- filename: 20261031190513903_managed_postgres_overage_deliveries.sql
 --
 -- ADR-20261031110037: the managed PostgreSQL overage charge delivered to a
 -- billing provider for a usage subject's UTC month. One row per provider,

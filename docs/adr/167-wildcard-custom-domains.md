@@ -54,3 +54,25 @@ leave `api.example.com` dark for the account that had proved
 - A live pending row still shadows the broader wildcard, as before. A claim
   made by another account before the wildcard verified can therefore darken
   that name until its 7-day deadline. After that it cannot be renewed.
+
+## Amendment 2 (2026-10-31): a company's wildcard covers every company app
+
+Bug hunt 32 (M5). `ForeignVerifiedWildcard` compared the account that created
+the wildcard's app with the account that created the app asking for a name.
+A company app keeps its creator's account as `account_id`
+(ADR-202610171904), so a member could not attach a name below the company's
+own verified wildcard to a company app they created: `409`, "belongs to
+another account". Once the wildcard's creator left the company, the only apps
+that could take new names under it were the ones that creator had made.
+
+- Names below a verified wildcard belong to its tenant (`state.AppTenantID`):
+  the app's shared organization, else the account that created it (an app
+  with no organization, or one in its creator's personal organization). Any
+  company app may take a name below a company wildcard. The creator's
+  personal apps no longer can; they are another tenant.
+- Managing a company app's domains already follows the organization's roles
+  (ADR-20261026151103 amendment 4). This makes adding names under the
+  company's zone follow them too.
+- The claim takeover by DNS proof is unchanged. It still lets a member move
+  another account's unverified claim, including a colleague's, onto their own
+  app by publishing the takeover record.

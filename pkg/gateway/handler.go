@@ -10072,12 +10072,16 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	return p
 }
 
-// hostname strips any port from the Host header and lowercases it.
+// hostname strips any port from the Host header, lowercases it and drops a
+// trailing root dot. "app.example.com." names the same host as
+// "app.example.com"; keeping the dot missed the exact custom-domain row and
+// host-scoped edge rules while the wildcard lookup, which trims it, still
+// matched (bug hunt 32 M3).
 func hostname(host string) string {
 	if i := strings.IndexByte(host, ':'); i >= 0 {
 		host = host[:i]
 	}
-	return strings.ToLower(host)
+	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
 
 // basicCredentialsMatch compares Basic credentials in time independent of

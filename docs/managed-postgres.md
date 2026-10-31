@@ -3,13 +3,14 @@
 > Customers: see [Managed PostgreSQL](postgres.md). This page covers
 > qualification, rollout, accounting and the provider adapter.
 
-> Managed PostgreSQL remains gated to qualified accounts while the provider
-> qualification is completed. Its provider-neutral commands are nevertheless
-> exposed through the customer-facing `gregale` CLI so eligible workloads use
-> the same workflow in development and production.
+> Managed PostgreSQL is generally available
+> ([ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md)). In
+> production it reaches customers once an operator approves the backend and
+> the `managed_postgres` capability flag releases it; [GA rollout](#ga-rollout)
+> lists the steps.
 
-Managed PostgreSQL now has a customer-facing, provider-neutral API while
-remaining an opt-in operator preview. The API exposes account-scoped database
+Managed PostgreSQL has a customer-facing, provider-neutral API. The API
+exposes account-scoped database
 CRUD/status, restore-to-new-database, and workload bindings under
 `/v1/postgres/*`. Provider IDs, passwords, connection URLs, and secret
 ciphertext never cross that API boundary. `provisioning_enabled` must remain
@@ -108,6 +109,53 @@ A purge cannot be undone through Gregale. Within 7 days Neon can still recover
 the project (`POST /projects/{id}/recover`), but Gregale's catalog already
 records the database as deleted. Rescuing it is a manual operator task: recover
 the project in Neon, copy the data out, and import it into a new database.
+
+### GA rollout
+
+`managed-postgres`, `postgres-bindings` and `postgres-restore` are `ga`, so
+their flags are on for every account that has no stored definition. Keep
+customers out until the owner has tested production
+([ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md)):
+
+1. Before the release reaches production, close the flag except for the
+   owner's account:
+
+   ```bash
+   gregalectl flags default --key managed_postgres --value false --reason "GA rollout" --yes
+   gregalectl flags allow --key managed_postgres --account-id <owner-account-uuid> --reason "GA rollout" --yes
+   ```
+
+2. Qualify the backend in an isolated Neon project with
+   `managed-postgres-qualify --compute-cap` and `--storage-cap`. The deletion
+   hold check runs with every qualification.
+3. Turn on enforcement after each shadow readout:
+   `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`,
+   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
+   (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
+   maild). Create the [SQL probe](#sql-availability-probe) canary databases.
+4. Approve the production backend ([Production](#production)) with fleet
+   ceilings sized to the Neon plan.
+5. Run the customer journey with the owner's account:
+
+   ```bash
+   scripts/e2e-journeys.sh --tier full --run TestManagedPostgres
+   ```
+
+6. At the public release, once the ADR's public-release gate (the P0
+   workstreams of [#6146](https://github.com/poyrazK/faas/issues/6146)) is
+   green, open it to every account:
+
+   ```bash
+   gregalectl flags default --key managed_postgres --value true --reason "GA" --yes
+   ```
+
+`gregalectl flags disable --capability managed-postgres --reason "<why>" --yes`
+hides managed PostgreSQL again. Existing databases keep running, and the
+credentials apps already hold keep working.
+
+Rollbacks that restore the database are a separate preview,
+`database-rollbacks`. An account that used them through a `postgres_restore`
+rule needs `database_rollbacks` allowed as well.
 
 ## Provider health
 
@@ -360,7 +408,9 @@ high-availability promise merely because Neon storage has internal redundancy.
 `scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
 suspension. Customer requests cannot currently select `false`; the adapter
 retains the provider-neutral field for a future always-on entitlement.
-PostgreSQL majors 14 through 18 are enabled.
+PostgreSQL majors 14 through 18 are enabled. New databases choose 15 through
+18: 14 is retiring (`Capabilities.RetiringMajors`) and stays available to the
+databases that already run it.
 
 The mutating qualification run also proves the runtime behavior: it connects
 to the disposable database, closes the connection, waits for Neon to report
