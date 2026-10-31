@@ -756,6 +756,7 @@
         "/v1/invoices",
         "/v1/orgs/{}/billing",
         "/v1/orgs/{}/invoices",
+        "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
         "/v1/orgs/{}/seat_usage",
         "/v1/orgs/{}/usage",
