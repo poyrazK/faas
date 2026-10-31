@@ -186,7 +186,7 @@ func TestKeptRegressionIsNotAPassedWatch(t *testing.T) {
 		}),
 	}
 	got := releasetimeline.Build(in)
-	if got.Phase != api.ReleasePhaseReleased || !strings.Contains(got.Summary, "found a regression (p95 700 ms vs 40 ms) and did not roll back") {
+	if got.Phase != api.ReleasePhaseReleased || !strings.Contains(got.Summary, "a regression was found after the rollout (p95 700 ms vs 40 ms) and Gregale did not roll back") {
 		t.Fatalf("phase = %s %q", got.Phase, got.Summary)
 	}
 	var regressed bool

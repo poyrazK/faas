@@ -285,8 +285,8 @@ ahead. Scripts pass `--acknowledge-releases`, and the API takes
 committed part of its changes. Automatic rollbacks (the first-wake 5xx
 rollback, the post-release watch and alert-rule rollback actions) never
 acknowledge, so they leave the current release serving instead. When the
-post-release watch finds a regression it cannot roll back, the release's
-decision records it with `rollback_skipped: "rollback_crosses_release"`, its
+post-release watch or the first-wake 5xx guard finds a regression it cannot
+roll back, the release's decision records it with `rollback_skipped: "rollback_crosses_release"`, its
 timeline shows `watch_regressed` instead of a passed watch, and you decide:
 roll back with `--acknowledge-releases` or ship a fix.
 
@@ -553,6 +553,13 @@ approve: `gregale release approve` answers `403
 release_approval_session_required` with the page's link. Rejecting works
 from anywhere, because stopping a release needs no second person.
 
+The policy stays in force until an owner or admin removes it. Changing or
+removing it needs the admin scope (signed in, the CLI's login or an admin
+key), so a CI key with `deploy:write` cannot switch it off; the same holds for
+deleting a release gate. An app with a policy cannot leave request mode
+(`409`): a service, worker or job has no canary stage to wait in, so its
+releases would ship unapproved. Remove the policy first.
+
 Waiting ends in one of three ways:
 - **Enough approvals:** the rollout continues.
 - **A rejection:** the rollout is aborted at once (rule
@@ -687,7 +694,12 @@ gregale environment promote shop --from staging --to production --override-freez
 ```
 
 The override is recorded in the audit log (`release.freeze_overridden`) with
-the freezes it overrode and the deployment it created. A GitHub push can't carry an override, so a frozen
+the freezes it overrode and the deployment it created. A company
+organization's freeze is overridden only by someone who may lift it: an owner
+or admin, or the member who created the window, signed in or with an admin
+key. Anyone else, and a key that can only deploy, gets `403
+release_freeze_override_not_allowed`. Lifting a freeze needs the admin scope
+too; a CI key with `deploy:write` cannot lift one. A GitHub push can't carry an override, so a frozen
 push fails, and the commit shows why.
 
 An `--after-rollback` freeze is a policy. Each time the rollout circuit

@@ -20284,6 +20284,8 @@ SELECT d.id, d.app_id, d.scope, d.created_at, d.first_wake_at, d.first_5xx_windo
  WHERE d.status = 'live'
    AND d.rollback_on_5xx
    AND d.last_auto_rollback_reason IS NULL
+   -- A breach the guard could not roll back is recorded once.
+   AND COALESCE(d.rollout_decision->>'rollback_skipped', '') = ''
    AND d.traffic_percent = 100
    AND d.rollout_state = 'complete'
    AND (d.first_5xx_window_ends_at IS NULL
