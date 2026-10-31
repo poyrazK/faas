@@ -271,6 +271,14 @@ All steps stay on local branches until the owner asks for PRs. Each sits behind 
    - Σ(reservation + 8) ≤ 2 × ceiling;
    - reservation ≤ `ram_mb`;
    - `memory.max = ram_mb + 8`.
+
+   **Built locally (2026-10-31), behind schedd `FAAS_SCHEDD_AGENT_MEASURED_CHARGE=1` with measured admission on; not pushed.**
+   - **A gap it closes first.** Agent run VMs have no `instances` row, so the node measurement never included them. After one stats tick a run dropped out of the measured figure, and only the 2× overcommit cap held agent runs back. The ledger now adds every agent run to the measured figure, at `ram_mb` + 8 with the switch off (a separate fix).
+   - **Size history.** A query over `agent_run_usage` stands in for the `agent_size_history` table. It takes the p95 `peak_private_mb` of a version's last `AgentSizeHistoryWindowRuns` measured runs of one input class (with or without a checkout), and leaves out runs missing more than `AgentSizeHistoryMaxGapPercent` of their samples. agentd sends it in `AgentRunStart.history_peak_private_mb` once a version has `AgentSizeHistoryMinRuns` such runs, and 0 before that.
+   - **Charge.** max(memory, peak, `AgentChargeFloorMB`) + 8, capped at `ram_mb` + 8. The memory is the VM's `memory.current` from vmmd's stats rows, the reclaimable file pages included. A run the latest sample cannot have seen is charged its peak.
+   - **Reservation.** min(`ram_mb`, max(`AgentReservationFloorMB`, `AgentReservationPeakFactorPercent` × peak)) + 8 is booked against the overcommit bound. Without a fresh measurement the node falls back to reservations, and every agent run counts at `ram_mb` + 8 again.
+   - **Deferred.** The thaw headroom waits for compress-on-wait (step 5), since only a compressed run can grow back above its charge.
+   - **Tests.** Unit tests cover the charge and reservation functions and the ledger, and a property test checks the bounds over random admissions, releases and samples. `memory.max` is unchanged.
 5. **vmmd compress-on-wait** behind `agent_wait_compress` (default off). Metal tests:
    - a held relay response pauses and compresses the VM, and the first byte resumes it;
    - no swap is opened without writeback disabled;

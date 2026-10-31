@@ -4327,8 +4327,13 @@ type AgentRunStart struct {
 	// (ADR-20261027090012 §1). false (a version that opted out, or an older
 	// agentd) keeps the run's VM running while it waits on the model.
 	PauseDuringModelCalls bool `protobuf:"varint,10,opt,name=pause_during_model_calls,json=pauseDuringModelCalls,proto3" json:"pause_during_model_calls,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// history_peak_private_mb is the agent version's p95 private memory peak
+	// over its recent measured runs (ADR-20261027090015 §3), 0 until the
+	// version has AgentSizeHistoryMinRuns of them. schedd's measured charge
+	// books and charges the run from it; an older agentd sends 0.
+	HistoryPeakPrivateMb int32 `protobuf:"varint,11,opt,name=history_peak_private_mb,json=historyPeakPrivateMb,proto3" json:"history_peak_private_mb,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *AgentRunStart) Reset() {
@@ -4429,6 +4434,13 @@ func (x *AgentRunStart) GetPauseDuringModelCalls() bool {
 		return x.PauseDuringModelCalls
 	}
 	return false
+}
+
+func (x *AgentRunStart) GetHistoryPeakPrivateMb() int32 {
+	if x != nil {
+		return x.HistoryPeakPrivateMb
+	}
+	return 0
 }
 
 // AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010
@@ -7178,7 +7190,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x06cancel\x18\x02 \x01(\v2%.onebox.faas.schedd.v1.AgentRunCancelH\x00R\x06cancel\x12B\n" +
 	"\aproceed\x18\x03 \x01(\v2&.onebox.faas.schedd.v1.AgentRunProceedH\x00R\aproceedB\a\n" +
 	"\x05frame\"\x11\n" +
-	"\x0fAgentRunProceed\"\xcf\x02\n" +
+	"\x0fAgentRunProceed\"\x86\x03\n" +
 	"\rAgentRunStart\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1d\n" +
 	"\n" +
@@ -7191,7 +7203,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05relay\x18\b \x01(\v2$.onebox.faas.schedd.v1.AgentRunRelayR\x05relay\x12\x1b\n" +
 	"\tinput_key\x18\t \x01(\tR\binputKey\x127\n" +
 	"\x18pause_during_model_calls\x18\n" +
-	" \x01(\bR\x15pauseDuringModelCalls\"\x8d\x01\n" +
+	" \x01(\bR\x15pauseDuringModelCalls\x125\n" +
+	"\x17history_peak_private_mb\x18\v \x01(\x05R\x14historyPeakPrivateMb\"\x8d\x01\n" +
 	"\rAgentRunRelay\x12\x1f\n" +
 	"\vlease_token\x18\x01 \x01(\tR\n" +
 	"leaseToken\x12\x1b\n" +
