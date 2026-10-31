@@ -4818,6 +4818,12 @@ from .queue_receive_response_payload import QueueReceiveResponsePayload
 from .queue_receive_response_result import QueueReceiveResponseResult
 from .queue_release_requirements import QueueReleaseRequirements
 from .queue_release_requirements_additional_property import QueueReleaseRequirementsAdditionalProperty
+from .queue_send_batch_message import QueueSendBatchMessage
+from .queue_send_batch_message_payload import QueueSendBatchMessagePayload
+from .queue_send_batch_request import QueueSendBatchRequest
+from .queue_send_batch_response import QueueSendBatchResponse
+from .queue_send_batch_result import QueueSendBatchResult
+from .queue_send_batch_result_status import QueueSendBatchResultStatus
 from .queue_send_request import QueueSendRequest
 from .queue_send_request_payload import QueueSendRequestPayload
 from .queue_send_response import QueueSendResponse
@@ -10739,6 +10745,12 @@ __all__ = (
     "QueueReceiveResponseResult",
     "QueueReleaseRequirements",
     "QueueReleaseRequirementsAdditionalProperty",
+    "QueueSendBatchMessage",
+    "QueueSendBatchMessagePayload",
+    "QueueSendBatchRequest",
+    "QueueSendBatchResponse",
+    "QueueSendBatchResult",
+    "QueueSendBatchResultStatus",
     "QueueSendRequest",
     "QueueSendRequestPayload",
     "QueueSendResponse",

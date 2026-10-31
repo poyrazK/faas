@@ -50,6 +50,20 @@ curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/send" \
   -d '{"queue_name":"jobs","payload":{"image":"cat.png"}}'
 ```
 
+Each send is an API request, and an account makes at most 1,200 (Hobby), 3,000
+(Pro) or 6,000 (Scale) a minute. To send faster, send up to 100 messages at
+once:
+
+```bash
+curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/send-batch" \
+  -H "Authorization: Bearer $KEY" \
+  -d '{"queue_name":"jobs","messages":[{"payload":{"image":"a.png"}},{"payload":{"image":"b.png"}}]}'
+```
+
+The response lists every message as `accepted`, `rejected` (with the reason)
+or `not_attempted`: a refused message ends the batch, so resend from the first
+message that was not accepted.
+
 A send that would pass a plan limit is refused; see [Limits](#limits).
 
 ## Consume a queue
@@ -91,8 +105,8 @@ allows. The target is at most 10,000 messages per worker. `max` can't pass
 the plan's running workers (see [Limits](#limits)); a deploy that asks for more
 is refused with `plan_worker_replicas`, and Free runs no workers. With `min: 0`
 the pool stops when the queue is empty and starts a worker when the next
-message arrives. A worker that consumes an external broker (Kafka, NATS or
-Redis Streams) declares it under `triggers:` and scales on `metric: queue_lag`
+message arrives. A worker that consumes an external broker (Kafka, NATS, an
+SQS-compatible queue or Redis Streams) declares it under `triggers:` and scales on `metric: queue_lag`
 instead (see [scaling policy](scaling-policy.md)). A `scaling` block with a `queue_depth` target
 works the same way, with `min_instances` as the floor. It scales out on the tick that sees the
 backlog and scales in only after demand has stayed low for 60 seconds, so a

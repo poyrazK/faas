@@ -145,3 +145,55 @@ The same review found the backlog unobservable and expensive to observe:
   gateway's wake-hold queue. `queue_backlog` and `queue_oldest_age_seconds`
   read the schedd queue gauges, which now cover every worker app, not only
   queue-scaled ones. Both are app-scoped and webhook-only.
+
+## Amendment 2026-10-31 — GA review round 3
+
+A third review of the worker path, toward general availability, found more
+gaps. The owner decided the three marked *decision* on 2026-10-31.
+
+- **Repository deploys dropped `queue_bindings`.** `gregale deploy` applied the
+  block; apid's repository and GitHub deploys did not, so a worker deployed
+  from GitHub had no binding: its leases answered 404. Repository deploys now
+  reconcile the block by name with the CLI's defaults (pull, worker). A
+  binding the block no longer names is disabled, not deleted, so a deploy that
+  is not accepted restores it; `gregale queue bindings delete` removes it. An
+  omitted block leaves the bindings alone.
+- **Producer throughput** (*decision*: batch send and batched acks). Every
+  send was one API request against the account's budget (Hobby 1,200, Pro
+  3,000, Scale 6,000 a minute). `POST /v1/apps/{slug}/queues/send-batch` takes
+  up to 100 messages in at most 8 MiB as one request; each passes the single
+  send's admission, the first refusal ends the batch and the rest are not
+  attempted. The SDK consumers settle acks and lease extensions that come due
+  within 20 ms in one call. The budget itself is unchanged.
+- **Completed payloads in the primary database** (*decision*: drop 24 hours
+  after the ack). A completed queue message kept its payload for the plan's
+  result retention (up to 90 days) with no byte limit. The retention sweep now
+  sets it to JSON `null` 24 hours after completion, reading
+  `invocations_queue_completed_payload_idx`; the history row stays. Failures
+  and dead letters keep their payloads for replay, and a completed message
+  cannot be replayed.
+- **Plan limits at deploy** (*decision*: refuse). A worker on Free deployed
+  and never started; on Hobby a `max` above the plan's one running worker was
+  capped silently. A request that makes an app a worker, or sets its worker
+  bounds, past `WorkerReplicasMax` is now refused with `plan_worker_replicas`
+  (limit and observed). An atomic project release with a worker stays blocked
+  on Hobby by `worker_replica_overlap`.
+- **Status reads counted whole backlogs.** `GET /queues/state`, binding status
+  and the dashboard's jobs page counted every pending message and dead letter
+  on each call. They now read `QueueAppTelemetry` and
+  `QueueBindingTelemetry`, each count stopping at
+  `api.QueueStatusCountLimit` (100,000).
+- **`gregale worker status` read the wrong trigger.** It took the app's first
+  trigger as the queue; a pull binding has none, and a cron's numbers showed
+  as the backlog. It now sums the production bindings' status and takes only
+  an external broker trigger as the source.
+- **Stale gauges.** Queue gauges outlived a move to another schedd, and
+  `max(schedd_queue_depth)` kept a backlog alert firing after the queue
+  drained. A schedd now deletes the queue series of an app it no longer
+  keeps.
+- **API URL.** The SDK consumers default to `https://api.gregale.dev`; on any
+  other installation they presented local workload tokens to it. schedd hands
+  workloads `GREGALE_API_URL` from `FAAS_PUBLIC_API_URL`, unless the app sets
+  its own.
+- **Docs.** The guide named `worker.source` for external brokers; nothing
+  applies that field. Brokers are declared under `triggers:`.
