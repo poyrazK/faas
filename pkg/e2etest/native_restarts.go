@@ -49,11 +49,21 @@ func (h *Harness) restartNativeOwner(name string) error {
 		gatewayControlHost = control.Host
 	}
 	for index, child := range h.procs {
-		if child == nil || child.Process == nil || child.ProcessState != nil || child.Path != filepath.Join(h.BinDir, name) {
+		owned := child != nil && (child.Path == filepath.Join(h.BinDir, name) || (name == "vmmd" && isVMMDProc(child)))
+		if !owned || child.Process == nil || child.ProcessState != nil {
 			continue
 		}
 		environment := append([]string(nil), child.Env...)
-		if err := child.Process.Kill(); err != nil {
+		if name == "vmmd" && vmmdUnitOf(child) != "" {
+			// The wrapper's own environment is not vmmd's: restart from
+			// the harness's recipe.
+			environment = append([]string(nil), h.vmmdLaunchEnv...)
+		}
+		kill := child.Process.Kill
+		if name == "vmmd" {
+			kill = func() error { return killVMMD(child) }
+		}
+		if err := kill(); err != nil {
 			return fmt.Errorf("e2etest: kill owned %s: %w", name, err)
 		}
 		if err := child.Wait(); err != nil {

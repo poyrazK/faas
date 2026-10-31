@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
 	"net"
@@ -2067,6 +2068,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	defer uninstallRuntimeSigner()
+	if err := installCredentialPolicy(deps.getenv, log); err != nil {
+		return err
+	}
 	// ADR 20261022111812: apid reads the account domain.
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Account, len(accountDomainIdentities) > 0)
 
@@ -2320,6 +2324,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runApplicationStandardWorker(ctx)
 	go srv.runMigrationVerificationWorker(ctx)
 	go srv.runMigrationCutoverWorker(ctx)
+	go credentialkeys.RunRekey(ctx, srv.store, log)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -2658,28 +2663,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
 
-		// ADR-127 PR-D: gatewayd-public → apid AuthenticateKey
-		// unary RPC. Lives on /run/faas/auth.sock; the OTel spans
-		// writer refuses to start without it (fail-closed posture
-		// for an unauthenticated OTLP surface). Defaults to enabled
-		// when the env var is unset; set FAAS_AUTH_RPC_ENABLED=false
-		// to disable — but doing so will break the OTel handler
-		// at the gateway, which is the intended safe default.
-		if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
-			authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
-			authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log)
-			if err != nil {
-				_ = l.Close()
-				return fmt.Errorf("apid: auth server: %w", err)
-			}
-			go func() {
-				log.Info("apid auth server listening")
-				if err := authSrv.Serve(authLis); err != nil {
-					log.Error("apid auth serve", "err", err)
-				}
-			}()
-		}
-
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
 		// by watchLogLevelReload). Install three parallel ones — each
@@ -2729,6 +2712,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		go func() {
 			if err := appErrSrv.Serve(appErrLis); err != nil {
 				log.Error("apid consumer usage serve", "err", err)
+			}
+		}()
+	}
+
+	// ADR-127 PR-D: gatewayd-public → apid AuthenticateKey unary RPC, on
+	// /run/faas/auth.sock; the OTel spans writer refuses to start without
+	// it (fail-closed posture for an unauthenticated OTLP surface). Since
+	// ADR 20261029202403 every gateway resolves API keys and OIDC bearers
+	// through it too, so it runs whether or not app errors are on. Set
+	// FAAS_AUTH_RPC_ENABLED=false to disable it — which breaks gateway
+	// key authentication and the OTel handler.
+	if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
+		authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
+		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log)
+		if err != nil {
+			_ = l.Close()
+			return fmt.Errorf("apid: auth server: %w", err)
+		}
+		go func() {
+			log.Info("apid auth server listening")
+			if err := authSrv.Serve(authLis); err != nil {
+				log.Error("apid auth serve", "err", err)
 			}
 		}()
 	}
@@ -3289,8 +3294,12 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	)...)
 	receivers.RegisterAppErrorsReceiver(srv, store, ops, appErrorsEnabled, ingest)
 	// The private history reader shares this authenticated listener for
-	// compute-only realtimed nodes in split-box deployments.
+	// compute-only realtimed nodes in split-box deployments. So does
+	// credential lookup: a compute node's gatewayd-internal cannot key a
+	// credential hash itself (ADR 20261029202403); single-box gateways ask
+	// over /run/faas/auth.sock.
 	if !isUnixSocketPath(target) {
+		receivers.RegisterAuthReceiver(srv, store)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
 			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)

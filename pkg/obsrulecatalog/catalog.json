@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "761a0be43740a495e1ed9c8069cbe28d32318dd3136f996246daf536c43cbc44",
+      "revision": "2a6b4c18e80aeda58b91f362dc3f001fbfd72352d8e097e004fe942c1db0f2b9",
       "files": [
         "faas.rules.yml"
       ],
@@ -3884,6 +3884,19 @@
           }
         },
         {
+          "id": "975441c093f5af2f07e3121caed1853285111507143a61fa50f2c8e1d0a3746a",
+          "file_name": "faas.rules.yml",
+          "group_name": "postgres_capacity",
+          "rule_name": "FaasRealtimeChannelHeadsGrowing",
+          "definition": {
+            "expression_hash": "905c52320c1d846e0eeb91348ff41410a10fad89f6c31a14dddb24acdfc5ba61",
+            "labels_hash": "afb98c8c7552e032f7edb9e4f94c609f980e163c7fade7ada0dcd8729b576728",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8e35362bdc4783891e07d0dcf236a8adac091850b0d847a2310a5c6d1c081c8a"
+          }
+        },
+        {
           "id": "97e48aa3ddd3b109af68213564e66671cd5b285ae0d5edf1bc3b7ce9f482b309",
           "file_name": "faas.rules.yml",
           "group_name": "faas_environment_git_sources",
@@ -6487,7 +6500,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "46182b80dafa049a21a883bc3c9e8d6a4493b9253eeafd4c47504d851333b6ab",
+      "revision": "447f1a93b84f016bdeb64ead642083ded8dbc195b0bdbfdc3244d05ff558fbd2",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10550,6 +10563,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b044ff90777c1cb60c99433fe2db66308b74e0506039015d855aad1953c2f4e3"
+          }
+        },
+        {
+          "id": "975441c093f5af2f07e3121caed1853285111507143a61fa50f2c8e1d0a3746a",
+          "file_name": "faas.rules.yml",
+          "group_name": "postgres_capacity",
+          "rule_name": "FaasRealtimeChannelHeadsGrowing",
+          "definition": {
+            "expression_hash": "905c52320c1d846e0eeb91348ff41410a10fad89f6c31a14dddb24acdfc5ba61",
+            "labels_hash": "afb98c8c7552e032f7edb9e4f94c609f980e163c7fade7ada0dcd8729b576728",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8e35362bdc4783891e07d0dcf236a8adac091850b0d847a2310a5c6d1c081c8a"
           }
         },
         {

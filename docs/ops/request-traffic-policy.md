@@ -232,8 +232,8 @@ create, update and rollback are scoped too.
   a write. A capture it cannot read counts as kind `capture_unreadable`. Scoped
   writes check the record instead of diffing the fleet, so this counter must
   also read zero first.
-- **Scoped reads** (app and tenant binding writes): a scoped write reads only
-  these claims:
+- **Scoped reads** (app, tenant and custom-domain binding writes): a scoped
+  write reads only these claims:
   - its account's claims and their redirects;
   - the claims its hostnames name, with their wildcard ancestors;
   - the claims inside its subtrees.
@@ -241,8 +241,7 @@ create, update and rollback are scoped too.
   It reads the same set of reservations, except when an empty-scope route
   (`*`) exists; then it reads all of them. Its `binding_scope` refusal comes
   from the capture. When the write touched no claim or reservation, as with a
-  deployment create, it skips the global route check. Custom-domain writes
-  still read the fleet.
+  deployment create, it skips the global route check.
 - **To roll back:** unset the variable and restart apid.
 
 Legacy action aliases whose decoding cannot be verified by this projection

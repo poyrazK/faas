@@ -227,6 +227,9 @@ type Reader struct {
 	quiet  atomic.Pointer[quietPausedSnapshot]
 	// cpu is the latest per-instance measured CPU (measured_cpu.go).
 	cpu atomic.Pointer[measuredCPUSnapshot]
+	// pressure is the latest per-node CPU pressure readings
+	// (cpu_pressure.go).
+	pressure atomic.Pointer[cpuPressureSnapshot]
 
 	// rateMu protects the cumulative-counter baselines and their
 	// derived app-level rates. These are deliberately separate from

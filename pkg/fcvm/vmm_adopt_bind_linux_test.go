@@ -172,3 +172,58 @@ func TestReleaseBindSourceToleratesAGuestViewHandle(t *testing.T) {
 		}
 	}
 }
+
+// faas-vmmd.service's RestrictSUIDSGID= answers openat2 with ENOSYS, so the
+// guest-view open walks the jail one component at a time and must refuse
+// exactly what RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS would.
+func TestOpenBeneathNoFollowStaysInTheJail(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a", "b", "f"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a/b", filepath.Join(root, "l")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("f", filepath.Join(root, "a", "b", "s")); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := unix.Open(root, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(dir) }()
+	for _, tc := range []struct {
+		rel  string
+		mode uint32 // 0: refused
+	}{
+		{"a/b/f", unix.S_IFREG},
+		{"a/../a/b/f", unix.S_IFREG},
+		{"a/b/s", unix.S_IFLNK}, // the link itself, never its target
+		{"l/f", 0},
+		{"../f", 0},
+		{"a/../../f", 0},
+		{"/a/b/f", 0},
+		{".", 0},
+	} {
+		fd, err := openBeneathNoFollow(dir, tc.rel)
+		if tc.mode == 0 {
+			if err == nil {
+				_ = unix.Close(fd)
+				t.Errorf("%q opened, want it refused", tc.rel)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: %v", tc.rel, err)
+			continue
+		}
+		var st unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT != tc.mode {
+			t.Errorf("%q opened mode %o, %v; want %o", tc.rel, st.Mode&unix.S_IFMT, err, tc.mode)
+		}
+		_ = unix.Close(fd)
+	}
+}

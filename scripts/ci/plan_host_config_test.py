@@ -29,8 +29,8 @@ def record(commit="a" * 40, **changes):
     return out
 
 
-def host(rec, base=BASE):
-    return {"base_git_sha": base, "current": base, "record": rec}
+def host(rec, base=BASE, contract=None):
+    return {"base_git_sha": base, "current": base, "record": rec, "contract": contract}
 
 
 def ancestors(*pairs):
@@ -100,6 +100,53 @@ class PlanTest(unittest.TestCase):
             with self.subTest(name):
                 with self.assertRaisesRegex(phc.Refused, want):
                     phc.plan(release, state, NEW, None, ancestors(("a" * 40, COMMIT)), previous)
+
+
+class FullReleaseTest(unittest.TestCase):
+    """ADR-20261030150000: a full release converges the roles whose hash
+    differs from the record, stateful roles included, and refuses nothing."""
+    CASES = [
+        # name, record, deps, action, roles, all
+        ("a changed role converges alone, even one that restarts PostgreSQL", record(), None,
+         "roles", ["postgres"], False),
+        ("a notified role's owner comes along", record(), {"postgres": {"grafana"}},
+         "roles", ["postgres", "grafana"], False),
+        ("nothing changed leaves the contract to decide", record(roles=dict(NEW["roles"])), None,
+         "contract", [], False),
+        ("no record converges every role", None, None, "all", NEW["order"], True),
+        ("another record format converges every role", record(format_version=0), None,
+         "all", NEW["order"], True),
+        ("other globals converge every role", record(globals="sha256:old"), None, "all", NEW["order"], True),
+        # A rollback or a record a newer unit release wrote: the hashes
+        # compare content, so no ancestry is needed.
+        ("a record from a newer commit converges what differs", record(commit="d" * 40), None,
+         "roles", ["postgres"], False),
+    ]
+
+    def test_a_record_whose_contract_moved_is_stale(self):
+        # An older release's whole play moved the contract and left the
+        # record naming content the host no longer has.
+        rec = record(contract="sha256:c1")
+        out, _ = phc.plan_full_release(COMMIT, host(rec, contract="sha256:c2"), NEW)
+        self.assertEqual((out["action"], out["all"]), ("all", True))
+        self.assertIn("without updating its role record", out["reason"])
+        out, _ = phc.plan_full_release(COMMIT, host(rec, contract="sha256:c1"), NEW)
+        self.assertEqual((out["action"], out["roles"]), ("roles", ["postgres"]))
+        # The lane's planner reads the record the same way.
+        out, _ = phc.plan(RELEASE, host(rec, contract="sha256:c2"), NEW, None, ancestors(("a" * 40, COMMIT)))
+        self.assertEqual((out["action"], out["all"], out["previous"]), ("converge", True, BASE))
+
+    def test_cases(self):
+        for name, rec, deps, action, roles, every in self.CASES:
+            with self.subTest(name):
+                out, written = phc.plan_full_release(COMMIT, host(rec), NEW, deps)
+                self.assertEqual((out["action"], out["roles"], out["all"], out["commit"]),
+                                 (action, roles, every, COMMIT))
+                # Every action records the release commit's hashes once the
+                # play succeeded; the workflow adds the environment hash.
+                self.assertEqual(written, {"format_version": 1, "kind": "gregale-host-config", "group": "control_plane",
+                                           "commit": COMMIT, "globals": "sha256:g", "order": NEW["order"],
+                                           "roles": NEW["roles"]})
 
 
 class GateTest(unittest.TestCase):
@@ -209,6 +256,23 @@ class MainTest(unittest.TestCase):
         # The release commit's own record converges nothing.
         got, _ = self.plan(dict(written, environment="sha256:e"))
         self.assertEqual(got["action"], "none")
+
+    def test_full_release_converges_the_changed_role_and_records_it(self):
+        base_hashes = hr.group_hashes(hr.git_tree(self.base, self.root), "control_plane")
+        rec = dict(base_hashes, kind="gregale-host-config", commit=self.base, environment="sha256:e")
+        state = os.path.join(self.root, "h.json")
+        with open(state, "w", encoding="utf-8") as fh:
+            json.dump({"base_git_sha": self.base, "current": self.base, "record": rec}, fh)
+        out = os.path.join(self.root, "full")
+        proc = subprocess.run([sys.executable, str(HERE / "plan_host_config.py"), "--full-release", self.head,
+                               "--host-state", state, "--out", out, "--repo", self.root], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        with open(os.path.join(out, "plan.json"), encoding="utf-8") as fh:
+            got = json.load(fh)
+        self.assertEqual((got["action"], got["roles"]), ("roles", ["postgres_capacity"]))
+        with open(os.path.join(out, "record.json"), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["roles"],
+                             hr.group_hashes(hr.git_tree(self.head, self.root), "control_plane")["roles"])
 
 
 if __name__ == "__main__":

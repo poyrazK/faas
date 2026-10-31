@@ -128,6 +128,9 @@ type QualificationReport struct {
 	ScaleToZeroUpdate    bool                         `json:"scale_to_zero_update"`
 	ComputePolicy        *ComputePolicyEvidence       `json:"compute_policy,omitempty"`
 	Resize               *ResizeEvidence              `json:"resize,omitempty"`
+	// DeletionHold is set by every run against a provider that holds
+	// databases for deletion (ADR-20261029174950); older reports lack it.
+	DeletionHold *DeletionHoldEvidence `json:"deletion_hold,omitempty"`
 	// ComputeCap is set only by a --compute-cap run, whose output is its own
 	// artifact (ADR-20261025094915); provisioning approvals never carry it.
 	ComputeCap *ComputeCapEvidence `json:"compute_cap,omitempty"`
@@ -367,6 +370,12 @@ func ValidateQualificationReport(report QualificationReport) error {
 	}
 	if report.Restore != nil {
 		requiredChecks = append(append([]string(nil), requiredChecks...), restoreQualificationChecks[:]...)
+	}
+	if report.DeletionHold != nil {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "deletion_hold_probe")
+		if report.DeletionHold.Validate() != nil {
+			return ErrUnavailable
+		}
 	}
 	if !hasQualificationChecks(report.Checks, requiredChecks) {
 		return ErrInvalid
@@ -873,6 +882,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			probeErr = probe.Validate()
 		}
 		if !record("scale_to_zero_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if _, holds := provider.(DeletionHoldProvider); holds {
+		prober, ok := provider.(DeletionHoldProber)
+		if !ok {
+			record("deletion_hold_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeDeletionHold(ctx, providerResourceID, material)
+		report.DeletionHold = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("deletion_hold_probe", probeErr) {
 			return report, resultErr
 		}
 	}

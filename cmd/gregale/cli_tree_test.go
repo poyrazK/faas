@@ -17,6 +17,9 @@ var cliTreeVerbs = []string{
 	"pause", "resume", "cancel", "retry", "wait", "watch", "logs", "diff", "doctor", "status",
 	"promote", "rollback", "purge", "rotate", "approve", "reject", "join", "leave", "explain",
 	"replay", "recover", "scale", "park", "wake", "wake-ahead", "restart", "rename", "restore",
+	// undelete: bring a deleted database back inside its delete window, where
+	// `postgres restore` already means point-in-time restore.
+	"undelete",
 	"exec", "cp", "port-forward", "run", "publish", "send", "deliver", "receive", "peek", "ack",
 	"apply", "check", "verify", "setup", "sync", "connect", "disconnect", "link", "advance",
 	"simulate", "hide", "prune", "reorder", "serve", "call", "complete", "read", "render",
@@ -31,6 +34,7 @@ var cliTreeVerbs = []string{
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
 	"reset", "pull", "push", "signal", "generate", "void", "draft", "handoff", "end",
+	"open", "fail", "undelete",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -57,7 +61,19 @@ var cliTreeCompoundWords = []string{
 	"object-lock", "subscription-version", "subscription-retry", "subscription-circuit",
 	"subscription-capacity", "lock-policy", "deploy-token",
 	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
+	"quality-alert", "probe-policy", "release-policy", "object-storage", "copy-source", "attack-mode",
+	"grace-window", "payment-method", "server-key",
+	"ack-sync", "billing-connection", "content-policy", "tag-limit", "app-limit", "legal-hold",
+	"event-hold", "impact-alert", "lifecycle-alert", "ownership-rule", "compound-alert", "source-map",
 }
+
+// cliTreeValueWord matches a word that is a value, not a verb: today's
+// manifest lists some choices as verbs (`bucket encryption AES256`).
+var cliTreeValueWord = regexp.MustCompile(`^[A-Z0-9_]+$|:`)
+
+// cliTreePlacedInCode are today's paths a rewrite places rather than the
+// alias table (`apps tcp` is `app listener --protocol tcp`).
+var cliTreePlacedInCode = []string{"apps tcp", "apps udp"}
 
 // Rule 5: top-level verbs that may start a tree path.
 var cliTreeShortcuts = []string{"open", "logs"}
@@ -333,7 +349,7 @@ func TestCliTreeSpelling(t *testing.T) {
 		{"preview show 12", "preview get 12"},
 		{"mcp serve --transport stdio", ""},
 		{"mcp doctor", "mcp server doctor"},
-		{"mcp server readiness", ""}, // already the tree's names
+		{"mcp server readiness", "mcp readiness"}, // readiness sits directly under mcp (round 8)
 		{"dashboard list", ""},
 		{"run --image alpine", ""}, // a shortcut keeps its name
 		{"rollback api", ""},
@@ -440,6 +456,12 @@ func cliTreeVerbViolations() []string {
 	for _, alias := range *main.CliTreeAliases {
 		renamed[alias.Old], explicit[alias.New] = true, true
 	}
+	for _, fold := range *main.CliTreeFlagFolds {
+		renamed[fold.Old] = true
+	}
+	for _, old := range cliTreePlacedInCode {
+		renamed[old] = true
+	}
 	found := map[string]bool{}
 	check := func(path []string, leaf bool) {
 		var reasons []string
@@ -447,11 +469,17 @@ func cliTreeVerbViolations() []string {
 			reasons = append(reasons, "more than four words")
 		}
 		for _, word := range path {
+			if cliTreeValueWord.MatchString(word) {
+				continue
+			}
 			if strings.Contains(word, "-") && !slices.Contains(cliTreeCompoundWords, word) {
 				reasons = append(reasons, "hyphenated "+word)
 			}
 		}
 		last := path[len(path)-1]
+		if leaf && cliTreeValueWord.MatchString(last) {
+			last = path[len(path)-2]
+		}
 		if leaf && !slices.Contains(cliTreeVerbs, last) && !slices.Contains(cliTreeReadNouns, last) {
 			reasons = append(reasons, "verb "+last)
 		}
@@ -540,6 +568,91 @@ func TestCliTreeEveryAliasRunsItsCommand(t *testing.T) {
 		if err != nil || !slices.Equal(got, want) {
 			t.Errorf("%q rewrites to %q (err %v), want %q", alias.New, got, err, want)
 		}
+	}
+}
+
+// A flag fold runs its command: the flag that selects it is consumed (or
+// kept when that command takes it), the rest of the line follows, and the
+// plain tree path must not take the flag itself, or the fold would hide it.
+func TestCliTreeFlagFoldsRunTheirCommand(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, fold := range *main.CliTreeFlagFolds {
+		args := append(strings.Fields(fold.New), "ARG")
+		name, value, valued := strings.Cut(fold.Flag, "=")
+		switch {
+		case valued:
+			args = append(args, "--"+name, value)
+		case fold.Value || fold.Append || fold.Keep && name != "dry-run":
+			args = append(args, "--"+name, "VALUE")
+		default:
+			args = append(args, "--"+name)
+		}
+		if fold.Also != "" {
+			args = append(args, "--"+fold.Also)
+			if fold.KeepAlso {
+				args = append(args, "ALSO")
+			}
+		}
+		got, err := main.RewriteCliTree(append(args, "--json"))
+		want := strings.Fields(fold.Old)
+		if fold.Value {
+			want = append(want, "VALUE")
+		}
+		want = append(want, "ARG")
+		if fold.Keep {
+			want = append(want, "--"+name, "VALUE")
+		}
+		if fold.KeepAlso {
+			want = append(want, "--"+fold.Also, "ALSO")
+		}
+		want = append(want, "--json")
+		if fold.Append {
+			want = append(want, "VALUE")
+		}
+		if err != nil || !slices.Equal(got, want) {
+			t.Errorf("%v rewrites to %q (err %v), want %q", args, got, err, want)
+		}
+		if fold.Only {
+			continue // the path runs nothing without its flag
+		}
+		plain, err := main.RewriteCliTree(strings.Fields(fold.New))
+		if err != nil || main.OldPathDepth(plain) < len(plain) {
+			t.Errorf("%q runs no command of today's: %q (err %v)", fold.New, plain, err)
+			continue
+		}
+		if !fold.Keep && slices.ContainsFunc(main.ManifestLeafFlags(plain), func(flag main.CliFlag) bool { return flag.Name == name }) {
+			t.Errorf("%q takes --%s itself; the fold to %q would hide it", fold.New, name, fold.Old)
+		}
+	}
+}
+
+// Help already spelled in the tree is not renamed again where a tree path
+// extends today's name (`mcp` → `mcp server`).
+func TestCliTreeHelpNeverDoublesAPath(t *testing.T) {
+	enableEveryCLIFeature(t)
+	var reference strings.Builder
+	main.RenderMarkdownReference(&reference, main.CliTreeManifest(main.VisibleCliCommands()))
+	if strings.Contains(reference.String(), "gregale mcp server server") {
+		t.Error("the reference spells `gregale mcp server server`")
+	}
+}
+
+// An earlier name of a folded command names its flag in the hint.
+func TestCliTreeFlagFoldHint(t *testing.T) {
+	enableEveryCLIFeature(t)
+	previous := *main.CliTreeHintTerminal
+	*main.CliTreeHintTerminal = func() bool { return true }
+	t.Cleanup(func() { *main.CliTreeHintTerminal = previous })
+	_, _, stderr := runCLI(t, "events", "replay-preview", "--help")
+	if strings.Contains(stderr, "Tip: ") {
+		t.Errorf("help printed a hint: %q", stderr)
+	}
+	path, spelled, ok := main.CliTreeFold([]string{"events", "replay-preview", "my-app"})
+	if !ok || path != "events replay-preview" || spelled != "event backfill create --dry-run" {
+		t.Errorf("fold of events replay-preview = %q %q %v", path, spelled, ok)
+	}
+	if _, spelled, _ := main.CliTreeFold([]string{"events", "subscription-delivery-health"}); spelled != "event subscription health --view delivery" {
+		t.Errorf("fold of events subscription-delivery-health = %q", spelled)
 	}
 }
 

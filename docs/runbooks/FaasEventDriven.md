@@ -52,8 +52,10 @@ Covers `FaasEventRoutingStalled` (page), `FaasEventRoutingSweepSlow`,
   `gregalectl flags deny --key events --account-id <uuid> --reason <why>`.
   The account's publishing answers 503 and its customer events wait;
   platform-produced events still route.
-- **Stop one consumer:** pause its subscription with the delivery controls
-  (`gregale events subscription-pause`); the account sees it.
+- **Stop one consumer:** the account pauses its subscription with the
+  delivery controls (`gregale event subscription pause`), and sees the pause.
+  There is no operator command for one account's consumer; to stop routing
+  for one account, deny it the `events` flag (above).
 - **Code rollback:** schedd, apid and vmmd release independently
   ([release compatibility](../release-compatibility.md)); roll back the unit
   that introduced the regression. Receipts, recipients and dead-letter rows
@@ -91,9 +93,11 @@ Sweeps finish, but the p95 takes longer than 30 seconds. Events arrive late.
    (`schedd_loop_work_total{kind="event_fanout",outcome="rerun"}` rises);
    each pass is still one sample here, so a slow p95 means slow passes. Check
    `schedd_event_delivery_capacity_waiting` and the oldest pending age.
-3. Many running recovery or backfill jobs slow every sweep; list an
-   account's with `gregale events recovery-list` and pause the largest
-   (`gregale events recovery-pause`).
+3. Many running recovery or backfill jobs slow every sweep. Find them on the
+   control-plane database (`select account_id, app_id, count(*) from
+   event_recovery_jobs where state = 'running' group by 1, 2`, and the same
+   on `event_replay_jobs`). The account lists and pauses its own with
+   `gregale event recovery list` and `gregale event recovery pause`.
 
 Resolution: clears when the p95 falls back under 30 seconds.
 
@@ -102,8 +106,9 @@ Resolution: clears when the p95 falls back under 30 seconds.
 More than 10,000 deliveries platform-wide wait for consumer capacity
 (ADR-614 delivery limits).
 
-1. Find the accounts: `gregale events backlog` for a suspected account, or
-   the `event_routing_backlog` projection grouped by account.
+1. Find the accounts: the `event_routing_backlog` projection on the
+   control-plane database, grouped by `account_id`. (`gregale event backlog`
+   shows an account its own backlog; it cannot read another account's.)
 2. One account: its consumer is slower than its producers. It is the
    customer's to fix (scale the consumer, raise its concurrency, or pause the
    subscription); nothing is lost while it waits.
@@ -134,7 +139,7 @@ More than half of one broker kind's trigger polls failed for fifteen
 minutes.
 
 1. Find the triggers: each trigger's consumer health shows its last poll
-   error (`gregale triggers` for the account, or schedd logs
+   error (`gregale trigger list`, run by the account, or schedd logs
    `sched trigger tick: dispatch lane`).
 2. One trigger: the customer's broker is unreachable or its credentials are
    wrong; the trigger's health tells the customer.

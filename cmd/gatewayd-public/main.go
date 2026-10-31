@@ -474,6 +474,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := configureRuntimeIngressProxy(proxy, pgStore, os.Getenv); err != nil {
 		return err
 	}
+	// The pickers name the node before the transport looks for an idle
+	// connection, so connections can stay alive per node without reaching a
+	// drained node or a node a failover retry excluded. Off by default for a
+	// measured rollout. The runtime ingress guard proves every connection
+	// itself, so it keeps one connection per request.
+	if dynamicUpstream && envBoolOr(internalKeepAlivePerNodeEnv, false) && !proxy.WithUpstreamKeepAlive() {
+		log.Warn("gatewayd-public: " + internalKeepAlivePerNodeEnv + " ignored: this upstream cannot keep connections per node")
+	}
 	// Issue #587 / PR-A: per-request drain tracker shared between
 	// the InternalReverseProxy and the control mux so every
 	// ServeHTTP surface contributes to the same in-flight count.
@@ -692,7 +700,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 			log.Warn("gatewayd-public: initial object storage fence read failed", "err", err)
 		}
 		go fence.Run(runtimeCtx)
-		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, func() bool { return s3Flag.Load() && fence.Open() },
+		// Upload keys are resolved by apid on its local auth socket (ADR
+		// 20261029202403); this edge runs on the control plane.
+		uploadAuth, dialErr := apidgrpc.DialAuth(ctx, envOr("FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock"), nil)
+		if dialErr != nil {
+			return fmt.Errorf("gatewayd-public: dial apid credential auth: %w", dialErr)
+		}
+		defer func() { _ = uploadAuth.Close() }()
+		credentials := apidgrpc.CredentialLookup{Apid: uploadAuth, Fallback: pgStore, Log: log}
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, func() bool { return s3Flag.Load() && fence.Open() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err

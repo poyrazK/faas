@@ -8199,6 +8199,25 @@ func (c *Client) GetAppHealth(ctx context.Context, slug string) (AppHealthRespon
 	return out, err
 }
 
+// GetAppStatus reads an app's conditions (ADR-20261030151810). An empty
+// environment reads the app's default environment.
+func (c *Client) GetAppStatus(ctx context.Context, slug, environment string) (ResourceStatus, error) {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/status"
+	if environment != "" {
+		path += "?" + url.Values{"environment": {environment}}.Encode()
+	}
+	var out ResourceStatus
+	err := c.do(ctx, "GET", path, nil, &out)
+	return out, err
+}
+
+// GetDeploymentStatus reads a deployment's conditions (ADR-20261030151810).
+func (c *Client) GetDeploymentStatus(ctx context.Context, id string) (ResourceStatus, error) {
+	var out ResourceStatus
+	err := c.do(ctx, "GET", "/v1/deployments/"+url.PathEscape(id)+"/status", nil, &out)
+	return out, err
+}
+
 func (c *Client) ListAppHealthHistory(ctx context.Context, slug string, limit int, before string) (AppHealthHistoryPage, error) {
 	query := url.Values{}
 	if limit > 0 {
