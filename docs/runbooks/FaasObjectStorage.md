@@ -103,11 +103,13 @@ Severity: warn.
    held in memory are written by the next successful flush; a restart
    writes them once before exiting.
 5. Region capacity: add a provider project to the region's pool.
-   1. Create the OVH Public Cloud project, its S3 user and keys, and ask OVH
+   1. Create the OVH Public Cloud project, its two S3 users and keys (the
+      bucket-admin user for apid and the gateway user with the policy in
+      `deploy/ansible/roles/s3_gateway_service/README.md`), and ask OVH
       support for the project's 1,000-bucket quota.
    2. Add a backend to `/etc/faas/object-storage.json` with a new `id`, the
-      project as `namespace`, its own key environment variables and
-      `max_buckets` below the quota (950 for 1,000). Its driver, Object Lock,
+      project as `namespace`, its own admin and gateway key environment
+      variables and `max_buckets` below the quota (950 for 1,000). Its driver, Object Lock,
       encryption algorithms and `allowed_origins` must match the pool's.
    3. Append its `id` to the region's `pools` list. Never reorder or remove
       a backend that still holds buckets; removing it from the pool only

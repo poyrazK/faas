@@ -234,7 +234,11 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		if app.Status == state.AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return gateway.App{}, false, nil
 		}
-		return gateway.App{ID: app.ID, AccountID: acct.ID, ResourceOwnerID: acct.ResourceOrgID, Plan: acct.Plan, AccountStatus: string(acct.Status),
+		edgeRuleScope, scopeErr := state.AppEdgeRuleScope(ctx, r.store, app)
+		if scopeErr != nil {
+			return gateway.App{}, false, scopeErr
+		}
+		return gateway.App{ID: app.ID, AccountID: acct.ID, ResourceOwnerID: acct.ResourceOrgID, EdgeRuleScope: edgeRuleScope, Plan: acct.Plan, AccountStatus: string(acct.Status),
 			AccountAbuseHeld: acct.AbuseHeld(), EnvironmentNotReady: true, DynamicRoute: true}, true, nil
 	}
 	if err != nil || !found {
@@ -693,6 +697,10 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 	if err != nil {
 		return gateway.App{}, false, err
 	}
+	edgeRuleScope, err := state.AppEdgeRuleScope(ctx, r.store, app)
+	if err != nil {
+		return gateway.App{}, false, err
+	}
 	requestRateLimitRPS, requestRateLimitBurst := 0, 0
 	if app.RequestRateLimitRPS != nil {
 		requestRateLimitRPS = *app.RequestRateLimitRPS
@@ -704,6 +712,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		ID:                           app.ID,
 		AccountID:                    acct.ID,
 		ResourceOwnerID:              acct.ResourceOrgID,
+		EdgeRuleScope:                edgeRuleScope,
 		SecurityQuarantined:          securityQuarantined,
 		Visibility:                   api.NormalizeAppVisibility(app.Visibility),
 		AccountStatus:                string(acct.Status),
