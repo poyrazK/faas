@@ -381,12 +381,15 @@ func (r EgressUpstream) Key() string { return r.key() }
 func (r *Engine) BootBudget() *func(state.State) time.Duration { return &r.bootBudget }
 func (r *Engine) DeadNodeSettle() *storeSettle                 { return &r.deadNodeSettle }
 func (r *Engine) DefaultLocalNodeID() *string                  { return &r.defaultLocalNodeID }
-func (r *Engine) FrozenFastPath() *atomic.Bool                 { return &r.frozenFastPath }
-func (r *Engine) Log() **slog.Logger                           { return &r.log }
-func (r *Engine) NodePresence() **nodePresenceTracker          { return &r.nodePresence }
-func (r *Engine) Now() *func() time.Time                       { return &r.now }
-func (r *Engine) Ops() **wire.OpsMetrics                       { return &r.ops }
-func (r *Engine) Owners() *ownerCache                          { return &r.owners }
+func (r *Engine) FrozenCompressOne() *func(context.Context, string) string {
+	return &r.frozenCompressOne
+}
+func (r *Engine) FrozenFastPath() *atomic.Bool        { return &r.frozenFastPath }
+func (r *Engine) Log() **slog.Logger                  { return &r.log }
+func (r *Engine) NodePresence() **nodePresenceTracker { return &r.nodePresence }
+func (r *Engine) Now() *func() time.Time              { return &r.now }
+func (r *Engine) Ops() **wire.OpsMetrics              { return &r.ops }
+func (r *Engine) Owners() *ownerCache                 { return &r.owners }
 func (r *Engine) ServiceReconcileSubmit() *func(context.Context, string) {
 	return &r.serviceReconcileSubmit
 }

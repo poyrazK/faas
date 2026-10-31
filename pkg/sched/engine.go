@@ -812,6 +812,13 @@ type Engine struct {
 	// (ADR 20261030100950, node_cpu_pressure.go).
 	cpuPressureReadings CPUPressureReadings
 	cpuPressureHolds    *cpuPressureHolds
+	// frozenProactiveCompress, compressBackoff and frozenCompressOne drive
+	// proactive compression of frozen VMs (ADR 20261031143521,
+	// frozen_proactive_compress.go); frozenCompressOne replaces the vmmd
+	// call in tests.
+	frozenProactiveCompress bool
+	compressBackoff         *frozenCompressBackoff
+	frozenCompressOne       func(ctx context.Context, instanceID string) string
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller

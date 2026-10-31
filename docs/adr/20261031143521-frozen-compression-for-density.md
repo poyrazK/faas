@@ -57,8 +57,10 @@ Azure trace:
    the node cannot fit it. The frozen charge is
    `min(plan + 8, max(memory.current, 8 MB) x 1.25)`:
    - in the memory shadow (`instancestats`), for instances in `frozen`;
-   - in the ledger (`frozenChargeMB`, `ShrinkFrozenCharge`,
-     `admitFrozen_locked`, and the frozen seed after a restart).
+   - in the ledger (`frozenChargeMB`, `Freeze`, `ShrinkFrozenCharge`,
+     `admitFrozen_locked`). The frozen seed after a schedd restart has no
+     measurement and keeps booking its 64 MB stand-in until the next
+     sample.
    It applies whether or not the VM is compressed: an uncompressed frozen VM
    is charged its real memory too.
 
