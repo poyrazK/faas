@@ -8211,6 +8211,14 @@ func (c *Client) GetAppStatus(ctx context.Context, slug, environment string) (Re
 	return out, err
 }
 
+// UpdateAppLabels sets and removes an app's labels in one write and returns
+// every label it carries after it (ADR-20261031100025).
+func (c *Client) UpdateAppLabels(ctx context.Context, slug string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/apps/"+url.PathEscape(slug)+"/labels", change, &out)
+	return out, err
+}
+
 // GetDeploymentStatus reads a deployment's conditions (ADR-20261030151810).
 func (c *Client) GetDeploymentStatus(ctx context.Context, id string) (ResourceStatus, error) {
 	var out ResourceStatus
