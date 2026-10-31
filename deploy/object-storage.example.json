@@ -20,6 +20,8 @@
       "path_style": true,
       "access_key_env": "GREGALE_OBJECT_STORAGE_ACCESS_KEY",
       "secret_key_env": "GREGALE_OBJECT_STORAGE_SECRET_KEY",
+      "gateway_access_key_env": "GREGALE_OBJECT_STORAGE_GATEWAY_ACCESS_KEY",
+      "gateway_secret_key_env": "GREGALE_OBJECT_STORAGE_GATEWAY_SECRET_KEY",
       "usage_reports_path": "/var/spool/faas/s3-gatewayd/managed-virginia-v1-usage.json",
       "usage": {
         "driver": "ovh",
