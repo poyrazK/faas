@@ -188,3 +188,33 @@ func TestPgStoreNewServicePreviewFollowsBoundAppGates(t *testing.T) {
 			service.RequireSigned, service.Visibility, service.OnlyAllowDeclaredRoutes, service.DeclaredRoutes, err)
 	}
 }
+
+// The tenant-only gate and the security posture policy follow the production
+// app onto its previews and onto the services its PR environments add.
+func TestPgStoreTenantAndSecurityGatesReachPreviews(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("db.MigrateUp: %v", err)
+	}
+	store := state.NewPgStore(pool)
+	ctx := context.Background()
+	f := newPreviewEnvironmentFixture(t, ctx, store, api.PlanPro)
+	bound, err := store.CreateApp(ctx, state.App{AccountID: f.account.ID, ProjectID: f.project.ID, Slug: f.prefix + "-web",
+		WorkloadName: "web", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := f.reserve(ctx, 9, 'a', api.MustLimitsFor(api.PlanPro), "web", "worker")
+	if err != nil || len(reserved) != 2 {
+		t.Fatalf("reserve = (%d, %v)", len(reserved), err)
+	}
+	if _, err := pool.Exec(ctx, `update apps set platform_tenant_required = true, security_policy = 'enforce' where id = $1`, bound.ID); err != nil {
+		t.Fatalf("change the production app's gates: %v", err)
+	}
+	for _, preview := range reserved {
+		got, err := store.AppByID(ctx, preview.ID)
+		if err != nil || !got.PlatformTenantRequired || got.SecurityPolicy != api.AppSecurityPolicyEnforce {
+			t.Fatalf("%s = tenant %t, policy %q (%v); want production's", preview.Slug, got.PlatformTenantRequired, got.SecurityPolicy, err)
+		}
+	}
+}
