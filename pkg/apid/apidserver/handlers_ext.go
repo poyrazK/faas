@@ -7095,7 +7095,7 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 				managedPostgresProblem(w, err)
 				return
 			}
-			usage, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, now, managedPostgresUsageCeilings(limits, overage))
+			usage, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, now, managedPostgresUsageCeilings(limits, overage, managedPostgresOverageBilled(s.managedPostgresBillingPolicy)))
 			if err != nil {
 				managedPostgresProblem(w, err)
 				return

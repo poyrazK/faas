@@ -45,7 +45,7 @@ func (s *server) attachManagedPostgresOverage(w http.ResponseWriter, r *http.Req
 	item := &dashboard.ManagedPostgresOverageItem{
 		Enabled:        enabled,
 		AllowanceLabel: dashboardComputeUnitHours(limits.MonthlyComputeUnitSeconds),
-		CeilingLabel:   dashboardComputeUnitHours(managedPostgresComputeCeiling(limits, true)),
+		CeilingLabel:   dashboardComputeUnitHours(managedPostgresComputeCeiling(limits, true, managedPostgresOverageBilled(s.managedPostgresBillingPolicy))),
 		ConfirmToken:   token,
 	}
 	switch r.URL.Query().Get("overage") {

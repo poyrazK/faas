@@ -21,7 +21,7 @@ type CapMetrics struct {
 
 var (
 	capMetricModes         = []CapEnforcementMode{CapEnforcementOff, CapEnforcementShadow, CapEnforcementOn}
-	capMetricAccountStates = []string{"enforced", "suspended", "uncapped", "period_mismatch", "unsupported", "failed"}
+	capMetricAccountStates = []string{"enforced", "suspended", "spend_cap", "uncapped", "period_mismatch", "unsupported", "failed"}
 	capMetricScopeOutcomes = []string{"applied", "shadowed", "unchanged"}
 
 	storageCapMetricAccountStates = []string{"enforced", "blocked", "uncapped", "unsupported", "failed"}
@@ -103,6 +103,7 @@ func (m *CapMetrics) Observe(summary CapSweepSummary) {
 	skipped := summary.Uncapped + summary.PeriodMismatch + summary.Unsupported + summary.Failed
 	m.accounts.WithLabelValues("enforced").Set(float64(max(0, summary.Accounts-skipped)))
 	m.accounts.WithLabelValues("suspended").Set(float64(summary.SuspendedAccounts))
+	m.accounts.WithLabelValues("spend_cap").Set(float64(summary.SpendCapAccounts))
 	m.accounts.WithLabelValues("uncapped").Set(float64(summary.Uncapped))
 	m.accounts.WithLabelValues("period_mismatch").Set(float64(summary.PeriodMismatch))
 	m.accounts.WithLabelValues("unsupported").Set(float64(summary.Unsupported))

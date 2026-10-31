@@ -613,6 +613,13 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 // PostgreSQL databases before the cap suspends them (ADR-20261025094915).
 const ManagedPostgresOverageCeilingMultiplier = 2
 
+// ManagedPostgresBilledOverageCeilingMultiplier replaces it once managed
+// PostgreSQL overage is billed (ADR-20261031165104 decision 5): four times the
+// allowance lets one production-class database at its 1 CU floor run a whole
+// month on Scale (800 of 720 CU-hours), and the customer's spend cap is the
+// control. The storage pool stays at ManagedPostgresOverageCeilingMultiplier.
+const ManagedPostgresBilledOverageCeilingMultiplier = 4
+
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.

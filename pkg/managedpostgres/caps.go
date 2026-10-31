@@ -146,6 +146,10 @@ type CapLimits struct {
 	Ceiling     int64
 	Overage     bool
 	StoragePool int64
+	// SpendCapReached is set once overage is billed and the subject's
+	// spend cap holds this month (ADR-20261031165104 decision 4): its
+	// databases are suspended with its apps.
+	SpendCapReached bool
 }
 
 // CapCeiling returns a usage subject's limits: an account, or an
@@ -235,16 +239,19 @@ type CapSweepSummary struct {
 	Mode              CapEnforcementMode
 	Accounts          int
 	SuspendedAccounts int
-	Uncapped          int
-	PeriodMismatch    int
-	Unsupported       int
-	Failed            int
-	ScopesUnchanged   int
-	ScopesApplied     int
-	ScopesShadowed    int
-	EventsRecorded    int
-	NotifyFailed      int
-	CompletedAt       time.Time
+	// SpendCapAccounts are enforced at their spend cap, not their ceiling
+	// (ADR-20261031165104 decision 4); they are also counted as enforced.
+	SpendCapAccounts int
+	Uncapped         int
+	PeriodMismatch   int
+	Unsupported      int
+	Failed           int
+	ScopesUnchanged  int
+	ScopesApplied    int
+	ScopesShadowed   int
+	EventsRecorded   int
+	NotifyFailed     int
+	CompletedAt      time.Time
 	// The storage pool pass, counted apart so its failures never mark the
 	// compute sweep stale.
 	StorageMode            CapEnforcementMode
@@ -456,6 +463,14 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	if err != nil {
 		return err
 	}
+	eventCeiling := ceiling
+	if limits.SpendCapReached {
+		// At the spend cap the databases stop at what they have used
+		// (ADR-20261031165104 decision 4). Cap events keep the plan's
+		// ceiling, so this suspension never mails as a used-up allowance.
+		ceiling = min(ceiling, max(1, snapshot.ComputeUnitSeconds))
+		summary.SpendCapAccounts++
+	}
 	plan, err := planComputeCaps(ceiling, snapshot.ComputeUnitSeconds, scopes)
 	if err != nil {
 		return err
@@ -465,7 +480,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	}
 	var failures []error
 	if e.mode == CapEnforcementOn {
-		if err := e.recordCapEvents(ctx, accountID, now, plan.used, limits, plan.ceiling, summary); err != nil {
+		if err := e.recordCapEvents(ctx, accountID, now, plan.used, limits, eventCeiling, summary); err != nil {
 			failures = append(failures, err)
 		}
 	}

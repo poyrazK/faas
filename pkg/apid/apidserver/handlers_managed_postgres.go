@@ -192,7 +192,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 // the customer-safe API shape. In particular, it never serializes policy
 // rates, provider cost, backend IDs, or credential material.
 func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) api.ManagedPostgresUsageResponse {
-	storageLimit := managedPostgresUsageCeilings(limits, false).MaxMonthlyStorageByteSeconds
+	storageLimit := managedPostgresUsageCeilings(limits, false, false).MaxMonthlyStorageByteSeconds
 	remaining := int64(0)
 	if storageLimit > summary.Snapshot.StorageByteSeconds {
 		remaining = storageLimit - summary.Snapshot.StorageByteSeconds
@@ -258,7 +258,7 @@ func (s *server) managedPostgresUsageFor(ctx context.Context, account state.Acco
 	if err != nil {
 		return managedpostgres.UsageSummary{}, false, err
 	}
-	summary, err := s.managedPostgres.UsageSummary(ctx, subject, time.Now().UTC(), managedPostgresUsageCeilings(limits, overage))
+	summary, err := s.managedPostgres.UsageSummary(ctx, subject, time.Now().UTC(), managedPostgresUsageCeilings(limits, overage, managedPostgresOverageBilled(s.managedPostgresBillingPolicy)))
 	return summary, overage, err
 }
 

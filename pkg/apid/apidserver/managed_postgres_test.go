@@ -97,22 +97,26 @@ func TestManagedPostgresUsageCeilingsFollowPlanStorage(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s plan missing", plan)
 		}
-		for _, overage := range []bool{false, true} {
-			got := apidserver.ManagedPostgresUsageCeilings(limits, overage)
+		for _, tc := range []struct{ overage, billed bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+			got := apidserver.ManagedPostgresUsageCeilings(limits, tc.overage, tc.billed)
 			want := managedpostgres.UsageCeilings{
 				MaxMonthlyStorageByteSeconds: limits.StorageLimitBytes * month,
 				MaxMonthlyComputeUnitSeconds: limits.MonthlyComputeUnitSeconds,
 			}
-			// adr: 20261025094915 — overage raises only the compute ceiling, to 2x.
-			if overage {
+			// adr: 20261025094915 — overage raises only the compute ceiling, to
+			// 2x; adr: 20261031165104 — 4x once overage is billed.
+			switch {
+			case tc.overage && tc.billed:
+				want.MaxMonthlyComputeUnitSeconds *= api.ManagedPostgresBilledOverageCeilingMultiplier
+			case tc.overage:
 				want.MaxMonthlyComputeUnitSeconds *= api.ManagedPostgresOverageCeilingMultiplier
 			}
 			if got != want {
-				t.Fatalf("%s overage=%v ceiling = %+v, want the pooled %+v", plan, overage, got, want)
+				t.Fatalf("%s %+v ceiling = %+v, want the pooled %+v", plan, tc, got, want)
 			}
 		}
 	}
-	if got := apidserver.ManagedPostgresUsageCeilings(api.ManagedPostgresPlanLimits{}, true); got != (managedpostgres.UsageCeilings{}) {
+	if got := apidserver.ManagedPostgresUsageCeilings(api.ManagedPostgresPlanLimits{}, true, true); got != (managedpostgres.UsageCeilings{}) {
 		t.Fatalf("no-database ceiling = %+v, want zero", got)
 	}
 }

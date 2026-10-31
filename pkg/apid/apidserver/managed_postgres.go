@@ -191,7 +191,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			if overageErr != nil {
 				return overageErr
 			}
-			admitErr := registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits, overageOn))
+			admitErr := registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits, overageOn, managedPostgresOverageBilled(hooks.billingPolicy())))
 			if metrics != nil {
 				metrics.ObserveAdmission(admitErr)
 			}
@@ -320,9 +320,16 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 			if err != nil {
 				return managedpostgres.CapLimits{}, err
 			}
-			return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
-				Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
-				StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
+			billed := managedPostgresOverageBilled(hooks.billingPolicy())
+			capLimits := managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
+				Ceiling: managedPostgresComputeCeiling(limits, overageOn, billed), Overage: overageOn,
+				StoragePool: managedPostgresStoragePool(limits, overageOn)}
+			if billed {
+				if capLimits.SpendCapReached, err = managedPostgresSpendCapReached(ctx, accountStore, subject); err != nil {
+					return managedpostgres.CapLimits{}, err
+				}
+			}
+			return capLimits, nil
 		},
 	}
 	if mode == managedpostgres.CapEnforcementOn {
@@ -396,6 +403,29 @@ func loadManagedPostgresBillingSweeper(registry *managedpostgres.Registry, store
 	return managedpostgres.NewBillingSweeper(registry, store, options)
 }
 
+// managedPostgresSpendCapReached reports a spend-cap hold that still applies
+// to subject's current cap this month (ADR-20261026120843): once managed
+// PostgreSQL overage is billed, its databases stop with the apps at the cap
+// (ADR-20261031165104 decision 4).
+func managedPostgresSpendCapReached(ctx context.Context, store any, subject string) (bool, error) {
+	caps, ok := store.(interface {
+		GetAccountOverageCapCents(context.Context, string) (int64, bool, error)
+	})
+	holds, holdsOK := store.(state.SpendCapHoldStore)
+	if !ok || !holdsOK {
+		return false, nil
+	}
+	capCents, capped, err := caps.GetAccountOverageCapCents(ctx, subject)
+	if err != nil || !capped {
+		return false, err
+	}
+	hold, found, err := holds.GetSpendCapHold(ctx, subject)
+	if err != nil || !found {
+		return false, err
+	}
+	return hold.Holds(capCents, time.Now()), nil
+}
+
 func managedPostgresStoredOverage(ctx context.Context, store managedpostgres.OverageStore, overage managedPostgresOverageGate, account state.Account, subject string) (bool, error) {
 	if overage == nil || !overage(account) {
 		return false, nil
@@ -403,14 +433,14 @@ func managedPostgresStoredOverage(ctx context.Context, store managedpostgres.Ove
 	return store.OverageEnabled(ctx, subject)
 }
 
-func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits, overage bool) managedpostgres.UsageCeilings {
+func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits, overage, billed bool) managedpostgres.UsageCeilings {
 	if limits.DatabasesMax <= 0 {
 		return managedpostgres.UsageCeilings{}
 	}
 	const secondsPerBillingMonth = int64(31 * 24 * time.Hour / time.Second)
 	ceilings := managedpostgres.UsageCeilings{}
 	if limits.MonthlyComputeUnitSeconds > 0 {
-		ceilings.MaxMonthlyComputeUnitSeconds = managedPostgresComputeCeiling(limits, overage)
+		ceilings.MaxMonthlyComputeUnitSeconds = managedPostgresComputeCeiling(limits, overage, billed)
 	}
 	if limits.StorageLimitBytes > 0 && limits.StorageLimitBytes <= math.MaxInt64/secondsPerBillingMonth {
 		ceilings.MaxMonthlyStorageByteSeconds = limits.StorageLimitBytes * secondsPerBillingMonth

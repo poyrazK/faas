@@ -39,19 +39,33 @@ func (s *server) managedPostgresOverageOn(ctx context.Context, account state.Acc
 	return s.managedPostgres.Overage(ctx, subject)
 }
 
-func managedPostgresOverageView(limits api.ManagedPostgresPlanLimits, enabled bool) api.ManagedPostgresOverage {
+func managedPostgresOverageView(limits api.ManagedPostgresPlanLimits, enabled, billed bool) api.ManagedPostgresOverage {
 	view := api.ManagedPostgresOverage{Enabled: enabled, ComputeAllowanceUnitSeconds: limits.MonthlyComputeUnitSeconds}
-	view.ComputeCeilingUnitSeconds = managedPostgresComputeCeiling(limits, enabled)
+	view.ComputeCeilingUnitSeconds = managedPostgresComputeCeiling(limits, enabled, billed)
 	return view
 }
 
 // managedPostgresComputeCeiling is the plan's monthly compute ceiling before
-// the operator's usage cap: the allowance, or twice it with overage on.
-func managedPostgresComputeCeiling(limits api.ManagedPostgresPlanLimits, overage bool) int64 {
-	if overage {
+// the operator's usage cap: the allowance, or with overage on twice it, four
+// times once overage is billed (ADR-20261031165104 decision 5).
+func managedPostgresComputeCeiling(limits api.ManagedPostgresPlanLimits, overage, billed bool) int64 {
+	switch {
+	case overage && billed:
+		return limits.MonthlyComputeUnitSeconds * api.ManagedPostgresBilledOverageCeilingMultiplier
+	case overage:
 		return limits.MonthlyComputeUnitSeconds * api.ManagedPostgresOverageCeilingMultiplier
 	}
 	return limits.MonthlyComputeUnitSeconds
+}
+
+// managedPostgresOverageBilled reports a live managed PostgreSQL overage
+// billing policy; shadow and off keep the unbilled 2x ceiling.
+func managedPostgresOverageBilled(policy func() (managedpostgres.BillingPolicy, bool)) bool {
+	if policy == nil {
+		return false
+	}
+	p, ok := policy()
+	return ok && p.Mode == managedpostgres.BillingModeLive
 }
 
 // managedPostgresStoragePool is the subject's pooled storage the storage pass
@@ -75,7 +89,7 @@ func (s *server) getManagedPostgresOverage(w http.ResponseWriter, r *http.Reques
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresOverageView(limits, enabled))
+	writeJSON(w, http.StatusOK, managedPostgresOverageView(limits, enabled, managedPostgresOverageBilled(s.managedPostgresBillingPolicy)))
 }
 
 func (s *server) putManagedPostgresOverage(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -98,7 +112,7 @@ func (s *server) putManagedPostgresOverage(w http.ResponseWriter, r *http.Reques
 		managedPostgresProblem(w, err)
 		return
 	}
-	view := managedPostgresOverageView(limits, *req.Enabled)
+	view := managedPostgresOverageView(limits, *req.Enabled, managedPostgresOverageBilled(s.managedPostgresBillingPolicy))
 	s.audit.Emit(r.Context(), "managed_postgres.overage.changed", &acct.ID, map[string]any{
 		"subject_id": subject, "enabled": view.Enabled, "compute_ceiling_unit_seconds": view.ComputeCeilingUnitSeconds,
 	})

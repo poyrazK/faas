@@ -100,6 +100,16 @@
    - the cap enforcer suspending at a hold;
    - the 4× ceiling under live mode;
    - the cap email's reason.
+
+   **Delivered first (2a):**
+   - With the policy live, the cap enforcer's ceiling closure reads the subject's spend-cap hold (`GetSpendCapHold`, `Holds`). A held subject's databases are set to what they have used, counted as `apid_managed_postgres_cap_accounts{state="spend_cap"}`.
+   - The ceiling is 4× (`api.ManagedPostgresBilledOverageCeilingMultiplier`) in the cap enforcer, admission, `postgres usage`, `postgres overage` and the dashboard.
+   - Cap events keep the plan's ceiling, so a spend-cap suspension does not mail as a used-up allowance.
+   - All of it is dormant while the mode is off or shadow.
+
+   **Left for 2b, before live:**
+   - meterd's reservation and the step's cap headroom;
+   - the cap email naming the spend cap (a new cap-event threshold, so the template CHECK lists are re-created).
 3. **Live billing:**
    - the live publish, month close and receipt;
    - the reconciliation metric and alert;
