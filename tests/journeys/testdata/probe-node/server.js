@@ -158,6 +158,11 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { app: "gregale-e2e-probe", version, uptime_ms: Date.now() - started });
     case "/ready":
       return json(res, 200, { ready: true, port: Number(process.env.PORT) || 8080 });
+    case "/cacheable":
+      // The one response a kind=cache edge rule may store: json() sends
+      // no-store, which the edge cache never stores.
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=60" });
+      return res.end(JSON.stringify({ cacheable: true, version }));
     case "/secret": {
       const key = url.searchParams.get("key") || "";
       if (!/^E2E_[A-Z0-9_]{1,40}$/.test(key)) {
