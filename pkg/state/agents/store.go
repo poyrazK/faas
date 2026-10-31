@@ -138,6 +138,10 @@ type VersionSpec struct {
 	AIBudgetMillicents int64
 	// Deliveries are what a succeeded run delivers (ADR-20261027090010 §8).
 	Deliveries []Delivery
+	// NoModelWaitPause opts the version's runs out of the model-wait pause
+	// (ADR-20261027090012 §1), for a harness whose connections are
+	// heartbeat-sensitive. The API names it pause_during_model_calls: false.
+	NoModelWaitPause bool
 }
 
 // Agent is an agent definition.
@@ -329,6 +333,7 @@ func (s *Store) addVersion(ctx context.Context, tx pgx.Tx, accountID string, age
 		HarnessRun: run, HarnessModels: models, PromptTemplate: spec.PromptTemplate,
 		RamMb: optInt(spec.RAMMB), TimeoutSec: int32(spec.TimeoutSec),
 		ModelIntegrations: integrations, AiBudgetMillicents: optInt8(spec.AIBudgetMillicents), Deliveries: deliveries,
+		PauseDuringModelCalls: !spec.NoModelWaitPause,
 	})
 	if err != nil {
 		return Agent{}, Version{}, fmt.Errorf("insert agent version: %w", err)
@@ -754,7 +759,7 @@ func versionFrom(row sqlc.GetAgentVersionRow) (Version, error) {
 			Harness:        Harness{Preset: row.HarnessPreset.String, Image: row.HarnessImage.String, Run: row.HarnessRun, Models: models},
 			PromptTemplate: row.PromptTemplate, RAMMB: int(row.RamMb.Int32), TimeoutSec: int(row.TimeoutSec),
 			Integrations: nilIfEmpty(integrations), AIBudgetMillicents: row.AiBudgetMillicents.Int64,
-			Deliveries: deliveries,
+			Deliveries: deliveries, NoModelWaitPause: !row.PauseDuringModelCalls,
 		},
 		CreatedAt: row.CreatedAt.Time,
 	}, nil

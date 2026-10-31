@@ -46,6 +46,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			pr.Out.URL.Scheme = p.Target.Scheme
 			pr.Out.URL.Host = p.Target.Host
 			pr.Out.Host = pr.In.Host // app lookup uses the customer hostname
+			p.markPlacement(pr.Out.Header)
 			stampTrafficStart(pr.Out)
 			clientIP, proto := p.forwardingContext(pr.In)
 			if clientIP != "" {
@@ -55,6 +56,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			propagation.TraceContext{}.Inject(pr.In.Context(), propagation.HeaderCarrier(pr.Out.Header))
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			p.takeInstanceNode(r, resp.Header)
 			if err := bindPublicTrafficSecurity(r, resp); err != nil {
 				return err
 			}

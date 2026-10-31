@@ -15115,6 +15115,11 @@ const (
 // PagerDuty event or email.
 const NotificationChannelTestsPerAccountMinute = 10
 
+// AlertPresetTestsPerAccountMinute caps preset test sends per account
+// (ADR-20261030214500): each one posts to the rule's webhook and records a
+// test delivery.
+const AlertPresetTestsPerAccountMinute = 10
+
 // Custom dashboards (ADR-20261022173833).
 const (
 	DashboardsPerAccount   = 20
@@ -16304,6 +16309,20 @@ const (
 	DataRepairPurgePlanTTLSeconds      = 15 * 60
 	DataRepairPurgeTimeoutSeconds      = 10
 	DataRepairPurgeLockTimeoutMS       = 2000
+)
+
+// Resource labels (ADR-20261031100025) use Kubernetes label syntax and are the
+// same on every plan: labels hold no resources. A resource carries at most
+// LabelsPerResourceMax labels. A key is an optional DNS-subdomain prefix of at
+// most LabelKeyPrefixMax bytes, a slash, and a name of 1–LabelKeyNameMax bytes;
+// a value is 0–LabelValueMax bytes. A selector is at most LabelSelectorMaxBytes,
+// which bounds parsing and matching for one list request.
+const (
+	LabelsPerResourceMax  = 32
+	LabelKeyNameMax       = 63
+	LabelKeyPrefixMax     = 253
+	LabelValueMax         = 63
+	LabelSelectorMaxBytes = 4096
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
