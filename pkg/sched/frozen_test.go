@@ -198,8 +198,9 @@ func TestLedgerFreezeBooksMeasuredChargeOnly(t *testing.T) {
 	if l.ResidentRAMForNode("n1") != 0 || l.FrozenCountForNode("n1") != 0 {
 		t.Fatal("Release left frozen RAM booked")
 	}
-	// An unmeasured instance books the floor plus headroom.
-	if got := frozenChargeMB(1024, 0); got != api.MeasuredChargeFloorMB*(100+api.MeasuredChargeHeadroomPercent)/100 {
+	// An unmeasured instance books the frozen floor plus headroom
+	// (ADR 20261031143521).
+	if got := frozenChargeMB(1024, 0); got != api.FrozenChargeFloorMB*(100+api.MeasuredChargeHeadroomPercent)/100 {
 		t.Fatalf("unmeasured charge = %d MB", got)
 	}
 }
@@ -449,7 +450,7 @@ func TestLedgerShrinkFrozenCharge(t *testing.T) {
 	if !l.ShrinkFrozenCharge("i1", 300) || l.ResidentRAMForNode("n1") != 120 {
 		t.Fatal("a compression grew the frozen charge")
 	}
-	if !l.ShrinkFrozenCharge("i1", 1) || l.ResidentRAMForNode("n1") != api.MeasuredChargeFloorMB {
+	if !l.ShrinkFrozenCharge("i1", 1) || l.ResidentRAMForNode("n1") != api.FrozenChargeFloorMB {
 		t.Fatalf("frozen charge fell below the floor: %d MB", l.ResidentRAMForNode("n1"))
 	}
 }
@@ -487,6 +488,43 @@ func TestEvictUnderPressureCompressesFrozenInstances(t *testing.T) {
 				if now := f.e.Ledger().ResidentRAMForNode(f.ins.NodeID); now >= booked || !f.e.Ledger().IsFrozen(f.ins.ID) {
 					t.Fatalf("booked %d MB after compression, %d before; want the smaller footprint", now, booked)
 				}
+			}
+		})
+	}
+}
+
+// adr: 20261031143521 — proactive compression compresses a frozen VM and
+// books the smaller footprint, and never parks it: an unavailable or
+// insufficient compression leaves it frozen as it was.
+func TestCompressFrozenProactiveNeverParks(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		report  FreezeReport
+		err     error
+		want    string
+		shrinks bool
+	}{
+		{name: "compressed", report: FreezeReport{ResidentBytesBefore: 400 << 20, ResidentBytesAfter: 6 << 20}, want: frozenCompressed, shrinks: true},
+		{name: "barely shrinks", report: FreezeReport{ResidentBytesBefore: 400 << 20, ResidentBytesAfter: 380 << 20}, want: frozenCompressInsufficient},
+		{name: "no memory-only swap", err: api.NewProblem(409, api.CodeFrozenCompressUnavailable, "Compression unavailable", "no zswap"), want: frozenCompressUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFrozenFixture(t, true)
+			f.e.EnableFrozenTier()
+			if handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 400); err != nil || !handled {
+				t.Fatalf("FreezeIdle: %v, %v", handled, err)
+			}
+			before, _ := f.e.Ledger().FrozenChargeOf(f.ins.ID)
+			f.vmm.compressReport, f.vmm.compressErr = tc.report, tc.err
+			if got := f.e.compressFrozenProactive(t.Context(), f.ins.ID); got != tc.want {
+				t.Fatalf("outcome = %q, want %q", got, tc.want)
+			}
+			if f.vmm.compresses != 1 || f.state(t) != state.StateFrozen {
+				t.Fatalf("compresses %d, state %s; want one compression and still frozen", f.vmm.compresses, f.state(t))
+			}
+			after, _ := f.e.Ledger().FrozenChargeOf(f.ins.ID)
+			if tc.shrinks != (after < before) || after < api.FrozenChargeFloorMB {
+				t.Fatalf("charge %d MB -> %d MB; shrink %t, floor %d", before, after, tc.shrinks, api.FrozenChargeFloorMB)
 			}
 		})
 	}

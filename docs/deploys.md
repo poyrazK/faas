@@ -386,7 +386,8 @@ email, like a database restore), then
 
 Gregale already stops a release whose 5xx rate, latency, crashes or memory
 regress. Release gates add the signals only your app knows about
-([ADR-20261019071734](adr/20261019071734-release-gates-on-customer-signals.md)):
+([ADR-20261019071734](adr/20261019071734-release-gates-on-customer-signals.md),
+[ADR-20261022082305](adr/20261022082305-synthetic-and-relative-release-gates.md)):
 
 ```bash
 # Abort or roll back when the release burns the checkout SLO 10x too fast.
@@ -395,6 +396,11 @@ gregale release gate create --name checkout-slo --slo checkout --max-burn-rate 1
 gregale release gate create --name no-new-errors --new-errors --min-events 3
 # ...when orders per minute average below 5.
 gregale release gate create --name orders --metric orders_per_minute --below 5
+# ...when orders per minute drop more than 30% from before the rollout.
+gregale release gate create --name orders-drop --metric orders_per_minute --max-drop 30
+# ...when the canary fails the "checkout" synthetic check more than the
+# release it replaces (and more than 10% of the time).
+gregale release gate create --name checkout-probe --check checkout
 # ...when its AI gateway calls cost 30% more each than the previous release's.
 gregale release gate create --name ai-cost --ai cost_per_call --max-increase 30
 
@@ -420,6 +426,22 @@ How each gate judges:
   at least `min_samples` values (default 20) in the window, or the gate is not
   judged. Custom metrics are reported per app, not per revision, so these
   gates are most useful after the release takes all the traffic.
+- **`metric_change` gates** (`--max-rise` or `--max-drop`) compare the
+  metric's average, read from its history the same way, with its average over
+  the same length of time before the rollout started. Use them when a fixed
+  bound would have to be guessed: "orders must not drop by 30%" holds across
+  seasons. Both windows need `min_samples` values. A metric that averaged zero
+  before the rollout is not judged.
+- **`synthetic` gates** (`--check`) send one of the app's
+  [synthetic checks](synthetic-checks.md) to the canary and to the stable revision
+  once a minute, pinned to each revision. A probe passes when the response
+  has the check's expected status, or any 2xx when it names none. The gate
+  fails when the canary fails more than `--max-failure-percent` (default 10)
+  of its probes and more than the stable revision does, so an outage of a
+  shared dependency does not abort a good release. Probes that get no answer
+  are not counted. Synthetic gates run during canaries only: a release
+  without a canary keeps its scheduled synthetic checks. Disabling the check
+  pauses the gate; deleting it deletes the gate.
 - **`ai` gates** compare the release's AI gateway calls with the previous
   release's ([ADR 20261022153155](adr/20261022153155-ai-signals-per-deployment-and-release-gates.md)):
   `error_rate` (provider errors), `flagged_rate` (answers truncated, refused,
@@ -430,12 +452,13 @@ How each gate judges:
   `--min-samples` calls. Only calls from the app's instances count;
   `gregale ai deployments` lists them by deployment.
 
-A gate that has too few requests or values (`--min-samples`, default 20) is
-not judged. A gate never holds a rollout on missing evidence. The rollout
-decision still lists it, with `not_judged: true` and what it was waiting for,
-such as "not judged: 4 of 20 requests so far", so a canary that completes on a
-quiet app shows which gates never ran. An SLO that a gate judges cannot be
-deleted until the gate is removed.
+A gate that has too few requests, probes or values (`--min-samples`: default
+20, or 6 probes for synthetic gates) is not judged. A gate never holds a
+rollout on missing evidence. The rollout decision still lists it, with
+`not_judged: true` and what it was waiting for, such as "not judged: 4 of 20
+requests so far", so a canary that completes on a quiet app shows which gates
+never ran. An SLO that a gate judges cannot be deleted until the gate is
+removed.
 
 ## What changed between releases
 
@@ -465,6 +488,37 @@ The approval page and the "approval needed" message show the same
 comparison. `gregale release summary` remains the quick cockpit view:
 rollout status, rollback target, and release fields against the previous
 deployment.
+
+## The release page
+
+Every release has a page at `/dashboard/releases/<id>` that tells its whole
+story in one place
+([ADR-20261022120744](adr/20261022120744-release-page.md)). The terminal shows
+the same history:
+
+```bash
+gregale release timeline v42           # phase, gates, approvals, then every event
+gregale release timeline v42 --json    # GET /v1/deployments/{id}/timeline
+```
+
+The page and the command show:
+- **Where the release is:** building, scheduled, waiting for approval,
+  rolling out, held, watched after the rollout, released, rolled back or
+  replaced, with one line saying why. For example: "Held at step 2 of 4, 10%
+  of traffic: 12 of 50 requests".
+- **What happened, oldest first:** creation, the schedule, approval requests
+  and decisions, the rollout start, each canary step with the evidence
+  behind it, holds, release gate results, completion, the post-release
+  watch, an abort or rollback, and the release that replaced it. Repeated
+  holds for the same reason show as one line with a count.
+- **What changed:** the same comparison as `gregale release diff`.
+
+While a canary rolls out, the page can advance it one step or abort it and
+return traffic to the stable release. It uses the same API routes as the CLI,
+so the same roles, MFA, approval, freeze and gate checks apply. A release
+waiting for approval links to its approval page. The page refreshes itself
+while the release is in flight. The deployment page (build, scan and logs)
+and the approval page link to it.
 
 ## Release approvals
 

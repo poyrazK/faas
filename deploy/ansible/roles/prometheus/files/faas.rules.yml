@@ -3569,21 +3569,21 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
 
       # ─────────────────────────────────────────────────────────────────
-      # TLS cert expiry (gatewayd-public / gateway_tls_cert_expiry_seconds).
-      # ADR-024 H3 closure: page at ≤14 days, warn between 14 and 30.
-      # The gauge carries min(notAfter − now) across cached certs on
-      # cfg.StorageDir/certificates/...; first-mint pre-boot state is
-      # +Inf (the gauge default), which legitimately fails the < 14d
-      # comparator. Operators expect a missing cert at startup, not a
-      # page.
+      # TLS cert expiry (gateway_tls_cert_expiry_seconds and
+      # gateway_tls_cert_expiry_by_host_seconds). ADR-024 H3 closure: page
+      # at ≤14 days, warn between 14 and 30; ADR-1236 adds the 72-hour page.
       #
-      # The gauge is ticked every 5 minutes by
-      # pkg/gateway.StartCertExpiryRefresher; a stale gauge would mean
-      # the refresher goroutine died (visible as gateway_tls_cert_expiry_seconds
-      # not changing for > 6m — separate drift signal, not in this rule).
+      # Caddy on the public edge holds every customer certificate, obtained
+      # on demand (ADR-520). apid exports these gauges from the expiries its
+      # domain doctor records when it completes a TLS handshake with each
+      # verified custom domain (custom_domains.cert_expires_at, at most
+      # every 30 s; pkg/apid/certexpiry). Before bug hunt 32 M6 nothing in
+      # production set them, so these rules could never fire. Every apid
+      # replica exports the same values, hence min(). No series until a
+      # certificate is observed; a store error exports none.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasTLSCertExpiryPage
-        expr: gateway_tls_cert_expiry_seconds < (14 * 86400)
+        expr: min(gateway_tls_cert_expiry_seconds) < (14 * 86400)
         for: 5m
         labels:
           severity: warn
@@ -3591,13 +3591,13 @@ groups:
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expires in ≤14 days"
-          description: "The smallest remaining lifetime across cached certs is below 14 days. A renewal has failed (or never ran) — HTTPS serving across the box will start failing within hours. Re-run `make bootstrap` on the EX44 to refresh certmagic + the Hetzner DNS-01 token, then force-renew via `faas cert refresh`."
+          description: "The soonest-expiring edge certificate apid's domain doctor observed on a verified custom domain has under 14 days left. Caddy renews on-demand certificates at about 30 days, so renewal has been failing for two weeks. Check the public edge's Caddy log for that host, the on-demand ask decisions (gateway_tls_on_demand_* on gatewayd-public), HTTP-01 reachability on port 80 and the domain's CAA records."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
 
       # ADR-1236: the 14-day alert above is warn; this is the page, sized
       # so a failed renewal still leaves time to issue by hand.
       - alert: FaasTLSCertExpiryImminent
-        expr: gateway_tls_cert_expiry_seconds < (3 * 86400)
+        expr: min(gateway_tls_cert_expiry_seconds) < (3 * 86400)
         for: 5m
         labels:
           severity: page
@@ -3605,11 +3605,11 @@ groups:
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expires in under 72 hours"
-          description: "The smallest remaining lifetime across cached certs is below 72 hours, so renewal has failed for at least eleven days. HTTPS for the affected hosts fails when the cert expires; renew it now."
+          description: "The soonest-expiring edge certificate on a verified custom domain has under 72 hours left, so renewal has failed for at least eleven days. HTTPS for that host fails when the certificate expires; renew it now."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
 
       - alert: FaasTLSCertExpiryWarn
-        expr: gateway_tls_cert_expiry_seconds < (30 * 86400) and gateway_tls_cert_expiry_seconds >= (14 * 86400)
+        expr: min(gateway_tls_cert_expiry_seconds) < (30 * 86400) and min(gateway_tls_cert_expiry_seconds) >= (14 * 86400)
         for: 5m
         labels:
           severity: warn
@@ -3617,21 +3617,17 @@ groups:
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expiry < 30 days"
-          description: "Smallest remaining lifetime is between 14 and 30 days. Renewals normally fire at 30d; verify certmagic's renew-loop is alive (a log line every few minutes post-first-mint) and that the Hetzner DNS-01 token still has zone-write permission on the apps domain."
+          description: "The soonest-expiring edge certificate on a verified custom domain has between 14 and 30 days left. Caddy renews at about 30 days, so this is usually a renewal that has just started failing; check the public edge's Caddy log for the host."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarn.md"
 
       # ─────────────────────────────────────────────────────────────────
-      # Per-host TLS cert expiry (Finding 2 / ADR-024 H3 follow-up).
-      # The aggregate rule above covers the box-level signal; these
-      # rules attach a hostname + kind label so the alert routes to
-      # the right custom domain. `hostname!="__other__"` excludes the
-      # bounded-admission overflow (an admission overflow means we've
-      # run past hostnameLabelSetCap and don't have a real host name
-      # to attribute). `kind!="unknown"` excludes misclassifications
-      # so an issuer-key wiring bug doesn't page.
+      # Per-host TLS cert expiry (ADR-024 H3 follow-up). apid exports the
+      # soonest-expiring verified domains (CustomDomainCertExpiryExportMaxHosts)
+      # with kind="ondemand"; the __other__ and unknown filters stay for the
+      # old refresher's label shape.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasTLSCertExpiryPageByHost
-        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (14 * 86400)
+        expr: min by (hostname, kind) (gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"}) < (14 * 86400)
         for: 5m
         labels:
           severity: warn
@@ -3641,11 +3637,11 @@ groups:
           kind: "{{ $labels.kind }}"
         annotations:
           summary: "TLS cert for {{ $labels.hostname }} expires in ≤14 days"
-          description: "Per-host cert expiry below 14 days. kind={{ $labels.kind }} tells you whether the wildcard (DNS-01) or an on-demand (HTTP-01) cert is affected — wildcard renewals auto-recover via DNS-01; on-demand renewals need the customer to keep the custom_domains row active and the HTTP-01 challenge endpoint reachable. Verify certmagic's renew-loop for this host (check the slog for {{ $labels.hostname }} renew lines)."
+          description: "The edge certificate apid's domain doctor observed for {{ $labels.hostname }} has under 14 days left. On-demand renewals need the custom_domains row verified, the ask endpoint allowing the host, HTTP-01 reachable on port 80 and CAA allowing Let's Encrypt. Check the public edge's Caddy log for {{ $labels.hostname }}."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPageByHost.md"
 
       - alert: FaasTLSCertExpiryWarnByHost
-        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (30 * 86400) and gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} >= (14 * 86400)
+        expr: min by (hostname, kind) (gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"}) < (30 * 86400) and min by (hostname, kind) (gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"}) >= (14 * 86400)
         for: 10m
         labels:
           severity: warn
@@ -3655,7 +3651,7 @@ groups:
           kind: "{{ $labels.kind }}"
         annotations:
           summary: "TLS cert for {{ $labels.hostname }} expiry < 30 days"
-          description: "Per-host cert expiry is between 14 and 30 days. Renewals normally fire at 30d; if no renew log line surfaces for this host within the next 12h, force-renew via `faas cert refresh --host={{ $labels.hostname }}`."
+          description: "The edge certificate for {{ $labels.hostname }} has between 14 and 30 days left. Caddy renews at about 30 days; if the Caddy log shows no renewal for this host within the next 12 hours, follow the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarnByHost.md"
 
       # ─────────────────────────────────────────────────────────────────
@@ -7089,6 +7085,17 @@ groups:
           summary: "Custom-domain certificate checks are being rate-limited"
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
           description: "TLS handshakes with unknown server names exceed the ask endpoint's lookup budget for 15m, usually a scan. Legitimate names are retried on the client's next handshake but may see failed first connections."
+      - alert: FaasCustomDomainTLSFleetBudget
+        expr: sum(increase(gateway_tls_on_demand_ask_total{decision="deny_fleet_budget"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: custom_domain_tls
+        annotations:
+          summary: "New wildcard custom-domain hosts are refused at the fleet issuance cap"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+          description: "The deployment admitted OnDemandTLSFleetNewHostsPer3h new hosts below wildcard custom domains in 3 hours, so no tenant can add another until admissions age out. The cap keeps the shared ACME account under Let's Encrypt's order limit; find the owners and registered domains that drew it."
       - alert: FaasCustomDomainCertIssuanceFailing
         expr: sum(increase(apid_cert_issuance_failed_total[1h])) >= 5
         for: 5m

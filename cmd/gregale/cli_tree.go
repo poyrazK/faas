@@ -51,7 +51,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"edge", "Manage edge rules, rule lists, caching and CORS", "Configure"},
 	{"api", "Manage your API: routes, OpenAPI spec, consumers and tenants", "Configure"},
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
-	{"postgres", "Manage PostgreSQL databases: usage, overage and capabilities", "Data"},
+	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
 	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
@@ -107,6 +107,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release resume", "deploy resume"},
 	{"release recover", "deploy recover"},
 	{"release diff", "deployment diff"},
+	{"release timeline", "deployment timeline"},
 	{"release hide", "deploys clear"},
 	{"release prune", "deploys clear-obsolete"},
 	{"release reorder", "deploys reorder"},
@@ -597,6 +598,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin postgres reconcile", "postgres reconcile"},
 	{"admin postgres usage-import", "postgres usage-import"},
 	{"admin postgres diagnostics", "postgres diagnostics"},
+	// Sealed live queries stay an operator preview (ADR-20261016151947);
+	// customers read live through `data-api live`.
+	{"admin postgres live", "postgres live"},
 	{"admin billing refresh-invoice", "billing refresh-invoice"},
 	{"admin billing backfill-invoices", "billing backfill-invoices"},
 }
@@ -993,7 +997,7 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 		return cliTreeTopic{}, false
 	}
 	if len(words) == 1 {
-		if today && !cliTreeReshapes(noun.Name) {
+		if today && (!cliTreeReshapes(noun.Name) || !cliTreeListsNoun(noun.Name)) {
 			return cliTreeTopic{}, false
 		}
 		return cliTreeTopic{Path: words, Short: noun.Short}, true
@@ -1008,6 +1012,14 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 		}
 	}
 	return cliTreeTopic{Path: words, Short: "Commands under gregale " + path}, true
+}
+
+// cliTreeListsNoun reports whether the tree can list the noun's command. An
+// operator command (postgres) stays out of the tree (cliTreeDiscovery.node),
+// so it keeps today's help rather than a topic that lists nothing.
+func cliTreeListsNoun(noun string) bool {
+	command, ok := lookupCliCommand(cliTreeNounCommand(noun))
+	return ok && command.Audience == cliAudienceCustomer
 }
 
 // cliTreeReshapes reports a noun whose tree verbs differ from today's

@@ -2019,11 +2019,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release-gates",
 		DocSlug: "release-gates",
-		Short:   "Stop rollouts on SLO, error, metric or AI regressions and roll back",
+		Short:   "Stop rollouts on SLO, error, metric, check or AI regressions",
 		Examples: []string{
 			"gregale release gate create --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
 			"gregale release gate create --app my-api --name no-new-errors --new-errors --min-events 3",
 			"gregale release gate create --app my-api --name orders --metric orders_per_minute --below 5",
+			"gregale release gate create --app my-api --name orders-drop --metric orders_per_minute --max-drop 30",
+			"gregale release gate create --app my-api --name checkout-probe --check checkout",
 			"gregale release gate create --app my-api --name ai-cost --ai cost_per_call --max-increase 30",
 			"gregale release gate list --app my-api",
 		},
@@ -2039,12 +2041,16 @@ var cliCommands = []cliCommand{
 				{Name: "new-errors", Short: "fail when the release introduces new error groups", Bool: true},
 				{Name: "max-new-groups", Short: "new error groups allowed (default 0)", Value: "N"},
 				{Name: "min-events", Short: "events before a new error group counts (default 3)", Value: "N"},
-				{Name: "metric", Short: "fail when this custom metric crosses a bound", Value: "NAME"},
+				{Name: "metric", Short: "fail when this custom metric crosses a bound or moves too far", Value: "NAME"},
 				{Name: "below", Short: "fail when the metric averages below this", Value: "VALUE"},
 				{Name: "above", Short: "fail when the metric averages above this", Value: "VALUE"},
+				{Name: "max-rise", Short: "fail when the metric rises more than this percent from before the rollout", Value: "PCT"},
+				{Name: "max-drop", Short: "fail when the metric drops more than this percent from before the rollout", Value: "PCT"},
+				{Name: "check", Short: "probe the canary and its stable revision with this synthetic check", Value: "NAME"},
+				{Name: "max-failure-percent", Short: "failed probes allowed, in percent (default 10)", Value: "PCT"},
 				{Name: "ai", Short: "fail when this AI gateway metric gets worse than the previous release's: error_rate, flagged_rate, cost_per_call or ttfb_ms", Value: "METRIC"},
 				{Name: "max-increase", Short: "percent over the previous release that fails an --ai gate (default 50)", Value: "PCT"},
-				{Name: "min-samples", Short: "requests, metric values or AI calls before the gate is judged (default 20)", Value: "N"},
+				{Name: "min-samples", Short: "requests, probes, metric values or AI calls before the gate is judged (default 20; 6 probes for --check)", Value: "N"},
 			}},
 			{Name: "rm", Short: "Remove a release gate", Aliases: []string{"delete"}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
@@ -2771,6 +2777,7 @@ var cliCommands = []cliCommand{
 			{Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"advance"}, Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"summary"}, Position: 1, Role: cliCompletionDeploymentID},
+			{Path: []string{"timeline"}, Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"wait"}, Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"set-min-instances"}, Position: 1, Role: cliCompletionDeploymentID},
 		},
@@ -2787,6 +2794,9 @@ var cliCommands = []cliCommand{
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "diff", Short: "Show what changed since the previous release", Notes: []string{"Covers code, config keys, packages, runtime settings and the release command."}, Examples: []string{"gregale release diff v42 --app my-api", "gregale release diff v42 --against v38 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "against", Value: "ID|vN", Short: "release to compare with (default: the release that served before it)"},
+				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
+			}},
+			{Name: "timeline", Short: "Show a release's rollout, gates, approvals and history", Examples: []string{"gregale release timeline v42 --app my-api", "gregale release timeline v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
 			}},
 			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale release summary --app my-api --interactive", "gregale release summary v42 --app my-api", "gregale release summary v42 --app my-api --json"}, Positionals: []string{"[<id|vN>]"}, Flags: []cliFlag{
@@ -5732,10 +5742,9 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:     "postgres",
-		DocSlug:  "postgres",
-		Short:    "Operator preview: manage PostgreSQL databases and bindings",
-		Audience: cliAudienceOperator,
+		Name:    "postgres",
+		DocSlug: "postgres",
+		Short:   "Create, attach and restore managed PostgreSQL databases",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
 			{Name: "capabilities", Short: "Show plan and region PostgreSQL feature support", Flags: []cliFlag{
@@ -5792,7 +5801,7 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
-			{Name: "live", Short: "Enable live queries and manage the live secret (operator preview)", Subcommands: []cliSub{
+			{Name: "live", Short: "Enable live queries and manage the live secret (preview)", Subcommands: []cliSub{
 				{Name: "status", Short: "Show whether live queries are enabled and the live secrets' key IDs", Positionals: []string{"<database>"}},
 				{Name: "enable", Short: "Enable live queries and issue the live secret", Positionals: []string{"<database>"}, Flags: []cliFlag{
 					{Name: "app", Short: "store the secret as an app secret on this app", Value: "APP"},

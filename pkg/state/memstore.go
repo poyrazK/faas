@@ -384,6 +384,9 @@ type MemStore struct {
 	releaseFreezes map[string]ReleaseFreeze
 	// releaseGates mirrors app_release_gates (ADR-20261019071734).
 	releaseGates map[string]ReleaseGate
+	// releaseGateProbes mirrors release_gate_probe_results
+	// (ADR-20261022082305).
+	releaseGateProbes map[releaseGateProbeKey]ReleaseGateProbeResult
 	// releaseApprovalPolicies mirrors app_release_approval_policies, keyed by
 	// app ID; releaseApprovals mirrors deployment_release_approvals
 	// (ADR-20261020085706).
@@ -639,6 +642,9 @@ type MemStore struct {
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
 	customDomainTLSHosts map[string]customDomainTLSHost
+	// customDomainTLSAdmissions mirrors custom_domain_tls_admissions
+	// (ADR-520 amendment 1), oldest first.
+	customDomainTLSAdmissions []customDomainTLSAdmission
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole

@@ -396,6 +396,56 @@ func TestTarball_Extract_Idempotent(t *testing.T) {
 	}
 }
 
+// v0.1.18-rc.312: a no-drain rollout rerun re-installed fsn-3's active release
+// while its daemons ran from it, and writing through a running binary failed
+// with ETXTBSY. Extract must replace each file (a new inode at the path), so
+// a process keeps the one it is executing, and leave no temp files behind.
+func TestTarball_Extract_ReplacesFilesInsteadOfWritingThroughThem(t *testing.T) {
+	bin, root, gitSHA, manifestHash := fakeBinDir(t)
+	tb, err := releaseinstall.BuildTarball(root, gitSHA, manifestHash, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if err := tb.Extract(root); err != nil {
+		t.Fatalf("extract #1: %v", err)
+	}
+	before := make(map[string]os.FileInfo)
+	for _, n := range catalogDaemons() {
+		info, err := os.Stat(filepath.Join(bin, n))
+		if err != nil {
+			t.Fatalf("stat %s: %v", n, err)
+		}
+		before[n] = info
+	}
+	if err := tb.Extract(root); err != nil {
+		t.Fatalf("extract #2: %v", err)
+	}
+	for _, n := range catalogDaemons() {
+		after, err := os.Stat(filepath.Join(bin, n))
+		if err != nil {
+			t.Fatalf("stat %s: %v", n, err)
+		}
+		if os.SameFile(before[n], after) {
+			t.Fatalf("daemon %s was written through in place; want a replaced file", n)
+		}
+		if after.Mode().Perm() != 0o755 {
+			t.Fatalf("daemon %s mode = %v, want 0755", n, after.Mode().Perm())
+		}
+	}
+	entries, err := os.ReadDir(bin)
+	if err != nil {
+		t.Fatalf("read bin: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Fatalf("extract left temp file %s", e.Name())
+		}
+	}
+	if err := releaseinstall.Verify(root, tb.Manifest); err != nil {
+		t.Fatalf("on-disk verify after re-extract: %v", err)
+	}
+}
+
 func TestTarball_Extract_PreservesRuntimeAssetPaths(t *testing.T) {
 	bin, root, gitSHA, manifestHash := fakeBinDir(t)
 	for _, name := range releaseinstall.RuntimeAssetNames() {

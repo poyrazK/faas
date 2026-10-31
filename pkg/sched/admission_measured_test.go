@@ -260,3 +260,36 @@ func TestMeasuredAdmissionRandomTraffic(t *testing.T) {
 		t.Fatalf("peak %d live instances, want more than the %d reservations allow", maxLive, measuredCeilingMB/1032)
 	}
 }
+
+// Agent run VMs have no instances row, so no measurement includes them:
+// measured admission counts their reservations after every sample, not only
+// until the next one (ADR-909, ADR-20261027090014 §2).
+func TestMeasuredAdmissionAlwaysCountsAgentRuns(t *testing.T) {
+	m := &fakeMeasurement{mb: map[string]int{"n1": 0}, ok: true}
+	l, clock := newMeasuredLedger(m)
+	m.asOf = clock.now()
+	agentRun := func(i int) sched.Request {
+		return sched.Request{Instance: fmt.Sprintf("agent-%d", i), Plan: api.PlanScale, RAMMB: 1024, VCPU: 1,
+			NodeID: "n1", NodeCeilingMB: measuredCeilingMB, Kind: sched.KindAgentRun}
+	}
+	admitted := 0
+	for ; admitted < 20; admitted++ {
+		clock.tick()
+		if err := l.Admit(agentRun(admitted)); err != nil {
+			break
+		}
+	}
+	if admitted != 8 {
+		t.Fatalf("admitted %d agent runs, want 8 (8 x 1032 MB under %d)", admitted, measuredCeilingMB)
+	}
+	// A new sample of the node's instances still sees none of the runs.
+	clock.tick()
+	m.asOf = clock.now()
+	clock.tick()
+	if err := l.Admit(agentRun(100)); err == nil {
+		t.Fatal("a sample that cannot see agent runs freed their memory")
+	}
+	if used := l.AdmissionUsedMB("n1"); used != 8*1032 {
+		t.Fatalf("admission counts %d MB for the node, want the runs' %d", used, 8*1032)
+	}
+}
