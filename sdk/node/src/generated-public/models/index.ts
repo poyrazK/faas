@@ -943,6 +943,8 @@ export type { ReleaseFreeze } from './ReleaseFreeze.js';
 export type { ReleaseFreezeWeekly } from './ReleaseFreezeWeekly.js';
 export type { ReleaseGateResult } from './ReleaseGateResult.js';
 export type { ReleaseRestorePoint } from './ReleaseRestorePoint.js';
+export type { ReleaseTimeline } from './ReleaseTimeline.js';
+export type { ReleaseTimelineEvent } from './ReleaseTimelineEvent.js';
 export type { RenameAppRequest } from './RenameAppRequest.js';
 export type { RepoResponse } from './RepoResponse.js';
 export type { RequestAnalyticsComputeCost } from './RequestAnalyticsComputeCost.js';

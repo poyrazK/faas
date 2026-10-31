@@ -96,6 +96,10 @@ type App struct {
 	ID              string
 	ResourceOwnerID string // aggregate policy subject; empty falls back to AccountID in older adapters
 	AccountID       string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// EdgeRuleScope is the organization owning a company app, "" for a
+	// personal app (state.AppEdgeRuleScope). A route rule may only send
+	// traffic to an app of its own scope (ADR-091 amendment 2026-10-31).
+	EdgeRuleScope string
 	// Private verifier inputs; only the effective fingerprint leaves the gateway.
 	PublicPolicySource     *PublicAppPolicySource   `json:",omitempty"`
 	PublicRouteSource      *PublicRouteSourcePolicy `json:",omitempty"`
@@ -2459,7 +2463,7 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	if _, _, ok := EnvironmentIDsFromHost(hostidentity.DeploySuffix(), hostname(r.Host)); ok {
 		return false
 	}
-	rule := h.routeRuleForHost(r, appHost)
+	rule, hostApp := h.routeRuleForHost(r, appHost)
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "miss")
@@ -2495,6 +2499,25 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 			// PR-B: cross-account is a defense-in-depth no-op, not an
 			// apply failure. Surface as success so the §12 apply-rate
 			// panel counts it as a successful (no-op) apply.
+			h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
+		}
+		return false
+	}
+	if target.EdgeRuleScope != hostApp.EdgeRuleScope {
+		// A company app keeps its creator's account, so the account check
+		// alone let a personal app's route rule serve a company app (or the
+		// reverse) on the personal host (ADR-091 amendment 2026-10-31).
+		if h.edgeRuleAudit != nil {
+			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.route_blocked", &target.AccountID, map[string]any{
+				"rule_id":       rule.ID,
+				"from_host":     r.Host,
+				"to_slug":       rule.TargetAppSlug,
+				"target_app_id": target.ID,
+				"reason":        "scope",
+			})
+		}
+		if h.metrics != nil {
+			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "blocked")
 			h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
 		}
 		return false
@@ -2556,17 +2579,17 @@ type RouteTargetPreparer interface {
 // The host's public policy source must also allow a substitution; a policy
 // lookup failure is retained in the request context so the fallback lookup
 // refuses the request too.
-func (h *Handler) routeRuleForHost(r *http.Request, appHost string) *EdgeRuleResolved {
+func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (*EdgeRuleResolved, App) {
 	hostApp, found, err := h.lookupAppPolicy(r, appHost)
 	if err != nil {
 		*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, err))
-		return nil
+		return nil, App{}
 	}
 	if !found {
-		return nil
+		return nil, App{}
 	}
 	if hostApp.PublicPolicySource != nil && !hostApp.PublicPolicySource.CanSubstitute {
-		return nil
+		return nil, App{}
 	}
 	rememberPublicRouteSourcePolicy(r, hostApp, found)
 	ctx := WithEdgeRuleScope(r.Context(), hostApp)
@@ -2580,9 +2603,9 @@ func (h *Handler) routeRuleForHost(r *http.Request, appHost string) *EdgeRuleRes
 	}
 	rule := h.edgeRules.MatchRoute(ctx, hostname(r.Host), r.URL.Path, r.Method)
 	if rule == nil || rule.AccountID != hostApp.AccountID {
-		return nil
+		return nil, App{}
 	}
-	return rule
+	return rule, hostApp
 }
 
 // matchAndApplyRewrite (ADR-089 / issue #561 PR 4) consults the
@@ -2706,7 +2729,7 @@ func (h *Handler) matchAndApplyRedirect(w http.ResponseWriter, r *http.Request, 
 	// templated redirect renders its target and headers first (ADR-968).
 	target, redirectHeaders := expandRedirect(rule, r)
 	for k, v := range redirectHeaders {
-		w.Header().Set(k, v)
+		w.Header().Set(k, scopeTenantCookie(k, v))
 	}
 	status := rule.StatusCode
 	if status != http.StatusMovedPermanently &&
@@ -4958,7 +4981,10 @@ func stampTrustedClientIP(r *http.Request) {
 // map. Action ∈ {add, set, remove}; Value is empty for "remove".
 // Blacklist (Host, Content-Length, Transfer-Encoding, Connection,
 // x-faas-*) is enforced at apid-Validate-time (PR 1) so this
-// helper trusts the input.
+// helper trusts the input. A Set-Cookie value goes through
+// scopeTenantCookie like the app's own: a rule could otherwise set a
+// cookie for the domain every tenant shares (ADR-091 amendment
+// 2026-10-31, round 6).
 func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 	switch op.Action {
 	case "remove":
@@ -4968,14 +4994,14 @@ func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 			hdr.Del(op.Name)
 			return
 		}
-		hdr.Set(op.Name, op.Value)
+		hdr.Set(op.Name, scopeTenantCookie(op.Name, op.Value))
 	case "vary":
 		// Platform-only (customer header ops validate to add/set/remove):
 		// add one field name to the list unless it is already covered.
 		addVaryField(hdr, op.Value)
 	default: // "add" and any unknown verb
 		if op.Value != "" {
-			hdr.Add(op.Name, op.Value)
+			hdr.Add(op.Name, scopeTenantCookie(op.Name, op.Value))
 		}
 	}
 }
