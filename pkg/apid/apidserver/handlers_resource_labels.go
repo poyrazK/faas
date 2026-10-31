@@ -18,14 +18,15 @@ func (s *server) labelsReleased(r *http.Request, acct state.Account) bool {
 	return s.capGate == nil || s.capGate.Enabled(resourcelabels.Capability, flagSubject(r, acct))
 }
 
-// appLabelStore is the store's label methods, or nil and a problem when the
-// store has none.
-func (s *server) appLabelStore() (state.AppLabelStore, *api.Problem) {
+// appLabelStore is the store's label methods; false when the store has none.
+func (s *server) appLabelStore() (state.AppLabelStore, bool) {
 	store, ok := s.store.(state.AppLabelStore)
-	if !ok {
-		return nil, api.ErrCapacity("labels are not available")
-	}
-	return store, nil
+	return store, ok
+}
+
+// errLabelsUnavailable answers a label read or write the store cannot serve.
+func errLabelsUnavailable() *api.Problem {
+	return api.ErrCapacity("labels are not available")
 }
 
 // updateAppLabels is PATCH /v1/apps/{slug}/labels: set and remove labels in
@@ -45,9 +46,9 @@ func (s *server) updateAppLabels(w http.ResponseWriter, r *http.Request, acct st
 	if !ok {
 		return
 	}
-	store, problem := s.appLabelStore()
-	if problem != nil {
-		api.WriteProblem(w, problem)
+	store, ok := s.appLabelStore()
+	if !ok {
+		api.WriteProblem(w, errLabelsUnavailable())
 		return
 	}
 	next, err := store.UpdateAppLabels(r.Context(), app.ID, change)
@@ -89,8 +90,11 @@ func (s *server) appListLabels(r *http.Request, acct state.Account, apps []state
 	if problem != nil {
 		return nil, nil, problem
 	}
-	store, problem := s.appLabelStore()
-	if problem != nil {
+	store, ok := s.appLabelStore()
+	switch {
+	case !ok && selected:
+		return nil, nil, errLabelsUnavailable()
+	case !ok:
 		return apps, nil, nil
 	}
 	byApp, err := resourcelabels.AppLabels(r.Context(), store, apps)
@@ -137,8 +141,8 @@ func (s *server) singleAppLabels(r *http.Request, acct state.Account, app state.
 	if !s.capabilityEnabledFor(resourcelabels.Capability, acct, app) {
 		return nil
 	}
-	store, problem := s.appLabelStore()
-	if problem != nil {
+	store, ok := s.appLabelStore()
+	if !ok {
 		return nil
 	}
 	l, err := store.AppLabels(r.Context(), app.ID)

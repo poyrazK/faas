@@ -111,6 +111,8 @@ import type { IssueTeam } from '../models/IssueTeam.js';
 import type { IssueTrackerAutoSync } from '../models/IssueTrackerAutoSync.js';
 import type { IssueTrackerLinearConnection } from '../models/IssueTrackerLinearConnection.js';
 import type { IssueTrackerLink } from '../models/IssueTrackerLink.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
 import type { ListIssueSavedViewsResponse } from '../models/ListIssueSavedViewsResponse.js';
@@ -1563,10 +1565,20 @@ export class AppsService {
    * @returns AppResponse Apps on the account.
    * @throws ApiError
    */
-  public static listApps(): CancelablePromise<Array<AppResponse>> {
+  public static listApps({
+    selector,
+  }: {
+    /**
+     * Preview (resource-labels capability). A Kubernetes label selector, such as team=billing,tier in (web,api),!canary; only matching resources are listed (domains: those of matching apps). Supports =, ==, !=, key, !key, in and notin; at most 4096 bytes. An invalid selector is a 400 invalid_label_selector; a selector while the capability is off is a 403 capability_not_released.
+     */
+    selector?: string,
+  }): CancelablePromise<Array<AppResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps',
+      query: {
+        'selector': selector,
+      },
       errors: {
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -3186,6 +3198,40 @@ export class AppsService {
       query: {
         'environment': environment,
       },
+    });
+  }
+  /**
+   * Set and remove an app's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the app carries after it. The
+   * write is idempotent. A result over 32 labels is refused with
+   * label_limit_exceeded; an invalid key or value with invalid_label_key
+   * or invalid_label_value; a key under gregale.dev/ with
+   * reserved_label_key. Emits a resource.labels.changed audit event.
+   * Requires apps:deploy or admin scope and MFA.
+   *
+   * @returns LabelsResponse The app's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, deploy scope or MFA, an app this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateAppLabels({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/labels',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

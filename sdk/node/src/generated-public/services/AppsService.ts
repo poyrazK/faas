@@ -327,10 +327,20 @@ export class AppsService {
    * @returns AppResponse Apps on the account.
    * @throws ApiError
    */
-  public static listApps(): CancelablePromise<Array<AppResponse>> {
+  public static listApps({
+    selector,
+  }: {
+    /**
+     * Preview (resource-labels capability). A Kubernetes label selector, such as team=billing,tier in (web,api),!canary; only matching resources are listed (domains: those of matching apps). Supports =, ==, !=, key, !key, in and notin; at most 4096 bytes. An invalid selector is a 400 invalid_label_selector; a selector while the capability is off is a 403 capability_not_released.
+     */
+    selector?: string,
+  }): CancelablePromise<Array<AppResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps',
+      query: {
+        'selector': selector,
+      },
       errors: {
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses

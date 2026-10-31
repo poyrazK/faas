@@ -277,6 +277,7 @@ from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
+from .app_response_labels import AppResponseLabels
 from .app_response_preview_pr_state import AppResponsePreviewPrState
 from .app_response_release_policy import AppResponseReleasePolicy
 from .app_response_runtime import AppResponseRuntime
@@ -2404,6 +2405,10 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .label_change import LabelChange
+from .label_change_set import LabelChangeSet
+from .labels_response import LabelsResponse
+from .labels_response_labels import LabelsResponseLabels
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
@@ -6594,6 +6599,7 @@ __all__ = (
     "AppResponseCpuMillicores",
     "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
+    "AppResponseLabels",
     "AppResponsePreviewPrState",
     "AppResponseReleasePolicy",
     "AppResponseRuntime",
@@ -8553,6 +8559,10 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "LabelChange",
+    "LabelChangeSet",
+    "LabelsResponse",
+    "LabelsResponseLabels",
     "LatestDeploymentsByAppResponse",
     "LinkPlatformTenantConsumerRequest",
     "LinkPlatformTenantSurfaceRequest",
