@@ -23,6 +23,29 @@ loaded by systemd into `apid` and `s3-gatewayd`. Switching to an ADC backend
 and clearing `faas_object_storage_provider_env_src` removes any stale file.
 Never put secret values in the JSON.
 
+Give each S3 backend a second provider user for the gateways and name it
+with `gateway_access_key_env` and `gateway_secret_key_env` (and
+`gateway_session_token_env` if it uses one). `s3-gatewayd` and
+`gatewayd-public` then reach the provider with it, while `apid` keeps the
+credential named by `access_key_env`, the only one that creates and deletes
+buckets (ADR-20261031122757). A backend without the gateway fields keeps one
+credential for all three. The gateway credential needs, on the backend's
+buckets (`gregale-*`) and on the access-log bucket the usage export reads:
+
+- objects: get, head, put, copy, delete, versions, tagging, retention and
+  legal hold;
+- listing and multipart: `ListBucket`, `ListBucketVersions`,
+  `ListBucketMultipartUploads`, `ListMultipartUploadParts` and
+  `AbortMultipartUpload`;
+- the bucket settings the S3 API forwards: get and put of versioning,
+  encryption and Object Lock configuration.
+
+It must not allow `CreateBucket`, `DeleteBucket`, `PutBucketCORS`,
+`PutBucketPolicy` or `PutBucketAcl`. On OVH, create a second S3 user in the
+same project and import a policy with those actions. Add the gateway fields
+only once `apid`, `s3-gatewayd` and `gatewayd-public` all run a release that
+knows them: older releases refuse a registry with unknown fields.
+
 Installing or changing the registry/provider environment also restarts
 `faas-gatewayd-public`. That daemon reads the registry at boot; restarting it
 here is required for public bucket mounts to become active when storage is
