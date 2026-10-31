@@ -113,8 +113,48 @@ next request wakes it, and that is the product working, not a failure.
 | `Progressing` | `pending`, `building`, `imaging` or `snapshotting` (reason is the status), live while readiness runs (reason `verifying`), or live with a rollout still advancing (reason `rolling_out`) | otherwise (reason `complete`, or the terminal status) |
 | `RolledOut` | live and the rollout reached 100% traffic, or no safe rollout (reason `rolled_out`) | rolling out (reason `rolling_out`); rollout aborted (reason `rollout_aborted`, terminal); not live (reason is the status, terminal when `Ready` is) |
 
-Domains, databases, crons and job runs follow in later steps with the same
-shape.
+**Database** (`GET /v1/postgres/databases/{id}/status`, from the database
+response with its cached health):
+
+| Type | `True` | `False` | `Unknown` |
+|---|---|---|---|
+| `Ready` | state `ready` (reason `ready`, or `suspended` when compute scaled to zero: the next connection wakes it) | `provisioning`, `updating` (reason is the state); `failed`, `deleting`, `deleted` (reason is the state, terminal) | — |
+| `Progressing` | `provisioning`, `updating`, `deleting` (reason is the state) | otherwise (reason `complete`, or `failed`, terminal) | — |
+| `Degraded` | cached health `degraded` (reason is its error code, else `degraded`) | cached health `healthy` | health off, stale or not yet checked (reason `not_assessed`, `stale`) |
+
+`Ready` follows the lifecycle state, not the cached provider health: health
+is a cached observation, not a connectivity proof, so it shows in `Degraded`.
+
+**Domain** (`GET /v1/domains/{domain}/status`, from the durable domain row;
+the read never dials the domain, unlike `GET /v1/domains/{domain}`):
+
+| Type | `True` | `False` | `Unknown` |
+|---|---|---|---|
+| `Verified` | the ownership TXT record was found (reason `verified`) | not yet (reason `dns_pending`) | — |
+| `CertificateReady` | certificate `issued`, `renewing`, or served by a CDN (reason is the status) | `pending`, `failed`, `dns_drifted` (reason is the status) | no recorded status (reason `not_assessed`) |
+| `Ready` | both of the above (reason `serving`) | the first that is not: its reason | — |
+
+None is terminal: the DNS poller retries, and DNS changes outside Gregale.
+
+**Cron** (`GET /v1/crons/{id}/status`, from the cron and its newest run):
+
+| Type | `True` | `False` | `Unknown` |
+|---|---|---|---|
+| `Ready` | enabled and not suspended (reason `scheduled`) | disabled (reason `disabled`, terminal); suspended (reason is the suspension, such as `no_live_deployment`, which a deploy clears) | — |
+| `LastRunSucceeded` | the newest run succeeded (reason `success`) | it ended otherwise (reason is its outcome: `failed`, `timeout`, `dead_letter`, `cancelled`, `uncertain`) | it is still running (reason `running`), or there is none (reason `never_run`) |
+
+`LastRunSucceeded` describes the newest run, so it is never terminal: the
+next fire changes it. To wait for one fire, `gregale cron run --wait` stays.
+
+**Job run** (`GET /v1/jobs/{name}/runs/{id}/status`, from the run):
+
+| Type | `True` | `False` |
+|---|---|---|
+| `Succeeded` | every task succeeded (reason `succeeded`) | `queued`, `running` (reason is the status); `failed`, `cancelled`, `dead_letter` (reason is the status, terminal) |
+| `Progressing` | `queued` or `running` (reason is the status) | otherwise (reason `complete`, or the terminal status) |
+
+A job run has no `Ready`: it runs to completion, so its waits default to
+`Succeeded`.
 
 ### 4. The CLI: `status` and `wait` on each noun
 
@@ -133,6 +173,12 @@ the existing nouns, with the same flags and exit codes everywhere:
   resource or its conditions are not found. The final status document is
   printed with `--json`, so an agent reads the `reason` without a second
   call.
+- The same verbs serve the other kinds: `gregale postgres status|wait <name>`,
+  `gregale cron status|wait <id>`, and `gregale domain status <domain>` with
+  `gregale domain wait <domain>` (`domain status` with no argument still lists
+  every domain's certificate). Job runs already have `job status` and
+  `job wait`; `job wait --for CONDITION` waits on the run's conditions and
+  `job status --conditions` prints them.
 - `gregale release wait` gains `--for` in a later step; `--rollout` stays as
   `--for RolledOut`. `gregale app health --wait` stays as it is: health is the
   evidence, conditions are the summary, and `app status` points to `app health`
@@ -141,7 +187,7 @@ the existing nouns, with the same flags and exit codes everywhere:
 ### 5. Rollout
 
 - **Capability.** A `resource-conditions` preview capability, off by default,
-  owns both routes and both commands (ADR-20261023115741). Customer docs and
+  owns every status route and command (ADR-20261023115741). Customer docs and
   the dashboard come when it reaches beta.
 - **Release compatibility.** The routes and types are new, so release N-1
   is unaffected. A new CLI against an apid without the route, or with the

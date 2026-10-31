@@ -36,8 +36,9 @@ func TestMemAPIDiscoveryOfRehearsalAppDoesNotFanOut(t *testing.T) {
 				published++
 			}
 		}
-		if want := map[bool]int{true: 0, false: 1}[enrolled]; published != want {
-			t.Fatalf("enrolled=%v: published route events = %d, want %d", enrolled, published, want)
+		// ADR-20261030170000: the receipt is the event's only copy.
+		if want := map[bool]int{true: 0, false: 1}[enrolled]; published != 0 || len(store.eventFanout) != want {
+			t.Fatalf("enrolled=%v: published route events = %d, receipts = %d, want 0 and %d", enrolled, published, len(store.eventFanout), want)
 		}
 	}
 }
