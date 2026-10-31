@@ -330,6 +330,14 @@ ADR-568 requires.
   - The applied revision was still never recorded. Every apid pass ended
     `environment_runtime_unacknowledged`, which points at the runtime
     readiness checks that follow serving convergence.
+- 2026-10-31, n2, rerun with an uncommitted readiness diagnostic:
+  - The blocker was the runtime target's `UnqualifiedWorkloads:1`.
+  - That fence comes from the ADR-568 preview. It counts every Git-managed
+    workload source as unqualified, and nothing clears it, so an enforced
+    graph could never record its applied revision.
+  - 6bc1801865 treats the fence as met when the reviewed graph qualified,
+    activated and served in the same pass. Freshness checks still apply,
+    and report mode keeps the fence.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 

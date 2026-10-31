@@ -4540,3 +4540,13 @@ prepared earlier keep the requirement. For a runner candidate the native
 restore reads the framework-ready state the runner kept in guest memory and
 records the receipt itself. Details and n2 evidence:
 ADR 20261023093000 amendment 1.
+
+### A served graph meets the unqualified-workload fence (2026-10-31)
+
+The runtime observation fences every Git-managed workload source as
+unqualified (`EnvironmentGitOpsUnqualifiedWorkloads`), from the preview that
+predates graph qualification, and nothing clears it. An enforced graph that
+qualified, activated and served could therefore never record its applied
+revision. Runtime verification now treats the fence as met when the reviewed
+graph served in the same pass; runtime freshness still applies, and report mode
+keeps the fence. Details and n2 evidence: ADR 20261023093000 acceptance record.
