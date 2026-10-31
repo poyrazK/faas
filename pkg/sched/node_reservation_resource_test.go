@@ -38,7 +38,7 @@ func TestDurableGuardRefusalNamesItsResource(t *testing.T) {
 		})
 	}
 	other := errors.New("boom")
-	if got := e.NodeCapacityProblem(other); got != other {
+	if got := e.NodeCapacityProblem(other); !errors.Is(got, other) {
 		t.Fatalf("a non-capacity error was rewritten: %v", got)
 	}
 }
