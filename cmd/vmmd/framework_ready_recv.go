@@ -595,8 +595,11 @@ func (r *FrameworkReadyReceiver) handleEventPublishVerdict(instance string, conn
 	verdict := guestEventPublishVerdict(r.publishGuestEvent(ctx, instance, body))
 	cancel()
 	reply, err := json.Marshal(verdict)
-	if err != nil || len(reply) > api.EventPublishVerdictMaxBytes {
-		return "protocol", fmt.Errorf("event publish verdict encode: %d bytes, %v", len(reply), err)
+	if err != nil {
+		return "protocol", fmt.Errorf("event publish verdict encode: %w", err)
+	}
+	if len(reply) > api.EventPublishVerdictMaxBytes {
+		return "protocol", fmt.Errorf("event publish verdict %d bytes exceeds %d", len(reply), api.EventPublishVerdictMaxBytes)
 	}
 	frame := make([]byte, 2+len(reply))
 	binary.BigEndian.PutUint16(frame, uint16(len(reply)))
