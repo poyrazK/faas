@@ -18,7 +18,8 @@ type k8sManifest struct {
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
 	Metadata   struct {
-		Name string `yaml:"name"`
+		Name   string            `yaml:"name"`
+		Labels map[string]string `yaml:"labels"`
 	} `yaml:"metadata"`
 	Spec struct {
 		// CronJob-only
@@ -121,6 +122,9 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 			// command/args/env/ports/apply. (We don't
 			// model initContainers / sidecars here.)
 			seed := k8sDeploymentSeed(p, m)
+			if opts.ResourceLabels {
+				seed.labels = k8sLabels(&warnings, p, header.Kind, m)
+			}
 			if hint, ok := denylistKind(seed.image); ok {
 				managed = append(managed, Managed{
 					Name: m.Metadata.Name, Kind: imageBase(seed.image),
@@ -153,6 +157,9 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 				return fmt.Errorf("reposcan: %s CronJob %q requires a first container image", p, m.Metadata.Name)
 			}
 			seed := k8sCronJobSeed(p, m)
+			if opts.ResourceLabels {
+				seed.labels = k8sLabels(&warnings, p, header.Kind, m)
+			}
 			cronWarnings, err := applyK8sCronJobSpec(&seed, node, opts.KubernetesManifests)
 			if err != nil {
 				return fmt.Errorf("reposcan: %s CronJob %q: %w", p, m.Metadata.Name, err)

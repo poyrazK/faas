@@ -19,7 +19,7 @@ import (
 
 // Capability is the catalog id that owns labels, the label routes and
 // ?selector= (pkg/productcap/catalog.json).
-const Capability = "resource-labels"
+const Capability = labels.Capability
 
 // SelectorParam is the list query parameter a selector arrives in.
 const SelectorParam = "selector"
