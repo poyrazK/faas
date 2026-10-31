@@ -1173,6 +1173,15 @@ Each slice is one reviewable change on a branch. Slices 2–4 are behind
      drains anyway, so the release that proves the rc.309 fixes on fsn-2 also
      arms fsn-3. A release that changes a runtime base generation still
      drains every node (ADR-20261024085817).
+   - **A restart without bridge units cuts requests briefly (2026-10-31).**
+     The guests survive, but `faas-vmmd.service` (`KillMode=control-group`)
+     reaps vmmd's bridge processes when it stops, so a guest is unreachable
+     until the successor starts new ones: 6 of 51 requests got 503 across a
+     1.2 s restart on gregale-internal-test-1 with vmmd under the production
+     unit (`FAAS_E2E_VMMD_SYSTEMD=1`). A harness vmmd outside systemd left its
+     bridges running, which hid the gap. Only the bridge units
+     (`vmmd_bridge_canary_nodes`, connection-survival P1c) carry requests
+     through the restart.
 5. **fsn-4 acceptance** (§5), then flip `adopt_running_vms` to true by default.
 
 ## Risks

@@ -18,7 +18,9 @@ func TestVMMDSandboxPropertiesFollowTheProductionUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	props := vmmdSandboxProperties(unit.Render(), []string{"-/mnt/e2e/run"})
-	want := map[string]bool{"ProtectSystem=strict": false, "NoNewPrivileges=yes": false}
+	// RuntimeDirectory is how the sandbox lets vmmd write /run/faas-ibridge.
+	want := map[string]bool{"ProtectSystem=strict": false, "NoNewPrivileges=yes": false, "RuntimeDirectory=faas-ibridge": false,
+		"RuntimeDirectoryPreserve=yes": false, "KillMode=control-group": false}
 	var rw, caps string
 	for _, p := range props {
 		if _, ok := want[p]; ok {

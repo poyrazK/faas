@@ -33,7 +33,9 @@ const (
 	vmmdUnitPrefix = "faas-e2e-vmmd-"
 )
 
-func vmmdUnderSystemd() bool { return os.Getenv(vmmdSystemdEnv) == "1" }
+// VMMDUnderSystemd reports whether the harness runs vmmd as a transient
+// service carrying the production unit's sandbox.
+func VMMDUnderSystemd() bool { return os.Getenv(vmmdSystemdEnv) == "1" }
 
 // vmmdSandboxKeys are the production unit's [Service] settings that shape
 // vmmd's mount namespace, privileges and filesystem view, and how it stops.
@@ -43,6 +45,9 @@ var vmmdSandboxKeys = map[string]bool{
 	"ProtectKernelModules": true, "ProtectKernelTunables": true, "ProtectControlGroups": true,
 	"SystemCallArchitectures": true, "LockPersonality": true, "RestrictRealtime": true, "RestrictSUIDSGID": true,
 	"RestrictAddressFamilies": true, "ProtectHostname": true, "ProtectClock": true, "KillMode": true,
+	// /run/faas-ibridge holds the bridge sockets; ProtectSystem=strict leaves
+	// it writable only as the unit's RuntimeDirectory.
+	"RuntimeDirectory": true, "RuntimeDirectoryMode": true, "RuntimeDirectoryPreserve": true,
 }
 
 // hostTreeRoots are never made writable for the harness's vmmd.
