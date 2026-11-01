@@ -5329,6 +5329,8 @@ func cmdCrons(args []string) int {
 		return cronConditions.status(args[1:])
 	case subWait:
 		return cronConditions.wait(args[1:])
+	case subLabel:
+		return cmdCronLabel(args[1:])
 	case subList:
 		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
 			if delayedTasksHidden() {
@@ -5337,27 +5339,38 @@ func cmdCrons(args []string) int {
 			return cmdDelayedTaskList(rest)
 		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
-		slug := fs.String("app", "", "app slug (required)")
+		slug := fs.String("app", "", "app slug (required without -l)")
+		selector := addSelectorFlag(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
-		if *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug>", "crons")
+		if *slug == "" && *selector == "" {
+			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
 			return 1
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		out, err := client.ListCrons(context.Background(), *slug)
+		var out []api.CronResponse
+		if *selector != "" {
+			// -l without --app selects across every app (ADR-20261031100025).
+			out, err = selectedCrons(context.Background(), client, *slug, *selector)
+		} else {
+			out, err = client.ListCrons(context.Background(), *slug)
+		}
 		if err != nil {
 			return printErr("Could not list crons", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
+		}
+		if len(out) == 0 && *selector != "" {
+			_, _ = fmt.Fprintf(osStdout, "No cron matches %s\n", *selector)
+			return 0
 		}
 		// The ID leads because `crons info|update|rm|runs` all require it
 		// and nothing else printed it (issue #3362).

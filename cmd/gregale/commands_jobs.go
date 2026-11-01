@@ -48,6 +48,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/labels"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -75,6 +76,8 @@ func cmdJobs(args []string) int {
 	switch subcommand {
 	case subList:
 		return cmdJobsList(rest)
+	case subLabel:
+		return cmdJobLabel(rest)
 	case subAdd:
 		return cmdJobsAdd(rest)
 	case subInfo:
@@ -136,13 +139,14 @@ func cmdJobsList(args []string) int {
 	// Jobs belong to the account, not to an app, so there is no --app filter;
 	// the flag package answered only "unknown flag --app" (Hunt 14 H14-63).
 	if argsPassAppFlag(args) {
-		PrintUsage(os.Stderr, "gregale job list lists every job in the account; it has no --app filter. Inspect one job with `gregale job get <job>`.\nusage: gregale job list [--limit N] [--offset N] [--all]", "jobs")
+		PrintUsage(os.Stderr, "gregale job list lists every job in the account; it has no --app filter. Inspect one job with `gregale job get <job>`.\nusage: gregale job list [--limit N] [--offset N] [--all] [-l SELECTOR]", "jobs")
 		return 1
 	}
 	fs := newFlagSet("jobs-list", flag.ContinueOnError)
 	limit := fs.Int("limit", 0, "page size (1..200; omit for server default 50)")
 	offset := fs.Int("offset", 0, "starting page offset")
 	all := fs.Bool("all", false, "walk every page using --limit and --offset")
+	selector := addSelectorFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -156,12 +160,20 @@ func cmdJobsList(args []string) int {
 		}
 	})
 	if limitProvided && (*limit < 1 || *limit > 200) {
-		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all]   (--limit must be between 1 and 200)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all] [-l SELECTOR]   (--limit must be between 1 and 200)", "jobs")
 		return 1
 	}
 	if *offset < 0 {
-		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all]   (--offset must be >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all] [-l SELECTOR]   (--offset must be >= 0)", "jobs")
 		return 1
+	}
+	var sel labels.Selector
+	if *selector != "" {
+		parsed, err := parseSelectorFlag(*selector)
+		if err != nil {
+			return printErr("Invalid selector", err)
+		}
+		sel = parsed
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -170,7 +182,7 @@ func cmdJobsList(args []string) int {
 	var out api.ListJobsResponse
 	first := true
 	items, next, err := collectOffsetPages(context.Background(), *offset, *all, func(ctx context.Context, offset int) ([]api.JobResponse, int, error) {
-		page, err := client.ListJobs(ctx, *limit, offset)
+		page, err := listJobsPage(ctx, client, *selector, sel, *limit, offset)
 		if first {
 			out = page
 			first = false
@@ -185,6 +197,10 @@ func cmdJobsList(args []string) int {
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
+	}
+	if len(out.Jobs) == 0 && *selector != "" {
+		_, _ = fmt.Fprintf(osStdout, "No job matches %s\n", *selector)
+		return 0
 	}
 	if len(out.Jobs) == 0 {
 		next := recoveryCLI() + " job list"
@@ -2105,4 +2121,16 @@ func argsPassAppFlag(args []string) bool {
 		}
 	}
 	return false
+}
+
+// listJobsPage reads one page of jobs, or of the jobs sel picks when selector
+// is set. The server pages the matches; the CLI matches the returned labels
+// again, because an apid without labels ignores the selector.
+func listJobsPage(ctx context.Context, client *Client, selector string, sel labels.Selector, limit, offset int) (api.ListJobsResponse, error) {
+	if selector == "" {
+		return client.ListJobs(ctx, limit, offset)
+	}
+	page, err := client.ListJobsSelected(ctx, sel.String(), limit, offset)
+	page.Jobs = slices.DeleteFunc(page.Jobs, func(j api.JobResponse) bool { return !sel.Matches(j.Labels) })
+	return page, err
 }
