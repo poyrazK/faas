@@ -699,6 +699,11 @@ func (p *Provider) PushUsageRecord(ctx context.Context, acct state.Account, hour
 	return nil
 }
 
+// StampsUsageAtDelivery reports that Polar totals usage by delivery time
+// (billing.DeliveryTimeStamper), which the billing reconciler compares with
+// meterd's delivery ledger.
+func (p *Provider) StampsUsageAtDelivery() bool { return true }
+
 // deliveryTimestamp stamps a usage event with the time it is sent, so Polar
 // bills it in the subscription cycle that is open when it arrives
 // (ADR-20261028101500).

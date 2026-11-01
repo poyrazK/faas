@@ -301,6 +301,14 @@ type UsageModeProvider interface {
 	UsageMode() UsageMode
 }
 
+// DeliveryTimeStamper is an optional provider contract: a provider that
+// stamps each usage event with the time it is sent, not the hour it
+// measures (Polar, ADR-20261028101500), totals usage by delivery time, so
+// ReconcileUsage over a window counts what was delivered in it.
+type DeliveryTimeStamper interface {
+	StampsUsageAtDelivery() bool
+}
+
 // UsageMode describes the quantity passed to PushUsageRecord and returned by
 // ReconcileUsage.
 type UsageMode string
