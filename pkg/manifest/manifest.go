@@ -129,6 +129,10 @@ type Manifest struct {
 	// platform zone. Today that is customer custom domains (ADR-520).
 	PublicEdge PublicEdge `yaml:"public_edge,omitempty"`
 
+	// ManagedPostgres turns on native managed PostgreSQL (ADR-1027) on the
+	// fleet's database hosts (managed_postgres.go).
+	ManagedPostgres *ManagedPostgres `yaml:"managed_postgres,omitempty"`
+
 	// PostgreSQL is the database cluster configuration. The renderer
 	// needs the role names, the database name, and the migration
 	// policy (the manifest validator checks the migration scope is
@@ -198,6 +202,16 @@ type ObjectStorage struct {
 	// ProviderEnvSrc is the optional controller-local credential env file
 	// for S3-compatible providers; GCS with attached ADC needs none.
 	ProviderEnvSrc string `yaml:"provider_env_src,omitempty"`
+	// ComputeNodes runs the gateway on every compute node of the cell as
+	// well (ADR-20261031122757). It needs the managed gateway, the app edge
+	// on the compute nodes, GatewayProviderEnvSrc and every compute host's
+	// port_mbps.
+	ComputeNodes bool `yaml:"compute_nodes,omitempty"`
+	// GatewayProviderEnvSrc is the controller-local env file holding only
+	// the gateway credentials the registry's gateway_*_env fields name.
+	// Compute nodes get it instead of ProviderEnvSrc, so they never hold the
+	// bucket-admin credential.
+	GatewayProviderEnvSrc string `yaml:"gateway_provider_env_src,omitempty"`
 }
 
 // Managed reports whether the playbooks own s3-gatewayd.
@@ -219,8 +233,43 @@ func (o ObjectStorage) validate() Errors {
 	if !o.Managed() && (o.ConfigSrc != "" || o.ProviderEnvSrc != "") {
 		errs = append(errs, Error{"object_storage.gateway", "must be managed when config_src or provider_env_src is set"})
 	}
+	if o.ComputeNodes && !o.Managed() {
+		errs = append(errs, Error{"object_storage.compute_nodes", "needs the managed gateway"})
+	}
+	if o.ComputeNodes && !filepath.IsAbs(o.GatewayProviderEnvSrc) {
+		errs = append(errs, Error{"object_storage.gateway_provider_env_src", "must be an absolute controller path when the gateway runs on compute nodes"})
+	}
+	if !o.ComputeNodes && o.GatewayProviderEnvSrc != "" {
+		errs = append(errs, Error{"object_storage.gateway_provider_env_src", "is used only with compute_nodes"})
+	}
 	return errs
 }
+
+// validateOnCompute checks what the gateway on compute nodes needs from the
+// rest of the manifest (ADR-20261031122757): the app edge runs there too, and
+// every compute host declares its port speed, from which its port share is
+// rendered.
+func (o ObjectStorage) validateOnCompute(edge PublicEdge, hosts []Host) Errors {
+	if !o.ComputeNodes {
+		return nil
+	}
+	var errs Errors
+	if !edge.ComputeNodes {
+		errs = append(errs, Error{"object_storage.compute_nodes", "needs public_edge.compute_nodes: the gateway's tunnel runs beside the app edge"})
+	}
+	for i, h := range hosts {
+		if h.Role == "compute-only" && (h.PortMbps < MinHostPortMbps || h.PortMbps > MaxHostPortMbps) {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].port_mbps", i), fmt.Sprintf("must be %d–%d Mbit/s when the object gateway runs on compute nodes", MinHostPortMbps, MaxHostPortMbps)})
+		}
+	}
+	return errs
+}
+
+// MinHostPortMbps and MaxHostPortMbps bound a host's declared port speed.
+const (
+	MinHostPortMbps = 100
+	MaxHostPortMbps = 100_000
+)
 
 // WorkloadIdentity names the directory `gregalectl workload-identity init`
 // wrote on the Ansible controller (ADR-1141 amendment 2026-10-24). Empty
@@ -472,6 +521,13 @@ type Host struct {
 	// checks (e.g. `--role=compute-only` skips cert checks for the
 	// egress server leaf, which lives on the control-plane box).
 	Tags []string `yaml:"tags,omitempty"`
+	// Database is a database host's place in schedd's database
+	// scheduler (role `database` only; managed_postgres.go).
+	Database *DatabaseHost `yaml:"database,omitempty"`
+	// PortMbps is the speed of the host's network port in Mbit/s. A compute
+	// host that runs the object gateway gets its share of it
+	// (ADR-20261031122757 §3); required there, unused elsewhere.
+	PortMbps int `yaml:"port_mbps,omitempty"`
 }
 
 // Daemons is the per-daemon configuration. Keys are daemon names;
@@ -1114,7 +1170,9 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Cgroups.validate()...)
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
+	errs = append(errs, m.validateManagedPostgres()...)
 	errs = append(errs, m.ObjectStorage.validate()...)
+	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
@@ -1371,7 +1429,7 @@ func (f *Fleet) validate() Errors {
 			errs = append(errs, Error{path + ".role", "is required"})
 		} else if !roleKnown(h.Role) {
 			errs = append(errs, Error{path + ".role",
-				fmt.Sprintf("unknown role %q (allowed: single-box|control-plane|compute-only)", h.Role)})
+				fmt.Sprintf("unknown role %q (allowed: single-box|control-plane|compute-only|database)", h.Role)})
 		}
 		if h.Address != "" && !looksLikeHostPort(h.Address) {
 			errs = append(errs, Error{path + ".address",
@@ -1785,7 +1843,7 @@ func contains(xs []string, x string) bool {
 }
 
 func roleKnown(r string) bool {
-	for _, v := range []string{"single-box", "control-plane", "compute-only"} {
+	for _, v := range []string{"single-box", "control-plane", "compute-only", RoleDatabase} {
 		if r == v {
 			return true
 		}

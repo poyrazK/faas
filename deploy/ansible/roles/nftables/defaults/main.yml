@@ -72,6 +72,11 @@ faas_compute_allowed_ports:
   - 9091
   - 9093
   - 50053
+# ADR-1027: control-plane ingress from database nodes. pgproxyd reads role
+# verifiers from PostgreSQL and wakes databases through schedd; the
+# manifest generator renders both lists from the database hosts.
+faas_database_allowed_cidrs: []
+faas_database_allowed_ports: [5432]
 # Control-plane ingress to compute services. The manifest generator sets
 # these only on compute-only hosts; an empty list keeps the one-box policy.
 faas_control_plane_allowed_cidrs: []
@@ -104,6 +109,12 @@ faas_edge_connector_metrics_port: 20241
 # plane probes and scrapes. Not 9092: gatewayd-internal's egress listener
 # holds that on a compute node (daemonunitspec.ComputeEdgeControlPort).
 faas_edge_control_port: 9109
+# ADR-20261031122757 §2: with the S3 gateway on compute nodes, the control
+# plane scrapes the gateway's control listener and its s3 tunnel connector
+# (daemonunitspec.ComputeObjectGatewayControlPort and
+# ComputeObjectGatewayConnectorMetricsPort).
+faas_object_gateway_control_port: 9096
+faas_object_gateway_connector_metrics_port: 20242
 
 # Raw TCP app listeners are opt-in and fail closed. When enabled, only the
 # explicitly listed client CIDRs can reach the reserved public range.
@@ -134,3 +145,9 @@ faas_udpd_allowed_cidrs: []
 # service HTTPS listener (gatewayd_service_proxy_https_listen) is staged.
 faas_service_tcp_enabled: false
 faas_service_tcp_https_enabled: false
+
+# ADR-1027 managed-database route: guests reach pgproxyd at 198.18.0.1:5432
+# through the gatewayd-internal forwarder on the bridge (:10083). Mirrors
+# vmmd's database_route_enabled so a reboot keeps the boot-time ruleset
+# identical to the runtime render.
+faas_database_route_enabled: false

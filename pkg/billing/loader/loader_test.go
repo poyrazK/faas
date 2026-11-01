@@ -64,7 +64,7 @@ func polarCatalogServer(t *testing.T, includeMeter bool) string {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/v1/organizations/":
-			_, _ = w.Write([]byte(`{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false}}]}`))
+			_, _ = w.Write([]byte(`{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"}}]}`))
 		case strings.HasPrefix(r.URL.Path, "/v1/products/"):
 			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
 			if id == "" {

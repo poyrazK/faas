@@ -11,7 +11,8 @@ import (
 // promise that already-issued capabilities can be revoked.
 type ObjectStoragePolicy struct {
 	// Gateway safety mode is prospective, has no provider-cost ceiling, and
-	// cannot supply billable usage. Empty mode preserves provider reports.
+	// bills stored bytes only, from Gregale's own meter (ADR-20261024132844).
+	// Empty mode preserves provider reports.
 	AccountingMode           string     `json:"accounting_mode,omitempty"`
 	GatewayMeteringSince     *time.Time `json:"gateway_metering_since,omitempty"`
 	MaxAccountBytes          int64      `json:"max_account_bytes"`
@@ -137,6 +138,13 @@ func (u ObjectStorageUsage) Chargeable() bool {
 // ADR-1430 prices object storage: requests and egress are free.
 func (p ObjectStoragePricing) StorageOnly() bool {
 	return p.RequestsMillicentsPerMillion == 0 && p.EgressMillicentsPerGiB == 0
+}
+
+// PublishedObjectStoragePricing is the rate card customers are billed:
+// ADR-1430's storage price in the billing currency, with requests and egress
+// free. apid refuses a registry whose pricing differs from it.
+func PublishedObjectStoragePricing() ObjectStoragePricing {
+	return ObjectStoragePricing{Currency: BillingCurrency, StorageMillicentsPerGiBMonth: ObjectStorageMillicentsPerGiBMonth}
 }
 
 func (p ObjectStoragePricing) Valid() bool {

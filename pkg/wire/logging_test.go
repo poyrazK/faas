@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -438,5 +439,49 @@ func TestWithCorrelationFields_SanitizesControlChars(t *testing.T) {
 		if got, _ := rec[k].(string); got != want {
 			t.Errorf("field %q = %q, want %q", k, got, want)
 		}
+	}
+}
+
+// TestNewRequestIDCarriesMintingTime pins the ADR-20261101085552 layout: a
+// minted ID is 32 hex characters whose first 48 bits are the minting time.
+func TestNewRequestIDCarriesMintingTime(t *testing.T) {
+	before := time.Now().Truncate(time.Millisecond)
+	seen := make(map[string]bool)
+	for range 1000 {
+		id := wire.NewRequestID()
+		if len(id) != 32 || strings.ToLower(id) != id {
+			t.Fatalf("id %q: want 32 lowercase hex characters", id)
+		}
+		if seen[id] {
+			t.Fatalf("duplicate id %q", id)
+		}
+		seen[id] = true
+		minted, ok := wire.RequestIDMintedAt(id)
+		if !ok || minted.Before(before) || minted.After(time.Now()) {
+			t.Fatalf("RequestIDMintedAt(%q) = %s, %v; want a time since %s", id, minted, ok, before)
+		}
+	}
+}
+
+func TestRequestIDMintedAt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+		want time.Time
+		ok   bool
+	}{
+		{name: "minted layout", id: "019a3f17a37b7abc8def0123456789ab", want: time.UnixMilli(0x019a3f17a37b).UTC(), ok: true},
+		{name: "dashed uuidv7", id: "019a3f17-a37b-7abc-8def-0123456789ab", want: time.UnixMilli(0x019a3f17a37b).UTC(), ok: true},
+		{name: "legacy random id", id: "4f1c2a3b4d5e4f608a7b9c0d1e2f3a4b", ok: false},
+		{name: "wrong variant", id: "019a3f17a37b7abc0def0123456789ab", ok: false},
+		{name: "client id", id: "req-123", ok: false},
+		{name: "not hex", id: "zz9a3f17a37b7abc8def0123456789ab", ok: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := wire.RequestIDMintedAt(tc.id)
+			if ok != tc.ok || (ok && !got.Equal(tc.want)) {
+				t.Fatalf("RequestIDMintedAt(%q) = %s, %v; want %s, %v", tc.id, got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }

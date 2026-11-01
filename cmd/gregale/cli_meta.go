@@ -2184,7 +2184,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
 			{Name: "next", Short: "Show upcoming expression times across app tasks", Notes: []string{"Includes state and policy caveats."}, Examples: []string{"gregale cron next --app my-api", "gregale cron next --app my-api --json"}, Flags: []cliFlag{{Name: "app", Short: "app slug (linked app or picker by default)", Value: "SLUG"}}},
-			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "one-off", Short: "list one-off requests (--at or --in) instead of cron rules", Bool: true, Capability: "delayed-execution"}}},
+			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug (required without -l)", Value: "slug"}, {Name: "selector", ShortName: "l", Short: "only crons whose labels match (preview)", Value: "SELECTOR"}, {Name: "one-off", Short: "list one-off requests (--at or --in) instead of cron rules", Bool: true, Capability: "delayed-execution"}}},
 			{Name: "add", Short: "Schedule a POST to an app path, or a deployment command", Examples: []string{"gregale cron create --app my-api --interactive", "gregale cron create --app my-api --at 2030-01-01T09:00:00Z --path /report", "gregale cron create --app my-api --in 30m --path /reminders"}, Notes: []string{"With --at or --in, add schedules one request instead of a recurring cron and takes the flags of `gregale delayed-task add` (--payload, --method, --header, retries); --schedule and the command flags belong to recurring crons."}, Flags: []cliFlag{
 				{Name: "at", Short: "send one request at this RFC3339 time instead of on a schedule", Value: "RFC3339", Capability: "delayed-execution"},
 				{Name: "in", Short: "send one request after this delay (such as 30m) instead of on a schedule", Value: "DURATION", Capability: "delayed-execution"},
@@ -2211,6 +2211,11 @@ var cliCommands = []cliCommand{
 				{Name: "for", Short: "Ready or LastRunSucceeded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
 				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
+			{Name: subLabel, Short: "List, set or unset a cron's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select crons with -l on cron list.", "Labels are not secret."}, Examples: []string{"gregale cron label set CRON_ID team=billing", "gregale cron label list CRON_ID"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show a cron's labels", Positionals: []string{"<id>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<id>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<id>", "KEY..."}},
 			}},
 			{Name: "info", Short: "Show one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "one-off", Short: "show a one-off request (--at or --in) instead of a cron rule", Bool: true, Capability: "delayed-execution"},
@@ -2354,6 +2359,12 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "page size (1..200, default 50)", Value: "N"},
 				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
 				{Name: "all", Short: "walk every page using --limit and --offset"},
+				{Name: "selector", ShortName: "l", Short: "only jobs whose labels match (preview)", Value: "SELECTOR"},
+			}},
+			{Name: subLabel, Short: "List, set or unset a job's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select jobs with -l on job list.", "Labels are not secret."}, Examples: []string{"gregale job label set nightly-report team=billing", "gregale job label list nightly-report"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show a job's labels", Positionals: []string{"<job>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<job>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<job>", "KEY..."}},
 			}},
 			{Name: "next", Short: "Show upcoming recurring Job expression times and readiness", Examples: []string{"gregale job next", "gregale job next --json"}},
 			{Name: "add", Short: "Create a new job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale job create --interactive"}, Flags: []cliFlag{
@@ -5766,7 +5777,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "postgres",
 		Short:   "Create, attach and restore managed PostgreSQL databases",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List managed PostgreSQL databases"},
+			{Name: "list", Short: "List managed PostgreSQL databases", Flags: []cliFlag{{Name: "selector", ShortName: "l", Short: "only databases whose labels match (preview)", Value: "SELECTOR"}}},
 			{Name: "capabilities", Short: "Show plan and region PostgreSQL feature support", Flags: []cliFlag{
 				{Name: "region", Short: "region (defaults to configured region)", Value: "REGION"},
 			}, Examples: []string{"gregale postgres capabilities --json"}},
@@ -5801,6 +5812,11 @@ var cliCommands = []cliCommand{
 				{Name: "for", Short: "Ready, Progressing or Degraded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
 				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
+			{Name: subLabel, Short: "List, set or unset a database's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select databases with -l on postgres list.", "Labels are not secret."}, Examples: []string{"gregale postgres label set orders team=billing", "gregale postgres label list orders"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show a database's labels", Positionals: []string{"<database>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<database>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<database>", "KEY..."}},
 			}},
 			{Name: "delete", Short: "Delete a managed PostgreSQL database; it can be undone for 7 days", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "purge", Short: "delete at once with its restore history; cannot be undone"},

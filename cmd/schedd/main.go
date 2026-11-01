@@ -87,7 +87,7 @@ func loadHostAgeIdentities(path string) ([]*age.X25519Identity, error) {
 }
 
 // scheddServerVerifier permits the registered compute-node identities and the
-// three role-specific service leaves that legitimately call schedd. The
+// role-specific service leaves that legitimately call schedd. The
 // compute_nodes registry intentionally contains host identities, while the
 // gatewayd, meterd, and vmmd schedd-client leaves carry stable role CNs.
 // Applying the registry verifier alone rejects those clients after the
@@ -100,6 +100,7 @@ func scheddServerVerifier(nodeVerifier wire.NodeVerifier) wire.NodeVerifier {
 	serviceVerifier.Set([]string{
 		"gatewayd.faas",
 		"meterd.faas",
+		"pgproxyd.faas", // ADR-1027: wakes databases, records activity
 		"vmmd.faas",
 	})
 	return wire.NewAnyNodeVerifier(nodeVerifier, serviceVerifier)
@@ -1897,6 +1898,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if nodeVerifier != nil {
 		grpcHandler.WithPeerNodeResolver(nodeVerifier)
 	}
+	// Database nodes (ADR-1027) present node-identity vmmd leaves that are
+	// not compute_nodes rows; without a fleet registry (single box) the
+	// CA alone authenticates vmmd, as on the compute path.
+	loadDatabaseVMMTLS := func(v wire.NodeVerifier) (*tls.Config, error) {
+		if nodeVerifier == nil {
+			v = nil
+		}
+		return cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(v, nil)
+	}
+	databases, stopDatabases, err := enableDatabaseScheduler(ctx, cfg.DatabaseScheduler, pool, loadDatabaseVMMTLS, grpcHandler, ops, log)
+	if err != nil {
+		return err
+	}
+	defer stopDatabases()
 	grpcHandler.Register(gsrv)
 
 	// Serve goroutine — must run AFTER Register or grpc fatals.
@@ -1962,7 +1977,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// scale-up, targets and floor triggers, the reaper and the scaling-policy
 	// observer. It rereads the rows only when their version changed.
 	appSnapshot := sched.NewAppSnapshot(store)
-	loop := sched.NewLoop(pool, engine, log).
+	loop := sched.NewLoop(pool, engine, log)
+	if databases != nil {
+		loop.WithDatabaseMover(databaseMover{sched: databases}).WithDatabaseRestarter(databaseMover{sched: databases}).
+			WithDatabaseSwitcher(databaseMover{sched: databases})
+	}
+	loop = loop.
 		WithAppSnapshot(appSnapshot).
 		WithEventRecipientClaims(eventRecipientClaimsEnabled(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED"))).
 		WithLiveness(liveness).
@@ -2221,7 +2241,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	floorTrigger := floor.New(
 		appSnapshot,
 		store, // deploymentStore — issue #557 closure / ADR-074 (per-deployment walk)
-		schedFloorLedger{ledger: engine.Ledger()},
+		schedFloorLedger{ledger: engine.Ledger(), headroom: engine.FloorHeadroomMB},
 		schedFloorEngine{engine: engine},
 		floor.Options{
 			Logger:       log,
@@ -3146,6 +3166,8 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 // trigger adds.
 type schedFloorLedger struct {
 	ledger *sched.NodeLedger
+	// headroom is Engine.FloorHeadroomMB; nil falls back to the ledger.
+	headroom func() int
 }
 
 // Concurrency implements floor.Ledger.
@@ -3164,10 +3186,14 @@ func (s schedFloorLedger) ResidentRAM() int {
 	return s.ledger.ResidentRAM()
 }
 
-// HeadroomMB implements floor.Ledger with the best single node's admission
-// headroom, the figure Admit places against; the fleet sum went negative
-// under measured admission and stopped every floor refill.
+// HeadroomMB implements floor.Ledger with the best single admitting node's
+// admission headroom, the figure Admit places against; the fleet sum went
+// negative under measured admission and stopped every floor refill, and the
+// ledger alone missed nodes it held nothing on (ADR 20261031190030).
 func (s schedFloorLedger) HeadroomMB() int {
+	if s.headroom != nil {
+		return s.headroom()
+	}
 	return s.ledger.AdmissionHeadroomMB()
 }
 

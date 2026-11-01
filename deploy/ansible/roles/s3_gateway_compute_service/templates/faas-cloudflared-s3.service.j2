@@ -1,0 +1,60 @@
+# Managed by Ansible (s3_gateway_compute_service). Local edits are overwritten.
+# ADR-20261031122757 §2: the Cloudflare Tunnel connector of the node's S3
+# gateway. It only dials out; the s3 tunnel's ingress rule (configured in
+# Cloudflare) sends s3.<domain> to http://127.0.0.1:8084, the gateway's data
+# listener. The app tunnel's connector (faas-cloudflared) is separate.
+[Unit]
+Description=Cloudflare Tunnel connector for the compute-node S3 gateway (ADR-20261031122757)
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
+# Bound to the gateway: the connector starts only once the gateway reports
+# ready (Type=notify follows its /readyz), and leaves the tunnel whenever the
+# gateway stops or fails, so Cloudflare sends this node's share to the other
+# replicas. Stopping runs in reverse start order: on a stop, restart or
+# reboot the connector withdraws first and drains its in-flight requests
+# through the still-running gateway.
+After=network-online.target faas-s3-gatewayd-compute.service
+Wants=network-online.target
+BindsTo=faas-s3-gatewayd-compute.service
+PartOf=faas-s3-gatewayd-compute.service
+ConditionPathExists={{ faas_cloudflared_s3_token_path }}
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=notify
+User=cloudflared
+Group=cloudflared
+ExecStart={{ faas_cloudflared_install_dir }}/cloudflared tunnel --no-autoupdate --grace-period {{ faas_cloudflared_s3_grace_period }} --metrics {{ faas_cloudflared_s3_metrics_addr }} run --token-file %d/tunnel-token
+LoadCredential=tunnel-token:{{ faas_cloudflared_s3_token_path }}
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=60s
+# On SIGTERM the connector stops taking new requests and waits up to the
+# grace period for the ones in flight; systemd must wait longer than that.
+TimeoutStopSec={{ faas_cloudflared_s3_stop_timeout }}
+Slice=faas-cp.slice
+MemoryMax=256M
+AmbientCapabilities=
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+# Starting the gateway starts the connector, including the restarts release
+# activation carries from gatewayd-internal.
+WantedBy=faas-s3-gatewayd-compute.service

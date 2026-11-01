@@ -38,6 +38,9 @@ const (
 	CodeAgentTenantNotFound     = "agent_tenant_not_found"
 	CodeAgentTenantInactive     = "agent_tenant_inactive"
 	CodeAgentLimit              = "agent_limit"
+	// CodeAgentCallbackRateLimited: a thread got more callbacks in a minute
+	// than AgentCallbacksPerMinutePerThread.
+	CodeAgentCallbackRateLimited = "agent_callback_rate_limited"
 	// CodeAgentIntegrationInvalid: a version names an integration that is
 	// not an enabled customer AI integration of the account for that provider.
 	CodeAgentIntegrationInvalid = "agent_integration_invalid"
@@ -294,6 +297,14 @@ func ErrAgentLimit(plan Plan, limit string, max, observed int) *Problem {
 		WithDocs(docsBase + "/plans#agents")
 }
 
+// ErrAgentCallbackRateLimited refuses a callback beyond the thread's limit.
+func ErrAgentCallbackRateLimited(limit, observed int) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeAgentCallbackRateLimited, "Callback rate limit reached",
+		fmt.Sprintf("The thread got %d callbacks this minute; AgentCallbacksPerMinutePerThread allows %d. Retry after the minute.", observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#agents")
+}
+
 // AgentInboxChannel is the realtime channel of a stateless agent app's inbox
 // (ADR-20261030125501 §2). Its consumer group orders messages by thread_id.
 const AgentInboxChannel = "agent-inbox"
@@ -329,6 +340,20 @@ type AgentCallbackPost struct {
 	MessageID string          `json:"message_id"`
 	Kind      string          `json:"kind"`
 	Data      json.RawMessage `json:"data"`
+}
+
+// RevokeAgentCallbacksRequest closes one thread of an endpoint's agent
+// inbox to every callback URL issued for it until now.
+type RevokeAgentCallbacksRequest struct {
+	EndpointID string `json:"endpoint_id"`
+	ThreadID   string `json:"thread_id"`
+}
+
+// AgentCallbackRevocation answers a revocation.
+type AgentCallbackRevocation struct {
+	EndpointID string    `json:"endpoint_id"`
+	ThreadID   string    `json:"thread_id"`
+	RevokedAt  time.Time `json:"revoked_at"`
 }
 
 // AgentCallbackReceipt answers an accepted post with the inbox message's

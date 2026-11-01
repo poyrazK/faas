@@ -10,8 +10,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // debugRequestJournalSkew matches the request-ID journal RPC's accepted
@@ -35,7 +37,54 @@ func (s *server) findDebugRequestJournal(ctx context.Context, accountID, appID, 
 			return state.RequestIDJournalEntry{}, false, err
 		}
 	}
+	if journal, found := s.findNodeRequestJournal(ctx, accountID, appID, identifier, from, now); found {
+		return journal, true, nil
+	}
 	return state.RequestIDJournalEntry{}, false, nil
+}
+
+// findNodeRequestJournal asks the gateways that keep the journal on their node
+// (ADR-20261101085552). A platform-minted ID carries its minting time, so the
+// first ask covers that minute; a miss there, or an ID without the time, asks
+// across the whole window. A gateway that does not answer is logged rather
+// than failing the lookup: during the switch-over the record may still be in
+// the control-plane table, which was read first.
+func (s *server) findNodeRequestJournal(ctx context.Context, accountID, appID, identifier string, from, now time.Time) (state.RequestIDJournalEntry, bool) {
+	if s.requestIDLookups == nil || s.requestIDLookups.Gateways() == 0 {
+		return state.RequestIDJournalEntry{}, false
+	}
+	until := now.Add(debugRequestJournalSkew)
+	for _, candidate := range debugRequestIDCandidates(identifier) {
+		windows := [][2]time.Time{{from, until}}
+		if minted, ok := wire.RequestIDMintedAt(candidate); ok && !minted.Before(from) && minted.Before(until) {
+			windows = [][2]time.Time{{maxTime(from, minted.Add(-time.Minute)), minTime(until, minted.Add(time.Minute))}, {from, until}}
+		}
+		for _, window := range windows {
+			result := s.requestIDLookups.Lookup(ctx, accountID, appID, candidate, window[0], window[1], api.RequestJournalNodeLookupTimeout)
+			if result.Found {
+				return state.RequestIDJournalEntry{AccountID: accountID, AppID: appID, RequestID: candidate,
+					TraceID: result.TraceID, ReceivedAt: result.ReceivedAt, ExpiresAt: result.ExpiresAt}, true
+			}
+			if result.Incomplete && s.log != nil {
+				s.log.Warn("request ID lookup: a gateway did not answer; the request may be unresolvable", "app_id", appID, "asked", result.Asked)
+			}
+		}
+	}
+	return state.RequestIDJournalEntry{}, false
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 // getDebugRequestTelemetry finds one request's telemetry for evidence. The

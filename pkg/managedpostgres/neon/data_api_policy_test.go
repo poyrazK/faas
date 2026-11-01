@@ -58,7 +58,7 @@ func TestSQLDataAPILockPolicyUpgradePreservesCredentialsAndSessions(t *testing.T
 	}
 	// Qualification checks effective settings, including more-specific overrides.
 	executeSQL(t, fresh, "SET lock_timeout=0")
-	if err := verifyDataAPIProbe(ctx, fresh, f.admin, role.schemaOwner, "must_not_create"); !errors.Is(err, managedpostgres.ErrUnavailable) {
+	if err := managedpostgres.VerifyDataAPICredentialProbe(ctx, fresh, f.admin, role.schemaOwner, "must_not_create"); !errors.Is(err, managedpostgres.ErrUnavailable) {
 		t.Fatalf("qualification accepted an ineffective lock policy: %v", err)
 	}
 }

@@ -200,6 +200,14 @@ type Agent struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
+// ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
+type AgentCallbackRevocation struct {
+	EndpointID pgtype.UUID
+	ThreadID   string
+	AccountID  pgtype.UUID
+	RevokedAt  pgtype.Timestamptz
+}
+
 // ADR-20261027090010 §8 deliveries of succeeded agent runs; agentd's delivery worker (ADR-20261027090014) is the only writer.
 type AgentDelivery struct {
 	ID             pgtype.UUID
@@ -3030,6 +3038,7 @@ type Cron struct {
 	FailureRules          []byte
 	ScheduleRevision      int64
 	ScheduleAnchorAt      pgtype.Timestamptz
+	Labels                []byte
 }
 
 type CronFireNowRequest struct {
@@ -3681,6 +3690,82 @@ type DataUpstreamProbesDefault struct {
 	Ok               bool
 	ErrorClass       pgtype.Text
 	ProbeNode        pgtype.Text
+}
+
+type DatabaseNode struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	BootSlots           int32
+	PostgresMajors      []int32
+	Lifecycle           string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type DatabaseRestoreDrill struct {
+	DrillID     pgtype.UUID
+	NodeID      string
+	SourceID    pgtype.UUID
+	TargetAt    pgtype.Timestamptz
+	StartedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	Result      string
+	RecoveredTo pgtype.Timestamptz
+	ErrorCode   pgtype.Text
+}
+
+type DatabaseRoleVerifier struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+	Verifier   string
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type DatabaseUsage struct {
+	DatabaseID pgtype.UUID
+	Meter      string
+	StartedAt  pgtype.Timestamptz
+	EndedAt    pgtype.Timestamptz
+	Rate       int64
+}
+
+type DatabaseVm struct {
+	DatabaseID           pgtype.UUID
+	NodeID               string
+	PostgresMajor        int32
+	VcpuCount            int32
+	MemMib               int32
+	VolumeBytes          int64
+	State                string
+	Bootstrapped         bool
+	AlwaysOn             bool
+	LastBackupAt         pgtype.Timestamptz
+	RestoreWindowSeconds int64
+	RestoreSource        pgtype.UUID
+	RestoreTarget        pgtype.Timestamptz
+	RestoreRecoveredTo   pgtype.Timestamptz
+	RestoreLeaseUntil    pgtype.Timestamptz
+	ResizePending        bool
+	LastError            pgtype.Text
+	LastActiveAt         pgtype.Timestamptz
+	StateChangedAt       pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	MoveNode             pgtype.Text
+	MoveLeaseUntil       pgtype.Timestamptz
+	Replicated           bool
+	StandbyNode          pgtype.Text
+	StandbyRunning       bool
+	StandbySynced        bool
+	PromotePending       bool
+	DropStandbySlot      bool
+	UpgradeMajor         pgtype.Int4
+	UpgradeFrom          pgtype.Int4
+	UpgradeOperation     pgtype.Text
+	UpgradeResult        pgtype.Text
+	UpgradeLeaseUntil    pgtype.Timestamptz
+	MajorHistory         []byte
 }
 
 type DeadLetterEvent struct {
@@ -7644,6 +7729,7 @@ type Job struct {
 	ScheduleRevision                  int64
 	ImageEntrypoint                   []string
 	ImageCmd                          []string
+	Labels                            []byte
 }
 
 type JobRegistryCredential struct {
@@ -8206,6 +8292,8 @@ type ManagedPostgresDatabase struct {
 	AccountingRequired          bool
 	OrgID                       pgtype.UUID
 	PurgeAfter                  pgtype.Timestamptz
+	RestoreSlotUntil            pgtype.Timestamptz
+	Labels                      []byte
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
@@ -8270,20 +8358,23 @@ type ManagedPostgresOverageDelivery struct {
 }
 
 type ManagedPostgresResize struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	DatabaseID         pgtype.UUID
-	BackendID          string
-	BackendFingerprint string
-	ProviderResourceID string
-	DataResourceID     string
-	SourceSpec         []byte
-	TargetClass        string
-	Generation         int64
-	State              string
-	CreatedAt          pgtype.Timestamptz
-	CompletedAt        pgtype.Timestamptz
-	TargetScaleToZero  pgtype.Bool
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	DatabaseID              pgtype.UUID
+	BackendID               string
+	BackendFingerprint      string
+	ProviderResourceID      string
+	DataResourceID          string
+	SourceSpec              []byte
+	TargetClass             string
+	Generation              int64
+	State                   string
+	CreatedAt               pgtype.Timestamptz
+	CompletedAt             pgtype.Timestamptz
+	TargetScaleToZero       pgtype.Bool
+	TargetStorageLimitBytes pgtype.Int8
+	TargetPostgresMajor     pgtype.Int4
+	ErrorCode               pgtype.Text
 }
 
 type ManagedPostgresRestoreProof struct {
@@ -8300,6 +8391,16 @@ type ManagedPostgresRestoreProof struct {
 	Generation         int64
 	ObservedAt         pgtype.Timestamptz
 	DataResourceID     pgtype.Text
+}
+
+// Restore slot notices for a managed PostgreSQL copy (ending soon, delete scheduled); written only by apid (ADR-20261031123259).
+type ManagedPostgresRestoreSlotNotice struct {
+	DatabaseID      pgtype.UUID
+	Kind            string
+	SlotUntil       pgtype.Timestamptz
+	RestorableUntil pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+	MailIntentID    pgtype.UUID
 }
 
 type ManagedPostgresRestoreVerification struct {
