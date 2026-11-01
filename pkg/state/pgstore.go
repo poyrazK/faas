@@ -6508,7 +6508,42 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 	if b.LinkedAt.IsZero() {
 		b.LinkedAt = time.Now()
 	}
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub bind: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	var previous GitHubBinding
+	var installID, repoID *int64
+	var repoName *string
+	if err := tx.QueryRow(ctx,
+		`select github_install_id, github_repo_id, github_repo_full_name
+		   from apps where id = $1 and account_id = $2 for update`,
+		b.AppID, b.AccountID).Scan(&installID, &repoID, &repoName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: read GitHub binding: %w", err)
+	}
+	if installID != nil {
+		previous.InstallID = *installID
+	}
+	if repoID != nil {
+		previous.RepoID = *repoID
+	}
+	if repoName != nil {
+		previous.RepoFullName = *repoName
+	}
+	// Rebinding to another repository or installation retires the previews
+	// of the old one, as an unbind does: its close events no longer reach
+	// them, and a PR with the same number in the new repository would take
+	// the old preview's row (bug hunt 33).
+	if githubBindingRepoChanged(previous, b) {
+		if err := markAppPRPreviewsStaleTx(ctx, tx, b.AppID); err != nil {
+			return fmt.Errorf("state: mark rebound app's PR previews stale: %w", err)
+		}
+	}
+	tag, err := tx.Exec(ctx,
 		`update apps
 		 set github_install_id = $2,
 		     github_repo_full_name = $3,
@@ -6522,9 +6557,59 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 		b.AppID, b.InstallID, nullString(b.RepoFullName), nullableInt64(b.OwnerID), nullableInt64(b.RepoID),
 		nullString(b.ProductionBranch), b.BindingID, b.AccountID, b.LinkedAt,
 	)
-	if err == nil && tag.RowsAffected() == 0 {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub bind: %w", err)
+	}
+	return nil
+}
+
+// githubBindingRepoChanged reports whether next binds the app to another
+// installation or repository than previous. An app with no binding has
+// nothing to retire.
+func githubBindingRepoChanged(previous, next GitHubBinding) bool {
+	if previous.InstallID == 0 {
+		return false
+	}
+	if previous.InstallID != next.InstallID {
+		return true
+	}
+	if previous.RepoID > 0 && next.RepoID > 0 {
+		return previous.RepoID != next.RepoID
+	}
+	return !strings.EqualFold(previous.RepoFullName, next.RepoFullName)
+}
+
+// markAppPRPreviewsStaleTx marks the PR preview environments of the app's
+// repository stale, for the janitor to tear down. An environment belongs to
+// its root's production app, the anchor the orphan sweep uses
+// (MarkOrphanedPRPreviewsForTeardown).
+func markAppPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, appID string) error {
+	_, err := tx.Exec(ctx, `
+		update apps set preview_pr_state = $2, preview_expires_at = now()
+		 where id in (
+		   select p.id
+		     from apps p
+		     join apps parent on parent.id = $1 and parent.account_id = p.account_id
+		     left join lateral (
+		       select root.preview_of_slug as anchor
+		         from pr_preview_sets s
+		         join apps root on root.id = s.root_app_id
+		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
+		        order by s.updated_at desc
+		        limit 1
+		     ) env on true
+		    where p.preview_of_slug is not null
+		      and coalesce(p.preview_pr_number, 0) > 0
+		      and p.status <> 'deleted'
+		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
+		      and coalesce(env.anchor, p.preview_of_slug) = parent.slug)`,
+		appID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown)
 	return err
 }
 
@@ -6547,28 +6632,7 @@ func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) 
 		return fmt.Errorf("state: begin GitHub unbind: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
-	// An environment belongs to its root's production app, the anchor the
-	// orphan sweep uses (MarkOrphanedPRPreviewsForTeardown).
-	if _, err := tx.Exec(ctx, `
-		update apps set preview_pr_state = $2, preview_expires_at = now()
-		 where id in (
-		   select p.id
-		     from apps p
-		     join apps parent on parent.id = $1 and parent.account_id = p.account_id
-		     left join lateral (
-		       select root.preview_of_slug as anchor
-		         from pr_preview_sets s
-		         join apps root on root.id = s.root_app_id
-		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
-		        order by s.updated_at desc
-		        limit 1
-		     ) env on true
-		    where p.preview_of_slug is not null
-		      and coalesce(p.preview_pr_number, 0) > 0
-		      and p.status <> 'deleted'
-		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
-		      and coalesce(env.anchor, p.preview_of_slug) = parent.slug)`,
-		appID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown); err != nil {
+	if err := markAppPRPreviewsStaleTx(ctx, tx, appID); err != nil {
 		return fmt.Errorf("state: mark unbound app's PR previews stale: %w", err)
 	}
 	tag, err := tx.Exec(ctx,

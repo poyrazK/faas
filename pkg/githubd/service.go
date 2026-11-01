@@ -1606,6 +1606,22 @@ func (s *Service) resolvePullRequestTarget(ctx context.Context, ev PullRequestEv
 // retired too: GitHub's later events for the PR are skipped as well, so it
 // would serve that head to the end of its lease while the PR's check said
 // the preview was skipped.
+// pullRequestTargetStillCurrent re-resolves the PR's binding and preview
+// policy and reports whether they still allow the preview target resolved at
+// the start of the event. A lookup error counts as not current: the event is
+// ignored and the next one retries.
+func (s *Service) pullRequestTargetStillCurrent(ctx context.Context, ev PullRequestEvent, target pullRequestTarget) bool {
+	fresh, err := s.resolvePullRequestTarget(ctx, ev)
+	if err != nil {
+		if !errors.Is(err, ErrNoBinding) && s.Log != nil {
+			s.Log.Warn("githubd: recheck PR preview target failed; ignoring the event", "repo", ev.Repository.FullName, "pr", ev.Number, "err", err)
+		}
+		return false
+	}
+	return fresh.previewsOff == "" && fresh.parent.ID == target.parent.ID &&
+		fresh.binding.InstallID == target.binding.InstallID && strings.EqualFold(fresh.binding.RepoFullName, target.binding.RepoFullName)
+}
+
 func (s *Service) skipPullRequestPreview(ctx context.Context, ev PullRequestEvent, target pullRequestTarget, reason string) (reconcile.Result, error) {
 	retired, err := s.retirePullRequestPreviews(ctx, ev, target)
 	if err != nil {
@@ -1792,8 +1808,11 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	}
 	previewApp = withParentAccessGates(applyGitHubRootPolicy(previewApp, policy), parentApp)
 	// Resolve the account server-side so the separate, bounded PR-preview
-	// allowance comes from the plan table, including dependency previews.
-	account, err := s.Reconcile.Store.AccountByID(ctx, binding.AccountID)
+	// allowance comes from the plan table, including dependency previews. It
+	// is the account that owns the project's resources, as for a project
+	// deploy: an organization's plan for its apps, not the binding creator's
+	// personal plan (bug hunt 33).
+	account, err := state.AppResourceAccount(ctx, s.Reconcile.Store, parentApp)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve preview account limits: %w", err)
 	}
@@ -1857,6 +1876,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 		if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, &ev); currentErr != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: recheck current PR state: %w", currentErr)
 		} else if !current {
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
+		}
+		// Previews turned off, or the app unbound or rebound, while the
+		// source was fetched and scanned: that retire marked this PR's
+		// preview stale, and reserving now would reopen it with a fresh
+		// lease (bug hunt 33). The next event for the PR acts on the
+		// current target.
+		if !s.pullRequestTargetStillCurrent(ctx, ev, target) {
 			return reconcile.Result{WasIgnored: true}, ErrIgnored
 		}
 	}

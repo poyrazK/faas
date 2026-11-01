@@ -49,6 +49,13 @@ var (
 	_ PreviewTombstoneStore = (*MemStore)(nil)
 )
 
+// retiredPreviewSetRoot reports whether a preview set's root app is deleted
+// or torn down, so another owner may take the set's (installation,
+// repository, PR) key.
+func retiredPreviewSetRoot(status AppStatus, prState string) bool {
+	return status == AppDeleted || prState == PreviewPrStateTearingDown || prState == PreviewPrStateTornDown
+}
+
 // previewTornDown reports a preview the janitor or a destroy has torn down
 // (or is tearing down). Such a tombstone is never restored: the janitor skips
 // torn-down rows and a preview that is not open holds no allowance, so a
@@ -250,17 +257,23 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 		return nil, fmt.Errorf("state: lock PR preview account: %w", mapErr(err))
 	}
 	var previous []string
-	var previousAccount, previousProject string
+	var previousAccount, previousProject, previousStatus, previousState string
 	err = tx.QueryRow(ctx, `select preview_set.member_app_ids, root.account_id::text,
-		coalesce(root.project_id::text, '')
+		coalesce(root.project_id::text, ''), root.status::text, coalesce(root.preview_pr_state, '')
 		from pr_preview_sets preview_set join apps root on root.id = preview_set.root_app_id
 		where preview_set.installation_id = $1 and preview_set.repo_full_name = $2 and preview_set.pr_number = $3`,
-		head.InstallationID, head.RepoFullName, head.PRNumber).Scan(&previous, &previousAccount, &previousProject)
+		head.InstallationID, head.RepoFullName, head.PRNumber).Scan(&previous, &previousAccount, &previousProject, &previousStatus, &previousState)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("state: load previous PR preview set: %w", err)
 	}
 	if err == nil && (previousAccount != apps[0].AccountID || previousProject != apps[0].ProjectID) {
-		return nil, ErrConflict
+		if !retiredPreviewSetRoot(AppStatus(previousStatus), previousState) {
+			return nil, ErrConflict
+		}
+		// Another owner's set whose root is gone: the repository moved, and
+		// the old set only blocked the PR's previews until its root was
+		// purged (bug hunt 33). Nothing of it is left to retire.
+		previous = nil
 	}
 	if err := retireReplacedPreviewMembersTx(ctx, tx, head, apps, previous); err != nil {
 		return nil, err
@@ -577,7 +590,9 @@ func (m *MemStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, 
 	previous := m.previewSets[key]
 	if previous.RootAppID != "" {
 		root, ok := m.apps[previous.RootAppID]
-		if !ok || root.AccountID != apps[0].AccountID || root.ProjectID != apps[0].ProjectID {
+		if ok && (root.AccountID != apps[0].AccountID || root.ProjectID != apps[0].ProjectID) && retiredPreviewSetRoot(root.Status, root.PreviewPrState) {
+			previous = PRPreviewSet{} // mirrors PgStore: replace another owner's retired set
+		} else if !ok || root.AccountID != apps[0].AccountID || root.ProjectID != apps[0].ProjectID {
 			return nil, ErrConflict
 		}
 	}

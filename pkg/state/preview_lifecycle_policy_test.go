@@ -22,6 +22,7 @@ type previewLifecycleStore interface {
 	RestoreApp(ctx context.Context, id string, limits api.Limits) (state.App, error)
 	ListAccountDeletedApps(ctx context.Context, accountID string, beforeAt time.Time, beforeID string, limit int) ([]state.DeletedAppRecord, error)
 	DeleteGithubInstallBinding(ctx context.Context, appID string) error
+	UpsertGithubInstallBinding(ctx context.Context, b state.GitHubBinding) error
 	PutPRPreviewSet(ctx context.Context, set state.PRPreviewSet) error
 }
 
@@ -113,6 +114,51 @@ func exerciseUnbindStalesPRPreviews(t *testing.T, store previewLifecycleStore) {
 			t.Fatalf("%s after unbind = (%q, %v), want %q", tc.app.Slug, got.PreviewPrState, err, tc.want)
 		}
 	}
+}
+
+// Bug hunt 33: rebinding an app to another repository left the old
+// repository's previews serving to the end of their lease. A rebind to the
+// same repository (a branch change) keeps them.
+func exerciseRebindStalesPRPreviews(t *testing.T, store previewLifecycleStore) {
+	ctx := context.Background()
+	acct, production, preview := seedPRPreview(t, store)
+	bind := func(repo string, repoID int64) {
+		t.Helper()
+		if err := store.UpsertGithubInstallBinding(ctx, state.GitHubBinding{AppID: production.ID, AccountID: acct.ID,
+			BindingID: "bind-" + production.ID, InstallID: 42, RepoFullName: repo, OwnerID: 7, RepoID: repoID,
+			ProductionBranch: "main"}); err != nil {
+			t.Fatalf("bind %s: %v", repo, err)
+		}
+	}
+	prState := func() string {
+		t.Helper()
+		got, err := store.AppByID(ctx, preview.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.PreviewPrState
+	}
+	bind("acme/old", 100)
+	bind("acme/old", 100) // same repository again: nothing to retire
+	if got := prState(); got != "open" {
+		t.Fatalf("preview after rebinding the same repository = %q, want open", got)
+	}
+	bind("acme/new", 200)
+	if got := prState(); got != "stale" {
+		t.Fatalf("preview after rebinding to another repository = %q, want stale", got)
+	}
+}
+
+func TestMemStoreRebindStalesPRPreviews(t *testing.T) {
+	exerciseRebindStalesPRPreviews(t, state.NewMemStore())
+}
+
+func TestPgStoreRebindStalesPRPreviews(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("db.MigrateUp: %v", err)
+	}
+	exerciseRebindStalesPRPreviews(t, state.NewPgStore(pool))
 }
 
 func TestMemStoreUnbindStalesPRPreviews(t *testing.T) {
