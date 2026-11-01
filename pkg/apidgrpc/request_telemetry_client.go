@@ -100,6 +100,12 @@ func DialRequestTelemetry(ctx context.Context, target string, tlsCfg *tls.Config
 	return &RequestTelemetryClientImpl{conn: conn, cli: apidpb.NewRequestTelemetryClient(conn)}, nil
 }
 
+// RequestIDLookups returns a client for the lookup stream apid serves beside
+// RequestTelemetry on the same connection (ADR-20261101085552).
+func (c *RequestTelemetryClientImpl) RequestIDLookups() apidpb.RequestIDLookupsClient {
+	return apidpb.NewRequestIDLookupsClient(c.conn)
+}
+
 // NewRequestTelemetryClient wraps an already-dialed connection
 // (used by bufconn tests in pkg/apidgrpc/).
 func NewRequestTelemetryClient(conn *grpc.ClientConn) *RequestTelemetryClientImpl {

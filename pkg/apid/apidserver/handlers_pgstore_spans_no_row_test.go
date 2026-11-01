@@ -27,7 +27,7 @@ func TestPGStore_UpdateSpansSummaryReportsMissingRow(t *testing.T) {
 	summary := []byte(`[{"trace_id":"5bf92f3577b34da6a3ce929d0e0e4736","span_id":"0000000000000001","name":"SELECT orders","duration_nanos":191000000,"end_time_unix_nano":2}]`)
 	const traceID = "5bf92f3577b34da6a3ce929d0e0e4736"
 
-	if err := (*e.Store()).UpdateSpansSummary(ctx, traceID, accountID, summary); !errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
+	if err := (*e.Store()).UpdateSpansSummary(ctx, traceID, accountID, summary, 1000); !errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
 		t.Fatalf("update before row = %v, want ErrRequestTelemetryRowNotFound", err)
 	}
 	if err := (*e.Store()).InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
@@ -41,11 +41,11 @@ func TestPGStore_UpdateSpansSummaryReportsMissingRow(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("InsertRequestTelemetry: %v", err)
 	}
-	if err := (*e.Store()).UpdateSpansSummary(ctx, traceID, accountID, summary); err != nil {
+	if err := (*e.Store()).UpdateSpansSummary(ctx, traceID, accountID, summary, 1000); err != nil {
 		t.Fatalf("update after row = %v", err)
 	}
 	// Another account cannot see the row, so its write is a missing row too.
-	if err := (*e.Store()).UpdateSpansSummary(ctx, traceID, uuid.New(), summary); !errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
+	if err := (*e.Store()).UpdateSpansSummary(ctx, traceID, uuid.New(), summary, 1000); !errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
 		t.Fatalf("cross-account update = %v, want ErrRequestTelemetryRowNotFound", err)
 	}
 }

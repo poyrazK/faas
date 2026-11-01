@@ -32,7 +32,10 @@ func (h *Handler) maybePublicRoutingBurst(ctx context.Context, app App, maximum,
 	if app.MaxConcurrency > 0 && app.MaxConcurrency < maximum {
 		maximum = app.MaxConcurrency
 	}
-	app.Scope = routing.Scope
+	// The selected deployment is admitted where its roster lives: a project
+	// app still on the legacy default scope resolves in "production", and
+	// schedd refused that scope as "no live deployment" (PulseWatch F11).
+	app.Scope = routing.admissionScope()
 	healthy := h.backend.HealthyCount
 	if counter, ok := h.backend.(interface {
 		HealthyCountForDeployments(string, []string) int

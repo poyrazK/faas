@@ -70,6 +70,42 @@ service RequestTelemetry {
   rpc RecordRequestIDJournalBatch(RecordRequestIDJournalBatchRequest) returns (RecordRequestIDJournalBatchResponse);
 }
 
+// RequestIDLookups lets apid resolve request IDs kept on compute nodes
+// (ADR-20261101085552). Served by apid beside RequestTelemetry, on the same
+// listener; an apid that predates it answers Unimplemented.
+service RequestIDLookups {
+  // Serve is held open by each gatewayd-internal that keeps the request-ID
+  // journal on its node. The gateway's first message names its node; apid then
+  // sends lookups down the stream and the gateway answers each one on it. The
+  // stream rides the gateway's existing connection to apid, so compute nodes
+  // take no new inbound port.
+  rpc Serve(stream RequestIDLookupAnswer) returns (stream RequestIDLookupQuestion);
+}
+
+// RequestIDLookupQuestion asks one node for a public request ID it served.
+message RequestIDLookupQuestion {
+  string question_id = 1;
+  string account_id = 2;
+  string app_id = 3;
+  string request_id = 4;
+  int64 received_from_unix_ms = 5;
+  int64 received_until_unix_ms = 6;
+}
+
+// RequestIDLookupAnswer answers one question. The stream's first message
+// carries only node and identifies the gateway.
+message RequestIDLookupAnswer {
+  string question_id = 1;
+  bool found = 2;
+  string request_id = 3;
+  string trace_id = 4;
+  int64 received_at_unix_ms = 5;
+  int64 expires_at_unix_ms = 6;
+  // error is set when this node could not read its journal.
+  string error = 7;
+  string node = 8;
+}
+
 message RecordRequestIDJournalRequest {
   string record_id = 1; // gateway-generated idempotency key for this HTTP attempt
   string account_id = 2;

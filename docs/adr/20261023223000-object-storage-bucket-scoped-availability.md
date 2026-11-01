@@ -145,3 +145,26 @@ satisfy `errors.Is(err, ErrConflict)`.
 - `TestInventorySweepDrainsEveryDueBucket` sweeps 157 buckets in one tick,
   under the race detector, without charging any listing to an account.
 - `TestPutSlotsKeepRoomForOtherAccounts` covers the upload slot share.
+
+## Amendment 2026-11-01: uploads wait for a slot
+
+Decision 9 answered `SlowDown` as soon as an account held its share. With the
+default four slots the share is two, and S3 transfer managers send several
+parts at once: the AWS CLI and boto3 send ten. Eight of every ten parts were
+refused, and a large upload could fail once the SDK ran out of retries.
+
+An upload, upload part or part copy that finds its account at its share, or
+every slot taken, now waits up to `api.ObjectUploadSlotWait` (15 s, the same as
+`ObjectDeletionAdmissionWait`) for a slot to free. It reads no body while it
+waits. If none frees in time, or the request ends first, it answers
+`SlowDown` as before. The share itself does not change: the waiting parts take
+the account's own slots as they free, while other accounts keep the rest.
+The spool reservation still refuses at once.
+
+Compatibility: no schema, wire or configuration change. An N-1 gateway keeps
+refusing at once.
+
+Validation: `TestPutSlotWaitsForTheAccountsShare`, `TestPutSlotWaitIsBounded`
+and `TestGatewayBoundsConcurrentPutStaging`. `TestProductionTransferEndToEndMem`
+now gives its account two slots, so the spool, not the slot share, refuses its
+second upload.

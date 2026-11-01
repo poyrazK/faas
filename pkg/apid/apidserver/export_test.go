@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/logerasure"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
@@ -246,6 +247,8 @@ const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
 const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
 const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
+const S3GatewayComputeMetricsDiscoveryPath = s3GatewayComputeMetricsDiscoveryPath
+const CloudflaredS3MetricsDiscoveryPath = cloudflaredS3MetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
 
 // sessionCookie is the legacy session cookie name test fixtures send; the
@@ -1042,6 +1045,8 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) PostgresUpgrades() *managedpg.Rollout               { return &r.postgresUpgrades }
+func (r *server) PostgresStorage() *managedpg.Rollout                { return &r.postgresStorage }
 func (r *server) LogArchive() *logerasure.Objects                    { return &r.logArchive }
 func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
 	return r.beforeAccountDelete(ctx, acct)
@@ -1481,6 +1486,12 @@ func (r *server) GatewaydPublicEdgeMetricsDiscovery(p0 http.ResponseWriter, p1 *
 func (r *server) CloudflaredMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.cloudflaredMetricsDiscovery(p0, p1)
 }
+func (r *server) S3GatewayComputeMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.s3GatewayComputeMetricsDiscovery(p0, p1)
+}
+func (r *server) CloudflaredS3MetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.cloudflaredS3MetricsDiscovery(p0, p1)
+}
 func (r *server) SendTestAlertPresetCore(p0 context.Context, p1 state.Account, p2 string, p3 string) (api.TestAlertPresetResponse, *api.Problem) {
 	return r.sendTestAlertPresetCore(p0, p1, p2, p3)
 }
@@ -1772,6 +1783,13 @@ func NewGithubdBridgeForTest(store githubdBridgeStore, notif githubdBridgeNotifi
 // SetAgentStoreForTest gives the configured agent API a store; call it
 // after ConfigureAgentsForTest.
 func (s *server) SetAgentStoreForTest(store agents.Store) { s.agentAPI.Store = store }
+
+// SetAgentCallbackRevocationsForTest gives the configured agent API the
+// callback revocations it otherwise keeps in Postgres, so the callback
+// routes answer; call it after ConfigureAgentsForTest.
+func (s *server) SetAgentCallbackRevocationsForTest(r agents.CallbackRevocations) {
+	s.agentAPI.Revocations = r
+}
 
 // RealtimePreviewEveryone shows realtime preview features to every account
 // (ADR-20261019102657).

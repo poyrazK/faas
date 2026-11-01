@@ -8525,7 +8525,7 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		}
 	}
 
-	// RedistributeTraffic returns weights that sum to (100 - newPercent);
+	// RedistributeManualTraffic returns weights that sum to (100 - newPercent);
 	// siblings[idx].ID gets newWeights[idx]. Σ + newPercent = 100 by
 	// construction (the algorithm enforces it; see helper doc).
 	helperSiblings := make([]struct {
@@ -8536,7 +8536,10 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		helperSiblings[i].ID = s.ID
 		helperSiblings[i].Prior = s.Prior
 	}
-	newWeights := RedistributeTraffic(helperSiblings, 100-newPercent)
+	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool { return rows[i].AbortedCanary }, 100-newPercent)
+	if err != nil {
+		return Deployment{}, err
+	}
 	for i, sibling := range siblings {
 		if newWeights[i] > sibling.Prior {
 			if err := s.authorizeProductionLifecycle(ctx, tx, sibling.ID, false); err != nil {
@@ -9029,6 +9032,40 @@ func RedistributeTraffic(siblings []struct {
 		}
 	}
 	return out
+}
+
+// RedistributeManualTraffic is RedistributeTraffic for a manual traffic
+// change. An aborted canary candidate at 0% (abortedCanaryCandidate) keeps 0%:
+// it stays live after the abort, and lowering the only serving release used to
+// hand it an even share of the residual, serving the regression that the
+// canary gate had just rolled back (PulseWatch F1). It receives traffic only
+// when an operator names it. When every sibling is such a candidate and
+// residual remains, the change is refused with ErrTrafficResidualUnassigned.
+// heldAtZero(i) reports whether siblings[i] is an aborted canary candidate.
+func RedistributeManualTraffic(siblings []struct {
+	ID    string
+	Prior int
+}, heldAtZero func(int) bool, residual int) ([]int, error) {
+	weights := make([]int, len(siblings))
+	recipients := make([]struct {
+		ID    string
+		Prior int
+	}, 0, len(siblings))
+	positions := make([]int, 0, len(siblings))
+	for i, sibling := range siblings {
+		if sibling.Prior == 0 && heldAtZero(i) {
+			continue
+		}
+		recipients = append(recipients, sibling)
+		positions = append(positions, i)
+	}
+	if residual > 0 && len(recipients) == 0 && len(siblings) > 0 {
+		return nil, ErrTrafficResidualUnassigned
+	}
+	for i, weight := range RedistributeTraffic(recipients, residual) {
+		weights[positions[i]] = weight
+	}
+	return weights, nil
 }
 
 // SetDeploymentParked stamps the per-deployment parked_reason +
@@ -13684,6 +13721,9 @@ func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token s
 			return CustomDomain{}, ErrConflict
 		}
 		return CustomDomain{}, mapErr(err)
+	}
+	if err := forgetCustomDomainTLSHostsTx(ctx, tx, domain); err != nil {
+		return CustomDomain{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return CustomDomain{}, err
@@ -18695,7 +18735,11 @@ func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, st
 		 from instances
 		 where state = any($1)
 		   and terminal_at is not null
-		   and terminal_at < $2`,
+		   and terminal_at < $2
+		   -- A job task keeps its instance: job_tasks.instance_id has no
+		   -- delete action, so deleting such a row failed on every sweep
+		   -- (production: ~200 failures a day). ADR 20261031190030.
+		   and not exists (select 1 from job_tasks t where t.instance_id = instances.id)`,
 		stateStrs, threshold)
 	if err != nil {
 		return nil, err
@@ -30788,11 +30832,12 @@ func (s *PgStore) InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertReq
 // predicate is `account_id = $3::uuid` with no `RETURNING`
 // or named-arg convention. Mirror what `make sqlc-generate`
 // produces so the drift gate stays green.
-func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte) error {
+func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error {
 	affected, err := s.appErrorsQueries().UpdateSpansSummary(ctx, s.pool, sqlc.UpdateSpansSummaryParams{
 		TraceID: pgtype.Text{String: traceID, Valid: traceID != ""},
 		Column2: summary,
 		Column3: pgtype.UUID{Bytes: accountID, Valid: true},
+		Column4: int32(min(max(maxSpans, 1), 1000)),
 	})
 	if err != nil {
 		return err

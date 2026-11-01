@@ -254,6 +254,14 @@ type Loop struct {
 	// triggerAgents admits the runs of agent-target triggers (ADR-20261027090010 §9).
 	triggerAgents TriggerAgents
 
+	// databaseMover starts database_move operator intents,
+	// databaseRestarter runs database_restart ones and databaseSwitcher
+	// database_switchover ones (nil: the database scheduler is not
+	// enabled).
+	databaseMover     DatabaseMover
+	databaseRestarter DatabaseRestarter
+	databaseSwitcher  DatabaseSwitcher
+
 	// triggerHealthMu guards triggerHealthLast, the last consumer health row
 	// written per trigger (trigger_health_throttle.go).
 	triggerHealthMu   sync.Mutex
@@ -819,6 +827,30 @@ func (l *Loop) WithMigratingWatchdog(w *MigratingWatchdog) *Loop {
 // staleness window this sweeper enforces is 120 s (api.DeadNode-
 // ReconcilerStalenessSeconds), so a 1 s tick would issue ~120
 // no-op queries per node death before any row is even eligible.
+// WithDatabaseMover attaches the native database scheduler's moves
+// (ADR-1027) for database_move operator intents. Without one those intents
+// fail: the database scheduler is not enabled on this schedd.
+func (l *Loop) WithDatabaseMover(m DatabaseMover) *Loop {
+	l.databaseMover = m
+	return l
+}
+
+// WithDatabaseRestarter attaches the native database scheduler's in-place
+// restarts (ADR-1027) for database_restart operator intents. Without one
+// those intents fail.
+func (l *Loop) WithDatabaseRestarter(r DatabaseRestarter) *Loop {
+	l.databaseRestarter = r
+	return l
+}
+
+// WithDatabaseSwitcher attaches the native database scheduler's planned
+// switchovers (ADR-1027) for database_switchover operator intents.
+// Without one those intents fail.
+func (l *Loop) WithDatabaseSwitcher(sw DatabaseSwitcher) *Loop {
+	l.databaseSwitcher = sw
+	return l
+}
+
 func (l *Loop) WithDeadNodeReconciler(r *DeadNodeReconciler) *Loop {
 	l.deadNodeReconciler = r
 	return l
@@ -2902,6 +2934,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 
 	l.parkExpiredFrozen(ctx, snapshot, now)
+	l.settleSeededFrozen(snapshot, activityByInstance)
 	// ADR 20261031143521: compress frozen VMs on nodes near their RAM
 	// ceiling before eviction looks at nodes over it.
 	l.engine.CompressFrozenForDensity(ctx, now)

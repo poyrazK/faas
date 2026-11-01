@@ -2,13 +2,17 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
+	"github.com/onebox-faas/faas/pkg/apid/queueleases"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
@@ -40,6 +44,9 @@ func (s *server) configureAgents(pool *pgxpool.Pool) {
 func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	if inbox, ok := s.store.(agents.CallbackInbox); ok {
 		h.Inbox = inbox
+	}
+	if revocations, ok := h.Store.(agents.CallbackRevocations); ok {
+		h.Revocations = revocations
 	}
 	if s.sessions != nil {
 		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
@@ -158,12 +165,74 @@ func (s *server) getAgentRunOutputs(w http.ResponseWriter, r *http.Request, acct
 	}
 }
 
-func (s *server) createAgentCallback(w http.ResponseWriter, r *http.Request, acct state.Account) {
+// agentCallbackCallerRoute authenticates an issue or revoke request
+// (ADR-20261030125501 step 4). A JWT-shaped bearer is a gregale:agents
+// workload token from a live instance of an app, which reaches only that
+// app's endpoints; every other credential takes the API-key chain, and the
+// organization check an app route gets decides each endpoint it names. No
+// API key, OIDC or hosting token is JWT-shaped, so the split never
+// misroutes a key.
+func (s *server) agentCallbackCallerRoute(next func(http.ResponseWriter, *http.Request, agents.CallbackCaller)) http.HandlerFunc {
+	keyed := s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		next(w, r, agents.CallbackCaller{Account: acct, Authorize: func(endpoint state.ManagedRealtimeEndpoint) *api.Problem {
+			return s.authorizeCallbackEndpoint(r, acct, endpoint)
+		}})
+	})))
+	workload := middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			caller, err := agents.WorkloadCaller(r, s.workloadTrust(), s.store, time.Now())
+			if err != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required",
+					"a live workload token for gregale:agents from a production instance of the app is required"))
+				return
+			}
+			// The API-key chain decides the capability for the account; a
+			// workload token gets the same decision (ADR-20261023115741).
+			if !s.capabilityAllowedFor(r, caller.Account) {
+				writeMissingRoute(w, r)
+				return
+			}
+			next(w, r, caller)
+		}))
+	return func(w http.ResponseWriter, r *http.Request) {
+		if queueleases.WorkloadBearer(r) {
+			workload.ServeHTTP(w, r)
+			return
+		}
+		keyed(w, r)
+	}
+}
+
+// authorizeCallbackEndpoint applies appaccess to the app of an endpoint an
+// API-key caller names in the body. The route names no app, so without it
+// a creator removed from, demoted in or suspended with a company app's
+// organization, or a key bound to another organization, would still issue
+// callback URLs into the app's agent inbox and revoke its threads.
+func (s *server) authorizeCallbackEndpoint(r *http.Request, acct state.Account, endpoint state.ManagedRealtimeEndpoint) *api.Problem {
+	app, err := s.store.AppByID(r.Context(), endpoint.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+	}
+	if err != nil {
+		return api.ErrCapacity("could not load the endpoint's app; retry shortly")
+	}
+	return s.authorizeNamedApp(r, acct, app)
+}
+
+func (s *server) createAgentCallback(w http.ResponseWriter, r *http.Request, caller agents.CallbackCaller) {
 	if s.agentAPI == nil {
 		api.WriteProblem(w, api.ErrCapacity("the agent API is unavailable on this control-plane host"))
 		return
 	}
-	s.agentAPI.CreateCallback(w, r, acct)
+	s.agentAPI.CreateCallback(w, r, caller)
+}
+
+func (s *server) revokeAgentCallbacks(w http.ResponseWriter, r *http.Request, caller agents.CallbackCaller) {
+	if s.agentAPI == nil {
+		api.WriteProblem(w, api.ErrCapacity("the agent API is unavailable on this control-plane host"))
+		return
+	}
+	s.agentAPI.RevokeCallbacks(w, r, caller)
 }
 
 // receiveAgentCallback serves the token-only callback route; it needs the

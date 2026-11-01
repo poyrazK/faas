@@ -497,3 +497,27 @@ func TestRollbackToADarkReleaseMeetsItsApprovals(t *testing.T) {
 		t.Fatalf("dark release after the refused rollbacks = %+v, %v; want still live at 0%%", got, err)
 	}
 }
+
+// adr: 20261020085706 amendment 5 — an app that requires approvals stays in
+// request mode: a service, worker or job has no canary stage to wait in, so
+// the policy would stay set and stop gating (release review 2026-11-01).
+func TestApprovalPolicyKeepsTheAppInRequestMode(t *testing.T) {
+	ctx := context.Background()
+	f := newApprovalFixture(ctx, t, "approval-mode", time.Now(), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1})
+	service, one := api.ExecutionModeService, 1
+	toService := api.UpdateAppRequest{ExecutionMode: &service, MaxConcurrency: &one}
+	rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", toService, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	if !strings.Contains(rec.Body.String(), "release approval disable") {
+		t.Fatalf("refusal = %s, want the way to remove the policy", rec.Body)
+	}
+	if got, err := (*f.e.Store()).AppByID(ctx, f.app.ID); err != nil || got.Manifest.ExecutionMode != "" {
+		t.Fatalf("app mode after the refusal = %q, %v; want request", got.Manifest.ExecutionMode, err)
+	}
+	if rec := f.e.Do(t, http.MethodDelete, "/v1/apps/approval-mode/release-approval-policy", nil, nil); rec.Code >= 300 {
+		t.Fatalf("remove policy = %d %s", rec.Code, rec.Body)
+	}
+	if rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", toService, nil); strings.Contains(rec.Body.String(), "requires release approvals") {
+		t.Fatalf("mode change without a policy = %d %s, want no approval refusal", rec.Code, rec.Body)
+	}
+}
