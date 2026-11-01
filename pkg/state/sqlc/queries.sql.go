@@ -15298,6 +15298,27 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 	return i, err
 }
 
+const dropTriggerRecordByOperator = `-- name: DropTriggerRecordByOperator :execrows
+delete from trigger_records r using triggers t
+where r.id=$1::uuid and r.trigger_id=$2::uuid
+  and t.id=r.trigger_id and t.app_id=$3::uuid
+`
+
+type DropTriggerRecordByOperatorParams struct {
+	ID        pgtype.UUID
+	TriggerID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// Deletes one record of the addressed trigger on the caller's app.
+func (q *Queries) DropTriggerRecordByOperator(ctx context.Context, db DBTX, arg DropTriggerRecordByOperatorParams) (int64, error) {
+	result, err := db.Exec(ctx, dropTriggerRecordByOperator, arg.ID, arg.TriggerID, arg.AppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const dueManagedPostgresLifecycleDatabases = `-- name: DueManagedPostgresLifecycleDatabases :many
 SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after FROM managed_postgres_databases
 WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR ($1::boolean AND state IN ('provisioning','failed')))
@@ -101626,6 +101647,30 @@ func (q *Queries) TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const triggerRecordInScope = `-- name: TriggerRecordInScope :one
+select exists(select 1 from trigger_records r join triggers t on t.id=r.trigger_id
+  where r.id=$1::uuid and r.trigger_id=$2::uuid
+    and t.app_id=$3::uuid)
+`
+
+type TriggerRecordInScopeParams struct {
+	ID        pgtype.UUID
+	TriggerID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// The operator record verbs (POST /v1/triggers/{id}/records/{rid}/retry and
+// /drop) address a record through its trigger's URL. The record must belong
+// to that trigger and the trigger to the caller's app; any other record
+// answers "no such record". A record's trigger and a trigger's app never
+// change, so the check needs no row lock and keeps the replay lock order.
+func (q *Queries) TriggerRecordInScope(ctx context.Context, db DBTX, arg TriggerRecordInScopeParams) (bool, error) {
+	row := db.QueryRow(ctx, triggerRecordInScope, arg.ID, arg.TriggerID, arg.AppID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const tryEdgeRuleAccountMutationLock = `-- name: TryEdgeRuleAccountMutationLock :one

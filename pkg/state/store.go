@@ -3761,8 +3761,11 @@ type Store interface {
 	TriggerRecordIDByItemIdentifier(ctx context.Context, triggerID, itemIdentifier string) (string, error)
 	ListTriggerDeadLetter(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerDeadLetter, error)
 	ListTriggerRecordsForTrigger(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error)
-	RetryTriggerRecordByOperator(ctx context.Context, id string) error
-	DropTriggerRecordByOperator(ctx context.Context, id string) error
+	// RetryTriggerRecordByOperator and DropTriggerRecordByOperator act on
+	// one record of triggerID, a trigger of appID. A record of another
+	// trigger or app answers ErrNotFound, as a missing one does.
+	RetryTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error
+	DropTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error
 
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +

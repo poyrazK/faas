@@ -58,7 +58,7 @@ func testQueueReplayReceipt(t *testing.T, fx *Fixture) {
 			case "queue":
 				_, err = fx.Store.RetryQueueDeadLetter(fx.Ctx, fx.Account.ID, inv.ID)
 			case "receipt":
-				err = fx.Store.RetryTriggerRecordByOperator(fx.Ctx, receiptID)
+				err = fx.Store.RetryTriggerRecordByOperator(fx.Ctx, app.ID, triggerID, receiptID)
 			default:
 				var events []state.DeadLetterEvent
 				events, err = fx.Store.ListDeadLetterEvents(fx.Ctx, app.ID, 100, "")
@@ -139,12 +139,80 @@ func testQueueReplayReceipt(t *testing.T, fx *Fixture) {
 			if audit, err := fx.Store.ListTriggerDeadLetter(fx.Ctx, triggerID, 100); err != nil || len(audit) == 0 {
 				t.Fatalf("replay lost failure audit=%+v %v", audit, err)
 			}
-			if err := fx.Store.RetryTriggerRecordByOperator(fx.Ctx, receiptID); !errors.Is(err, state.ErrNotFound) {
+			if err := fx.Store.RetryTriggerRecordByOperator(fx.Ctx, app.ID, triggerID, receiptID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("receipt revived a live invocation=%v", err)
 			}
 			if err := fx.Store.CompleteInvocation(fx.Ctx, inv.ID, []byte(`{}`)); err != nil {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// The operator record verbs act only on a record of the addressed trigger
+// on the addressed app; a record of another trigger, or a trigger of another
+// app, is not found and stays as it was.
+func testTriggerRecordOperatorScope(t *testing.T, fx *Fixture) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	newTrigger := func(appID string) string {
+		row, err := fx.Store.CreateTriggerIfUnderQuota(fx.Ctx, appID, "nats", uuid.NewString(), false, []byte(`{}`), "", 1, 1000, 3, 1024, "commit", limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row.ID.String()
+	}
+	other, err := fx.Store.CreateApp(fx.Ctx, state.App{AccountID: fx.Account.ID, Slug: "scope-" + uuid.NewString()[:8]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, sibling, foreign := newTrigger(fx.App.ID), newTrigger(fx.App.ID), newTrigger(other.ID)
+	stateOf := func(triggerID, recordID string) string {
+		rows, err := fx.Store.ListTriggerRecordsForTrigger(fx.Ctx, triggerID, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			if row.ID.String() == recordID {
+				return row.State
+			}
+		}
+		return "missing"
+	}
+	verbs := map[string]func(appID, triggerID, recordID string) error{
+		"retry": func(a, tr, r string) error { return fx.Store.RetryTriggerRecordByOperator(fx.Ctx, a, tr, r) },
+		"drop":  func(a, tr, r string) error { return fx.Store.DropTriggerRecordByOperator(fx.Ctx, a, tr, r) },
+	}
+	type scope struct{ appID, triggerID string }
+	for name, verb := range verbs {
+		for _, target := range []scope{{fx.App.ID, sibling}, {other.ID, foreign}} {
+			recordID, err := fx.Store.InsertTriggerRecord(fx.Ctx, target.triggerID, name+"-"+uuid.NewString(), []byte(`{}`), nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := fx.Store.MarkTriggerRecordDeadLetter(fx.Ctx, recordID, "max_attempts"); err != nil {
+				t.Fatal(err)
+			}
+			for _, wrong := range []scope{{fx.App.ID, own}, {other.ID, own}, {other.ID, sibling}, {fx.App.ID, foreign}} {
+				if wrong == target {
+					continue
+				}
+				if err := verb(wrong.appID, wrong.triggerID, recordID); !errors.Is(err, state.ErrNotFound) {
+					t.Fatalf("%s through app %s trigger %s = %v, want ErrNotFound", name, wrong.appID, wrong.triggerID, err)
+				}
+			}
+			if err := verb(target.appID, target.triggerID, "not-a-uuid"); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("%s malformed record = %v, want ErrNotFound", name, err)
+			}
+			if got := stateOf(target.triggerID, recordID); got != "dead_letter" {
+				t.Fatalf("%s out of scope changed the record to %q", name, got)
+			}
+			if err := verb(target.appID, target.triggerID, recordID); err != nil {
+				t.Fatalf("%s in scope: %v", name, err)
+			}
+			want := map[string]string{"retry": "pending", "drop": "missing"}[name]
+			if got := stateOf(target.triggerID, recordID); got != want {
+				t.Fatalf("%s in scope left %q, want %q", name, got, want)
+			}
+		}
 	}
 }

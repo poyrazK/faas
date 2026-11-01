@@ -14580,20 +14580,45 @@ func (m *MemStore) ListTriggerRecordsForTrigger(_ context.Context, triggerID str
 	return out, nil
 }
 
-func (m *MemStore) RetryTriggerRecordByOperator(_ context.Context, id string) error {
+func (m *MemStore) RetryTriggerRecordByOperator(_ context.Context, appID, triggerID, recordID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	id, ok := m.triggerRecordInScopeLocked(appID, triggerID, recordID)
+	if !ok {
+		return ErrNotFound
+	}
 	return m.retryTriggerReceiptLocked(id, time.Now().UTC())
 }
 
-func (m *MemStore) DropTriggerRecordByOperator(_ context.Context, id string) error {
+func (m *MemStore) DropTriggerRecordByOperator(_ context.Context, appID, triggerID, recordID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.records[id]; !ok {
+	id, ok := m.triggerRecordInScopeLocked(appID, triggerID, recordID)
+	if !ok {
 		return ErrNotFound
 	}
 	delete(m.records, id)
 	return nil
+}
+
+// triggerRecordInScopeLocked mirrors TriggerRecordInScope: the record must
+// belong to triggerID and the trigger to appID. It returns the record's key.
+func (m *MemStore) triggerRecordInScopeLocked(appID, triggerID, recordID string) (string, bool) {
+	id := recordID
+	r, ok := m.records[id]
+	if !ok {
+		for key, candidate := range m.records {
+			if sameMemUUID(key, recordID) {
+				id, r, ok = key, candidate, true
+				break
+			}
+		}
+	}
+	if !ok || !sameMemUUID(r.TriggerID.String(), triggerID) {
+		return "", false
+	}
+	t, ok := m.triggers[r.TriggerID.String()]
+	return id, ok && sameMemUUID(t.AppID.String(), appID)
 }
 
 // --- Invocations (Move 1 event-shaped queue: async_invoke / queue /

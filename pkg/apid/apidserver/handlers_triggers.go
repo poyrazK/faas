@@ -1105,19 +1105,16 @@ func (s *server) listTriggerRecords(w http.ResponseWriter, r *http.Request, acct
 // store method lands (PR-B scope), we synthesize the write
 // inline: this is a small one-line UPDATE that doesn't belong
 // on the dispatcher's interface.
+//
+// The record must belong to the trigger in the URL: the store call is
+// scoped by trigger and app, so another trigger's record is a 404.
 func (s *server) retryTriggerRecord(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	tID, ok := parseTriggerID(w, r)
+	trigger, recID, ok := s.triggerRecordForWrite(w, r, acct)
 	if !ok {
 		return
 	}
-	if !s.authoriseTriggerRead(w, r, acct, tID) {
-		return
-	}
-	recID, ok := parseTriggerRecordID(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.RetryTriggerRecordByOperator(r.Context(), recID); err != nil {
+	if err := s.store.RetryTriggerRecordByOperator(r.Context(), uuidFromPgtype(trigger.AppID).String(),
+		uuidFromPgtype(trigger.ID).String(), recID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such record")
 			return
@@ -1129,19 +1126,14 @@ func (s *server) retryTriggerRecord(w http.ResponseWriter, r *http.Request, acct
 }
 
 // dropTriggerRecord handles POST /v1/triggers/{id}/records/{rid}/drop.
+// Like retry, it acts only on a record of the trigger in the URL.
 func (s *server) dropTriggerRecord(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	tID, ok := parseTriggerID(w, r)
+	trigger, recID, ok := s.triggerRecordForWrite(w, r, acct)
 	if !ok {
 		return
 	}
-	if !s.authoriseTriggerRead(w, r, acct, tID) {
-		return
-	}
-	recID, ok := parseTriggerRecordID(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.DropTriggerRecordByOperator(r.Context(), recID); err != nil {
+	if err := s.store.DropTriggerRecordByOperator(r.Context(), uuidFromPgtype(trigger.AppID).String(),
+		uuidFromPgtype(trigger.ID).String(), recID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such record")
 			return
@@ -1478,6 +1470,27 @@ func parseTriggerRecordID(w http.ResponseWriter, r *http.Request) (string, bool)
 	return uid.String(), true
 }
 
+// triggerRecordForWrite authorises a record mutation. Its routes require the
+// deploy-write scope (server.go), so a read-only key never gets here; the {id}
+// trigger must be the caller's (ownedTrigger) and {rid} a well-formed record
+// id. The store call that follows scopes the record by the returned trigger's
+// id and app, so a record of another trigger, app or account answers 404.
+func (s *server) triggerRecordForWrite(w http.ResponseWriter, r *http.Request, acct state.Account) (sqlc.Trigger, string, bool) {
+	tID, ok := parseTriggerID(w, r)
+	if !ok {
+		return sqlc.Trigger{}, "", false
+	}
+	trigger, ok := s.ownedTrigger(w, r, acct, tID)
+	if !ok {
+		return sqlc.Trigger{}, "", false
+	}
+	recID, ok := parseTriggerRecordID(w, r)
+	if !ok {
+		return sqlc.Trigger{}, "", false
+	}
+	return trigger, recID, true
+}
+
 // authoriseTriggerRead resolves the trigger + app + account and
 // emits a 404 (intentionally not 403 — see handlers_ext.go for
 // precedent) if either step fails. Both fail branches use
@@ -1485,17 +1498,24 @@ func parseTriggerRecordID(w http.ResponseWriter, r *http.Request) (string, bool)
 // "someone else's trigger". Returns true when the caller is
 // authorised; false when a response has already been written.
 func (s *server) authoriseTriggerRead(w http.ResponseWriter, r *http.Request, acct state.Account, id string) bool {
+	_, ok := s.ownedTrigger(w, r, acct, id)
+	return ok
+}
+
+// ownedTrigger returns the trigger when its app belongs to acct, and
+// otherwise writes the 404 authoriseTriggerRead documents.
+func (s *server) ownedTrigger(w http.ResponseWriter, r *http.Request, acct state.Account, id string) (sqlc.Trigger, bool) {
 	t, err := s.store.TriggerByID(r.Context(), id)
 	if err != nil {
 		s.notFound(w, "no such trigger")
-		return false
+		return sqlc.Trigger{}, false
 	}
 	app, err := s.store.AppByID(r.Context(), uuidFromPgtype(t.AppID).String())
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such trigger")
-		return false
+		return sqlc.Trigger{}, false
 	}
-	return true
+	return t, true
 }
 
 // intFrom returns *p when non-nil, 0 otherwise. Helper for the
