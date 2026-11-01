@@ -6,8 +6,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // An account that ever ran a job could not be erased: job-task instances
@@ -42,5 +45,48 @@ func TestPg_DeleteAccount_ErasesAnAccountThatRanJobs(t *testing.T) {
 		if err := pool.QueryRow(ctx, q, job.ID).Scan(&left); err != nil || left != 0 {
 			t.Fatalf("%s = %d (%v), want 0", q, left, err)
 		}
+	}
+}
+
+// debug_regression_observations has no FK to apps. The app purge deleted an
+// app's rows but account erasure did not, so a deleted account's per-route
+// latency and error observations outlived it.
+func TestPg_DeleteAccount_ErasesDebugRegressionObservations(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "regression-erasure@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "regression-erasure", Type: state.AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	factor, zero := pgtype.Numeric{}, pgtype.Numeric{}
+	if err := factor.Scan("1.50"); err != nil {
+		t.Fatal(err)
+	}
+	if err := zero.Scan("0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertRegressionObservation(ctx, sqlc.UpsertRegressionObservationParams{
+		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
+		DeploymentID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		Route:        "GET /orders", P95Ms: 300, P95BaseMs: 200, AffectedCount: 4,
+		RegressionFactor: factor, Kind: "latency", ErrorRatePct: zero, ErrorRateBasePct: zero,
+	}); err != nil {
+		t.Fatalf("seed regression observation: %v", err)
+	}
+	if err := s.MarkAccountDeletionPending(ctx, acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteAccount(ctx, acct.ID); err != nil {
+		t.Fatalf("DeleteAccount: %v", err)
+	}
+	var left int
+	if err := pool.QueryRow(ctx, `select count(*) from debug_regression_observations where app_id = $1`, app.ID).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("regression observations left = %d (%v), want 0", left, err)
 	}
 }

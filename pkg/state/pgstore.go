@@ -27863,6 +27863,8 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	for _, step := range []struct{ name, sql string }{
 		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1)`},
 		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1)`},
+		// No FK either: the app purge deletes it, account erasure did not.
+		{"debug_regression_observations", `delete from debug_regression_observations where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 	} {
 		if _, err := tx.Exec(ctx, step.sql, mustPgUUID(id)); err != nil {
 			return fmt.Errorf("state: purge account %s: %w", step.name, err)
