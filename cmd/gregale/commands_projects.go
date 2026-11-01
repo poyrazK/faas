@@ -43,16 +43,18 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|branch|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|secrets|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|secrets|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
 		return 1
+	}
+	// Environment branches are dark (envbranch.go); hidden, the verb is unknown.
+	if args[0] == "branch" && environmentBranchCLI() {
+		return cmdProjectsEnvironmentBranch(args[1:])
 	}
 	switch args[0] {
 	case "list", "ls":
 		return cmdProjectsEnvironmentsList(args[1:])
 	case "create":
 		return cmdProjectsEnvironmentCreate(args[1:])
-	case "branch":
-		return cmdProjectsEnvironmentBranch(args[1:])
 	case "protect":
 		return cmdProjectsEnvironmentProtection(args[1:], true)
 	case "unprotect":
