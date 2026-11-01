@@ -75398,6 +75398,13 @@ CREATE INDEX managed_realtime_inbox_gap_candidates_idx ON public.managed_realtim
 
 
 --
+-- Name: managed_realtime_inbox_heads_held_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_heads_held_idx ON public.managed_realtime_inbox_heads USING btree (endpoint_id) WHERE (oldest_sequence < next_sequence);
+
+
+--
 -- Name: managed_realtime_inbox_messages_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
