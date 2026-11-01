@@ -183,7 +183,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ops.Registry().MustRegister(transfers.Collectors()...)
 	}
 	handler, err := s3gateway.New(s3gateway.Config{
-		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: serving, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
+		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: serving, Fenced: func() bool { return !fence.Open() }, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
 		ReadAdmitter: readAdmitter, OrgAccess: orgAccess, AccountLimiter: objectstorage.NewAccountRequestLimiter(), Credentials: credentials, Transfers: transfers,
 		OpenSecret: func(sealed []byte) (string, error) {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(readers, sealed)
