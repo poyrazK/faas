@@ -52,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestDeployHealthcheckMetal issues a single deploy with
@@ -156,7 +157,7 @@ func TestDeployHealthcheckMetal(t *testing.T) {
 	if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, StateParkedForHealthcheck, 90*time.Second); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 90*time.Second); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 
@@ -199,20 +200,6 @@ func TestDeployHealthcheckMetal(t *testing.T) {
 			"(proves waitReady HTTP probe flipped the runner's ready flag)", string(body2))
 	}
 }
-
-// StateParkedForHealthcheck pins the local re-export of the
-// parked-instance state constant. The e2etest.WaitForInstanceState
-// helper takes a state.State — the value lives in pkg/state and is
-// the same set used by TestDeployOverridePortMetal. Local alias
-// keeps the test self-documenting (this is the parked-state wait,
-// not the running-state wait).
-//
-// Re-exported here rather than imported as pkg/state.StateParked
-// to keep the e2e test files readable without dragging in
-// pkg/state per file (cmd/e2e is build-tagged metal, but the
-// lightweight alias lets future readers grep `StateParked*` in
-// one place).
-const StateParkedForHealthcheck = "PARKED"
 
 // metalAvailable + randHexSuffix are defined in
 // deploy_override_port_metal_test.go and shared across the per-test
