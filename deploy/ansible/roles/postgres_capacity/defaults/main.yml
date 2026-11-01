@@ -3,8 +3,20 @@
 # complete [compute_nodes] inventory; it never assumes a two-node ceiling.
 # Includes optional data planes, the private APID clone worker and the hosted
 # management MCP server.
-faas_postgres_control_plane_pool_budget: 51
+faas_postgres_control_plane_pool_budget: 55
 faas_postgres_per_compute_pool_budget: 34
+
+# Daemons a compute node runs only when its cell turns them on. Both read
+# /etc/faas/compute-db.env, so their pools reach the same postmaster as the
+# five above. The plan adds a budget when any compute host sets the switch:
+# gatewayd-public for the app edge (faas_edge_on_compute_nodes, ADR-1343) and
+# s3-gatewayd for the object gateway (faas_object_gateway_on_compute_nodes,
+# ADR-20261031122757). The pool budgets are db.DaemonMaxConnections; the
+# direct ones are db.directHubOnMaxConns.
+faas_postgres_per_compute_edge_pool_budget: 3
+faas_postgres_per_compute_edge_direct_budget: 2
+faas_postgres_per_compute_object_gateway_pool_budget: 6
+faas_postgres_per_compute_object_gateway_direct_budget: 2
 
 # Pooled fleet (faas_pgbouncer_enabled). A compute node's ORDINARY pools no
 # longer reach the postmaster — they terminate at pgbouncer and share its
@@ -33,8 +45,10 @@ faas_postgres_min_operator_headroom: 10
 # PostgreSQL backends are processes. Keep the small-fleet floor compatible
 # with the 4 GB public-beta control plane, then require 24 MB of additional
 # host RAM for every configured connection above the two-node 160 baseline.
-# A 12-node fleet derives 620 connections and therefore requires about
-# 14.5 GB; an n2-standard-4 (16 GB) control plane satisfies the guard.
+# A 12-node fleet derives 630 connections and therefore requires about
+# 14.8 GB; an n2-standard-4 (16 GB) control plane satisfies the guard. With
+# the app edge and the object gateway on its compute nodes it derives 770 and
+# requires about 18.1 GB.
 faas_postgres_small_fleet_connections: 160
 faas_postgres_small_fleet_min_memory_mb: 3500
 faas_postgres_incremental_connection_memory_mb: 24

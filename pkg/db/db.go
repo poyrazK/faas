@@ -45,7 +45,7 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 // generation plus operator headroom before node admission. Because the role
 // multiplies these numbers across the control plane and every compute node,
 // a single entry here sets the RAM requirement of the database host for the
-// whole fleet: a 12-node fleet already derives 620 connections.
+// whole fleet: a 12-node fleet already derives 630 connections.
 //
 // Sizing rule. With the hub on, a daemon parks exactly ONE connection for
 // notifications no matter how many channels it subscribes to, so an entry
@@ -72,9 +72,19 @@ var DaemonMaxConnections = map[string]int32{
 	"meterd": 5,
 	// One connection is the notify hub's LISTEN; with 2, every claim-loop
 	// query ran at the cap and 12% of acquires waited on prod (H10-83).
-	"githubd":     3,
-	"outboundd":   2,
-	"s3-gatewayd": 2,
+	"githubd":   3,
+	"outboundd": 2,
+	// One connection is the notify hub's LISTEN (the runtime-config
+	// watcher). The rest carry every PUT's and part's four to five short
+	// transactions for the default four upload slots
+	// (api.DefaultObjectConcurrentUploads), plus the read-usage flush and
+	// admission refresh. With 2, all of that queued on one connection, and on
+	// a compute node every transaction also pays the round trip to the
+	// control plane (ADR-20261031122757). postgres_capacity counts this entry
+	// on the control plane and, through
+	// faas_postgres_per_compute_object_gateway_pool_budget, on every compute
+	// node that runs the gateway.
+	"s3-gatewayd": 6,
 	"maild":       2,
 	// The hosted management MCP bridge (ADR-20261026195952): lease renewal
 	// and state writes; it subscribes to nothing.
@@ -122,9 +132,10 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 	"meterd": 5,
 	// Never below the hub-on budget: githubd's one subscriber parks a
 	// connection on this path too.
-	"githubd":     3,
-	"outboundd":   2,
-	"s3-gatewayd": 2,
+	"githubd":   3,
+	"outboundd": 2,
+	// Never below the hub-on budget.
+	"s3-gatewayd": 6,
 	"maild":       2,
 	"mcp-bridge":  2,
 }
