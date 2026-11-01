@@ -121,8 +121,7 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 		if info, err := os.Stat(rec.consolePath); err == nil {
 			from = info.Size()
 		}
-		w := &customerConsoleWriter{ring: ring}
-		go tailConsole(rec.consolePath, from, w, w.Flush, rec.done)
+		v.startConsoleTail(rec, from, &customerConsoleWriter{ring: ring})
 	}
 	go v.watchAdoptedProcess(l, cmd, rec, wait)
 	return nil

@@ -174,6 +174,8 @@ type JailerVMM struct {
 	// /var/log/faas in tests.
 	consoleOpens  map[string]*consoleFileOpen
 	consoleLogDir string
+	// consoleDrainWait overrides consoleTailDrainWait in tests.
+	consoleDrainWait time.Duration
 	// rings is the per-instance log ring buffer (issue #254 / Move 4).
 	// Created in Boot/Restore before startJailer so cmd.Stdout can be wired
 	// to the ring's writer; closed in Kill/DestroyWithExport so the byte
@@ -426,6 +428,10 @@ type instanceRecord struct {
 	// fileConsole marks a guest whose stdout and stderr are its console
 	// file, not a pipe into vmmd (console_file.go).
 	fileConsole bool
+	// tailDone closes once the file-console tailer has drained the exited
+	// guest's last output into the ring; nil without a tailer. Guarded by
+	// JailerVMM.mu (console_file.go startConsoleTail).
+	tailDone chan struct{}
 	// oomKilled records the guest's ADR-121 workload OOM report so a startup
 	// that then fails is explained as app_runtime_oom; guarded by JailerVMM.mu.
 	oomKilled bool
@@ -4153,6 +4159,9 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 			return fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
 		}
 	}
+	// The guest has exited; let a file console's tailer copy its last
+	// output into the ring before the ring closes (audit 2026-10-31 A7).
+	v.awaitConsoleDrain(l.Instance, rec)
 	// Builder output is build-log evidence owned by builderd, not app logs.
 	v.retireRing(l.Instance, !l.IsBuilder)
 	v.closeGuestVsockListeners(l.Instance)
@@ -5658,7 +5667,7 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		_ = consoleFile.Close()
 		consoleFile = nil
 		if consoleWriter != nil {
-			go tailConsole(consolePath, 0, consoleWriter, consoleWriter.Flush, rec.done)
+			v.startConsoleTail(rec, 0, consoleWriter)
 			consoleWriter = nil // the tail flushes it once the process exits
 		}
 	}
