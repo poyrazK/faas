@@ -98,6 +98,58 @@ func (s *Service) reopenLivePullRequestPreview(ctx context.Context, ev PullReque
 	return true, nil
 }
 
+// keepLivePreviewOnReady answers ready_for_review for a PR whose preview
+// already serves the head: with draft previews on, the draft was previewed,
+// and rebuilding every workload for the same commit spent builder time and
+// the hourly preview deploy budget (ADR-20261101100000). The leases are
+// renewed and the check says the preview is live. Anything else (a new head,
+// a set that is not live) returns false and takes the normal path.
+func (s *Service) keepLivePreviewOnReady(ctx context.Context, ev PullRequestEvent, installationID int64,
+	previewURL string, expiresAt time.Time) (bool, error) {
+	if ev.Action != PullRequestActionReadyForReview {
+		return false, nil
+	}
+	sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore)
+	reader, readable := s.Reconcile.Store.(state.PRPreviewEnvironmentReader)
+	if !ok || !readable {
+		return false, nil
+	}
+	set, err := sets.GetPRPreviewSet(ctx, installationID, ev.Repository.FullName, ev.Number)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("githubd: load PR preview set: %w", err)
+	}
+	if set.Closed || set.CommitSHA != ev.PullRequest.HeadSHA {
+		return false, nil
+	}
+	environment, err := reader.PRPreviewEnvironmentByRoot(ctx, set.RootAppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("githubd: load PR preview environment: %w", err)
+	}
+	if previewset.EvaluateSet(set.PRNumber, set.RootAppID, environment.Members, environment.Set.SetupError).Phase != previewset.PhaseLive {
+		return false, nil
+	}
+	for _, id := range set.MemberAppIDs {
+		if _, err := s.Reconcile.Store.RefreshPRPreview(ctx, id, expiresAt); err != nil && !errors.Is(err, state.ErrNotFound) {
+			return false, fmt.Errorf("githubd: renew PR preview lease: %w", err)
+		}
+	}
+	summary := fmt.Sprintf("Ready for review: the preview is already serving %s, so nothing was rebuilt.", shortSHA(set.CommitSHA))
+	if err := s.writePreviewCheck(ctx, installationID, ev.Repository.FullName, ev.PullRequest.HeadSHA,
+		githubdgrpc.CheckPhaseLive, previewURL, summary); err != nil {
+		s.Log.Warn("githubd: write ready preview check", "err", err,
+			"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
+	}
+	s.Log.Info("githubd pull_request: ready for review; live preview kept", "repo", ev.Repository.FullName,
+		"pr_number", ev.Number, "serving", set.CommitSHA)
+	return true, nil
+}
+
 func environmentRootSlug(environment state.PRPreviewEnvironment, rootAppID string) string {
 	for _, member := range environment.Members {
 		if member.AppID == rootAppID {
