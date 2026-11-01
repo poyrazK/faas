@@ -2869,6 +2869,13 @@ const (
 // parallel uploads leave room for others (ADR-20261023223000).
 const ObjectUploadAccountSlotSharePercent = 50
 
+// ObjectUploadSlotWait is how long an upload or part waits for a slot before
+// it answers SlowDown. S3 transfer managers send several parts at once (the
+// AWS CLI ten) against a share of two slots, so refusing at once failed most
+// parts of a large upload (ADR-20261023223000 amendment 2026-11-01). It
+// matches ObjectDeletionAdmissionWait.
+const ObjectUploadSlotWait = 15 * time.Second
+
 // A request body holds an upload slot while the gateway reads it. It may go
 // ObjectUploadIdleTimeout without a byte and, after ObjectUploadMinRateGrace,
 // must average ObjectUploadMinBytesPerSecond, so a client trickling bytes
