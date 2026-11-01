@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -52,10 +53,15 @@ type Config struct {
 	OpenSecret     func([]byte) (string, error)
 	HTTPClient     *http.Client
 	Enabled        func() bool
-	Host           string
-	Region         string
-	SpoolDir       string
-	MaxPutBytes    int64
+	// Fenced reports a closed object storage restore fence
+	// (ADR-20261025111015): the database was restored, so keys it revoked
+	// may be valid again. Every request is refused while it is closed,
+	// including the deletes Enabled leaves open (bug hunt 33).
+	Fenced      func() bool
+	Host        string
+	Region      string
+	SpoolDir    string
+	MaxPutBytes int64
 	// UploadGrants serves ?gregale-upload= grant uploads. Nothing issues
 	// grants yet, so the path stays off: an unauthenticated request then never
 	// reaches the grant store, and a stray grant row authorizes nothing.
@@ -100,6 +106,7 @@ type Handler struct {
 	openSecret      func([]byte) (string, error)
 	client          *http.Client
 	enabled         func() bool
+	fenced          func() bool
 	host            string
 	region          string
 	spoolDir        string
@@ -189,6 +196,9 @@ func New(c Config) (*Handler, error) {
 	if c.Enabled == nil {
 		c.Enabled = func() bool { return true }
 	}
+	if c.Fenced == nil {
+		c.Fenced = func() bool { return false }
+	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -198,7 +208,7 @@ func New(c Config) (*Handler, error) {
 	return &Handler{
 		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, transfers: c.Transfers, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
-		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
+		enabled:        c.Enabled, fenced: c.Fenced, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
 		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
 		transferTimeout: c.Registry.TransferTimeout(),
@@ -285,6 +295,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("x-amz-request-id", requestID)
 	if strings.ToLower(r.Host) != h.host {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Use the configured Gregale S3 endpoint with path-style addressing.", r.URL.Path, requestID)
+		return
+	}
+	// A closed restore fence refuses everything, before CORS, signatures and
+	// the pre-routes: a key the restore un-revoked must not delete objects
+	// or versions the restored database cannot bring back.
+	if h.fenced() {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale Object Storage is temporarily unavailable.", r.URL.Path, requestID)
 		return
 	}
 	if h.handleCORS(w, r, requestID) {
@@ -806,6 +823,13 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 	}
 	request, ok := h.readDeleteObjects(w, r, req)
 	if !ok {
+		return
+	}
+	// The operator kill switch leaves cleanup deletes open, but not a
+	// permanent version delete: DELETE ?versionId is refused, and a bulk
+	// delete that names versions is refused the same way (bug hunt 33).
+	if !h.enabled() && slices.ContainsFunc(request.Objects, func(o deleteObjectTarget) bool { return o.VersionID != "" }) {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale Object Storage is temporarily disabled.", r.URL.Path, req.requestID)
 		return
 	}
 
