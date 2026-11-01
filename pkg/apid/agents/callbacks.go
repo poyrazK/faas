@@ -6,7 +6,8 @@ package agents
 // thread's lane of the endpoint's agent-inbox channel, which the app's
 // realtime trigger delivers as the thread's next slice. The URL's token is
 // the only credential, and it cannot address another thread, endpoint or
-// account. A repeated message_id lands once.
+// account. A repeated message_id lands once. A tool may also post RAP's own
+// callback messages (rap_callback.go).
 
 import (
 	"bytes"
@@ -87,9 +88,9 @@ func (h *Handler) callbackGrant(ctx context.Context, caller CallbackCaller, req 
 	case ttl < 1 || ttl > api.AgentCallbackTokenTTLSec:
 		return CallbackToken{}, api.ErrValidation(fmt.Sprintf("ttl_seconds must be 1-%d; got %d", api.AgentCallbackTokenTTLSec, ttl))
 	}
-	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(ctx, req.EndpointID)
-	if err != nil || !caller.owns(endpoint) {
-		return CallbackToken{}, errRealtimeEndpointNotFound()
+	endpoint, problem := caller.endpoint(ctx, h.Inbox, req.EndpointID)
+	if problem != nil {
+		return CallbackToken{}, problem
 	}
 	// Not truncated: a token issued just after a revocation must compare later.
 	now := h.now().UTC()
@@ -109,12 +110,15 @@ func (h *Handler) ReceiveCallback(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var post api.AgentCallbackPost
-	if err := httpkit.DecodeJSONSized(r, &post, api.AgentCallbackPayloadMaxBytes+callbackEnvelopeMaxBytes); err != nil {
-		api.WriteProblem(w, api.ErrValidation("the body must be a JSON callback of at most the payload limit"))
+	post, publish, problem := decodeCallbackPost(r, grant)
+	if problem == nil && !publish {
+		httpkit.WriteJSON(w, http.StatusAccepted, api.AgentCallbackReceipt{ThreadID: grant.ThreadID})
 		return
 	}
-	if problem := checkCallbackPost(grant, post); problem != nil {
+	if problem == nil {
+		problem = checkCallbackPost(grant, post)
+	}
+	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -175,9 +179,9 @@ func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, caller
 		api.WriteProblem(w, api.ErrValidation("the body must name an endpoint_id and a valid thread_id"))
 		return
 	}
-	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(r.Context(), req.EndpointID)
-	if err != nil || !caller.owns(endpoint) {
-		api.WriteProblem(w, errRealtimeEndpointNotFound())
+	endpoint, problem := caller.endpoint(r.Context(), h.Inbox, req.EndpointID)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	at, err := h.Revocations.RevokeCallbacks(r.Context(), caller.Account.ID, endpoint.ID, req.ThreadID)

@@ -99,3 +99,15 @@ enforcement, recovery/coalescing, per-partition classification, and replay of
 only failed partitions before rollout. Do not describe the execution guarantee
 as exactly once; customers still need idempotent external effects and Gregale
 retains an explicit uncertain outcome when a receipt is missing.
+
+## Amendment 2026-10-30: bounded recovery
+
+A cron with a schedule policy recovered every due time it had passed, one
+occurrence record per time. After a long gap (a per-minute cron whose app was
+off for a month) that is tens of thousands of rows written in one tick, on
+schedd's main loop. Recovery
+now records only the newest `api.CronCatchUpRecordedMax` (20) due times; older
+ones are passed over without a record, and schedd logs how many. `skip` and
+`coalesce_latest` apply to the recorded times as before, so `coalesce_latest`
+still considers the newest due time. The walk itself stops after
+`api.CronCatchUpScanMax` steps. Jobs are unchanged.

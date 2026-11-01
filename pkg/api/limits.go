@@ -652,6 +652,11 @@ const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 // total managed PostgreSQL databases and monthly provider cost (integer
 // millicents). They are COGS breakers across every account, not plan quotas.
 const ManagedPostgresFleetDatabasesCeiling = 100000
+
+// ManagedPostgresFleetPaidReservePercent is the share of the fleet's database
+// cap only paid plans may add when the operator sets no paid reserve
+// (ADR-20261031091607).
+const ManagedPostgresFleetPaidReservePercent = 20
 const ManagedPostgresFleetMonthlyCostCeilingMillicents = 10_000_000_000
 
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
@@ -1467,6 +1472,17 @@ const (
 const (
 	CronPlatformAttempts   = 3
 	CronPlatformRetryDelay = 5 * time.Second
+)
+
+// CronCatchUpRecordedMax bounds the due occurrences a schedule-policy or
+// command cron records in one tick after an outage or suspension: the newest
+// is dispatched and the ones before it are recorded as missed or coalesced.
+// Each is a database write on schedd's main loop, so older due occurrences
+// are passed over. CronCatchUpScanMax bounds how far the in-memory walk goes
+// (about four years of minutes).
+const (
+	CronCatchUpRecordedMax = 20
+	CronCatchUpScanMax     = 1 << 21
 )
 
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
@@ -2868,6 +2884,13 @@ const (
 // gateway's concurrent staged transfers (at least one), so a single tenant's
 // parallel uploads leave room for others (ADR-20261023223000).
 const ObjectUploadAccountSlotSharePercent = 50
+
+// ObjectUploadSlotWait is how long an upload or part waits for a slot before
+// it answers SlowDown. S3 transfer managers send several parts at once (the
+// AWS CLI ten) against a share of two slots, so refusing at once failed most
+// parts of a large upload (ADR-20261023223000 amendment 2026-11-01). It
+// matches ObjectDeletionAdmissionWait.
+const ObjectUploadSlotWait = 15 * time.Second
 
 // A request body holds an upload slot while the gateway reads it. It may go
 // ObjectUploadIdleTimeout without a byte and, after ObjectUploadMinRateGrace,
@@ -6870,6 +6893,14 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// DatabaseVMWritebackBurstMB is how far a database VM's memory.max sits
+	// above its memory.high, which is BillableRAMMB (ADR-1027). The VM's
+	// volume writes leave host page cache charged to its cgroup; with only
+	// PerVMOverheadMB of room, dirty pages writeback has not cleaned yet got
+	// a write-heavy database OOM-killed. memory.high throttles and reclaims
+	// above BillableRAMMB, so the steady state, admission and metering stay
+	// at BillableRAMMB; only this transient burst may exceed it.
+	DatabaseVMWritebackBurstMB = 56
 	// MeasuredChargeFloorMB and MeasuredChargeHeadroomPercent define the
 	// ADR-909 (proposed) charge: what admission by measured memory would book
 	// for a running instance. schedd only reports it (shadow mode); admission
@@ -13299,6 +13330,38 @@ func ServiceTCPReservedPorts() []int {
 // destination; the OCI puller's egress denylist already refuses it.
 func ServiceAddressCIDR() netip.Prefix {
 	return netip.MustParsePrefix("198.19.0.0/16")
+}
+
+// ADR-1027: the app route to native managed databases. Guests reach every
+// database at one platform address, identical on every node; the host DNATs
+// it to a node-local forwarder that relays bytes to pgproxyd over the
+// overlay. Database traffic is a platform hop, not tenant egress, so it needs
+// no egress port on any plan.
+const (
+	// DatabaseRoutePort is the PostgreSQL port guests dial on the address.
+	DatabaseRoutePort = 5432
+	// DatabaseRouteProxyPort is the forwarder's reserved tenant-bridge port.
+	// No netns rule admits it: guests reach it only through the host DNAT.
+	DatabaseRouteProxyPort = 10083
+	// DatabaseRouteSessionsPerNodeMax caps concurrent database sessions
+	// through one node's forwarder.
+	DatabaseRouteSessionsPerNodeMax = 8192
+	// DatabaseRouteSessionsPerSourceMax caps one instance's concurrent
+	// sessions: well above any connection pool, far below the node cap.
+	DatabaseRouteSessionsPerSourceMax = 256
+	// DatabaseRouteDialTimeout bounds one pgproxyd dial before the forwarder
+	// tries the next upstream.
+	DatabaseRouteDialTimeout = 3 * time.Second
+	// DatabaseRouteDNSTTLSeconds is the TTL of the resolver's answer. The
+	// address never changes, so it can outlive service answers.
+	DatabaseRouteDNSTTLSeconds = 60
+)
+
+// DatabaseRouteAddress is the platform address of the database route
+// (ADR-1027). Like ServiceAddressCIDR it sits in the RFC 2544 benchmarking
+// range, in the half ADR-576 does not use.
+func DatabaseRouteAddress() netip.Addr {
+	return netip.MustParseAddr("198.18.0.1")
 }
 
 // UDPListenerReservationsPerAppMax bounds all durable reservations, including

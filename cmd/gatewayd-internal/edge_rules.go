@@ -170,7 +170,7 @@ func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate valida
 }
 
 // BeginConvergence fences the supplied hosts before the policy write. A TTL
-// prevents a crashed apid from leaving a hostname unavailable indefinitely.
+// bounds how long a crashed apid leaves a hostname marked as changing.
 // accountID is the mutating rule's owner; "" fences every app on the hosts.
 // appID narrows an app-wide (@app) fence to that app's hosts.
 func (g *gatewaydEdgeRules) BeginConvergence(accountID, appID string, hosts []string, generation int64) {
@@ -212,12 +212,15 @@ func (g *gatewaydEdgeRules) EndConvergence(accountID, appID string, hosts []stri
 	g.fencesChangedLocked()
 }
 
-// Converging is the request-path fail-closed check. ownerAccountID and
-// ownerAppID name the app the host resolved to ("" when no app claims it).
-// A fence only holds the owner's traffic: request-time matching ignores
-// another account's rules (OwnedEdgeRules), so that account's mutation —
-// even on match_host "*" — cannot change this host's policy and must not
-// 503 it. Unclaimed hosts and unscoped fences keep the fleet-wide hold.
+// Converging reports a pending (prepared, not yet applied) change to the
+// host's rules. ownerAccountID and ownerAppID name the app the host resolved
+// to ("" when no app claims it). A fence only covers the owner's traffic:
+// request-time matching ignores another account's rules (OwnedEdgeRules), so
+// that account's mutation — even on match_host "*" — cannot change this
+// host's policy. Unclaimed hosts and unscoped fences are covered fleet-wide.
+// The host keeps serving its current rules while a fence holds
+// (ADR-20261101141123); the handler consults this only when a route rule's
+// target does not resolve.
 func (g *gatewaydEdgeRules) Converging(host, ownerAccountID, ownerAppID string) bool {
 	if g == nil || g.fenceCount.Load() == 0 {
 		return false

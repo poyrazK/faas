@@ -3,7 +3,10 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 // ErrChallengeRequired answers a non-navigation request on a challenged
@@ -81,4 +84,54 @@ func EdgeChallengeNavigation(method string, header http.Header) bool {
 		return strings.EqualFold(mode, "navigate")
 	}
 	return strings.Contains(strings.ToLower(header.Get("Accept")), "text/html")
+}
+
+// Bounds on what a challenged preflight answer echoes.
+const (
+	edgeChallengePreflightMaxOrigin  = 512
+	edgeChallengePreflightMaxHeaders = 32
+)
+
+// EdgeChallengePreflightHeaders answers a CORS preflight on a challenged
+// route (ADR-831 amendment 18). A preflight carries no cookies and no
+// Authorization, so it can never hold a pass or a verified credential, and
+// refusing it fails every cross-origin call that needs one, even from a
+// browser that holds a pass or a JWT. The answer allows the requested method
+// and headers from the requesting origin, without credentials: the browser
+// then sends the request itself without cookies, the challenge still applies
+// to it, and the app's own response still decides whether the page may read
+// it. It reports false for a request that is not a well-formed preflight.
+func EdgeChallengePreflightHeaders(method string, header http.Header) (http.Header, bool) {
+	if method != http.MethodOptions {
+		return nil, false
+	}
+	origin := header.Get("Origin")
+	requested := strings.TrimSpace(header.Get("Access-Control-Request-Method"))
+	if origin == "" || len(origin) > edgeChallengePreflightMaxOrigin || !httpguts.ValidHeaderFieldName(requested) {
+		return nil, false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil ||
+		u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return nil, false
+	}
+	var names []string
+	for _, name := range strings.Split(header.Get("Access-Control-Request-Headers"), ",") {
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
+		if !httpguts.ValidHeaderFieldName(name) || len(names) == edgeChallengePreflightMaxHeaders {
+			return nil, false
+		}
+		names = append(names, name)
+	}
+	out := http.Header{}
+	out.Set("Access-Control-Allow-Origin", origin)
+	out.Set("Access-Control-Allow-Methods", requested)
+	if len(names) > 0 {
+		out.Set("Access-Control-Allow-Headers", strings.Join(names, ", "))
+	}
+	out.Set("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
+	out.Set("Cache-Control", "no-store")
+	return out, true
 }

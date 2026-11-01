@@ -1,0 +1,177 @@
+---
+# database_node_pki — issue a database node's first mTLS bundle (see
+# defaults/main.yml). Runs after database_node, which installs the release
+# and links gregalectl.
+
+- name: database_node_pki — require the issuer and the node identity
+  ansible.builtin.assert:
+    that:
+      - (groups['control_plane'] | default([])) | length == 1
+      - faas_node_name | default('') | length > 0
+      - database_vmmd_overlay_ip | default('') | length > 0
+    fail_msg: >-
+      Issuing a database node's bundle needs exactly one control_plane host
+      (the issuer), faas_node_name and database_vmmd_overlay_ip (the
+      manifest renders both).
+  when: database_node_pki_source | default('') | length == 0
+
+- name: database_node_pki — look for an installed bundle
+  ansible.builtin.stat:
+    path: "{{ database_node_pki_root }}/vmmd/server.crt"
+  register: database_node_pki_installed
+  when: database_node_pki_source | default('') | length == 0
+
+- name: database_node_pki — issue and install the first bundle
+  when:
+    - database_node_pki_source | default('') | length == 0
+    - not database_node_pki_installed.stat.exists
+  block:
+    - name: database_node_pki — find gregalectl on the node
+      ansible.builtin.stat:
+        path: "{{ database_node_pki_gregalectl }}"
+      register: database_node_pki_gregalectl_stat
+
+    - name: database_node_pki — require gregalectl on the node
+      ansible.builtin.assert:
+        that:
+          - database_node_pki_gregalectl_stat.stat.exists
+        fail_msg: >-
+          Installing the node's bundle needs gregalectl, which comes with the
+          release: set database_node_release_tarball (and its signature and
+          git sha), or database_node_pki_source to an issued bundle.
+
+    - name: database_node_pki — reset issuer staging
+      ansible.builtin.file:
+        path: "{{ database_node_pki_issuer_stage }}"
+        state: absent
+      delegate_to: "{{ database_node_pki_issuer_host }}"
+
+    - name: database_node_pki — create issuer staging
+      ansible.builtin.file:
+        path: "{{ database_node_pki_issuer_stage }}"
+        state: directory
+        owner: "{{ database_node_pki_owner }}"
+        group: "{{ database_node_pki_group }}"
+        mode: "0700"
+      delegate_to: "{{ database_node_pki_issuer_host }}"
+
+    - name: database_node_pki — issue the node's bundle on the issuer
+      ansible.builtin.command:
+        argv:
+          - "{{ database_node_pki_gregalectl }}"
+          - pki
+          - issue-bundle
+          - --issuer-root
+          - "{{ database_node_pki_issuer_root }}"
+          - --output-dir
+          - "{{ database_node_pki_issuer_stage }}/bundle"
+          - --box-role
+          - database
+          - --cn
+          - "{{ faas_node_name }}"
+          - --transport-san
+          - "{{ database_vmmd_overlay_ip }}"
+      delegate_to: "{{ database_node_pki_issuer_host }}"
+      no_log: true
+      changed_when: true
+
+    - name: database_node_pki — package the bundle on the issuer
+      ansible.builtin.command:
+        argv:
+          - tar
+          - --create
+          - --gzip
+          - --file
+          - "{{ database_node_pki_issuer_stage }}/bundle.tgz"
+          - --directory
+          - "{{ database_node_pki_issuer_stage }}/bundle"
+          - .
+      delegate_to: "{{ database_node_pki_issuer_host }}"
+      changed_when: true
+
+    - name: database_node_pki — create controller transfer directory
+      ansible.builtin.file:
+        path: "{{ database_node_pki_controller_stage }}"
+        state: directory
+        mode: "0700"
+      become: false
+      delegate_to: localhost
+
+    - name: database_node_pki — fetch the bundle from the issuer
+      ansible.builtin.fetch:
+        src: "{{ database_node_pki_issuer_stage }}/bundle.tgz"
+        dest: "{{ database_node_pki_controller_stage }}/{{ inventory_hostname }}.tgz"
+        flat: true
+      delegate_to: "{{ database_node_pki_issuer_host }}"
+
+    - name: database_node_pki — reset target staging
+      ansible.builtin.file:
+        path: "{{ database_node_pki_target_stage }}"
+        state: absent
+
+    - name: database_node_pki — create target staging
+      ansible.builtin.file:
+        path: "{{ database_node_pki_target_stage }}/bundle"
+        state: directory
+        owner: "{{ database_node_pki_owner }}"
+        group: "{{ database_node_pki_group }}"
+        mode: "0700"
+
+    - name: database_node_pki — transfer the bundle to the node
+      ansible.builtin.unarchive:
+        src: "{{ database_node_pki_controller_stage }}/{{ inventory_hostname }}.tgz"
+        dest: "{{ database_node_pki_target_stage }}/bundle"
+        owner: "{{ database_node_pki_owner }}"
+        group: "{{ database_node_pki_group }}"
+
+    # A first bundle has no active trust to protect, so it is copied in, as
+    # compute join and database_node_pki_source do (install-bundle pins a
+    # renewal to the node's active CA). It is validated against this node's
+    # identity first.
+    - name: database_node_pki — validate the bundle for this node
+      ansible.builtin.command:
+        argv:
+          - "{{ database_node_pki_gregalectl }}"
+          - pki
+          - status
+          - --root-dir
+          - "{{ database_node_pki_target_stage }}/bundle"
+          - --box-role
+          - database
+          - --cn
+          - "{{ faas_node_name }}"
+          - --transport-san
+          - "{{ database_vmmd_overlay_ip }}"
+      changed_when: false
+
+    - name: database_node_pki — install the bundle
+      ansible.builtin.copy:
+        src: "{{ database_node_pki_target_stage }}/bundle/"
+        dest: "{{ database_node_pki_root }}/"
+        remote_src: true
+        owner: "{{ database_node_pki_owner }}"
+        group: "{{ database_node_pki_group }}"
+        mode: preserve
+      no_log: true
+      notify:
+        - restart faas-vmmd
+        - restart faas-pgproxyd
+
+  always:
+    - name: database_node_pki — remove issuer staging
+      ansible.builtin.file:
+        path: "{{ database_node_pki_issuer_stage }}"
+        state: absent
+      delegate_to: "{{ database_node_pki_issuer_host }}"
+
+    - name: database_node_pki — remove target staging
+      ansible.builtin.file:
+        path: "{{ database_node_pki_target_stage }}"
+        state: absent
+
+    - name: database_node_pki — remove the controller copy
+      ansible.builtin.file:
+        path: "{{ database_node_pki_controller_stage }}/{{ inventory_hostname }}.tgz"
+        state: absent
+      become: false
+      delegate_to: localhost

@@ -108,6 +108,7 @@ type Handler struct {
 	putSlots        chan struct{}
 	slotMu          sync.Mutex
 	accountSlots    map[string]int
+	slotFreed       chan struct{}
 	maxSpoolBytes   int64
 	minSpoolFree    int64
 	transferTimeout time.Duration

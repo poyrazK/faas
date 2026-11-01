@@ -4038,6 +4038,25 @@
       ]
     },
     {
+      "id": "postgres-major-upgrades",
+      "name": "Postgres major version upgrades",
+      "category": "data",
+      "description": "Upgrade a native database in place to a later PostgreSQL major version.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "pkg/apid/apidserver/managed_postgres_upgrade_rollout_test.go::TestManagedPostgresUpgradeHiddenOutsideTheRollout",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/postgres/databases/{}/upgrade",
+        "/v1/postgres/databases/{}/upgrades"
+      ]
+    },
+    {
       "id": "postgres-overage",
       "name": "Postgres compute overage",
       "category": "data",
@@ -4818,6 +4837,9 @@
       ],
       "docs_url": "/docs/apps",
       "acceptance_test": "pkg/apid/apidserver/handlers_resource_labels_test.go::TestAppLabelsAPI",
+      "settings": [
+        "manifest.labels"
+      ],
       "routes": [
         "/v1/apps/{}/labels",
         "/v1/postgres/databases/{}/labels",
@@ -4827,8 +4849,8 @@
       "cli": [
         "app label",
         "postgres label",
-        "cron label",
-        "job label"
+        "crons label",
+        "jobs label"
       ]
     },
     {

@@ -16467,30 +16467,50 @@ gregale --profile staging mcp serve --timeout 15s
 
 ### mcp connection
 
-Inspect or revoke agent grants through a local operator socket
+List or revoke the agents connected to your account
 
 #### mcp connection list
 
-List bounded connection metadata without credentials
+List connected agents: hosted MCP sign-ins and agent keys
 
-`gregale mcp connection list --socket <PATH> [--limit <N>] [--offset <N>]`
+`gregale mcp connection list [--socket <PATH>] [--limit <N>] [--offset <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--socket <PATH>` | owner-protected management control socket | required |
-| `--limit <N>` | page size from 1 to 100 (default 20) |  |
-| `--offset <N>` | non-negative page offset |  |
+| `--socket <PATH>` | owner-protected management control socket (operators) |  |
+| `--limit <N>` | page size from 1 to 100 (with --socket, default 20) |  |
+| `--offset <N>` | non-negative page offset (with --socket) |  |
+
+Examples:
+
+```sh
+gregale mcp connection list
+```
+
+With --socket, an operator lists a bridge&#39;s grants through its local admin socket instead.
 
 #### mcp connection revoke
 
-Revoke one exact bridge grant and stop its observations
+Revoke one connected agent, or all of them
 
-`gregale mcp connection revoke --socket <PATH> --grant-id <ID>`
+`gregale mcp connection revoke [--all] [--socket <PATH>] [--grant-id <ID>] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--socket <PATH>` | owner-protected management control socket | required |
-| `--grant-id <ID>` | exact active bridge grant ID to revoke | required |
+| `--all` | revoke every agent connected to the account |  |
+| `--socket <PATH>` | owner-protected management control socket (operators) |  |
+| `--grant-id <ID>` | exact active bridge grant ID to revoke (with --socket) |  |
+
+Examples:
+
+```sh
+gregale mcp connection revoke 3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19
+gregale mcp connection revoke --all
+```
+
+Revoking a connection revokes the API key the agent uses; it must sign in again.
+
+With --socket and --grant-id, an operator revokes one bridge grant instead.
 
 ### mcp server
 
