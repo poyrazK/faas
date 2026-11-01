@@ -499,6 +499,7 @@ type MemStore struct {
 	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
 	keys                      map[string]APIKey
+	agentClients              map[string]AgentClient // ADR-20261030133644
 	keyDisplayPrefixes        map[string]string
 	keyByHash                 map[string]APIKey
 	deployTokens              map[string]DeployToken
@@ -1466,6 +1467,10 @@ type MemStore struct {
 	// appLabels holds each app's labels (ADR-20261031100025), created on
 	// first write; an app absent from it has none.
 	appLabels map[string]map[string]string
+
+	// resourceLabels holds the labels of databases, crons and jobs by kind
+	// and ID, created on first write.
+	resourceLabels map[LabelKind]map[string]map[string]string
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -6167,7 +6172,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		helperSiblings[i].ID = s.ID
 		helperSiblings[i].Prior = s.Prior
 	}
-	newWeights := RedistributeTraffic(helperSiblings, 100-newPercent)
+	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool {
+		return abortedCanaryCandidate(m.deployments[siblings[i].ID])
+	}, 100-newPercent)
+	if err != nil {
+		return Deployment{}, err
+	}
 	proposed := map[string]int{id: newPercent}
 	for i, sibling := range siblings {
 		proposed[sibling.ID] = newWeights[i]
@@ -12994,6 +13004,7 @@ func (m *MemStore) CreateCustomDomain(ctx context.Context, domain, appID, token 
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
 		return CustomDomain{}, err
 	}
+	m.dropCustomDomainTLSHostsLocked(domain)
 	m.domains[domain] = d
 	return d, nil
 }
@@ -13580,6 +13591,9 @@ func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
 	c, ok := m.crons[id]
 	if !ok || c.AppID != appID {
 		return ErrNotFound
+	}
+	if err := m.cancelPendingCronRunsLocked(id, time.Now()); err != nil {
+		return err
 	}
 	if len(c.Command) == 0 {
 		m.invalidateDeploymentCronsLocked(c.AppID)
@@ -15294,16 +15308,23 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	if inv.State != InvocationPending {
 		return inv.State, nil
 	}
+	if err := m.cancelPendingInvocationLocked(id, inv, time.Now()); err != nil {
+		return "", err
+	}
+	return InvocationCancelled, nil
+}
+
+// cancelPendingInvocationLocked cancels one pending invocation; m.mu is held.
+func (m *MemStore) cancelPendingInvocationLocked(id string, inv Invocation, now time.Time) error {
 	inv.State = InvocationCancelled
 	inv.QuotaReserved = false
-	now := time.Now()
 	inv.CompletedAt = &now
 	if err := m.operationTransitionLocked(&inv, false); err != nil {
-		return "", err
+		return err
 	}
 	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
-	return inv.State, nil
+	return nil
 }
 
 // ListInvocationsForAccount is the dashboard's unified history read.

@@ -19,6 +19,10 @@ export type { ActivityActorResponse } from './models/ActivityActorResponse.js';
 export type { ActivityResourceResponse } from './models/ActivityResourceResponse.js';
 export type { AdvanceCanaryRequest } from './models/AdvanceCanaryRequest.js';
 export type { AfterRestoreHook } from './models/AfterRestoreHook.js';
+export type { AgentClientRequest } from './models/AgentClientRequest.js';
+export type { AgentConnectionResponse } from './models/AgentConnectionResponse.js';
+export type { AgentConnectionsResponse } from './models/AgentConnectionsResponse.js';
+export type { AgentConnectionsRevokeAllResponse } from './models/AgentConnectionsRevokeAllResponse.js';
 export type { AlertDeliveryResponse } from './models/AlertDeliveryResponse.js';
 export type { AlertPresetResponse } from './models/AlertPresetResponse.js';
 export type { AlertRuleResponse } from './models/AlertRuleResponse.js';
@@ -475,6 +479,7 @@ export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDataba
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
+export type { ManagedPostgresRestoreRange } from './models/ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';
 export type { ManagedServiceProbeSpec } from './models/ManagedServiceProbeSpec.js';
 export type { MCPPolicyConvergenceSnapshot } from './models/MCPPolicyConvergenceSnapshot.js';

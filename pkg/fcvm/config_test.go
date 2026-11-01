@@ -364,3 +364,47 @@ func indexOf(ss []string, target string) int {
 	}
 	return -1
 }
+
+// TestNetworklessConfigListsNoNetworkInterfaces pins the Firecracker config
+// shape of networkless VMs: an empty interface list, never null, because
+// Firecracker 1.7 rejects "network-interfaces": null and the VM never boots
+// (found booting the first database VM, ADR-1027).
+func TestNetworklessConfigListsNoNetworkInterfaces(t *testing.T) {
+	cfg := BuildColdBootConfig(ColdBootSpec{KernelKey: "k", BaseKey: "b", LayerKey: "l", VcpuCount: 1, MemSizeMiB: 128, Networkless: true}, 0)
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"network-interfaces":[]`) {
+		t.Fatalf("networkless config must list no interfaces, never null: %s", raw)
+	}
+	app := BuildColdBootConfig(ColdBootSpec{KernelKey: "k", BaseKey: "b", LayerKey: "l", VcpuCount: 1, MemSizeMiB: 128, Tap: "tap0"}, 0)
+	raw, err = json.Marshal(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"network-interfaces":[{"iface_id":"eth0","host_dev_name":"tap0"}]`) {
+		t.Fatalf("app config lost its interface: %s", raw)
+	}
+}
+
+// TestJailerCommandDatabaseOverrides pins the database VM jailer shape
+// (ADR-1027): its own chroot base and cgroup parent, and no netns.
+func TestJailerCommandDatabaseOverrides(t *testing.T) {
+	argv := strings.Join(JailerCommand(JailerSpec{
+		Instance: "db-1", UID: 20001, GID: 20001, Networkless: true,
+		ChrootBase: "/srv/fc/dbjail", ParentCgroup: "faas.slice/faas-db.slice",
+	}), " ")
+	for _, want := range []string{"--chroot-base-dir /srv/fc/dbjail", "--parent-cgroup faas.slice/faas-db.slice"} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("jailer argv missing %q: %s", want, argv)
+		}
+	}
+	if strings.Contains(argv, "--netns") || strings.Contains(argv, JailChrootBase+" ") {
+		t.Fatalf("database jailer argv kept app defaults: %s", argv)
+	}
+	def := strings.Join(JailerCommand(JailerSpec{Instance: "app-1", UID: 20002, GID: 20002, Netns: "fc-app-1"}), " ")
+	if !strings.Contains(def, "--chroot-base-dir "+JailChrootBase) {
+		t.Fatalf("app jailer argv lost the default chroot base: %s", def)
+	}
+}

@@ -1,0 +1,45 @@
+[Unit]
+Description=Gregale archive keeper for managed databases
+Documentation=https://gregale.dev/docs/managed-postgres
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=notify
+User=faas-dbbackupd
+Group=faas-dbbackupd
+ExecStart=/opt/faas/current/bin/dbbackupd -config /etc/faas/dbbackupd.toml
+Restart=on-failure
+RestartSec=2s
+WatchdogSec=60s
+MemoryHigh=768M
+MemoryMax=1G
+TasksMax=4096
+CapabilityBoundingSet=
+EnvironmentFile=-/etc/faas/otel.env
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/srv/db/archive
+RuntimeDirectory=faas-dbbackupd
+RuntimeDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

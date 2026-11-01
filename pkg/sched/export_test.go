@@ -1014,6 +1014,9 @@ func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocati
 	return d.invocationAttemptBudget(ctx, inv)
 }
 
+// XCronDueOccurrences is the catch-up walk for schedule-policy and command crons.
+var XCronDueOccurrences = cronDueOccurrences
+
 // XHoldFinancialAdmission makes the drain's budget admission refuse every
 // app with err, as a held strict compute budget does.
 func (d *Drain) XHoldFinancialAdmission(err error) {
@@ -1031,4 +1034,22 @@ func CustomerCapacityProblem(detail string, blockers ...api.WorkerAdmissionBlock
 func (r *Engine) NodeCapacityProblem(err error) error { return r.nodeCapacityProblem(err) }
 func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
+}
+
+// MarkRestartInFlight records appID as restarting, as restartApp does, until
+// the returned func runs.
+func (e *Engine) MarkRestartInFlight(appID string) func() {
+	e.restartMu.Lock()
+	defer e.restartMu.Unlock()
+	if e.restartInFlight == nil {
+		e.restartInFlight = make(map[string]*restartCall)
+	}
+	call := &restartCall{done: make(chan struct{})}
+	e.restartInFlight[appID] = call
+	return func() {
+		e.restartMu.Lock()
+		defer e.restartMu.Unlock()
+		delete(e.restartInFlight, appID)
+		close(call.done)
+	}
 }

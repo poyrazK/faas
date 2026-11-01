@@ -136,7 +136,7 @@ type pkiFlags struct {
 	// pkg/pki.Roles() — that's the canonical single-box dev/lima
 	// shape, and the implicit default for any operator who hasn't
 	// added a host_vars/faas-fsn-{1,2}.yml yet. Allowed values:
-	// "", "single-box", "control-plane", "compute-only".
+	// "", "single-box", "control-plane", "compute-only", "database".
 	//
 	// When set, --daemon is ignored if it would have widened the
 	// subset (--box-role wins; it's the per-box shape, --daemon is
@@ -226,7 +226,7 @@ func cmdPKIStatus(args []string) int {
 	if err != nil {
 		return printErr("pki status: identity", err)
 	}
-	if f.boxRole == "compute-only" && identity.nodeCN == "" {
+	if pki.UsesNodeIdentity(f.boxRole) && identity.nodeCN == "" {
 		identity.nodeCN = inferComputeNodeCN(f.rootDir)
 	}
 	if err := pki.ValidateTrustBundleForNode(f.rootDir, f.boxRole, identity.transportSAN, identity.nodeCN); err != nil {
@@ -443,7 +443,7 @@ type pkiRenewalState struct {
 func cmdPKIMetrics(args []string) int {
 	fs := flag.NewFlagSet("pki metrics", flag.ContinueOnError)
 	rootDir := fs.String("root-dir", pki.DefaultRootDir, "active PKI root")
-	boxRole := fs.String("box-role", "", "host role: control-plane or compute-only")
+	boxRole := fs.String("box-role", "", "host role: control-plane, compute-only or database")
 	host := fs.String("host", "", "bounded host label")
 	output := fs.String("output", "", "node_exporter textfile destination (stdout when empty)")
 	renewalState := fs.String("renewal-state", "/var/lib/faas/pki-renewal/status.json", "renewal workflow state file")
@@ -693,8 +693,8 @@ func pkiIdentity(f *pkiFlags) (pkiIdentityOptions, error) {
 	if f.nodeCN == "" && f.transportSAN == "" {
 		return identity, nil
 	}
-	if f.boxRole != "compute-only" {
-		return identity, errors.New("--cn/--transport-san require --box-role=compute-only")
+	if !pki.UsesNodeIdentity(f.boxRole) {
+		return identity, errors.New("--cn/--transport-san require --box-role=compute-only or database")
 	}
 	if raw := strings.TrimSpace(f.nodeCN); raw != "" {
 		identity.nodeCN = raw

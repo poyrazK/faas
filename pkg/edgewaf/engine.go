@@ -18,6 +18,7 @@ import (
 	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 	"github.com/corazawaf/coraza/v3"
 	"github.com/corazawaf/coraza/v3/types"
+	"github.com/corazawaf/coraza/v3/types/variables"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -42,6 +43,10 @@ type Result struct {
 	Detected   bool
 	RuleIDs    []int
 	Categories []string
+	// CookiesOnly is true when every scoring match was in a request cookie's
+	// name or value: a page on another host of a shared apps domain can plant
+	// such a cookie in a visitor's browser (ADR-831 amendment 18).
+	CookiesOnly bool
 }
 
 // CRS assumes a website; platformPolicy and platformOverrides adapt it to a
@@ -179,6 +184,7 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 // Points follow CRS defaults: critical 5, error 4, warning 3, notice 2.
 func score(matched []types.MatchedRule, exclude []int) Result {
 	var res Result
+	res.CookiesOnly = true
 	for _, m := range matched {
 		rule := m.Rule()
 		id := rule.ID()
@@ -193,6 +199,7 @@ func score(matched []types.MatchedRule, exclude []int) Result {
 			continue
 		}
 		res.Score += points
+		res.CookiesOnly = res.CookiesOnly && matchedOnlyInCookies(m)
 		res.RuleIDs = append(res.RuleIDs, id)
 		for _, c := range categories(rule.Tags()) {
 			if !slices.Contains(res.Categories, c) {
@@ -203,7 +210,23 @@ func score(matched []types.MatchedRule, exclude []int) Result {
 	slices.Sort(res.RuleIDs)
 	res.RuleIDs = slices.Compact(res.RuleIDs)
 	slices.Sort(res.Categories)
+	res.CookiesOnly = res.CookiesOnly && res.Score > 0
 	return res
+}
+
+// matchedOnlyInCookies reports whether every variable m matched was a
+// request cookie's name or value.
+func matchedOnlyInCookies(m types.MatchedRule) bool {
+	data := m.MatchedDatas()
+	if len(data) == 0 {
+		return false
+	}
+	for _, d := range data {
+		if v := d.Variable(); v != variables.RequestCookies && v != variables.RequestCookiesNames {
+			return false
+		}
+	}
+	return true
 }
 
 func severityPoints(s types.RuleSeverity) int {

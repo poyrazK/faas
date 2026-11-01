@@ -103,7 +103,9 @@ func (r *LedgerReconciler) RunOnce(ctx context.Context) ([]LedgerMonthReconcilia
 	if final := finalThrough.Truncate(time.Hour); final.Before(cutoff) {
 		cutoff = final
 	}
-	accounts, err := p.store.ListAllAccounts(ctx)
+	// Company organizations are billing subjects of their own (#6029) and
+	// the pusher delivers their hours, so the dual run covers them too.
+	accounts, err := state.ListBillingResourceAccounts(ctx, p.store)
 	if err != nil {
 		return nil, fmt.Errorf("meter: ledger reconciliation accounts: %w", err)
 	}
@@ -214,8 +216,16 @@ func (r *LedgerReconciler) reconcileAccount(ctx context.Context, deliveries stat
 	switch {
 	case diff == 0:
 		return LedgerMatch, 0
-	case diff < 0 && hasCap(caps, acct.ID):
-		return LedgerCapped, diff
+	case diff < 0:
+		capped, err := r.capExplains(ctx, acct, caps, end, atFrom, expected, delivered)
+		if err != nil {
+			p.log.Warn("meter: ledger reconciliation cap", "account", acct.ID, "err", err)
+			return LedgerFailed, 0
+		}
+		if capped {
+			return LedgerCapped, diff
+		}
+		fallthrough
 	default:
 		p.log.Warn("meter: ledger drift", "account", acct.ID, "provider", provider,
 			"from", from, "through", end, "ledger_mb_seconds", expected, "delivered_mb_seconds", delivered)
@@ -223,9 +233,25 @@ func (r *LedgerReconciler) reconcileAccount(ctx context.Context, deliveries stat
 	}
 }
 
-func hasCap(caps map[string]int64, accountID string) bool {
-	_, ok := caps[accountID]
-	return ok
+// capExplains reports whether acct's spend cap accounts for delivering less
+// than the ledger's net compute. Every paid plan starts with a cap, so having
+// one explains nothing: the shortfall is the cap's only when the pusher could
+// not have delivered more. The pusher clamps each hour to the cap less the
+// month's live egress and object-storage charges at that hour; both only grow
+// within a month, so the allowance at the window's last hour is the least it
+// ever granted. Delivering at least the window's net compute under that
+// allowance is the cap at work; delivering less is lost usage. atFrom is the
+// month's net compute before the window, which the pusher's clamp counts too.
+func (r *LedgerReconciler) capExplains(ctx context.Context, acct state.Account, caps map[string]int64, end time.Time, atFrom, expected, delivered int64) (bool, error) {
+	capCents, ok := caps[acct.ID]
+	if !ok {
+		return false, nil
+	}
+	floor, err := r.pusher.computeWithinCap(ctx, acct, end.Add(-time.Hour), capCents, atFrom, atFrom+expected)
+	if err != nil {
+		return false, err
+	}
+	return delivered >= floor, nil
 }
 
 // ledgerComputeQuantity is the ledger's compute quantity for usage in

@@ -481,6 +481,49 @@ type ObsNodeMutationResponse struct {
 	Preflight          ObsNodeOperationPreflight `json:"preflight"`
 }
 
+// ObsDatabaseRestartResponse acknowledges an operator's in-place restart
+// of a native managed database (ADR-1027), onto its node's current base.
+// Poll StatusURL for the intent.
+type ObsDatabaseRestartResponse struct {
+	OK         bool      `json:"ok"`
+	IntentID   string    `json:"intent_id"`
+	StatusURL  string    `json:"status_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Kind       string    `json:"kind"`
+	DatabaseID string    `json:"database_id"`
+	Reason     string    `json:"reason"`
+}
+
+// ObsDatabaseSwitchoverResponse acknowledges an operator's planned
+// switchover of a production-class native managed database to its
+// synchronized standby (ADR-1027). Poll StatusURL for the intent.
+type ObsDatabaseSwitchoverResponse struct {
+	OK         bool      `json:"ok"`
+	IntentID   string    `json:"intent_id"`
+	StatusURL  string    `json:"status_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Kind       string    `json:"kind"`
+	DatabaseID string    `json:"database_id"`
+	Reason     string    `json:"reason"`
+}
+
+// ObsDatabaseMoveResponse acknowledges an operator's move of a native
+// managed database to another database node (ADR-1027). schedd parks the
+// database and records the move, then copies it in the background; poll
+// StatusURL for the intent.
+type ObsDatabaseMoveResponse struct {
+	OK         bool      `json:"ok"`
+	IntentID   string    `json:"intent_id"`
+	StatusURL  string    `json:"status_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Kind       string    `json:"kind"`
+	DatabaseID string    `json:"database_id"`
+	// TargetNode is the requested node; empty lets schedd pick the active
+	// node with the most free volume capacity.
+	TargetNode string `json:"target_node,omitempty"`
+	Reason     string `json:"reason"`
+}
+
 // ObsNodeOperationPreflight is the bounded impact summary persisted with a
 // node lifecycle intent and returned to the operations console. It contains
 // counts and capacity only; app, tenant, and instance identifiers remain on

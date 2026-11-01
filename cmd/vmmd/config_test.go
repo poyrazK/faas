@@ -99,6 +99,22 @@ func TestLoadConfigServiceTCPConfiguresRuntimePolicy(t *testing.T) {
 	}
 }
 
+// adr: 1027 — the database route switch Ansible renders from the manifest.
+func TestLoadConfigDatabaseRouteFromEnvironment(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil || cfg.ComputeNode.DatabaseRouteEnabled {
+		t.Fatalf("default = %v, %v; want off", cfg.ComputeNode.DatabaseRouteEnabled, err)
+	}
+	t.Setenv("FAAS_VMMD_DATABASE_ROUTE_ENABLED", "true")
+	if cfg, err = LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err != nil || !cfg.ComputeNode.DatabaseRouteEnabled {
+		t.Fatalf("with the switch = %v, %v; want on", cfg.ComputeNode.DatabaseRouteEnabled, err)
+	}
+	t.Setenv("FAAS_VMMD_DATABASE_ROUTE_ENABLED", "maybe")
+	if _, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err == nil || !strings.Contains(err.Error(), "FAAS_VMMD_DATABASE_ROUTE_ENABLED") {
+		t.Fatalf("LoadConfig error = %v, want a parse error", err)
+	}
+}
+
 func TestLoadConfigRejectsInvalidPublicIface(t *testing.T) {
 	t.Setenv("FAAS_PUBLIC_IFACE", `ens4"; flush ruleset`)
 	_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))

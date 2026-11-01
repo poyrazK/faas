@@ -7,13 +7,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Cron delivery outcomes are a closed vocabulary shared with delayed tasks.
-// Keep these values stable: alerting and dashboards aggregate them directly.
+// Cron delivery outcomes are a closed vocabulary shared with delayed tasks,
+// plus app_error: the run reached the app and the app answered with an
+// error, so it is the customer's failure, not the platform's. failed and
+// dead_letter are platform failures. Keep these values stable: alerting and
+// dashboards aggregate them directly.
 const (
 	CronDeliverySuccess    = DelayedTaskDispatchSuccess
 	CronDeliveryRetry      = DelayedTaskDispatchRetry
 	CronDeliveryFailed     = DelayedTaskDispatchFailed
 	CronDeliveryDeadLetter = DelayedTaskDispatchDeadLetter
+	CronDeliveryAppError   = "app_error"
 )
 
 type cronDeliveryMetrics struct {
@@ -25,7 +29,7 @@ func newCronDeliveryMetrics(prefix string) *cronDeliveryMetrics {
 	m := &cronDeliveryMetrics{
 		deliveryTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_cron_delivery_total",
-			Help: "Count of HTTP cron delivery attempts (scheduled fires and manual runs) by outcome. Outcome is one of success, retry, failed, or dead_letter. No app or account label.",
+			Help: "Count of HTTP cron delivery attempts (scheduled fires and manual runs) by outcome. Outcome is one of success, retry, app_error (the app answered with an error), failed or dead_letter (platform failures). No app or account label.",
 		}, []string{"outcome"}),
 		scheduleLagSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    prefix + "_cron_schedule_lag_seconds",
@@ -38,6 +42,7 @@ func newCronDeliveryMetrics(prefix string) *cronDeliveryMetrics {
 		CronDeliveryRetry,
 		CronDeliveryFailed,
 		CronDeliveryDeadLetter,
+		CronDeliveryAppError,
 	} {
 		m.deliveryTotal.WithLabelValues(outcome)
 	}
@@ -54,7 +59,8 @@ func (m *OpsMetrics) ObserveCronDelivery(outcome string) {
 	case CronDeliverySuccess,
 		CronDeliveryRetry,
 		CronDeliveryFailed,
-		CronDeliveryDeadLetter:
+		CronDeliveryDeadLetter,
+		CronDeliveryAppError:
 		m.cronDelivery.deliveryTotal.WithLabelValues(outcome).Inc()
 	}
 }
