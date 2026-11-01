@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -27,6 +28,10 @@ import (
 func main() { wire.Daemon("bridged", run) }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the dev-bridge credential ring: bridged checks dev-bridge tokens.
+	if err := credhash.Install(os.Getenv, credhash.FamilyDevBridge); err != nil {
+		return fmt.Errorf("bridged: %w", err)
+	}
 	if err := role.Require("bridged", role.FromConfig("", "FAAS_BRIDGED_ROLE"), role.RoleSingleBox, role.RoleControlPlane); err != nil {
 		return err
 	}

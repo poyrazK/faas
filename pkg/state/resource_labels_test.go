@@ -48,7 +48,7 @@ func TestResourceLabelStore(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			job, err := s.JobCreate(ctx, acct.ID, "labelled", "batch", "registry.example/job:v1", nil, 128, 30, 1, 0, nil)
+			job, err := s.JobCreate(ctx, acct.ID, "labelled", "batch", "registry.example/job:v1", []string{"/bin/true"}, 128, 30, 1, 0, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

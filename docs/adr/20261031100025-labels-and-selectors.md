@@ -85,9 +85,11 @@ needs no extra step and no label can outlive its resource.
 
 - **Writer.** Only apid writes `labels`, through one sqlc statement per table
   that sets and removes keys in a single `UPDATE` and refuses the write when the
-  result would exceed the limit. No other component reads them yet; schedd,
-  vmmd and the gateways never do, and nothing on the request path selects the
-  column.
+  result would exceed the limit. The one exception is the repository reconcile
+  (`pkg/reconcile`), which already creates apps in apid and in githubd: it sets
+  the imported labels of an app it has just created, through the same
+  statement (§7). No other component reads them yet; schedd, vmmd and the
+  gateways never do, and nothing on the request path selects the column.
 - **Migration.** Expand only: `ADD COLUMN … DEFAULT '{}'` is a metadata change,
   and the object `CHECK` is added `NOT VALID` and validated in a separate
   statement, each after `SET LOCAL lock_timeout = '5s'`.
@@ -163,8 +165,14 @@ read once at the start, so a resource labelled during the wait is not added.
   `gregale app label unset` removes it. Tracking which keys a manifest last
   applied, as `kubectl apply` does, waits for a need.
 - **The Kubernetes importer** carries each Deployment's and CronJob's
-  `metadata.labels` to the app or cron it creates, drops `gregale.dev/` keys and
-  reports invalid ones. Pod template labels stay matching-only, as today.
+  `metadata.labels` to the app it creates (a CronJob imports as a job-class
+  app with its schedules), drops `gregale.dev/` keys and reports invalid ones
+  and any past the per-resource limit as scan warnings. Pod template labels
+  stay matching-only, as today. The scan reads labels only while the account
+  has the capability (`reposcan.ScanOptions.ResourceLabels`, decided the same
+  way by apid and githubd so a push deploy matches the reviewed plan), and only
+  a newly created app is labelled: an existing app keeps the labels its owner
+  set.
 
 ### 8. Rollout
 

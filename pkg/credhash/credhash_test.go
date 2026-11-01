@@ -83,6 +83,49 @@ func TestPolicyFollowsTheRollout(t *testing.T) {
 	}
 }
 
+// adr: 20261029202403 amendment 1 decision 3 — a derived capability is an
+// HMAC under the family key once keyed writes are on, keeps the old shape,
+// and the old derivation is accepted only while plain lookup is on.
+func TestDerivedCapabilitiesFollowTheRollout(t *testing.T) {
+	const tag credhash.Tag = "ci_job_runtime.capability"
+	material := []byte("run\x00instance\x00lease")
+	legacy := strings.Repeat("ab", 32)
+	r := ring(t, 2, 1)
+
+	var none *credhash.Policy
+	if got := none.Derive(tag, material, legacy); got != legacy || !none.DerivedMatches(tag, material, legacy, legacy) {
+		t.Fatal("the release before derives and accepts the old capability")
+	}
+	expand := &credhash.Policy{Ring: r, PlainLookup: true}
+	if got := expand.Derive(tag, material, legacy); got != legacy {
+		t.Fatal("expand keeps issuing the old capability")
+	}
+	keyed := &credhash.Policy{Ring: r, KeyedWrites: true, PlainLookup: true}
+	derived := keyed.Derive(tag, material, legacy)
+	if derived == legacy || len(derived) != 64 || strings.ToLower(derived) != derived {
+		t.Fatalf("keyed capability = %q", derived)
+	}
+	for _, p := range []*credhash.Policy{expand, keyed} {
+		if !p.DerivedMatches(tag, material, legacy, derived) || !p.DerivedMatches(tag, material, legacy, legacy) {
+			t.Fatal("the rollout refuses a capability it issues")
+		}
+	}
+	older := (&credhash.Policy{Ring: ring(t, 9), KeyedWrites: true}).Derive(tag, material, legacy)
+	contract := &credhash.Policy{Ring: r, KeyedWrites: true}
+	switch {
+	case !contract.DerivedMatches(tag, material, legacy, derived):
+		t.Fatal("contract refuses the keyed capability")
+	case contract.DerivedMatches(tag, material, legacy, legacy):
+		t.Fatal("contract still accepts the old derivation")
+	case contract.DerivedMatches(tag, material, legacy, older):
+		t.Fatal("a key outside the ring was accepted")
+	case contract.DerivedMatches(tag, []byte("run\x00instance\x00other"), legacy, derived):
+		t.Fatal("a capability for other material was accepted")
+	case contract.DerivedMatches("job_operation.capability", material, legacy, derived):
+		t.Fatal("a capability for another tag was accepted")
+	}
+}
+
 func TestParseRingRefusesBadLines(t *testing.T) {
 	good, err := credhash.NewKeyLine(1)
 	if err != nil {

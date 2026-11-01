@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"errors"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/credhash"
+	"github.com/onebox-faas/faas/pkg/devbridge"
 )
 
 // Account-family credential columns (ADR 20261029202403). Each names the
@@ -51,14 +53,81 @@ const (
 	CredentialColumnForkToken   credhash.Tag = "app_forks.access_token_hash"
 )
 
+// Columns of the other families that pkg/state writes or looks up (ADR
+// 20261029202403 amendment 1). The families' readers outside pkg/state use
+// the same names.
+const (
+	credTagOutboundAIAccessToken credhash.Tag = "outbound_ai_access_tokens.token_hash"
+	credTagUploadGrant           credhash.Tag = "object_storage_upload_grants.token_hash"
+	credTagInteractiveAttach     credhash.Tag = api.AttachTokenCredentialTag
+)
+
+// Columns of other families that a daemon holding no ring for them asks
+// apid to match (ADR 20261029202403 amendment 1, decision 2).
+const (
+	// CredentialColumnOperationCapability is checked by gatewayd-internal
+	// when it admits a platform-tenant operation invocation.
+	CredentialColumnOperationCapability credhash.Tag = "customer_operations.execution_capability_digest"
+	// CredentialColumnDevBridgeAttachment and CredentialColumnDevBridgeRequest
+	// are checked by gatewayd-internal when it relays dev-bridge traffic.
+	CredentialColumnDevBridgeAttachment = devbridge.AttachmentDigestColumn
+	CredentialColumnDevBridgeRequest    = devbridge.RequestDigestColumn
+	// CredentialColumnDataAPIServerKey is checked by realtimed when a Data
+	// API server key opens a live query.
+	CredentialColumnDataAPIServerKey credhash.Tag = api.DataAPIServerKeyCredentialTag
+)
+
 // GatewayCheckedCredential reports whether a gateway may ask apid to match
-// a value of column.
-func GatewayCheckedCredential(column string) (credhash.Tag, bool) {
+// a value of column, and the family whose policy answers.
+func GatewayCheckedCredential(column string) (credhash.Tag, credhash.Family, bool) {
 	switch tag := credhash.Tag(column); tag {
 	case CredentialColumnConsumerKey, CredentialColumnForkToken:
-		return tag, true
+		return tag, credhash.FamilyAccount, true
+	case CredentialColumnOperationCapability:
+		return tag, credhash.FamilyScheduler, true
+	case CredentialColumnDevBridgeAttachment, CredentialColumnDevBridgeRequest:
+		return tag, credhash.FamilyDevBridge, true
+	case CredentialColumnDataAPIServerKey:
+		return tag, credhash.FamilyDataAPI, true
 	}
-	return "", false
+	return "", "", false
+}
+
+// FamilyCredentialMatches reports whether stored, read from column tag, is
+// the value family's credential whose token hashes to sum may hold, under
+// this process's policy for family or the remote installed for it
+// (credhash.Match).
+func FamilyCredentialMatches(ctx context.Context, family credhash.Family, tag credhash.Tag, sum, stored []byte) bool {
+	return credhash.Match(ctx, family, tag, sum, stored)
+}
+
+// familyStoredCredential is the value to write in column tag for family's
+// credential whose token hashes to sum. A stored digest is written as it is.
+func familyStoredCredential(family credhash.Family, tag credhash.Tag, sum []byte) []byte {
+	if credhash.Keyed(sum) {
+		return sum
+	}
+	return credhash.For(family).Store(tag, sum)
+}
+
+// familyStoredCredentialHex is familyStoredCredential for a column that
+// holds hex text. A value that is not a hex SHA-256 is written as it is.
+func familyStoredCredentialHex(family credhash.Family, tag credhash.Tag, sumHex string) string {
+	sum, err := hex.DecodeString(sumHex)
+	if err != nil || len(sum) != credhash.PlainSize {
+		return sumHex
+	}
+	return hex.EncodeToString(familyStoredCredential(family, tag, sum))
+}
+
+// familyCredentialLookups are the stored values to try for family's
+// credential whose token hashes to sum; a stored digest is looked up as it
+// is.
+func familyCredentialLookups(family credhash.Family, tag credhash.Tag, sum []byte) [][]byte {
+	if credhash.Keyed(sum) {
+		return [][]byte{sum}
+	}
+	return credhash.For(family).Lookups(tag, sum)
 }
 
 // CredentialMatches reports whether stored, read from column tag, is the

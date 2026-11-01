@@ -75,6 +75,7 @@
       "docs_url": "/docs/adr/20261027090010-agent-runs-and-agent-step",
       "acceptance_test": "pkg/e2etest/agentchain/agentchain_metal_test.go::TestMetalAgentPRTriage",
       "routes": [
+        "/v1/agent-callbacks",
         "/v1/agent-runs",
         "/v1/agents"
       ],
@@ -1247,6 +1248,7 @@
       "description": "Serve a managed Postgres database over a generated HTTP API.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -4315,6 +4317,7 @@
         "/v1/deployments/{}/canary/advance",
         "/v1/deployments/{}/promote",
         "/v1/deployments/{}/promote-with-application-ack",
+        "/v1/deployments/{}/timeline",
         "/v1/deployments/{}/traffic"
       ],
       "cli": [
@@ -4818,6 +4821,9 @@
         "/v1/postgres/databases/{}/labels",
         "/v1/crons/{}/labels",
         "/v1/jobs/{}/labels"
+      ],
+      "cli": [
+        "app label"
       ]
     },
     {

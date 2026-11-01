@@ -265,10 +265,11 @@ func (m *MemStore) AdmitCustomDomainTLSHost(_ context.Context, a CustomDomainTLS
 }
 
 // dropCustomDomainTLSHostsLocked mirrors the ON DELETE CASCADE from
-// custom_domains. The admission ledger has no foreign key and stays.
-// Callers hold m.mu.
+// custom_domains to the known hosts and the host allowlist. The admission
+// ledger has no foreign key and stays. Callers hold m.mu.
 func (m *MemStore) dropCustomDomainTLSHostsLocked(domain string) {
 	domain = strings.ToLower(domain)
+	delete(m.customDomainTLSAllowedHosts, domain)
 	for host, h := range m.customDomainTLSHosts {
 		if h.wildcardDomain == domain {
 			delete(m.customDomainTLSHosts, host)

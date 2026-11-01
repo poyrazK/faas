@@ -244,6 +244,9 @@ check says previews are off.
 `preview_bot_prs` (default off) and `preview_draft_prs` (default on) decide
 whether pull requests opened by bots such as Dependabot and Renovate, and draft
 pull requests, get previews. The PR's author decides, not whoever pushed to it.
+A PR head is held to the plan a project deploy applies: a service whose
+declared memory, replicas, image process or lifecycle settings the plan does
+not allow gets no preview, and the `gregale-preview` check names the limit.
 A skipped pull request gets a neutral `gregale-preview` check that says why;
 with draft previews off, a draft gets its preview when it is marked ready for
 review. A pull request whose preview is live and whose next head is skipped
@@ -345,6 +348,7 @@ to the target branch and triggers the normal deployment event.
 - ADR-20261026090000 (environment allowance, environment-wide destroy, setup failures on the PR, gate sync).
 - ADR-20261031090000 (route contract on previews, turning previews off tears them down).
 - ADR-20261031120000 (new services' gates and org, skipped heads retire the preview, production protocols, no custom domains).
+- ADR-20261031180000 (PR heads held to the plan, tenant and security gates on previews).
 - `docs/runbooks/PreviewSubdomainRouting.md` — operator
   recovery for routing failures.
 - `pkg/githubd` — webhook receiver (PR-A surface).
@@ -407,8 +411,9 @@ A preview gets the rest of its configuration from two places
   previews. `pr-preview` cannot be the name of a project environment.
 
 Previews keep their production app's access and egress gates: password,
-IP allowlist, signed-request and consumer-auth requirements, the egress
-allowlist, the app's visibility, and its declared-route contract: when
+IP allowlist, signed-request, consumer-auth and platform-tenant requirements,
+the egress allowlist, the security posture policy for deploys, the app's
+visibility, and its declared-route contract: when
 production answers only the routes its imported OpenAPI document declares, so
 do its previews, held to the production app's document. A gate changed on the
 production app applies to its live previews at once. Previews also serve the

@@ -1891,6 +1891,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/runtime/data-api/usage", s.reportDataAPIUsage)
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/usage", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.appDataAPIConnectionBudget))))
+	// ADR-20261031095954: the CLI deploys the runtime apid serves.
+	mux.HandleFunc("GET /v1/apps/{slug}/data-api/runtime", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIRuntime)))
 	// ADR-20261027123814: owner contract inspection, gated by the Data API capability.
 	mux.HandleFunc("POST /v1/apps/{slug}/data-api/contract-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDataAPIContractTask)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/contract-tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDataAPIContractTask))))
@@ -2197,7 +2199,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteScenarioTest))))
 	mux.HandleFunc("POST /v1/dev/sessions/{project}/syncs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recordDevSync)))))
 	mux.HandleFunc("GET /v1/dev/sessions/{project}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDevSyncHistory))))
-	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getApp))))
+	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.getApp))))
 	// App-owned raw TCP listeners. The public port is stable and the
 	// listener can be fail-closed without changing the app deployment.
 	mux.HandleFunc("GET /v1/apps/{slug}/tcp-listeners", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTCPListeners))))
@@ -3171,6 +3173,10 @@ func (s *server) handler() http.Handler {
 	// message rather than a generic 404 (matches the pre-#911
 	// pattern in api/flags.go).
 	mux.HandleFunc("GET /v1/domains/{domain}/doctor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomainDoctor))))
+	// ADR-520 amendment 2: a wildcard domain's optional host allowlist.
+	mux.HandleFunc("GET /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomainHosts))))
+	mux.HandleFunc("PUT /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.setDomainHosts)))))
+	mux.HandleFunc("DELETE /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearDomainHosts))))
 
 	// Crons.
 	mux.HandleFunc("GET /v1/crons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCrons))))
@@ -3247,6 +3253,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputs))))
 	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs/files/{name...}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputFile))))
 	mux.HandleFunc("DELETE /v1/agent-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelAgentRun))))
+	// ADR-20261030125501 §3: a callback URL for one thread of an agent
+	// inbox, and the token-only route a tool posts its result to.
+	mux.HandleFunc("POST /v1/agent-callbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createAgentCallback))))
+	mux.Handle("POST /v1/agent-callbacks/{token}", middleware.AuthLimit(middleware.AuthLimitConfig{
+		Log:           s.log,
+		Window:        time.Minute,
+		MaxFailures:   api.AgentCallbackFailuresPerIPPerMinute,
+		CountStatuses: []int{http.StatusNotFound},
+	})(http.HandlerFunc(s.receiveAgentCallback)))
 	mux.HandleFunc("GET /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}/labels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJobLabels))))

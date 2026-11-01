@@ -20,3 +20,11 @@ faas_object_storage_caddy_binary: /usr/bin/caddy
 # proxied retains the beta CDN body contract. direct requires DNS-only routing
 # to the Caddy TLS origin. The provider registry's transfer.profile must agree.
 faas_object_storage_gateway_edge_mode: proxied
+
+# ADR 20261029202403 amendment 1: the uploads credential ring (object upload grants s3-gatewayd checks; agentd issues them with the same ring),
+# an operator-local file from `gregalectl credentials keygen`. Empty
+# removes it. Set keyed writes only once every holder runs the release
+# that reads keyed digests; turn plain lookup off only at the contract step.
+faas_credential_uploads_keys_src: ""
+faas_credential_uploads_writes: plain
+faas_credential_uploads_plain_lookup: true

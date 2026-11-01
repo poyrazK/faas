@@ -189,7 +189,7 @@ export class JobsService {
     requestBody,
   }: {
     /**
-     * The job slug (3-40 chars, lowercase letters/digits/hyphens).
+     * Slug of the job whose labels change.
      */
     name: string,
     requestBody: LabelChange,

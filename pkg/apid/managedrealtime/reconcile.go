@@ -684,6 +684,14 @@ func (s *Service) RunManagedRealtimeHistoryReaper(ctx context.Context) {
 				log.Info("managed realtime durable cursor reaper pass complete", "removed", removed)
 			}
 		}
+		if markerReaper, ok := s.Host.Store().(state.ManagedRealtimeReadMarkerReaper); ok && ctx.Err() == nil {
+			removed, err := markerReaper.PruneExpiredManagedRealtimeReadMarkers(ctx, managedRealtimeHistoryReapBatch)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("managed realtime read marker reaper pass failed", "err", err)
+			} else if removed > 0 {
+				log.Info("managed realtime read marker reaper pass complete", "removed", removed)
+			}
+		}
 		if presenceReaper, ok := s.Host.Store().(state.ManagedRealtimePresenceReaper); ok && ctx.Err() == nil {
 			removed, err := presenceReaper.PruneExpiredManagedRealtimePresenceLeases(ctx, managedRealtimeHistoryReapBatch)
 			if err != nil && !errors.Is(err, context.Canceled) {

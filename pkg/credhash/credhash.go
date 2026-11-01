@@ -11,17 +11,20 @@ package credhash
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -242,6 +245,40 @@ func (p *Policy) Stale(stored []byte) bool {
 	return !Keyed(stored) || stored[0] != p.Ring.current
 }
 
+// Derive is a capability derived from material (amendment 1, decision 3):
+// the hex HMAC of material under the current key once keyed writes are on,
+// legacy, the old derivation, before. A derived capability keeps the old
+// one's shape, 64 hex characters, so the guests that carry it do not change.
+func (p *Policy) Derive(tag Tag, material []byte, legacy string) string {
+	if p == nil || !p.KeyedWrites || p.Ring == nil {
+		return legacy
+	}
+	return hex.EncodeToString(p.Ring.mac(p.Ring.current, tag, material)[1:])
+}
+
+// DerivedMatches reports, in constant time per candidate, whether presented
+// is a capability p accepts for material: its HMAC under any key in the
+// ring, or legacy while plain lookup is on.
+func (p *Policy) DerivedMatches(tag Tag, material []byte, legacy, presented string) bool {
+	if presented == "" {
+		return false
+	}
+	matched := false
+	if p != nil && p.Ring != nil {
+		for _, kid := range p.Ring.order {
+			if hmac.Equal([]byte(hex.EncodeToString(p.Ring.mac(kid, tag, material)[1:])), []byte(presented)) {
+				matched = true
+			}
+		}
+	}
+	if p == nil || p.PlainLookup || p.Ring == nil {
+		if hmac.Equal([]byte(legacy), []byte(presented)) {
+			matched = true
+		}
+	}
+	return matched
+}
+
 // HexAll returns the lowercase hex lookups for a column that stores hex text.
 func HexAll(values [][]byte) []string {
 	out := make([]string, len(values))
@@ -251,23 +288,122 @@ func HexAll(values [][]byte) []string {
 	return out
 }
 
+// Family names a token family. Each family has its own ring, held only by
+// the daemons that issue and check its tokens (decision 2), so a leaked key
+// mints one family.
+type Family string
+
+// The token families (ADR 20261029202403 decision 2 and amendment 1).
+const (
+	// FamilyAccount is apid's credentials: API, deploy and consumer keys,
+	// mailed tokens, invitations, approvals and apid's own receipts.
+	FamilyAccount Family = "account"
+	// FamilyScheduler is schedd's work credentials: event acknowledgements,
+	// consumer-group leases and CI and operation capabilities. schedd and
+	// apid hold it.
+	FamilyScheduler Family = "scheduler"
+	// FamilyOutbound is outboundd's integration and AI access tokens.
+	// outboundd and apid hold it.
+	FamilyOutbound Family = "outbound"
+	// FamilyUploads is agentd's object upload grants, which s3-gatewayd
+	// checks.
+	FamilyUploads Family = "uploads"
+	// FamilyAttach is the one-shot interactive attach tokens apid issues
+	// and vmmd checks: the only family a compute node holds.
+	FamilyAttach Family = "attach"
+	// FamilyDevBridge is dev-bridge attach and request tokens. apid and
+	// bridged hold it; gatewayd-internal asks apid.
+	FamilyDevBridge Family = "dev-bridge"
+	// FamilyDataAPI is Data API server keys. apid holds it; realtimed asks
+	// apid.
+	FamilyDataAPI Family = "data-api"
+)
+
 var (
 	activeMu sync.RWMutex
-	active   *Policy
+	active   = map[Family]*Policy{}
 )
+
+// Set installs family's policy for this process; nil restores plain
+// hashes. A daemon installs the policies of the families it issues or
+// checks at start.
+func Set(family Family, p *Policy) {
+	activeMu.Lock()
+	defer activeMu.Unlock()
+	if p == nil {
+		delete(active, family)
+		return
+	}
+	active[family] = p
+}
+
+// For is family's policy in this process, nil when none was installed.
+func For(family Family) *Policy {
+	activeMu.RLock()
+	defer activeMu.RUnlock()
+	return active[family]
+}
+
+// Remote answers, for a family this process holds no ring for, whether
+// stored is the value a credential whose SHA-256 is sum may hold: a daemon
+// on a compute node installs apid's MatchCredential (amendment 1, decision
+// 2).
+type Remote func(ctx context.Context, tag Tag, stored, sum []byte) (bool, error)
+
+var (
+	remoteMu sync.RWMutex
+	remotes  = map[Family]Remote{}
+)
+
+// SetRemote routes family's matches to r; nil matches locally again.
+func SetRemote(family Family, r Remote) {
+	remoteMu.Lock()
+	defer remoteMu.Unlock()
+	if r == nil {
+		delete(remotes, family)
+		return
+	}
+	remotes[family] = r
+}
+
+// remoteTimeout bounds a remote match: a slow apid refuses the credential
+// rather than holding the request.
+const remoteTimeout = 5 * time.Second
+
+// Match reports whether stored, read from column tag, is the value family's
+// credential whose token hashes to sum may hold: under this process's
+// policy for family, or by asking the remote installed for it. A remote
+// failure refuses the credential.
+func Match(ctx context.Context, family Family, tag Tag, sum, stored []byte) bool {
+	remoteMu.RLock()
+	r := remotes[family]
+	remoteMu.RUnlock()
+	if r == nil {
+		return For(family).Matches(tag, sum, stored)
+	}
+	ctx, cancel := context.WithTimeout(ctx, remoteTimeout)
+	defer cancel()
+	ok, err := r(ctx, tag, stored, sum)
+	return err == nil && ok
+}
+
+// AnyKeyedWrites reports whether any family's installed policy writes keyed
+// digests.
+func AnyKeyedWrites() bool {
+	activeMu.RLock()
+	defer activeMu.RUnlock()
+	for _, p := range active {
+		if p != nil && p.KeyedWrites {
+			return true
+		}
+	}
+	return false
+}
 
 // SetAccount installs the account family's policy for this process; nil
 // restores plain hashes. apid installs it at start.
-func SetAccount(p *Policy) {
-	activeMu.Lock()
-	active = p
-	activeMu.Unlock()
-}
+func SetAccount(p *Policy) { Set(FamilyAccount, p) }
 
 // Account is the account family's policy in this process, nil when none was
 // installed.
-func Account() *Policy {
-	activeMu.RLock()
-	defer activeMu.RUnlock()
-	return active
-}
+func Account() *Policy { return For(FamilyAccount) }

@@ -126,7 +126,7 @@ func (s *Service) RealtimeWorkerClaim(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Worker identity denied", "worker identity is fixed by the credential"))
 		return
 	}
-	claim, err := s.claimRealtimeGroupWithWait(r, store, g.EndpointID, g.Channel, g.Group, g.Info.Name, req.WaitSeconds)
+	claim, err := s.claimRealtimeGroupWithWait(r, store, g.AccountID, g.EndpointID, g.Channel, g.Group, g.Info.Name, req.WaitSeconds)
 	if err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
 		return

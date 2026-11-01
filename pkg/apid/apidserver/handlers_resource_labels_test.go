@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/labels"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -215,7 +216,7 @@ func TestCronAndJobLabelsAPI(t *testing.T) {
 		crons = append(crons, c.ID)
 	}
 	for _, name := range []string{"billing-report", "billing-export", "search-index"} {
-		if _, err := store.JobCreate(ctx, acct.ID, name, "batch", "registry.example/job:v1", nil, 128, 30, 1, 0, nil); err != nil {
+		if _, err := store.JobCreate(ctx, acct.ID, name, "batch", "registry.example/job:v1", []string{"/bin/true"}, 128, 30, 1, 0, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -292,5 +293,42 @@ func TestCronLabelsAPI_OtherAccount(t *testing.T) {
 	}
 	if rec := e.Do(t, http.MethodPatch, "/v1/crons/"+c.ID+"/labels", api.LabelChange{Set: map[string]string{"a": "b"}}, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("foreign cron label write = %d %s, want 404", rec.Code, rec.Body)
+	}
+}
+
+// A source deploy sets the labels its manifest declares and removes none
+// (ADR-20261031100025 §7); while the capability is off they are ignored.
+func TestSourceRefManifestLabels(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	srv, store, acct := *e.S(), *e.Store(), *e.Acct()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "manifest-labels", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	labelApp(t, e, "manifest-labels", api.LabelChange{Set: map[string]string{"owner": "ops", "tier": "api"}})
+
+	manifest := &gregalemanifest.Manifest{Labels: map[string]string{"team": "billing", "tier": "web"}}
+	if _, problem := srv.ApplySourceRefManifest(t.Context(), acct, app, manifest, state.DefaultEnvScope, false); problem != nil {
+		t.Fatalf("apply manifest: %+v", problem)
+	}
+	rec := e.Do(t, http.MethodGet, "/v1/apps/manifest-labels", nil, nil)
+	var got api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"owner": "ops", "team": "billing", "tier": "web"}; !maps.Equal(got.Labels, want) {
+		t.Fatalf("labels after a manifest deploy = %v, want %v", got.Labels, want)
+	}
+
+	if err := srv.InstallCapabilityGate(); err != nil {
+		t.Fatal(err)
+	}
+	gated := &gregalemanifest.Manifest{Labels: map[string]string{"gated": "yes"}}
+	if _, problem := srv.ApplySourceRefManifest(t.Context(), acct, app, gated, state.DefaultEnvScope, false); problem != nil {
+		t.Fatalf("apply manifest with the capability off: %+v", problem)
+	}
+	l, err := store.AppLabels(t.Context(), app.ID)
+	if err != nil || l["gated"] != "" {
+		t.Fatalf("labels with the capability off = %v, %v; want the manifest's ignored", l, err)
 	}
 }

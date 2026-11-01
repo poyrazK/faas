@@ -72,6 +72,7 @@ const (
 	subDomainsShow       = "show"
 	subDomainsStatus     = "status"
 	subDomainsDoctor     = "doctor"
+	subDomainsHost       = "host"
 
 	statusPending  = "pending"
 	statusVerified = "verified"
@@ -4158,6 +4159,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestQueueBindings(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest queue bindings failed", err)
 	}
+	if err := deployManifestLabels(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest labels failed", err)
+	}
 
 	recordQueued := func(dep api.DeploymentResponse) int {
 		realtimeTriggers.commit()
@@ -5195,7 +5199,7 @@ func cmdTraffic(args []string) int {
 func cmdDomains(args []string) int {
 	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|wait|doctor> [args]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|wait|doctor|host> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
@@ -5284,6 +5288,8 @@ func cmdDomains(args []string) int {
 		return cmdDomainsStatus(args[1:])
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
+	case subDomainsHost:
+		return cmdDomainsHost(args[1:])
 	case subWait:
 		return domainConditions.wait(args[1:])
 	}
@@ -7710,11 +7716,23 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		// pollDeploymentFinal. A fast tarball deploy on a slow link
 		// is the canonical case where the stream never opened and
 		// the build row is already terminal.
+		if readRefused(err) && !opts.quiet {
+			// deploy:write alone (a deploy token, a CI OIDC bearer) may not
+			// read build logs; it follows the deployment it created.
+			PrintProgress(osStdout, "build logs need apps:read; following the deployment's status instead")
+		}
 		if b, ok := pollBuildStatusContext(waitCtx, c, dep, 5*time.Second); ok {
 			return terminalBuild(b)
 		}
-		if final, ok := pollDeploymentFinalContext(waitCtx, c, dep); ok {
+		// Follow the deployment row to the wait deadline, as the end of the
+		// stream does below. One read used to give up on a deploy still
+		// building, so a CI credential's every --wait ended in exit 3.
+		if final, ok := pollDeploymentFinalUntilContext(waitCtx, c, dep, waitTimeout); ok {
 			return terminalDeployment(final)
+		}
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			warnWaitTimeout()
+			return 3
 		}
 		warnWaitStopped("stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
@@ -7901,14 +7919,30 @@ streamLoop:
 // where /v1/builds/{id} is unavailable still degrades gracefully;
 // streamDeployLogs prefers the new path.
 func pollDeploymentFinalContext(ctx context.Context, c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool) {
+	final, ok, _ := pollDeploymentFinalOnce(ctx, c, dep)
+	return final, ok
+}
+
+func pollDeploymentFinalOnce(ctx context.Context, c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool, error) {
 	got, err := c.GetDeployment(ctx, dep.ID)
 	if err != nil {
-		return api.DeploymentResponse{}, false
+		return api.DeploymentResponse{}, false, err
 	}
 	if got.PromotionHold != nil || isCompletedDeployment(got) {
-		return got, true
+		return got, true, nil
 	}
-	return api.DeploymentResponse{}, false
+	return api.DeploymentResponse{}, false, nil
+}
+
+// readRefused reports an answer a retry will not change: the credential may
+// not read the resource. A CI credential with only deploy:write (a deploy
+// token, a GitHub Actions OIDC bearer) is refused build logs and build status
+// but may read its deployment (ADR-20261031162858), so a wait stops asking
+// for what it cannot read and follows the deployment row instead.
+func readRefused(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) &&
+		(apiErr.Problem.Status == http.StatusUnauthorized || apiErr.Problem.Status == http.StatusForbidden)
 }
 
 // pollDeploymentFinalUntil is the deployment-row counterpart to
@@ -7924,8 +7958,12 @@ func pollDeploymentFinalUntilContext(ctx context.Context, c *Client, dep api.Dep
 	defer cancel()
 	backoff := time.Second
 	for {
-		if final, ok := pollDeploymentFinalContext(pollCtx, c, dep); ok {
+		final, ok, err := pollDeploymentFinalOnce(pollCtx, c, dep)
+		if ok {
 			return final, true
+		}
+		if readRefused(err) {
+			return api.DeploymentResponse{}, false
 		}
 		timer := time.NewTimer(backoff)
 		select {
@@ -8000,6 +8038,10 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 		cancelCall()
 		if err == nil && isTerminalBuildStatus(b.Status) {
 			return b, true
+		}
+		if readRefused(err) {
+			// The caller falls back to the deployment row at once.
+			return api.BuildResponse{}, false
 		}
 		// Jitter ±10% of the current backoff so N concurrent CI
 		// jobs don't wake at the same wall-clock tick. Pseudo-
@@ -8504,11 +8546,12 @@ func warnDeployStreamInterrupted(quiet bool) {
 func cmdDomainsList(args []string) int {
 	fs := newFlagSet("domains list", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "only this app's domains")
+	selector := addSelectorFlag(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale domain list [--app <slug>]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domain list [--app <slug>] [-l SELECTOR]", "domains")
 		return 1
 	}
 	client, err := authedClient()
@@ -8534,6 +8577,18 @@ func cmdDomainsList(args []string) int {
 	}
 	if appID != "" {
 		out = slices.DeleteFunc(out, func(d api.CustomDomainResponse) bool { return d.AppID != appID })
+	}
+	if *selector != "" {
+		// A domain matches through its app (ADR-20261031100025).
+		apps, err := selectedApps(ctx, client, *selector)
+		if err != nil {
+			return printErr("Could not list apps", err)
+		}
+		matched := make(map[string]bool, len(apps))
+		for _, a := range apps {
+			matched[a.ID] = true
+		}
+		out = slices.DeleteFunc(out, func(d api.CustomDomainResponse) bool { return !matched[d.AppID] })
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(out))

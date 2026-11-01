@@ -175,3 +175,25 @@ This bounds the damage griefing can do: a registered domain's budget, never
 other tenants' or the fleet's. It does not stop a third party spending the
 targeted customer's budget. The opt-in per-wildcard label allowlist (next
 change) does.
+
+## Amendment 2: an opt-in host allowlist per wildcard (2026-10-31)
+
+Bug hunt 32 (M7, second half). The shared budgets bound what random server
+names below a wildcard can cost the platform, but anyone can still spend the
+targeted customer's own budget for the week. A wildcard's owner can now list
+the names below it that may hold certificates.
+
+- `custom_domain_tls_allowed_hosts` (wildcard, name) holds the list; a name
+  is the part of the host before the wildcard's suffix. apid is the only
+  writer (customer intent, `GET`/`PUT`/`DELETE /v1/domains/{domain}/hosts`,
+  `gregale domain host set|get|clear`, at most
+  `api.CustomDomainTLSAllowedHostsMax` (100) names). Rows cascade with the
+  wildcard. The organization actions match the domain's other routes: members
+  read, members who deploy configure.
+- The ask endpoint checks the list after the wildcard's plan and before
+  admission, for known hosts too, so removing a name stops its next reload
+  and renewal. An unlisted host is refused with `deny_not_allowlisted` and
+  never reaches the budgets. No list admits every name, as before. The
+  domain doctor's probe host (`state.WildcardProbeHost`) is always allowed,
+  so verification and drift checks keep working.
+- Routing is unchanged: the list governs certificates only.

@@ -645,6 +645,9 @@ type MemStore struct {
 	// customDomainTLSAdmissions mirrors custom_domain_tls_admissions
 	// (ADR-520 amendment 1), oldest first.
 	customDomainTLSAdmissions []customDomainTLSAdmission
+	// customDomainTLSAllowedHosts mirrors custom_domain_tls_allowed_hosts
+	// (ADR-520 amendment 2): wildcard → sorted names.
+	customDomainTLSAllowedHosts map[string][]string
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole
@@ -20725,6 +20728,7 @@ type billingUsageDelivery struct {
 	meter               BillingMeter
 	hour                time.Time
 	quantity            int64
+	deliveredAt         time.Time
 }
 
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
@@ -20812,7 +20816,7 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	defer m.mu.Unlock()
 	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
 	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
-		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity, deliveredAt: m.clock()}
 	}
 	return nil
 }
