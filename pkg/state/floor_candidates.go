@@ -13,31 +13,40 @@ import (
 // of apps that can carry one, so an idle fleet costs one indexed query per
 // tick. The reconciler still decides with the full App and Deployment.
 
-// floorCandidateFilter is the SQL form of appMayHaveFloor: a superset of
-// App.EffectiveMinInstances() > 0 or Deployment.EffectiveMinInstances() > 0.
-// Every live deployment of a matching app is returned, so the reconciler's
-// serving-scope check (servingScopes, inheritsNoFloor) sees the same rows it
-// did before.
-const floorCandidateFilter = `
-	    and a.status <> 'deleted'
-	    and d.status = 'live'
-	    and (a.min_instances > 0
-	         or (jsonb_typeof(a.scaling_policy->'min_instances') = 'number'
-	             and (a.scaling_policy->>'min_instances')::numeric > 0)
-	         or (jsonb_typeof(a.scaling_policy->'schedules') = 'array'
-	             and jsonb_array_length(a.scaling_policy->'schedules') > 0)
-	         or exists (select 1 from deployments f
-	                     where f.app_id = a.id and f.status = 'live' and f.min_instances > 0))
-	  order by d.created_at desc`
+// floorDeploymentsQuery returns the live deployments of the apps matching the
+// SQL form of appMayHaveFloor: a superset of App.EffectiveMinInstances() > 0
+// or Deployment.EffectiveMinInstances() > 0. Every live deployment of a
+// matching app is returned, so the reconciler's serving-scope check
+// (servingScopes, inheritsNoFloor) sees the same rows it did before.
+//
+// The candidate apps are materialized first so the plan starts from those few
+// apps and probes their live deployments by index. Joined from deployments,
+// the global listing read the app of every live deployment, and most of those
+// belong to deleted apps whose deployments stay live.
+func floorDeploymentsQuery(ownerClause string) string {
+	return `with floor_apps as materialized (
+		select a.id
+		  from apps a
+		 where a.status <> 'deleted'` + ownerClause + `
+		   and (a.min_instances > 0
+		        or (jsonb_typeof(a.scaling_policy->'min_instances') = 'number'
+		            and (a.scaling_policy->>'min_instances')::numeric > 0)
+		        or (jsonb_typeof(a.scaling_policy->'schedules') = 'array'
+		            and jsonb_array_length(a.scaling_policy->'schedules') > 0)
+		        or exists (select 1 from deployments f
+		                    where f.app_id = a.id and f.status = 'live' and f.min_instances > 0))
+		)
+		select ` + deploymentSelectColumnsQualified + `
+		  from floor_apps fa
+		  join deployments d on d.app_id = fa.id
+		 where d.status = 'live'
+		 order by d.created_at desc`
+}
 
 // ListFloorDeployments returns the live deployments of every non-deleted app
 // that can carry a min-instances floor.
 func (s *PgStore) ListFloorDeployments(ctx context.Context) ([]Deployment, error) {
-	rows, err := s.pool.Query(ctx,
-		`select `+deploymentSelectColumnsQualified+`
-		   from deployments d
-		   join apps a on a.id = d.app_id
-		  where true`+floorCandidateFilter)
+	rows, err := s.pool.Query(ctx, floorDeploymentsQuery(""))
 	if err != nil {
 		return nil, err
 	}
@@ -48,11 +57,7 @@ func (s *PgStore) ListFloorDeployments(ctx context.Context) ([]Deployment, error
 // ListFloorDeploymentsByNodeID is ListFloorDeployments for the apps owned by
 // one compute node (the floor reconciler's owner shard).
 func (s *PgStore) ListFloorDeploymentsByNodeID(ctx context.Context, nodeID string) ([]Deployment, error) {
-	rows, err := s.pool.Query(ctx,
-		`select `+deploymentSelectColumnsQualified+`
-		   from deployments d
-		   join apps a on a.id = d.app_id
-		  where a.node_id = $1`+floorCandidateFilter, nodeID)
+	rows, err := s.pool.Query(ctx, floorDeploymentsQuery(" and a.node_id = $1"), nodeID)
 	if err != nil {
 		return nil, err
 	}

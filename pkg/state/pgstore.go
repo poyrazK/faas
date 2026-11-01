@@ -3344,17 +3344,33 @@ func (s *PgStore) ListInstancesForLifecycleReconciliation(ctx context.Context, n
 	}
 	args = append(args, limit)
 
-	sel := fmt.Sprintf(`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
-		   from instances i
-		   join apps a on a.id = i.app_id
-		   join app_resource_accounts ac ON ac.app_id = a.id
-		  where (
-		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen'))
-		     or (ac.status = 'deleted_pending' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','evicting_account_deleting'))
-		  )%s
-		  order by i.started_at asc, i.id asc
-		  limit $%d`, nodeClause, limitArg)
+	// One branch per cause, unioned, rather than one OR across the app and
+	// account joins: an OR spanning two relations cannot use an index, so it
+	// scanned every instance ever recorded (tens of thousands of terminal
+	// rows) to find the handful that are live. The deleted-app branch walks
+	// the live-state partial index; the deleting-account branch starts from
+	// the few apps whose owner is deleted_pending and probes (app_id, state).
+	// UNION drops an instance that matches both causes.
+	sel := fmt.Sprintf(`with targets as (
+		select i.id
+		  from instances i
+		  join apps a on a.id = i.app_id
+		 where a.status = 'deleted'
+		   and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')%[1]s
+		union
+		select i.id
+		  from app_resource_accounts ac
+		  join apps a on a.id = ac.app_id
+		  join instances i on i.app_id = a.id
+		 where ac.status = 'deleted_pending'
+		   and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','evicting_account_deleting')%[1]s
+		)
+		select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		       coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
+		  from instances i
+		  join targets t on t.id = i.id
+		 order by i.started_at asc, i.id asc
+		 limit $%[2]d`, nodeClause, limitArg)
 	rows, err := s.pool.Query(ctx, sel, args...)
 	if err != nil {
 		return nil, err
