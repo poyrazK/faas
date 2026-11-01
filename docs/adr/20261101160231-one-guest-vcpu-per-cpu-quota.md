@@ -61,6 +61,9 @@
      IDs or `*`. Empty (the default) keeps today's plan topology. A list of
      apps, not nodes, lets two identical apps on the same node be compared at
      the same time. The same list later applies the baseline and ceiling.
+     ADR-20261101215228 replaces this environment variable with the runtime
+     config key `guest_vcpu_from_cpu_apps`, and makes the baseline per GB,
+     the ceiling floor and the millicores per vCPU runtime config too.
 - **Why CPU follows RAM:** billing is plan RAM per running second (§4.7),
   but today every app books one core and may use one core whatever its RAM.
   So one billed GB-second carried four cores' worth of ceiling on Free and
