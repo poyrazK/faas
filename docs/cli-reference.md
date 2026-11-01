@@ -456,102 +456,6 @@ gregale deploy check --project --project-slug shop --from staging --env producti
 
 Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project&#39;s release prerequisites against current state.
 
-### deploy resolve-contract
-
-Record checks and a verified roll-forward after failed cleanup
-
-`gregale deploy resolve-contract [--replacement-attempt <ID>] [--task-id <ID>] [--generation <N>] [--request-id <ID>] [--evidence-hash <SHA256>] [--database-state-checked] [--execution-quiescent] ATTEMPT_ID`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--replacement-attempt <ID>` | verified corrected deployment attempt |  |
-| `--task-id <ID>` | inspected original cleanup task |  |
-| `--generation <N>` | inspected cleanup generation |  |
-| `--request-id <ID>` | reuse after a lost recovery response |  |
-| `--evidence-hash <SHA256>` | SHA256 of private SQL/execution evidence |  |
-| `--database-state-checked` | attest database inspection/repair |  |
-| `--execution-quiescent` | attest original cleanup execution has stopped |  |
-
-### deploy contract
-
-Run planned schema cleanup after retained versions and work drain
-
-`gregale deploy contract [--request-id <ID>] [--generation <N>] ATTEMPT_ID`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--request-id <ID>` | reuse this contract identity after an ambiguous response |  |
-| `--generation <N>` | require this inspected checkpoint generation |  |
-
-### deploy status
-
-Inspect an atomic project attempt and available recovery actions
-
-`gregale deploy status ATTEMPT_ID`
-
-### deploy abort
-
-Stop a progressive rollout and request guarded baseline restoration
-
-`gregale deploy abort [--request-id <ID>] [--generation <N>] ATTEMPT_ID`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--request-id <ID>` | reuse this control identity after an ambiguous response |  |
-| `--generation <N>` | require this inspected checkpoint generation |  |
-
-### deploy recover
-
-Retry baseline health verification for a blocked progressive deploy
-
-`gregale deploy recover [--request-id <ID>] [--generation <N>] ATTEMPT_ID`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--request-id <ID>` | reuse this control identity after an ambiguous response |  |
-| `--generation <N>` | require this inspected checkpoint generation |  |
-
-### deploy retry
-
-Rebuild confirmed failed workloads from a saved project deploy
-
-`gregale deploy retry [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--yes] [--no-wait] [--timeout <SECONDS>] SESSION_ID`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--tarball <PATH>` | source archive to rebuild |  |
-| `--path <DIR>` | source directory to rebuild (default: current directory) |  |
-| `--source <auto|head|worktree>` | local source policy (default: auto) | one of `auto` · `head` · `worktree` |
-| `--worktree` | include working tree changes (alias for --source=worktree) |  |
-| `--yes` | confirm the retry plan |  |
-| `--no-wait` | return after acceptance |  |
-| `--timeout <SECONDS>` | maximum wait seconds (default 1200) |  |
-
-Examples:
-
-```sh
-gregale release attempt retry SESSION_ID --path . --source=worktree --yes
-gregale release attempt retry SESSION_ID --tarball source.tar.gz --yes
-```
-
-### deploy resume
-
-Reconnect to a saved app or project deploy and finish pending checks
-
-`gregale deploy resume [--app <SLUG>] [--timeout <SECONDS>] [SESSION_ID]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | select the most recent saved deploy for this app |  |
-| `--timeout <SECONDS>` | maximum wait seconds (default 1200) |  |
-
-Examples:
-
-```sh
-gregale release resume --app my-api
-gregale release resume SESSION_ID --json
-```
-
 
 ## logs
 
@@ -1014,6 +918,100 @@ Save filters as a named view
 | `--limit <1..200>` | HTTP page size (default 100) |  |
 | `--replace` | replace an existing view |  |
 
+### logs drain
+
+Ship app runtime logs to an HTTP JSON or OTLP endpoint
+
+#### logs drain list
+
+List an app&#39;s log drains
+
+`gregale logs drain list [--app <SLUG>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+
+Examples:
+
+```sh
+gregale logs drain list --app my-app
+```
+
+#### logs drain create
+
+Add a log drain; the credential is read from an environment variable
+
+`gregale logs drain create [--app <SLUG>] --url <URL> [--kind <KIND>] [--auth-header-env <ENV>] [--disabled] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--url <URL>` | destination URL | required |
+| `--kind <KIND>` | destination format (default http_json) | one of `http_json` · `otlp` |
+| `--auth-header-env <ENV>` | environment variable holding the Authorization value (&#39;Bearer …&#39;) or one &#39;Name: value&#39; header |  |
+| `--disabled` | create the drain disabled |  |
+
+Examples:
+
+```sh
+LOG_TOKEN='Bearer …' gregale logs drain create --app my-app --url https://logs.example.com/ingest --auth-header-env LOG_TOKEN
+```
+
+#### logs drain get
+
+Show one log drain (credential masked)
+
+`gregale logs drain get [--app <SLUG>] --id <ID> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+
+#### logs drain health
+
+Show delivery health: queue, delivered, failed and last error
+
+`gregale logs drain health [--app <SLUG>] --id <ID> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+
+Examples:
+
+```sh
+gregale logs drain health --app my-app --id <drain-id>
+```
+
+#### logs drain update
+
+Change a drain&#39;s URL or credential, or pause and resume it
+
+`gregale logs drain update [--app <SLUG>] --id <ID> [--url <URL>] [--auth-header-env <ENV>] [--enable] [--disable] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+| `--url <URL>` | new destination URL |  |
+| `--auth-header-env <ENV>` | environment variable holding the new Authorization value (&#39;Bearer …&#39;) or one &#39;Name: value&#39; header |  |
+| `--enable` | resume delivery |  |
+| `--disable` | pause delivery |  |
+
+#### logs drain delete
+
+Delete a log drain
+
+`gregale logs drain delete [--app <SLUG>] --id <ID> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+
 
 ## status
 
@@ -1054,6 +1052,16 @@ Open a CLI docs page
 
 Usage: open docs [&lt;slug&gt;].
 
+### open dashboard
+
+Open the account dashboard in your browser
+
+`gregale open dashboard [--stateless]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--stateless` | open the stateless-advisory landing page instead of the account page |  |
+
 
 ## rollback
 
@@ -1089,17 +1097,19 @@ gregale rollback my-api --to v41 --restore-databases
 
 Read an exact rollback operation
 
-`gregale rollback status --operation <UUID> [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
+`gregale rollback status [--operation <UUID>] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--operation <UUID>` | accepted rollback operation UUID | required |
+| `--operation <UUID>` | accepted rollback operation UUID |  |
 | `--wait` | wait for completion with a committed audit receipt |  |
 | `--timeout <duration>` | wait deadline (default 10m) |  |
 | `--poll-interval <duration>` | poll interval (default 2s) |  |
 | `--json` | print the operation receipt |  |
 
 Waiting never submits another rollback.
+
+With a switch ID in place of --operation, it shows a rollback that restores the database (`gregale rollback status &lt;slug&gt; &lt;switch-id&gt;`).
 
 ### rollback switches
 
@@ -1110,28 +1120,6 @@ List rollbacks that restored or are restoring the database
 | Flag | Meaning | |
 |---|---|---|
 | `--json` | machine-readable output |  |
-
-### rollback switch
-
-Show, follow or cancel a rollback that restores the database
-
-`gregale rollback switch [--cancel] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug> <switch-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--cancel` | cancel the switch; the app keeps its current release and database |  |
-| `--wait` | follow the switch until it ends |  |
-| `--timeout <duration>` | wait deadline (default 60m) |  |
-| `--poll-interval <duration>` | poll interval (default 2s) |  |
-| `--json` | machine-readable output |  |
-
-Examples:
-
-```sh
-gregale release rollback status my-api 6f1c2b0e-7d2a-4f7e-9a51-3c8d2f0b9e41 --wait
-```
-
-A switch can be cancelled until it starts switching the release and the bindings.
 
 
 ## run
@@ -1760,7 +1748,7 @@ gregale release rollback my-api --to v41 --restore-databases
 
 Show, follow or cancel a rollback that restores the database
 
-`gregale release rollback status [--cancel] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug> <switch-id>`
+`gregale release rollback status [--cancel] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--operation <UUID>] [--json] <slug> <switch-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1768,6 +1756,7 @@ Show, follow or cancel a rollback that restores the database
 | `--wait` | follow the switch until it ends |  |
 | `--timeout <duration>` | wait deadline (default 60m) |  |
 | `--poll-interval <duration>` | poll interval (default 2s) |  |
+| `--operation <UUID>` | read this rollback operation instead of a switch |  |
 | `--json` | machine-readable output |  |
 
 Examples:
@@ -1777,6 +1766,8 @@ gregale release rollback status my-api 6f1c2b0e-7d2a-4f7e-9a51-3c8d2f0b9e41 --wa
 ```
 
 A switch can be cancelled until it starts switching the release and the bindings.
+
+With --operation UUID in place of a switch ID, it reads a rollback operation, as `gregale rollback status` does.
 
 #### release rollback switches
 
@@ -14713,7 +14704,7 @@ Look up a distributed trace by its trace ID
 
 Group failures into issues and track ownership and resolution
 
-`gregale debug issue <releases|token|impact-alert|lifecycle-alert|ownership-rule|compound-alert|source-map|list|get|assign|resolve|reopen|ignore|merge|split|tickets|links|teams|codeowners|views|tokens|update> [--app <SLUG>] [--release <UUID>] [--state <STATE>] [--env <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--team <UUID>] [--assignee <OWNER>] [--sort <ORDER>] [--tag <KEY=VALUE>] [--min-customers <N>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>] [--rules-file <PATH>]`
+`gregale debug issue <releases|token|impact-alert|ownership-rule|lifecycle-alert|compound-alert|source-map|list|get|assign|resolve|reopen|ignore|merge|split|tickets|links|teams|codeowners|views|tokens|update> [--app <SLUG>] [--release <UUID>] [--state <STATE>] [--env <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--team <UUID>] [--assignee <OWNER>] [--sort <ORDER>] [--tag <KEY=VALUE>] [--min-customers <N>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>] [--rules-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14825,42 +14816,6 @@ Read or configure customer-impact alert threshold
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
 
-#### debug issue lifecycle-alert
-
-get · set
-
-`gregale debug issue lifecycle-alert <get|set>`
-
-##### debug issue lifecycle-alert get
-
-Read, save or preview new-issue/regression alert filters
-
-`gregale debug issue lifecycle-alert get --app <SLUG> [--environments <ENVS>] [--cooldown-seconds <N>] [--expected-revision <N>] [--issue <UUID>] [--event <EVENT>] <get|save|preview>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` |  | required |
-| `--environments <ENVS>` | comma-separated exact names; empty means all |  |
-| `--cooldown-seconds <N>` | shared cooldown; zero disables throttling |  |
-| `--expected-revision <N>` | required when saving |  |
-| `--issue <UUID>` | existing issue for draft preview |  |
-| `--event <EVENT>` | created or regressed for preview |  |
-
-##### debug issue lifecycle-alert set
-
-Read, save or preview new-issue/regression alert filters
-
-`gregale debug issue lifecycle-alert set --app <SLUG> [--environments <ENVS>] [--cooldown-seconds <N>] [--expected-revision <N>] [--issue <UUID>] [--event <EVENT>] <get|save|preview>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` |  | required |
-| `--environments <ENVS>` | comma-separated exact names; empty means all |  |
-| `--cooldown-seconds <N>` | shared cooldown; zero disables throttling |  |
-| `--expected-revision <N>` | required when saving |  |
-| `--issue <UUID>` | existing issue for draft preview |  |
-| `--event <EVENT>` | created or regressed for preview |  |
-
 #### debug issue ownership-rule
 
 get · set
@@ -14889,17 +14844,76 @@ Read or replace automatic assignment rules
 | `--app <SLUG>` | application slug | required |
 | `--rules-file <PATH>` | JSON policy file to replace rules; use - for stdin |  |
 
+#### debug issue lifecycle-alert
+
+Read, save or preview new-issue/regression alert filters
+
+`gregale debug issue lifecycle-alert <get|set> --app <SLUG> [--environments <ENVS>] [--cooldown-seconds <N>] [--expected-revision <N>] [--issue <UUID>] [--event <EVENT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--environments <ENVS>` | comma-separated exact names; empty means all |  |
+| `--cooldown-seconds <N>` | shared cooldown; zero disables throttling |  |
+| `--expected-revision <N>` | required when saving |  |
+| `--issue <UUID>` | existing issue for draft preview |  |
+| `--event <EVENT>` | created or regressed for preview |  |
+
+##### debug issue lifecycle-alert get
+
+Read the alert filters
+
+`gregale debug issue lifecycle-alert get --app <SLUG> [--environments <ENVS>] [--cooldown-seconds <N>] [--expected-revision <N>] [--issue <UUID>] [--event <EVENT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--environments <ENVS>` | comma-separated exact names; empty means all |  |
+| `--cooldown-seconds <N>` | shared cooldown; zero disables throttling |  |
+| `--expected-revision <N>` | required when saving |  |
+| `--issue <UUID>` | existing issue for draft preview |  |
+| `--event <EVENT>` | created or regressed for preview |  |
+
+##### debug issue lifecycle-alert set
+
+Save the alert filters
+
+`gregale debug issue lifecycle-alert set --app <SLUG> [--environments <ENVS>] [--cooldown-seconds <N>] [--expected-revision <N>] [--issue <UUID>] [--event <EVENT>] [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--environments <ENVS>` | comma-separated exact names; empty means all |  |
+| `--cooldown-seconds <N>` | shared cooldown; zero disables throttling |  |
+| `--expected-revision <N>` | required when saving |  |
+| `--issue <UUID>` | existing issue for draft preview |  |
+| `--event <EVENT>` | created or regressed for preview |  |
+| `--dry-run` | show the alerts the draft filters would send without saving them |  |
+
 #### debug issue compound-alert
-
-get · set
-
-`gregale debug issue compound-alert <get|set>`
-
-##### debug issue compound-alert get
 
 Manage and preview shared-window event and customer conditions
 
-`gregale debug issue compound-alert get --app <SLUG> [--key <KEY>] [--env <NAME>] [--minimum-events <N>] [--minimum-customers <N>] [--window-seconds <N>] [--cooldown-seconds <N>] [--enabled[=true|false]] [--expected-revision <N>] [--issue <UUID>] <get|save|remove|preview>`
+`gregale debug issue compound-alert <get|set|delete> --app <SLUG> [--key <KEY>] [--env <NAME>] [--minimum-events <N>] [--minimum-customers <N>] [--window-seconds <N>] [--cooldown-seconds <N>] [--enabled[=true|false]] [--expected-revision <N>] [--issue <UUID>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--key <KEY>` | stable rule key |  |
+| `--env <NAME>` | exact environment; empty matches all (also --environment) |  |
+| `--minimum-events <N>` | event threshold in the shared window |  |
+| `--minimum-customers <N>` | verified distinct customer threshold in the shared window |  |
+| `--window-seconds <N>` |  |  |
+| `--cooldown-seconds <N>` |  |  |
+| `--enabled[=true|false]` | use --enabled=false to disable a saved rule | one of `true` · `false` |
+| `--expected-revision <N>` | required for save/remove |  |
+| `--issue <UUID>` | existing issue for an unsaved preview |  |
+
+##### debug issue compound-alert get
+
+Read the compound rules
+
+`gregale debug issue compound-alert get --app <SLUG> [--key <KEY>] [--env <NAME>] [--minimum-events <N>] [--minimum-customers <N>] [--window-seconds <N>] [--cooldown-seconds <N>] [--enabled[=true|false]] [--expected-revision <N>] [--issue <UUID>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14916,9 +14930,29 @@ Manage and preview shared-window event and customer conditions
 
 ##### debug issue compound-alert set
 
-Manage and preview shared-window event and customer conditions
+Save a compound rule
 
-`gregale debug issue compound-alert set --app <SLUG> [--key <KEY>] [--env <NAME>] [--minimum-events <N>] [--minimum-customers <N>] [--window-seconds <N>] [--cooldown-seconds <N>] [--enabled[=true|false]] [--expected-revision <N>] [--issue <UUID>] <get|save|remove|preview>`
+`gregale debug issue compound-alert set --app <SLUG> [--key <KEY>] [--env <NAME>] [--minimum-events <N>] [--minimum-customers <N>] [--window-seconds <N>] [--cooldown-seconds <N>] [--enabled[=true|false]] [--expected-revision <N>] [--issue <UUID>] [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--key <KEY>` | stable rule key |  |
+| `--env <NAME>` | exact environment; empty matches all (also --environment) |  |
+| `--minimum-events <N>` | event threshold in the shared window |  |
+| `--minimum-customers <N>` | verified distinct customer threshold in the shared window |  |
+| `--window-seconds <N>` |  |  |
+| `--cooldown-seconds <N>` |  |  |
+| `--enabled[=true|false]` | use --enabled=false to disable a saved rule | one of `true` · `false` |
+| `--expected-revision <N>` | required for save/remove |  |
+| `--issue <UUID>` | existing issue for an unsaved preview |  |
+| `--dry-run` | preview the rule against retained events without saving it |  |
+
+##### debug issue compound-alert delete
+
+Remove a compound rule
+
+`gregale debug issue compound-alert delete --app <SLUG> [--key <KEY>] [--env <NAME>] [--minimum-events <N>] [--minimum-customers <N>] [--window-seconds <N>] [--cooldown-seconds <N>] [--enabled[=true|false]] [--expected-revision <N>] [--issue <UUID>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14935,15 +14969,22 @@ Manage and preview shared-window event and customer conditions
 
 #### debug issue source-map
 
-get · publish
+Publish, inspect or retire deployment mapping artifacts
 
-`gregale debug issue source-map <get|publish>`
+`gregale debug issue source-map <get|publish|retire> --app <SLUG> --deployment <UUID> [--directory <PATH>] [--manifest-file <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--deployment <UUID>` |  | required |
+| `--directory <PATH>` | deployed directory corresponding to the build scan root |  |
+| `--manifest-file <PATH>` | portable source-map manifest file |  |
 
 ##### debug issue source-map get
 
-Publish, inspect or retire deployment mapping artifacts
+Show a deployment&#39;s mapping artifact
 
-`gregale debug issue source-map get --app <SLUG> --deployment <UUID> [--directory <PATH>] [--manifest-file <PATH>] <publish|status|retire>`
+`gregale debug issue source-map get --app <SLUG> --deployment <UUID> [--directory <PATH>] [--manifest-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14954,9 +14995,22 @@ Publish, inspect or retire deployment mapping artifacts
 
 ##### debug issue source-map publish
 
-Publish, inspect or retire deployment mapping artifacts
+Publish a deployment&#39;s mapping artifact
 
-`gregale debug issue source-map publish --app <SLUG> --deployment <UUID> [--directory <PATH>] [--manifest-file <PATH>] <publish|status|retire>`
+`gregale debug issue source-map publish --app <SLUG> --deployment <UUID> [--directory <PATH>] [--manifest-file <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--deployment <UUID>` |  | required |
+| `--directory <PATH>` | deployed directory corresponding to the build scan root |  |
+| `--manifest-file <PATH>` | portable source-map manifest file |  |
+
+##### debug issue source-map retire
+
+Retire a deployment&#39;s mapping artifact
+
+`gregale debug issue source-map retire --app <SLUG> --deployment <UUID> [--directory <PATH>] [--manifest-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
