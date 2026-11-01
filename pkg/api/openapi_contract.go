@@ -14,11 +14,13 @@ type GitHubInstallMutationRequest struct {
 // credentials; the nested sync result is kept anonymous because it is an
 // inline object in the public OpenAPI document.
 type GitHubInstallStatus struct {
-	State                        string            `json:"state"`
-	Health                       string            `json:"health"`
-	Connected                    bool              `json:"connected"`
-	InstallationID               int64             `json:"installation_id,omitempty"`
-	GitHubLogin                  string            `json:"github_login,omitempty"`
+	State          string `json:"state"`
+	Health         string `json:"health"`
+	Connected      bool   `json:"connected"`
+	InstallationID int64  `json:"installation_id,omitempty"`
+	GitHubLogin    string `json:"github_login,omitempty"`
+	// DefaultBranch is empty for installations connected since
+	// ADR-20261101160300; a bind without a branch takes the repository's.
 	DefaultBranch                string            `json:"default_branch,omitempty"`
 	RepoFullName                 string            `json:"repo_full_name,omitempty"`
 	ProductionBranch             string            `json:"production_branch,omitempty"`

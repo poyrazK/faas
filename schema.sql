@@ -1575,6 +1575,7 @@ CREATE TABLE public.apps (
     deployment_mail_revision bigint DEFAULT 1 NOT NULL,
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     github_production_trigger text,
+    github_preview_enabled boolean,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),

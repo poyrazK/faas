@@ -219,18 +219,18 @@ func cmdGithubSetup(args []string) int {
 			return printErr("GitHub setup found an invalid repository binding", errors.New("rerun with --repo OWNER/NAME"))
 		}
 	}
-	// An app without a project keeps only its production trigger; every
-	// other setting belongs to a project (ADR-20261101160300). Refuse those
-	// flags before anything changes.
+	// An app without a project keeps only its production trigger and
+	// whether it gets previews; every other setting belongs to a project
+	// (ADR-20261101160300). Refuse those flags before anything changes.
 	projectBacked, err := githubSetupProjectBacked(ctx, client, positional[0])
 	if err != nil {
 		return printErr("GitHub deployment policy failed", err)
 	}
 	if !projectBacked {
 		if flag := githubSetupProjectOnlyFlag(fs); flag != "" {
-			return printErr("--"+flag+" needs a project-backed app", errors.New("an app without a project can bind a repository and hand production deploys to GitHub Actions; previews, root directory, ignored paths and branch mappings are project settings"))
+			return printErr("--"+flag+" needs a project-backed app", errors.New("an app without a project can bind a repository, hand production deploys to GitHub Actions and turn previews on or off; preview tuning, root directory, ignored paths and branch mappings are project settings"))
 		}
-		policyPatch = &api.GitHubDeploymentPolicyPatch{ProductionTrigger: policyPatch.ProductionTrigger}
+		policyPatch = &api.GitHubDeploymentPolicyPatch{ProductionTrigger: policyPatch.ProductionTrigger, PreviewEnabled: policyPatch.PreviewEnabled}
 	}
 	bindInstallation := *installationID
 	if bindInstallation == 0 {
@@ -363,7 +363,7 @@ func githubSetupProjectBacked(ctx context.Context, client *Client, slug string) 
 // githubSetupProjectOnlyFlag names the first flag set that only a
 // project-backed app supports, or "".
 func githubSetupProjectOnlyFlag(fs *flag.FlagSet) string {
-	projectOnly := map[string]bool{"preview": true, "no-preview": true, "preview-ttl-hours": true, "preview-bots": true,
+	projectOnly := map[string]bool{"preview-ttl-hours": true, "preview-bots": true,
 		"no-preview-bots": true, "preview-drafts": true, "no-preview-drafts": true, "preview-service-policy": true,
 		"root-dir": true, "ignore": true, "deploy-branches": true}
 	found := ""

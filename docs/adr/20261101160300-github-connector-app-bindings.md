@@ -49,19 +49,35 @@ test exercised a stub RPC that returns an error in production:
 8. The durable webhook inbox's event check refused `issues`, which githubd
    enqueues for issue-tracker callbacks (ADR-1476).
 
+A second review of the first fix found four gaps for apps bound at the app
+level:
+
+9. A pull request previewed only the first app bound to its branch, while a
+   push deployed all of them.
+10. Such an app always got previews (drafts included); only a project could
+    turn them off.
+11. With a project bound to the same repository, a push deployed only the
+    project's apps, and a push to a branch the project does not deploy was
+    ignored, so an app bound to that branch never deployed.
+12. A release tag deployed such an app only when it was bound to the
+    repository's default branch.
+
 ## Decision
 
-1. **A push deploys the apps bound to its repository when no project is.**
-   githubd keeps the project path unchanged. When `ProjectByRepo` finds no
-   project, it builds every live app of the account bound to the pushed
-   repository, branch and installation, with no reconcile. A project-backed
-   app bound at the app level follows its project's policy and is skipped when
-   that project is bound to another repository.
-2. **An app without a project stores its production trigger on its
-   binding** (`apps.github_production_trigger`, NULL = webhook). The deployment
-   policy API reads and sets only that field for such an app; the other policy
-   fields stay project settings and answer 409 `project_required`. Unbinding
-   clears it; a re-bind keeps it.
+1. **A push deploys the apps bound to its branch, with or without a
+   project.** githubd keeps the project path unchanged and builds, beside it,
+   every live app of the account bound at the app level to the pushed
+   repository, branch and installation, with no reconcile, each to its own
+   production scope. Without a project, or on a branch the project does not
+   deploy, only those apps build. An app in a project without a repository
+   follows its project's policy; one whose project is bound to another
+   repository is skipped.
+2. **An app without a project stores its production trigger and preview
+   switch on its binding** (`apps.github_production_trigger`, NULL = webhook;
+   `apps.github_preview_enabled`, NULL = on). The deployment policy API reads
+   and sets only those two fields for such an app; the other policy fields
+   stay project settings and answer 409 `project_required`. Unbinding clears
+   them; a re-bind keeps them.
 3. **The account's durable connection authorizes an installation in every
    browser flow.** `/oauth/callback` persists nothing and redirects to GitHub
    authorization with the installation bound into the OAuth state, as the
@@ -88,11 +104,22 @@ test exercised a stub RPC that returns an error in production:
 8. **App settings are watched.** githubd reads `GET /app` with each delivery
    log poll and exports `githubd_github_app_config_missing{kind,name}`;
    `FaasGithubAppConfigDrift` names a missing event or permission.
+9. **A pull request previews every app bound to its branch.** For apps
+   without a project, the PR's preview set holds a preview of each one with
+   previews on, in app ID order (the first is the set's root); closing the PR
+   closes every member of the set.
+10. **A release tag deploys the branch it tags.** Without a project, a tag
+    deploys the apps bound to the production branch whose head is the tagged
+    commit, the default branch first; a tag on an older commit deploys
+    nothing. A project's tags are unchanged.
+11. **`default_branch` in connection status is deprecated.** It is empty for
+    connections made after this change; `github_login` already names the
+    account the App is installed on.
 
 ## Compatibility
 
-Both migrations are expand-only. An older githubd ignores the trigger column
-and writes a subset of the widened event check. A new githubd keeps the phrase
+The migrations are expand-only. An older githubd ignores the trigger and
+preview columns and writes a subset of the widened event check. A new githubd keeps the phrase
 an older apid matches for "App not installed"; an older apid shows the new
 refusals as before (502). A new apid accepts an older githubd's untyped errors
 and its `main` default branch. The ExchangeOAuthCode proto is unchanged.
@@ -110,7 +137,9 @@ and its `main` default branch. The ExchangeOAuthCode proto is unchanged.
 ## Validation
 
 Unit tests cover the app-bound push (one and several apps, Actions trigger,
-deleted app, project bound elsewhere), the installation choice and refusals,
+deleted app, project bound elsewhere, beside a project, a branch the project
+does not deploy), release tags, previews of several apps and the preview
+switch, the installation choice and refusals,
 the wizard for a password session and an existing app, the default branch,
 the installation listing, renames by ID and `installation_target`, and the App
 settings check. The acceptance test for `github-deploys` is the app-bound push

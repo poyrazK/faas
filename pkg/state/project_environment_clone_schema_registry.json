@@ -2574,6 +2574,7 @@
       "github_install_id",
       "github_install_linked_at",
       "github_owner_id",
+      "github_preview_enabled",
       "github_production_branch",
       "github_production_trigger",
       "github_repo_full_name",

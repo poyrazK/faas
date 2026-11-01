@@ -6581,7 +6581,8 @@ func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) 
 		     github_install_binding_id = null,
 		     github_install_account_id = null,
 		     github_install_linked_at = null,
-		     github_production_trigger = null
+		     github_production_trigger = null,
+		     github_preview_enabled = null
 		 where id = $1`,
 		appID,
 	)
@@ -6917,7 +6918,8 @@ func (s *PgStore) RevokeGitHubInstallation(ctx context.Context, installationID i
 		       github_install_binding_id = null,
 		       github_install_account_id = null,
 		       github_install_linked_at = null,
-		       github_production_trigger = null
+		       github_production_trigger = null,
+		       github_preview_enabled = null
 		 where github_install_id = $1`, installationID); err != nil {
 		return fmt.Errorf("state: clear GitHub bindings: %w", err)
 	}
@@ -6970,7 +6972,8 @@ func (s *PgStore) RemoveGitHubRepositories(ctx context.Context, installationID i
 		       github_install_binding_id = null,
 		       github_install_account_id = null,
 		       github_install_linked_at = null,
-		       github_production_trigger = null
+		       github_production_trigger = null,
+		       github_preview_enabled = null
 		 where github_install_id = $1
 		   and github_repo_full_name = any($2::text[])`, installationID, repoFullNames); err != nil {
 		return fmt.Errorf("state: clear removed GitHub repositories: %w", err)
@@ -7092,20 +7095,37 @@ func (s *PgStore) RenameGitHubAccount(ctx context.Context, installationID int64,
 // empty trigger restores the webhook. ErrNotFound when the app is not bound
 // to GitHub under accountID.
 func (s *PgStore) SetGitHubAppProductionTrigger(ctx context.Context, appID, accountID string, trigger ProductionTrigger) error {
+	return s.UpdateGitHubAppPolicy(ctx, appID, accountID, GitHubAppPolicyPatch{ProductionTrigger: &trigger})
+}
+
+// UpdateGitHubAppPolicy applies patch to the GitHub policy of an app bound
+// without a project (ADR-20261101160300), in one statement. ErrNotFound when
+// the app is not bound to GitHub under accountID.
+func (s *PgStore) UpdateGitHubAppPolicy(ctx context.Context, appID, accountID string, patch GitHubAppPolicyPatch) error {
 	if appID == "" || accountID == "" {
 		return ErrNotFound
 	}
-	if trigger != "" && !trigger.Valid() {
-		return fmt.Errorf("state: production_trigger must be %q or %q", ProductionTriggerWebhook, ProductionTriggerActions)
+	if err := patch.Validate(); err != nil {
+		return err
 	}
+	trigger, previews := "", true
+	if patch.ProductionTrigger != nil {
+		trigger = string(*patch.ProductionTrigger)
+	}
+	if patch.PreviewEnabled != nil {
+		previews = *patch.PreviewEnabled
+	}
+	// NULL keeps each default: the webhook, and previews on.
 	tag, err := s.pool.Exec(ctx, `
 		update apps
-		   set github_production_trigger = nullif($3, '')
+		   set github_production_trigger = case when $3 then nullif($4, '') else github_production_trigger end,
+		       github_preview_enabled = case when $5 then nullif($6::boolean, true) else github_preview_enabled end
 		 where id = $1
 		   and account_id = $2
-		   and github_install_id is not null`, appID, accountID, string(trigger))
+		   and github_install_id is not null`,
+		appID, accountID, patch.ProductionTrigger != nil, trigger, patch.PreviewEnabled != nil, previews)
 	if err != nil {
-		return fmt.Errorf("state: set GitHub production trigger: %w", err)
+		return fmt.Errorf("state: update GitHub app policy: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -7133,12 +7153,12 @@ func (s *PgStore) GetGithubInstallBindingForApp(ctx context.Context, appID, acco
 		`select id, github_install_id, github_repo_full_name, github_owner_id,
 		        github_repo_id, github_production_branch,
 		        github_install_binding_id, github_install_account_id, github_install_linked_at,
-		        coalesce(github_production_trigger, '')
+		        coalesce(github_production_trigger, ''), coalesce(github_preview_enabled, true) = false
 		 from apps
 		 where id = $1
 		   and account_id = $2
 		   and github_install_id is not null`, appID, accountID,
-	).Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &b.AccountID, &linkedAt, &b.ProductionTrigger)
+	).Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &b.AccountID, &linkedAt, &b.ProductionTrigger, &b.PreviewsOff)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubBinding{}, ErrNotFound
@@ -7199,7 +7219,7 @@ func (s *PgStore) githubInstallBindingForRepoBranch(ctx context.Context, repoFul
 	err := s.pool.QueryRow(ctx,
 		`select id, github_install_account_id, github_install_binding_id, github_install_linked_at,
 		        github_install_id, github_repo_full_name, github_owner_id, github_repo_id,
-		        github_production_branch, coalesce(github_production_trigger, '')
+		        github_production_branch, coalesce(github_production_trigger, ''), coalesce(github_preview_enabled, true) = false
 		 from apps
 		 where github_repo_full_name = $1
 		   and github_production_branch = $2
@@ -7207,7 +7227,7 @@ func (s *PgStore) githubInstallBindingForRepoBranch(ctx context.Context, repoFul
 		   and ($3::bigint = 0 or github_install_id = $3)
 		 order by (status = 'deleted'), id
 		 limit 1`, repoFullName, productionBranch, installationID,
-	).Scan(&b.AppID, &accountID, &bindingID, &linkedAt, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &b.ProductionTrigger)
+	).Scan(&b.AppID, &accountID, &bindingID, &linkedAt, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &b.ProductionTrigger, &b.PreviewsOff)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubBinding{}, ErrNotFound
@@ -7252,7 +7272,7 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 		`select id, github_install_id, github_repo_full_name, github_owner_id,
 		        github_repo_id, github_production_branch,
 		        github_install_binding_id, github_install_linked_at,
-		        coalesce(github_production_trigger, '')
+		        coalesce(github_production_trigger, ''), coalesce(github_preview_enabled, true) = false
 		 from apps
 		 where github_install_account_id = $1
 		   and github_install_id is not null`, accountID,
@@ -7269,7 +7289,7 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 		var branch *string
 		var bindingID *string
 		var linkedAt *time.Time
-		if err := rows.Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &linkedAt, &b.ProductionTrigger); err != nil {
+		if err := rows.Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &linkedAt, &b.ProductionTrigger, &b.PreviewsOff); err != nil {
 			return nil, err
 		}
 		if installID != nil {

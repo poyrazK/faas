@@ -207,11 +207,23 @@ Check Run on the pushed commit.
 
 3. **Push.** A push to the production branch builds and deploys the app. Put
    `[skip deploy]` in the commit message to skip one push. Several apps can be
-   bound to one repository; each push deploys every one of them, or, for a
-   project, the apps whose source changed.
+   bound to one repository; each push deploys every one bound to the pushed
+   branch, and, for a project, the project's apps whose source changed. An
+   app bound on its own deploys beside a project bound to the same
+   repository.
 
 Without `--branch`, the production branch is the repository's default branch
 on GitHub at the time you bind.
+
+**Pull-request previews.** A pull request into a bound branch gets a preview
+of every app bound to that branch, at `pr-<number>-<app>`. Closing the pull
+request tears them down. Turn an app's previews off with `gregale github setup
+my-api --no-preview` or `PATCH /v1/apps/my-api/github/deployment-policy`
+with `{"preview_enabled": false}`.
+
+**Release tags.** A tag push deploys the apps bound to the branch whose head
+the tag points at; a tag on an older commit deploys nothing. A project's tags
+deploy its production branch.
 
 **Several installations.** If your GitHub user can connect more than one
 installation (your personal account and an organization, say), Connect GitHub
@@ -225,8 +237,9 @@ installation belongs to one Gregale account.
 **Deploy from GitHub Actions instead.** `gregale github setup my-api --repo
 acme/my-api` binds the app, writes a deploy workflow, and hands production
 deploys to the workflow (`production_trigger: actions`), so a push deploys
-once. Pull-request previews, a root directory, ignored paths and branch
-mappings are project settings: they need an app that belongs to a project.
+once. Preview lifetime, bot and draft pull requests, a root directory,
+ignored paths and branch mappings are project settings: they need an app that
+belongs to a project.
 
 **Renames.** Renaming or transferring the repository, or renaming the user or
 organization, keeps the binding.

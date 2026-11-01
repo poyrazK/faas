@@ -29184,7 +29184,8 @@ paths:
         project. Legacy allow_marked compatibility rows are migrated to deny;
         customers can explicitly opt back in when production calls are safe.
         An app without a project reports the defaults with an empty
-        `project_id` and its own `production_trigger`.
+        `project_id` and its own `production_trigger` and
+        `preview_enabled`.
       security:
         - bearerAuth: [github:manage]
       responses:
@@ -29208,9 +29209,9 @@ paths:
         trailing `/**` directory patterns. `preview_service_policy=deny`
         rejects preview calls to production dependencies before discovery or
         wake-up; `allow_marked` preserves the marked-call compatibility mode.
-        An app without a project can set only `production_trigger`, once it
-        is bound to a repository; other fields answer 409
-        `project_required`. Mutations require MFA.
+        An app without a project can set only `production_trigger` and
+        `preview_enabled`, once it is bound to a repository; other fields
+        answer 409 `project_required`. Mutations require MFA.
       security:
         - bearerAuth: [github:manage]
       requestBody:
@@ -85564,8 +85565,17 @@ components:
         health: { type: string, enum: [not_connected, unknown, healthy, degraded] }
         connected: { type: boolean }
         installation_id: { type: integer, format: int64 }
-        github_login: { type: string }
-        default_branch: { type: string }
+        github_login:
+          type: string
+          description: The GitHub user or organization the App is installed on.
+        default_branch:
+          type: string
+          deprecated: true
+          description: |
+            Empty for installations connected since ADR-20261101160300: an
+            installation has no default branch, and a bind without a branch
+            takes the repository's default branch. Older connections report
+            the `main` they stored.
         repo_full_name: { type: string }
         production_branch: { type: string }
         deploy_branches:

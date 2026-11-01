@@ -10,10 +10,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// The production trigger of an app bound without a project lives on its
-// binding: every binding read returns it, a re-bind keeps it and an unbind
-// clears it.
-func TestPgStoreGitHubAppProductionTrigger(t *testing.T) {
+// The production trigger and preview switch of an app bound without a
+// project live on its binding: every binding read returns them, a re-bind
+// keeps them and an unbind clears them.
+func TestPgStoreGitHubAppPolicy(t *testing.T) {
 	store, ctx := pgStore(t)
 	acct, err := store.CreateAccount(ctx, "github-trigger-pg@example.com", api.PlanPro)
 	if err != nil {
@@ -41,25 +41,29 @@ func TestPgStoreGitHubAppProductionTrigger(t *testing.T) {
 	if err := store.SetGitHubAppProductionTrigger(ctx, app.ID, acct.ID, state.ProductionTriggerActions); err != nil {
 		t.Fatal(err)
 	}
-	bind() // a re-bind keeps the trigger
+	off := false
+	if err := store.UpdateGitHubAppPolicy(ctx, app.ID, acct.ID, state.GitHubAppPolicyPatch{PreviewEnabled: &off}); err != nil {
+		t.Fatal(err)
+	}
+	bind() // a re-bind keeps the policy
 	byApp, err := store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID)
-	if err != nil || byApp.ProductionTrigger != state.ProductionTriggerActions {
+	if err != nil || byApp.ProductionTrigger != state.ProductionTriggerActions || !byApp.PreviewsOff {
 		t.Fatalf("binding for app = %+v, %v", byApp, err)
 	}
 	byRepo, err := store.GithubInstallBindingForRepoBranchInstallation(ctx, "acme/api", "main", installation)
-	if err != nil || byRepo.ProductionTrigger != state.ProductionTriggerActions {
+	if err != nil || byRepo.ProductionTrigger != state.ProductionTriggerActions || !byRepo.PreviewsOff {
 		t.Fatalf("binding for repository = %+v, %v", byRepo, err)
 	}
 	all, err := store.ListGithubInstallBindingsForAccount(ctx, acct.ID)
-	if err != nil || all[app.ID].ProductionTrigger != state.ProductionTriggerActions {
+	if err != nil || all[app.ID].ProductionTrigger != state.ProductionTriggerActions || !all[app.ID].PreviewsOff {
 		t.Fatalf("account bindings = %+v, %v", all, err)
 	}
 	if err := store.DeleteGithubInstallBinding(ctx, app.ID); err != nil {
 		t.Fatal(err)
 	}
 	bind()
-	if after, err := store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID); err != nil || after.ProductionTrigger != "" {
-		t.Fatalf("binding after unbind and bind = %+v, %v; want the webhook", after, err)
+	if after, err := store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID); err != nil || after.ProductionTrigger != "" || after.PreviewsOff {
+		t.Fatalf("binding after unbind and bind = %+v, %v; want the webhook and previews on", after, err)
 	}
 }
 

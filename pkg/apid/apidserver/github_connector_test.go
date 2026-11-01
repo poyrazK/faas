@@ -157,7 +157,8 @@ func TestGitHubConnectionListsSeveralInstallations(t *testing.T) {
 }
 
 // An app without a project could not hand production deploys to GitHub
-// Actions, so `gregale github setup` failed after binding.
+// Actions, so `gregale github setup` failed after binding, and could not turn
+// its pull-request previews off.
 func TestGitHubDeployPolicyForAppWithoutProject(t *testing.T) {
 	env := newConnectorEnv(t, 42)
 	app := env.app(t, "api", "")
@@ -165,7 +166,10 @@ func TestGitHubDeployPolicyForAppWithoutProject(t *testing.T) {
 	if rec.Code != http.StatusOK || body["project_id"] != "" || body["production_trigger"] != "webhook" {
 		t.Fatalf("GET: %d %s", rec.Code, rec.Body.String())
 	}
-	rec, body = env.call(t, env.srv.PatchGitHubDeployPolicyForTest, http.MethodPatch, "/", app.Slug, map[string]any{"production_trigger": "actions", "preview_enabled": false})
+	if body["preview_enabled"] != true {
+		t.Fatalf("GET previews: %v, want on by default", body)
+	}
+	rec, body = env.call(t, env.srv.PatchGitHubDeployPolicyForTest, http.MethodPatch, "/", app.Slug, map[string]any{"production_trigger": "actions", "preview_ttl_hours": 24})
 	if rec.Code != http.StatusConflict || body["code"] != "project_required" {
 		t.Fatalf("project setting: %d %s, want 409 project_required", rec.Code, rec.Body.String())
 	}
@@ -185,6 +189,13 @@ func TestGitHubDeployPolicyForAppWithoutProject(t *testing.T) {
 	}
 	if _, body = env.call(t, env.srv.GetGitHubDeployPolicyForTest, http.MethodGet, "/", app.Slug, nil); body["production_trigger"] != "actions" {
 		t.Fatalf("GET after PATCH: %v", body)
+	}
+	rec, body = env.call(t, env.srv.PatchGitHubDeployPolicyForTest, http.MethodPatch, "/", app.Slug, map[string]any{"preview_enabled": false})
+	if rec.Code != http.StatusOK || body["preview_enabled"] != false || body["production_trigger"] != "actions" {
+		t.Fatalf("PATCH previews off: %d %s", rec.Code, rec.Body.String())
+	}
+	if binding, err := env.store.GetGithubInstallBindingForApp(t.Context(), app.ID, env.acct.ID); err != nil || !binding.PreviewsOff {
+		t.Fatalf("stored previews off = %v, %v", binding.PreviewsOff, err)
 	}
 }
 

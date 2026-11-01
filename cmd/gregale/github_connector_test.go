@@ -110,16 +110,17 @@ func githubSetupRepo(t *testing.T) string {
 }
 
 // `gregale github setup` on an app without a project failed with
-// project_required after it had bound the app.
+// project_required after it had bound the app, and could not turn its
+// previews off.
 func TestGithubSetupForAppWithoutProject(t *testing.T) {
 	repoDir := githubSetupRepo(t)
 	fake := &githubAPI{status: `{"state":"installed","health":"healthy","connected":false,"installation_id":42}`}
 	fake.serve(t)
 
 	stderr, restore := main.CaptureStderr(t)
-	code := main.CmdGithubSetup([]string{"api", "--repo", "acme/api", "--preview"})
+	code := main.CmdGithubSetup([]string{"api", "--repo", "acme/api", "--preview-ttl-hours", "24"})
 	restore()
-	if code == 0 || !strings.Contains(stderr.String(), "--preview needs a project-backed app") || len(fake.binds) != 0 {
+	if code == 0 || !strings.Contains(stderr.String(), "--preview-ttl-hours needs a project-backed app") || len(fake.binds) != 0 {
 		t.Fatalf("exit = %d binds = %v stderr = %s; a project setting must be refused before any change", code, fake.binds, stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, ".github", "workflows")); err == nil {
@@ -127,7 +128,7 @@ func TestGithubSetupForAppWithoutProject(t *testing.T) {
 	}
 
 	_, restoreOut := main.CaptureStdout(t)
-	code = main.CmdGithubSetup([]string{"api", "--repo", "acme/api"})
+	code = main.CmdGithubSetup([]string{"api", "--repo", "acme/api", "--no-preview"})
 	restoreOut()
 	if code != 0 {
 		t.Fatalf("setup exit = %d", code)
@@ -135,8 +136,8 @@ func TestGithubSetupForAppWithoutProject(t *testing.T) {
 	if len(fake.binds) != 1 || fake.binds[0].ProductionBranch != "trunk" || fake.binds[0].InstallationID != 42 {
 		t.Fatalf("bind = %+v, want installation 42 on the repository's default branch", fake.binds)
 	}
-	if len(fake.patches) != 1 || len(fake.patches[0]) != 1 || fake.patches[0]["production_trigger"] != "actions" {
-		t.Fatalf("policy patches = %v, want production_trigger only", fake.patches)
+	if len(fake.patches) != 1 || len(fake.patches[0]) != 2 || fake.patches[0]["production_trigger"] != "actions" || fake.patches[0]["preview_enabled"] != false {
+		t.Fatalf("policy patches = %v, want production_trigger and preview_enabled only", fake.patches)
 	}
 	workflow, err := os.ReadFile(filepath.Join(repoDir, ".github", "workflows", "gregale.yml"))
 	if err != nil || !strings.Contains(string(workflow), `- "trunk"`) {
