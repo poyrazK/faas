@@ -4139,15 +4139,10 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 const defaultCronTimezone = "UTC"
 
 func normalizeCronTimezone(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if strings.TrimSpace(raw) == "" {
 		return defaultCronTimezone, nil
 	}
-	loc, err := time.LoadLocation(raw)
-	if err != nil {
-		return "", err
-	}
-	return loc.String(), nil
+	return cronexpr.NormalizeCustomerTimezone(raw)
 }
 
 func validCronRetryPolicy(retryMax, backoffSeconds int) bool {
@@ -4275,6 +4270,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, api.ErrPlanCronQuota(acct.Plan, string(qe.Scope), qe.Limit, qe.Observed))
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such app")
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.ErrCronConflict())
 		default:
 			api.WriteProblem(w, api.ErrCapacity("could not create cron"))
 		}
@@ -4465,6 +4462,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		timezonePatch = &timezone
 	}
 	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.ErrCronConflict())
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/conditions"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -87,8 +88,12 @@ func (s *server) getCronStatus(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("read cron runs"))
 		return
 	}
+	paused := ""
+	if store, ok := s.store.(cronrun.Store); ok {
+		paused = cronrun.Paused(r.Context(), store, app, c)
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, conditions.Cron(cronResponse(c), last, time.Now()))
+	writeJSON(w, http.StatusOK, conditions.Cron(cronResponse(c), last, time.Now(), paused))
 }
 
 func (s *server) newestCronRun(ctx context.Context, c state.Cron) (*api.CronRun, error) {

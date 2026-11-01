@@ -38,6 +38,34 @@ func OverPlan(ctx context.Context, store Store, app state.App, c state.Cron) *ap
 	return api.ErrCronRunOverPlan(r.plan, r.scope, r.limit, r.observed)
 }
 
+// Reasons an enabled, unsuspended cron still does not fire. Status reports
+// them in the place of a suspension reason.
+const (
+	PausedAccountSuspended = "account_suspended"
+	PausedPlanLimit        = "plan_limit"
+)
+
+// Paused reports why the scheduler skips c although it is enabled and not
+// suspended, or "": the app's owner is suspended, or a downgrade left c over
+// the plan's limits (OverPlan). A read error reports "", as the scheduler's
+// gate admits on one.
+func Paused(ctx context.Context, store Store, app state.App, c state.Cron) string {
+	if !c.Enabled || c.SuspendedReason != "" {
+		return ""
+	}
+	owner, err := state.AppResourceAccount(ctx, store, app)
+	if err != nil {
+		return ""
+	}
+	if !owner.Active() {
+		return PausedAccountSuspended
+	}
+	if _, refused := refuse(ctx, store, app, c); refused {
+		return PausedPlanLimit
+	}
+	return ""
+}
+
 // refusal is the plan limit a cron is over.
 type refusal struct {
 	plan            api.Plan

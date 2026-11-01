@@ -18,7 +18,8 @@ Disabled crons count toward both limits. A request over a limit gets
 
 If a plan change leaves you over a limit, your oldest enabled crons keep
 running and the rest stop until the plan allows them again. Running one of the
-stopped crons with `gregale cron run` also gets `403 plan_cron_quota`.
+stopped crons with `gregale cron run` also gets `403 plan_cron_quota`, and
+`gregale cron status ID` reports it as not ready with reason `plan_limit`.
 
 ## Create a cron
 
@@ -37,7 +38,12 @@ single `/`, may carry a query string, and is at most 2,048 bytes; whitespace,
 control characters, backslashes and `#` are rejected. A cron always calls its
 own app, so a path cannot name another host.
 
-`--timezone` takes an IANA name and defaults to `UTC`. Schedules follow the
+An app has one cron per schedule and path; another gets `409 conflict`. To
+run the same job on the same schedule in two timezones, give each its own
+path, for example `/jobs/report?tz=istanbul` and `/jobs/report?tz=newyork`.
+
+`--timezone` takes an IANA name such as `Europe/Istanbul` and defaults to
+`UTC`; `Local` is rejected because it names no place. Schedules follow the
 zone's daylight-saving rules: a time that falls in a spring-forward gap fires
 once at the first valid minute after it, and a fixed time that repeats when
 clocks fall back fires once. Interval schedules such as `*/30 * * * *` keep
@@ -62,10 +68,16 @@ triggers:
     skip_if_running: true       # optional
 ```
 
-When `triggers:` names an app, that app's HTTP crons match the file exactly
-after each deploy: crons missing from the file are removed. An empty
+When `triggers:` names an app, `gregale deploy` makes that app's HTTP crons
+match the file exactly: crons missing from the file are removed. An empty
 `triggers: []` removes them all. If the file has no `triggers:` key, or none
 of its cron triggers name the app, the app's crons are left alone.
+
+A deploy from a GitHub push, or through the source API, only adds the file's
+crons the app does not have yet, with their timezone and `skip_if_running`; it
+never changes or removes a cron. Declared crons take effect when the
+deployment goes live. PR previews, deploys to another environment and releases
+staged without traffic leave crons alone.
 
 ## What your app receives
 
@@ -141,7 +153,8 @@ gregale cron run get REQUEST_ID --wait          # follow a request you already m
 ```
 
 A manual run sends the same request as a scheduled run and does not move the
-schedule. The request goes `pending`, then `running` while the run is queued
+schedule. A suspended cron cannot be run (`409 conflict`); deploy the app to
+resume it. The request goes `pending`, then `running` while the run is queued
 and delivered, then `succeeded` or `failed` with the run's error. A cron can
 have five manual runs waiting or running at once; another request gets
 `429 cron_fire_now_busy` until one finishes.
@@ -202,7 +215,8 @@ need more control:
   `retry` or `fail_partition` (fail without retrying), and choose whether an
   unknown outcome is held or retried. Retries use your plan's retry budget,
   so a cron with failure rules can run more than once for one scheduled time;
-  make such handlers idempotent.
+  make such handlers idempotent. Without failure rules, a cron with a schedule
+  policy is delivered once per scheduled time, like any other cron.
 
 ## Command crons (preview)
 

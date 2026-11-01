@@ -74,6 +74,57 @@ func TestCompanyMembersManageDomainsAndCronsOnAnotherMembersApp(t *testing.T) {
 	}
 }
 
+// Amendment 5 (2026-11-02): a cron's status and a manual run's request are
+// read with the cron's read permission. A member who ran a company cron got
+// 404 polling the request, which is stored under the company's account, so
+// `gregale cron run --wait` failed for everyone but the app's creator.
+func TestCompanyMembersReadCronStatusAndRunRequests(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	ctx := t.Context()
+	creator := *e.Acct()
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "run-requests", Name: "Run Requests", Plan: api.PlanPro, ResourceOwnershipEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember(ctx, org.ID, creator.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: creator.ID, OrgID: org.ID, Slug: "company-jobs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, asAdmin := sharedAppMember(t, store, org, state.OrgRoleAdmin, api.ScopesAdminOnly)
+	_, asViewer := sharedAppMember(t, store, org, state.OrgRoleViewer, api.ScopesAdminOnly)
+	cron, err := store.CreateCron(ctx, app.ID, "0 3 * * *", "/nightly", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := e.Do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/run", nil, asAdmin)
+	if r.Code != http.StatusAccepted {
+		t.Fatalf("admin runs the cron = %d %s", r.Code, r.Body)
+	}
+	var run api.FireCronResponse
+	if err := json.Unmarshal(r.Body.Bytes(), &run); err != nil || run.RequestID == "" {
+		t.Fatalf("run response %s: %v", r.Body, err)
+	}
+	for _, c := range []struct {
+		path    string
+		headers map[string]string
+	}{
+		{"/v1/cron-fire-now-requests/" + run.RequestID, asAdmin},
+		{"/v1/cron-fire-now-requests/" + run.RequestID, asViewer},
+		{"/v1/crons/" + cron.ID + "/status", asViewer},
+	} {
+		if r := e.Do(t, http.MethodGet, c.path, nil, c.headers); r.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200: %s", c.path, r.Code, r.Body)
+		}
+	}
+	if r := e.Do(t, http.MethodGet, "/v1/cron-fire-now-requests/00000000-0000-4000-8000-000000000000", nil, asViewer); r.Code != http.StatusNotFound {
+		t.Fatalf("missing request = %d, want 404: %s", r.Code, r.Body)
+	}
+}
+
 // The company's plan also refuses: the Pro creator of a Free company's app
 // gets no crons on it.
 //

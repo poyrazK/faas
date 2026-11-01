@@ -88,6 +88,10 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrPlanCronsNotAllowed(acct.Plan))
 		return
 	}
+	if c.SuspendedReason != "" {
+		api.WriteProblem(w, api.ErrCronSuspendedRun(c.SuspendedReason))
+		return
+	}
 	if prob := s.cronRunOverPlan(ctx, app, c); prob != nil {
 		api.WriteProblem(w, prob)
 		return

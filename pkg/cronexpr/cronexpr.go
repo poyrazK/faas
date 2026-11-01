@@ -30,6 +30,17 @@ func NormalizeTimezone(raw string) (string, error) {
 	return location.String(), nil
 }
 
+// NormalizeCustomerTimezone is NormalizeTimezone for a timezone a customer
+// supplies. It refuses "Local", which names no place: it is whatever timezone
+// the host evaluating the schedule runs in. Parse still accepts it, so a row
+// stored before this check keeps firing.
+func NormalizeCustomerTimezone(raw string) (string, error) {
+	if strings.EqualFold(strings.TrimSpace(raw), "Local") {
+		return "", fmt.Errorf("sched: invalid timezone %q: name an IANA location such as Europe/Istanbul", raw)
+	}
+	return NormalizeTimezone(raw)
+}
+
 // Parse validates a five-field expression and timezone and returns robfig's
 // immutable schedule for scheduler callers that need to calculate fire times.
 func Parse(raw, timezone string) (cron.Schedule, error) {

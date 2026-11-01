@@ -18,13 +18,18 @@ import (
 // per-account cap.
 type fakeStore struct {
 	plan         api.Plan
+	suspended    bool
 	crons        []state.Cron
 	eligibleErr  error
 	eligibleAsks int
 }
 
 func (f *fakeStore) AccountByID(_ context.Context, id string) (state.Account, error) {
-	return state.Account{ID: id, Plan: f.plan, Status: state.AccountActive}, nil
+	status := state.AccountActive
+	if f.suspended {
+		status = state.AccountSuspended
+	}
+	return state.Account{ID: id, Plan: f.plan, Status: status}, nil
 }
 
 func (f *fakeStore) OrgByID(context.Context, string) (state.Org, error) {
@@ -133,6 +138,32 @@ func TestOverPlan(t *testing.T) {
 			}
 			if prob.Limit == nil || *prob.Limit != tc.wantLimit || prob.Observed == nil || *prob.Observed != tc.wantObserved {
 				t.Fatalf("limit/observed = %v/%v, want %d/%d", prob.Limit, prob.Observed, tc.wantLimit, tc.wantObserved)
+			}
+		})
+	}
+}
+
+// Paused names why an enabled, unsuspended cron does not fire, for status.
+func TestPaused(t *testing.T) {
+	ctx := context.Background()
+	t0 := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	all := crons("a", 7, t0)
+	app := state.App{ID: "a", AccountID: "acct"}
+	for _, tc := range []struct {
+		name      string
+		suspended bool
+		cron      state.Cron
+		want      string
+	}{
+		{"within the limits", false, all[0], ""},
+		{"over the per-app limit", false, all[6], cronrun.PausedPlanLimit},
+		{"owner suspended", true, all[0], cronrun.PausedAccountSuspended},
+		{"disabled is reported elsewhere", false, state.Cron{ID: "off", AppID: "a"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{plan: api.PlanHobby, suspended: tc.suspended, crons: all}
+			if got := cronrun.Paused(ctx, store, app, tc.cron); got != tc.want {
+				t.Fatalf("Paused = %q, want %q", got, tc.want)
 			}
 		})
 	}

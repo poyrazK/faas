@@ -2,10 +2,13 @@ package deploystaging
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -56,7 +59,14 @@ func PrepareSourceCrons(ctx context.Context, store state.DeploymentCronStagingSt
 		if t.App != app.Slug || t.Kind != gregalemanifest.TriggerKindCron || keys[key] {
 			continue
 		}
-		r.Desired = append(r.Desired, api.DeploymentCronConfig{ID: uuid.NewString(), Schedule: t.Schedule, Path: t.Path, Enabled: t.IsEnabled(), Timezone: "UTC"})
+		// The declared timezone and skip_if_running apply, as on a CLI deploy;
+		// every source-declared cron used to run in UTC.
+		timezone, err := cronexpr.NormalizeTimezone(t.Timezone)
+		if err != nil {
+			return ctx, nil, state.ErrInvalidArgument
+		}
+		r.Desired = append(r.Desired, api.DeploymentCronConfig{ID: uuid.NewString(), Schedule: t.Schedule, Path: t.Path, Enabled: t.IsEnabled(),
+			Timezone: timezone, SkipIfRunning: t.SkipIfRunning != nil && *t.SkipIfRunning})
 		keys[key] = true
 	}
 	limits, _ := api.LimitsFor(acct.Plan)
@@ -65,4 +75,29 @@ func PrepareSourceCrons(ctx context.Context, store state.DeploymentCronStagingSt
 		return ctx, nil, err
 	}
 	return ctx, &r, nil
+}
+
+// PrepareDeliveryCrons is PrepareSourceCrons for a GitHub push. Its session is
+// derived from the webhook delivery and the app, as the deployment's IDs are,
+// so a delivery githubd retries prepares the same intent again instead of a
+// second one.
+func PrepareDeliveryCrons(ctx context.Context, store state.DeploymentCronStagingStore, acct state.Account, app state.App, m *gregalemanifest.Manifest, deliveryID string) (context.Context, *api.DeploymentCronStagingRequest, error) {
+	if deliveryID != "" && state.DeploymentSubmissionAttempt(ctx) == "" {
+		sum := sha256.Sum256([]byte("github-delivery-crons\x00" + deliveryID + "\x00" + app.ID))
+		ctx = state.ContextWithDeploymentSubmission(ctx, hex.EncodeToString(sum[:api.DeploymentAttemptIDBytes/2]))
+	}
+	return PrepareSourceCrons(ctx, store, acct, app, m)
+}
+
+// CancelSourceCrons withdraws an intent PrepareSourceCrons returned when its
+// deployment was definitely not created, so it does not hold the app's later
+// source deploys back from staging their crons.
+func CancelSourceCrons(ctx context.Context, store state.DeploymentCronStagingStore, accountID, appID string, intent *api.DeploymentCronStagingRequest) error {
+	if intent == nil {
+		return nil
+	}
+	r := *intent
+	r.Operation = "cancel"
+	_, err := store.ApplyDeploymentCronStaging(ctx, appID, state.DeploymentCronStagingParams{AccountID: accountID, Request: r})
+	return err
 }

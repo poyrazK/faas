@@ -1053,3 +1053,23 @@ func (e *Engine) MarkRestartInFlight(appID string) func() {
 		close(call.done)
 	}
 }
+
+// WithCronSweepSlice sets how long one pass of the cron sweep may dispatch.
+func (r *Loop) WithCronSweepSlice(d time.Duration) *Loop { r.cronSweepSlice = d; return r }
+
+// RunCronSweep runs one continuation pass of the minute's cron sweep.
+func (r *Loop) RunCronSweep(ctx context.Context) { r.runCronSweep(ctx) }
+
+// TakeCronSweepResume reports, and consumes, a pending request to continue
+// the cron sweep.
+func (r *Loop) TakeCronSweepResume() bool {
+	select {
+	case <-r.cronResume:
+		return true
+	default:
+		return false
+	}
+}
+
+// XFireNowRefusal is the requester-facing reason for a refused manual run.
+var XFireNowRefusal = fireNowRefusal

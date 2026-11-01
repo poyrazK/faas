@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -84,9 +85,9 @@ func (l *Loop) drainPendingFireNowRequests(ctx context.Context) {
 // (defence in depth — the cron may have been disabled/deleted between
 // INSERT and claim), dispatches HTTP crons via RunCronNow and command
 // crons via the app-task queue, then stamps the terminal state.
-// Errors are mapped to status: ErrCronDisabled / ErrAccountSuspended /
-// ErrNoCapacity → failed; anything else → failed with the err.Error()
-// text capped at 1 KB.
+// Errors are mapped to status: ErrCronDisabled / ErrAccountSuspended and the
+// refusals fireNowRefusal words → failed with that reason; anything else →
+// failed with the err.Error() text capped at 1 KB.
 func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowRequest) {
 	if l.requeueFireNowOnOwnerChange(ctx, req) {
 		return
@@ -163,6 +164,13 @@ func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowReque
 		l.log.Info("sched: fire_now: account suspended", "request_id", req.ID)
 		resultLabel = fireNowResultLabelFailed
 
+	case fireNowRefusal(err) != "":
+		if mErr := l.engine.Store().MarkFireNowRequestFailed(ctx, req.ID, fireNowRefusal(err)); mErr != nil {
+			l.log.Warn("sched: fire_now: mark failed", "request_id", req.ID, "err", mErr)
+		}
+		l.log.Info("sched: fire_now: refused", "request_id", req.ID, "cron_id", req.CronID, "err", err)
+		resultLabel = fireNowResultLabelFailed
+
 	default:
 		// Unknown error. Stamp as failed with the err string so the
 		// customer's `GET /v1/crons/{id}/runs` shows the failure
@@ -184,6 +192,23 @@ func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowReque
 	if obs := l.ops.CronFireNowDispatchDuration(resultLabel); obs != nil {
 		obs.Observe(elapsed)
 	}
+}
+
+// fireNowRefusal is the requester-facing reason for a manual run schedd
+// refused, or "" for an error it has no wording for. A run that could not be
+// queued keeps the store's error out of the message.
+func fireNowRefusal(err error) string {
+	switch {
+	case errors.Is(err, ErrCronsNotEnabled):
+		return "crons are not enabled for this account"
+	case errors.Is(err, ErrNoLiveDeployment):
+		return "the app has no live deployment; deploy it, then run the cron again"
+	case errors.Is(err, ErrCronSuspended):
+		return strings.TrimPrefix(err.Error(), "sched: ")
+	case errors.Is(err, ErrCronRunNotQueued):
+		return "the run could not be queued; try again"
+	}
+	return ""
 }
 
 // Ownership can move after the atomic claim. Do not turn that handoff into a
