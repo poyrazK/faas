@@ -673,6 +673,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		if api.ValidOIDCKeyFormat(tok) {
 			acct, key, err := m.Authn.AuthenticateOIDCBearer(r.Context(), api.HashAPIKey(tok))
 			if err == nil {
+				// A bearer exchanged under a trust policy Gregale created is
+				// bound to one app and confined like a per-app deploy token
+				// (ADR-20261101100000).
+				if key.AppID != "" && m.appBoundCredentialRefused(w, r, key, "OIDC token scope is app-bound") {
+					return
+				}
 				if !acct.Active() {
 					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
@@ -709,43 +715,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
-					// The resumable upload routes are the CLI's default source
-					// deploy path. They name their app in the request body or the
-					// stored session, so the app binding is enforced where the
-					// handlers resolve it (appaccess.Authorize refuses a token
-					// bound to another app) instead of from the path here.
-					uploadRoute := IsUploadSessionPath(r.URL.Path)
-					// A deploy follows the deployment it created; the route
-					// is bound by the deployment's app, not a path slug.
-					deploymentRead := deployTokenDeploymentReads[r.Pattern]
-					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead {
-						api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments"))
-						return
-					}
-					var bound bool
-					var bindErr error
-					switch {
-					case uploadRoute:
-						bound = key.AppID != ""
-					case deploymentRead:
-						bound, bindErr = m.deployTokenBoundToDeployment(r, key)
-					default:
-						bound, bindErr = m.deployTokenBoundTo(r, key)
-					}
-					if bindErr != nil {
-						m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
-						return
-					}
-					if !bound {
-						// Same 404 shape LoadApp and the deployment reads return
-						// for a cross-app or cross-account probe.
-						detail := "no such app"
-						if deploymentRead {
-							detail = "no such deployment"
-						}
-						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-							"Not found", detail))
+					if m.appBoundCredentialRefused(w, r, key, "Deploy token scope is app-bound") {
 						return
 					}
 					if !acct.Active() {
@@ -1637,6 +1607,53 @@ func IsUploadSessionPath(path string) bool {
 	}
 	id, tail, _ := strings.Cut(rest, "/")
 	return id != "" && (tail == "" || tail == "commit")
+}
+
+// appBoundCredentialRefused confines a credential bound to one app (a per-app
+// deploy token, or an OIDC bearer exchanged for one app): it reaches its app's
+// /v1/apps/{slug} routes, the upload routes and its app's deployment reads,
+// and nothing else. It answers the request and reports true when it refuses.
+func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Request, key state.APIKey, title string) bool {
+	// The resumable upload routes are the CLI's default source
+	// deploy path. They name their app in the request body or the
+	// stored session, so the app binding is enforced where the
+	// handlers resolve it (appaccess.Authorize refuses a token
+	// bound to another app) instead of from the path here.
+	uploadRoute := IsUploadSessionPath(r.URL.Path)
+	// A deploy follows the deployment it created; the route
+	// is bound by the deployment's app, not a path slug.
+	deploymentRead := deployTokenDeploymentReads[r.Pattern]
+	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments"))
+		return true
+	}
+	var bound bool
+	var bindErr error
+	switch {
+	case uploadRoute:
+		bound = key.AppID != ""
+	case deploymentRead:
+		bound, bindErr = m.deployTokenBoundToDeployment(r, key)
+	default:
+		bound, bindErr = m.deployTokenBoundTo(r, key)
+	}
+	if bindErr != nil {
+		m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
+		return true
+	}
+	if !bound {
+		// Same 404 shape LoadApp and the deployment reads return
+		// for a cross-app or cross-account probe.
+		detail := "no such app"
+		if deploymentRead {
+			detail = "no such deployment"
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Not found", detail))
+		return true
+	}
+	return false
 }
 
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {

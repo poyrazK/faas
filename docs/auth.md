@@ -114,6 +114,22 @@ another relying party cannot deploy. The token's `repository_owner_id` and
 repository recreated under the same name has to be bound again. Other branches
 and workflows of a bound repository are admitted only under a policy Gregale
 created: a trust policy the account wrote is authoritative.
+
+Under a policy Gregale created, a deploy bearer follows what the GitHub App
+itself deploys (ADR-20261101100000):
+
+- The run must be on a branch Gregale deploys from that repository (the
+  production branch, or a project deploy branch) or on a `v*` release tag, and
+  not a `pull_request` or `pull_request_target` run. A pull request is deployed
+  by merging it; its PR preview is built by the GitHub integration.
+- The exchange names the app to deploy (`app` in the JSON body, or
+  `resource=urn:gregale:app:<app>` in the RFC 8693 form), and the app must be
+  bound to the token's repository. The bearer can act only on that app, like a
+  per-app deploy token.
+
+A refused exchange answers 403 with the allowed refs. To deploy from another
+ref, write the account's trust policy for it. Protect `v*` tags in the
+repository if releases depend on review, as you protect the production branch.
 ## Organization queue permissions
 
 Organization-owned queue operations apply current membership roles alongside

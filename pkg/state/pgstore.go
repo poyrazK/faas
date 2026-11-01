@@ -516,6 +516,7 @@ func (s *PgStore) AuthenticateOIDCBearer(ctx context.Context, hash []byte) (Acco
 		Audience:  row.Audience,
 		JTI:       row.Jti,
 		CreatedAt: timeFromPgtype(row.CreatedAt),
+		AppID:     row.AppID,
 	}
 	return acct, token.ToAPIKey(), nil
 }
@@ -696,11 +697,21 @@ func (s *PgStore) InsertOIDCExchangedToken(ctx context.Context, t *OIDCExchanged
 		Subject:   t.Subject,
 		Audience:  t.Audience,
 		Jti:       pgtype.Text{String: t.JTI, Valid: t.JTI != ""},
+		AppID:     oidcBearerAppID(t.AppID),
 	})
 	if err != nil {
 		return "", err
 	}
 	return uuidFromPgtype(row.ID).String(), nil
+}
+
+// oidcBearerAppID is the nullable app binding of an exchanged token.
+func oidcBearerAppID(appID string) pgtype.UUID {
+	id, err := uuid.Parse(appID)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return pgtypeFromUUID(id)
 }
 
 // GetOIDCExchangedTokenByHash returns the row whose TokenHash
@@ -18220,7 +18231,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where state in ('running','waking','cold_booting','draining','snapshotting','warm','frozen')
+		 where state in ('running','waking','cold_booting','draining','snapshotting','warm','frozen','migrating')
 		 order by started_at desc`)
 	if err != nil {
 		return nil, err
@@ -30572,6 +30583,7 @@ func oidcExchangedTokenFromRow(row sqlc.GetOIDCExchangedTokenByHashRow) *OIDCExc
 		Audience:  row.Audience,
 		JTI:       row.Jti,
 		CreatedAt: timeFromPgtype(row.CreatedAt),
+		AppID:     row.AppID,
 	}
 }
 

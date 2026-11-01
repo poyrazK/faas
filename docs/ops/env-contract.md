@@ -560,6 +560,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_LOG_ARCHIVE_RETENTION_DAYS` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_SECRET` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_SPOOL_ROOT` | shared | `default` |  |  | `` |  |
+| `FAAS_LOG_DRAIN_SPOOL_BUDGET_BYTES` | gatewayd-internal | `default` |  |  | `` | optional byte budget shared by every log-drain spool on the node; defaults to 2 GiB |
 | `FAAS_LOG_DRAIN_SPOOL_ROOT` | gatewayd-internal | `default` |  |  | `` | optional gateway log-drain spool override; defaults to /var/lib/faas/log-drains |
 | `FAAS_LOG_LEVEL` | shared | `default` |  |  | `` | info; re-read on SIGHUP |
 | `FAAS_LOG_SEARCH_ENABLED` | apid, meterd | `default` |  | 0 | `` | ADR-20261018083536 operator gate for GET /v1/apps/{slug}/log-events and /log-events/facets, vmmd's runtime log projection, and (meterd) the ADR-20261022172052 log context on firing alerts; explicit 1 enables the internal preview |

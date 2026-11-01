@@ -2892,6 +2892,12 @@ const ObjectUploadAccountSlotSharePercent = 50
 // matches ObjectDeletionAdmissionWait.
 const ObjectUploadSlotWait = 15 * time.Second
 
+// ObjectCredentialTouchTimeout bounds the S3 gateway's once-a-minute write of
+// a credential's last use. It runs before the request is served, so without
+// its own bound a stalled control-plane database held that request for the
+// whole transfer budget, even when the read itself came from cache.
+const ObjectCredentialTouchTimeout = 2 * time.Second
+
 // A request body holds an upload slot while the gateway reads it. It may go
 // ObjectUploadIdleTimeout without a byte and, after ObjectUploadMinRateGrace,
 // must average ObjectUploadMinBytesPerSecond, so a client trickling bytes
@@ -6919,6 +6925,16 @@ const (
 	MeasuredChargeWindowSeconds = 600
 	MeasuredChargeSampleSeconds = 5
 	MeasuredChargePercentile    = 95
+	// MeasuredChargeHoldSeconds is how long an instance that misses samples
+	// (a vmmd restart, a late stream batch) keeps its recent charge before it
+	// is charged its full reservation (ADR 20261101091815).
+	MeasuredChargeHoldSeconds = 30
+	// A node's own scheduler publishes the node's measured memory every
+	// NodeMemoryReportSeconds; a peer admits by a report at most
+	// NodeMemoryPeerMaxAgeSeconds old, and otherwise by bookings (ADR
+	// 20261101091815).
+	NodeMemoryReportSeconds     = 2
+	NodeMemoryPeerMaxAgeSeconds = 6
 	// MeasuredAdmissionMaxOvercommitPercent caps reservations on a node
 	// under measured admission (ADR-909): Σ(ram_mb + 8) may reach this
 	// share of the admission ceiling while measured charges stay under the
@@ -9496,6 +9512,11 @@ const (
 	// AgentCallbacksPerMinutePerThread bounds the callbacks one apid accepts
 	// for one thread in a minute, so a runaway tool cannot flood the thread.
 	AgentCallbacksPerMinutePerThread = 600
+	// AgentSleepMaxSeconds bounds a gregale_sleep (ADR-20261030125501 §4):
+	// the wake-up is a realtime schedule on the inbox, and a schedule is due
+	// at most 30 days ahead. A sleep also counts against the endpoint's
+	// realtime schedules (state.ManagedRealtimeScheduleLimit).
+	AgentSleepMaxSeconds = 2_592_000
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).

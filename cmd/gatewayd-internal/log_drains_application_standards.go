@@ -137,5 +137,11 @@ func (m *appLogDrainManager) runLogDrainWorker(ctx context.Context, w *appLogDra
 		// ADR-1340: the app's AI gateway lines share the drain's sender.
 		go func() { defer joined.Done(); m.aiLogExportWorker(ctx, w.spec, sender, exports) }()
 	}
-	go func() { joined.Wait(); close(w.done) }()
+	go func() {
+		joined.Wait()
+		if w.queue != nil {
+			w.queue.Release()
+		}
+		close(w.done)
+	}()
 }

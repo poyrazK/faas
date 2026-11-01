@@ -193,7 +193,9 @@ What the endpoint does not support:
 - A single request or upload part can be at most 64 MiB; larger objects need a
   multipart upload. SDK upload helpers such as `upload_file` do this for you.
 - Creating or deleting buckets, ACLs and SigV4A requests return `NotImplemented`.
-  Manage buckets with the CLI or API.
+  Manage buckets with the CLI or API. An upload that sends `x-amz-acl: private`
+  or `bucket-owner-full-control`, as many upload libraries do by default, is
+  accepted: objects are always private to the bucket's credentials.
 - Browser form uploads (presigned POST) are not supported; use a signed PUT URL.
 - Keys containing `/./` or `/../` segments cannot be used.
 
