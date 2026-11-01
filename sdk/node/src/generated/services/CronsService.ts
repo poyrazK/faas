@@ -6,6 +6,8 @@ import type { AppTaskResponse } from '../models/AppTaskResponse.js';
 import type { CreateCronRequest } from '../models/CreateCronRequest.js';
 import type { CronResponse } from '../models/CronResponse.js';
 import type { FireCronResponse } from '../models/FireCronResponse.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ListCronRunsResponse } from '../models/ListCronRunsResponse.js';
 import type { ListScheduleOccurrencesResponse } from '../models/ListScheduleOccurrencesResponse.js';
 import type { Problem } from '../models/Problem.js';
@@ -86,6 +88,39 @@ export class CronsService {
         `,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
+    });
+  }
+  /**
+   * Set and remove a cron's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the cron carries after it, with
+   * the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+   * Requires deploy:write or admin scope and MFA. While the capability is on,
+   * GET /v1/crons and GET /v1/crons/{id} include labels, and GET /v1/crons
+   * takes ?selector=, a Kubernetes label selector.
+   *
+   * @returns LabelsResponse The cron's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, scope or MFA, a cron this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateCronLabels({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/crons/{id}/labels',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
