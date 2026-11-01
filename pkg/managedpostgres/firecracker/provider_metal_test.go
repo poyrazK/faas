@@ -20,6 +20,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -373,6 +374,14 @@ func newMetalStackWith(t *testing.T, workdir string, bases map[int]string) *meta
 	}
 	cfg.CredentialKey = testCredentialKey
 	cfg.MaxRestoreWindowSeconds = 7 * 86400
+	// The driver offers only the majors this node has a base for, as a real
+	// node's configured images bound it: an advertised major without a base
+	// would send qualification's upgrade probe to a VM that cannot boot.
+	cfg.Majors = cfg.Majors[:0]
+	for major := range bases {
+		cfg.Majors = append(cfg.Majors, major)
+	}
+	slices.Sort(cfg.Majors)
 	verifiers := newFakeVerifiers()
 	p, err := New(cfg, client, verifiers)
 	if err != nil {
