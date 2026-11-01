@@ -1921,6 +1921,18 @@ func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.
 	return r.planDowngradeProblem(ctx, subject, target)
 }
 
+// SetManagedPostgresCapModeForTest sets FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT
+// as configureManagedPostgresCapMode would.
+func (r *server) SetManagedPostgresCapModeForTest(mode managedpostgres.CapEnforcementMode) {
+	r.managedPostgresCapMode = mode
+}
+
+// EnsureDevPostgresForTest provisions a developer environment's database as
+// `gregale dev --postgres` does.
+func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Account, app state.App) (*api.DevPostgresResponse, error) {
+	return r.ensureDevPostgres(ctx, acct, app, &api.DevPostgresRequest{})
+}
+
 // RequestBillingMailOutboxesForTest selects the three webhook billing-mail
 // outboxes without configuring one, so a delivery that reaches an outbox
 // fails closed with 503 (Hunt 17 H17-3).

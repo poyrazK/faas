@@ -28,6 +28,13 @@ database reservation boundary:
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
+A Free-plan database needs enforced compute caps, because Free has no
+overage to pay for compute past its allowance. Until the platform enforces
+them, `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors
+and restores answer `403 managed_postgres_not_in_plan` on Free, and a
+Compose `postgres` service is not provisioned (the deploy names the plan as
+the reason).
+
 Storage is pooled across the account's databases: one database may use the
 whole pool. Storage is a limit, not billed overage
 ([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).

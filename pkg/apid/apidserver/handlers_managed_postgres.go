@@ -70,6 +70,18 @@ func managedPostgresNotConfiguredProblem(w http.ResponseWriter) {
 	).WithDocs("https://gregale.dev/docs/managed-postgres"))
 }
 
+// managedPostgresFreeClosed reports whether a Free-plan owner is refused a
+// new database. Free has no overage to pay for compute past its allowance,
+// and only enforced caps (FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on) suspend
+// it there. Under shadow or off a Free database with steady traffic ran its
+// provider compute all month (~730 compute-unit hours against 5) at
+// Gregale's cost, and Free sign-ups are unlimited. Every create path checks
+// it: the create route, Compose and dev databases here, and the service's
+// admission for the rest (bug hunt 33 H1).
+func managedPostgresFreeClosed(plan api.Plan, mode managedpostgres.CapEnforcementMode) bool {
+	return plan == api.PlanFree && mode != managedpostgres.CapEnforcementOn
+}
+
 func managedPostgresPlanDenied(w http.ResponseWriter, plan api.Plan, detail string) {
 	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan", fmt.Sprintf("plan %q: %s", plan, detail)))
 }
@@ -376,12 +388,7 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
 		return
 	}
-	// Free has no overage to pay for compute past its allowance, and only
-	// enforced caps (FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on) suspend it
-	// there. Under shadow or off a Free database with steady traffic ran
-	// its provider compute all month (~730 compute-unit hours against 5) at
-	// Gregale's cost, and Free sign-ups are unlimited.
-	if acct.Plan == api.PlanFree && s.managedPostgresCapMode != managedpostgres.CapEnforcementOn {
+	if managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
 		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL opens to the Free plan once compute caps are enforced; upgrade to a paid plan to create a database")
 		return
 	}
