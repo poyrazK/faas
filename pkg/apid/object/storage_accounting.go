@@ -18,6 +18,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ValidateObjectStoragePricing refuses a registry rate card other than the
+// published one. apid computes month-close charges and customer estimates
+// from it whether or not billing is on, so a mistyped price or currency would
+// otherwise become wrong invoices with no error (ADR-1430).
+func ValidateObjectStoragePricing(registry *objectstorage.Registry) error {
+	if registry == nil || registry.Pricing == nil {
+		return nil
+	}
+	if want := api.PublishedObjectStoragePricing(); *registry.Pricing != want {
+		return fmt.Errorf("apid: object storage pricing is not the published rate card (currency %s, storage_millicents_per_gib_month %d, request and egress prices 0); got currency %q, storage %d, requests %d, egress %d",
+			want.Currency, want.StorageMillicentsPerGiBMonth, registry.Pricing.Currency, registry.Pricing.StorageMillicentsPerGiBMonth, registry.Pricing.RequestsMillicentsPerMillion, registry.Pricing.EgressMillicentsPerGiB)
+	}
+	return nil
+}
+
 func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *objectstorage.Registry) error {
 	sink, ok := provider.(billing.ObjectStorageLineItemSink)
 	if !ok {

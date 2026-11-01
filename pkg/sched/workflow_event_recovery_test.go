@@ -184,9 +184,8 @@ func testEventWorkflowRecipientRoutingSelectiveRecovery(t *testing.T, backing re
 			t.Fatalf("selective replay %s: %v", role, err)
 		}
 	}
-	if err := store.DeleteEventSubscription(ctx, subs["failed_app"], accountID, apps["failed_app"].ID); err != nil {
-		t.Fatal(err)
-	}
+	// The application subscription stays: routing filters an accepted
+	// recipient whose subscription is disabled or gone (ADR-20261031130000).
 	store.recipientRoutingTestStore = restart()
 	loop = NewLoop(nil, &Engine{store: store}, nil).WithEventRecipientClaims(false).WithWorkflowsDispatched(true)
 	loop.now = func() time.Time { return now }

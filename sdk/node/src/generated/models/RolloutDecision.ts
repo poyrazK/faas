@@ -40,6 +40,10 @@ export type RolloutDecision = {
    * The release gates judged with this decision.
    */
   gates?: Array<ReleaseGateResult>;
+  /**
+   * Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix.
+   */
+  rollback_skipped?: string;
   decided_at: string;
 };
 

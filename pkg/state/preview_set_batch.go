@@ -358,18 +358,18 @@ func refreshPreviewGatesTx(ctx context.Context, tx pgx.Tx, id string, desired Ap
 			update apps set require_authn = $2, public_auth_mode = $3, public_auth_basic = $4,
 			       public_auth_ip_allowlist = $5, consumer_auth_mode = $6, require_signed = $7,
 			       egress_allowlist = $8, visibility = $9, only_declared_routes = $10, declared_routes = $11::jsonb,
-			       websocket_enabled = $12, streaming_enabled = $13
+			       websocket_enabled = $12, streaming_enabled = $13, platform_tenant_required = $14, security_policy = $15
 			where id = $1
 			  and (require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist,
 			       consumer_auth_mode, require_signed, egress_allowlist, visibility, only_declared_routes, declared_routes,
-			       websocket_enabled, streaming_enabled)
-			      is distinct from ($2, $3, $4::bytea, $5::cidr[], $6, $7, $8::cidr[], $9, $10, $11::jsonb, $12, $13)
+			       websocket_enabled, streaming_enabled, platform_tenant_required, security_policy)
+			      is distinct from ($2, $3, $4::bytea, $5::cidr[], $6, $7, $8::cidr[], $9, $10, $11::jsonb, $12, $13, $14, $15)
 			returning id)
 		select pg_notify('app_changed', id::text) from changed`,
 		id, desired.RequireAuthn, publicAuthMode, desired.PublicAuthBasicSealed,
 		cidrPrefixesToArray(desired.PublicAuthIPAllowlist), string(consumerAuth), desired.RequireSigned,
 		cidrPrefixesToArray(desired.EgressAllowlist), visibility, desired.OnlyAllowDeclaredRoutes, string(declaredRoutes),
-		desired.WebSocketEnabled, desired.StreamingEnabled)
+		desired.WebSocketEnabled, desired.StreamingEnabled, desired.PlatformTenantRequired, string(previewSecurityPolicy(desired.SecurityPolicy)))
 	if err != nil {
 		return fmt.Errorf("state: refresh PR preview gates: %w", err)
 	}
@@ -390,7 +390,18 @@ func copyPreviewGates(row, desired App) App {
 	row.DeclaredRoutes = previewDeclaredRoutes(desired.DeclaredRoutes)
 	row.WebSocketEnabled = desired.WebSocketEnabled
 	row.StreamingEnabled = desired.StreamingEnabled
+	row.PlatformTenantRequired = desired.PlatformTenantRequired
+	row.SecurityPolicy = previewSecurityPolicy(desired.SecurityPolicy)
 	return row
+}
+
+// previewSecurityPolicy is the column value for a copied security posture
+// policy: unset is off, the column's default.
+func previewSecurityPolicy(policy api.AppSecurityPolicy) api.AppSecurityPolicy {
+	if policy == "" {
+		return api.AppSecurityPolicyOff
+	}
+	return policy
 }
 
 // previewDeclaredRoutes copies a production app's declared-route contract

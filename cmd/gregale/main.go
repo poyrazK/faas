@@ -346,11 +346,14 @@ func run(args []string) (status int) {
 		// `gregale apps ls` (or `list`, as `projects list` spells it) is an
 		// alias for the default list action.
 		if len(args) > 1 && (args[1] == "ls" || args[1] == "list") {
-			if len(args) != 2 {
-				PrintUsage(os.Stderr, "usage: gregale app list [ls|list]", "apps")
+			if len(args) != 2 && !hasSelectorFlag(args[2:]) {
+				PrintUsage(os.Stderr, "usage: gregale app list [ls|list] [-l SELECTOR]", "apps")
 				return 1
 			}
-			return cmdApps()
+			return cmdApps(args[2:])
+		}
+		if len(args) > 1 && hasSelectorFlag(args[1:2]) {
+			return cmdApps(args[1:])
 		}
 		if len(args) > 1 && args[1] == subRestore {
 			return cmdAppsRestore(args[2:])
@@ -415,7 +418,7 @@ func run(args []string) (status int) {
 			PrintUsage(os.Stderr, "usage: gregale app list [ls|list|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
 			return 1
 		}
-		return cmdApps()
+		return cmdApps(nil)
 	case dispatchDeployments:
 		// `gregale deployments [--app SLUG] [--limit N|--before C|--all]` — list.
 		// Place before appSlugFallback so the singular never shadows it.

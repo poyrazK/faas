@@ -304,6 +304,9 @@
     # ADR-1343: the app edge (Cloudflare Tunnel connector + gatewayd-public in
     # compute edge mode); removes itself unless the manifest turns it on.
     - role: gatewayd_public_edge_service
+    # ADR-20261031122757: the S3 gateway beside the app edge; removes itself
+    # unless the manifest's object_storage.compute_nodes turns it on.
+    - role: s3_gateway_compute_service
     - role: builderd_service
     - role: compute_only_service
     - role: profiled_service

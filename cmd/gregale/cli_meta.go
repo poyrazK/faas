@@ -1670,7 +1670,7 @@ var cliCommands = []cliCommand{
 		Name:     dispatchApps,
 		DocSlug:  "apps",
 		Short:    "List your apps",
-		Examples: []string{"gregale app list", "gregale app list --json", "gregale app delete my-api --dry-run", "gregale app delete my-api --yes"},
+		Examples: []string{"gregale app list", "gregale app list --json", "gregale app list -l team=billing", "gregale app delete my-api --dry-run", "gregale app delete my-api --yes"},
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
 			{Name: "rm", Aliases: []string{"delete"}, Short: "Delete an app; restore it within the deletion grace window", Notes: []string{"Also accepted as delete."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
@@ -1685,7 +1685,7 @@ var cliCommands = []cliCommand{
 			appUDPListenerCLISubcommand(true),
 			{Name: "streaming-cap", Short: "Show app streaming classification", Positionals: []string{"<slug>"}},
 		},
-		Flags: []cliFlag{{Name: "dry-run", Short: "preview app deletion without changing resources", Bool: true}, {Name: "quiet", ShortName: "q", Short: "delete one app without prompting"}, {Name: "yes", Short: "confirm app deletion without prompting", Bool: true}},
+		Flags: []cliFlag{{Name: "selector", ShortName: "l", Short: "only apps whose labels match (preview)", Value: "SELECTOR"}, {Name: "dry-run", Short: "preview app deletion without changing resources", Bool: true}, {Name: "quiet", ShortName: "q", Short: "delete one app without prompting"}, {Name: "yes", Short: "confirm app deletion without prompting", Bool: true}},
 	},
 	{
 		Name:        appSlugFallback,
@@ -1706,11 +1706,17 @@ var cliCommands = []cliCommand{
 			{Name: subStatus, Short: "Show the app's Ready, Progressing and Degraded conditions (preview)", Notes: []string{"Conditions are derived from the health assessment; `app health` shows the evidence."}, Examples: []string{"gregale app status my-api", "gregale app status my-api --json"}, Flags: []cliFlag{
 				{Name: "environment", Short: "read this project environment's conditions instead of the default scope", Value: "SLUG"},
 			}},
-			{Name: subWait, Short: "Wait until a condition holds (preview)", Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout."}, Examples: []string{"gregale app wait my-api", "gregale app wait my-api --for Progressing=False --timeout 10m"}, Flags: []cliFlag{
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout.", "With -l, waits on every matching app within one timeout and exits 4 when none matches."}, Examples: []string{"gregale app wait my-api", "gregale app wait my-api --for Progressing=False --timeout 10m"}, Flags: []cliFlag{
 				{Name: "for", Short: "TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "selector", ShortName: "l", Short: "wait on every app whose labels match, instead of one app (preview)", Value: "SELECTOR"},
 				{Name: "environment", Short: "wait on this project environment's conditions instead of the default scope", Value: "SLUG"},
 				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
+			{Name: subLabel, Short: "List, set or unset an app's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select apps with -l on app list, app wait and domain list.", "Labels are not secret."}, Examples: []string{"gregale app label set my-api team=billing tier=web", "gregale app label unset my-api tier", "gregale app label list my-api"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show an app's labels", Positionals: []string{"<app>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<app>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<app>", "KEY..."}},
 			}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
@@ -1913,7 +1919,7 @@ var cliCommands = []cliCommand{
 			"gregale release approval require --app my-api --approvals 2 --notify releases",
 			"gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h",
 			"gregale release approval pending --app my-api",
-			"gregale release approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment \"canary looks clean\"",
+			"gregale release approval status v42 --app my-api",
 			"gregale release reject v42 --app my-api --reason \"checkout latency is up\"",
 		},
 		Subcommands: []cliSub{
@@ -1938,10 +1944,12 @@ var cliCommands = []cliCommand{
 			{Name: "status", Short: "Show a release's approvals", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
 			}},
-			{Name: "approve", Short: "Approve a release", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
-				{Name: "comment", Short: "note recorded with the approval", Value: "TEXT"},
-			}},
+			{Name: "approve", Short: "Approve a release (in the dashboard; prints its approval page)", Positionals: []string{"<deployment>"},
+				Notes: []string{"A person signed in to the dashboard approves a release; the CLI's login token, an API key or CI cannot. The command fails with the release's approval page to open. `gregale release reject` works from the CLI."},
+				Flags: []cliFlag{
+					{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+					{Name: "comment", Short: "note recorded with the approval", Value: "TEXT"},
+				}},
 			{Name: "reject", Short: "Reject a release and abort its rollout", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
 				{Name: "reason", Short: "why the release is rejected", Value: "TEXT", Req: true},
@@ -2173,7 +2181,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
 			{Name: "next", Short: "Show upcoming expression times across app tasks", Notes: []string{"Includes state and policy caveats."}, Examples: []string{"gregale cron next --app my-api", "gregale cron next --app my-api --json"}, Flags: []cliFlag{{Name: "app", Short: "app slug (linked app or picker by default)", Value: "SLUG"}}},
-			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "one-off", Short: "list one-off requests (--at or --in) instead of cron rules", Bool: true, Capability: "delayed-execution"}}},
+			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug (required without -l)", Value: "slug"}, {Name: "selector", ShortName: "l", Short: "only crons whose labels match (preview)", Value: "SELECTOR"}, {Name: "one-off", Short: "list one-off requests (--at or --in) instead of cron rules", Bool: true, Capability: "delayed-execution"}}},
 			{Name: "add", Short: "Schedule a POST to an app path, or a deployment command", Examples: []string{"gregale cron create --app my-api --interactive", "gregale cron create --app my-api --at 2030-01-01T09:00:00Z --path /report", "gregale cron create --app my-api --in 30m --path /reminders"}, Notes: []string{"With --at or --in, add schedules one request instead of a recurring cron and takes the flags of `gregale delayed-task add` (--payload, --method, --header, retries); --schedule and the command flags belong to recurring crons."}, Flags: []cliFlag{
 				{Name: "at", Short: "send one request at this RFC3339 time instead of on a schedule", Value: "RFC3339", Capability: "delayed-execution"},
 				{Name: "in", Short: "send one request after this delay (such as 30m) instead of on a schedule", Value: "DURATION", Capability: "delayed-execution"},
@@ -2200,6 +2208,11 @@ var cliCommands = []cliCommand{
 				{Name: "for", Short: "Ready or LastRunSucceeded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
 				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
+			{Name: subLabel, Short: "List, set or unset a cron's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select crons with -l on cron list.", "Labels are not secret."}, Examples: []string{"gregale cron label set CRON_ID team=billing", "gregale cron label list CRON_ID"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show a cron's labels", Positionals: []string{"<id>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<id>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<id>", "KEY..."}},
 			}},
 			{Name: "info", Short: "Show one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "one-off", Short: "show a one-off request (--at or --in) instead of a cron rule", Bool: true, Capability: "delayed-execution"},
@@ -2343,6 +2356,12 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "page size (1..200, default 50)", Value: "N"},
 				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
 				{Name: "all", Short: "walk every page using --limit and --offset"},
+				{Name: "selector", ShortName: "l", Short: "only jobs whose labels match (preview)", Value: "SELECTOR"},
+			}},
+			{Name: subLabel, Short: "List, set or unset a job's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select jobs with -l on job list.", "Labels are not secret."}, Examples: []string{"gregale job label set nightly-report team=billing", "gregale job label list nightly-report"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show a job's labels", Positionals: []string{"<job>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<job>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<job>", "KEY..."}},
 			}},
 			{Name: "next", Short: "Show upcoming recurring Job expression times and readiness", Examples: []string{"gregale job next", "gregale job next --json"}},
 			{Name: "add", Short: "Create a new job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale job create --interactive"}, Flags: []cliFlag{
@@ -3065,7 +3084,7 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "verification wait deadline (default 10m, maximum 1h)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "verification interval (5s..1m, default 10s)", Value: "DURATION"},
 			}},
-			{Name: subList, Short: "List custom domain bindings", Flags: []cliFlag{{Name: "app", Short: "only this app's domains", Value: "SLUG"}}},
+			{Name: subList, Short: "List custom domain bindings", Flags: []cliFlag{{Name: "app", Short: "only this app's domains", Value: "SLUG"}, {Name: "selector", ShortName: "l", Short: "only domains of apps whose labels match (preview)", Value: "SELECTOR"}}},
 			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Positionals: []string{"[<domain>]"}, Flags: []cliFlag{
 				{Name: "domain", Short: "domain to attach (or the first argument)", Value: "DOMAIN"},
 				{Name: "app", Short: "app slug to attach to", Req: true, Value: "SLUG"},
@@ -3082,6 +3101,11 @@ var cliCommands = []cliCommand{
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
 			}},
 			{Name: subDomainsDoctor, Short: "Run a 5-check domain readiness report", Notes: []string{"Exits nonzero when unhealthy, including in JSON mode."}, Positionals: []string{"<domain>"}},
+			{Name: subDomainsHost, Short: "Choose which names below a wildcard domain get certificates", Notes: []string{"With an allowlist, the edge refuses certificates for every other name, so random names cannot use up the wildcard's issuance budget. Routing is unchanged."}, Subcommands: []cliSub{
+				{Name: "set", Short: "Allow only these names (replaces the list)", Positionals: []string{"<*.domain>", "<name>..."}, Examples: []string{"gregale domain host set '*.example.com' app api eu.shop"}},
+				{Name: subGet, Short: "Show the allowlist", Positionals: []string{"<*.domain>"}},
+				{Name: "clear", Short: "Remove the allowlist so every name may get a certificate", Positionals: []string{"<*.domain>"}},
+			}},
 		},
 	},
 	{
@@ -5605,12 +5629,16 @@ var cliCommands = []cliCommand{
 				{Name: "migrations", Value: "DIR", Short: "single-app project: run this migration directory as the app's release task"},
 				{Name: "release-command", Value: "COMMAND", Short: "single-app release command (default node migrations/release.mjs)"},
 			}, Examples: []string{"gregale data-api create shop-data --database shop-db --issuer https://id.example.com/ --jwks-url https://id.example.com/jwks.json --audience shop --migrations migrations"}},
-			{Name: "deploy", Short: "Deploy a single-app Data API with its migrations as the release task", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "migrations", Value: "DIR", Req: true, Short: "migration directory run with MIGRATION_DATABASE_URL"},
+			{Name: "deploy", Short: "Deploy the current Data API runtime and run migrations on release", Notes: []string{"Deploys the runtime the control plane serves; without --migrations it upgrades the runtime only."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "migrations", Value: "DIR", Short: "migration directory run with MIGRATION_DATABASE_URL"},
 				{Name: "release-command", Value: "COMMAND", Short: "release command (default node migrations/release.mjs)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "timeout", Value: "DURATION", Short: "deployment and release wait (default 15m)"},
-			}},
+			}, Examples: []string{"gregale data-api deploy shop-data --migrations migrations", "gregale data-api deploy shop-data"}},
+			{Name: "delete", Short: "Revoke a Data API's database bindings and delete the app", Notes: []string{"Deleting the app alone is refused while its bindings are live."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "yes", Bool: true, Short: "confirm deletion without prompting"},
+				{Name: "timeout", Value: "DURATION", Short: "maximum time for the API calls (default 2m)"},
+			}, Examples: []string{"gregale data-api delete shop-data --yes"}},
 			{Name: "configure", Short: "Change access, aggregates, usage reporting or caps", Notes: []string{"Restarts the runtime fresh."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "public-read", Value: "SCHEMA.RELATION[,...]", Short: "relations readable without a token"},
 				{Name: "no-public-read", Short: "disable anonymous reads"},
@@ -5742,12 +5770,11 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:     "postgres",
-		DocSlug:  "postgres",
-		Short:    "Operator preview: manage PostgreSQL databases and bindings",
-		Audience: cliAudienceOperator,
+		Name:    "postgres",
+		DocSlug: "postgres",
+		Short:   "Create, attach and restore managed PostgreSQL databases",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List managed PostgreSQL databases"},
+			{Name: "list", Short: "List managed PostgreSQL databases", Flags: []cliFlag{{Name: "selector", ShortName: "l", Short: "only databases whose labels match (preview)", Value: "SELECTOR"}}},
 			{Name: "capabilities", Short: "Show plan and region PostgreSQL feature support", Flags: []cliFlag{
 				{Name: "region", Short: "region (defaults to configured region)", Value: "REGION"},
 			}, Examples: []string{"gregale postgres capabilities --json"}},
@@ -5783,6 +5810,11 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
 			}},
+			{Name: subLabel, Short: "List, set or unset a database's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select databases with -l on postgres list.", "Labels are not secret."}, Examples: []string{"gregale postgres label set orders team=billing", "gregale postgres label list orders"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show a database's labels", Positionals: []string{"<database>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<database>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<database>", "KEY..."}},
+			}},
 			{Name: "delete", Short: "Delete a managed PostgreSQL database; it can be undone for 7 days", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "purge", Short: "delete at once with its restore history; cannot be undone"},
 				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"},
@@ -5802,7 +5834,7 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
-			{Name: "live", Short: "Enable live queries and manage the live secret (operator preview)", Subcommands: []cliSub{
+			{Name: "live", Short: "Enable live queries and manage the live secret (preview)", Subcommands: []cliSub{
 				{Name: "status", Short: "Show whether live queries are enabled and the live secrets' key IDs", Positionals: []string{"<database>"}},
 				{Name: "enable", Short: "Enable live queries and issue the live secret", Positionals: []string{"<database>"}, Flags: []cliFlag{
 					{Name: "app", Short: "store the secret as an app secret on this app", Value: "APP"},

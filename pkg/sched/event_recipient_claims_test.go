@@ -153,11 +153,9 @@ func testEventRecipientRoutingSelectiveRecovery(t *testing.T, backing recipientR
 	if err := store.ReplayFailedPublishedEventRecipientForApp(ctx, accountID, apps[2].ID, "orders", envelope.ID, subscriptions[2].ID); err != nil {
 		t.Fatalf("replay email while analytics pending: %v", err)
 	}
-	// Recovery and restart continue even with adoption disabled. Delete the
-	// subscription to verify accepted work still uses its captured recipient.
-	if err := store.DeleteEventSubscription(ctx, subscriptions[2].ID, accountID, apps[2].ID); err != nil {
-		t.Fatal(err)
-	}
+	// Recovery and restart continue even with adoption disabled. The
+	// subscription stays: routing filters an accepted recipient whose
+	// subscription is disabled or gone (ADR-20261031130000).
 	now = time.Now().UTC().Add(time.Millisecond)
 	store.recipientRoutingTestStore = restart()
 	loop = NewLoop(nil, &Engine{store: store}, nil).WithEventRecipientClaims(false)
@@ -365,11 +363,9 @@ func TestEventRecipientRoutingSelectiveRecovery(t *testing.T) {
 	if err := store.ReplayFailedPublishedEventRecipientForApp(ctx, accountID, apps[2].ID, "orders", envelope.ID, subscriptions[2].ID); err != nil {
 		t.Fatalf("replay email while analytics pending: %v", err)
 	}
-	// Recovery and restart continue even with adoption disabled. Delete the
-	// subscription to verify accepted work still uses its captured recipient.
-	if err := store.DeleteEventSubscription(ctx, subscriptions[2].ID, accountID, apps[2].ID); err != nil {
-		t.Fatal(err)
-	}
+	// Recovery and restart continue even with adoption disabled. The
+	// subscription stays: routing filters an accepted recipient whose
+	// subscription is disabled or gone (ADR-20261031130000).
 	now = time.Now().UTC().Add(time.Millisecond)
 	loop = &Loop{engine: &Engine{store: store}, now: func() time.Time { return now }}
 	loop.runEventFanoutSweep(ctx)

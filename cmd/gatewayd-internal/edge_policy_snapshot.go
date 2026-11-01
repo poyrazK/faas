@@ -23,12 +23,23 @@ func (g *gatewaydEdgeRules) PinHostPolicy(ctx context.Context, host string) (con
 		return g.pinPublicRouteGraph(ctx, host)
 	}
 	// Owner-scoped convergence fences are checked by the handler once the
-	// host's owner is resolved; the pin only refuses a generation change.
+	// host's owner is resolved; the pin only refuses a change to its sets.
 	prior, pinned := ctx.Value(pinnedPolicyGenerationKey{}).(pinnedPolicyGeneration)
+	if pinned && prior.owner != g {
+		return nil, errors.New("traffic policy changed during snapshot resolution")
+	}
+	key := gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx))
 	for attempt := 1; ; attempt++ {
 		generation := g.cache.Generation()
-		if pinned && (prior.owner != g || prior.generation != generation) {
-			return nil, errors.New("traffic policy changed during snapshot resolution")
+		// Every invalidation, for any host or account, advances the shared
+		// generation. The request's pinned sets still hold one snapshot unless
+		// an invalidation since their pin can reach one of them.
+		if pinned && prior.generation != generation {
+			current, unchanged := g.cache.UnchangedSince(ctx, prior.generation, "", nil)
+			if !unchanged {
+				return nil, errors.New("traffic policy changed during snapshot resolution")
+			}
+			prior.generation, generation = current, current
 		}
 		// ADR-1191: once the request's app is known the host's set includes that
 		// app's app-wide rules, so the pin is per (host, app) like the cache.
@@ -45,13 +56,12 @@ func (g *gatewaydEdgeRules) PinHostPolicy(ctx context.Context, host string) (con
 		if err := entry.SealPolicy(); err != nil {
 			return nil, err
 		}
-		if generation == g.cache.Generation() {
-			ctx = context.WithValue(ctx, pinnedPolicyGenerationKey{}, pinnedPolicyGeneration{g, generation})
-			return gateway.WithPinnedHostPolicy(ctx, gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)), entry)
+		if current, unchanged := g.cache.UnchangedSince(ctx, generation, key, entry); unchanged {
+			ctx = context.WithValue(ctx, pinnedPolicyGenerationKey{}, pinnedPolicyGeneration{g, current})
+			return gateway.WithPinnedHostPolicy(ctx, key, entry)
 		}
-		// Every invalidation, for any host, advances the shared generation.
-		// With nothing pinned yet the read starts again; a request that
-		// already pinned another host keeps one generation and fails closed.
+		// With nothing pinned yet the read starts again; a request whose
+		// pinned sets changed fails closed.
 		if pinned || attempt >= hostPolicyPinAttempts || ctx.Err() != nil {
 			return nil, errors.New("traffic policy changed during snapshot resolution")
 		}

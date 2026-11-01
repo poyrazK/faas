@@ -2,7 +2,7 @@
 - name: internal_pki_renewal — validate host identity
   ansible.builtin.assert:
     that:
-      - faas_box_role in ['control-plane', 'compute-only']
+      - faas_box_role in ['control-plane', 'compute-only', 'database']
       - faas_node_name is defined
       - faas_node_name | length > 0
 

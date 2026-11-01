@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
-func TestManagedPostgresNotConfiguredProblemExplainsPreviewGate(t *testing.T) {
+func TestManagedPostgresNotConfiguredProblemExplainsTheMissingProvider(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	apidserver.ManagedPostgresNotConfiguredProblem(recorder)
 
@@ -26,7 +26,7 @@ func TestManagedPostgresNotConfiguredProblemExplainsPreviewGate(t *testing.T) {
 	if problem.Code != "managed_postgres_unavailable" {
 		t.Fatalf("code = %q", problem.Code)
 	}
-	for _, want := range []string{"operator preview", "not configured", "qualify and configure a provider"} {
+	for _, want := range []string{"not configured", "configure a provider"} {
 		if !strings.Contains(problem.Detail, want) {
 			t.Errorf("detail %q does not contain %q", problem.Detail, want)
 		}
@@ -44,10 +44,15 @@ func TestManagedPostgresProviderUnavailableProblemExplainsRetry(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&problem); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"operator preview", "temporarily unavailable", "retry later"} {
+	for _, want := range []string{"temporarily unavailable", "retry later"} {
 		if !strings.Contains(problem.Detail, want) {
 			t.Errorf("detail %q does not contain %q", problem.Detail, want)
 		}
+	}
+	// Managed PostgreSQL is GA (ADR-20261031091607); customers no longer
+	// read that it is a preview.
+	if strings.Contains(problem.Detail, "preview") {
+		t.Errorf("detail %q still calls managed PostgreSQL a preview", problem.Detail)
 	}
 }
 

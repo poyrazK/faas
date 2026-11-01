@@ -197,6 +197,13 @@ What the endpoint does not support:
 - Browser form uploads (presigned POST) are not supported; use a signed PUT URL.
 - Keys containing `/./` or `/../` segments cannot be used.
 
+The endpoint runs a few of an account's uploads and upload parts at a time.
+Others wait up to 15 seconds for a turn, then answer `503 SlowDown`. S3
+transfer managers send several parts at once (the AWS CLI and boto3 send 10),
+so set yours to 4: `aws configure set default.s3.max_concurrent_requests 4`,
+`TransferConfig(max_concurrency=4)` in boto3, or `queueSize: 4` (the default)
+for `Upload` in `@aws-sdk/lib-storage`.
+
 ## Give your app access
 
 `gregale add bucket` binds the bucket to your app. Your app then receives six
@@ -382,6 +389,7 @@ what you used.
 | CORS rules per bucket | 100 |
 | Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
+| Uploads and upload parts in progress through `s3.gregale.dev` | A few per account; more wait up to 15 seconds for a turn, then answer `503 SlowDown` |
 | Egress each month | 10 times your plan's included storage: Free 10 GiB, Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB ([plans](plans.md#object-storage)). Public objects served from the CDN's cache do not count. At the limit, every request except deletes is refused until the month ends |
 
 Your plan and account also cap stored bytes, requests and egress each month.

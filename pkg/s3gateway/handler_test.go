@@ -795,7 +795,11 @@ func TestGatewayBoundsConcurrentPutStaging(t *testing.T) {
 	body := []byte("body")
 	sum := sha256.Sum256(body)
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/key", body, hex.EncodeToString(sum[:])))
+	// The request gives up waiting for a slot when its context ends.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	request := signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/key", body, hex.EncodeToString(sum[:])).WithContext(ctx)
+	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "SlowDown") {
 		t.Fatalf("concurrent PUT limit = %d %s", recorder.Code, recorder.Body.String())
 	}

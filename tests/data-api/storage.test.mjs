@@ -61,7 +61,7 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   const require = createRequire(new URL('package.json', runtime))
   const pg = require('pg')
   const { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } = await import(pathToFileURL(require.resolve('jose')))
-  const { runtimeConfig } = await import(new URL('config.mjs', runtime))
+  const { runtimeConfig, UnsafeConfiguration } = await import(new URL('config.mjs', runtime))
   const { inspect } = await import(new URL('types.mjs', runtime))
   const { createServer, tokenVerifier } = await import(new URL('server.mjs', runtime))
   const { checkStorageTable } = await import(new URL('storage.mjs', runtime))
@@ -97,11 +97,12 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
     ALTER TABLE bare.storage_objects ENABLE ROW LEVEL SECURITY;`)
   const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
   await checkStorageTable(loginURL.toString(), 'api')
-  await assert.rejects(checkStorageTable(loginURL.toString(), 'bare'), /guard trigger/)
-  await assert.rejects(checkStorageTable(loginURL.toString(), 'public'), /missing/)
+  const unsafe = pattern => error => error instanceof UnsafeConfiguration && pattern.test(error.message)
+  await assert.rejects(checkStorageTable(loginURL.toString(), 'bare'), unsafe(/guard trigger/))
+  await assert.rejects(checkStorageTable(loginURL.toString(), 'public'), unsafe(/missing/))
   // A table created before object keys refuses storage until its upgrade.
   await owner.query(`CREATE SCHEMA old; ${sql.replaceAll('{{schema}}', 'old')}; ALTER TABLE old.storage_objects DROP COLUMN object_key; GRANT USAGE ON SCHEMA old TO "${role}"`)
-  await assert.rejects(checkStorageTable(loginURL.toString(), 'old'), /storage sql --upgrade/)
+  await assert.rejects(checkStorageTable(loginURL.toString(), 'old'), unsafe(/storage sql --upgrade/))
   await owner.query(`ALTER TABLE old.storage_objects ADD COLUMN IF NOT EXISTS object_key text CHECK (object_key ~ '^_gregale/objects/[0-9a-f]{32}$')`)
   await checkStorageTable(loginURL.toString(), 'old')
 

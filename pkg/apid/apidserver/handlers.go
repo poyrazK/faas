@@ -126,6 +126,11 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not list apps"))
 		return
 	}
+	apps, labelsByApp, problem := s.appListLabels(r, acct, apps)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	latestByApp, err := s.store.ListLatestDeploymentPerApp(r.Context(), acct.ID)
 	if err != nil {
 		s.log.Error("list app deployments failed", "account", acct.ID, "err", err)
@@ -143,6 +148,7 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 	for _, a := range apps {
 		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
 		resp.DeploymentAvailability = appDeploymentAvailability(liveByApp[a.ID])
+		resp.Labels = labelsByApp[a.ID]
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}

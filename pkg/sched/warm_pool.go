@@ -52,7 +52,7 @@ func (e *Engine) ReconcileEnvironmentWarmPools(ctx context.Context, appID string
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: environment inventory: %w", err)
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: paused inventory: %w", err)
 	}
@@ -131,7 +131,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	// Keep the plan-labelled gauge aligned with durable WARM rows even when
 	// reconciliation exits early (disabled pool, plan gate, or no snapshot).
 	defer e.refreshWarmPoolSizeGauge(ctx, acct.Plan, appID)
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: list instances: %w", err)
 	}
@@ -205,7 +205,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 		if err := e.reclaimWarmPool(ctx, warm, desired); err != nil {
 			return err
 		}
-		instances, err = e.store.ListInstancesForApp(ctx, appID)
+		instances, err = e.liveInstancesForApp(ctx, appID)
 		if err != nil {
 			return fmt.Errorf("sched: warm pool: refresh instances: %w", err)
 		}
@@ -304,7 +304,7 @@ func (e *Engine) refreshWarmPoolSizeGauge(ctx context.Context, plan api.Plan, ap
 	if e == nil || e.store == nil || e.ops == nil || appID == "" {
 		return
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		if e.log != nil {
 			e.log.Warn("sched: warm pool: refresh size gauge", "app", appID, "err", err)

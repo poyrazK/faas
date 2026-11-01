@@ -168,3 +168,24 @@ func TestBootstrapReleaseAll(t *testing.T) {
 		}
 	}
 }
+
+func TestEnabledByRuleCountsOnlyARuleOrOptIn(t *testing.T) {
+	on := true
+	set := platformflags.NewSet(map[string]platformflags.Definition{
+		flagKey(t, "managed-postgres"): {Enabled: true, Default: true, Rules: []platformflags.Rule{{ID: "owner", Accounts: []string{"acct-1"}, Value: &on}}},
+	})
+	d := load(t, set)
+	if !d.EnabledByRule("managed-postgres", platformflags.Subject{AccountID: "acct-1"}) {
+		t.Error("the account the rule names is enabled by the rule")
+	}
+	if !d.Enabled("managed-postgres", platformflags.Subject{AccountID: "acct-2"}) || d.EnabledByRule("managed-postgres", platformflags.Subject{AccountID: "acct-2"}) {
+		t.Error("an account only the default enables is not enabled by a rule")
+	}
+	if load(t, nil).EnabledByRule("managed-postgres", platformflags.Subject{AccountID: "acct-1"}) {
+		t.Error("the catalog tier default is not a rule")
+	}
+	var nilDecider *capflags.Decider
+	if nilDecider.EnabledByRule("managed-postgres", platformflags.Subject{AccountID: "acct-1"}) {
+		t.Error("a nil decider names no account")
+	}
+}

@@ -11,27 +11,25 @@ tests:
   - interval: 1m
     name: "a public cert with two days left pages"
     input_series:
-      - series: 'gateway_tls_cert_expiry_seconds{job="gatewayd",instance="127.0.0.1:9092"}'
+      - series: 'gateway_tls_cert_expiry_seconds{job="apid",instance="10.0.0.1:9101"}'
         values: '172800x30'
     alert_rule_test:
       - eval_time: 20m
         alertname: FaasTLSCertExpiryImminent
         exp_alerts:
           - exp_labels:
-              job: "gatewayd"
-              instance: "127.0.0.1:9092"
               severity: "page"
               component: "gatewayd-public"
               family: "tls_cert_expiry"
             exp_annotations:
               summary: "TLS cert expires in under 72 hours"
-              description: "The smallest remaining lifetime across cached certs is below 72 hours, so renewal has failed for at least eleven days. HTTPS for the affected hosts fails when the cert expires; renew it now."
+              description: "The soonest-expiring edge certificate on a verified custom domain has under 72 hours left, so renewal has failed for at least eleven days. HTTPS for that host fails when the certificate expires; renew it now."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
 
   - interval: 1m
     name: "a public cert with ten days left does not page"
     input_series:
-      - series: 'gateway_tls_cert_expiry_seconds{job="gatewayd",instance="127.0.0.1:9092"}'
+      - series: 'gateway_tls_cert_expiry_seconds{job="apid",instance="10.0.0.1:9101"}'
         values: '864000x30'
     alert_rule_test:
       - eval_time: 20m

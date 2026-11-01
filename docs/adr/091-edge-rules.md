@@ -1585,3 +1585,29 @@ path does. None changes the rule format.
    gateway's route-target scope check and the app's resource account work in
    this mode too; before, every app read as personal there, and a company
    app's plan and limits came from its creator's account.
+
+## Amendment (2026-10-31, later): app-bound credentials write rules for their app only
+
+An edge-security review found that a per-app deploy token, which the docs
+describe as able to deploy one app, could take over the traffic of every app
+in its owner scope. The token may call every `/v1/apps/{slug}/...` route of
+its app, including `POST /v1/apps/{slug}/edge-rules`, and a bearer skips the
+MFA gate. `match_host` is checked for syntax only, and the gateway applies a
+rule to every host it covers whichever of the scope's apps owns it (round 6).
+A leaked CI token could therefore write a `redirect`, `respond`, `ip` or
+`headers` rule with `match_host: "*"`, another app's host or a custom domain,
+and the rule would show only under the token's own app.
+
+A principal bound to one app (a deploy token; `APIKey.AppID` is set for no
+other credential) may now write rules whose `match_host` is `@app`, the
+app's own host under each apps domain, or one of the app's custom domains.
+Anything wider (`*`, a glob, another app's host) is refused with 403
+`forbidden`, and needs an account credential. The check
+(`edgerules.AppBoundHostProblem`) runs on every path such a credential can
+reach that writes a rule: create, update, rollback (each restored rule),
+OpenAPI policy apply, and the `routes` and `async_routes` of a deployed
+`gregale.yaml`. A manifest route is stored on its target app but matches
+the source host, so deploying with a deploy token a manifest that routes
+another app's host to this app is refused too; deploy such a project with an
+account key. Account keys, organization keys and dashboard sessions are not
+limited.

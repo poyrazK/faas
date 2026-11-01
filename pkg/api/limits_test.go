@@ -265,6 +265,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Cron (spec §4.4 paid-only): Free has no crons at all. Handler
 			// returns 402 ErrPlanCronsNotAllowed before the store is touched.
 			CronLimitPerApp: 0, CronLimitPerAccount: 0,
+			EventSubscriptionsPerApp: 0, EventSubscriptionsPerAccount: 0,
 			// Issue #475: Free is gated off the reserved eviction tier.
 			// Fail-closed at 0/0 mirrors the cron 0/0 posture above.
 			EvictionPriorityReservedAllowed: false, ReservedConcurrencyPerAccount: 0,
@@ -442,6 +443,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			ScaleUpTargetRPSAllowed: false, ScaleUpTargetCPUAllowed: false,
 			// Cron: Hobby gets 5 per-app and 10 per-account.
 			CronLimitPerApp: 5, CronLimitPerAccount: 10,
+			EventSubscriptionsPerApp: 5, EventSubscriptionsPerAccount: 10,
 			// M-2 / ADR-137+138: Hobby's 30 s stop-grace, 30 s
 			// startup-deadline, 5-retry caps. Hobby unlocks worker
 			// (1) + service (3 replicas) + 5-min job runtime.
@@ -607,6 +609,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			ScaleUpTargetRPSAllowed: true, ScaleUpTargetCPUAllowed: true,
 			// Cron: Pro gets 20 per-app and 50 per-account.
 			CronLimitPerApp: 20, CronLimitPerAccount: 50,
+			EventSubscriptionsPerApp: 20, EventSubscriptionsPerAccount: 50,
 			// M-2 / ADR-137+138: Pro doubles Hobby (60 s grace,
 			// 10 retries); the startup deadline is the 30 s cold-boot
 			// window (ADR-138 amendment). 3 workers, 5 service
@@ -777,6 +780,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			ScaleUpTargetRPSAllowed: true, ScaleUpTargetCPUAllowed: true,
 			// Cron: Scale gets 100 per-app and 500 per-account.
 			CronLimitPerApp: 100, CronLimitPerAccount: 500,
+			EventSubscriptionsPerApp: 100, EventSubscriptionsPerAccount: 500,
 			// M-2 / ADR-137+138: Scale doubles Pro (120 s grace,
 			// 20 retries); the startup deadline is the 30 s cold-boot
 			// window (ADR-138 amendment). 10 workers, 20 service

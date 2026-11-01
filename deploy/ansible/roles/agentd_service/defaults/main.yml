@@ -26,3 +26,11 @@ faas_agentd_s3_endpoint: ""
 
 # Loopback /metrics (agent_deliveries_total and friends).
 faas_agentd_metrics_listen: "127.0.0.1:9109"
+
+# ADR 20261029202403 amendment 1: the uploads credential ring (object upload grants agentd issues; s3-gatewayd checks them with the same ring),
+# an operator-local file from `gregalectl credentials keygen`. Empty
+# removes it. Set keyed writes only once every holder runs the release
+# that reads keyed digests; turn plain lookup off only at the contract step.
+faas_credential_uploads_keys_src: ""
+faas_credential_uploads_writes: plain
+faas_credential_uploads_plain_lookup: true

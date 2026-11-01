@@ -1917,7 +1917,7 @@ func (h *Handler) WithWakeAdmissionAudit(audit RequireAuthnAuditor) *Handler {
 // gateway audit writer; nil keeps the limiter useful in tests and on boxes
 // without event persistence.
 func (h *Handler) WithVMConcurrencyAudit(audit RequireAuthnAuditor) *Handler {
-	h.vmConcurrencyAudit = audit
+	h.vmConcurrencyAudit = throttleRepeatedAudit(audit)
 	return h
 }
 
@@ -2055,7 +2055,7 @@ func (h *Handler) WithConsumerAuth(store ConsumerAuthStore) *Handler {
 func (h *Handler) WithEdgeRules(matcher EdgeRuleMatcher, resolve ResolveTargetApp, audit EdgeRuleAuditor) *Handler {
 	h.edgeRules = matcher
 	h.resolveTargetApp = resolve
-	h.edgeRuleAudit = audit
+	h.edgeRuleAudit = throttleRepeatedAudit(audit)
 	return h
 }
 
@@ -6180,7 +6180,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set(api.RequestIDHeader, rid)
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) || strings.HasPrefix(strings.ToLower(name), "x-gregale-event-") {
+			if api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") {
 				delete(r.Header, name)
 			}
 		}
@@ -8294,7 +8294,12 @@ haveApp:
 	// bytes that didn't egress would be wrong on both ends of the
 	// financial model. nil-safe for unit tests.
 	h.recordEgress(rec, completionTarget, app)
-	if cold && h.metrics != nil {
+	// A request that found no routable target went through wake admission:
+	// it admitted a wake (cold, with the scheduler's method) or joined one
+	// already in flight. The latter is cold on the pinned path but admitted
+	// nothing, so it carries no method of its own.
+	waitedOnWake := cold || !platformWakeStart.IsZero()
+	if waitedOnWake && h.metrics != nil {
 		// Wake latency is "request-received to first upstream byte". The
 		// wake-timing RoundTripper stamps the inbound request's recorder at
 		// GotFirstResponseByte; reading it back here yields the actual wake
@@ -8308,30 +8313,39 @@ haveApp:
 				"app", app.ID, "node", target.NodeID, "instance", target.InstanceID)
 			firstByteAt = time.Now()
 		}
-		h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceIDFromContext(r.Context()))
-		if !platformWakeStart.IsZero() {
-			h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceIDFromContext(r.Context()))
-			platformWakeTrace.observe(h.metrics, firstByteAt)
+		traceID := traceIDFromContext(r.Context())
+		// What every caller saw, including the queue behind a wake in flight.
+		h.metrics.ObserveWakeRequestLatencyWithTrace(firstByteAt.Sub(wakeStart), traceID)
+		// The §12 wake SLO, its per-node and platform views, the phase
+		// breakdown, the cold-boot counter, locality and tier hold one sample
+		// per admitted wake. Counting joiners too filed each one as
+		// local_coldboot (8,497 in a 2026-10-31 load test whose 15 wakes were
+		// all restores) and weighted the SLO by how many requests piled up
+		// behind a wake rather than by how long the wake took.
+		if cold && wakeMethod != WakeMethodUnspecified {
+			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
+			if !platformWakeStart.IsZero() {
+				h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+				platformWakeTrace.observe(h.metrics, firstByteAt)
+			}
+			// Wake-locality classifier (PR scale-out readiness). Increment
+			// AFTER the first-byte observation so the 350 ms measurement
+			// path is unchanged. Today's outcomes are local_snapshot /
+			// local_coldboot; remote_* outcomes slot in when a second
+			// compute node joins.
+			h.metrics.ObserveWakeLocality(wakeMethod.String())
+			// Snapshot-tier counter (issue #470 / PR #470-FU-B). The
+			// tier ∈ {warm, init, cold} refinement of the wake
+			// outcome is produced by PR #470-FU-A (engine
+			// usableSnapshotForWake). Until the engine threads the
+			// tier onto the Admit response, we map the existing
+			// WakeMethod to the closest tier: snapshot→init (today
+			// every restored snapshot is init; warm is a refinement)
+			// and cold-boot→cold. Update to the real tier field once
+			// PR #470-FU-A lands; the Observe method's empty-string
+			// fallback already covers the transition seam.
+			h.metrics.ObserveWakeSnapshotTier(tierFromWakeMethod(wakeMethod))
 		}
-		// Wake-locality classifier (PR scale-out readiness). Increment
-		// AFTER the existing first-byte observation so the 350 ms
-		// measurement path is unchanged. Only fires on a real admit
-		// (cold==true), so warm requests, at-capacity benign outcomes,
-		// and admission errors do not enumerate. Today's outcomes are
-		// local_snapshot / local_coldboot; remote_* outcomes slot in
-		// when a second compute node joins.
-		h.metrics.ObserveWakeLocality(wakeMethod.String())
-		// Snapshot-tier counter (issue #470 / PR #470-FU-B). The
-		// tier ∈ {warm, init, cold} refinement of the wake
-		// outcome is produced by PR #470-FU-A (engine
-		// usableSnapshotForWake). Until the engine threads the
-		// tier onto the Admit response, we map the existing
-		// WakeMethod to the closest tier: snapshot→init (today
-		// every restored snapshot is init; warm is a refinement)
-		// and cold-boot→cold. Update to the real tier field once
-		// PR #470-FU-A lands; the Observe method's empty-string
-		// fallback already covers the transition seam.
-		h.metrics.ObserveWakeSnapshotTier(tierFromWakeMethod(wakeMethod))
 	}
 }
 

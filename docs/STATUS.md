@@ -7,6 +7,30 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Managed PostgreSQL GA — 2026-10-31 (not released)
+
+[ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md) moves
+`managed-postgres`, `postgres-bindings` and `postgres-restore` to `ga` and
+resize and organization databases to `beta`. Rollbacks that restore the
+database become their own preview, `database-rollbacks`. The code-side GA
+blockers from the 2026-10-23 review are closed (caps, storage pool, delete
+undo window, SQL probe, the Neon review fixes); all of it is unreleased.
+
+Managed PostgreSQL launches GA with the public release. Customers get it when
+the flag opens, after the public-release gate in the ADR: the P0 workstreams
+of [#6146](https://github.com/poyrazK/faas/issues/6146) (lifecycle evidence,
+sustained production use with priced continuation, customer recovery).
+
+Open evidence:
+- `tests/journeys/postgres_test.go::TestManagedPostgres` has not run against
+  production yet. It needs the release, an approved production backend and
+  the owner's account released by the `managed_postgres` flag (the
+  [GA rollout](managed-postgres.md#ga-rollout)).
+- The compute and storage cap qualifications, the deletion hold check and the
+  enforcement switches are operator steps in the same rollout.
+- Free and Hobby cannot restore: a restore is a second database and those
+  plans allow one.
+
 ## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
 
 The 2026-10-26 crons GA review found four blockers; #5649 fixes them
@@ -335,6 +359,17 @@ whose paths route to several apps. Open before releasing `edge_challenge` or
 `edge_attack_mode`: deliver the fleet's `gatewayd_edge_challenge_key` to
 every gateway and see `FaasEdgeChallengeKeyMismatch` quiet
 (`docs/ops/platform-flags.md`).
+
+2026-10-31: a security review fixed three more. A per-app deploy token could
+write rules covering every app of its account; it is now limited to its own
+app's hosts (ADR-091 amendment 2026-10-31, later). A cookie planted by
+another app on the shared apps domain could hide a challenge pass (now a
+`__Host-` cookie) or get a visitor boxed through a WAF `block` rule
+(cookie-only detections no longer count toward penalties), and challenged CORS
+preflights broke cross-origin calls (now answered at the edge; ADR-831
+amendment 18). Open: such a planted cookie still trips `block` rules on
+`gregale.dev` hosts until apps move to a domain on the Public Suffix List
+(ADR-20261026100000 amendment 1, proposed).
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

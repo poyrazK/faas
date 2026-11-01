@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -142,7 +143,7 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 	var attachDigest []byte
 	if resolved.Interactive != nil {
 		interactiveTTY = resolved.Interactive.TTY
-		attachDigest = resolved.Interactive.TokenSHA256
+		attachDigest = familyStoredCredential(credhash.FamilyAttach, credTagInteractiveAttach, resolved.Interactive.TokenSHA256)
 	}
 	row := s.pool.QueryRow(ctx, `
 		with created as (

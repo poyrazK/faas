@@ -46,6 +46,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -137,6 +138,7 @@ type InternalReverseProxy struct {
 	placement EdgePlacement
 
 	trafficRevocations  *trafficrevocation.Registry
+	trafficSnapshots    *trafficSnapshotMemo
 	Dialer              InternalDialer
 	Target              *url.URL
 	Transport           http.RoundTripper
@@ -967,6 +969,15 @@ func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (in
 	return copyResponseBodyWithActivity(ctx, dst, src, nil)
 }
 
+// responseCopyBuffers recycles copyResponseBodyWithActivity's 32 KiB
+// buffer. A fresh one per response was the edge's largest allocation by
+// bytes (300 req/s made ~10 MB/s of garbage). The copier returns its
+// buffer only after its last Read and Write.
+var responseCopyBuffers = sync.Pool{New: func() any {
+	buf := make([]byte, 32*1024)
+	return &buf
+}}
+
 func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, activity func()) (int64, error) {
 	if w, ok := dst.(http.ResponseWriter); ok {
 		stop, err := armResponseWriteContext(ctx, w)
@@ -1019,7 +1030,9 @@ func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.Rea
 			}
 		}()
 		defer func() { _ = src.Close() }() // ensure goroutine exit even on panic
-		buf := make([]byte, 32*1024)
+		bufp := responseCopyBuffers.Get().(*[]byte)
+		defer responseCopyBuffers.Put(bufp)
+		buf := *bufp
 		for {
 			n, rErr := src.Read(buf)
 			if n > 0 {
