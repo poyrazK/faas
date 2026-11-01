@@ -114,6 +114,9 @@ func run(args []string) (status int) {
 	previousAutomation := nonInteractive
 	defer func() { nonInteractive = previousAutomation }()
 	nonInteractive = false
+	previousInsecureWarned := insecureAPIWarned
+	defer func() { insecureAPIWarned = previousInsecureWarned }()
+	insecureAPIWarned = false
 	var automationErr error
 	args, automationErr = extractAutomationFlag(args)
 	previousProfile := profileOverride
@@ -253,6 +256,9 @@ func run(args []string) (status int) {
 	}
 	if err := validateSelectedProfile(); err != nil {
 		return printErr("Invalid connection profile", err)
+	}
+	if code, stop := connectionPreflight(args[0]); stop {
+		return code
 	}
 	switch args[0] {
 	case "profile":

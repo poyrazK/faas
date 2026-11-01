@@ -2613,3 +2613,7 @@ func TierDiscoverableFlags(names, capabilities []string) []string {
 var BindExclusiveLock = bindExclusiveLock
 
 type ExclusiveLock = exclusiveLock
+
+// CLI audit 2026-10-31 (auth and credentials).
+var CmdLogin = cmdLogin
+var WithEntry = withEntry

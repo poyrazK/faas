@@ -184,6 +184,16 @@ func loadTokenWithDiagnostics(diagnostics io.Writer) string {
 	if v := os.Getenv("FAAS_TOKEN"); v != "" {
 		return strings.TrimSpace(v)
 	}
+	return loadStoredToken(diagnostics)
+}
+
+// envToken returns the FAAS_TOKEN override, trimmed like loadToken does.
+func envToken() string { return strings.TrimSpace(os.Getenv("FAAS_TOKEN")) }
+
+// loadStoredToken is loadToken without the FAAS_TOKEN override: the
+// credential saved for the selected profile. Logout and re-login revoke the
+// key behind this credential, never the environment's.
+func loadStoredToken(diagnostics io.Writer) string {
 	if kr := effectiveKeyring(); kr != nil {
 		v, err := kr.Get(keyringService, profileKeyringAccount())
 		switch {
@@ -253,6 +263,43 @@ func loadLegacyToken(diagnostics io.Writer) string {
 		}
 	}
 	return ""
+}
+
+// warnEnvTokenOverride prints one stderr line when FAAS_TOKEN replaces a
+// credential the user selected: an explicit --profile, or a login saved for
+// the selected profile. Stdout stays clean, so --json output is unchanged.
+func warnEnvTokenOverride() {
+	env := envToken()
+	switch {
+	case env == "":
+	case profileOverride != "":
+		PrintWarn(osStderr, "FAAS_TOKEN is set and overrides --profile %s's saved login; this command sends FAAS_TOKEN to %s. Unset FAAS_TOKEN to use the profile's login.", profileOverride, displayAPIBase(apiBase()))
+	case savedLoginShadowedBy(env):
+		PrintWarn(osStderr, "FAAS_TOKEN is set and overrides your saved login; unset FAAS_TOKEN to use it.")
+	}
+}
+
+// savedLoginShadowedBy reports whether a credential saved for the selected
+// profile differs from env. The OS keychain is read only from an interactive
+// terminal: automation that exports FAAS_TOKEN never touched it before, and a
+// keychain probe on a headless host can start a D-Bus session.
+func savedLoginShadowedBy(env string) bool {
+	if meta, err := loadManagedSession(); err == nil && meta.Managed && meta.KeyID != "" && meta.TokenFingerprint != "" && !meta.matches(env) {
+		return true
+	}
+	if p, err := tokenPath(); err == nil {
+		if b, err := os.ReadFile(p); err == nil {
+			if v := strings.TrimSpace(string(b)); validPersistedToken(v) && v != env {
+				return true
+			}
+		}
+	}
+	if !stdinIsTTY() {
+		return false
+	}
+	v, err := effectiveKeyring().Get(keyringService, profileKeyringAccount())
+	v = strings.TrimSpace(v)
+	return err == nil && validPersistedToken(v) && v != env
 }
 
 // validPersistedToken keeps the on-disk/keychain stores aligned with the
