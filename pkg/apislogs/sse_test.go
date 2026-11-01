@@ -56,7 +56,7 @@ func TestLogAppLogFrameStructuredJournalRecord(t *testing.T) {
 
 func TestLogAppLogFrameWithIdentityIncludesDeploymentProvenance(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	LogAppLogFrameWithIdentity(logger, scheddgrpc.LogFrame{
 		InstanceID: "instance-1", Seq: 7, Stream: "stdout", Line: "hello",
 		WrittenAt: time.Date(2026, 9, 23, 10, 11, 12, 0, time.UTC),
@@ -88,7 +88,7 @@ func TestLogAppLogFrameWithIdentityIncludesDeploymentProvenance(t *testing.T) {
 
 func TestLogAppLogFrameGapUsesWarningRecord(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	LogAppLogFrame(logger, scheddgrpc.LogFrame{
 		IsGap:          true,
 		GapReason:      "seq_below_retained",
