@@ -87,10 +87,12 @@ func (q *Queue) advancePastLocked(items []QueueItem, now time.Time) error {
 	if items[0].offset != q.state.Offset {
 		return fmt.Errorf("log drain: acknowledge stale item: %w", ErrQueueData)
 	}
-	for i, item := range items {
-		if item.nextOffset <= item.offset || (i > 0 && item.offset != items[i-1].nextOffset) {
+	expected := items[0].offset
+	for _, item := range items {
+		if item.offset != expected || item.nextOffset <= item.offset {
 			return fmt.Errorf("log drain: acknowledge non-consecutive items: %w", ErrQueueData)
 		}
+		expected = item.nextOffset
 	}
 	last := items[len(items)-1]
 	next := queueState{Offset: last.nextOffset, LastSequences: maps.Clone(q.state.LastSequences), LastSeen: maps.Clone(q.state.LastSeen)}

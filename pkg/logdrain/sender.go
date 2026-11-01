@@ -445,16 +445,11 @@ func (s *Sender) deliverDurableBatch(ctx context.Context, items []QueueItem) err
 	return nil
 }
 
-// withinRetryWindow reports whether a durable record that just failed with a
-// retryable error is still young enough to retry beyond MaxAttempts.
-// production-us hunt #9 (H9-109): three attempts 100 ms and 200 ms apart
-// dead-lettered every record an endpoint failed to accept for ~0.3 s.
-func (s *Sender) withinRetryWindow(item QueueItem) bool {
-	return s.cfg.RetryWindow > 0 && !item.EnqueuedAt.IsZero() && time.Since(item.EnqueuedAt) < s.cfg.RetryWindow
-}
-
 // withinRetryWindowSince reports whether a batch that first failed at
-// firstFailure is still inside the retry window (zero: not failed yet).
+// firstFailure is still inside the retry window (zero: not failed yet), so a
+// retryable failure keeps retrying beyond MaxAttempts. production-us hunt #9
+// (H9-109): three attempts 100 ms and 200 ms apart dead-lettered every record
+// an endpoint failed to accept for ~0.3 s.
 func (s *Sender) withinRetryWindowSince(firstFailure time.Time) bool {
 	return s.cfg.RetryWindow > 0 && !firstFailure.IsZero() && time.Since(firstFailure) < s.cfg.RetryWindow
 }
