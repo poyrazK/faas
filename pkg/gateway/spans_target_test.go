@@ -41,7 +41,8 @@ func TestSpansTargetsBufferAndFlushApart(t *testing.T) {
 	}
 	written := map[SpanTarget]int{}
 	acc.drainOnce(context.Background(), FlushLoopConfig{
-		Log: slog.Default(),
+		Log:        slog.Default(),
+		MaxRetries: 3,
 		WriteTargetFn: func(_ context.Context, traceID string, _ []byte, target SpanTarget) (string, int64, error) {
 			if traceID != tid {
 				t.Errorf("trace = %s", traceID)
