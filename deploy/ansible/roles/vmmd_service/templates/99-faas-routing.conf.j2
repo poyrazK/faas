@@ -4,3 +4,8 @@
 # preserve the single-box unix-socket path.
 Environment=FAAS_VMMD_LISTEN_ADDR={{ faas_vmmd_listen_addr | default('') }}
 Environment=FAAS_VMMD_TARGET_URL={{ faas_vmmd_target_url | default('') }}
+{% if faas_database_route_enabled | default(false) | bool %}
+# ADR-1027: the app route to managed databases (with the nftables role's
+# faas_database_route_enabled and gatewayd-internal's database_route_*).
+Environment=FAAS_VMMD_DATABASE_ROUTE_ENABLED=true
+{% endif %}

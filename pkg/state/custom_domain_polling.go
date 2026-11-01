@@ -168,6 +168,11 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		}
 		return d, 0, mapErr(err)
 	}
+	// A reclaimed or taken-over row starts as a new claim: no host
+	// allowlist or known hosts from the previous claimant.
+	if err = forgetCustomDomainTLSHostsTx(ctx, tx, domain); err != nil {
+		return CustomDomain{}, 0, err
+	}
 	var outboxID int64
 	if entry != nil {
 		outboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, *entry)
@@ -316,6 +321,7 @@ func (m *MemStore) createCustomDomainIfUnderQuotaLocked(ctx context.Context, dom
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
 		return CustomDomain{}, err
 	}
+	m.dropCustomDomainTLSHostsLocked(domain)
 	m.domains[domain] = d
 	return d, nil
 }

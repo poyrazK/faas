@@ -73,6 +73,11 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_client_request import AgentClientRequest
+from .agent_connection_response import AgentConnectionResponse
+from .agent_connection_response_kind import AgentConnectionResponseKind
+from .agent_connections_response import AgentConnectionsResponse
+from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
 from .ai_deployment_usage import AIDeploymentUsage
 from .ai_deployment_usage_list import AIDeploymentUsageList
 from .alert_delivery_response import AlertDeliveryResponse
@@ -2649,6 +2654,7 @@ from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
 from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
 from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
@@ -6309,6 +6315,11 @@ __all__ = (
     "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentClientRequest",
+    "AgentConnectionResponse",
+    "AgentConnectionResponseKind",
+    "AgentConnectionsResponse",
+    "AgentConnectionsRevokeAllResponse",
     "AIDeploymentUsage",
     "AIDeploymentUsageList",
     "AlertDeliveryResponse",
@@ -8769,6 +8780,7 @@ __all__ = (
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageImportReading",
     "ManagedPostgresUsageImportReadingMeter",
     "ManagedPostgresUsageImportRequest",

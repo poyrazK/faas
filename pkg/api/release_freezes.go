@@ -121,6 +121,16 @@ func ErrReleaseFreezeLimit(observed int) *Problem {
 		WithDocs(docsBase + "/deploys#deploy-freezes")
 }
 
+// ErrReleaseFreezeOverrideNotAllowed refuses overriding a company
+// organization's freeze by a caller who may not lift it, or with a key that
+// can only deploy (ADR-20261019071733 amendment 5).
+func ErrReleaseFreezeOverrideNotAllowed(freezeID, why string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeReleaseFreezeOverrideNotAllowed, "Freeze override not allowed",
+		fmt.Sprintf("%s Freeze %s belongs to the organization.", why, freezeID)).
+		WithHint("Ask an owner or admin to lift the freeze with `gregale freeze lift`, or to deploy with --override-freeze.").
+		WithDocs(docsBase + "/deploys#deploy-freezes")
+}
+
 // ErrReleaseFreezeCompanyApp refuses an account freeze route that names a
 // company organization's app: the organization owns that app's freezes
 // (ADR-20261019071733 amendment 4).

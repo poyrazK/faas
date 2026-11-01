@@ -490,6 +490,10 @@ func cmdApp(args []string) int {
 		if explicit["per-instance-concurrency"] {
 			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
+		if explicit["min"] {
+			// The policy was copied from the app, so it holds the old floor.
+			policy.MinInstances = *min
+		}
 		req.ScalingPolicy = policy
 	}
 	if explicit["idle"] {
@@ -1908,11 +1912,11 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
-	case "function-rust":
+	case "function-rust", "agent-infinity-rust":
 		// ADR-987: built from the template's Dockerfile; the handler value
 		// is vestigial, but the deploy API requires it to be non-empty.
 		return runtimeBinary, "handler", true
-	case "cron-worker", "event-worker", "queue-worker":
+	case "cron-worker", "event-worker", "queue-worker", "agent-stateless-node":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
 		return "", "", false
@@ -5090,6 +5094,7 @@ func cmdTrafficStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
 		return 0
 	}
+	defer printCanaryProgress(live)
 	if len(byScope) > 1 {
 		printScopedTrafficStatus(live, byScope)
 		return 0
@@ -5108,6 +5113,19 @@ func cmdTrafficStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
+}
+
+// printCanaryProgress names each rolling canary's current step. Traffic
+// changes are refused while a canary runs, and advancing it needs that step;
+// it appeared only in the refusal of a wrong guess (PulseWatch F17).
+func printCanaryProgress(live []api.DeploymentResponse) {
+	for _, d := range live {
+		if d.CanaryTotalSteps <= 0 || d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+			continue
+		}
+		_, _ = fmt.Fprintf(osStdout, "Canary %s is rolling out at canary_step=%d (step %d of %d). Advance it with:\n  %s deployment advance %s --expected-step %d\n",
+			deploymentLabel(d), d.CanaryStep, d.CanaryStep+1, d.CanaryTotalSteps, recoveryCLI(), recoveryArgument(d.ID), d.CanaryStep)
+	}
 }
 
 // trafficScope names a deployment's traffic scope; an unscoped row is the
@@ -5311,6 +5329,8 @@ func cmdCrons(args []string) int {
 		return cronConditions.status(args[1:])
 	case subWait:
 		return cronConditions.wait(args[1:])
+	case subLabel:
+		return cmdCronLabel(args[1:])
 	case subList:
 		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
 			if delayedTasksHidden() {
@@ -5319,27 +5339,38 @@ func cmdCrons(args []string) int {
 			return cmdDelayedTaskList(rest)
 		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
-		slug := fs.String("app", "", "app slug (required)")
+		slug := fs.String("app", "", "app slug (required without -l)")
+		selector := addSelectorFlag(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
-		if *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug>", "crons")
+		if *slug == "" && *selector == "" {
+			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
 			return 1
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		out, err := client.ListCrons(context.Background(), *slug)
+		var out []api.CronResponse
+		if *selector != "" {
+			// -l without --app selects across every app (ADR-20261031100025).
+			out, err = selectedCrons(context.Background(), client, *slug, *selector)
+		} else {
+			out, err = client.ListCrons(context.Background(), *slug)
+		}
 		if err != nil {
 			return printErr("Could not list crons", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
+		}
+		if len(out) == 0 && *selector != "" {
+			_, _ = fmt.Fprintf(osStdout, "No cron matches %s\n", *selector)
+			return 0
 		}
 		// The ID leads because `crons info|update|rm|runs` all require it
 		// and nothing else printed it (issue #3362).

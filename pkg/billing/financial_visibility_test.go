@@ -92,6 +92,49 @@ func TestFinancialVisibility(t *testing.T) {
 	}
 }
 
+// adr: 20261031090658 — after a plan change the ledger nets compute the way
+// the provider pusher bills it, hour by hour, so the dual run agrees.
+func TestFinancialVisibilityBillsAPlanChangeHourByHour(t *testing.T) {
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	day := 24 * time.Hour
+	store := &visibilityTestStore{MemStore: state.NewMemStore(), retained: start, timeNow: start.Add(17 * day)}
+	a, err := store.CreateAccount(t.Context(), "financial-downgrade@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		plan api.Plan
+		at   time.Time
+	}{{api.PlanPro, start}, {api.PlanHobby, start.Add(15 * day)}} {
+		p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), EffectiveFrom: step.at, Plan: step.plan, DeliveryMode: "live", Price: financial.Price{Version: string(step.plan) + "-v1", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: api.IncludedMBSeconds(step.plan)}}
+		if _, err := store.PutFinancialPriceSnapshot(t.Context(), p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 700 GB-h under Pro, then 50 GB-h after the downgrade: the month's
+	// allowance falls to 587 GB-h, but only the 50 GB-h used afterwards bill.
+	for i, use := range []struct {
+		at      time.Time
+		gbHours int64
+	}{{start.Add(day), 700}, {start.Add(16 * day), 50}} {
+		if err := store.AppendUsage(t.Context(), a.ID, "app", string(rune('a'+i)), use.at, use.gbHours*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := ReadFinancialCosts(t.Context(), store, a.ID, start, store.timeNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accrued := got.Meters[0].Accrued
+	if net := accrued.Quantity - accrued.IncludedQuantity; net != 50*api.SecondsPerGBHour {
+		t.Fatalf("ledger net compute = %.1f GB-h, want the 50 GB-h the pusher bills: %+v", float64(net)/float64(api.SecondsPerGBHour), accrued)
+	}
+	billed, err := OverageMBSecondsForRange(t.Context(), store, a, start, store.timeNow)
+	if err != nil || billed != 50*api.SecondsPerGBHour {
+		t.Fatalf("pusher range billing = %d, %v; want 50 GB-h", billed, err)
+	}
+}
+
 // October's price snapshots recorded before the USD switch are in EUR
 // (ADR-1430). They stay valid history, but pricing them failed every October
 // cost report with a 503 ("could not read retained financial evidence" from

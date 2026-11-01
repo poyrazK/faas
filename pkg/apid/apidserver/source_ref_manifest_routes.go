@@ -43,6 +43,11 @@ func (s *server) applySourceRefManifestPathRoutes(ctx context.Context, acct stat
 	}
 	desired := make([]state.CreateEdgeRuleParams, 0, 2*len(matching))
 	for _, route := range matching {
+		// A deploy token deploys one app; the route's host must be that
+		// app's too (ADR-091 amendment 2026-10-31, security review).
+		if problem := s.edgeRules.AppBoundHostProblem(ctx, app, route.MatchHost); problem != nil {
+			return problem
+		}
 		params, problem := sourceRefManifestPathRouteParams(acct, app, route)
 		if problem != nil {
 			return problem

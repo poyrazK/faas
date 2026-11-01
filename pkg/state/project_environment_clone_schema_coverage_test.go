@@ -32,6 +32,14 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"data_repair_rehearsals":            state.CloneSchemaOperational,
 		"migration_verifications":           state.CloneSchemaOperational,
 		"project_migrations":                state.CloneSchemaOperational,
+		// adr:1027 — native database placement, standby, drill, usage and
+		// role-verifier state stay with the source; a clone never shares a VM
+		// or a credential. The database-node fleet is platform inventory.
+		"database_nodes":          state.CloneSchemaPlatform,
+		"database_restore_drills": state.CloneSchemaOperational,
+		"database_role_verifiers": state.CloneSchemaOperational,
+		"database_usage":          state.CloneSchemaOperational,
+		"database_vms":            state.CloneSchemaOperational,
 		// Function capture and destination authority stay with their original instance.
 		"function_migration_sources":      state.CloneSchemaOperational,
 		"function_migration_destinations": state.CloneSchemaOperational,

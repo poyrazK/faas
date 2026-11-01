@@ -27,9 +27,10 @@ It all happens in one browser tab (ADR-20261028205920).
 
 The connection's credential stays valid while the agent uses it: it ends
 after a week unused, and 30 days after you connect at the latest. Then the
-agent asks you to connect again. Revoke it any time from your account's API
-keys page; its label is `mcp-login`. An account can have 10 connections at a
-time.
+agent asks you to connect again. Revoke it any time with
+`gregale mcp connection revoke` (see
+[See and revoke connected agents](#see-and-revoke-connected-agents)). An
+account can have 10 connections at a time.
 
 The hosted server lists the `core` and `provision` toolsets. A connection
 sees only the tools its consent covers:
@@ -87,6 +88,30 @@ The key reaches every app in its account. Agent keys expire after 90 days by
 default; rotate them like any key. Revoking the key ends the agent's access at
 its next request. Release plans made with a key are kept in memory, so after a
 server restart the agent plans again.
+
+### See and revoke connected agents
+
+Every agent that can reach your account is listed in one place
+(ADR-20261030133644): browser sign-ins through the hosted server, named by the
+client that signed in, and agent keys, named by their label.
+
+```sh
+gregale mcp connection list
+gregale mcp connection revoke <id>
+gregale mcp connection revoke --all
+```
+
+`list` shows each agent's kind, name, and the site the client was verified
+at, plus when it was last used and when it expires. A connected agent is the
+API key it uses, so revoking it revokes that key: the agent fails its next
+request and must sign in again. `--all` revokes every connected agent at once,
+for example after losing a laptop. Revoking needs an admin credential; your
+CLI login has one.
+
+The same list is `GET /v1/agent-connections`; revoke with
+`DELETE /v1/agent-connections/{id}` or `POST /v1/agent-connections/revoke_all`.
+Connections made before this list existed show no client name until the agent
+signs in again.
 
 ## Connect a local agent to Gregale
 
@@ -153,8 +178,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 |---|---|
 | `gregale_preflight` | Read-only app/environment consent, release-review/health/operations compatibility and durable-state checks. Unknown capabilities require native review/admission. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
-| `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. |
-| `gregale_get_app` | One app's status, URLs, deployment availability, and resource settings. |
+| `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. `selector` (preview) keeps the apps whose labels match a Kubernetes selector such as `team=billing,tier in (web,api)`. |
+| `gregale_get_app` | One app's status, URLs, deployment availability, resource settings and, with the resource-labels preview, labels. |
 | `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
 | `gregale_get_deployment` | Build/deployment status, commit and image identifiers, and failure diagnostics. |
 | `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. |
@@ -2101,7 +2126,7 @@ sudo -u faas-mcp-bridge /opt/faas/current/bin/gregale mcp connection revoke \
   --socket /run/faas-mcp-bridge/admin.sock --grant-id <grant_id>
 ```
 
-  [Inspect and revoke agent connections locally](#inspect-and-revoke-agent-connections-locally)
+  [Inspect and revoke a bridge's grants locally](#inspect-and-revoke-a-bridges-grants-locally)
   describes the output.
 
 ## Connect a remote agent with OAuth
@@ -2211,8 +2236,11 @@ revokes the grant. A browser sign-in's grant follows its `mcp-login` credential:
 a week after its last use, 30 days after consent at the latest. A grant made with
 a pasted API key expires after eight hours. `POST /oauth/revoke` disconnects
 a grant using its token and registered client ID. Token/code lookups use hashes.
-Revoking the backing `mcp-login` credential in Gregale also disables the connection
-on its next request. Without a state file, restarting disconnects clients. Durable
+Revoking the backing `mcp-login` credential in Gregale (`gregale mcp connection
+revoke`) disables the connection on its next request, and the bridge then drops
+it. The bridge names each `mcp-login` credential's client in Gregale after
+sign-in and revokes the credential itself when the grant ends (ADR-20261030133644).
+Without a state file, restarting disconnects clients. Durable
 state supports one bridge process; shared multi-replica grants remain separate work.
 
 Ingress must route `/mcp`, `/oauth/*`,
@@ -4523,7 +4551,11 @@ for isolated CLI SIGTERM, native-read cancellation, metrics cleanup and encrypte
 state reopening checks. SDK tests additionally cover mutation grace, lost replies,
 durable retry keys and journal commits during drain.
 
-### Inspect and revoke agent connections locally
+### Inspect and revoke a bridge's grants locally
+
+Customers see and revoke their own agents with `gregale mcp connection list`
+and `revoke` (see [See and revoke connected agents](#see-and-revoke-connected-agents)).
+This section is the operator's view of one bridge's grants.
 
 For an HTTP management bridge, enable `--admin-socket /path/to/private/control.sock`.
 Its parent directory must already exist, be owned by the bridge user with mode

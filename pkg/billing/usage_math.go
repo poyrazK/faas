@@ -3,10 +3,8 @@ package billing
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,11 +20,12 @@ import (
 //
 // The allowance follows the month's recorded plan history exactly as the
 // provider pusher applies it hour by hour (ADR-1162, ADR-20261030093512):
-// each UTC hour uses the time-weighted grant of the activations recorded
-// before the hour ends. A segment is split at the hours where that grant
-// changes, so the result equals the sum of the
-// pusher's hourly deliveries before any spend-cap clamp. acct.Plan is the
-// fallback for stores or months without recorded activations.
+// the range is the month's billed compute at its end less the billed compute
+// at its start, both from state.MonthBilledComputeMBSeconds, the one
+// implementation the pusher's spend cap and the cap gate also use
+// (ADR-20261031161842). The result equals the sum of the pusher's hourly
+// deliveries before any spend-cap clamp. acct.Plan is the fallback for stores
+// or months without recorded activations.
 func OverageMBSecondsForRange(ctx context.Context, store UsageRangeStore, acct state.Account, start, end time.Time) (int64, error) {
 	if store == nil {
 		return 0, fmt.Errorf("billing: usage range store is nil")
@@ -57,44 +56,27 @@ func OverageMBSecondsForRange(ctx context.Context, store UsageRangeStore, acct s
 				return 0, fmt.Errorf("billing: plan history for %s: %w", monthStart.Format(time.RFC3339), err)
 			}
 		}
-		prior, err := sumUsage(ctx, store, acct.ID, monthStart, segmentStart)
-		if err != nil {
-			return 0, fmt.Errorf("billing: usage before %s: %w", monthStart.Format(time.RFC3339), err)
+		usageBefore := func(at time.Time) (int64, error) {
+			return sumUsage(ctx, store, acct.ID, monthStart, at)
 		}
-		from := segmentStart
-		for _, to := range append(grantBoundaries(snapshots, segmentStart, segmentEnd), segmentEnd) {
-			current, err := sumUsage(ctx, store, acct.ID, from, to)
+		billedAt := func(at time.Time) (int64, error) {
+			usage, err := usageBefore(at)
 			if err != nil {
-				return 0, fmt.Errorf("billing: usage in %s: %w", monthStart.Format(time.RFC3339), err)
+				return 0, err
 			}
-			included := state.MonthComputeIncludedMBSeconds(acct.Plan, snapshots, from.Truncate(time.Hour).Add(time.Hour))
-			total += api.BillableMBSecondsAbove(included, prior+current) - api.BillableMBSecondsAbove(included, prior)
-			prior += current
-			from = to
+			return state.MonthBilledComputeMBSeconds(acct.Plan, snapshots, at, usage, usageBefore)
 		}
+		before, err := billedAt(segmentStart)
+		if err != nil {
+			return 0, fmt.Errorf("billing: usage before %s: %w", segmentStart.Format(time.RFC3339), err)
+		}
+		after, err := billedAt(segmentEnd)
+		if err != nil {
+			return 0, fmt.Errorf("billing: usage in %s: %w", monthStart.Format(time.RFC3339), err)
+		}
+		total += after - before
 	}
 	return total, nil
-}
-
-// grantBoundaries returns the sorted UTC hours strictly inside (start, end)
-// from which a recorded compute activation first applies. An activation at
-// instant e counts for every hour that ends after e, so it starts applying
-// at e truncated to its hour.
-func grantBoundaries(snapshots []state.FinancialPriceSnapshot, start, end time.Time) []time.Time {
-	seen := map[time.Time]bool{}
-	var out []time.Time
-	for _, s := range snapshots {
-		if s.Price.Meter != "compute" {
-			continue
-		}
-		boundary := s.EffectiveFrom.UTC().Truncate(time.Hour)
-		if boundary.After(start) && boundary.Before(end) && !seen[boundary] {
-			seen[boundary] = true
-			out = append(out, boundary)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
-	return out
 }
 
 // UsageRangeStore reads an account's hourly usage over a UTC range. A store

@@ -3370,7 +3370,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if journalClient != nil {
 		journalRPC = journalClient
 	}
-	journalQueue := gateway.NewRequestIDJournalQueue(newRequestIDJournalWriter(journalRPC, log).Write, deps.metrics, log)
+	journalWrite := newRequestIDJournalWriter(journalRPC, log).Write
+	// ADR-20261101085552: with the switch on, the journal stays on this node
+	// and apid asks for a request ID over a lookup stream on the same apid
+	// connection, instead of the control plane storing a row per request.
+	if osGetenv("FAAS_REQUEST_ID_JOURNAL_LOCAL") == "1" {
+		local, stop, err := startLocalRequestIDJournal(ctx, journalClient, cfg.NodeName, deps.metrics, log)
+		if err != nil {
+			return err
+		}
+		defer stop()
+		journalWrite = gateway.LocalRequestIDJournalWriter(local)
+	}
+	journalQueue := gateway.NewRequestIDJournalQueue(journalWrite, deps.metrics, log)
 	go journalQueue.Run(ctx)
 	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {
@@ -3412,6 +3424,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			FlushInterval:  5 * time.Second,
 			FlushBatchSize: 256,
 			MaxRetries:     3,
+			MinuteCollapse: osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
 			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
 			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
 			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
@@ -4480,6 +4493,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		sessionDrains = append(sessionDrains, drainServiceTCP)
 	}
+	if err := validateDatabaseRoute(cfg); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.DatabaseRouteListen) != "" {
+		if err := startDatabaseRoute(ctx, deps, cfg, errc, log); err != nil {
+			return err
+		}
+	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
 			return err
@@ -4569,6 +4590,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					}
 					dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
 					log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
+				}
+				// ADR-1027: app guests reach managed databases through the
+				// private route; rehearsal guests see private services only.
+				if dnsPort == gateway.ServiceDiscoveryDNSPort {
+					if err := withDatabaseRouteDNS(dnsHandler, cfg, log); err != nil {
+						return err
+					}
 				}
 				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
 				listenPacket := deps.listenPacket

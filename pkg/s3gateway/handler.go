@@ -108,6 +108,7 @@ type Handler struct {
 	putSlots        chan struct{}
 	slotMu          sync.Mutex
 	accountSlots    map[string]int
+	slotFreed       chan struct{}
 	maxSpoolBytes   int64
 	minSpoolFree    int64
 	transferTimeout time.Duration
@@ -283,6 +284,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
 	w.Header().Set("x-amz-request-id", requestID)
+	// Every answer here is per credential or per signed URL. Cloudflare reads
+	// this header and clients do not, so an object's own Cache-Control still
+	// reaches the client while the edge never keeps a private response past
+	// its URL's expiry or the object's deletion.
+	w.Header().Set("Cloudflare-CDN-Cache-Control", "no-store")
 	if strings.ToLower(r.Host) != h.host {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Use the configured Gregale S3 endpoint with path-style addressing.", r.URL.Path, requestID)
 		return
@@ -392,6 +398,10 @@ func (h *Handler) touchCredential(ctx context.Context, credentialID string) {
 	}
 	h.lastTouch[credentialID] = now
 	h.touchMu.Unlock()
+	// The request's own deadline is the whole transfer budget; a stalled
+	// database must not hold the request that long for a last-used stamp.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectCredentialTouchTimeout)
+	defer cancel()
 	if err := h.store.TouchObjectS3Credential(ctx, credentialID, now); err != nil {
 		h.log.Warn("S3 credential last-used update failed", "credential_id", credentialID)
 	}
@@ -1016,16 +1026,27 @@ func hasUnsupportedS3Semantics(r *http.Request) bool {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) && !supportedMultipartChecksumHeader(r, name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) && !supportedMultipartChecksumHeader(r, name) && !privateCannedACL(r, name, r.Header.Values(name)) {
 			return true
 		}
 	}
-	for name := range r.URL.Query() {
-		if unsupportedS3SemanticName(name) {
+	for name, values := range r.URL.Query() {
+		if unsupportedS3SemanticName(name) && !privateCannedACL(r, name, values) {
 			return true
 		}
 	}
 	return false
+}
+
+// privateCannedACL reports an x-amz-acl on a write that asks for what every
+// Gregale object already is: readable only through its bucket's own
+// credentials. Upload libraries send it by default, so it is accepted and
+// ignored; any other canned ACL, and grants, still answer NotImplemented.
+func privateCannedACL(r *http.Request, name string, values []string) bool {
+	if !strings.EqualFold(name, "x-amz-acl") || r.Method != http.MethodPut && r.Method != http.MethodPost || len(values) != 1 {
+		return false
+	}
+	return values[0] == "private" || values[0] == "bucket-owner-full-control"
 }
 
 func unsupportedS3SemanticName(name string) bool {

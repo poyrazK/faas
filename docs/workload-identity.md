@@ -35,6 +35,12 @@ policies for AWS, GCP, and Cloudflare. When vmmd cannot read the instance's
 deployment it refuses the request with `environment_unavailable` rather than
 mint a token for the wrong environment.
 
+Gregale's own APIs accept a token only for their own audience, so a token
+minted for one cannot be replayed to another: `gregale:queues` for queue
+leases, `gregale:operations` for operation runtimes, `gregale:flags` for Flags
+and `gregale:agents` for a stateless agent's callback URLs
+(ADR-20261030125501).
+
 To enable signing on a vmmd node, provision the same RSA-2048+ private key on
 the node and set these `vmmd.toml` fields (the `FAAS_WORKLOAD_IDENTITY_*`
 environment variables override them):

@@ -31,6 +31,12 @@ Operators: see the [operator guide](managed-postgres.md).
 - A database runs in a single zone. Gregale makes no high-availability
   promise for it; point-in-time restore and the 7-day undo of a delete are the
   recovery paths.
+- A plan downgrade waits until your databases fit the new plan: the refusal
+  lists the databases to delete and the ones to move to a class the plan
+  includes. A database whose delete is scheduled no longer counts.
+- When the platform is near capacity, new databases on the Free plan pause
+  first (`503 managed_postgres_new_databases_paused`); paid plans can still
+  create them.
 
 ## Create a database
 
@@ -145,13 +151,32 @@ gregale postgres restore orders --name orders-before-import --point-in-time 2026
 gregale postgres attach orders-before-import my-api --env RESTORED_DATABASE_URL
 ```
 
+`gregale postgres get` shows `restore_range`: the earliest and latest point a
+restore can target now. The earliest is the later of the database's creation
+and the start of its restore window.
+
 Attach the restored database under its own environment key when you want an
 app to read it. A source cannot be deleted while a database restored from it
 exists.
 
-The restored database counts toward your plan's database limit, so restoring
-needs room for one more database: Pro and Scale. Free and Hobby allow one
-database, so they cannot restore; the 7-day undo of a delete still applies.
+The restored database counts toward your plan's database limit. When the
+account is at its limit, one restore may still go one database past it, on
+every plan:
+
+- The copy shows `restore_slot_until`, 7 days out, in `get`, `list` and the
+  API.
+- If you purge another database or upgrade before then, the copy becomes an
+  ordinary database.
+- Otherwise its delete is scheduled at `restore_slot_until`, with the usual
+  7-day undo. Its bindings are removed first. The source is never touched.
+- The account that ran the restore gets an email 48 hours before
+  `restore_slot_until` while there is still no room, and another when the
+  delete is scheduled.
+- A second restore past the limit while a copy holds the slot returns
+  `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
+- A copy cannot replace its source: the source cannot be deleted while the
+  copy exists. To keep restored rows on a one-database plan, copy them back
+  into the source, then purge the copy.
 
 ## Change the compute class
 
