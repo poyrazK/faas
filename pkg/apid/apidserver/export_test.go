@@ -1990,3 +1990,14 @@ func (r *server) BindGitHubConnectionForTest(w http.ResponseWriter, req *http.Re
 func (r *server) GetGitHubConnectionForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
 	r.getGitHubConnection(w, req, acct)
 }
+
+// AppErrorsPurgeStore is the store the app_errors retention purge needs.
+type AppErrorsPurgeStore = appErrorsPurgeStore
+
+// PurgeAppErrorsOnce runs one app_errors retention pass at now over every
+// account the store lists.
+func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func() time.Time) {
+	p := newAppErrorsPurger(store, nil, nil, slog.New(slog.DiscardHandler), true)
+	p.now = now
+	p.purgeAll(ctx)
+}

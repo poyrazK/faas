@@ -74,7 +74,15 @@ customers never reach the gateway under test.
    - points its ingress for the pilot host at `http://127.0.0.1:8084`;
    - pipes the connector token to the pilot node alone, and starts
      `faas-cloudflared-s3` there;
-   - creates the proxied record `s3-pilot.<domain>`.
+   - creates the proxied record `s3-pilot.<domain>`;
+   - adds (or updates) two zone rules for `s3.<domain>` and the pilot host:
+     a cache bypass, so Cloudflare never turns a HEAD into a GET that fails
+     SigV4, and a configuration rule that turns off Browser Integrity Check,
+     Email Obfuscation, Rocket Loader, Automatic HTTPS Rewrites, Fonts, Web
+     Analytics and Zaraz. Other rules in those phases stay as they are.
+
+   The API token needs Tunnel: Edit, DNS: Edit, Cache Rules: Edit and Config
+   Rules: Edit.
 
    It refuses to add `s3.<domain>` to the ingress without `CUTOVER=yes` and
    never touches that host's record.
