@@ -321,3 +321,31 @@ func TestNewEgressHTTPClient_RoundTripsPublic(t *testing.T) {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
 }
+
+// TestEgressTransportsBoundIdleConnections pins the pool bounds on both
+// egress transports. Without IdleConnTimeout a parked keep-alive
+// connection to a customer host stays open until that host closes it, so
+// a daemon talking to many receivers accumulated connections, goroutines
+// and file descriptors.
+func TestEgressTransportsBoundIdleConnections(t *testing.T) {
+	t.Setenv("FAAS_EGRESS_ALLOW_LOOPBACK", "1")
+	for name, hc := range map[string]*http.Client{
+		"guarded":  NewEgressHTTPClient(),
+		"loopback": NewEgressHTTPClientAllowLoopback(),
+	} {
+		tr, ok := hc.Transport.(*http.Transport)
+		if !ok {
+			t.Fatalf("%s: transport is %T, want *http.Transport", name, hc.Transport)
+		}
+		if tr.IdleConnTimeout != EgressIdleConnTimeout || tr.IdleConnTimeout <= 0 {
+			t.Errorf("%s: IdleConnTimeout = %v, want %v", name, tr.IdleConnTimeout, EgressIdleConnTimeout)
+		}
+		if tr.MaxIdleConns != EgressMaxIdleConns || tr.MaxIdleConnsPerHost != EgressMaxIdleConnsPerHost {
+			t.Errorf("%s: idle pool = %d/%d per host, want %d/%d", name,
+				tr.MaxIdleConns, tr.MaxIdleConnsPerHost, EgressMaxIdleConns, EgressMaxIdleConnsPerHost)
+		}
+		if tr.Proxy != nil {
+			t.Errorf("%s: transport reads a proxy; a proxy would bypass the dial-time guard", name)
+		}
+	}
+}

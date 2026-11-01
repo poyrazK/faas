@@ -210,8 +210,8 @@ func (s *Signer) Verify(unix int64, deliveryID string, body []byte, gotHex strin
 
 // Target is the destination URL for a single delivery. URL is
 // pre-validated by the handler (PR 3) via oci.EgressIPAllowed; the
-// dispatcher runs the dial-time check via oci.NewEgressHTTPClient
-// (default HTTPClient).
+// dispatcher runs the dial-time check via SharedHTTPClient (default
+// HTTPClient).
 //
 // Signer is the per-rule HMAC key. Construct once per (account,
 // rule, secret version) — the secret lifetime equals the
@@ -280,8 +280,8 @@ type Result struct {
 // DispatcherOptions configures a Dispatcher. Zero-valued fields
 // resolve to the package defaults (DefaultMaxAttempts = 5,
 // DefaultBaseBackoff = 2s, DefaultPerAttempt = 10s). HTTPClient is
-// optional; nil resolves to oci.NewEgressHTTPClient so the dial-time
-// SSRF guard is on by default. Sleeper is injectable so tests don't
+// optional; nil resolves to SharedHTTPClient so the dial-time SSRF
+// guard is on by default and deliveries share one connection pool. Sleeper is injectable so tests don't
 // wait real backoff; nil uses a context-cancelable timer. An injected
 // Sleeper must return promptly; cancellation is checked before and
 // after calling it. Logger is optional; nil resolves to slog.Default().
@@ -338,8 +338,9 @@ type Dispatcher struct {
 // it wants fewer retries.
 //
 // HTTPClient ownership: when the caller passes nil the dispatcher
-// builds one via oci.NewEgressHTTPClient() (the SSRF-guarded client
-// has no timeout) and applies PerAttempt as the client-level Timeout.
+// sends through SharedHTTPClient() (the process-wide SSRF-guarded
+// client, which has no timeout) and applies PerAttempt as the
+// Timeout of its own copy, leaving the shared client untouched.
 // When the caller passes their own *http.Client the dispatcher does
 // NOT mutate it — the caller's Timeout (and Transport) stay as-is.
 // PR 3 callers that want the SSRF guard AND a custom timeout should
@@ -360,18 +361,16 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 	}
 	callerHTTPClient := opts.HTTPClient != nil
 	if opts.HTTPClient == nil {
-		// Test-only escape hatch: cmd/e2e/meterd_alerts_e2e_test.go
-		// sets FAAS_EGRESS_ALLOW_LOOPBACK=1 BEFORE spawning meterd so
-		// the dispatcher can POST to an httptest.NewServer bound on
-		// 127.0.0.1. The flag is read fresh on every dispatcher
-		// construction (NewDispatcher is called once at meterd boot
-		// today, so this is a no-op cost). Production daemons must
-		// NOT export this env var — see oci.NewEgressHTTPClientAllowLoopback.
-		if hc := oci.NewEgressHTTPClientAllowLoopback(); hc != nil {
-			opts.HTTPClient = hc
-		} else {
-			opts.HTTPClient = oci.NewEgressHTTPClient()
-		}
+		// One SSRF-guarded client per process, shared by every
+		// dispatcher (see SharedHTTPClient): schedd and apid build a
+		// Dispatcher per delivery or per request, and a fresh transport
+		// each time stranded one keep-alive connection per call.
+		// cmd/e2e/meterd_alerts_e2e_test.go sets
+		// FAAS_EGRESS_ALLOW_LOOPBACK=1 before spawning meterd so the
+		// dispatcher can POST to an httptest.NewServer bound on
+		// 127.0.0.1; SharedHTTPClient reads that flag on every call.
+		// Production daemons must NOT export it.
+		opts.HTTPClient = SharedHTTPClient()
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
@@ -379,13 +378,16 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 	if opts.Format == "" {
 		opts.Format = DeliveryFormatJSON
 	}
-	// Only stamp PerAttempt onto the HTTPClient when we built it
-	// ourselves (SSRF guard returns no-timeout clients). A caller-
-	// supplied *http.Client keeps its own Timeout.
+	// withoutRedirects copies the client, so the per-dispatcher Timeout
+	// below never reaches the shared client and the copy still pools
+	// through the shared Transport.
+	opts.HTTPClient = withoutRedirects(opts.HTTPClient)
+	// Only stamp PerAttempt when the dispatcher picked the client (the
+	// shared client has no Timeout). A caller-supplied *http.Client
+	// keeps its own Timeout.
 	if !callerHTTPClient {
 		opts.HTTPClient.Timeout = opts.PerAttempt
 	}
-	opts.HTTPClient = withoutRedirects(opts.HTTPClient)
 	sig, id, ts, att := opts.HeaderSet.headerNames()
 	return &Dispatcher{
 		opts:          opts,
