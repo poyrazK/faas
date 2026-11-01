@@ -138,6 +138,18 @@ Each step is one PR behind the `agents` capability.
      - A JWT-shaped bearer takes the workload path. No API key, OIDC or hosting token is JWT-shaped, so no key is misrouted.
    - **The inbox in `gregale.yaml`.** A manifest consumer group takes `ordering_metadata_key`, `deduplication_metadata_key` and `dead_letter_policy`, so the app declares §2's `slices` group itself. A deploy still creates a missing group and never changes an existing one.
    - **Tests.** `TestWorkloadCaller` covers the audience, environment, account, app, instance and deployment checks. `TestCallbackAppCallerOwnsOnlyItsEndpoints` covers the app scope. The manifest tests cover the new fields' loading, validation and reconcile.
+
+   **Built, part two (2026-11-01): the template and the journey.**
+   - **Template `agent-stateless-node`.** It is unlisted while `agents` is internal, and `gregale deploy --template agent-stateless-node` deploys it.
+     - Its `gregale.yaml` declares the `agent` endpoint, the `slices` group on `agent-inbox` (§2's ordering, deduplication and `block` dead-letter policy) and the realtime trigger. The endpoint refuses client connections; the seller's backend publishes.
+     - Each slice keeps §1's contract. History and seen-message IDs are rows in the seller's Postgres (`DATABASE_URL`). The turn is persisted before its tool call goes out. A redelivery finishes a dispatch or a revocation the first delivery did not.
+     - Each slice opens one Postgres connection and closes it, so a parked agent holds no connection and no snapshot captures a socket.
+     - Callback URLs are issued and revoked with the app's own `gregale:agents` workload token. The answer revokes the thread's URLs.
+     - The model is scripted, so the starter runs with no provider key. Step 4b replaces it with Infinity's step mode and adds the Infinity store adapter.
+   - **Journey `TestStatelessAgent`** (inventory row 167, full tier). It skips while `agents` or `realtime` is hidden or managed Postgres provisioning is closed.
+     - It deploys the template with a managed Postgres store and publishes a question.
+     - It reads the tool call, parks the agent, and posts the tool's result to the callback URL twice: it lands once.
+     - It reads the answer the woken agent wrote, and checks that the answered thread refuses its callback URL.
 5. The platform tools: `gregale.sleep`, `gregale.run`, then `gregale.github.subscribe`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 

@@ -1916,7 +1916,7 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// ADR-987: built from the template's Dockerfile; the handler value
 		// is vestigial, but the deploy API requires it to be non-empty.
 		return runtimeBinary, "handler", true
-	case "cron-worker", "event-worker", "queue-worker":
+	case "cron-worker", "event-worker", "queue-worker", "agent-stateless-node":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
 		return "", "", false
