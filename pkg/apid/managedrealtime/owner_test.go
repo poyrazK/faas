@@ -161,11 +161,13 @@ func TestLeasedRealtimeOwnerRemembersMissingConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &fakeRealtimeNode{connections: []realtime.ConnectionInfo{{ID: "conn-1", EndpointID: "endpoint-1"}}}
+	other := &fakeRealtimeNode{}
 	owner := NewLeasedRealtimeOwner(store, store, "", nil, nil)
 	owner.leaseTTL = time.Minute
+	// Every active node answers, so a miss is a complete discovery.
 	owner.clientFor = func(n state.ComputeNode) (RealtimeNodeOperator, error) {
 		if n.ID != node.ID {
-			return nil, errors.New("unknown node")
+			return other, nil
 		}
 		return fake, nil
 	}
