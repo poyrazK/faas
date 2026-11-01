@@ -7158,6 +7158,10 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	}
 	printedLines := retainedLines
 	parkedFallback := false
+	// reconnectAt is set when a follow stream ended on its idle timeout:
+	// `gregale logs -f` reconnects instead of exiting 0 after ten quiet
+	// minutes.
+	var reconnectAt time.Time
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
 		// when schedd's StreamAppLogs RPC isn't wired yet (the
@@ -7201,10 +7205,25 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 					return true, 3
 				}
 			}
+			if follow && archive == nil && appLogsArchiveEndReason(e.Data) == "timeout" {
+				reconnectAt = time.Now()
+				return true, 0
+			}
 			if collector != nil && !jsonOutput {
 				collector.flush(osStdout)
 			}
 			return true, 0
+		}
+		if e.Event == "error" {
+			// A rejected filter or plan gate: report it and fail, not
+			// print it as a log line and exit 0.
+			problem := appLogsStreamErrorProblem(e.Data)
+			if jsonOutput {
+				_ = writeJSONProblem(problem)
+			} else {
+				renderAPIError(os.Stderr, &APIError{Problem: problem})
+			}
+			return true, 1
 		}
 		if e.Data != "" {
 			if archive != nil && !retainedLineMatches(e.Data, filter.Grep) {
@@ -7227,6 +7246,12 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	}
 	if streamErr != nil {
 		return printErr("Stream closed", streamErr)
+	}
+	if !reconnectAt.IsZero() && ctx.Err() == nil {
+		_ = dec.Close()
+		_ = body.Close()
+		filter.Since = reconnectAt.UTC().Format(time.RFC3339Nano)
+		return runLogsExplainingMissingArchive(ctx, slug, deployment, filter, archive, follow, explain, archiveMissing)
 	}
 	if parkedFallback {
 		if retainedLines > 0 {

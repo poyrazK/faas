@@ -127,6 +127,33 @@ func TestLogsInterruptedWhileConnectingExits130(t *testing.T) {
 	}
 }
 
+// A rejected filter or plan gate arrives as `event: error`. The CLI printed
+// its JSON as a log line and exited 0; it now reports the problem and fails.
+func TestLogsStreamErrorEventFails(t *testing.T) {
+	main.ResetJSONOut(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: error\ndata: {\"code\":\"plan_deployment_filter_not_allowed\",\"message\":\"your plan does not allow the ?deployment= filter (max=0)\"}\n\nevent: end\ndata: {}\n\n")
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	stdout, restoreOut := main.CaptureStdout(t)
+	stderr, restoreErr := main.CaptureStderr(t)
+	code := main.RunLogs(context.Background(), "myapp", "dep-1", api.LogFilter{}, nil, false, false)
+	restoreErr()
+	restoreOut()
+	if code == 0 {
+		t.Fatalf("exit 0 after a stream error; stdout=%q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "plan_deployment_filter_not_allowed") {
+		t.Fatalf("the error was printed as a log line: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "deployment= filter") {
+		t.Fatalf("stderr = %q, want the rejection reason", stderr.String())
+	}
+}
+
 func TestNormalizeLogsSinceRejectsFutureRuntimeTimestamp(t *testing.T) {
 	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
 	if _, err := main.NormalizeLogsSince("2030-01-01T00:00:00Z", "runtime", now); err == nil || !strings.Contains(err.Error(), "in the past") {

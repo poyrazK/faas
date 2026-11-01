@@ -128,4 +128,7 @@ gregale logs drain health my-api <drain-id>
 ## Limits
 
 - A line is at most 1 MiB. Output without a newline beyond that is dropped.
+- An account can hold a limited number of log streams open at once (Free 2,
+  Hobby 5, Pro 20, Scale 50); more answer `429 log_streams_limit`.
+- `--follow` reconnects by itself after ten quiet minutes.
 - Logs have no separate charge.

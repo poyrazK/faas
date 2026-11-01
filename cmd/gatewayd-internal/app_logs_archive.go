@@ -165,6 +165,9 @@ type ArchiveLogsHandler struct {
 	// Traffic enrolls the read under the app's security scopes
 	// (admitPlatformTraffic); nil only in legacy fixtures.
 	Traffic *trafficrevocation.Registry
+	// Streams bounds an account's open log streams, shared with the live
+	// handler; nil admits every stream.
+	Streams *logStreamSlots
 	// CapabilityAllowed hides the route while the logs capability is off
 	// for the caller's account (logsReleased); nil releases it.
 	CapabilityAllowed func(capability, accountID string) bool
@@ -226,6 +229,11 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	defer release()
+	releaseSlot, ok := h.Streams.admit(w, acct)
+	if !ok {
+		return
+	}
+	defer releaseSlot()
 	// Plan gate (issue #562 AC3). Unknown/off-plan customers get a
 	// clean 402 + CodePlanLogArchiveNotAllowed; Free is entitled to
 	// the one-day demo window.

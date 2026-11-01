@@ -3981,6 +3981,13 @@ type Limits struct {
 	// per-tier multi-deployment fan-out needs.
 	LogDeploymentFilterMax int
 
+	// LogStreamsMax caps the log streams (GET /v1/apps/{slug}/logs, live
+	// or archived) one account may hold open at once on one gateway. Each
+	// follow stream polls the shared database from schedd several times a
+	// second, so without a cap one account's scripts could load it for
+	// everyone. The CLI, dashboard and a few drains fit well inside.
+	LogStreamsMax int
+
 	// Cron limits (spec §4.4 / event-shaped surface). Two independent
 	// caps; both populated for every plan, Free is 0/0 so the
 	// per-store check returns QuotaError immediately. The handler
@@ -5448,6 +5455,7 @@ var planLimits = map[Plan]Limits{
 		// before the store is touched; the 0 here is a
 		// defence-in-depth value the handler still reads.
 		LogDeploymentFilterMax: 0,
+		LogStreamsMax:          2,
 		// CPU fairness (issue #301 / ADR-044): Free gets the smallest
 		// slice weight=2 and the tightest quota (100ms/100ms). 100 ms
 		// is enough headroom for a Free-tier app to handle a handful of
@@ -5885,6 +5893,7 @@ var planLimits = map[Plan]Limits{
 		// scopes the log stream to it. Mirror shape of Hobby's
 		// per-app cron cap (5).
 		LogDeploymentFilterMax: 1,
+		LogStreamsMax:          5,
 		// CPU fairness (issue #301): Hobby weight=4, quota 200ms/200ms.
 		// Doubles Free's quota — tracks the per-app concurrency bump
 		// (1 → 2) and the per-app rps (5 → 20).
@@ -6309,6 +6318,7 @@ var planLimits = map[Plan]Limits{
 		// letting one app monopolise the schedd's per-instance
 		// goroutine fan-out.
 		LogDeploymentFilterMax: 10,
+		LogStreamsMax:          20,
 		// CPU fairness (issue #301): Pro weight=8, quota 500ms/500ms.
 		// Half-bandwidth of 2 cores — tracks the per-app concurrency
 		// (5) and the per-app rps (100).
@@ -6737,6 +6747,7 @@ var planLimits = map[Plan]Limits{
 		// (100 apps vs Pro's 25) and the multi-region staging fan-out
 		// SaaS-scale customers typically run.
 		LogDeploymentFilterMax:  50,
+		LogStreamsMax:           50,
 		ScaleUpTargetCPUAllowed: true,
 		// CPU fairness (issue #301): Scale weight=16, quota 1000ms/1000ms
 		// — i.e. the full bandwidth of one core. Scale runs 20 concurrent
@@ -11805,6 +11816,15 @@ func (p Plan) LogDeploymentFilterMax() int {
 		return 0
 	}
 	return l.LogDeploymentFilterMax
+}
+
+// LogStreamsMax returns the per-plan cap on an account's open log streams
+// on one gateway. Unknown plans get the Free cap.
+func (p Plan) LogStreamsMax() int {
+	if l, ok := LimitsFor(p); ok && l.LogStreamsMax > 0 {
+		return l.LogStreamsMax
+	}
+	return planLimits[PlanFree].LogStreamsMax
 }
 
 // OrgMembersMax returns the per-non-personal-org member cap for the
