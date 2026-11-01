@@ -38,6 +38,9 @@ type managedPostgresHooks struct {
 	// or nil (ADR-20261031110037). It is read at each sweep because apid
 	// attaches the billing provider after loading managed PostgreSQL.
 	Charges func() billing.ManagedPostgresChargeSink
+	// RestoreSlotExpired records a copy whose delete was scheduled because
+	// its restore slot ended without room (ADR-20261031123259).
+	RestoreSlotExpired func(context.Context, managedpostgres.Database)
 }
 
 func (h *managedPostgresHooks) charges() billing.ManagedPostgresChargeSink {
@@ -45,6 +48,13 @@ func (h *managedPostgresHooks) charges() billing.ManagedPostgresChargeSink {
 		return nil
 	}
 	return h.Charges()
+}
+
+func (h *managedPostgresHooks) restoreSlotExpired() func(context.Context, managedpostgres.Database) {
+	if h == nil {
+		return nil
+	}
+	return h.RestoreSlotExpired
 }
 
 func (h *managedPostgresHooks) overage() managedPostgresOverageGate {
@@ -230,6 +240,14 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	restoreSlots, err := managedpostgres.NewRestoreSlotSweeper(service, bindingService, managedpostgres.RestoreSlotSweeperOptions{
+		Expired: hooks.restoreSlotExpired(),
+		Logger:  log,
+	})
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	reconciler.SetRestoreSlots(restoreSlots)
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
 		IncludeProvisioning: provisioningGate,
 		Observe: func(ob managedpostgres.BindingReconcileObservation) {

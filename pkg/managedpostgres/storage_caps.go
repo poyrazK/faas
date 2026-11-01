@@ -227,6 +227,14 @@ func (e *CapEnforcer) observeStorageScopes(ctx context.Context, databases []Data
 	providers := make(map[string]StorageCapProvider)
 	var order []string
 	for _, database := range databases {
+		// A restored copy holding the restore slot shares its source's pages
+		// and is left out of the pool (ADR-20261031123259 decision 6):
+		// counting it would let a restore block writes to the live database.
+		// The provider's limit is per project, so the copy still stops at the
+		// limit its source's scope gets.
+		if !database.RestoreSlotUntil.IsZero() {
+			continue
+		}
 		backend, err := e.registry.Resolve(database.BackendID, database.BackendFingerprint)
 		if err != nil {
 			return nil, nil, err

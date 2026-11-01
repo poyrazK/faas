@@ -8208,6 +8208,7 @@ type ManagedPostgresDatabase struct {
 	AccountingRequired          bool
 	OrgID                       pgtype.UUID
 	PurgeAfter                  pgtype.Timestamptz
+	RestoreSlotUntil            pgtype.Timestamptz
 	Labels                      []byte
 }
 
