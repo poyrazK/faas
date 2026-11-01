@@ -116,3 +116,13 @@ no overage, so their exposure is platform cost, not customer billing.
   leaves the outage behavior unchanged.
 - **Unbounded grace.** A gateway cut off from the store would never see a
   stop or a cap again.
+
+## Amendment 1 (2026-10-31): the spend cap is not a gateway check
+
+ADR 20261031211500 corrects the Context: the gateway's budget admission
+checks strict compute holds and preview stops, not the spend cap. A subject
+at its spend cap is stopped by schedd: the wake gate refuses new wakes and the
+reaper parks its live, frozen and warm-pool instances on its next sweep. The
+grace therefore does not extend warm traffic past a spend cap; it only keeps
+serving the last stop decision, as decided above. Preview stops now read the
+stops of the subject that pays for the preview.

@@ -198,7 +198,10 @@ stop every covered workload.
 Notification-only policies report `enforcement_ready: false`. Monitored
 compute-only preview stopping reports integration readiness separately from
 actual per-target stopping acknowledgements. The strict app compute candidate
-reports conservative commitments and funding separately. Other stopping actions
+reports conservative commitments and funding separately. Commitments fund
+warm, quiet-paused and frozen instances like running ones, while the invoice
+bills only running seconds, so a strict budget can hold before the invoice
+reaches its limit (`commitments_include_paused_time`). Other stopping actions
 and strict scopes remain unavailable. A successful preview does
 not activate a spending limit. Monitored responses can exceed a threshold while
 usage arrives or workloads drain. Full-invoice hard limits are not implied by
@@ -253,6 +256,35 @@ The Node and Python generated Billing clients expose the same operations,
 revision conditions, retry headers and readiness fields. Revision history is
 intent history; `runtime.stops` separately retains threshold decisions and
 current scheduler acknowledgements.
+
+A stored draft written before billing moved to USD keeps its EUR currency and
+reports `legacy_currency_draft`. Update it with `"currency": "USD"` to enable
+it, or delete it.
+
+### Organization budgets
+
+A budget covers what its owner pays for
+([ADR 20261031211500](adr/20261031211500-organization-budgets.md)). An
+organization that owns its resources pays for its apps, projects and
+environments, so it holds their costs and budgets, not the members who created
+them. A member's budget cannot name an app the organization pays for, and its
+account scope does not include that usage.
+
+```bash
+gregale billing costs --org acme
+gregale billing budgets list --org acme
+gregale billing budgets create --org acme --file budget.json --key acme-previews
+gregale billing budget-preview --org acme --file budget.json
+```
+
+`/v1/orgs/{slug}/billing/costs`, `/v1/orgs/{slug}/billing/budgets[/{id}]`,
+`.../{id}/revisions` and `.../budgets/preview` take the same bodies as the
+account routes. Every member can read them; the owner or billing role writes,
+with an `admin`-scoped credential, MFA and an `Idempotency-Key`. Organization
+budgets can notify and stop previews. Alerts go to the organization's billing
+contact; notification channels stay with account budgets. Strict budgets are
+not available to organizations, and an organization that does not own its
+resources cannot have budgets: its usage is billed to its members.
 
 ### Budget alerts on Slack, PagerDuty and email channels
 

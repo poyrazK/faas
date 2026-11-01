@@ -1,4 +1,9 @@
 -- filename: 20261031210054142_financial_evidence_org_environments.sql
+-- migration-compat: expand
+--
+-- Replaces two function bodies; no table or column changes. The previous
+-- release runs unchanged: it never writes organization budgets, and the
+-- evidence it records only gains an environment_id it previously missed.
 
 -- +goose Up
 -- +goose StatementBegin

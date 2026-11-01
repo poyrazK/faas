@@ -13534,7 +13534,8 @@ CREATE FUNCTION public.financial_preview_command_held(target_app uuid, target_de
     AS $$
  SELECT EXISTS (
   SELECT 1 FROM apps a
-  JOIN financial_budget_stops s ON s.account_id = a.account_id
+  LEFT JOIN orgs payer_org ON payer_org.id=a.org_id AND payer_org.resource_ownership_enabled AND NOT payer_org.personal_org
+  JOIN financial_budget_stops s ON s.account_id = COALESCE(payer_org.id, a.account_id)
   JOIN financial_budget_policies p ON p.account_id=s.account_id AND p.id=s.policy_id AND p.revision=s.revision
   LEFT JOIN deployments d ON d.id=target_deployment AND d.app_id=a.id
   LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
@@ -13546,7 +13547,7 @@ CREATE FUNCTION public.financial_preview_command_held(target_app uuid, target_de
     WHEN 'account' THEN true
     WHEN 'app' THEN (p.spec->'scope'->>'id')::uuid=a.id
     WHEN 'project' THEN (p.spec->'scope'->>'id')::uuid=a.project_id
-    WHEN 'environment' THEN environment.account_id=a.account_id AND environment.project_id=a.project_id
+    WHEN 'environment' THEN environment.project_id=a.project_id
       AND (owner.environment_id=environment.id OR owner.deployment_id IS NULL AND
         (environment.slug=CASE WHEN coalesce(nullif(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END))
     ELSE false END
@@ -25277,8 +25278,9 @@ BEGIN
     LEFT JOIN jobs job ON job.id = NEW.job_id AND job.account_id = account.id
     LEFT JOIN instances instance ON instance.id = NEW.instance_id AND instance.app_id = app.id
     LEFT JOIN deployments deployment ON deployment.id = instance.deployment_id AND deployment.app_id = app.id
-    LEFT JOIN project_environments environment ON environment.account_id = account.id
-      AND environment.project_id = app.project_id AND environment.slug = deployment.scope
+    LEFT JOIN project_environments environment ON environment.project_id = app.project_id
+      AND environment.slug = deployment.scope
+      AND (environment.account_id = account.id OR app.org_id = account.id)
     WHERE account.id = NEW.account_id;
     -- Preserve canonical usage behavior for orphan fixtures and late samples
     -- after account deletion without recreating erased financial history.
