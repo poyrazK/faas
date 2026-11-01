@@ -87,9 +87,9 @@ func (h *Handler) callbackGrant(ctx context.Context, caller CallbackCaller, req 
 	case ttl < 1 || ttl > api.AgentCallbackTokenTTLSec:
 		return CallbackToken{}, api.ErrValidation(fmt.Sprintf("ttl_seconds must be 1-%d; got %d", api.AgentCallbackTokenTTLSec, ttl))
 	}
-	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(ctx, req.EndpointID)
-	if err != nil || !caller.owns(endpoint) {
-		return CallbackToken{}, errRealtimeEndpointNotFound()
+	endpoint, problem := caller.endpoint(ctx, h.Inbox, req.EndpointID)
+	if problem != nil {
+		return CallbackToken{}, problem
 	}
 	// Not truncated: a token issued just after a revocation must compare later.
 	now := h.now().UTC()
@@ -175,9 +175,9 @@ func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, caller
 		api.WriteProblem(w, api.ErrValidation("the body must name an endpoint_id and a valid thread_id"))
 		return
 	}
-	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(r.Context(), req.EndpointID)
-	if err != nil || !caller.owns(endpoint) {
-		api.WriteProblem(w, errRealtimeEndpointNotFound())
+	endpoint, problem := caller.endpoint(r.Context(), h.Inbox, req.EndpointID)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	at, err := h.Revocations.RevokeCallbacks(r.Context(), caller.Account.ID, endpoint.ID, req.ThreadID)

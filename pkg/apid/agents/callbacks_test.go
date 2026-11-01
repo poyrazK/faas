@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -319,7 +320,8 @@ func (f *callbackFixture) revokeAs(t *testing.T, caller agents.CallbackCaller, e
 }
 
 // An app's workload caller issues and revokes callback URLs for its own
-// app's endpoints only; an API key reaches every endpoint of its account.
+// app's endpoints only; an API key reaches every endpoint of its account
+// that its organization check allows (TestCallbackCallerAuthorize).
 func TestCallbackAppCallerOwnsOnlyItsEndpoints(t *testing.T) {
 	f := newCallbackFixture(t)
 	app := agents.CallbackCaller{Account: state.Account{ID: callbackAccount, Plan: api.PlanPro}, AppID: "app-1"}
@@ -340,6 +342,51 @@ func TestCallbackAppCallerOwnsOnlyItsEndpoints(t *testing.T) {
 	}
 	if _, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-2", ThreadID: "t"}); code != http.StatusCreated {
 		t.Errorf("API key issue on ep-2 = %d", code)
+	}
+}
+
+// An API key's caller carries the organization check of the endpoint's app:
+// the check sees the endpoint the request names, only after the account
+// owns it; a refusal answers as it is, and one that hides the app answers
+// like a missing endpoint. Nothing is issued or revoked past a refusal.
+func TestCallbackCallerAuthorize(t *testing.T) {
+	f := newCallbackFixture(t)
+	var seen []string
+	callerWith := func(problem *api.Problem) agents.CallbackCaller {
+		return agents.CallbackCaller{Account: state.Account{ID: callbackAccount, Plan: api.PlanPro},
+			Authorize: func(endpoint state.ManagedRealtimeEndpoint) *api.Problem {
+				seen = append(seen, endpoint.ID)
+				return problem
+			}}
+	}
+	for _, tc := range []struct {
+		thread        string
+		problem       *api.Problem
+		issue, revoke int
+	}{
+		{"allowed", nil, http.StatusCreated, http.StatusOK},
+		{"role-refused", api.ErrOrgRoleForbidden("issue callback URLs"), http.StatusForbidden, http.StatusForbidden},
+		{"app-hidden", api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app"), http.StatusNotFound, http.StatusNotFound},
+	} {
+		caller := callerWith(tc.problem)
+		if _, code := f.issueAs(t, caller, api.CreateAgentCallbackRequest{EndpointID: "ep-2", ThreadID: tc.thread}); code != tc.issue {
+			t.Errorf("%s: issue = %d, want %d", tc.thread, code, tc.issue)
+		}
+		if code := f.revokeAs(t, caller, "ep-2", tc.thread); code != tc.revoke {
+			t.Errorf("%s: revoke = %d, want %d", tc.thread, code, tc.revoke)
+		}
+	}
+	if _, code := f.issueAs(t, callerWith(nil), api.CreateAgentCallbackRequest{EndpointID: "ep-other", ThreadID: "t"}); code != http.StatusNotFound {
+		t.Errorf("another account's endpoint = %d", code)
+	}
+	if want := []string{"ep-2", "ep-2", "ep-2", "ep-2", "ep-2", "ep-2"}; !slices.Equal(seen, want) {
+		t.Errorf("checked endpoints %v, want %v", seen, want)
+	}
+	revocations := f.h.Revocations.(*fakeRevocations)
+	for _, thread := range []string{"role-refused", "app-hidden"} {
+		if _, revoked := revocations.at["ep-2/"+thread]; revoked {
+			t.Errorf("a refused revocation recorded %q", thread)
+		}
 	}
 }
 
