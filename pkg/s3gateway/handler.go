@@ -51,11 +51,19 @@ type Config struct {
 	RequestMetrics state.ObjectStorageProviderUsageStore
 	OpenSecret     func([]byte) (string, error)
 	HTTPClient     *http.Client
-	Enabled        func() bool
-	Host           string
-	Region         string
-	SpoolDir       string
-	MaxPutBytes    int64
+	// Enabled is the operator's s3_enabled kill switch. While it is off the
+	// gateway takes no new work but still serves the cleanup isCleanupRequest
+	// names (deletes, aborts, configuration reads and removals); nil is on.
+	Enabled func() bool
+	// RestoreFenceOpen is the restore fence (ADR-20261025111015 amendment 1).
+	// While the database runs on a PostgreSQL timeline nobody accepted, keys
+	// revoked after the restore point may work again, so a closed fence
+	// refuses every request, cleanup included. nil is open.
+	RestoreFenceOpen func() bool
+	Host             string
+	Region           string
+	SpoolDir         string
+	MaxPutBytes      int64
 	// UploadGrants serves ?gregale-upload= grant uploads. Nothing issues
 	// grants yet, so the path stays off: an unauthenticated request then never
 	// reaches the grant store, and a stray grant row authorizes nothing.
@@ -81,8 +89,8 @@ type Config struct {
 	OrgAccess      *objectstorage.OrgAccessCache
 	AccountLimiter *objectstorage.AccountRequestLimiter
 	Credentials    *CredentialCache
-	// Transfers paces request and object response bodies to the gateway's
-	// share of its node's port; nil leaves them unpaced
+	// Transfers paces request bodies and object and listing response bodies
+	// to the gateway's share of its node's port; nil leaves them unpaced
 	// (ADR-20261031122757 §3).
 	Transfers *objectstorage.TransferLimiter
 }
@@ -100,6 +108,7 @@ type Handler struct {
 	openSecret      func([]byte) (string, error)
 	client          *http.Client
 	enabled         func() bool
+	fenceOpen       func() bool
 	host            string
 	region          string
 	spoolDir        string
@@ -189,6 +198,9 @@ func New(c Config) (*Handler, error) {
 	if c.Enabled == nil {
 		c.Enabled = func() bool { return true }
 	}
+	if c.RestoreFenceOpen == nil {
+		c.RestoreFenceOpen = func() bool { return true }
+	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -198,7 +210,7 @@ func New(c Config) (*Handler, error) {
 	return &Handler{
 		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, transfers: c.Transfers, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
-		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
+		enabled:        c.Enabled, fenceOpen: c.RestoreFenceOpen, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
 		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
 		transferTimeout: c.Registry.TransferTimeout(),
@@ -285,6 +297,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("x-amz-request-id", requestID)
 	if strings.ToLower(r.Host) != h.host {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Use the configured Gregale S3 endpoint with path-style addressing.", r.URL.Path, requestID)
+		return
+	}
+	// Before CORS, upload grants, credentials and every pre-route: a key
+	// revoked after the restore point must not delete or reconfigure
+	// anything while the fence is closed.
+	if !h.fenceOpen() {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", storageDisabledMessage, r.URL.Path, requestID)
 		return
 	}
 	if h.handleCORS(w, r, requestID) {
@@ -404,8 +423,10 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestConte
 		writeS3Error(w, http.StatusBadRequest, "InvalidURI", "Could not parse the specified URI.", r.URL.Path, req.requestID)
 		return
 	}
+	// The kill switch lets cleanup through; the restore fence, checked in
+	// ServeHTTP, does not.
 	if !h.enabled() && !isCleanupRequest(r, query, hasBucket, hasKey) {
-		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale Object Storage is temporarily disabled.", r.URL.Path, req.requestID)
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", storageDisabledMessage, r.URL.Path, req.requestID)
 		return
 	}
 	if !h.validateRequestSemantics(w, r, req, hasKey, query) {
@@ -1137,6 +1158,9 @@ func copyObjectHeaders(dst, src http.Header) {
 const (
 	objectBusyMessage     = "Other work on this bucket is settling. Reduce concurrency or retry shortly."
 	objectConflictMessage = "A conflicting operation on this bucket or key must finish first, such as an open multipart upload or a versioning change."
+	// storageDisabledMessage answers both the kill switch and the restore
+	// fence; customers need not tell them apart.
+	storageDisabledMessage = "Gregale Object Storage is temporarily disabled."
 )
 
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {

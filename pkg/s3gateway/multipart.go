@@ -319,7 +319,7 @@ func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req
 		h.writeMultipartError(w, r, req, err, "InvalidArgument")
 		return
 	}
-	if !h.recordProviderRequest(w, r, req) {
+	if !h.admit(w, r, req, upload.Key, 0, false) || !h.recordProviderRequest(w, r, req) {
 		return
 	}
 	page, err := req.provider.ListMultipartParts(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartListPartsRequest{Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumberMarker: marker, Limit: limit})
@@ -331,7 +331,7 @@ func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req
 	for _, part := range page.Items {
 		items = append(items, listedMultipartPart{checksumXML: checksumXMLFor(part.Checksum), PartNumber: part.PartNumber, ETag: part.ETag, Size: part.SizeBytes, LastModified: part.LastModified.UTC().Format(time.RFC3339Nano)})
 	}
-	writeS3XML(w, http.StatusOK, req.requestID, listMultipartPartsResult{ChecksumAlgorithm: upload.Checksum.Algorithm, ChecksumType: upload.Checksum.Type, XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, UploadID: upload.ID, PartNumberMarker: marker, MaxParts: limit, IsTruncated: page.NextPartNumberMarker != 0, NextPartNumberMarker: page.NextPartNumberMarker, Parts: items})
+	h.writeMeteredS3XML(w, r, req, listMultipartPartsResult{ChecksumAlgorithm: upload.Checksum.Algorithm, ChecksumType: upload.Checksum.Type, XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, UploadID: upload.ID, PartNumberMarker: marker, MaxParts: limit, IsTruncated: page.NextPartNumberMarker != 0, NextPartNumberMarker: page.NextPartNumberMarker, Parts: items})
 }
 
 func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID string) {

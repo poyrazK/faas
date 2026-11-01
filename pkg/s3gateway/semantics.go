@@ -30,6 +30,11 @@ func presignChecksumRead(ctx context.Context, p objectstorage.Provider, bucket, 
 	// S3 permits a successful response without a checksum when the object has none.
 	return objectstorage.PresignObjectRead(ctx, p, bucket, method, key, 60)
 }
+
+// isCleanupRequest names the requests the s3_enabled kill switch lets
+// through. The restore fence lets none through: a DeleteObjects naming
+// VersionIds deletes permanently, and the key sending it may be one a
+// restore brought back after its revocation.
 func isCleanupRequest(r *http.Request, q url.Values, hasBucket, hasKey bool) bool {
 	if !hasBucket {
 		return false

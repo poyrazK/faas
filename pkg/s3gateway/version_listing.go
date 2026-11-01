@@ -82,7 +82,7 @@ func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, req
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, "")
 		return
 	}
-	writeS3XML(w, http.StatusOK, req.requestID, result)
+	h.writeMeteredS3XML(w, r, req, result)
 }
 
 func versionListInput(ctx context.Context, req requestContext, st state.ObjectVersionReferenceStore, q url.Values) (objectstorage.ObjectVersionListRequest, error) {

@@ -119,7 +119,9 @@ healthy standby, fail over instead.
    reads (ADR-20261025111015 amendment 1); the hold covers a backup taken
    before that fence existed. Then deploy the release and repoint the
    compute nodes and public origin as in the failover runbook. S3 requests
-   and public bucket reads answer 503 until step 6 is done.
+   and public bucket reads answer 503 until step 6 is done. The fence
+   refuses every S3 request; the hold alone (a backup older than the fence)
+   still lets S3 deletes and multipart aborts through.
 6. Run `make ANSIBLE_INVENTORY=… object-storage-reconcile` and the
    revocation review in `docs/runbooks/ObjectStorageRestoreReconcile.md`,
    then accept the restored database's timeline and turn `s3_enabled` back

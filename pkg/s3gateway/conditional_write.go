@@ -10,7 +10,7 @@ import (
 // adr: 955
 func (h *Handler) conditionalWriteContext(ctx context.Context, req requestContext) context.Context {
 	return objectstorage.WithConditionalWriteRequestRecorder(ctx, func(ctx context.Context) error {
-		if h.requestMetrics == nil || !h.enabled() {
+		if h.requestMetrics == nil || !h.enabled() || !h.fenceOpen() {
 			return objectstorage.ErrConfiguration
 		}
 		credential, bucket, err := h.store.ResolveObjectS3Credential(ctx, req.credential.AccessKeyID)

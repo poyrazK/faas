@@ -106,8 +106,11 @@ owner's sign-off.
 
 The restore brought back every S3 key, copy source, compute binding and
 access grant that was revoked after the restore point, and the audit rows
-that recorded the revocations went with them. They work again as soon as
-`s3_enabled` is on, so re-apply them first.
+that recorded the revocations went with them. They work again as soon as the
+timeline is accepted and `s3_enabled` is on, so re-apply them first. Until
+then the fence answers every S3 request with 503, deletes included. A
+restore from a backup older than the fence has only the hold, and
+`s3_enabled` off still lets S3 deletes and multipart aborts through.
 
 1. apid also logs each revocation as `object storage access revoked`, with
    its `kind` (`object_storage.s3_credential_revoked`,

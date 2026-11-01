@@ -46,7 +46,7 @@ type gatewayTestStore struct {
 	activityBeginErr, activityFinishErr error
 	cors                                []api.ObjectBucketCORSRule
 	resolves                            int
-	resolveErr                          error
+	resolveErr, admitErr                error
 }
 
 func (s *gatewayTestStore) ObjectBucketCORSRules(context.Context, string) ([]api.ObjectBucketCORSRule, error) {
@@ -128,7 +128,7 @@ func (s *gatewayTestStore) TouchObjectS3Credential(context.Context, string, time
 }
 func (s *gatewayTestStore) AdmitObjectURL(_ context.Context, _, _, key string, _ int64, _ bool, _ api.ObjectStoragePolicy) error {
 	s.admitted = append(s.admitted, key)
-	return nil
+	return s.admitErr
 }
 
 type gatewayTestProvider struct {

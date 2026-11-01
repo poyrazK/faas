@@ -218,7 +218,11 @@ provider config/credentials loaded for cleanup. The bucket-list endpoint reports
 without a loaded registry does not make storage usable. On the branded S3
 endpoint, authenticated DeleteObject, DeleteObjects, and AbortMultipartUpload
 also bypass new-work budgets and the disable flag. Reads, listing, and multipart
-completion on that endpoint remain blocked while disabled.
+completion on that endpoint remain blocked while disabled. Nothing bypasses the
+restore fence (ADR-20261025111015 amendment 1): while the database runs on a
+timeline nobody accepted, the endpoint answers every request, deletes and
+aborts included, with 503, because a key revoked after the restore point may
+be live again.
 
 Rollout: apply the recovery migration, then update every apid replica before
 relying on this flag. Older binaries treat a loaded registry as enabled and do
@@ -2132,8 +2136,9 @@ rejected body.
 
 `max_bytes_per_second` is the gateway's share of its node's port
 (ADR-20261031122757 §3): 0 (the default) leaves transfers unpaced, otherwise
-1 MiB/s–12.5 GB/s. Request bodies and object response bodies draw on that one
-budget, in steps of 1 MiB, so the port carries at most the budget each way.
+1 MiB/s–12.5 GB/s. Request bodies, object response bodies and listing
+responses draw on that one budget, in steps of 1 MiB, so the port carries at
+most the budget each way.
 Transfers over it slow down; none fail, and the time a body waits for the
 budget does not count against the client's minimum upload rate. Set it on
 gateways that share a compute node's port with tenant apps, at
