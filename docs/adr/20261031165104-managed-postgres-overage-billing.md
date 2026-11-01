@@ -1,12 +1,27 @@
 # ADR-20261031165104: Managed PostgreSQL overage is billed
 
-- **Status:** proposed
+- **Status:** superseded in part by [ADR-20261031110037](20261031110037-managed-postgres-overage-invoicing.md) (2026-11-01); see "Superseded in part" below
 - **Date:** 2026-10-31
 - **Owner:** apid (managed PostgreSQL) and meterd (billing) maintainers
 - **Amends:**
   - [ADR-20261025094915](20261025094915-managed-postgres-compute-caps-on-running-databases.md): the overage ceiling once overage is billed;
   - [ADR-1430](1430-plan-entitlements-from-october-2026-cogs-report.md): the report's PostgreSQL overage is now billed;
   - [ADR-20261026120843](20261026120843-spend-cap-holds-include-live-meters.md): managed PostgreSQL is a live meter under the spend cap.
+
+## Superseded in part (2026-11-01)
+
+[ADR-20261031110037](20261031110037-managed-postgres-overage-invoicing.md) (PR #6157, accepted) now decides compute overage billing. Where the two differ, it wins:
+
+- **Compute.** The same $0.20 per CU-hour, charged up to the existing 2x ceiling (at most one allowance a month). The 4x billed ceiling in decision 1 is withdrawn.
+- **Delivery.** `managed_postgres_overage_deliveries` holds the cumulative steps, and the `FAAS_POLAR_MANAGED_POSTGRES_BILLING_*` modes control sending. A month stays open for seven days after it ends. This ADR's progress ledger and its 6 h close are withdrawn.
+- **Spend cap.** The charge does not count toward the spend cap (that ADR's decision 7). This ADR's spend-cap hold for databases is withdrawn.
+
+The step 1 and step 2a PRs (#6211, #6216) were closed unmerged.
+
+Still open from this ADR:
+
+- storage past the pool at $0.60 per GiB-month, to be added on the deliveries ledger by an amendment to ADR-20261031110037;
+- the always-on add-on, which has no price yet.
 
 ## Context
 
