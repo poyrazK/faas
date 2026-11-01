@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -209,9 +210,13 @@ func checkCallbackPost(grant CallbackToken, post api.AgentCallbackPost) *api.Pro
 }
 
 // callbackIdempotencyKey makes a repeated post of one message land once in
-// the thread; the realtime limit on keys is 128 bytes.
+// the thread; the realtime limit on keys is 128 bytes. Both IDs may carry
+// ':', so the thread's ':' become '~', which no ID carries: the first ':'
+// after the prefix then ends the thread, and thread "a:b" with message "c"
+// never shares a key with thread "a" and message "b:c". A thread without
+// ':' keeps the key it always had, so a retry across the upgrade lands once.
 func callbackIdempotencyKey(threadID, messageID string) string {
-	return "callback:" + threadID + ":" + messageID
+	return "callback:" + strings.ReplaceAll(threadID, ":", "~") + ":" + messageID
 }
 
 // callbackMetadata is the inbox message's metadata: the thread, which the
