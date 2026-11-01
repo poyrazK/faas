@@ -46,6 +46,9 @@ type deploymentFilterFakeVMM struct {
 	mu                sync.Mutex
 	dials             []recordedDial
 	perInstanceStream map[string]sched.LogStream
+	// perInstanceErr fails the dial for node/instance, as vmmd does for a
+	// ring that is not registered yet or a node that cannot be reached.
+	perInstanceErr map[string]error
 }
 
 type recordedDial struct {
@@ -66,6 +69,9 @@ func (r *deploymentFilterFakeVMM) Logs(ctx context.Context, nodeID, instanceID s
 		SinceWrittenAt: sinceWrittenAt,
 		Follow:         follow,
 	})
+	if err, ok := r.perInstanceErr[nodeID+"/"+instanceID]; ok {
+		return nil, err
+	}
 	if r.perInstanceStream == nil {
 		return &sched.FakeLogStream{}, nil
 	}

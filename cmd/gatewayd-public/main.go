@@ -678,9 +678,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				// per-POST gate; the flush-time cap is the
 				// memory bound the gateway needs across
 				// chunked POSTs within one window.
-				MaxSpansPerTrace: func(plan string) int {
-					return api.MustLimitsFor(api.Plan(plan)).DebugTelemetrySpansPerTrace
-				},
+				MaxSpansPerTrace: gateway.MaxSpansPerTraceForPlan,
 				// PR-D code-review #5: fires once per bucket
 				// the flush truncated. Drives the §12 metric
 				// gatewayd_public_otel_spans_truncated_total.

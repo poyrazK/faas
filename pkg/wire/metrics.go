@@ -4384,7 +4384,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// increments via IncrementGatewaydPublicOtelSpansIngested.
 	gatewaydPublicOtelSpansIngested := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_spans_ingested_total",
-		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid}. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
+		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid, buffer_full}. `buffer_full` counts traces rejected because the account or the process already buffers its maximum of traces between flushes. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansIngested)
 	// ADR-127 PR-D: truncation tripwire. Fires once per OTLP
@@ -6482,7 +6482,9 @@ var (
 	// (ADR-1741).
 	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
-		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining"}
+		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining",
+		// ADR 20261031190030: frozen VMs yield memory to admission.
+		"admission", "refused_wake"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
 	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}

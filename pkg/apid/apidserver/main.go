@@ -979,6 +979,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if archiveClient != nil {
 			srv.logArchive = archiveClient
 		}
+		reportLogArchiveEnabled(srv, archiveClient != nil)
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
 			BeforeAccountDelete: srv.beforeAccountDelete,
@@ -1696,7 +1697,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
-		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap}, ops.Registry())
+		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired}, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
@@ -3350,8 +3351,11 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest)
-	// Single-box realtimed reaches apid through this DAC-protected socket.
+	// Single-box realtimed reaches apid through this DAC-protected socket,
+	// and asks it to match Data API server keys there (ADR 20261029202403
+	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
+	receivers.RegisterAuthReceiver(srv, store)
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
 	} else {

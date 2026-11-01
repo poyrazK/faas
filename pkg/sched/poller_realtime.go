@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -172,6 +173,82 @@ func (p *realtimePoller) NackWithCodes(ctx context.Context, t sqlc.Trigger, code
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// realtimeLeaseRenewMin is the shortest wait between two renewals of a
+// batch's claims.
+const realtimeLeaseRenewMin = time.Second
+
+// keepLeases renews a polled batch's group claims while the batch is
+// delivered (ADR-1322 amendment, ADR-1180), so an invocation may run for its
+// app's timeout rather than the group's lease. Each claim is renewed when a
+// third of its remaining lease has passed, until the dispatcher settles it,
+// the group no longer leases it to this trigger, or its message reaches its
+// delivery deadline. The returned function stops renewing.
+func (p *realtimePoller) keepLeases(ctx context.Context, ids []string) func() {
+	leases := make(map[string]state.RealtimeConsumerGroupClaim, len(ids))
+	p.mu.Lock()
+	for _, id := range ids {
+		if claim, ok := p.claims[id]; ok {
+			leases[id] = claim
+		}
+	}
+	p.mu.Unlock()
+	if len(leases) == 0 {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for len(leases) > 0 {
+			timer := time.NewTimer(nextLeaseRenewal(leases, time.Now()))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			p.renewLeases(ctx, leases)
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+// nextLeaseRenewal is a third of the shortest remaining lease, and at least
+// realtimeLeaseRenewMin.
+func nextLeaseRenewal(leases map[string]state.RealtimeConsumerGroupClaim, now time.Time) time.Duration {
+	next := time.Duration(math.MaxInt64)
+	for _, claim := range leases {
+		next = min(next, claim.LeaseUntil.Sub(now)/3)
+	}
+	return max(next, realtimeLeaseRenewMin)
+}
+
+// renewLeases renews the claims the dispatcher still holds and stops
+// renewing the rest: a settled claim, a lost lease, or a lease the message's
+// delivery deadline no longer lets the group extend.
+func (p *realtimePoller) renewLeases(ctx context.Context, leases map[string]state.RealtimeConsumerGroupClaim) {
+	for id, claim := range leases {
+		p.mu.Lock()
+		held, ok := p.claims[id]
+		p.mu.Unlock()
+		if !ok || held.ClaimToken != claim.ClaimToken {
+			delete(leases, id)
+			continue
+		}
+		res, err := p.store.SettleRealtimeConsumerGroup(p.dispatchContext(ctx), p.cfg.EndpointID, p.cfg.Channel, p.cfg.Group,
+			state.RealtimeConsumerGroupSettlement{Sequence: claim.Message.Sequence, ClaimToken: claim.ClaimToken, Action: "renew"})
+		if err != nil || res.LeaseUntil == nil || !res.LeaseUntil.After(claim.LeaseUntil) {
+			delete(leases, id)
+			continue
+		}
+		claim.LeaseUntil = *res.LeaseUntil
+		leases[id] = claim
+	}
 }
 
 // realtimePlatformFailure reports whether the handler never ran: the

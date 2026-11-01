@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
@@ -303,6 +304,11 @@ func envOr(key, fallback string) string {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the scheduler credential ring: schedd offers event acknowledgements and
+	// consumer-group leases and issues CI and job operation capabilities.
+	if err := credhash.Install(os.Getenv, credhash.FamilyScheduler); err != nil {
+		return fmt.Errorf("schedd: %w", err)
+	}
 	return runWithDeps(ctx, log, defaultDeps())
 }
 
@@ -2215,7 +2221,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	floorTrigger := floor.New(
 		appSnapshot,
 		store, // deploymentStore — issue #557 closure / ADR-074 (per-deployment walk)
-		schedFloorLedger{ledger: engine.Ledger()},
+		schedFloorLedger{ledger: engine.Ledger(), headroom: engine.FloorHeadroomMB},
 		schedFloorEngine{engine: engine},
 		floor.Options{
 			Logger:       log,
@@ -3140,6 +3146,8 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 // trigger adds.
 type schedFloorLedger struct {
 	ledger *sched.NodeLedger
+	// headroom is Engine.FloorHeadroomMB; nil falls back to the ledger.
+	headroom func() int
 }
 
 // Concurrency implements floor.Ledger.
@@ -3158,10 +3166,14 @@ func (s schedFloorLedger) ResidentRAM() int {
 	return s.ledger.ResidentRAM()
 }
 
-// HeadroomMB implements floor.Ledger with the best single node's admission
-// headroom, the figure Admit places against; the fleet sum went negative
-// under measured admission and stopped every floor refill.
+// HeadroomMB implements floor.Ledger with the best single admitting node's
+// admission headroom, the figure Admit places against; the fleet sum went
+// negative under measured admission and stopped every floor refill, and the
+// ledger alone missed nodes it held nothing on (ADR 20261031190030).
 func (s schedFloorLedger) HeadroomMB() int {
+	if s.headroom != nil {
+		return s.headroom()
+	}
 	return s.ledger.AdmissionHeadroomMB()
 }
 

@@ -38,7 +38,20 @@ func (e *Engine) nodeCapacityProblem(err error) error {
 	}
 	e.log.Warn("sched: admit refused by the durable per-node reservation (ADR-193)",
 		"err", err)
+	// The guard also refuses vCPU and CPU; naming those RAM misled operators
+	// and parked frozen VMs for a refusal they cannot relieve (ADR
+	// 20261031190030).
+	switch state.NodeCapacityResource(err) {
+	case state.NodeCapacityVCPU:
+		return explainAdmission(api.ErrCapacity(
+			"vCPU headroom: the selected compute node is at its per-node vCPU budget"),
+			api.WorkerAdmissionBlocker{Code: "node_vcpu", Resource: state.NodeCapacityVCPU})
+	case state.NodeCapacityCPU:
+		return explainAdmission(api.ErrCapacity(
+			"CPU headroom: the selected compute node is at its physical CPU budget"),
+			api.WorkerAdmissionBlocker{Code: "node_cpu", Resource: state.NodeCapacityCPU})
+	}
 	return explainAdmission(api.ErrCapacity(
 		"RAM headroom: the selected compute node is at its per-node admission ceiling"),
-		api.WorkerAdmissionBlocker{Code: "node_ram", Resource: "ram_mb"})
+		api.WorkerAdmissionBlocker{Code: "node_ram", Resource: state.NodeCapacityRAM})
 }

@@ -398,3 +398,9 @@
 # provisioned via `gregalectl secrets init`).
 - name: vmmd_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
+
+- name: vmmd_service — attach credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: attach
+    credential_units: [faas-vmmd]

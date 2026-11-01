@@ -188,6 +188,7 @@ export type { CreateWorkflowCallbackWebhookBindingRequest } from './models/Creat
 export type { CronResponse } from './models/CronResponse.js';
 export type { CronRun } from './models/CronRun.js';
 export type { CSRFTokenResponse } from './models/CSRFTokenResponse.js';
+export type { CustomDomainHostsResponse } from './models/CustomDomainHostsResponse.js';
 export type { CustomDomainResponse } from './models/CustomDomainResponse.js';
 export type { CustomMetricListResponse } from './models/CustomMetricListResponse.js';
 export type { CustomMetricRequest } from './models/CustomMetricRequest.js';
@@ -474,6 +475,7 @@ export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDataba
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
+export type { ManagedPostgresRestoreRange } from './models/ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';
 export type { ManagedServiceProbeSpec } from './models/ManagedServiceProbeSpec.js';
 export type { MCPPolicyConvergenceSnapshot } from './models/MCPPolicyConvergenceSnapshot.js';
@@ -1066,6 +1068,7 @@ export type { SessionListResponse } from './models/SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './models/SessionsRevokeAllResponse.js';
 export type { SetAccountEgressAllowlistExtraRequest } from './models/SetAccountEgressAllowlistExtraRequest.js';
 export type { SetBindingReleasePolicyRequest } from './models/SetBindingReleasePolicyRequest.js';
+export type { SetCustomDomainHostsRequest } from './models/SetCustomDomainHostsRequest.js';
 export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasRequest.js';
 export type { SetFinancialBudgetChannelsRequest } from './models/SetFinancialBudgetChannelsRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';

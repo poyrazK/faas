@@ -1055,6 +1055,7 @@ from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
+from .custom_domain_hosts_response import CustomDomainHostsResponse
 from .custom_domain_response import CustomDomainResponse
 from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
@@ -1087,6 +1088,7 @@ from .data_api_access_config_version import DataAPIAccessConfigVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
+from .data_api_runtime import DataAPIRuntime
 from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
 from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
@@ -2404,6 +2406,10 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .label_change import LabelChange
+from .label_change_set import LabelChangeSet
+from .labels_response import LabelsResponse
+from .labels_response_labels import LabelsResponseLabels
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
@@ -2643,6 +2649,7 @@ from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
 from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
 from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
@@ -5612,6 +5619,7 @@ from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequ
 from .set_canary_route_gate_request import SetCanaryRouteGateRequest
 from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
 from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
+from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
@@ -7250,6 +7258,7 @@ __all__ = (
     "CronRun",
     "CronRunOutcome",
     "CSRFTokenResponse",
+    "CustomDomainHostsResponse",
     "CustomDomainResponse",
     "CustomMetricListResponse",
     "CustomMetricRequest",
@@ -7282,6 +7291,7 @@ __all__ = (
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
+    "DataAPIRuntime",
     "DataAPIRuntimeConnectionReport",
     "DataAPIRuntimeConnectionReportRuntimeModel",
     "DataAPIRuntimeConnectionReportState",
@@ -8557,6 +8567,10 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "LabelChange",
+    "LabelChangeSet",
+    "LabelsResponse",
+    "LabelsResponseLabels",
     "LatestDeploymentsByAppResponse",
     "LinkPlatformTenantConsumerRequest",
     "LinkPlatformTenantSurfaceRequest",
@@ -8756,6 +8770,7 @@ __all__ = (
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageImportReading",
     "ManagedPostgresUsageImportReadingMeter",
     "ManagedPostgresUsageImportRequest",
@@ -11521,6 +11536,7 @@ __all__ = (
     "SetCanaryRouteGateRequest",
     "SetCanaryRouteGateRequestMode",
     "SetCommitSourceEnabledBody",
+    "SetCustomDomainHostsRequest",
     "SetDeploymentAliasRequest",
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",

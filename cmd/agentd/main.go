@@ -18,6 +18,7 @@ import (
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/agentd"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -31,6 +32,10 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the uploads credential ring: agentd issues object upload grants.
+	if err := credhash.Install(os.Getenv, credhash.FamilyUploads); err != nil {
+		return fmt.Errorf("agentd: %w", err)
+	}
 	if strings.TrimSpace(os.Getenv("FAAS_AGENTD_AGENT_RUNS")) != "1" {
 		log.Info("agentd: agent runs are off (FAAS_AGENTD_AGENT_RUNS); idle")
 		<-ctx.Done()

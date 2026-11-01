@@ -45,8 +45,12 @@ func TestLoadGatewayUsesGatewayCredential(t *testing.T) {
 				t.Fatalf("LoadGateway err = %v, want gateway credential usable = %v", err, tc.gwOK)
 			}
 			if err == nil {
-				if b, err := registry.Default("us-east-1"); err != nil || b.Fingerprint != fingerprint(tc.backend) {
+				b, err := registry.Default("us-east-1")
+				if err != nil || b.Fingerprint != fingerprint(tc.backend) {
 					t.Fatalf("gateway backend = %+v, %v; the credential must not change its placement fingerprint", b, err)
+				}
+				if want := tc.backend.GatewayAccessKeyEnv != ""; b.GatewayCredential != want {
+					t.Fatalf("GatewayCredential = %v, want %v", b.GatewayCredential, want)
 				}
 			}
 		})
@@ -63,6 +67,7 @@ func TestRegistryRejectsPartialGatewayCredential(t *testing.T) {
 		{name: "key without secret", change: func(b *BackendConfig) { b.GatewayAccessKeyEnv = "GATEWAY_KEY" }, want: "both gateway credential variables"},
 		{name: "secret without key", change: func(b *BackendConfig) { b.GatewaySecretKeyEnv = "GATEWAY_SECRET" }, want: "both gateway credential variables"},
 		{name: "session token alone", change: func(b *BackendConfig) { b.GatewaySessionTokenEnv = "GATEWAY_TOKEN" }, want: "both gateway credential variables"},
+		{name: "admin credential named twice", change: func(b *BackendConfig) { b.GatewayAccessKeyEnv, b.GatewaySecretKeyEnv = "KEY", "GATEWAY_SECRET" }, want: "apart from its admin credential"},
 		{name: "gcs backend", change: func(b *BackendConfig) {
 			*b = BackendConfig{ID: "b", Driver: "gcs", Region: "us-east-1", Namespace: "project", GCSLocation: "US-EAST1", GCSServiceAccount: "gateway@project.iam.gserviceaccount.com", GatewayAccessKeyEnv: "GATEWAY_KEY", GatewaySecretKeyEnv: "GATEWAY_SECRET"}
 		}, want: "mixes GCS and S3 settings"},

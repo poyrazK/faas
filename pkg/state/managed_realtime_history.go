@@ -88,6 +88,12 @@ type ManagedRealtimeDurableCursorReaper interface {
 	PruneExpiredManagedRealtimeDurableCursors(context.Context, int) (int64, error)
 }
 
+// ManagedRealtimeReadMarkerReaper deletes read markers not updated within
+// ManagedRealtimeReadMarkerRetention.
+type ManagedRealtimeReadMarkerReaper interface {
+	PruneExpiredManagedRealtimeReadMarkers(context.Context, int) (int64, error)
+}
+
 // ManagedRealtimeHistoryReaper removes rows that have passed the retention
 // window. Read and append enforce that window even before this pass runs.
 type ManagedRealtimeHistoryReaper interface {

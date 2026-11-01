@@ -453,6 +453,9 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 				renderArchiveTerminal(w, flusher, archiveReasonDegraded)
 				return
 			}
+			// The backstop is an idle timeout: a large day that keeps
+			// delivering lines must not be cut off at a fixed total time.
+			backstopTimer.Reset(backstop)
 		}
 	}
 }

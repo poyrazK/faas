@@ -2771,8 +2771,8 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	// parent's gates through this path, and dropping them left a preview of
 	// an IP-allowlisted, password-protected or egress-restricted app open.
 	// The declared-route contract is one of those gates.
-	insertAppSQL := `insert into apps (id, account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required, egress_allowlist, public_auth_ip_allowlist, public_auth_basic, require_signed, consumer_auth_mode, only_declared_routes, declared_routes)
-		 values (coalesce(nullif($40, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb, coalesce(nullif($38, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $39, $41, $42, $43, $44, $45, $46, $47::jsonb)
+	insertAppSQL := `insert into apps (id, account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required, egress_allowlist, public_auth_ip_allowlist, public_auth_basic, require_signed, consumer_auth_mode, only_declared_routes, declared_routes, security_policy)
+		 values (coalesce(nullif($40, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb, coalesce(nullif($38, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $39, $41, $42, $43, $44, $45, $46, $47::jsonb, $48)
 		returning ` + appsSelectColumns
 	declaredRoutes, err := json.Marshal(previewDeclaredRoutes(app.DeclaredRoutes))
 	if err != nil {
@@ -2844,7 +2844,8 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		// default. Mirrors the binding in CreateApp above.
 		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID), app.PlatformTenantRequired, app.ID,
 		cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.PublicAuthBasicSealed,
-		app.RequireSigned, string(consumerAuth), app.OnlyAllowDeclaredRoutes, string(declaredRoutes))
+		app.RequireSigned, string(consumerAuth), app.OnlyAllowDeclaredRoutes, string(declaredRoutes),
+		string(previewSecurityPolicy(app.SecurityPolicy)))
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
@@ -18694,7 +18695,11 @@ func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, st
 		 from instances
 		 where state = any($1)
 		   and terminal_at is not null
-		   and terminal_at < $2`,
+		   and terminal_at < $2
+		   -- A job task keeps its instance: job_tasks.instance_id has no
+		   -- delete action, so deleting such a row failed on every sweep
+		   -- (production: ~200 failures a day). ADR 20261031190030.
+		   and not exists (select 1 from job_tasks t where t.instance_id = instances.id)`,
 		stateStrs, threshold)
 	if err != nil {
 		return nil, err
@@ -30565,6 +30570,18 @@ func (s *PgStore) IncrementAppError(ctx context.Context, arg sqlc.IncrementAppEr
 	return s.appErrorsQueries().IncrementAppError(ctx, s.pool, arg)
 }
 
+// AppErrorRequestCounter counts the request rows an error group keeps, so
+// apid can stop at the plan's AppErrorsMaxRequestRowsPerFingerprint (bug
+// hunt 2026-10-28 H41).
+type AppErrorRequestCounter interface {
+	CountAppErrorRequestsForFingerprint(ctx context.Context, arg sqlc.CountAppErrorRequestsForFingerprintParams) (int64, error)
+}
+
+// CountAppErrorRequestsForFingerprint implements AppErrorRequestCounter.
+func (s *PgStore) CountAppErrorRequestsForFingerprint(ctx context.Context, arg sqlc.CountAppErrorRequestsForFingerprintParams) (int64, error) {
+	return s.appErrorsQueries().CountAppErrorRequestsForFingerprint(ctx, s.pool, arg)
+}
+
 // InsertAppErrorRequest writes one drill-down row per request.
 // Paired with IncrementAppError on the same gRPC stream batch.
 func (s *PgStore) InsertAppErrorRequest(ctx context.Context, arg sqlc.InsertAppErrorRequestParams) error {
@@ -30765,11 +30782,12 @@ func (s *PgStore) InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertReq
 // predicate is `account_id = $3::uuid` with no `RETURNING`
 // or named-arg convention. Mirror what `make sqlc-generate`
 // produces so the drift gate stays green.
-func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte) error {
+func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error {
 	affected, err := s.appErrorsQueries().UpdateSpansSummary(ctx, s.pool, sqlc.UpdateSpansSummaryParams{
 		TraceID: pgtype.Text{String: traceID, Valid: traceID != ""},
 		Column2: summary,
 		Column3: pgtype.UUID{Bytes: accountID, Valid: true},
+		Column4: int32(min(max(maxSpans, 1), 1000)),
 	})
 	if err != nil {
 		return err
