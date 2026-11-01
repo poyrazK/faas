@@ -4837,6 +4837,9 @@
       ],
       "docs_url": "/docs/apps",
       "acceptance_test": "pkg/apid/apidserver/handlers_resource_labels_test.go::TestAppLabelsAPI",
+      "settings": [
+        "manifest.labels"
+      ],
       "routes": [
         "/v1/apps/{}/labels",
         "/v1/postgres/databases/{}/labels",
