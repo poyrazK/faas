@@ -184,6 +184,11 @@ egress ceiling".
    - the gateway holds its share;
    - the node's `gateway_wake_latency_seconds` p95 stays within noise;
    - control-plane Postgres stays under its CPU alert.
+
+   The test reaches the compute gateways on a pilot hostname
+   (`faas_object_gateway_public_endpoint`, the s3 tunnel's only ingress
+   until the cutover) while `s3.<domain>` stays on the control plane.
+   Procedure and readout: `docs/runbooks/S3GatewayComputeLoadTest.md`.
 6. Cutover of `s3.gregale.dev` from the control-plane origin to the s3
    tunnel, one pilot first (as in `docs/runbooks/AppEdgeCutover.md`). The
    control-plane gateway stays as a fallback for one release, then leaves

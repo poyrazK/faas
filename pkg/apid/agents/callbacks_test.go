@@ -95,8 +95,8 @@ func newCallbackFixture(t *testing.T) *callbackFixture {
 		t.Fatal(err)
 	}
 	f := &callbackFixture{inbox: &fakeInbox{endpoints: map[string]state.ManagedRealtimeEndpoint{
-		"ep-1": {ID: "ep-1", AccountID: callbackAccount}, "ep-2": {ID: "ep-2", AccountID: callbackAccount},
-		"ep-other": {ID: "ep-other", AccountID: otherAccount},
+		"ep-1": {ID: "ep-1", AccountID: callbackAccount, AppID: "app-1"}, "ep-2": {ID: "ep-2", AccountID: callbackAccount, AppID: "app-2"},
+		"ep-other": {ID: "ep-other", AccountID: otherAccount, AppID: "app-other"},
 	}}, now: time.Unix(1_800_000_000, 0), enabled: map[string]bool{callbackAccount: true, otherAccount: true}}
 	clock := func() time.Time { return f.now }
 	f.h = &agents.Handler{Callbacks: signer, Inbox: f.inbox, CallbackBaseURL: "https://api.example.test",
@@ -105,12 +105,22 @@ func newCallbackFixture(t *testing.T) *callbackFixture {
 	return f
 }
 
-// issue asks for a callback URL and returns its token, or the status.
+// issue asks for a callback URL with the account's API key and returns its
+// token, or the status.
 func (f *callbackFixture) issue(t *testing.T, accountID string, req api.CreateAgentCallbackRequest) (string, int) {
+	t.Helper()
+	return f.issueAs(t, keyCaller(accountID), req)
+}
+
+func keyCaller(accountID string) agents.CallbackCaller {
+	return agents.CallbackCaller{Account: state.Account{ID: accountID, Plan: api.PlanPro}}
+}
+
+func (f *callbackFixture) issueAs(t *testing.T, caller agents.CallbackCaller, req api.CreateAgentCallbackRequest) (string, int) {
 	t.Helper()
 	body, _ := json.Marshal(req)
 	w := httptest.NewRecorder()
-	f.h.CreateCallback(w, httptest.NewRequest(http.MethodPost, "/v1/agent-callbacks", bytes.NewReader(body)), state.Account{ID: accountID, Plan: api.PlanPro})
+	f.h.CreateCallback(w, httptest.NewRequest(http.MethodPost, "/v1/agent-callbacks", bytes.NewReader(body)), caller)
 	if w.Code != http.StatusCreated {
 		return "", w.Code
 	}
@@ -294,14 +304,43 @@ func TestPropertyCallbackStaysInItsThread(t *testing.T) {
 	}
 }
 
-// revoke closes a thread and returns the status.
+// revoke closes a thread with the account's API key and returns the status.
 func (f *callbackFixture) revoke(t *testing.T, accountID, endpointID, threadID string) int {
+	t.Helper()
+	return f.revokeAs(t, keyCaller(accountID), endpointID, threadID)
+}
+
+func (f *callbackFixture) revokeAs(t *testing.T, caller agents.CallbackCaller, endpointID, threadID string) int {
 	t.Helper()
 	body, _ := json.Marshal(api.RevokeAgentCallbacksRequest{EndpointID: endpointID, ThreadID: threadID})
 	w := httptest.NewRecorder()
-	f.h.RevokeCallbacks(w, httptest.NewRequest(http.MethodPost, "/v1/agent-callbacks/revocations", bytes.NewReader(body)),
-		state.Account{ID: accountID, Plan: api.PlanPro})
+	f.h.RevokeCallbacks(w, httptest.NewRequest(http.MethodPost, "/v1/agent-callbacks/revocations", bytes.NewReader(body)), caller)
 	return w.Code
+}
+
+// An app's workload caller issues and revokes callback URLs for its own
+// app's endpoints only; an API key reaches every endpoint of its account.
+func TestCallbackAppCallerOwnsOnlyItsEndpoints(t *testing.T) {
+	f := newCallbackFixture(t)
+	app := agents.CallbackCaller{Account: state.Account{ID: callbackAccount, Plan: api.PlanPro}, AppID: "app-1"}
+	for _, tc := range []struct {
+		endpoint string
+		want     int
+	}{{"ep-1", http.StatusCreated}, {"ep-2", http.StatusNotFound}, {"ep-other", http.StatusNotFound}} {
+		if _, code := f.issueAs(t, app, api.CreateAgentCallbackRequest{EndpointID: tc.endpoint, ThreadID: "t"}); code != tc.want {
+			t.Errorf("issue on %s = %d, want %d", tc.endpoint, code, tc.want)
+		}
+		revokeWant := http.StatusOK
+		if tc.want != http.StatusCreated {
+			revokeWant = http.StatusNotFound
+		}
+		if code := f.revokeAs(t, app, tc.endpoint, "t"); code != revokeWant {
+			t.Errorf("revoke on %s = %d, want %d", tc.endpoint, code, revokeWant)
+		}
+	}
+	if _, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-2", ThreadID: "t"}); code != http.StatusCreated {
+		t.Errorf("API key issue on ep-2 = %d", code)
+	}
 }
 
 // A revocation stops every URL issued for the thread until then, and only

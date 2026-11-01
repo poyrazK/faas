@@ -780,6 +780,8 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-check-compute-edges_test.sh
 	bash deploy/scripts/faas-app-edge-pilot-check_test.sh
 	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
+	bash deploy/scripts/cloudflare-s3-tunnel_test.sh
+	bash tests/load/s3-gateway/run_test.sh
 	bash deploy/scripts/cloudflare-app-dns_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
