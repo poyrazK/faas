@@ -4835,7 +4835,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/apps",
+      "docs_url": "/docs/labels",
       "acceptance_test": "pkg/apid/apidserver/handlers_resource_labels_test.go::TestAppLabelsAPI",
       "settings": [
         "manifest.labels"
