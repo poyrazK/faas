@@ -390,9 +390,12 @@ what you used.
 | Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
 | Uploads and upload parts in progress through `s3.gregale.dev` | A few per account; more wait up to 15 seconds for a turn, then answer `503 SlowDown` |
+| Stored data | Free stops at 1 GiB. A paid plan stores its included storage plus what your spend cap buys at $0.03 per GiB-month: with the default caps, Hobby 76 GiB, Pro 383 GiB and Scale 1,200 GiB. Raising the cap raises it; with no cap, the platform's own ceiling applies. Above it, uploads are refused and downloads answer `402` until you delete objects, raise the cap or upgrade; listing, `HEAD` and deletes keep working. A downgrade is refused while your data does not fit the new plan |
+| Objects per account, counting retained versions | 1,000,000 on every plan |
 | Egress each month | 10 times your plan's included storage: Free 10 GiB, Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB ([plans](plans.md#object-storage)). Public objects served from the CDN's cache do not count. At the limit, every request except deletes is refused until the month ends |
 
-Your plan and account also cap stored bytes, requests and egress each month.
+The platform also caps stored bytes, requests and egress per account; the
+current values are in `GET /v1/account/object-storage-usage` under `policy`.
 
 ## Deleting data and accounts
 

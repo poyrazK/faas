@@ -70573,6 +70573,26 @@ func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype
 	return plan, err
 }
 
+const objectUsageAccountPlanCap = `-- name: ObjectUsageAccountPlanCap :one
+SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+UNION ALL
+SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
+`
+
+type ObjectUsageAccountPlanCapRow struct {
+	Plan            string
+	OverageCapCents pgtype.Int8
+}
+
+// The plan and spend cap that set an account's object-storage ceilings
+// (ADR-1320, ADR-20261101214152). A null cap is no cap.
+func (q *Queries) ObjectUsageAccountPlanCap(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectUsageAccountPlanCapRow, error) {
+	row := db.QueryRow(ctx, objectUsageAccountPlanCap, id)
+	var i ObjectUsageAccountPlanCapRow
+	err := row.Scan(&i.Plan, &i.OverageCapCents)
+	return i, err
+}
+
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
 SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
 `

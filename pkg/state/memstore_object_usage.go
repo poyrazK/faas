@@ -42,11 +42,15 @@ func (m *MemStore) objectUsageLocked(account string, now time.Time) ObjectUsageS
 func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.Time) ObjectUsageSnapshot {
 	periodStart = ObjectStoragePeriod(periodStart)
 	out := ObjectUsageSnapshot{Authorizations: m.objectAuthorizations[account+periodStart.String()]}
+	var capCents *int64
+	if cents, ok := m.overageCapCents[account]; ok {
+		capCents = &cents
+	}
 	if acct, ok := m.accounts[account]; ok {
-		out.PlanLimits = objectStoragePlanLimits(acct.Plan)
+		out.PlanLimits = objectStoragePlanLimits(acct.Plan, capCents)
 	}
 	if org, ok := m.orgs[account]; ok && !org.Personal && org.ResourceOwnershipEnabled {
-		out.PlanLimits = objectStoragePlanLimits(org.Plan)
+		out.PlanLimits = objectStoragePlanLimits(org.Plan, capCents)
 	}
 	for _, b := range m.objectBuckets {
 		if m.objectBillingSubjectForPeriodLocked(b, periodStart) == account {

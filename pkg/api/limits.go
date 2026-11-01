@@ -2499,6 +2499,11 @@ const (
 	ObjectStorageProgressSweepInterval = time.Hour
 	ObjectStorageProgressRetry         = 5 * time.Minute
 	ObjectStorageInventoryMaxPages     = 1000
+	// MaxObjectStorageAccountKeys is the most objects (with retained
+	// versions) one account may store on every plan: Gregale meters a bucket
+	// by listing it whole, at most ObjectStorageInventoryMaxPages pages of
+	// MaxObjectS3ListItems keys. Writes past it answer account_keys.
+	MaxObjectStorageAccountKeys = ObjectStorageInventoryMaxPages * MaxObjectS3ListItems
 	// MaxObjectStorageReconcileBuckets bounds one backend's bucket listing in
 	// operator reconciliation after a database restore (ADR-20261025111015).
 	MaxObjectStorageReconcileBuckets = 100_000
@@ -3470,6 +3475,25 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
+
+// WithSpendCap returns the limits with the storage ceiling a paid account's
+// spend cap pays for: the plan's included storage plus the GiB-months the cap
+// buys at ObjectStorageMillicentsPerGiBMonth (ADR-20261101214152). Hobby's
+// default $2 cap gives 76 GiB, Pro's $10 383 GiB, Scale's $30 1,200 GiB. A nil
+// cap (none, or a cleared one) keeps the limits; a plan ceiling that is
+// already tighter, as Free's, stays.
+func (l ObjectStoragePlanLimits) WithSpendCap(capCents *int64) ObjectStoragePlanLimits {
+	if capCents == nil || *capCents < 0 || l.IncludedBytes <= 0 {
+		return l
+	}
+	gib := min(*capCents, MaxObjectStoragePolicyValue/MillicentsPerCent) * MillicentsPerCent / ObjectStorageMillicentsPerGiBMonth
+	ceiling := MaxObjectStoragePolicyValue
+	if gib < (MaxObjectStoragePolicyValue-l.IncludedBytes)>>30 {
+		ceiling = l.IncludedBytes + gib<<30
+	}
+	l.MaxAccountBytes = tighterObjectStorageLimit(ceiling, l.MaxAccountBytes)
+	return l
+}
 
 // Policy returns the operator safety policy tightened by the plan's ceilings.
 // The tighter positive value wins; a zero plan ceiling keeps the operator's.
