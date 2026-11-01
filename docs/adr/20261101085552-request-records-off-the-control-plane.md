@@ -12,8 +12,11 @@
      request.**
      - gatewayd-internal appends each journal record to segment files in its
        state directory (`/var/lib/faas-gatewayd-internal`). There is one file
-       per hour of zstd frames, plus an index sorted by request ID that is
-       written when the hour closes. A record keeps today's fields (account,
+       per 10 minutes of received time (`GatewayRequestJournalSegmentMinutes`)
+       holding CRC-checked zstd frames, plus an index sorted by key hash that is
+       written when the segment closes. Ten minutes keeps the in-memory sort at
+       close to about 7 MB at 1,000 req/s; an hour would be about 43 MB inside a
+       gateway whose soft memory limit is 384 MiB. A record keeps today's fields (account,
        app, request ID, trace ID, received at, expires at) and today's rule:
        a plan without the debugger entitlement writes nothing.
      - A segment is removed once every record in it has passed `expires_at`
@@ -111,8 +114,8 @@
     per app and gateway over 14 days.
   - Journal segments in object storage. They would survive node loss, but
     gatewayd-internal holds no storage credentials, and the debugger would
-    then depend on the object store. The hourly segment format leaves room to
-    ship closed segments there later.
+    then depend on the object store. The segment format leaves room to ship
+    closed segments there later.
   - Sampling the journal: ADR-1521 keeps the promise that every request ID of
     an entitled plan resolves.
   - A larger control-plane host: it moves the ceiling, not the slope.
