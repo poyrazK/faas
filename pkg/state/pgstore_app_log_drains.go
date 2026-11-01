@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -159,15 +160,46 @@ func (s *PgStore) ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, e
 	if err != nil {
 		return nil, fmt.Errorf("list enabled app log drains: %w", err)
 	}
-	result := make([]AppLogDrain, 0, len(rows))
+	drains := make([]AppLogDrain, 0, len(rows))
+	owners := make([]appLogDrainOwnership, 0, len(rows))
 	for _, row := range rows {
 		d, err := appLogDrainWithStandardBinding(row)
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, d)
+		var owner appLogDrainOwnership
+		if err := json.Unmarshal(row.Owner, &owner); err != nil {
+			return nil, fmt.Errorf("decode app log drain owner: %w", err)
+		}
+		drains = append(drains, d)
+		owners = append(owners, owner)
 	}
-	return result, nil
+	return planCoveredAppLogDrains(drains, owners), nil
+}
+
+// ListAppLogDrainsPausedByPlan names appID's enabled drains that the delivery
+// reads leave out because its owner's plan does not cover them.
+func (s *PgStore) ListAppLogDrainsPausedByPlan(ctx context.Context, appID string) ([]string, error) {
+	id, err := parsePgUUID(appID)
+	if err != nil {
+		return []string{}, nil
+	}
+	rows, err := sqlc.New().ListAppLogDrainPlanSubjectDrains(ctx, s.pool, id)
+	if err != nil {
+		return nil, fmt.Errorf("state: list app log drain plan coverage: %w", err)
+	}
+	ledger := newAppLogDrainPlanLedger()
+	paused := []string{}
+	for _, row := range rows {
+		var owner appLogDrainOwnership
+		if err := json.Unmarshal(row.Owner, &owner); err != nil {
+			return nil, fmt.Errorf("decode app log drain owner: %w", err)
+		}
+		if !ledger.admit(row.AppID, owner) && row.Addressed {
+			paused = append(paused, row.ID)
+		}
+	}
+	return paused, nil
 }
 
 func (s *PgStore) listAppLogDrains(ctx context.Context, query string, args ...any) ([]AppLogDrain, error) {

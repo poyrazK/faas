@@ -35,7 +35,7 @@ func (m *MemStore) LoadApplicationStandardLogConsumerSnapshot(ctx context.Contex
 	if err := ctx.Err(); err != nil {
 		return ApplicationStandardLogConsumerSnapshot{}, err
 	}
-	s := ApplicationStandardLogConsumerSnapshot{Drains: listAppLogDrains(func(d AppLogDrain) bool { return d.Enabled }, m.appLogDrains), Inventories: []ApplicationStandardLogInventory{}}
+	s := ApplicationStandardLogConsumerSnapshot{Drains: m.deliverableAppLogDrainsLocked(), Inventories: []ApplicationStandardLogInventory{}}
 	for n := range s.Drains {
 		s.Drains[n].StandardBinding = m.standardLogBindingLocked(s.Drains[n])
 	}

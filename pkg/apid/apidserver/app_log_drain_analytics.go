@@ -32,9 +32,6 @@ func appLogDrainAnalyticsWindow(raw string) (string, time.Duration, bool) {
 }
 
 func (s *server) getAppLogDrainAnalytics(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if _, ok := s.logDrainsAllowed(w, acct); !ok {
-		return
-	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return

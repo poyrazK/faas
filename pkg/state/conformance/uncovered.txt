@@ -563,7 +563,6 @@ UpdateAccountProviderCustomerID
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus
 UpdateAlertRule
-UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
 UpdateCorsPreset

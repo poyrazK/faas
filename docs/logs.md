@@ -124,6 +124,21 @@ gregale logs drain health my-api <drain-id>
 - `health` shows the queue, delivered and failed counts and the last error.
   Lines a destination keeps refusing are retried and then dead-lettered, so a
   broken drain never holds up your app.
+- Drains follow your current plan. The plan's limits apply when you create a
+  drain and again when logs are delivered: if you move to a plan with fewer
+  drains (or to Free, which has none), your oldest enabled drains keep
+  delivering up to the new limits and the rest pause, with `health` showing
+  them as `inactive`. A company app's drains follow the organization's plan
+  once the organization pays for its apps. Disable or delete drains to choose
+  which ones deliver; upgrading resumes them all. You can list, read, disable
+  and delete drains on every plan; creating, enabling or changing one needs a
+  plan that includes drains.
+- Many destinations (Sumo Logic and Loggly, for example) put their ingestion
+  token in the URL, so only whoever may change a drain sees its full URL: you
+  in a browser session or with an `admin` or `deploy:write` key, and on a
+  company app the organization's owners and admins. Everyone else (viewers,
+  developers, `apps:read` keys) sees the destination without its path and
+  query, as `https://collectors.example.com/***`.
 
 ## Limits
 

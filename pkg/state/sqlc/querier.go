@@ -3242,6 +3242,11 @@ type Querier interface {
 	// Forks this scheduler holds that reached their TTL or were cancelled.
 	ListAppForksDueForTeardown(ctx context.Context, db DBTX, arg ListAppForksDueForTeardownParams) ([]AppFork, error)
 	ListAppHealthHistory(ctx context.Context, db DBTX, arg ListAppHealthHistoryParams) ([][]byte, error)
+	// The enabled, deliverable drains of every app that shares app_id's billing
+	// subject, in delivery order, with the owner facts the delivery reads check
+	// against the plan. PgStore reports which of app_id's own drains the plan
+	// leaves out.
+	ListAppLogDrainPlanSubjectDrains(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListAppLogDrainPlanSubjectDrainsRow, error)
 	ListAppOperationQueueCounts(ctx context.Context, db DBTX, arg ListAppOperationQueueCountsParams) ([]ListAppOperationQueueCountsRow, error)
 	ListAppPendingRestarts(ctx context.Context, db DBTX, arg ListAppPendingRestartsParams) ([]ListAppPendingRestartsRow, error)
 	ListAppPendingRollbacks(ctx context.Context, db DBTX, arg ListAppPendingRollbacksParams) ([][]byte, error)
@@ -3424,7 +3429,9 @@ type Querier interface {
 	// Collapse region verdicts sharing one probe timestamp conservatively.
 	ListEgressCircuitCandidates(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) ([]ListEgressCircuitCandidatesRow, error)
 	// A rehearsal-enrolled app's candidate output never leaves for a customer
-	// log destination (ADR-20261019180000).
+	// log destination (ADR-20261019180000). owner is what PgStore checks against
+	// the plan of the account the app's resources belong to, so a drain stops
+	// when that plan stops covering it (appLogDrainOwnership).
 	ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error)
 	ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledCronsRow, error)
 	// A deleted app's rules wait out its restore grace without evaluating
@@ -3821,6 +3828,9 @@ type Querier interface {
 	LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db DBTX, arg LiveServiceProxyInstanceRowsByHostIPParams) ([]LiveServiceProxyInstanceRowsByHostIPRow, error)
 	LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSnapshotsForTierParams) ([]Snapshot, error)
 	// Both collections come from one statement snapshot, including empty drain sets.
+	// The drains are ListEnabledAppLogDrainsWithStandardBinding's: a
+	// rehearsal-enrolled app's output never leaves for a customer destination
+	// (ADR-20261019180000), and owner is checked against the plan.
 	LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error)
 	// ADR-732: production fork intent (app_forks). apid admits forks under a
 	// per-account advisory lock so the active-fork limits hold under concurrent
