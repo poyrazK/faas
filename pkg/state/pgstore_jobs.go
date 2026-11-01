@@ -1454,7 +1454,7 @@ func (s *PgStore) JobRunRecompute(ctx context.Context, runID string) (JobRun, er
 		  and exists (select 1 from job_tasks failed
 		              where failed.run_id = r.id
 		                and failed.status in ('failed', 'timeout', 'oom')
-		                and (failed.work_decision->>'action' = 'fail_partition' OR
+		                and (failed.work_decision->>'action' in ('fail_partition', 'dead_letter') OR
  ((failed.work_decision is null or failed.work_decision->>'action' = 'retry') and failed.attempt > coalesce(r.retry_max, j.retry_max))))
 	  )`, runID)
 	if err != nil {
@@ -1670,7 +1670,7 @@ func (s *PgStore) JobTaskClaimBatch(ctx context.Context, limit int) ([]JobTask, 
 		    and (r.failure_policy = 'continue' or not exists (
 		      select 1 from job_tasks failed
 		      where failed.run_id = r.id and failed.status in ('failed','timeout','oom')
-		        and (failed.work_decision->>'action' = 'fail_partition' OR
+		        and (failed.work_decision->>'action' in ('fail_partition', 'dead_letter') OR
  ((failed.work_decision is null or failed.work_decision->>'action' = 'retry') and failed.attempt > coalesce(r.retry_max, j.retry_max)))))
 		    and (job_tasks.next_attempt_at is null or job_tasks.next_attempt_at <= now())
 		    and not exists (
@@ -1870,7 +1870,7 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 		    and (r.failure_policy = 'continue' or not exists (
 		      select 1 from job_tasks failed
 		      where failed.run_id = r.id and failed.status in ('failed','timeout','oom')
-		        and (failed.work_decision->>'action' = 'fail_partition' OR
+		        and (failed.work_decision->>'action' in ('fail_partition', 'dead_letter') OR
  ((failed.work_decision is null or failed.work_decision->>'action' = 'retry') and failed.attempt > coalesce(r.retry_max, j.retry_max)))))
 		    and (r.execution_class = 'standard' or
 		         (r.eligible_at <= now() and r.latest_start_at > now()))
@@ -2585,4 +2585,46 @@ func (s *PgStore) CompleteJobTaskAttempt(ctx context.Context, p JobTaskCompletio
 	return s.jobTaskMarkTerminal(ctx, p.RunID, p.TaskIndex, p.InstanceID, p.LeaseToken, true,
 		p.Status, p.ExitCode, p.ErrorClass, p.ErrorMessage, p.LogContent, p.LogTruncated,
 		true, p.FinishedAt, p.OutputManifest, p)
+}
+
+// SettleRefusedJobTaskRetry implements JobTaskRetryRefusalStore.
+func (s *PgStore) SettleRefusedJobTaskRetry(ctx context.Context, runID string, taskIndex, attempt int, decision workpolicy.Decision) (bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("state: begin settle refused job task retry: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+	encoded := policyJSON(&decision)
+	tag, err := tx.Exec(ctx,
+		`update job_tasks set work_decision = $4::jsonb
+		 where run_id = $1::uuid and task_index = $2 and attempt = $3
+		   and status in ('failed', 'timeout', 'oom')
+		   and work_decision->>'action' = 'retry'`,
+		runID, taskIndex, attempt, encoded)
+	if err != nil {
+		return false, fmt.Errorf("state: settle refused retry of task (%s, %d): %w", runID, taskIndex, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil
+	}
+	if _, err := tx.Exec(ctx,
+		`update job_task_attempts set work_decision = $4::jsonb
+		 where run_id = $1::uuid and task_index = $2 and attempt = $3`,
+		runID, taskIndex, attempt, encoded); err != nil {
+		return false, fmt.Errorf("state: settle refused retry of task (%s, %d) attempt: %w", runID, taskIndex, err)
+	}
+	// Both counters move together (CHECK dead_letter_count <= tasks_failed),
+	// as JobRunIncrementDeadLetter does; the recompute that follows recounts
+	// tasks_failed from the task rows.
+	if tag, err := tx.Exec(ctx,
+		`update job_runs set dead_letter_count = dead_letter_count + 1, tasks_failed = tasks_failed + 1
+		 where id = $1::uuid`, runID); err != nil {
+		return false, fmt.Errorf("state: settle refused retry dead letter for run %s: %w", runID, err)
+	} else if tag.RowsAffected() == 0 {
+		return false, ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("state: commit settle refused job task retry: %w", err)
+	}
+	return true, nil
 }

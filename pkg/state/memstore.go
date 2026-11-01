@@ -1459,6 +1459,10 @@ type MemStore struct {
 	// runtimeSecretSignatures maps an envelope's SHA-256 to its writer
 	// signature (ADR 20261028161502), created on first use.
 	runtimeSecretSignatures map[string][]byte
+
+	// appLabels holds each app's labels (ADR-20261031100025), created on
+	// first write; an app absent from it has none.
+	appLabels map[string]map[string]string
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -20717,6 +20721,7 @@ type billingUsageDelivery struct {
 	meter               BillingMeter
 	hour                time.Time
 	quantity            int64
+	deliveredAt         time.Time
 }
 
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
@@ -20804,7 +20809,7 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	defer m.mu.Unlock()
 	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
 	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
-		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity, deliveredAt: m.clock()}
 	}
 	return nil
 }

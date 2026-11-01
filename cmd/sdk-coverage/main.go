@@ -1457,6 +1457,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/data-api/usage":                                              "GetAppDataAPIUsage",
 	"POST /v1/apps/{slug}/data-api/contract-tasks":                                    "CreateDataAPIContractTask",
 	"GET /v1/apps/{slug}/data-api/contract-tasks/{id}":                                "GetDataAPIContractTask",
+	"GET /v1/apps/{slug}/data-api/runtime":                                            "GetDataAPIRuntime",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",
@@ -2430,6 +2431,7 @@ var methodRouteMap = map[string]string{
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/health":                "GetAppHealth",
 	"GET /v1/apps/{slug}/status":                "GetAppStatus",
+	"PATCH /v1/apps/{slug}/labels":              "UpdateAppLabels",
 	"GET /v1/apps/{slug}/health/history":        "ListAppHealthHistory",
 	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
 	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",

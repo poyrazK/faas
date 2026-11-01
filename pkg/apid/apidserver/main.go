@@ -979,6 +979,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if archiveClient != nil {
 			srv.logArchive = archiveClient
 		}
+		reportLogArchiveEnabled(srv, archiveClient != nil)
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
 			BeforeAccountDelete: srv.beforeAccountDelete,
@@ -1696,7 +1697,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
-		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap}, ops.Registry())
+		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink}, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}

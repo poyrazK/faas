@@ -613,6 +613,17 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 // PostgreSQL databases before the cap suspends them (ADR-20261025094915).
 const ManagedPostgresOverageCeilingMultiplier = 2
 
+// ManagedPostgresOverageMillicentsPerComputeUnitHour prices managed
+// PostgreSQL compute above the plan allowance: $0.20 per CU-h, the October
+// 2026 COGS report's figure (ADR-20261031110037). Only accounts that turned
+// overage on are charged, at most up to the overage ceiling.
+const ManagedPostgresOverageMillicentsPerComputeUnitHour = 20_000
+
+// ManagedPostgresOverageCloseWindow is how long after a UTC month ends apid
+// keeps delivering that month's overage while late provider usage windows
+// arrive (ADR-20261031110037).
+const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
+
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.
@@ -12317,6 +12328,16 @@ const (
 	// beyond that.
 	AppErrorsCardinalityBackstopMultiplier = 2
 
+	// AppErrorsRequestSamplesPerFlush and AppErrorsRequestRowsPerAppPerMinute
+	// bound the app_error_requests rows one gateway sends (bug hunt
+	// 2026-10-28 H41). Repeats of an app's error within one flush fold into
+	// the count of the last record sent for it; up to SamplesPerFlush of them
+	// carry a request row, and an app gets at most RowsPerAppPerMinute
+	// request rows a minute. Without them each 4xx/5xx, scanner 404s
+	// included, cost two control-plane writes.
+	AppErrorsRequestSamplesPerFlush     = 3
+	AppErrorsRequestRowsPerAppPerMinute = 60
+
 	// ObsAdminAuditLogLimitDefault / ObsAdminAuditLogLimitMax bound
 	// the top-N size of /v1/admin/obs/audit-log/search (ADR-091 §3.7 /
 	// PR #3). Default 200 covers the operator's "what happened in
@@ -14210,6 +14231,10 @@ const (
 	DataAPISingleAppMigrationsMaxFiles = 4096
 	DataAPISingleAppMigrationsMaxBytes = 16 << 20
 	DataAPIReleaseCommandMaxBytes      = 1024
+	// The CLI deploys the runtime archive apid serves (ADR-20261031095954);
+	// a larger download, or one that unpacks larger, is refused.
+	DataAPIRuntimeArchiveMaxBytes = 2 << 20
+	DataAPIRuntimeFilesMaxBytes   = 16 << 20
 	// Fixed v2 customer SQL contract (ADR-1670). Never extend this window in
 	// place: doing so could revive keys whose receipts have already been purged.
 	DataAPIReplayV2WindowMS     = 86400000
@@ -14819,6 +14844,13 @@ const (
 	RealtimeConsumerGroupRetryMaxSeconds       = 300
 	RealtimeConsumerGroupFailureMaxBytes       = 64
 	RealtimeConsumerGroupBodyMaxBytes          = 4096
+
+	// RealtimeConsumerGroupWaitersPerAccount is one account's share of an
+	// apid's RealtimeConsumerGroupWaitersMax long-poll claims. SDK workers
+	// long-poll by default, so without a share one account's idle workers held
+	// every slot; a claim past the share is answered at once instead of
+	// waiting.
+	RealtimeConsumerGroupWaitersPerAccount = 8
 )
 
 // Scoped backend realtime worker credentials (ADR-1031).

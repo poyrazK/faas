@@ -1573,6 +1573,7 @@ CREATE TABLE public.apps (
     deployment_cron_fingerprint text DEFAULT ''::text NOT NULL,
     deployment_cron_before jsonb,
     deployment_mail_revision bigint DEFAULT 1 NOT NULL,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -1595,6 +1596,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
     CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
     CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
+    CONSTRAINT apps_labels_object_chk CHECK ((jsonb_typeof(labels) = 'object'::text)),
     CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
     CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
     CONSTRAINT apps_managed_postgres_admission_fence_check CHECK (((managed_postgres_admission_cutover_id IS NULL) = (managed_postgres_admission_fenced_at IS NULL))),
@@ -27679,7 +27681,9 @@ BEGIN
             egress_allowlist = NEW.egress_allowlist,
             visibility = NEW.visibility,
             only_declared_routes = NEW.only_declared_routes,
-            declared_routes = NEW.declared_routes
+            declared_routes = NEW.declared_routes,
+            platform_tenant_required = NEW.platform_tenant_required,
+            security_policy = NEW.security_policy
         WHERE account_id = NEW.account_id
           AND preview_of_slug = NEW.slug
           AND status <> 'deleted'
@@ -27698,7 +27702,9 @@ BEGIN
             public_auth_ip_allowlist = NEW.public_auth_ip_allowlist,
             consumer_auth_mode = NEW.consumer_auth_mode,
             require_signed = NEW.require_signed,
-            egress_allowlist = NEW.egress_allowlist
+            egress_allowlist = NEW.egress_allowlist,
+            platform_tenant_required = NEW.platform_tenant_required,
+            security_policy = NEW.security_policy
         FROM pr_preview_sets preview_set
         JOIN apps root ON root.id = preview_set.root_app_id
         WHERE root.account_id = NEW.account_id
@@ -27715,10 +27721,10 @@ BEGIN
                 AND production.status <> 'deleted')
           AND (service.require_authn, service.public_auth_mode, service.public_auth_basic,
                service.public_auth_ip_allowlist, service.consumer_auth_mode, service.require_signed,
-               service.egress_allowlist)
+               service.egress_allowlist, service.platform_tenant_required, service.security_policy)
               IS DISTINCT FROM (NEW.require_authn, NEW.public_auth_mode, NEW.public_auth_basic,
                NEW.public_auth_ip_allowlist, NEW.consumer_auth_mode, NEW.require_signed,
-               NEW.egress_allowlist)
+               NEW.egress_allowlist, NEW.platform_tenant_required, NEW.security_policy)
         RETURNING service.id
     LOOP
         PERFORM pg_notify('app_changed', preview_id::text);
@@ -43622,6 +43628,33 @@ CREATE TABLE public.managed_postgres_live_logins (
 --
 
 COMMENT ON TABLE public.managed_postgres_live_logins IS 'ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.';
+
+
+--
+-- Name: managed_postgres_overage_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_overage_deliveries (
+    provider text NOT NULL,
+    subject_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    live boolean NOT NULL,
+    billed_unit_seconds bigint NOT NULL,
+    delivered_millicents bigint NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_overage_deliveries_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
+    CONSTRAINT managed_postgres_overage_deliveries_check CHECK ((isfinite(updated_at) AND (updated_at >= period_start))),
+    CONSTRAINT managed_postgres_overage_deliveries_delivered_millicents_check CHECK ((delivered_millicents > 0)),
+    CONSTRAINT managed_postgres_overage_deliveries_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT managed_postgres_overage_deliveries_provider_check CHECK ((provider ~ '^[a-z][a-z0-9_]{0,31}$'::text))
+);
+
+
+--
+-- Name: TABLE managed_postgres_overage_deliveries; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_overage_deliveries IS 'Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).';
 
 
 --
@@ -63579,6 +63612,14 @@ ALTER TABLE ONLY public.managed_postgres_live_logins
 
 
 --
+-- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_overage_deliveries
+    ADD CONSTRAINT managed_postgres_overage_deliveries_pkey PRIMARY KEY (provider, subject_id, period_start);
+
+
+--
 -- Name: managed_postgres_resizes managed_postgres_resizes_database_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81020,7 +81061,7 @@ CREATE TRIGGER apps_streaming_plan_app_guard_trg BEFORE INSERT OR UPDATE OF acco
 -- Name: apps apps_sync_preview_access_gates; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER apps_sync_preview_access_gates AFTER UPDATE OF require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist, consumer_auth_mode, require_signed, egress_allowlist, visibility, only_declared_routes, declared_routes ON public.apps FOR EACH ROW WHEN (((new.preview_of_slug IS NULL) AND (new.status <> 'deleted'::text) AND ((old.require_authn IS DISTINCT FROM new.require_authn) OR (old.public_auth_mode IS DISTINCT FROM new.public_auth_mode) OR (old.public_auth_basic IS DISTINCT FROM new.public_auth_basic) OR (old.public_auth_ip_allowlist IS DISTINCT FROM new.public_auth_ip_allowlist) OR (old.consumer_auth_mode IS DISTINCT FROM new.consumer_auth_mode) OR (old.require_signed IS DISTINCT FROM new.require_signed) OR (old.egress_allowlist IS DISTINCT FROM new.egress_allowlist) OR (old.visibility IS DISTINCT FROM new.visibility) OR (old.only_declared_routes IS DISTINCT FROM new.only_declared_routes) OR (old.declared_routes IS DISTINCT FROM new.declared_routes)))) EXECUTE FUNCTION public.sync_preview_access_gates();
+CREATE TRIGGER apps_sync_preview_access_gates AFTER UPDATE OF require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist, consumer_auth_mode, require_signed, egress_allowlist, visibility, only_declared_routes, declared_routes, platform_tenant_required, security_policy ON public.apps FOR EACH ROW WHEN (((new.preview_of_slug IS NULL) AND (new.status <> 'deleted'::text) AND ((old.require_authn IS DISTINCT FROM new.require_authn) OR (old.public_auth_mode IS DISTINCT FROM new.public_auth_mode) OR (old.public_auth_basic IS DISTINCT FROM new.public_auth_basic) OR (old.public_auth_ip_allowlist IS DISTINCT FROM new.public_auth_ip_allowlist) OR (old.consumer_auth_mode IS DISTINCT FROM new.consumer_auth_mode) OR (old.require_signed IS DISTINCT FROM new.require_signed) OR (old.egress_allowlist IS DISTINCT FROM new.egress_allowlist) OR (old.visibility IS DISTINCT FROM new.visibility) OR (old.only_declared_routes IS DISTINCT FROM new.only_declared_routes) OR (old.declared_routes IS DISTINCT FROM new.declared_routes) OR (old.platform_tenant_required IS DISTINCT FROM new.platform_tenant_required) OR (old.security_policy IS DISTINCT FROM new.security_policy)))) EXECUTE FUNCTION public.sync_preview_access_gates();
 
 
 --
@@ -95002,6 +95043,14 @@ ALTER TABLE ONLY public.managed_postgres_live_keys
 
 ALTER TABLE ONLY public.managed_postgres_live_logins
     ADD CONSTRAINT managed_postgres_live_logins_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_overage_deliveries
+    ADD CONSTRAINT managed_postgres_overage_deliveries_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
