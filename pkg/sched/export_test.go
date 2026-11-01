@@ -1014,6 +1014,9 @@ func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocati
 	return d.invocationAttemptBudget(ctx, inv)
 }
 
+// XCronDueOccurrences is the catch-up walk for schedule-policy and command crons.
+var XCronDueOccurrences = cronDueOccurrences
+
 // XHoldFinancialAdmission makes the drain's budget admission refuse every
 // app with err, as a held strict compute budget does.
 func (d *Drain) XHoldFinancialAdmission(err error) {

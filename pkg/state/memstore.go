@@ -13591,6 +13591,9 @@ func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
 	if !ok || c.AppID != appID {
 		return ErrNotFound
 	}
+	if err := m.cancelPendingCronRunsLocked(id, time.Now()); err != nil {
+		return err
+	}
 	if len(c.Command) == 0 {
 		m.invalidateDeploymentCronsLocked(c.AppID)
 	}
@@ -15304,16 +15307,23 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	if inv.State != InvocationPending {
 		return inv.State, nil
 	}
+	if err := m.cancelPendingInvocationLocked(id, inv, time.Now()); err != nil {
+		return "", err
+	}
+	return InvocationCancelled, nil
+}
+
+// cancelPendingInvocationLocked cancels one pending invocation; m.mu is held.
+func (m *MemStore) cancelPendingInvocationLocked(id string, inv Invocation, now time.Time) error {
 	inv.State = InvocationCancelled
 	inv.QuotaReserved = false
-	now := time.Now()
 	inv.CompletedAt = &now
 	if err := m.operationTransitionLocked(&inv, false); err != nil {
-		return "", err
+		return err
 	}
 	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
-	return inv.State, nil
+	return nil
 }
 
 // ListInvocationsForAccount is the dashboard's unified history read.
