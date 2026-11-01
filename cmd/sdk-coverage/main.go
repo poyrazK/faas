@@ -2803,6 +2803,7 @@ func (r *reportT) print() {
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
 	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
+	"ListAppsSelected": "GET /v1/apps",
 }
 
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {

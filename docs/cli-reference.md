@@ -3976,10 +3976,11 @@ Inspect, change, scale and operate apps
 
 List your apps
 
-`gregale app list [--dry-run] [--quiet|-q] [--yes]`
+`gregale app list [--selector|-l <SELECTOR>] [--dry-run] [--quiet|-q] [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--selector|-l <SELECTOR>` | only apps whose labels match (preview) |  |
 | `--dry-run` | preview app deletion without changing resources |  |
 | `--quiet|-q` | delete one app without prompting |  |
 | `--yes` | confirm app deletion without prompting |  |
@@ -3989,6 +3990,7 @@ Examples:
 ```sh
 gregale app list
 gregale app list --json
+gregale app list -l team=billing
 gregale app delete my-api --dry-run
 gregale app delete my-api --yes
 ```
@@ -4588,11 +4590,12 @@ Conditions are derived from the health assessment; `app health` shows the eviden
 
 Wait until a condition holds (preview)
 
-`gregale app wait [--for <CONDITION>] [--env <SLUG>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale app wait [--for <CONDITION>] [--selector|-l <SELECTOR>] [--env <SLUG>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--for <CONDITION>` | TYPE or TYPE=True\|False\|Unknown (default Ready) |  |
+| `--selector|-l <SELECTOR>` | wait on every app whose labels match, instead of one app (preview) |  |
 | `--env <SLUG>` | wait on this project environment&#39;s conditions instead of the default scope (also --environment) |  |
 | `--timeout <DURATION>` | maximum wait (default 2m) |  |
 | `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
@@ -4605,6 +4608,42 @@ gregale app wait my-api --for Progressing=False --timeout 10m
 ```
 
 Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout.
+
+With -l, waits on every matching app within one timeout and exits 4 when none matches.
+
+### app label
+
+List, set or unset an app&#39;s labels (preview)
+
+Examples:
+
+```sh
+gregale app label set my-api team=billing tier=web
+gregale app label unset my-api tier
+gregale app label list my-api
+```
+
+Labels are key/value pairs with Kubernetes syntax; select apps with -l on app list, app wait and domain list.
+
+Labels are not secret.
+
+#### app label list
+
+Show an app&#39;s labels
+
+`gregale app label list [<app>] <app>`
+
+#### app label set
+
+Set labels; an empty value is KEY=
+
+`gregale app label set [<app>] <app> KEY=VALUE...`
+
+#### app label unset
+
+Remove labels
+
+`gregale app label unset [<app>] <app> KEY...`
 
 ### app health
 
@@ -5632,11 +5671,12 @@ Offers a default-domain change at the end.
 
 List custom domain bindings
 
-`gregale domain list [--app <SLUG>]`
+`gregale domain list [--app <SLUG>] [--selector|-l <SELECTOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | only this app&#39;s domains |  |
+| `--selector|-l <SELECTOR>` | only domains of apps whose labels match (preview) |  |
 
 ### domain create
 
