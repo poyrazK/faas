@@ -38,7 +38,8 @@ func (s *server) configureAgents(pool *pgxpool.Pool) {
 	s.agentAPI = h
 }
 
-// configureAgentCallbacks wires ADR-20261030125501 §3's callback URLs. The
+// configureAgentCallbacks wires ADR-20261030125501 §3's callback URLs and
+// §4's toolset, whose sleeps are realtime schedules on the inbox. The
 // signing key derives from the session key, which every apid replica shares;
 // a callback's account must have the agents capability when it posts.
 func (s *server) configureAgentCallbacks(h *agents.Handler) {
@@ -47,6 +48,9 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	}
 	if revocations, ok := h.Store.(agents.CallbackRevocations); ok {
 		h.Revocations = revocations
+	}
+	if sleeps, ok := s.store.(agents.SleepSchedules); ok {
+		h.Sleeps = sleeps
 	}
 	if s.sessions != nil {
 		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
@@ -243,6 +247,32 @@ func (s *server) receiveAgentCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agentAPI.ReceiveCallback(w, r)
+}
+
+// The ADR-20261030125501 §4 toolset routes carry no account credential:
+// an invocation is backed by the callback URL in its body.
+func (s *server) getAgentToolset(w http.ResponseWriter, r *http.Request) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.Toolset(w, r)
+}
+
+func (s *server) invokeAgentTool(w http.ResponseWriter, r *http.Request) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.InvokeTool(w, r)
+}
+
+func (s *server) closeAgentToolThread(w http.ResponseWriter, r *http.Request) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.CloseThread(w, r)
 }
 
 func (s *server) cancelAgentRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
