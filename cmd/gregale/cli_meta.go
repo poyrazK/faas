@@ -591,6 +591,7 @@ var cliCommands = []cliCommand{
 			{Name: "export", Short: "Export account data (GDPR)", Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "output file", Value: "PATH"},
 				{Name: "no-secrets", Short: "exclude the sealed-secret ciphertext slice", Bool: true},
+				{Name: "force", Short: "replace the output file if it exists", Bool: true},
 			}},
 			{Name: "delete", Short: "Schedule account deletion", Flags: []cliFlag{
 				{Name: "q", ShortName: "q", Short: "skip the confirmation prompt", Bool: true},
@@ -1883,7 +1884,9 @@ var cliCommands = []cliCommand{
 				{Name: "no-open", Short: "alias of --print", Bool: true},
 			}},
 			{Name: "retry", Short: "Retry failed payment when supported; Polar uses the portal"},
-			{Name: "cancel", Short: "Cancel the subscription at period end"},
+			{Name: "cancel", Short: "Cancel the subscription at period end", Flags: []cliFlag{
+				{Name: "yes", Short: "confirm the cancellation without prompting; required with --json or without a terminal", Bool: true},
+			}},
 			{Name: "payment-method", Short: "Show the card on file", Flags: []cliFlag{
 				{Name: "print", Short: "print the card summary and portal URL without opening a browser", Bool: true},
 				{Name: "no-open", Short: "alias of --print", Bool: true},
@@ -2879,8 +2882,8 @@ var cliCommands = []cliCommand{
 				{Name: "reason", Short: "cancel reason (default user)", Value: "REASON", ClosedSet: []string{"user", "auto_quota", "auto_health", "system"}},
 			}},
 			{Name: "reorder", Short: "Change one pending deployment's queue priority", Positionals: []string{"<id>"}},
-			{Name: "clear", Short: "Hide one deployment from the list", Positionals: []string{"<id|vN>"}, Flags: []cliFlag{{Name: "app", Short: "app slug for revision resolution", Value: "SLUG"}, {Name: "dry-run", Short: "preview cleanup without changing resources", Bool: true}, {Name: "force", Short: "confirm cleanup without prompting", Bool: true}}},
-			{Name: "clear-obsolete", Short: "Hide obsolete deployments older than a cutoff", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "older-than", Short: "cutoff age (default 168h)", Value: "D"}, {Name: "dry-run", Short: "preview age/status candidates without changing resources"}, {Name: "force", Short: "skip the confirmation"}}},
+			{Name: "clear", Short: "Hide one deployment from the list", Positionals: []string{"<id|vN>"}, Flags: []cliFlag{{Name: "app", Short: "app slug for revision resolution", Value: "SLUG"}, {Name: "dry-run", Short: "preview cleanup without changing resources", Bool: true}, {Name: "yes", Short: "confirm cleanup without prompting (alias: --force)", Bool: true}}},
+			{Name: "clear-obsolete", Short: "Hide obsolete deployments older than a cutoff", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "older-than", Short: "cutoff age (default 168h)", Value: "D"}, {Name: "dry-run", Short: "preview age/status candidates without changing resources"}, {Name: "yes", Short: "confirm cleanup without prompting (alias: --force)", Bool: true}}},
 			// ADR-117 §Production-ready follow-on, C2 — per-stage
 			// retry. The verb is `retry` (NOT a `--retry` flag on
 			// show/status) because the action mutates state — a
@@ -4192,7 +4195,7 @@ var cliCommands = []cliCommand{
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "to", Short: "version to restore", Req: true, Value: "N"},
-				{Name: "quiet", Short: "skip the typed confirmation (for scripts)"},
+				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)", Bool: true},
 			}},
 		},
 		Flags: []cliFlag{
@@ -5187,7 +5190,7 @@ var cliCommands = []cliCommand{
 				{Name: "app-id", Short: "filter by application UUID", Value: "UUID"},
 				{Name: "limit", Short: "page size (1..100)", Value: "N"},
 			}},
-			{Name: "rm", Short: "Delete one org", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "q", ShortName: "q", Short: "skip the confirmation prompt", Bool: true}}},
+			{Name: "rm", Short: "Delete one org", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the confirmation prompt (aliases: -q, --quiet)", Bool: true}}},
 			{Name: "members", Short: "Manage org members", Subcommands: []cliSub{
 				{Name: "list", Short: "List org members", Positionals: []string{"<slug>"}},
 				{Name: "invite", Short: "Invite a member by email", Flags: []cliFlag{

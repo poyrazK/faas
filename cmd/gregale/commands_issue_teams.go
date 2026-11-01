@@ -14,11 +14,11 @@ import (
 func cmdIssueTeams(args []string) int {
 	usage := "usage: gregale debug issue teams <list|get|save|delete|inbox> --app SLUG [--key KEY --name NAME --members ACCOUNT_UUID,... --cursor CURSOR]"
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 0
 	}
 	action := args[0]
@@ -36,7 +36,7 @@ func cmdIssueTeams(args []string) int {
 		return 1
 	}
 	if *app == "" || len(positionals) != 0 || action != "list" && action != "get" && action != "save" && action != "delete" && action != "inbox" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	invalid := false

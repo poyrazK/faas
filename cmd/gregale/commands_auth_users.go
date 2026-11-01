@@ -216,7 +216,7 @@ func cmdAuthUsers(args []string) int {
 			return printErr("Invalid flags", fmt.Errorf("--minutes must be 5 to %d", api.AuthImpersonationMaxMinutes))
 		}
 	case "delete":
-		if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
+		if code := requireConfirmationFlag(*yes, "--yes", "user deletion"); code != 0 {
 			return code
 		}
 		if !*yes && *keyStdin {

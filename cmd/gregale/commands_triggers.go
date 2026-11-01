@@ -170,6 +170,11 @@ func triggerStateValid(state string) bool {
 }
 
 func triggerUsageError(usage string, format string, args ...any) int {
+	if jsonOutput {
+		// One Problem, not a prose line followed by one (CLI audit 2026-10-31).
+		PrintUsage(os.Stderr, usage+"\n"+fmt.Sprintf(format, args...), "triggers")
+		return 1
+	}
 	PrintFail(os.Stderr, format, args...)
 	PrintUsage(os.Stderr, usage, "triggers")
 	return 1
@@ -444,7 +449,7 @@ func cmdTriggersUpdate(args []string) int {
 }
 
 func cmdTriggersDelete(args []string) int {
-	usage := "usage: gregale trigger delete <id> [--quiet]"
+	usage := "usage: gregale trigger delete <id> [--yes]"
 	fs := triggerFlagSet("triggers-delete", usage)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
@@ -455,7 +460,7 @@ func cmdTriggersDelete(args []string) int {
 	if len(pos) != 1 {
 		return triggerUsageError(usage, "expected one trigger ID")
 	}
-	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+	if code := requireConfirmationFlag(*quiet, "--yes", "trigger deletion"); code != 0 {
 		return code
 	}
 	if !*quiet {

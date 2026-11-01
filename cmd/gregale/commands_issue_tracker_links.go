@@ -14,11 +14,11 @@ import (
 func cmdIssueTrackerLinks(args []string) int {
 	usage := "usage: gregale debug issue links <list|save|delete> --app SLUG --issue UUID [--url URL --title TEXT --link UUID --cursor CURSOR]"
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 0
 	}
 	action := args[0]
@@ -38,7 +38,7 @@ func cmdIssueTrackerLinks(args []string) int {
 	}
 	id, err := uuid.Parse(*issue)
 	if *app == "" || len(pos) != 0 || err != nil || id == uuid.Nil || action != "list" && action != "save" && action != "delete" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	invalid := false

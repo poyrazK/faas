@@ -88,7 +88,7 @@ func cmdAuthServiceAccounts(args []string) int {
 		return printErr("Invalid service account", errors.New("add needs --org"))
 	}
 	if args[0] == "remove" {
-		if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
+		if code := requireConfirmationFlag(*yes, "--yes", "service account removal"); code != 0 {
 			return code
 		}
 		if !*yes && *keyStdin {
