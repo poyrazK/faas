@@ -27,6 +27,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -37,7 +38,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/middleware"
-	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -171,8 +171,7 @@ func (s *server) listInstallableRepos(w http.ResponseWriter, r *http.Request) {
 			"install_id", stripLogInt(req.InstallationID),
 			// Installation owner metadata is untrusted log input.
 			"connection_login", stripLogCRLF(connectionLogin), "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
-			"Could not reach GitHub", "retry in a minute: https://docs/connect-github"))
+		api.WriteProblem(w, githubUnreachableProblem("Retry in a minute."))
 		return
 	}
 	if !verified {
@@ -206,8 +205,7 @@ func (s *server) listInstallableRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		s.log.Warn("listInstallableRepos: githubd call failed",
 			"op", op, "account_id", acct.ID, "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
-			"Could not reach GitHub", "retry in a minute: https://docs/connect-github"))
+		api.WriteProblem(w, githubUnreachableProblem("Retry in a minute."))
 		return
 	}
 	out := make([]api.RepoResponse, 0, len(repos))
@@ -293,8 +291,7 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 			"install_id", stripLogInt(req.InstallationID),
 			// Installation owner metadata is untrusted log input.
 			"connection_login", stripLogCRLF(connectionLogin), "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
-			"Could not reach GitHub", "retry in a minute: https://docs/connect-github"))
+		api.WriteProblem(w, githubUnreachableProblem("Retry in a minute."))
 		return
 	}
 	if !verified {
@@ -327,28 +324,12 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	branch := req.ProductionBranch
-	if branch == "" {
-		branch = defaultBranch
+	if req.DeployBranches != nil && !s.canStoreDeployBranches(w, app) {
+		return
 	}
-	if req.DeployBranches != nil {
-		branchesStore, ok := s.store.(state.ProjectDeployBranchesStore)
-		if !ok || app.ProjectID == "" {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "project_required",
-				"Project required", "branch deployment scopes are available for project-backed apps only"))
-			return
-		}
-		if err := branchesStore.ReplaceProjectDeployBranches(r.Context(), acct.ID, app.ProjectID, req.DeployBranches); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
-				api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "not_found", "Project not found", "the app project no longer exists"))
-			} else {
-				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request", "Invalid deploy_branches", err.Error()))
-			}
-			return
-		}
-	}
-
-	bindingID, err := s.githubd.BindAppRepo(r.Context(), app.ID, acct.ID, req.InstallationID, req.RepoFullName, branch)
+	// An empty production branch binds the repository's default branch,
+	// which githubd reads while it verifies access to the repository.
+	bindingID, err := s.githubd.BindAppRepo(r.Context(), app.ID, acct.ID, req.InstallationID, req.RepoFullName, req.ProductionBranch)
 	if err != nil {
 		var problem *api.Problem
 		if errors.As(err, &problem) {
@@ -359,8 +340,12 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 			"op", op, "account_id", acct.ID,
 			"app_id", app.ID,
 			"install_id", stripLogInt(req.InstallationID), "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
-			"Could not reach GitHub", "retry in a minute: https://docs/connect-github"))
+		api.WriteProblem(w, githubUnreachableProblem("Retry in a minute."))
+		return
+	}
+	branch := s.boundProductionBranch(r.Context(), app.ID, acct.ID, req.ProductionBranch, defaultBranch)
+	// Branch mappings change only once the binding they route exists.
+	if req.DeployBranches != nil && !s.replaceDeployBranches(w, r, acct, app, req.DeployBranches) {
 		return
 	}
 
@@ -433,7 +418,7 @@ func (s *server) bindGitHubConnection(w http.ResponseWriter, r *http.Request, ac
 			return
 		}
 	}
-	install, err := s.store.GitHubInstallForAccountInstallation(r.Context(), acct.ID, req.InstallationID)
+	_, err := s.store.GitHubInstallForAccountInstallation(r.Context(), acct.ID, req.InstallationID)
 	if errors.Is(err, state.ErrNotFound) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeGitHubInstallNotOwned,
 			"GitHub installation is not connected to this account", "connect the GitHub App before binding a repository"))
@@ -450,17 +435,16 @@ func (s *server) bindGitHubConnection(w http.ResponseWriter, r *http.Request, ac
 			api.WriteProblem(w, problem)
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
-			"Could not reach GitHub", "retry in a minute"))
+		api.WriteProblem(w, githubUnreachableProblem("Retry in a minute."))
 		return
 	}
 	canonical := canonicalGitHubRepo(req.RepoFullName)
 	visible := false
-	repoFullName := req.RepoFullName
+	repoFullName, repoDefaultBranch := req.RepoFullName, ""
 	for _, repo := range repos {
 		if canonicalGitHubRepo(repo.FullName) == canonical {
 			visible = true
-			repoFullName = repo.FullName
+			repoFullName, repoDefaultBranch = repo.FullName, repo.DefaultBranch
 			break
 		}
 	}
@@ -471,23 +455,10 @@ func (s *server) bindGitHubConnection(w http.ResponseWriter, r *http.Request, ac
 	}
 	branch := req.ProductionBranch
 	if branch == "" {
-		branch = install.DefaultBranch
+		branch = repoDefaultBranch
 	}
-	if req.DeployBranches != nil {
-		branchesStore, ok := s.store.(state.ProjectDeployBranchesStore)
-		if !ok || app.ProjectID == "" {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "project_required",
-				"Project required", "branch deployment scopes are available for project-backed apps only"))
-			return
-		}
-		if err := branchesStore.ReplaceProjectDeployBranches(r.Context(), acct.ID, app.ProjectID, req.DeployBranches); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
-				api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "not_found", "Project not found", "the app project no longer exists"))
-			} else {
-				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request", "Invalid deploy_branches", err.Error()))
-			}
-			return
-		}
+	if req.DeployBranches != nil && !s.canStoreDeployBranches(w, app) {
+		return
 	}
 	bindingID, err := s.githubd.BindAppRepo(r.Context(), app.ID, acct.ID, req.InstallationID, repoFullName, branch)
 	if err != nil {
@@ -496,15 +467,17 @@ func (s *server) bindGitHubConnection(w http.ResponseWriter, r *http.Request, ac
 			api.WriteProblem(w, problem)
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
-			"Could not persist GitHub binding", "retry in a minute"))
+		api.WriteProblem(w, githubUnreachableProblem("The GitHub binding could not be saved. Retry in a minute."))
+		return
+	}
+	// Branch mappings change only once the binding they route exists.
+	if req.DeployBranches != nil && !s.replaceDeployBranches(w, r, acct, app, req.DeployBranches) {
 		return
 	}
 	acctID := acct.ID
 	s.audit.Emit(r.Context(), "auth.install.bound", &acctID, map[string]any{
 		"install_id":        req.InstallationID,
 		"app_id":            app.ID,
-		"install_owner":     install.AuditGithubLogin,
 		"repo_full_name":    repoFullName,
 		"production_branch": branch,
 		"binding_id":        bindingID,
@@ -516,37 +489,46 @@ func (s *server) bindGitHubConnection(w http.ResponseWriter, r *http.Request, ac
 	})
 }
 
-// sessionGithubLogin extracts env.GithubLogin for the legacy server-rendered
-// creation flow, applying the same §11 proof renderOAuthCallback uses.
-// Writes the right 403 / 302 and returns ok=false when the proof
-// can't be established so the caller can early-return without
-// further logging.
-//
-// The browser JSON picker and bind routes use the durable account-owned
-// connection instead (ADR-1345); they do not depend on the sign-in provider.
-func (s *server) sessionGithubLogin(w http.ResponseWriter, r *http.Request) (string, bool) {
-	c, err := sessioncookie.Get(r)
-	if err != nil || c.Value == "" {
-		s.writeGithubLoginRequired(w, r)
-		return "", false
+// canStoreDeployBranches reports whether app can carry branch-to-scope
+// mappings, which belong to its project, and writes the 409 when it cannot.
+func (s *server) canStoreDeployBranches(w http.ResponseWriter, app state.App) bool {
+	if _, ok := s.store.(state.ProjectDeployBranchesStore); !ok || app.ProjectID == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "project_required",
+			"Project required", "branch deployment scopes are available for project-backed apps only"))
+		return false
 	}
-	env, err := s.sessions.Verify(c.Value)
-	if err != nil || env.GithubLogin == "" {
-		s.writeGithubLoginRequired(w, r)
-		return "", false
-	}
-	return env.GithubLogin, true
+	return true
 }
 
-// writeGithubLoginRequired emits the 403 unauthenticated problem
-// that /v1/install/* + /v1/apps/{slug}/install/bind use when the
-// session has no github_login. Distinct Code so the dashboard can
-// render a "complete GitHub sign-in first" CTA rather than the
-// generic forged branch.
-func (s *server) writeGithubLoginRequired(w http.ResponseWriter, r *http.Request) {
-	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "github_login_required",
-		"GitHub sign-in required",
-		"complete /v1/auth/github before binding an installation: https://docs/connect-github"))
+// replaceDeployBranches stores the project's branch-to-scope mappings after
+// a successful bind; a bind that failed used to leave them changed.
+func (s *server) replaceDeployBranches(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, branches map[string]string) bool {
+	branchesStore, ok := s.store.(state.ProjectDeployBranchesStore)
+	if !ok {
+		return s.canStoreDeployBranches(w, app)
+	}
+	if err := branchesStore.ReplaceProjectDeployBranches(r.Context(), acct.ID, app.ProjectID, branches); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "not_found", "Project not found", "the app project no longer exists"))
+		} else {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request", "Invalid deploy_branches", err.Error()))
+		}
+		return false
+	}
+	return true
+}
+
+// boundProductionBranch reports the production branch githubd stored. A
+// githubd from before ADR-20261101160300 needs the branch named, so a failed
+// read falls back to the request's, then the installation's.
+func (s *server) boundProductionBranch(ctx context.Context, appID, accountID string, requested, installationDefault string) string {
+	if binding, err := s.store.GetGithubInstallBindingForApp(ctx, appID, accountID); err == nil && binding.ProductionBranch != "" {
+		return binding.ProductionBranch
+	}
+	if requested != "" {
+		return requested
+	}
+	return installationDefault
 }
 
 // writeJSON is the shared handler helper in server.go. The bind

@@ -183,6 +183,68 @@ can reuse them after the earlier attempt finishes. Removal, dependencies, declar
 environment keys, schedules, workers, images, migration commands, configuration
 snapshots and progressive rollout are unsupported in this first version.
 
+## Deploy from GitHub
+
+Connect GitHub once, bind an app to a repository, and every push to the app's
+production branch deploys it. Gregale reports each deployment as a `gregale`
+Check Run on the pushed commit.
+
+1. **Connect GitHub.** In the dashboard, open **Account → Connect GitHub**, or
+   run `gregale github connect`. GitHub asks you to authorize Gregale and, if
+   the Gregale GitHub App is not installed on your account or organization
+   yet, to install it and choose its repositories. It does not matter whether
+   you signed in to Gregale with GitHub, Google or a password.
+2. **Bind an app.** In the dashboard, **New app** creates an app bound to a
+   repository; an existing app's page has **Bind a repository**. From the
+   CLI:
+
+   ```bash
+   gregale github repos my-api                       # repositories the installation can see
+   gregale github link my-api --repo acme/my-api      # production branch: the repository's default
+   gregale github link my-api --repo acme/my-api --branch release
+   gregale github status my-api
+   ```
+
+3. **Push.** A push to the production branch builds and deploys the app. Put
+   `[skip deploy]` in the commit message to skip one push. Several apps can be
+   bound to one repository; each push deploys every one of them, or, for a
+   project, the apps whose source changed.
+
+Without `--branch`, the production branch is the repository's default branch
+on GitHub at the time you bind.
+
+**Several installations.** If your GitHub user can connect more than one
+installation (your personal account and an organization, say), Connect GitHub
+asks which one. Connect another later the same way. With several connected,
+name one with `--installation-id` (`gregale github status` lists them).
+
+**Who can connect.** A personal installation can be connected by its owner;
+an organization's installation by an admin of the organization. Each
+installation belongs to one Gregale account.
+
+**Deploy from GitHub Actions instead.** `gregale github setup my-api --repo
+acme/my-api` binds the app, writes a deploy workflow, and hands production
+deploys to the workflow (`production_trigger: actions`), so a push deploys
+once. Pull-request previews, a root directory, ignored paths and branch
+mappings are project settings: they need an app that belongs to a project.
+
+**Renames.** Renaming or transferring the repository, or renaming the user or
+organization, keeps the binding.
+
+**When it does not deploy.** `gregale github status my-api` shows the binding,
+its health and the recent GitHub events that reached the app. `gregale github
+sync my-api` rechecks access after you change the installation's
+repositories on GitHub.
+
+| Error | Meaning |
+|---|---|
+| `github_org_admin_required` | Only an admin of the organization can connect its installation. |
+| `github_installation_owner_required` | A personal installation can be connected only by its owner. |
+| `github_permission_pending` | An organization owner has not accepted a permission the Gregale GitHub App asks for. |
+| `github_account_conflict` | The installation is connected to another Gregale account. |
+| `github_installation_required` | Several installations are connected; pass `--installation-id`. |
+| `github_repo_not_accessible` | The installation cannot see the repository; add it to the installation on GitHub. |
+
 ## GitHub Actions
 
 Print a workflow starter with:

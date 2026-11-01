@@ -2640,7 +2640,7 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/deploy-from-github",
-      "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath",
+      "acceptance_test": "pkg/githubd/app_binding_push_test.go::TestPushDeploysAppBoundWithoutProject",
       "consumers": [
         "githubd"
       ],

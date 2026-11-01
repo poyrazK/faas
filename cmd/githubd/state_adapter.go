@@ -179,6 +179,10 @@ func (a *stateLifecycleAdapter) RenameGitHubRepository(ctx context.Context, inst
 	return a.store.RenameGitHubRepository(ctx, installationID, oldRepoFullName, newRepoFullName)
 }
 
+func (a *stateLifecycleAdapter) RenameGitHubAccount(ctx context.Context, installationID int64, oldLogin, newLogin string) error {
+	return a.store.RenameGitHubAccount(ctx, installationID, oldLogin, newLogin)
+}
+
 func (a *stateLifecycleAdapter) ListGitHubInstallations(ctx context.Context) ([]state.GitHubInstall, error) {
 	return a.store.ListGitHubInstallations(ctx)
 }

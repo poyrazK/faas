@@ -7862,7 +7862,28 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
+	// Mirrors PgStore: a re-bind keeps the app's production trigger.
+	b.ProductionTrigger = m.githubBindings[b.AppID].ProductionTrigger
 	m.githubBindings[b.AppID] = b
+	return nil
+}
+
+// SetGitHubAppProductionTrigger mirrors PgStore.
+func (m *MemStore) SetGitHubAppProductionTrigger(_ context.Context, appID, accountID string, trigger ProductionTrigger) error {
+	if appID == "" || accountID == "" {
+		return ErrNotFound
+	}
+	if trigger != "" && !trigger.Valid() {
+		return fmt.Errorf("state: production_trigger must be %q or %q", ProductionTriggerWebhook, ProductionTriggerActions)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.githubBindings[appID]
+	if !ok || b.InstallID == 0 || b.AccountID != accountID {
+		return ErrNotFound
+	}
+	b.ProductionTrigger = trigger
+	m.githubBindings[appID] = b
 	return nil
 }
 

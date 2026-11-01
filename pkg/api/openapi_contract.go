@@ -35,6 +35,15 @@ type GitHubInstallStatus struct {
 		RemoteRepositoryCount int       `json:"remote_repository_count"`
 		SyncedAt              time.Time `json:"synced_at"`
 	} `json:"sync_result,omitempty"`
+	// Installations lists the account's connected installations when it
+	// has more than one; an unbound app then reports no installation_id.
+	Installations []GitHubInstallationSummary `json:"installations,omitempty"`
+}
+
+// GitHubInstallationSummary names one connected GitHub App installation.
+type GitHubInstallationSummary struct {
+	InstallationID int64  `json:"installation_id"`
+	GitHubLogin    string `json:"github_login,omitempty"`
 }
 
 // GitHubInstallActivity is the redacted activity projection returned with a

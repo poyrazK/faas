@@ -1574,6 +1574,7 @@ CREATE TABLE public.apps (
     deployment_cron_before jsonb,
     deployment_mail_revision bigint DEFAULT 1 NOT NULL,
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    github_production_trigger text,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -1595,6 +1596,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
     CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
     CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
+    CONSTRAINT apps_github_production_trigger_chk CHECK (((github_production_trigger IS NULL) OR (github_production_trigger = ANY (ARRAY['webhook'::text, 'actions'::text])))),
     CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
     CONSTRAINT apps_labels_object_chk CHECK ((jsonb_typeof(labels) = 'object'::text)),
     CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
@@ -39892,7 +39894,7 @@ CREATE TABLE public.github_webhook_deliveries (
     repo_full_name text,
     commit_sha text,
     CONSTRAINT github_webhook_deliveries_attempts_check CHECK ((attempts >= 0)),
-    CONSTRAINT github_webhook_deliveries_event_type_check CHECK ((event_type = ANY (ARRAY['push'::text, 'pull_request'::text, 'installation'::text, 'installation_repositories'::text, 'repository'::text]))),
+    CONSTRAINT github_webhook_deliveries_event_type_chk CHECK ((event_type = ANY (ARRAY['push'::text, 'pull_request'::text, 'installation'::text, 'installation_repositories'::text, 'repository'::text, 'issues'::text, 'installation_target'::text]))),
     CONSTRAINT github_webhook_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'succeeded'::text, 'dead'::text])))
 );
 

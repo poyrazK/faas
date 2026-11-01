@@ -65,9 +65,33 @@ func (s *server) githubDeployPolicyForApp(r *http.Request, app state.App, acct s
 	return policy, nil
 }
 
+// appGitHubDeployPolicy is the policy of an app bound without a project
+// (ADR-20261101160300): the defaults, with the production trigger stored on
+// the app's binding. An unbound app reports the webhook.
+func (s *server) appGitHubDeployPolicy(ctx context.Context, app state.App, acct state.Account) (state.GitHubDeployPolicy, *api.Problem) {
+	policy := state.DefaultGitHubDeployPolicy("", acct.ID)
+	binding, err := s.store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return state.GitHubDeployPolicy{}, api.ErrCapacity("could not read the GitHub binding")
+	}
+	if err == nil && binding.ProductionTrigger != "" {
+		policy.ProductionTrigger = binding.ProductionTrigger
+	}
+	return policy, nil
+}
+
 func (s *server) getGitHubDeployPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	if app.ProjectID == "" {
+		policy, problem := s.appGitHubDeployPolicy(r.Context(), app, acct)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		writeJSON(w, http.StatusOK, githubDeployPolicyDTO(policy))
 		return
 	}
 	policy, problem := s.githubDeployPolicyForApp(r, app, acct)
@@ -81,6 +105,10 @@ func (s *server) getGitHubDeployPolicy(w http.ResponseWriter, r *http.Request, a
 func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	if app.ProjectID == "" {
+		s.patchAppGitHubProductionTrigger(w, r, app, acct)
 		return
 	}
 	current, problem := s.githubDeployPolicyForApp(r, app, acct)
@@ -130,6 +158,62 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	writeJSON(w, http.StatusOK, githubDeployPolicyDTO(stored))
+}
+
+// patchAppGitHubProductionTrigger sets the production trigger of an app
+// bound without a project. Its other policy settings belong to projects.
+func (s *server) patchAppGitHubProductionTrigger(w http.ResponseWriter, r *http.Request, app state.App, acct state.Account) {
+	var req githubDeployPolicyPatch
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid GitHub deployment policy", err.Error()))
+		return
+	}
+	if req.RootDir != nil || req.IgnoredPaths != nil || req.PreviewEnabled != nil || req.PreviewTTLHours != nil ||
+		req.PreviewBotPRs != nil || req.PreviewDraftPRs != nil || req.PreviewServicePolicy != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "project_required", "Project required",
+			"an app without a project can set only production_trigger; the other GitHub deployment settings are available for project-backed apps"))
+		return
+	}
+	if req.ProductionTrigger == nil {
+		policy, problem := s.appGitHubDeployPolicy(r.Context(), app, acct)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		writeJSON(w, http.StatusOK, githubDeployPolicyDTO(policy))
+		return
+	}
+	if !req.ProductionTrigger.Valid() {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid GitHub deployment policy",
+			"production_trigger must be webhook or actions"))
+		return
+	}
+	store, ok := s.store.(state.GitHubAppProductionTriggerStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("GitHub deployment policy storage is unavailable"))
+		return
+	}
+	if err := store.SetGitHubAppProductionTrigger(r.Context(), app.ID, acct.ID, *req.ProductionTrigger); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "github_not_bound",
+				"GitHub is not connected to this app", "bind a repository before choosing its production trigger"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not save GitHub deployment policy"))
+		return
+	}
+	acctID := acct.ID
+	s.audit.Emit(r.Context(), "github.deploy_policy.updated", &acctID, map[string]any{
+		"app_id":             app.ID,
+		"production_trigger": *req.ProductionTrigger,
+	})
+	policy, problem := s.appGitHubDeployPolicy(r.Context(), app, acct)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	writeJSON(w, http.StatusOK, githubDeployPolicyDTO(policy))
 }
 
 // retireProjectPreviewsWhenOff tears down the project's open PR previews once

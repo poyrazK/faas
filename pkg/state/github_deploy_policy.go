@@ -57,6 +57,14 @@ const (
 	ProductionTriggerActions ProductionTrigger = "actions"
 )
 
+// GitHubAppProductionTriggerStore is the optional extension that stores the
+// production trigger of an app bound to GitHub without a project
+// (ADR-20261101160300). A project-backed app keeps its trigger in the
+// project's GitHubDeployPolicy.
+type GitHubAppProductionTriggerStore interface {
+	SetGitHubAppProductionTrigger(ctx context.Context, appID, accountID string, trigger ProductionTrigger) error
+}
+
 func (t ProductionTrigger) Valid() bool {
 	return t == ProductionTriggerWebhook || t == ProductionTriggerActions
 }

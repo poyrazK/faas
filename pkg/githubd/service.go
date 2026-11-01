@@ -308,7 +308,7 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, eventType string, body
 		}
 		_, err = s.handlePullRequest(ctx, body)
 		return err
-	case "installation", "installation_repositories", "repository":
+	case "installation", "installation_repositories", "repository", "installation_target":
 		return s.HandleInstallationLifecycle(ctx, eventType, body)
 	default:
 		return unprocessableWebhook(fmt.Errorf("githubd: unsupported webhook event %q", eventType))
@@ -456,6 +456,26 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// ErrNoBinding (a bind row without a project is a soft-
 	// deleted binding — ignore the push).
 	project, err := s.Reconcile.Store.ProjectByRepo(ctx, binding.AccountID, install.InstallationID, ev.Repository.FullName)
+	// boundApps is non-nil when no project is bound to the repository and the
+	// push deploys the apps bound to it directly (ADR-20261101160300). Such a
+	// push has no project to reconcile, so it builds the bound apps as they are.
+	var boundApps []state.App
+	if errors.Is(err, state.ErrNotFound) && binding.AppID != "" {
+		apps, actionsOnly, appsErr := s.appsBoundForPush(ctx, binding, install.InstallationID)
+		if appsErr != nil {
+			return reconcile.Result{}, appsErr
+		}
+		if actionsOnly {
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
+		}
+		if len(apps) == 0 {
+			return reconcile.Result{}, ErrNoBinding
+		}
+		boundApps = apps
+		project = state.Project{AccountID: binding.AccountID, InstallID: install.InstallationID,
+			RepoFullName: ev.Repository.FullName, ProductionBranch: binding.ProductionBranch}
+		err = nil
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return reconcile.Result{}, ErrNoBinding
@@ -546,9 +566,13 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// the Service.Scan field. The production-branch guard
 	// returns ErrIgnored when the pushed branch differs from
 	// project.ProductionBranch — the caller renders 200-ignored.
-	scan, err := s.Reconcile.Scan(tree.FS(), s.scanOptions(project.AccountID))
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
+	// Apps bound without a project have nothing to reconcile.
+	var scan reposcan.Result
+	if boundApps == nil {
+		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(project.AccountID))
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
+		}
 	}
 	// Fetch and scan can take long enough for the branch to advance after
 	// the pre-fetch check. Re-read the remote head immediately before applying
@@ -563,27 +587,30 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{WasIgnored: true}, ErrIgnored
 		}
 	}
-	// githubd is push-driven (no --exclude analog on the webhook
-	// path); pass nil so workloadDiff's exclude filter is a no-op.
-	result, err := s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, nil)
-	if err != nil {
-		if errors.Is(err, reconcile.ErrIgnored) {
-			// Defensive: ErrIgnored is the Plan-side sentinel;
-			// the apply path surfaces feature-branch via
-			// Result.WasIgnored instead. The check stays so a
-			// future guard that errors out with ErrIgnored
-			// gets the same translation.
-			result.WasIgnored = true
+	var result reconcile.Result
+	if boundApps == nil {
+		// githubd is push-driven (no --exclude analog on the webhook
+		// path); pass nil so workloadDiff's exclude filter is a no-op.
+		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, nil)
+		if err != nil {
+			if errors.Is(err, reconcile.ErrIgnored) {
+				// Defensive: ErrIgnored is the Plan-side sentinel;
+				// the apply path surfaces feature-branch via
+				// Result.WasIgnored instead. The check stays so a
+				// future guard that errors out with ErrIgnored
+				// gets the same translation.
+				result.WasIgnored = true
+				return result, ErrIgnored
+			}
+			return result, err
+		}
+		// Production-branch guard trips without returning an error;
+		// reconcile marks Result.WasIgnored so the caller can render
+		// the 200-ignored body. Translate to ErrIgnored so the HTTP
+		// handler can branch on the typed sentinel.
+		if result.WasIgnored {
 			return result, ErrIgnored
 		}
-		return result, err
-	}
-	// Production-branch guard trips without returning an error;
-	// reconcile marks Result.WasIgnored so the caller can render
-	// the 200-ignored body. Translate to ErrIgnored so the HTTP
-	// handler can branch on the typed sentinel.
-	if result.WasIgnored {
-		return result, ErrIgnored
 	}
 
 	// 6. Build fan-out (PR-GH.6 path-filtered). Query GitHub's
@@ -602,9 +629,12 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// reconcile metadata delta. A source-only commit does not change an app row,
 	// and a retried delivery sees an already-converged reconcile result; both
 	// still need the same path-filtered deployment fan-out.
-	touched, err := s.Reconcile.Store.AppsForProject(ctx, binding.AccountID, project.ID)
-	if err != nil {
-		return result, fmt.Errorf("githubd: list project apps for build fan-out: %w", err)
+	touched := boundApps
+	if boundApps == nil {
+		touched, err = s.Reconcile.Store.AppsForProject(ctx, binding.AccountID, project.ID)
+		if err != nil {
+			return result, fmt.Errorf("githubd: list project apps for build fan-out: %w", err)
+		}
 	}
 	for i := range touched {
 		touched[i] = applyGitHubRootPolicy(touched[i], policy)
@@ -767,7 +797,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// The durable build row is the source of truth, so
 		// emitting on success keeps the audit paper trail
 		// consistent with the build pipeline.
-		if s.Reconcile != nil && build.ID != "" {
+		if s.Reconcile != nil && build.ID != "" && project.ID != "" {
 			s.Reconcile.EmitBuildEnqueued(ctx, project, app.ID, build.ID, build.DeploymentID, ev.After, ev.Repository.FullName, branch, sourcePath)
 		}
 	}
@@ -817,7 +847,8 @@ func (s *Service) pushBranchHeadIsCurrent(ctx context.Context, installationID in
 func (s *Service) scopeForPush(ctx context.Context, project state.Project, branch string) (string, string, error) {
 	scope := state.DefaultEnvScope
 	reconcileBranch := branch
-	if branchesStore, ok := s.Reconcile.Store.(state.ProjectDeployBranchesStore); ok {
+	// An app bound without a project has no branch mappings.
+	if branchesStore, ok := s.Reconcile.Store.(state.ProjectDeployBranchesStore); ok && project.ID != "" {
 		branches, err := branchesStore.ListProjectDeployBranches(ctx, project.ID)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return "", branch, fmt.Errorf("githubd: resolve deploy branch scope: %w", err)

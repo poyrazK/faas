@@ -408,10 +408,10 @@
         {{end}}
       {{else if eq .Data.GitHubConnection.State "installed"}}
         <p>GitHub is connected for <code>{{.Data.GitHubConnection.GitHubLogin}}</code>, but this app has no repository binding.</p>
-        <p><a href="/dashboard/apps/new">Bind a repository from the deploy wizard →</a></p>
+        <p><a href="/dashboard/apps/new?app={{.Data.App.Slug}}">Bind a repository →</a></p>
       {{else}}
         <p>This app is not connected to GitHub yet.</p>
-        <p><a href="/dashboard/account">Connect GitHub →</a></p>
+        <p><a href="/dashboard/apps/new?app={{.Data.App.Slug}}">Connect GitHub and bind a repository →</a></p>
       {{end}}
       {{end}}
 

@@ -6580,7 +6580,8 @@ func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) 
 		     github_production_branch = null,
 		     github_install_binding_id = null,
 		     github_install_account_id = null,
-		     github_install_linked_at = null
+		     github_install_linked_at = null,
+		     github_production_trigger = null
 		 where id = $1`,
 		appID,
 	)
@@ -6915,7 +6916,8 @@ func (s *PgStore) RevokeGitHubInstallation(ctx context.Context, installationID i
 		       github_production_branch = null,
 		       github_install_binding_id = null,
 		       github_install_account_id = null,
-		       github_install_linked_at = null
+		       github_install_linked_at = null,
+		       github_production_trigger = null
 		 where github_install_id = $1`, installationID); err != nil {
 		return fmt.Errorf("state: clear GitHub bindings: %w", err)
 	}
@@ -6967,7 +6969,8 @@ func (s *PgStore) RemoveGitHubRepositories(ctx context.Context, installationID i
 		       github_production_branch = null,
 		       github_install_binding_id = null,
 		       github_install_account_id = null,
-		       github_install_linked_at = null
+		       github_install_linked_at = null,
+		       github_production_trigger = null
 		 where github_install_id = $1
 		   and github_repo_full_name = any($2::text[])`, installationID, repoFullNames); err != nil {
 		return fmt.Errorf("state: clear removed GitHub repositories: %w", err)
@@ -6996,6 +6999,15 @@ func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int
 		   and github_repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName); err != nil {
 		return fmt.Errorf("state: rename GitHub repository binding: %w", err)
 	}
+	// A project bound to the repository is how a push finds its apps; left
+	// on the old name, every push after the rename was ignored.
+	if _, err := tx.Exec(ctx, `
+		update projects
+		   set repo_full_name = $3, updated_at = now()
+		 where install_id = $1
+		   and repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName); err != nil {
+		return fmt.Errorf("state: rename GitHub repository project: %w", err)
+	}
 	// PR preview environments are keyed by repository name. Left on the old
 	// name they never close, and they keep their members from being retired
 	// when the PR's next head (delivered under the new name) replaces them.
@@ -7021,6 +7033,86 @@ func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int
 	return nil
 }
 
+// RenameGitHubAccount moves every binding, project and PR preview environment
+// of an installation from oldLogin's repositories to newLogin's after GitHub
+// reports that the user or organization was renamed (installation_target).
+// GitHub sends no repository event for that rename, so without it every
+// binding kept the old owner and no push matched it (ADR-20261101160300).
+func (s *PgStore) RenameGitHubAccount(ctx context.Context, installationID int64, oldLogin, newLogin string) error {
+	if installationID <= 0 || oldLogin == "" || newLogin == "" || strings.Contains(oldLogin, "/") || strings.Contains(newLogin, "/") {
+		return ErrNotFound
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub account rename: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	if _, err := tx.Exec(ctx, `
+		update apps
+		   set github_repo_full_name = $3 || '/' || split_part(github_repo_full_name, '/', 2)
+		 where github_install_id = $1
+		   and lower(split_part(github_repo_full_name, '/', 1)) = lower($2)`, installationID, oldLogin, newLogin); err != nil {
+		return fmt.Errorf("state: rename GitHub account bindings: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update projects
+		   set repo_full_name = $3 || '/' || split_part(repo_full_name, '/', 2), updated_at = now()
+		 where install_id = $1
+		   and lower(split_part(repo_full_name, '/', 1)) = lower($2)`, installationID, oldLogin, newLogin); err != nil {
+		return fmt.Errorf("state: rename GitHub account projects: %w", err)
+	}
+	// As for a repository rename: a PR already recorded under the new name
+	// keeps that row and its old-name row is dropped.
+	if _, err := tx.Exec(ctx, `
+		update pr_preview_sets old_set
+		   set repo_full_name = $3 || '/' || split_part(old_set.repo_full_name, '/', 2), updated_at = now()
+		 where old_set.installation_id = $1
+		   and lower(split_part(old_set.repo_full_name, '/', 1)) = lower($2)
+		   and not exists (select 1 from pr_preview_sets renamed
+		     where renamed.installation_id = $1
+		       and renamed.repo_full_name = $3 || '/' || split_part(old_set.repo_full_name, '/', 2)
+		       and renamed.pr_number = old_set.pr_number)`, installationID, oldLogin, newLogin); err != nil {
+		return fmt.Errorf("state: rename GitHub account PR preview environments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from pr_preview_sets
+		 where installation_id = $1
+		   and lower(split_part(repo_full_name, '/', 1)) = lower($2)
+		   and split_part(repo_full_name, '/', 1) <> $3`, installationID, oldLogin, newLogin); err != nil {
+		return fmt.Errorf("state: drop superseded PR preview environments: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub account rename: %w", err)
+	}
+	return nil
+}
+
+// SetGitHubAppProductionTrigger records which of the App webhook or GitHub
+// Actions deploys a bound app's production branch (ADR-20261101160300). An
+// empty trigger restores the webhook. ErrNotFound when the app is not bound
+// to GitHub under accountID.
+func (s *PgStore) SetGitHubAppProductionTrigger(ctx context.Context, appID, accountID string, trigger ProductionTrigger) error {
+	if appID == "" || accountID == "" {
+		return ErrNotFound
+	}
+	if trigger != "" && !trigger.Valid() {
+		return fmt.Errorf("state: production_trigger must be %q or %q", ProductionTriggerWebhook, ProductionTriggerActions)
+	}
+	tag, err := s.pool.Exec(ctx, `
+		update apps
+		   set github_production_trigger = nullif($3, '')
+		 where id = $1
+		   and account_id = $2
+		   and github_install_id is not null`, appID, accountID, string(trigger))
+	if err != nil {
+		return fmt.Errorf("state: set GitHub production trigger: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // GetGithubInstallBindingForApp returns the (appID, accountID)
 // bind row. accountID scopes the lookup so a forged session cannot
 // read another tenant's binding — when the app is bound but to a
@@ -7040,12 +7132,13 @@ func (s *PgStore) GetGithubInstallBindingForApp(ctx context.Context, appID, acco
 	err := s.pool.QueryRow(ctx,
 		`select id, github_install_id, github_repo_full_name, github_owner_id,
 		        github_repo_id, github_production_branch,
-		        github_install_binding_id, github_install_account_id, github_install_linked_at
+		        github_install_binding_id, github_install_account_id, github_install_linked_at,
+		        coalesce(github_production_trigger, '')
 		 from apps
 		 where id = $1
 		   and account_id = $2
 		   and github_install_id is not null`, appID, accountID,
-	).Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &b.AccountID, &linkedAt)
+	).Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &b.AccountID, &linkedAt, &b.ProductionTrigger)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubBinding{}, ErrNotFound
@@ -7106,15 +7199,15 @@ func (s *PgStore) githubInstallBindingForRepoBranch(ctx context.Context, repoFul
 	err := s.pool.QueryRow(ctx,
 		`select id, github_install_account_id, github_install_binding_id, github_install_linked_at,
 		        github_install_id, github_repo_full_name, github_owner_id, github_repo_id,
-		        github_production_branch
+		        github_production_branch, coalesce(github_production_trigger, '')
 		 from apps
 		 where github_repo_full_name = $1
 		   and github_production_branch = $2
 		   and github_install_id is not null
 		   and ($3::bigint = 0 or github_install_id = $3)
-		 order by id
+		 order by (status = 'deleted'), id
 		 limit 1`, repoFullName, productionBranch, installationID,
-	).Scan(&b.AppID, &accountID, &bindingID, &linkedAt, &installID, &b.RepoFullName, &ownerID, &repoID, &branch)
+	).Scan(&b.AppID, &accountID, &bindingID, &linkedAt, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &b.ProductionTrigger)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubBinding{}, ErrNotFound
@@ -7158,7 +7251,8 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 	rows, err := s.pool.Query(ctx,
 		`select id, github_install_id, github_repo_full_name, github_owner_id,
 		        github_repo_id, github_production_branch,
-		        github_install_binding_id, github_install_linked_at
+		        github_install_binding_id, github_install_linked_at,
+		        coalesce(github_production_trigger, '')
 		 from apps
 		 where github_install_account_id = $1
 		   and github_install_id is not null`, accountID,
@@ -7175,7 +7269,7 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 		var branch *string
 		var bindingID *string
 		var linkedAt *time.Time
-		if err := rows.Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &linkedAt); err != nil {
+		if err := rows.Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &linkedAt, &b.ProductionTrigger); err != nil {
 			return nil, err
 		}
 		if installID != nil {

@@ -46,6 +46,15 @@ type githubInstallStatusResponse struct {
 	CSRFToken                    string                   `json:"csrf_token,omitempty"`
 	SyncResult                   *githubInstallSyncResult `json:"sync_result,omitempty"`
 	Activity                     *githubActivityResponse  `json:"activity,omitempty"`
+	// Installations lists every connected installation when the account
+	// has more than one; an unbound app then reports no installation_id,
+	// and a bind or repository listing must name one (ADR-20261101160300).
+	Installations []githubInstallationSummary `json:"installations,omitempty"`
+}
+
+type githubInstallationSummary struct {
+	InstallationID int64  `json:"installation_id"`
+	GitHubLogin    string `json:"github_login,omitempty"`
 }
 
 type githubInstallSyncResult struct {
@@ -471,24 +480,25 @@ type githubInstallationSyncRecorder interface {
 
 func (s *server) githubInstallStatus(ctx context.Context, accountID, appID, projectID string) (githubInstallStatusResponse, error) {
 	status := githubInstallStatusResponse{State: "not_installed", Health: "not_connected"}
-	install, installErr := s.store.GitHubInstallForAccount(ctx, accountID)
-	if installErr != nil && !errors.Is(installErr, state.ErrNotFound) {
-		return status, installErr
+	// An unbound app reports the account's installation only when there is
+	// one. With several, "the most recent" changed whenever a token was
+	// re-sealed, so they are listed instead (ADR-20261101160300).
+	installs, err := s.store.ListGitHubInstallationsForAccount(ctx, accountID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return status, err
 	}
-	if installErr == nil {
+	switch {
+	case len(installs) == 1:
 		status.State = "installed"
-		status.InstallationID = install.InstallationID
-		status.GitHubLogin = install.AuditGithubLogin
-		status.DefaultBranch = install.DefaultBranch
-		status.LastReconciledAt = install.LastReconciledAt
-		status.LastReconcileError = install.LastReconcileError
-		status.LastReconcileRepositoryCount = install.LastReconcileRepositoryCount
-		status.LastReconcileDetachedCount = install.LastReconcileDetachedCount
+		status.InstallationID = installs[0].InstallationID
+		s.applyGitHubInstallHealth(&status, installs[0])
+	case len(installs) > 1:
+		status.State = "installed"
 		status.Health = "unknown"
-		if install.LastReconcileError != "" {
-			status.Health = "degraded"
-		} else if install.LastReconciledAt != nil {
-			status.Health = "healthy"
+		for _, item := range installs {
+			status.Installations = append(status.Installations, githubInstallationSummary{
+				InstallationID: item.InstallationID, GitHubLogin: item.AuditGithubLogin,
+			})
 		}
 	}
 	binding, bindingErr := s.store.GetGithubInstallBindingForApp(ctx, appID, accountID)
@@ -506,8 +516,13 @@ func (s *server) githubInstallStatus(ctx context.Context, accountID, appID, proj
 			linkedAt := binding.LinkedAt
 			status.LinkedAt = &linkedAt
 		}
-		if installErr != nil {
-			status.Health = "degraded"
+		// Health is the bound installation's; a binding whose
+		// installation is gone is degraded.
+		status.Health = "degraded"
+		for _, item := range installs {
+			if item.InstallationID == binding.InstallID {
+				s.applyGitHubInstallHealth(&status, item)
+			}
 		}
 		if activityClient, ok := s.githubd.(githubdActivityClient); ok {
 			if activity, activityErr := activityClient.GetAppActivity(ctx, accountID, appID, githubActivityLimit); activityErr == nil {
@@ -527,6 +542,22 @@ func (s *server) githubInstallStatus(ctx context.Context, accountID, appID, proj
 		}
 	}
 	return status, nil
+}
+
+// applyGitHubInstallHealth projects an installation's reconcile health.
+func (s *server) applyGitHubInstallHealth(status *githubInstallStatusResponse, install state.GitHubInstall) {
+	status.GitHubLogin = install.AuditGithubLogin
+	status.DefaultBranch = install.DefaultBranch
+	status.LastReconciledAt = install.LastReconciledAt
+	status.LastReconcileError = install.LastReconcileError
+	status.LastReconcileRepositoryCount = install.LastReconcileRepositoryCount
+	status.LastReconcileDetachedCount = install.LastReconcileDetachedCount
+	status.Health = "unknown"
+	if install.LastReconcileError != "" {
+		status.Health = "degraded"
+	} else if install.LastReconciledAt != nil {
+		status.Health = "healthy"
+	}
 }
 
 func projectGithubActivity(activity githubdgrpc.AppActivity) *githubActivityResponse {

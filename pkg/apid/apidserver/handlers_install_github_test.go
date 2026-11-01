@@ -40,6 +40,8 @@ type bindPickerFake struct {
 	gotInstallID     int64
 	gotExpectedLogin string
 	bindCalls        int
+	gotAppID         string
+	gotBranch        string
 }
 
 func (f *bindPickerFake) VerifyInstallation(_ context.Context, installID int64, expectedLogin string) (bool, string, string, error) {
@@ -48,8 +50,9 @@ func (f *bindPickerFake) VerifyInstallation(_ context.Context, installID int64, 
 	return f.verified, f.accountLogin, f.defaultBranch, f.verifyErr
 }
 
-func (f *bindPickerFake) BindAppRepo(_ context.Context, _, _ string, _ int64, _, _ string) (string, error) {
+func (f *bindPickerFake) BindAppRepo(_ context.Context, appID, _ string, _ int64, _, branch string) (string, error) {
 	f.bindCalls++
+	f.gotAppID, f.gotBranch = appID, branch
 	if f.bindErr != nil {
 		return "", f.bindErr
 	}
