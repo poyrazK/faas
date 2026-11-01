@@ -10,9 +10,15 @@ import (
 
 func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 	// Control plane: apid, schedd, public gateway/control services. Each
-	// compute node: schedd, internal gateway, vmmd, imaged, and builderd.
+	// compute node: schedd, internal gateway, vmmd, imaged, and builderd,
+	// plus the app edge and the object gateway where the cell turns them on.
 	control := []string{"apid", "apid-clone-worker", "schedd", "gatewayd-public", "meterd", "githubd", "outboundd", "s3-gatewayd", "bridged", "mcp-bridge"}
 	compute := []string{"schedd", "gatewayd-internal", "vmmd", "imaged", "builderd"}
+	optionalCompute := map[string]string{
+		"faas_postgres_per_compute_edge_pool_budget":           "gatewayd-public",
+		"faas_postgres_per_compute_object_gateway_pool_budget": "s3-gatewayd",
+	}
+	optionalDirect := []string{"faas_postgres_per_compute_edge_direct_budget", "faas_postgres_per_compute_object_gateway_direct_budget"}
 	sum := func(names []string) int32 {
 		var total int32
 		for _, name := range names {
@@ -31,24 +37,45 @@ func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 	if got := sum(compute); got != declaredCompute {
 		t.Fatalf("per-compute pool budget = %d, role declares %d", got, declaredCompute)
 	}
+	declaredOptional := int32(0)
+	for key, daemon := range optionalCompute {
+		declared := postgresCapacityDefault(t, key)
+		if got := daemonMaxConnections(daemon); got != declared {
+			t.Fatalf("%s pool = %d, role declares %s: %d", daemon, got, key, declared)
+		}
+		declaredOptional += declared
+	}
+	for _, key := range optionalDirect {
+		if declared := postgresCapacityDefault(t, key); declared != directHubOnMaxConns {
+			t.Fatalf("%s = %d, want db.directHubOnMaxConns %d", key, declared, directHubOnMaxConns)
+		}
+	}
 	tests := []struct {
 		computeNodes int32
 		rolloutNodes int32
-		wantMax      int32
+		// optional: the edge and the object gateway run on every compute node.
+		optional bool
+		wantMax  int32
 	}{
 		{computeNodes: 1, rolloutNodes: standaloneRolloutNodes, wantMax: 140},
-		{computeNodes: 2, rolloutNodes: standaloneRolloutNodes, wantMax: 170},
-		{computeNodes: 10, rolloutNodes: standaloneRolloutNodes, wantMax: 530},
-		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, wantMax: 620},
+		{computeNodes: 2, rolloutNodes: standaloneRolloutNodes, wantMax: 180},
+		{computeNodes: 10, rolloutNodes: standaloneRolloutNodes, wantMax: 540},
+		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, wantMax: 630},
 		// join-fleet converges four nodes by default. These cases cover the
 		// boundary where the steady-state 75% margin alone is insufficient.
 		{computeNodes: 10, rolloutNodes: 4, wantMax: 550},
 		{computeNodes: 11, rolloutNodes: 4, wantMax: 580},
+		{computeNodes: 2, rolloutNodes: standaloneRolloutNodes, optional: true, wantMax: 200},
+		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, optional: true, wantMax: 770},
 	}
 	for _, tt := range tests {
 		computeNodes := tt.computeNodes
-		steadyTotal := declaredControl + computeNodes*declaredCompute
-		rolloutTotal := declaredControl + (computeNodes+tt.rolloutNodes)*declaredCompute
+		perCompute := declaredCompute
+		if tt.optional {
+			perCompute += declaredOptional
+		}
+		steadyTotal := declaredControl + computeNodes*perCompute
+		rolloutTotal := declaredControl + (computeNodes+tt.rolloutNodes)*perCompute
 		ordinaryForWarning := (steadyTotal*4 + 2) / 3
 		ordinaryForRollout := rolloutTotal + operatorHeadroom
 		ordinaryCapacity := max32(ordinaryForWarning, ordinaryForRollout)

@@ -134,7 +134,10 @@ Each step is one PR behind the `agents` capability.
    **Built, part one (2026-11-01): what the template needs from the platform.**
    - **The app's own credential.** `POST /v1/agent-callbacks` and `POST /v1/agent-callbacks/revocations` also take a `gregale:agents` workload token (docs/workload-identity.md), so the app holds no account key.
      - The token must come from a live instance of a production deployment of an active account's app, as for queue leases (ADR-1141 amendment 2026-10-27).
-     - It reaches only that app's realtime endpoints. An API key with `deploy:write` still reaches every endpoint of its account.
+     - It reaches only that app's realtime endpoints. An API key with `deploy:write` still reaches the endpoints of its account, but only those whose app the organization check lets it act on (fix, 2026-11-01).
+       - These routes name an endpoint, not an app, so apid looks up the endpoint's app and runs the check every app route runs (appaccess).
+       - On a company app, a callback URL counts as one of the app's credentials: issuing or revoking one needs owner or admin. A key bound to another organization reaches nothing, and neither does a creator who has been removed from the organization or whose organization is suspended.
+       - Test: `TestAgentCallbacksFollowCompanyAppAccess`.
      - A JWT-shaped bearer takes the workload path. No API key, OIDC or hosting token is JWT-shaped, so no key is misrouted.
    - **The inbox in `gregale.yaml`.** A manifest consumer group takes `ordering_metadata_key`, `deduplication_metadata_key` and `dead_letter_policy`, so the app declares §2's `slices` group itself. A deploy still creates a missing group and never changes an existing one.
    - **Tests.** `TestWorkloadCaller` covers the audience, environment, account, app, instance and deployment checks. `TestCallbackAppCallerOwnsOnlyItsEndpoints` covers the app scope. The manifest tests cover the new fields' loading, validation and reconcile.
