@@ -5271,7 +5271,7 @@ func reservationEvictions(ledger *NodeLedger, now time.Time, snapshot []Instance
 // evictForMeasuredMemory evicts on nodes whose measured memory exceeds their
 // ceiling (ADR-909). It runs only under measured admission: otherwise each
 // VM's memory.max keeps a node's memory under its reservations. A node
-// without a fresh vmmd capacity report is skipped.
+// without a fresh vmmd capacity report or published node report is skipped.
 func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceInfo, activity map[string]InstanceActivity, now time.Time) {
 	ledger := l.engine.Ledger()
 	if !ledger.MeasuredAdmissionEnabled() {
@@ -5282,11 +5282,17 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 		if _, seen := used[in.NodeID]; seen || in.NodeID == "" {
 			continue
 		}
-		report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now)
-		if !ok {
+		// A peer node's vmmd reports only to its own scheduler; its
+		// published report carries the same used memory, so this
+		// scheduler's instances there are evicted under its pressure too
+		// (ADR 20261101091815).
+		if report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now); ok {
+			used[in.NodeID] = int(report.UsedMB)
+		} else if peer, ok := l.engine.PeerNodeMemory(in.NodeID, now); ok && peer.UsedMB != nil {
+			used[in.NodeID] = *peer.UsedMB
+		} else {
 			continue
 		}
-		used[in.NodeID] = int(report.UsedMB)
 		ceiling[in.NodeID] = ledger.CeilingForNode(in.NodeID)
 	}
 	resident := make(map[string]int, len(activity))
