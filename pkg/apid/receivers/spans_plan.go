@@ -36,6 +36,9 @@ type telemetryPlan struct {
 	Limits  api.Limits
 	// Flag is the platform-flag subject for the capability gate.
 	Flag platformflags.Subject
+	// Resolved is set when the plan was read from the owner, not assumed
+	// by a store that cannot read accounts.
+	Resolved bool
 }
 
 type telemetryPlanKey struct {
@@ -164,9 +167,10 @@ func ownerPlan(owner state.Account, orgID string, fallback uuid.UUID) telemetryP
 		flagAccount = fallback.String()
 	}
 	return telemetryPlan{
-		Subject: subject,
-		Limits:  limits,
-		Flag:    platformflags.Subject{AccountID: flagAccount, Plan: string(owner.Plan), OrgID: orgID},
+		Subject:  subject,
+		Limits:   limits,
+		Flag:     platformflags.Subject{AccountID: flagAccount, Plan: string(owner.Plan), OrgID: orgID},
+		Resolved: true,
 	}
 }
 

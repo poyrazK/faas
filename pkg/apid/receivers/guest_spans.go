@@ -46,9 +46,8 @@ type guestSpansAccounts interface {
 // GuestSpansIngester is process-wide: both SpansWriter listeners (single-box
 // Unix socket and split-box mTLS) share one accumulator and flush loop.
 type GuestSpansIngester struct {
-	acc      *gateway.SpansAccumulator
-	accounts guestSpansAccounts
-	limiter  *peraccount.Limiter
+	acc     *gateway.SpansAccumulator
+	limiter *peraccount.Limiter
 	// plans resolves the app's resource owner's plan and the bucket its
 	// exports draw from (tracing tenancy T6).
 	plans *telemetryPlans
@@ -71,7 +70,7 @@ func NewGuestSpansIngester(accounts guestSpansAccounts, limiter *peraccount.Limi
 	if log == nil {
 		log = slog.Default()
 	}
-	return &GuestSpansIngester{acc: gateway.NewSpansAccumulator(), accounts: accounts, limiter: limiter, plans: newTelemetryPlans(accounts, limiter), log: log}
+	return &GuestSpansIngester{acc: gateway.NewSpansAccumulator(), limiter: limiter, plans: newTelemetryPlans(accounts, limiter), log: log}
 }
 
 // WithTracingRelease gates exports on the tracing capability's platform flag

@@ -193,7 +193,7 @@ func (r *spansWriterReceiver) WriteSpansSummary(ctx context.Context, req *apidpb
 		return nil, status.Errorf(codes.Internal, "resolve plan: %v", err)
 	}
 	limits := plan.Limits
-	if !limits.DebugTelemetryEnabled {
+	if plan.Resolved && !limits.DebugTelemetryEnabled {
 		// The plan keeps no request rows to merge into: drop, as
 		// IncrementRequestTelemetry drops a row on such a plan.
 		r.observe(swOutcomeRateLimited)
