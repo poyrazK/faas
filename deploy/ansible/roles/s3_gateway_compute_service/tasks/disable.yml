@@ -19,7 +19,7 @@
     - /etc/faas/secrets/object-storage/gateway-provider.env
   register: faas_object_gateway_removed
 
-- name: s3_gateway_compute_service — reload systemd after removing the gateway
+- name: s3_gateway_compute_service — reload systemd after removing the gateway  # noqa: no-handler (removal must be visible before later roles query units)
   ansible.builtin.systemd_service:
     daemon_reload: true
   when: faas_object_gateway_removed.changed

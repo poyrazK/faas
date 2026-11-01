@@ -55,7 +55,7 @@
 
 - name: seal_domains — give the compute gateway the storage domain identity
   ansible.builtin.template:
-    src: 60-faas-seal-domain-storage-compute-reader.conf.j2
+    src: 60-faas-seal-domain-storage-reader.conf.j2
     dest: /etc/systemd/system/faas-s3-gatewayd-compute.service.d/60-faas-seal-domain-storage.conf
     owner: root
     group: root
