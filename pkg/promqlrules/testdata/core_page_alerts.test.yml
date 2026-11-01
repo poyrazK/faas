@@ -371,7 +371,7 @@ tests:
               public_status: "internal"
             exp_annotations:
               summary: "Provider stripe push drift > 0.5% for 1h"
-              description: "Provider push totals are diverging from local usage_minutes totals by more than 0.5% for an hour (ADR-049 §B.1). Revenue leakage if local > pushed, refund liability if pushed > local. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
+              description: "Provider usage totals are diverging from the usage meterd recorded as delivered (billing_usage_deliveries) by more than 0.5% for an hour (ADR-049 §B.1, ADR-20261031161842). Revenue leakage if delivered > provider, refund liability if provider > delivered. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
 
   - interval: 1m

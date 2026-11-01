@@ -183,3 +183,10 @@ CREATE TABLE workflow_events (
  run_id uuid NOT NULL,
  event_name text NOT NULL
 );
+CREATE TABLE agent_callback_revocations (
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ account_id uuid NOT NULL,
+ revoked_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (endpoint_id, thread_id)
+);

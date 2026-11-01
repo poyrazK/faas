@@ -235,7 +235,7 @@ func TestRequire_EmptyAllowAlwaysRefuses(t *testing.T) {
 // tables and operator-facing error messages. Changing the order
 // requires a runbook update.
 func TestAllRolesIsSorted(t *testing.T) {
-	want := []Role{RoleSingleBox, RoleControlPlane, RoleComputeOnly}
+	want := []Role{RoleSingleBox, RoleControlPlane, RoleComputeOnly, RoleDatabase}
 	if len(AllRoles) != len(want) {
 		t.Fatalf("AllRoles length = %d; want %d", len(AllRoles), len(want))
 	}

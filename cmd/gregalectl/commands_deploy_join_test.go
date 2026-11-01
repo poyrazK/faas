@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -457,6 +459,90 @@ func TestNodeJoinPreparationStopsBeforeDrainAndActivationRequiresMarker(t *testi
 	for _, token := range []string{"grep", "- -Fqx", "prepared-release.sha", "faas_join_rollout_phase | default('full')) == 'activate'"} {
 		if !strings.Contains(activationBlock, token) {
 			t.Errorf("activation marker gate is missing %q", token)
+		}
+	}
+}
+
+// An activation that converges roles runs node_join.yml from the top, so every
+// task skipped in activation leaves a result without its module fields. A later
+// task that runs in activation must not read those fields undefaulted: on rc.315
+// "Read the serving vmmd process before runtime pre-stage" read
+// faas_join_active_vmmd.stat and stopped fsn-2's activation.
+func TestNodeJoinActivationNeverReadsResultsItSkipped(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plays []map[string]any
+	if err := yaml.Unmarshal(body, &plays); err != nil {
+		t.Fatal(err)
+	}
+	skippedInActivation := func(when []string) bool {
+		for _, w := range when {
+			if strings.Contains(w, "!= 'activate'") || strings.Contains(w, "== 'prepare'") {
+				return true
+			}
+		}
+		return false
+	}
+	type task struct {
+		body map[string]any
+		when []string
+	}
+	var walk func(items any, inherited []string, out *[]task)
+	walk = func(items any, inherited []string, out *[]task) {
+		list, _ := items.([]any)
+		for _, item := range list {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			when := append([]string(nil), inherited...)
+			switch w := m["when"].(type) {
+			case string:
+				when = append(when, w)
+			case []any:
+				for _, c := range w {
+					when = append(when, fmt.Sprint(c))
+				}
+			}
+			if block, ok := m["block"]; ok {
+				walk(block, when, out)
+				walk(m["rescue"], when, out)
+				walk(m["always"], when, out)
+				continue
+			}
+			*out = append(*out, task{body: m, when: when})
+		}
+	}
+	for _, play := range plays {
+		var tasks []task
+		walk(play["tasks"], nil, &tasks)
+		var skipped []string
+		for _, tk := range tasks {
+			if !skippedInActivation(tk.when) {
+				rest := map[string]any{}
+				for k, v := range tk.body {
+					if k != "name" && k != "register" {
+						rest[k] = v
+					}
+				}
+				text, err := yaml.Marshal(rest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, reg := range skipped {
+					read := regexp.MustCompile(regexp.QuoteMeta(reg) + `\.\w+(\s*\|\s*default)?`)
+					for _, m := range read.FindAllStringSubmatch(string(text), -1) {
+						if m[1] == "" {
+							t.Errorf("%q runs in activation but reads %q, which activation skipped", tk.body["name"], m[0])
+						}
+					}
+				}
+			}
+			if reg, ok := tk.body["register"].(string); ok && skippedInActivation(tk.when) {
+				skipped = append(skipped, reg)
+			}
 		}
 	}
 }
@@ -1681,5 +1767,32 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 	if !staleReport.RolesConverged || !staleReport.Applied {
 		t.Fatalf("stale-contract activation report = %#v, want roles converged and applied", staleReport)
+	}
+
+	// Converging roles needs the peers' private addresses, which only the fleet
+	// preflight caches; the activation job never ran it (rc.314 fsn-2).
+	for _, tc := range []struct {
+		current bool
+		want    []string
+	}{
+		{current: false, want: []string{"node_join_control_plane.yml", "preflight.yml", "node_join.yml", "node_join_accept_release.yml"}},
+		{current: true, want: []string{"node_join_control_plane.yml", "node_join.yml", "node_join_accept_release.yml"}},
+	} {
+		calls = nil
+		contractCurrent = tc.current
+		preflightOpts := activateOpts
+		preflightOpts.SkipFleetPreflight = false
+		preflightReport := report
+		preflightReport.Applied = false
+		if code, err := deployJoinApply(&preflightOpts, &preflightReport); err != nil || code != 0 {
+			t.Fatalf("activate (current=%v) deployJoinApply: code=%d err=%v", tc.current, code, err)
+		}
+		var playbooks []string
+		for _, call := range calls {
+			playbooks = append(playbooks, filepath.Base(call[len(call)-1]))
+		}
+		if !slices.Equal(playbooks, tc.want) {
+			t.Fatalf("activation (current contract=%v) playbooks = %v, want %v", tc.current, playbooks, tc.want)
+		}
 	}
 }

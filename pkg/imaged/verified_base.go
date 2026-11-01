@@ -93,7 +93,17 @@ func (h *Handler) ensureVerifiedBaseExt4(ctx context.Context, r verifiedBaseRequ
 	if err != nil {
 		return BaseStageResult{}, err
 	}
-	return h.finishVerifiedBase(ctx, r, producer, image.Config.Digest, false)
+	result, err := h.finishVerifiedBase(ctx, r, producer, image.Config.Digest, false)
+	if errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+		// Another node built the same base concurrently and its producer
+		// superseded this one before the scan was published: a phased prepare
+		// stages every node at once (rc.314 failed fsn-2 twice). Adopt the
+		// publication that won, as a stage that started later would.
+		if cached, ok, reuseErr := h.reuseVerifiedBase(ctx, r, store, resolved.SourceReference); reuseErr == nil && ok {
+			return cached, nil
+		}
+	}
+	return result, err
 }
 
 func (h *Handler) reuseVerifiedBase(ctx context.Context, r verifiedBaseRequest, store state.BaseImageProducerStore, source string) (BaseStageResult, bool, error) {

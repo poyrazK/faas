@@ -27,6 +27,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -304,8 +306,11 @@ func appendCorrelationAttrs(attrs []any, fields CorrelationFields) []any {
 // package convention; net/http uses struct{} keys for its own values).
 type correlationKey struct{}
 
-// NewRequestID returns a 128-bit random hex string (uuid-like, no dashes).
-// Crypto/rand so we don't pull google/uuid just for this; on the
+// NewRequestID returns a 128-bit request ID as 32 lowercase hex characters.
+// The first 48 bits are the minting time in Unix milliseconds and the rest is
+// random, in the UUIDv7 layout without dashes, so a lookup can narrow its
+// window to when the ID was minted (ADR-20261101085552). IDs minted before
+// that were fully random; both shapes remain valid request IDs. On the
 // extremely-unlikely rand.Read failure it emits zero rather than panicking
 // in the request hot path.
 //
@@ -315,10 +320,42 @@ type correlationKey struct{}
 // existing callers don't change.
 func NewRequestID() string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if _, err := rand.Read(b[6:]); err != nil {
 		return "00000000000000000000000000000000"
 	}
+	ms := uint64(time.Now().UnixMilli())
+	for i := range 6 {
+		b[i] = byte(ms >> (40 - 8*i))
+	}
+	b[6] = b[6]&0x0f | 0x70 // version 7
+	b[8] = b[8]&0x3f | 0x80 // RFC 9562 variant
 	return hex.EncodeToString(b[:])
+}
+
+// RequestIDMintedAt returns the minting time a platform request ID carries.
+// ok is false for an ID that is not 32 hex characters (dashes allowed) in the
+// UUIDv7 layout, such as an ID minted before ADR-20261101085552. A client may
+// send its own ID in the same layout, so callers treat the time as a hint and
+// fall back to their full window when a narrowed lookup misses.
+func RequestIDMintedAt(id string) (time.Time, bool) {
+	if len(id) == 36 {
+		id = strings.ReplaceAll(id, "-", "")
+	}
+	var b [16]byte
+	if len(id) != 32 {
+		return time.Time{}, false
+	}
+	if _, err := hex.Decode(b[:], []byte(id)); err != nil {
+		return time.Time{}, false
+	}
+	if b[6]>>4 != 7 || b[8]>>6 != 2 {
+		return time.Time{}, false
+	}
+	var ms int64
+	for i := range 6 {
+		ms = ms<<8 | int64(b[i])
+	}
+	return time.UnixMilli(ms).UTC(), true
 }
 
 // NewTraceID returns a 128-bit random hex string formatted as the

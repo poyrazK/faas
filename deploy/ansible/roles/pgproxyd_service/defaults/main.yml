@@ -1,0 +1,37 @@
+---
+# ADR-1027: pgproxyd, the PostgreSQL proxy of native managed databases and
+# the only public listener on a database node. Off until the operator
+# supplies every input below.
+pgproxyd_enabled: false
+
+# SNI suffix after the database id: clients connect to <id>.<suffix>.
+pgproxyd_host_suffix: ""
+pgproxyd_listen_addr: ":5432"
+pgproxyd_verifier_cache_ttl: "30s"
+# /healthz, /readyz and /metrics: loopback unless the manifest sets
+# database_node_metrics_host (the overlay address control-plane Prometheus
+# scrapes; the database_node firewall admits only the control plane).
+pgproxyd_ops_addr: "{{ database_node_metrics_host | default('127.0.0.1') }}:9109"
+
+# Control-plane schedd over the overlay, authenticated with the
+# pgproxyd.faas client leaf (e.g. "tcp://100.64.0.10:7444").
+pgproxyd_schedd_target: ""
+
+# Publicly trusted certificate chain and key for *.<suffix>. Files on the
+# Ansible controller; the key is installed owner-only.
+pgproxyd_tls_cert_src: ""
+pgproxyd_tls_key_src: ""
+
+# Read-only control-plane DSN for the faas_pgproxyd role, which may only
+# SELECT database_role_verifiers. The manifest renders it with the
+# password database_node.yml settles and creates the role with on the
+# control plane (generated once, or faas_pgproxyd_postgres_password).
+pgproxyd_db_url: ""
+
+# Query cancellation across instances: a client's cancel may reach another
+# database node's pgproxyd, which forwards it to the instance that issued
+# the key. Give every pgproxyd a distinct id (0-255) and list the others'
+# overlay listeners by id, e.g. {2: "100.64.0.21:5432"}. One instance needs
+# neither.
+pgproxyd_instance_id: 0
+pgproxyd_cancel_peers: {}

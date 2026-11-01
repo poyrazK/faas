@@ -195,3 +195,9 @@ func (r *server) EventsPausedProblem(acct state.Account, app state.App) *api.Pro
 func (r *server) ManagedPostgresReleased(ctx context.Context, accountID string) bool {
 	return r.managedPostgresReleased(ctx, accountID)
 }
+
+// SetManagedPostgresUncapped holds the release to flag rules, as production
+// does while the compute or storage cap is not on (ADR-20261031091607).
+func (r *server) SetManagedPostgresUncapped(uncapped bool) {
+	r.managedPostgresUncapped = uncapped
+}

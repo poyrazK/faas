@@ -302,6 +302,13 @@ The rule's `mode` decides what happens to a detection:
 | `warn` | checked on every request; a detection adds `X-WAF-Warning: <rule id>` to the response | sampled and reported |
 | `block` | checked on every request; a detection is answered with `403` before your app wakes | sampled and reported |
 
+Checks include cookies. Apps on a `gregale.dev` host share that domain with
+every other customer's app, and any of their pages can set a cookie your
+visitors' browsers then send to you, so an attack-shaped cookie planted that
+way is blocked by a `block` rule like any other. A detection found only in
+cookies never puts the client in a penalty box. Apps on a custom domain are
+not affected.
+
 Request bodies are never blocked: checking them costs tens to hundreds of
 milliseconds, so they are inspected off the request path, and only a sample
 of them under load. In `warn` and `block`, a request without a body is
@@ -387,7 +394,17 @@ The pass lasts an hour by default and is tied to the browser's address
 range and User-Agent, so it cannot be copied to another machine. It covers
 the whole host: one pass lets the browser through every challenge rule on
 that host, including paths a route rule sends to another of your apps, but
-not on your other hosts. Start in
+not on your other hosts.
+
+Calls from a page on another site work when they carry a verified JWT, API
+key or consumer key: the gateway answers their CORS preflight itself, without
+allowing cookies, so the browser sends the call, and your app's own CORS
+headers still decide whether the page may read the answer. A cross-site call
+that relies on cookies cannot pass a challenge, because the pass cookie is
+not sent across sites, and the challenge page cannot load inside a frame on
+another site. Leave such paths out of the rule.
+
+Start in
 log mode to see what the rule would challenge, and add a `verified_bot
 missing` condition so search engine crawlers still reach your pages:
 

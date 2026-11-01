@@ -1,0 +1,43 @@
+---
+# ADR-20261031122757: the S3 gateway on a compute node. The manifest's
+# object_storage.compute_nodes sets this per cell; off removes it again.
+faas_object_gateway_on_compute_nodes: false
+
+# The control plane's controller-local provider registry, and the env file
+# holding only the gateway credentials its gateway_*_env fields name. A
+# compute node never receives the bucket-admin credential.
+faas_object_storage_config_src: ''
+faas_object_storage_gateway_provider_env_src: ''
+
+# This node's share of its port in bytes per second, rendered by the manifest
+# from the host's port_mbps (ADR-20261031122757 §3). The role writes it into
+# the node's registry as transfer.max_bytes_per_second.
+faas_object_gateway_max_bytes_per_second: 0
+
+# The node's s3 tunnel connector, faas-cloudflared-s3 (ADR-20261031122757 §2):
+# a replica of the cell's second remotely managed tunnel, whose ingress rule
+# (configured in Cloudflare) sends s3.<domain> to http://127.0.0.1:8084. It
+# runs the cloudflared binary gatewayd_public_edge_service installs, which the
+# manifest requires on every node that runs this gateway. The operator
+# provisions the token; until the file exists the connector stays stopped.
+faas_cloudflared_s3_token_path: /etc/faas/secrets/cloudflared/s3-tunnel-token
+
+# Prometheus endpoint of the connector. The control plane scrapes it per node;
+# nftables admits only the control plane on this port. The app edge's
+# connector holds 20241 (daemonunitspec.ComputeObjectGatewayConnectorMetricsPort).
+faas_cloudflared_s3_metrics_addr: 0.0.0.0:20242
+
+# How long a stopping connector serves its in-flight requests after it leaves
+# the tunnel, and how long systemd waits for it. A proxied upload is at most
+# 64 MiB: at the share of the slowest port the manifest admits (100 Mbit/s,
+# 3.75 MB/s) it takes about 18 s, inside the grace.
+faas_cloudflared_s3_grace_period: 30s
+faas_cloudflared_s3_stop_timeout: 45s
+
+# The one-node load test (ADR-20261031122757 step 5) reaches the compute
+# gateways on a pilot hostname, while s3.<domain> still goes to the control
+# plane. s3-gatewayd answers only its registry's public_endpoint host, so set
+# this to https://<pilot host> for the test and back to '' before the
+# cutover; '' keeps the control plane's endpoint
+# (docs/runbooks/S3GatewayComputeLoadTest.md).
+faas_object_gateway_public_endpoint: ''

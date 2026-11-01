@@ -3537,7 +3537,46 @@ const (
 	OperatorIntentKindNodeForceDrain OperatorIntentKind = "node_force_drain"
 	OperatorIntentKindNodeActivate   OperatorIntentKind = "node_activate"
 	OperatorIntentKindNodeRetire     OperatorIntentKind = "node_retire"
+	// OperatorIntentKindDatabaseMove moves a native managed database to
+	// another database node (ADR-1027). TargetID is the database id,
+	// AccountID is nil, and Metadata names the target node (empty: the
+	// active node with the most free volume capacity). schedd's database
+	// scheduler parks the database and records the move before stamping
+	// the intent; the copy finishes in the background.
+	OperatorIntentKindDatabaseMove OperatorIntentKind = "database_move"
+	// OperatorIntentKindDatabaseRestart restarts a running native managed
+	// database in place (ADR-1027), onto its node's current base. TargetID
+	// is the database id and AccountID is nil. schedd's database scheduler
+	// parks the database and wakes it again before stamping the intent; a
+	// parked database is left for its next wake, which boots the current
+	// base anyway.
+	OperatorIntentKindDatabaseRestart OperatorIntentKind = "database_restart"
+	// OperatorIntentKindDatabaseSwitchover hands a production-class native
+	// managed database to its synchronized standby on purpose (ADR-1027).
+	// TargetID is the database id and AccountID is nil. schedd's database
+	// scheduler stops a running primary cleanly and promotes the standby,
+	// or moves a parked database's record to the standby's node, before
+	// stamping the intent.
+	OperatorIntentKindDatabaseSwitchover OperatorIntentKind = "database_switchover"
 )
+
+// IsOperatorDatabaseKind reports the native database operations (ADR-1027),
+// which schedd's database scheduler runs.
+func IsOperatorDatabaseKind(kind OperatorIntentKind) bool {
+	switch kind {
+	case OperatorIntentKindDatabaseMove, OperatorIntentKindDatabaseRestart, OperatorIntentKindDatabaseSwitchover:
+		return true
+	default:
+		return false
+	}
+}
+
+// DatabaseMoveIntentMetadata is a database_move intent's metadata: the
+// node to move to, or empty for the active node with the most free volume
+// capacity.
+type DatabaseMoveIntentMetadata struct {
+	TargetNode string `json:"target_node,omitempty"`
+}
 
 // OperatorIntent is one row of operator_intents (migrations/00431).
 // apid inserts customer-workload or fleet-level node intents, emits

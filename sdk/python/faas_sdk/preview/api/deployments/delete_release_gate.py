@@ -73,7 +73,8 @@ def sync_detailed(
 ) -> Response[Problem | ReleaseGate]:
     """Remove a release gate.
 
-     404 `release_gate_not_found` when the app has no gate with this name.
+     Needs the admin scope (a signed-in session or an admin key); a deploy:write key cannot remove the
+    gates it deploys past. 404 `release_gate_not_found` when the app has no gate with this name.
 
     Args:
         slug (str):
@@ -107,7 +108,8 @@ def sync(
 ) -> Problem | ReleaseGate | None:
     """Remove a release gate.
 
-     404 `release_gate_not_found` when the app has no gate with this name.
+     Needs the admin scope (a signed-in session or an admin key); a deploy:write key cannot remove the
+    gates it deploys past. 404 `release_gate_not_found` when the app has no gate with this name.
 
     Args:
         slug (str):
@@ -136,7 +138,8 @@ async def asyncio_detailed(
 ) -> Response[Problem | ReleaseGate]:
     """Remove a release gate.
 
-     404 `release_gate_not_found` when the app has no gate with this name.
+     Needs the admin scope (a signed-in session or an admin key); a deploy:write key cannot remove the
+    gates it deploys past. 404 `release_gate_not_found` when the app has no gate with this name.
 
     Args:
         slug (str):
@@ -168,7 +171,8 @@ async def asyncio(
 ) -> Problem | ReleaseGate | None:
     """Remove a release gate.
 
-     404 `release_gate_not_found` when the app has no gate with this name.
+     Needs the admin scope (a signed-in session or an admin key); a deploy:write key cannot remove the
+    gates it deploys past. 404 `release_gate_not_found` when the app has no gate with this name.
 
     Args:
         slug (str):
