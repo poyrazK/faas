@@ -666,53 +666,6 @@ func (f *ackRecordingPoller) Nack(_ context.Context, _ sqlc.Trigger, ids []strin
 }
 func (f *ackRecordingPoller) Close() error { return nil }
 
-// TestRateLimitDeny_AcksBrokerOffset is the CRIT-1 regression test
-// (PR #993 / issue #757 closure). The broker offset advances only
-// after the corresponding terminal receipt is durable. The test pins both:
-//
-//  1. deadLetterAll was called (audit row recorded) —
-//     covered indirectly via fakeDeadLetterStore.inserts.
-//  2. poller.Ack was called with the same item_identifiers —
-//     the broker offset advances.
-func TestRateLimitDeny_AcksBrokerOffset(t *testing.T) {
-	const triggerID = "11111111-1111-1111-1111-111111111111"
-	poller := &ackRecordingPoller{}
-	l := &Loop{
-		log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
-		triggerPollers: map[string]triggerSource{triggerID: poller},
-	}
-	store := &fakeDeadLetterStore{
-		records: map[string]string{"kafka-1": "record-1", "kafka-2": "record-2"},
-	}
-	t1 := sqlc.Trigger{ID: pgtypeUUIDFromString(t, triggerID)}
-	batch := []SourceRecord{
-		{ItemIdentifier: "kafka-1"},
-		{ItemIdentifier: "kafka-2"},
-	}
-	l.handleRateLimitedBatch(context.Background(), poller, t1, batch, store)
-
-	if got, want := poller.ackCalls, []string{"kafka-1", "kafka-2"}; !equalSlices(got, want) {
-		t.Errorf("Ack calls = %v, want %v (broker offset must advance after deny)", got, want)
-	}
-	if got, want := store.inserts, []string{"record-1", "record-2"}; !equalSlices(got, want) {
-		t.Errorf("DLQ receipts = %v, want %v", got, want)
-	}
-}
-
-// adr: 374 — a Kafka commit must not pass work with no durable receipt.
-func TestRateLimitDenyDoesNotCommitPastMissingKafkaReceipt(t *testing.T) {
-	const triggerID = "11111111-1111-1111-1111-111111111111"
-	poller := &ackRecordingPoller{}
-	store := &fakeDeadLetterStore{records: map[string]string{"kafka-2": "record-2"}}
-	l := &Loop{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	l.handleRateLimitedBatch(context.Background(), poller,
-		sqlc.Trigger{ID: pgtypeUUIDFromString(t, triggerID)},
-		[]SourceRecord{{ItemIdentifier: "kafka-1"}, {ItemIdentifier: "kafka-2"}}, store)
-	if len(poller.ackCalls) != 0 || !equalSlices(poller.nackCalls, []string{"kafka-1", "kafka-2"}) {
-		t.Fatalf("Kafka commit crossed missing receipt: ack=%v nack=%v", poller.ackCalls, poller.nackCalls)
-	}
-}
-
 // equalSlices is a tiny helper to keep the assertion readable
 // without pulling in reflect.DeepEqual's verbosity for two
 // []string compares.

@@ -4,6 +4,9 @@ Date: 2026-10-27
 Status: Accepted
 Amends: [ADR-972](972-parallel-queue-push-dispatch.md) (external brokers kept serial), [ADR-100](100-triggers-event-source-mappings.md) (every schedd walks every trigger)
 Related: [ADR-1180](1180-long-async-invocations.md), [ADR 20261027160930](20261027160930-continuous-fair-drain.md)
+Amended by [ADR 20261101093015](20261101093015-broker-trigger-lane-fairness-and-record-rate.md): the
+lanes are shared between accounts and taken round-robin, so the first
+triggers the tick meets no longer keep every lane.
 
 ## Context
 
