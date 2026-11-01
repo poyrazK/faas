@@ -1,0 +1,28 @@
+function:
+  runtime: node22
+  handler: handler.handler
+
+# The agent inbox (ADR-20261030125501 §2): one channel, one consumer group
+# that delivers a thread's messages one at a time and in order, and a
+# trigger that runs this function for each message. Publish to agent-inbox
+# from your backend; the endpoint refuses client connections.
+realtime:
+  endpoints:
+    - slug: agent
+      auth: none
+      consumer_groups:
+        - channel: agent-inbox
+          name: slices
+          lease_seconds: 120
+          ordering_metadata_key: thread_id
+          deduplication_metadata_key: message_id
+          dead_letter_policy: block
+
+triggers:
+  - kind: realtime
+    slug: agent-inbox
+    config:
+      endpoint: agent
+      channel: agent-inbox
+      group: slices
+      max_concurrency: 4

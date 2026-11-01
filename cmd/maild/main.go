@@ -92,6 +92,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return errors.New("maild: managed postgres cap notification schema is unavailable")
 		}
 	}
+	if internalmail.ManagedPostgresRestoreSlotOutboxEnabled(os.Getenv) {
+		if err := store.ManagedPostgresRestoreSlotOutboxReady(ctx); err != nil {
+			return errors.New("maild: managed postgres restore slot notification schema is unavailable")
+		}
+	}
 	if internalmail.AccountRestoredOutboxEnabled(os.Getenv) {
 		if err := store.AccountRestoredOutboxReady(ctx); err != nil {
 			return errors.New("maild: account restoration notification schema is unavailable")
@@ -175,6 +180,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return nil
 		},
 		Metrics: ops.Handler(),
+
+		ManagedPostgresRestoreSlotOutboxEnabled: func() bool { return internalmail.ManagedPostgresRestoreSlotOutboxEnabled(os.Getenv) },
 	}
 	monitor := internalmail.NewMonitor(store, service.Enabled, service.DeliveryEnabled, service.ReportsEnabled, service.FeedbackEnabled)
 	retentionMonitor := internalmail.NewRetentionMonitor(store, func() bool { return internalmail.RetentionEnabled(os.Getenv) }, cfg.RetentionPolicy)

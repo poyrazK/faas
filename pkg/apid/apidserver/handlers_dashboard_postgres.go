@@ -33,6 +33,7 @@ func (s *server) renderManagedPostgres(w http.ResponseWriter, r *http.Request, l
 			data.Error = "Managed PostgreSQL status is temporarily unavailable."
 		} else {
 			data.Databases = projectManagedPostgresDashboard(databases)
+			attachDashboardDatabaseLabels(data.Databases, s.dashboardResourceLabels(r, acct, state.LabelKindDatabase, dashboardDatabaseIDs(data.Databases)))
 			s.attachManagedPostgresBindings(r, log, acct.ID, &data)
 		}
 		s.attachManagedPostgresOverage(w, r, log, acct, &data)
@@ -59,6 +60,12 @@ func projectManagedPostgresDashboard(databases []managedpostgres.Database) []das
 		}
 		if managedPostgresDeleteScheduled(database) {
 			item.RestorableUntil = database.PurgeAfter.UTC().Format(time.RFC3339)
+		}
+		if earliest, _, ok := database.RestoreRange(time.Now().UTC()); ok {
+			item.RestoreFrom = earliest.UTC().Format(time.RFC3339)
+		}
+		if !database.RestoreSlotUntil.IsZero() && database.State != managedpostgres.StateDeleted {
+			item.RestoreSlotUntil = database.RestoreSlotUntil.UTC().Format(time.RFC3339)
 		}
 		items = append(items, item)
 	}

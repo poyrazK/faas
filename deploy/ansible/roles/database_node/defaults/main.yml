@@ -1,0 +1,39 @@
+---
+# ADR-1027 database node firewall. pgproxyd (5432) is the only public
+# listener; the overlay carries schedd -> vmmd and gatewayd -> pgproxyd.
+# Database VMs have no network interface, so nothing is forwarded.
+
+# Overlay ranges trusted for every port but the metrics ports (schedd,
+# the app route, cancel forwarding).
+database_node_overlay_cidrs: "{{ overlay_cidrs | default([]) }}"
+# Sources allowed to scrape the node's metrics ports (control-plane
+# Prometheus; the manifest renders the control plane's address). Empty
+# keeps them loopback-only, even from the overlay.
+database_node_metrics_cidrs: []
+database_node_metrics_ports: [9100, 9104, 9109, 9110]
+# Sources allowed to reach SSH. Empty keeps SSH reachable only over the
+# overlay.
+database_node_ssh_cidrs: []
+# UDP ports the overlay transport needs from the internet (WireGuard 51820,
+# Tailscale 41641).
+database_node_overlay_udp_ports: []
+
+# Release (vmmd, pgproxyd, guest-init and the signed guest kernel). Paths on
+# the Ansible controller: the signed release tarball, its cosign bundle and
+# the release's git SHA. Empty keeps the release already installed.
+database_node_release_tarball: ""
+database_node_release_signature: ""
+database_node_release_git_sha: ""
+# cosign binary on the controller, installed to verify the release.
+database_node_cosign_source: ""
+
+# Trust bundle from the PKI issuer, staged into /etc/faas/tls. Leave it
+# empty to let the database_node_pki role issue the node's first bundle
+# from the control-plane issuer (the daily pki_renew.yml renews it). To
+# issue one yourself:
+#   gregalectl pki issue-bundle --issuer-root ... --output-dir DIR \
+#     --box-role database --cn <id> --transport-san <overlay-ip>
+# <id> must equal the node's id in schedd's [database_scheduler]: schedd
+# binds database-node vmmd certificates to <id>.faas. Empty keeps an
+# installed bundle and issues one only when there is none.
+database_node_pki_source: ""

@@ -93,9 +93,30 @@ func (c *Client) GetManagedPostgresResize(ctx context.Context, databaseID, resiz
 	return out, err
 }
 
+func (c *Client) UpgradeManagedPostgresDatabase(ctx context.Context, id string, request UpgradeManagedPostgresDatabaseRequest) (ManagedPostgresMajorUpgrade, error) {
+	var out ManagedPostgresMajorUpgrade
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/databases/"+url.PathEscape(id)+"/upgrade", request, &out)
+	return out, err
+}
+
+func (c *Client) GetManagedPostgresMajorUpgrade(ctx context.Context, databaseID, upgradeID string) (ManagedPostgresMajorUpgrade, error) {
+	var out ManagedPostgresMajorUpgrade
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases/"+url.PathEscape(databaseID)+"/upgrades/"+url.PathEscape(upgradeID), nil, &out)
+	return out, err
+}
+
 func (c *Client) ListManagedPostgresDatabases(ctx context.Context) (ManagedPostgresDatabaseList, error) {
 	var out ManagedPostgresDatabaseList
 	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases", nil, &out)
+	return out, err
+}
+
+// ListManagedPostgresDatabasesSelected lists the databases a label selector
+// picks (ADR-20261031100025). An apid without labels ignores the selector and
+// returns every database, so callers match the returned labels again.
+func (c *Client) ListManagedPostgresDatabasesSelected(ctx context.Context, selector string) (ManagedPostgresDatabaseList, error) {
+	var out ManagedPostgresDatabaseList
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases?"+url.Values{"selector": {selector}}.Encode(), nil, &out)
 	return out, err
 }
 

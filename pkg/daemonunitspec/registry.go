@@ -44,6 +44,9 @@ type Role string
 const (
 	RoleControlPlane Role = "control-plane"
 	RoleComputeOnly  Role = "compute-only"
+	// RoleDatabase hosts native managed databases (ADR-1027): vmmd in
+	// database mode and pgproxyd, never app VMs.
+	RoleDatabase Role = "database"
 )
 
 // DaemonsForRole returns the Registry daemon names that run on a host of
@@ -152,6 +155,11 @@ var OptionalRegistry = []Entry{
 	// ADR-20261027090010, ADR-20261027090014: agent runs, switched on by the agentd_service role.
 	{Name: "agentd", Unit: UnitAgentd, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"schedd"}, Probe: ProbeSystemd}},
 	{Name: "gatewayd-public-edge", Unit: UnitGatewaydPublicEdge, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"gatewayd-internal"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8090", ReadyzURL: "http://127.0.0.1:" + ComputeEdgeControlPort + "/readyz"}},
+	// ADR-20261031122757: the S3 gateway on a compute node, turned on per
+	// cell by the manifest's object_storage.compute_nodes.
+	{Name: "s3-gatewayd-compute", Unit: UnitS3GatewayCompute, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"gatewayd-internal"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8084", ReadyzURL: "http://127.0.0.1:" + ComputeObjectGatewayControlPort + "/readyz"}},
+	{Name: "pgproxyd", Unit: UnitPgproxyd, Role: RoleDatabase, Critical: false, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:5432", ReadyzURL: "http://127.0.0.1:9109/readyz"}},
+	{Name: "dbbackupd", Unit: UnitDbbackupd, Role: RoleDatabase, Critical: false, Lifecycle: Lifecycle{Probe: ProbeUnix, ProbeTarget: "/run/faas-dbbackupd/dbbackupd.sock", ReadyzURL: "http://127.0.0.1:9110/readyz"}},
 }
 
 // UnitEntries returns fresh registry storage containing both always-on and

@@ -48,6 +48,9 @@ func (s *server) applySourceRefManifestAsyncRoutes(ctx context.Context, acct sta
 
 	desired := make([]state.CreateEdgeRuleParams, 0, len(matching))
 	for _, route := range matching {
+		if problem := s.edgeRules.AppBoundHostProblem(ctx, app, route.MatchHost); problem != nil {
+			return problem
+		}
 		params, problem := s.sourceRefManifestAsyncRouteParams(ctx, acct, app, route)
 		if problem != nil {
 			return problem

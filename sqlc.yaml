@@ -207,6 +207,7 @@ sql:
 
   - engine: "postgresql"
     queries:
+      - "pkg/state/agent_connection_queries.sql"
       - "pkg/state/audit_anchor_queries.sql"
       - "pkg/state/audit_outbox_delivery_queries.sql"
       - "pkg/state/automation_live_queries.sql"
@@ -214,6 +215,7 @@ sql:
       - "pkg/state/binding_verification_run_queries.sql"
       - "pkg/state/build_dependency_queries.sql"
       - "pkg/state/config_revision_queries.sql"
+      - "pkg/state/cron_delete_queries.sql"
       - "pkg/state/cron_history_queries.sql"
       - "pkg/state/data_api_connection_budget_queries.sql"
       - "pkg/state/data_api_runtime_connections_queries.sql"
@@ -550,6 +552,16 @@ sql:
       go:
         package: sqlc
         out: pkg/state/appquota/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
+    queries: pkg/state/resourcelabels/queries.sql
+    schema: pkg/state/resourcelabels/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/resourcelabels/sqlc
         sql_package: pgx/v5
         emit_methods_with_db_argument: true
         omit_unused_structs: true

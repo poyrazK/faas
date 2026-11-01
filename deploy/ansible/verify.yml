@@ -14,3 +14,68 @@
     faas_verify_strict: true
   roles:
     - role: fleet_verify
+
+# ADR-1027 database nodes run vmmd in database mode, pgproxyd and dbbackupd,
+# which fleet_verify's registered topology does not list. vmmd is required;
+# pgproxyd and dbbackupd are checked when enabled. Each must be active and
+# ready on its overlay ops listener (database_node_metrics_host).
+- name: Verify the converged database nodes
+  hosts: database_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    faas_verify_database_units:
+      - {unit: faas-vmmd.service, port: 9104, required: true}
+      - {unit: faas-pgproxyd.service, port: 9109, required: false}
+      - {unit: faas-dbbackupd.service, port: 9110, required: false}
+  tasks:
+    - name: database verify — read enablement  # noqa: command-instead-of-module (read-only query / no module equivalent)
+      ansible.builtin.command: "systemctl is-enabled {{ item.unit }}"
+      loop: "{{ faas_verify_database_units }}"
+      loop_control:
+        label: "{{ item.unit }}"
+      register: faas_verify_database_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: database verify — fail on a required daemon that is not enabled
+      ansible.builtin.assert:
+        that: item.rc == 0
+        fail_msg: "{{ item.item.unit }} is not enabled on {{ inventory_hostname }} (strict verify)"
+      loop: "{{ faas_verify_database_enabled.results }}"
+      loop_control:
+        label: "{{ item.item.unit }}"
+      when: item.item.required
+
+    - name: database verify — read active state  # noqa: command-instead-of-module (read-only query / no module equivalent)
+      ansible.builtin.command: "systemctl is-active {{ item.item.unit }}"
+      loop: "{{ faas_verify_database_enabled.results | selectattr('rc', 'equalto', 0) | list }}"
+      loop_control:
+        label: "{{ item.item.unit }}"
+      register: faas_verify_database_active
+      changed_when: false
+      failed_when: false
+
+    - name: database verify — fail on an enabled daemon that is not active
+      ansible.builtin.assert:
+        that: item.rc == 0
+        fail_msg: >-
+          {{ item.item.item.unit }} is enabled but {{ item.stdout | default('inactive') }} on
+          {{ inventory_hostname }}. `journalctl -u {{ item.item.item.unit }} -n 200` first.
+      loop: "{{ faas_verify_database_active.results }}"
+      loop_control:
+        label: "{{ item.item.item.unit }}"
+
+    - name: database verify — poll /readyz on the overlay ops listeners
+      ansible.builtin.uri:
+        url: "http://{{ database_node_metrics_host | default('127.0.0.1') }}:{{ item.item.port }}/readyz"
+        status_code: 200
+      loop: "{{ faas_verify_database_enabled.results | selectattr('rc', 'equalto', 0) | list }}"
+      loop_control:
+        label: "{{ item.item.unit }}"
+      register: faas_verify_database_ready
+      retries: 10
+      delay: 3
+      until: faas_verify_database_ready.status == 200

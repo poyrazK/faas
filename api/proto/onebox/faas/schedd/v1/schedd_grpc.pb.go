@@ -28,23 +28,40 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Schedd_Wake_FullMethodName                  = "/onebox.faas.schedd.v1.Schedd/Wake"
-	Schedd_AdmitInstance_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/AdmitInstance"
-	Schedd_ReportActivity_FullMethodName        = "/onebox.faas.schedd.v1.Schedd/ReportActivity"
-	Schedd_ReportFrameworkReady_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ReportFrameworkReady"
-	Schedd_ParkInstance_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ParkInstance"
-	Schedd_ForceColdBootNextWake_FullMethodName = "/onebox.faas.schedd.v1.Schedd/ForceColdBootNextWake"
-	Schedd_ForceRestartInstance_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ForceRestartInstance"
-	Schedd_ListInstanceStats_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/ListInstanceStats"
-	Schedd_StreamAppLogs_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/StreamAppLogs"
-	Schedd_StreamWarmHints_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/StreamWarmHints"
-	Schedd_ReportCapacity_FullMethodName        = "/onebox.faas.schedd.v1.Schedd/ReportCapacity"
-	Schedd_ReportLivenessFailed_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed"
-	Schedd_EnsureWake_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/EnsureWake"
-	Schedd_ReportWorkloadOOM_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM"
-	Schedd_RunAgent_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/RunAgent"
-	Schedd_ReportMemoryPressure_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ReportMemoryPressure"
-	Schedd_ReportSlowRequest_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/ReportSlowRequest"
+	Schedd_Wake_FullMethodName                    = "/onebox.faas.schedd.v1.Schedd/Wake"
+	Schedd_AdmitInstance_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/AdmitInstance"
+	Schedd_ReportActivity_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ReportActivity"
+	Schedd_ReportFrameworkReady_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/ReportFrameworkReady"
+	Schedd_ParkInstance_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/ParkInstance"
+	Schedd_ForceColdBootNextWake_FullMethodName   = "/onebox.faas.schedd.v1.Schedd/ForceColdBootNextWake"
+	Schedd_ForceRestartInstance_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/ForceRestartInstance"
+	Schedd_ListInstanceStats_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ListInstanceStats"
+	Schedd_StreamAppLogs_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/StreamAppLogs"
+	Schedd_StreamWarmHints_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/StreamWarmHints"
+	Schedd_ReportCapacity_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ReportCapacity"
+	Schedd_ReportLivenessFailed_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed"
+	Schedd_EnsureWake_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/EnsureWake"
+	Schedd_ReportWorkloadOOM_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM"
+	Schedd_RunAgent_FullMethodName                = "/onebox.faas.schedd.v1.Schedd/RunAgent"
+	Schedd_ReportMemoryPressure_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/ReportMemoryPressure"
+	Schedd_ReportSlowRequest_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ReportSlowRequest"
+	Schedd_ProvisionDatabase_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ProvisionDatabase"
+	Schedd_WakeDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/WakeDatabase"
+	Schedd_ParkDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/ParkDatabase"
+	Schedd_TouchDatabase_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/TouchDatabase"
+	Schedd_DatabaseAdmin_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/DatabaseAdmin"
+	Schedd_DeleteDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/DeleteDatabase"
+	Schedd_GetDatabase_FullMethodName             = "/onebox.faas.schedd.v1.Schedd/GetDatabase"
+	Schedd_SetDatabaseAlwaysOn_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/SetDatabaseAlwaysOn"
+	Schedd_RestoreDatabase_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/RestoreDatabase"
+	Schedd_DatabaseUsage_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/DatabaseUsage"
+	Schedd_ResizeDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ResizeDatabase"
+	Schedd_UpgradeDatabase_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/UpgradeDatabase"
+	Schedd_ImportDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ImportDatabase"
+	Schedd_DatabaseImportStatus_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/DatabaseImportStatus"
+	Schedd_CaptureDatabaseSnapshot_FullMethodName = "/onebox.faas.schedd.v1.Schedd/CaptureDatabaseSnapshot"
+	Schedd_GetDatabaseSnapshot_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/GetDatabaseSnapshot"
+	Schedd_DeleteDatabaseSnapshot_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/DeleteDatabaseSnapshot"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -352,6 +369,63 @@ type ScheddClient interface {
 	// Reports for instances this schedd does not own are ignored
 	// (queued=false). Additive per ADR-016.
 	ReportSlowRequest(ctx context.Context, in *ReportSlowRequestRequest, opts ...grpc.CallOption) (*ReportSlowRequestAck, error)
+	// Database VMs (ADR-1027): schedd's database scheduler places native
+	// managed databases on database nodes, wakes them within each node's RAM
+	// ceiling and parks idle ones. ProvisionDatabase, DeleteDatabase,
+	// DatabaseAdmin and GetDatabase accept only apid; WakeDatabase,
+	// ParkDatabase and TouchDatabase also accept pgproxyd. Without a
+	// database scheduler they return UNIMPLEMENTED.
+	ProvisionDatabase(ctx context.Context, in *ProvisionDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	WakeDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	ParkDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	TouchDatabase(ctx context.Context, in *TouchDatabaseRequest, opts ...grpc.CallOption) (*TouchDatabaseResponse, error)
+	// DatabaseAdmin runs SQL as the superuser, waking the database first.
+	// The SQL can carry role passwords and is never logged.
+	DatabaseAdmin(ctx context.Context, in *DatabaseAdminRequest, opts ...grpc.CallOption) (*DatabaseAdminResponse, error)
+	DeleteDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DeleteDatabaseResponse, error)
+	GetDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// SetDatabaseAlwaysOn switches a database between scale-to-zero and
+	// always-on (ADR-1027). apid only.
+	SetDatabaseAlwaysOn(ctx context.Context, in *SetDatabaseAlwaysOnRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// RestoreDatabase creates a database as a point-in-time restore of
+	// another (ADR-1027). It returns at once with the database provisioning;
+	// schedd restores it in the background. apid only.
+	RestoreDatabase(ctx context.Context, in *RestoreDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// DatabaseUsage reports a database's metered consumption over a window,
+	// also after it was deleted (ADR-1027). apid only.
+	DatabaseUsage(ctx context.Context, in *DatabaseUsageRequest, opts ...grpc.CallOption) (*DatabaseUsageResponse, error)
+	// ResizeDatabase changes a database's VM shape and grows its volume
+	// (never shrinks it), and turns its synchronous standby on or off
+	// (the production class). A running database restarts on the new
+	// shape. Repeating the request resumes an interrupted resize. apid only.
+	ResizeDatabase(ctx context.Context, in *ResizeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// UpgradeDatabase upgrades a database in place to a later PostgreSQL
+	// major with pg_upgrade (ADR-1027). It returns once the upgrade is
+	// recorded, with the database upgrading; schedd runs it in the
+	// background, parking a running database for it. operation_id names
+	// the upgrade: repeating it reports the upgrade's progress or outcome in
+	// DatabaseRuntime.upgrade and never upgrades twice. apid only.
+	UpgradeDatabase(ctx context.Context, in *UpgradeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// ImportDatabase starts copying another PostgreSQL database into an
+	// empty database of this one (ADR-1027 migration off Neon), waking it.
+	// A running or finished import is reported, not restarted. apid only.
+	ImportDatabase(ctx context.Context, in *ImportDatabaseRequest, opts ...grpc.CallOption) (*DatabaseImportProgress, error)
+	// DatabaseImportStatus reports the import; a database that stopped
+	// since has none. apid only.
+	DatabaseImportStatus(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseImportProgress, error)
+	// CaptureDatabaseSnapshot holds a database's archive at an instant once
+	// the archive reaches it (ADR-1027 environment clones): a restore with
+	// the snapshot recovers to that instant until the snapshot is deleted,
+	// past the database's restore window. Capturing the same name and point
+	// again returns the snapshot; another point under the name is
+	// FAILED_PRECONDITION. apid only.
+	CaptureDatabaseSnapshot(ctx context.Context, in *CaptureDatabaseSnapshotRequest, opts ...grpc.CallOption) (*DatabaseSnapshot, error)
+	// GetDatabaseSnapshot reports a snapshot; NOT_FOUND when it, or its
+	// database, is gone. apid only.
+	GetDatabaseSnapshot(ctx context.Context, in *DatabaseSnapshotRef, opts ...grpc.CallOption) (*DatabaseSnapshot, error)
+	// DeleteDatabaseSnapshot releases a snapshot; a missing one is success.
+	// apid only.
+	DeleteDatabaseSnapshot(ctx context.Context, in *DatabaseSnapshotRef, opts ...grpc.CallOption) (*DeleteDatabaseSnapshotResponse, error)
 }
 
 type scheddClient struct {
@@ -550,6 +624,176 @@ func (c *scheddClient) ReportSlowRequest(ctx context.Context, in *ReportSlowRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReportSlowRequestAck)
 	err := c.cc.Invoke(ctx, Schedd_ReportSlowRequest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) ProvisionDatabase(ctx context.Context, in *ProvisionDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_ProvisionDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) WakeDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_WakeDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) ParkDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_ParkDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) TouchDatabase(ctx context.Context, in *TouchDatabaseRequest, opts ...grpc.CallOption) (*TouchDatabaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TouchDatabaseResponse)
+	err := c.cc.Invoke(ctx, Schedd_TouchDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) DatabaseAdmin(ctx context.Context, in *DatabaseAdminRequest, opts ...grpc.CallOption) (*DatabaseAdminResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseAdminResponse)
+	err := c.cc.Invoke(ctx, Schedd_DatabaseAdmin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) DeleteDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DeleteDatabaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteDatabaseResponse)
+	err := c.cc.Invoke(ctx, Schedd_DeleteDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) GetDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_GetDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) SetDatabaseAlwaysOn(ctx context.Context, in *SetDatabaseAlwaysOnRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_SetDatabaseAlwaysOn_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) RestoreDatabase(ctx context.Context, in *RestoreDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_RestoreDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) DatabaseUsage(ctx context.Context, in *DatabaseUsageRequest, opts ...grpc.CallOption) (*DatabaseUsageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseUsageResponse)
+	err := c.cc.Invoke(ctx, Schedd_DatabaseUsage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) ResizeDatabase(ctx context.Context, in *ResizeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_ResizeDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) UpgradeDatabase(ctx context.Context, in *UpgradeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_UpgradeDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) ImportDatabase(ctx context.Context, in *ImportDatabaseRequest, opts ...grpc.CallOption) (*DatabaseImportProgress, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseImportProgress)
+	err := c.cc.Invoke(ctx, Schedd_ImportDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) DatabaseImportStatus(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseImportProgress, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseImportProgress)
+	err := c.cc.Invoke(ctx, Schedd_DatabaseImportStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) CaptureDatabaseSnapshot(ctx context.Context, in *CaptureDatabaseSnapshotRequest, opts ...grpc.CallOption) (*DatabaseSnapshot, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseSnapshot)
+	err := c.cc.Invoke(ctx, Schedd_CaptureDatabaseSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) GetDatabaseSnapshot(ctx context.Context, in *DatabaseSnapshotRef, opts ...grpc.CallOption) (*DatabaseSnapshot, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseSnapshot)
+	err := c.cc.Invoke(ctx, Schedd_GetDatabaseSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) DeleteDatabaseSnapshot(ctx context.Context, in *DatabaseSnapshotRef, opts ...grpc.CallOption) (*DeleteDatabaseSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteDatabaseSnapshotResponse)
+	err := c.cc.Invoke(ctx, Schedd_DeleteDatabaseSnapshot_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -861,6 +1105,63 @@ type ScheddServer interface {
 	// Reports for instances this schedd does not own are ignored
 	// (queued=false). Additive per ADR-016.
 	ReportSlowRequest(context.Context, *ReportSlowRequestRequest) (*ReportSlowRequestAck, error)
+	// Database VMs (ADR-1027): schedd's database scheduler places native
+	// managed databases on database nodes, wakes them within each node's RAM
+	// ceiling and parks idle ones. ProvisionDatabase, DeleteDatabase,
+	// DatabaseAdmin and GetDatabase accept only apid; WakeDatabase,
+	// ParkDatabase and TouchDatabase also accept pgproxyd. Without a
+	// database scheduler they return UNIMPLEMENTED.
+	ProvisionDatabase(context.Context, *ProvisionDatabaseRequest) (*DatabaseRuntime, error)
+	WakeDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error)
+	ParkDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error)
+	TouchDatabase(context.Context, *TouchDatabaseRequest) (*TouchDatabaseResponse, error)
+	// DatabaseAdmin runs SQL as the superuser, waking the database first.
+	// The SQL can carry role passwords and is never logged.
+	DatabaseAdmin(context.Context, *DatabaseAdminRequest) (*DatabaseAdminResponse, error)
+	DeleteDatabase(context.Context, *DatabaseRef) (*DeleteDatabaseResponse, error)
+	GetDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error)
+	// SetDatabaseAlwaysOn switches a database between scale-to-zero and
+	// always-on (ADR-1027). apid only.
+	SetDatabaseAlwaysOn(context.Context, *SetDatabaseAlwaysOnRequest) (*DatabaseRuntime, error)
+	// RestoreDatabase creates a database as a point-in-time restore of
+	// another (ADR-1027). It returns at once with the database provisioning;
+	// schedd restores it in the background. apid only.
+	RestoreDatabase(context.Context, *RestoreDatabaseRequest) (*DatabaseRuntime, error)
+	// DatabaseUsage reports a database's metered consumption over a window,
+	// also after it was deleted (ADR-1027). apid only.
+	DatabaseUsage(context.Context, *DatabaseUsageRequest) (*DatabaseUsageResponse, error)
+	// ResizeDatabase changes a database's VM shape and grows its volume
+	// (never shrinks it), and turns its synchronous standby on or off
+	// (the production class). A running database restarts on the new
+	// shape. Repeating the request resumes an interrupted resize. apid only.
+	ResizeDatabase(context.Context, *ResizeDatabaseRequest) (*DatabaseRuntime, error)
+	// UpgradeDatabase upgrades a database in place to a later PostgreSQL
+	// major with pg_upgrade (ADR-1027). It returns once the upgrade is
+	// recorded, with the database upgrading; schedd runs it in the
+	// background, parking a running database for it. operation_id names
+	// the upgrade: repeating it reports the upgrade's progress or outcome in
+	// DatabaseRuntime.upgrade and never upgrades twice. apid only.
+	UpgradeDatabase(context.Context, *UpgradeDatabaseRequest) (*DatabaseRuntime, error)
+	// ImportDatabase starts copying another PostgreSQL database into an
+	// empty database of this one (ADR-1027 migration off Neon), waking it.
+	// A running or finished import is reported, not restarted. apid only.
+	ImportDatabase(context.Context, *ImportDatabaseRequest) (*DatabaseImportProgress, error)
+	// DatabaseImportStatus reports the import; a database that stopped
+	// since has none. apid only.
+	DatabaseImportStatus(context.Context, *DatabaseRef) (*DatabaseImportProgress, error)
+	// CaptureDatabaseSnapshot holds a database's archive at an instant once
+	// the archive reaches it (ADR-1027 environment clones): a restore with
+	// the snapshot recovers to that instant until the snapshot is deleted,
+	// past the database's restore window. Capturing the same name and point
+	// again returns the snapshot; another point under the name is
+	// FAILED_PRECONDITION. apid only.
+	CaptureDatabaseSnapshot(context.Context, *CaptureDatabaseSnapshotRequest) (*DatabaseSnapshot, error)
+	// GetDatabaseSnapshot reports a snapshot; NOT_FOUND when it, or its
+	// database, is gone. apid only.
+	GetDatabaseSnapshot(context.Context, *DatabaseSnapshotRef) (*DatabaseSnapshot, error)
+	// DeleteDatabaseSnapshot releases a snapshot; a missing one is success.
+	// apid only.
+	DeleteDatabaseSnapshot(context.Context, *DatabaseSnapshotRef) (*DeleteDatabaseSnapshotResponse, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -921,6 +1222,57 @@ func (UnimplementedScheddServer) ReportMemoryPressure(context.Context, *ReportMe
 }
 func (UnimplementedScheddServer) ReportSlowRequest(context.Context, *ReportSlowRequestRequest) (*ReportSlowRequestAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportSlowRequest not implemented")
+}
+func (UnimplementedScheddServer) ProvisionDatabase(context.Context, *ProvisionDatabaseRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method ProvisionDatabase not implemented")
+}
+func (UnimplementedScheddServer) WakeDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method WakeDatabase not implemented")
+}
+func (UnimplementedScheddServer) ParkDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method ParkDatabase not implemented")
+}
+func (UnimplementedScheddServer) TouchDatabase(context.Context, *TouchDatabaseRequest) (*TouchDatabaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TouchDatabase not implemented")
+}
+func (UnimplementedScheddServer) DatabaseAdmin(context.Context, *DatabaseAdminRequest) (*DatabaseAdminResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DatabaseAdmin not implemented")
+}
+func (UnimplementedScheddServer) DeleteDatabase(context.Context, *DatabaseRef) (*DeleteDatabaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteDatabase not implemented")
+}
+func (UnimplementedScheddServer) GetDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetDatabase not implemented")
+}
+func (UnimplementedScheddServer) SetDatabaseAlwaysOn(context.Context, *SetDatabaseAlwaysOnRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetDatabaseAlwaysOn not implemented")
+}
+func (UnimplementedScheddServer) RestoreDatabase(context.Context, *RestoreDatabaseRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreDatabase not implemented")
+}
+func (UnimplementedScheddServer) DatabaseUsage(context.Context, *DatabaseUsageRequest) (*DatabaseUsageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DatabaseUsage not implemented")
+}
+func (UnimplementedScheddServer) ResizeDatabase(context.Context, *ResizeDatabaseRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResizeDatabase not implemented")
+}
+func (UnimplementedScheddServer) UpgradeDatabase(context.Context, *UpgradeDatabaseRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpgradeDatabase not implemented")
+}
+func (UnimplementedScheddServer) ImportDatabase(context.Context, *ImportDatabaseRequest) (*DatabaseImportProgress, error) {
+	return nil, status.Error(codes.Unimplemented, "method ImportDatabase not implemented")
+}
+func (UnimplementedScheddServer) DatabaseImportStatus(context.Context, *DatabaseRef) (*DatabaseImportProgress, error) {
+	return nil, status.Error(codes.Unimplemented, "method DatabaseImportStatus not implemented")
+}
+func (UnimplementedScheddServer) CaptureDatabaseSnapshot(context.Context, *CaptureDatabaseSnapshotRequest) (*DatabaseSnapshot, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureDatabaseSnapshot not implemented")
+}
+func (UnimplementedScheddServer) GetDatabaseSnapshot(context.Context, *DatabaseSnapshotRef) (*DatabaseSnapshot, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetDatabaseSnapshot not implemented")
+}
+func (UnimplementedScheddServer) DeleteDatabaseSnapshot(context.Context, *DatabaseSnapshotRef) (*DeleteDatabaseSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteDatabaseSnapshot not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -1213,6 +1565,312 @@ func _Schedd_ReportSlowRequest_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_ProvisionDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ProvisionDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ProvisionDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ProvisionDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ProvisionDatabase(ctx, req.(*ProvisionDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_WakeDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).WakeDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_WakeDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).WakeDatabase(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_ParkDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ParkDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ParkDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ParkDatabase(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_TouchDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TouchDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).TouchDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_TouchDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).TouchDatabase(ctx, req.(*TouchDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_DatabaseAdmin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseAdminRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DatabaseAdmin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DatabaseAdmin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DatabaseAdmin(ctx, req.(*DatabaseAdminRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_DeleteDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DeleteDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DeleteDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DeleteDatabase(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_GetDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).GetDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_GetDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).GetDatabase(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_SetDatabaseAlwaysOn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetDatabaseAlwaysOnRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).SetDatabaseAlwaysOn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_SetDatabaseAlwaysOn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).SetDatabaseAlwaysOn(ctx, req.(*SetDatabaseAlwaysOnRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_RestoreDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).RestoreDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_RestoreDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).RestoreDatabase(ctx, req.(*RestoreDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_DatabaseUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseUsageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DatabaseUsage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DatabaseUsage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DatabaseUsage(ctx, req.(*DatabaseUsageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_ResizeDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResizeDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ResizeDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ResizeDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ResizeDatabase(ctx, req.(*ResizeDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_UpgradeDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpgradeDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).UpgradeDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_UpgradeDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).UpgradeDatabase(ctx, req.(*UpgradeDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_ImportDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ImportDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ImportDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ImportDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ImportDatabase(ctx, req.(*ImportDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_DatabaseImportStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DatabaseImportStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DatabaseImportStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DatabaseImportStatus(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_CaptureDatabaseSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureDatabaseSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).CaptureDatabaseSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_CaptureDatabaseSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).CaptureDatabaseSnapshot(ctx, req.(*CaptureDatabaseSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_GetDatabaseSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseSnapshotRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).GetDatabaseSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_GetDatabaseSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).GetDatabaseSnapshot(ctx, req.(*DatabaseSnapshotRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_DeleteDatabaseSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseSnapshotRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DeleteDatabaseSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DeleteDatabaseSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DeleteDatabaseSnapshot(ctx, req.(*DatabaseSnapshotRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1271,6 +1929,74 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportSlowRequest",
 			Handler:    _Schedd_ReportSlowRequest_Handler,
+		},
+		{
+			MethodName: "ProvisionDatabase",
+			Handler:    _Schedd_ProvisionDatabase_Handler,
+		},
+		{
+			MethodName: "WakeDatabase",
+			Handler:    _Schedd_WakeDatabase_Handler,
+		},
+		{
+			MethodName: "ParkDatabase",
+			Handler:    _Schedd_ParkDatabase_Handler,
+		},
+		{
+			MethodName: "TouchDatabase",
+			Handler:    _Schedd_TouchDatabase_Handler,
+		},
+		{
+			MethodName: "DatabaseAdmin",
+			Handler:    _Schedd_DatabaseAdmin_Handler,
+		},
+		{
+			MethodName: "DeleteDatabase",
+			Handler:    _Schedd_DeleteDatabase_Handler,
+		},
+		{
+			MethodName: "GetDatabase",
+			Handler:    _Schedd_GetDatabase_Handler,
+		},
+		{
+			MethodName: "SetDatabaseAlwaysOn",
+			Handler:    _Schedd_SetDatabaseAlwaysOn_Handler,
+		},
+		{
+			MethodName: "RestoreDatabase",
+			Handler:    _Schedd_RestoreDatabase_Handler,
+		},
+		{
+			MethodName: "DatabaseUsage",
+			Handler:    _Schedd_DatabaseUsage_Handler,
+		},
+		{
+			MethodName: "ResizeDatabase",
+			Handler:    _Schedd_ResizeDatabase_Handler,
+		},
+		{
+			MethodName: "UpgradeDatabase",
+			Handler:    _Schedd_UpgradeDatabase_Handler,
+		},
+		{
+			MethodName: "ImportDatabase",
+			Handler:    _Schedd_ImportDatabase_Handler,
+		},
+		{
+			MethodName: "DatabaseImportStatus",
+			Handler:    _Schedd_DatabaseImportStatus_Handler,
+		},
+		{
+			MethodName: "CaptureDatabaseSnapshot",
+			Handler:    _Schedd_CaptureDatabaseSnapshot_Handler,
+		},
+		{
+			MethodName: "GetDatabaseSnapshot",
+			Handler:    _Schedd_GetDatabaseSnapshot_Handler,
+		},
+		{
+			MethodName: "DeleteDatabaseSnapshot",
+			Handler:    _Schedd_DeleteDatabaseSnapshot_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

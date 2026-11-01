@@ -116,7 +116,7 @@ func TestEdgeRulesChallenge_E2E(t *testing.T) {
 	}
 	var pass *http.Cookie
 	for _, c := range (&http.Response{Header: hdr}).Cookies() {
-		if c.Name == "gregale_challenge" {
+		if c.Name == "__Host-gregale_challenge" {
 			pass = c
 		}
 	}
