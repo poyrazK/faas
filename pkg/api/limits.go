@@ -9443,6 +9443,9 @@ const (
 	AgentCallbackMessageIDMaxBytes      = 54
 	AgentCallbackPayloadMaxBytes        = 4096
 	AgentCallbackFailuresPerIPPerMinute = 30
+	// AgentCallbacksPerMinutePerThread bounds the callbacks one apid accepts
+	// for one thread in a minute, so a runaway tool cannot flood the thread.
+	AgentCallbacksPerMinutePerThread = 600
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).

@@ -129,6 +129,22 @@ scrape_configs:
     target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
 {% endif %}
+{% if faas_object_gateway_on_compute_nodes | default(false) | bool %}
+  # ADR-20261031122757 §2: the S3 gateway on every active compute node —
+  # s3-gatewayd in compute mode and its s3 tunnel connector.
+  - job_name: "s3-gatewayd-compute"
+    http_sd_configs:
+      - url: "{{ prom_compute_s3_gateway_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+  - job_name: "cloudflared-s3"
+    http_sd_configs:
+      - url: "{{ prom_compute_cloudflared_s3_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+{% endif %}
 {% if prom_promtail_enabled | default(false) | bool %}
   # Issue #274: discover every compute-host Promtail endpoint from the same
   # active registry, but through a separate HTTP-SD endpoint so the gateway

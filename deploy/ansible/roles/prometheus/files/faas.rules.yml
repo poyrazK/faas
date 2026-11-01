@@ -1983,7 +1983,7 @@ groups:
   - name: faas_compute_edge
     rules:
       - alert: FaasComputeEdgeUnavailable
-        expr: (sum(up{job="gatewayd-public-edge"}) == 0) or (sum(cloudflared_tunnel_ha_connections) == 0)
+        expr: (sum(up{job="gatewayd-public-edge"}) == 0) or (sum(cloudflared_tunnel_ha_connections{job="cloudflared"}) == 0)
         for: 2m
         labels:
           severity: page
@@ -2009,7 +2009,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
       - alert: FaasComputeEdgeConnectorDisconnected
-        expr: (up{job="cloudflared"} == 0) or (cloudflared_tunnel_ha_connections == 0)
+        expr: (up{job="cloudflared"} == 0) or (cloudflared_tunnel_ha_connections{job="cloudflared"} == 0)
         for: 2m
         labels:
           severity: warn
@@ -2046,6 +2046,41 @@ groups:
           summary: "The app edge on {{ $labels.node }} is receiving non-app hosts"
           description: "The compute edge on {{ $labels.node }} answered {{ $value | humanize }} requests/s with 421 for hosts outside the apps domain for 15 minutes. The tunnel's ingress rules likely send platform or custom-domain hosts to the compute edge."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # ADR-20261031122757 §2: the S3 gateway on each compute node (s3-gatewayd
+  # in compute mode and its s3 tunnel connector). Prometheus scrapes the two
+  # jobs only while the cell runs the gateway on its compute nodes, so these
+  # stay silent on fleets without it. One node down is lost capacity;
+  # Cloudflare sends its share to the other connectors.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_compute_object_gateway
+    rules:
+      - alert: FaasComputeObjectGatewayDown
+        expr: up{job="s3-gatewayd-compute"} == 0
+        for: 2m
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+          public_status: internal
+        annotations:
+          summary: "The S3 gateway on {{ $labels.node }} is not answering"
+          description: "Prometheus cannot scrape s3-gatewayd's control listener on {{ $labels.node }}. Its s3 tunnel connector leaves the tunnel once the gateway's unit stops; check faas-s3-gatewayd-compute on that node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
+      - alert: FaasComputeObjectGatewayConnectorDisconnected
+        expr: (up{job="cloudflared-s3"} == 0) or (cloudflared_tunnel_ha_connections{job="cloudflared-s3"} == 0)
+        for: 2m
+        labels:
+          severity: warn
+          component: cloudflared
+          family: object_storage
+          public_status: internal
+        annotations:
+          summary: "The s3 tunnel connector on {{ $labels.node }} is not connected"
+          description: "faas-cloudflared-s3 on {{ $labels.node }} is down or holds no tunnel connections. The node serves no S3 traffic until it reconnects; the other connectors carry its share. A node whose s3 tunnel token is not staged yet stays here."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
 
   # ────────────────────────────────────────────────────────────────────
   # Dead-man's switch. FaasWatchdog fires permanently; Alertmanager routes
@@ -4012,7 +4047,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Provider {{ $labels.provider }} push drift > 0.5% for 1h"
-          description: "Provider push totals are diverging from local usage_minutes totals by more than 0.5% for an hour (ADR-049 §B.1). Revenue leakage if local > pushed, refund liability if pushed > local. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
+          description: "Provider usage totals are diverging from the usage meterd recorded as delivered (billing_usage_deliveries) by more than 0.5% for an hour (ADR-049 §B.1, ADR-20261031161842). Revenue leakage if delivered > provider, refund liability if provider > delivered. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
       - alert: BillingDriftAccount
         expr: meterd_billing_drift_ratio > 0.05

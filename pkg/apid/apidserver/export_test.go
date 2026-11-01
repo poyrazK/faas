@@ -247,6 +247,8 @@ const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
 const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
 const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
+const S3GatewayComputeMetricsDiscoveryPath = s3GatewayComputeMetricsDiscoveryPath
+const CloudflaredS3MetricsDiscoveryPath = cloudflaredS3MetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
 
 // sessionCookie is the legacy session cookie name test fixtures send; the
@@ -1483,6 +1485,12 @@ func (r *server) GatewaydPublicEdgeMetricsDiscovery(p0 http.ResponseWriter, p1 *
 }
 func (r *server) CloudflaredMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.cloudflaredMetricsDiscovery(p0, p1)
+}
+func (r *server) S3GatewayComputeMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.s3GatewayComputeMetricsDiscovery(p0, p1)
+}
+func (r *server) CloudflaredS3MetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.cloudflaredS3MetricsDiscovery(p0, p1)
 }
 func (r *server) SendTestAlertPresetCore(p0 context.Context, p1 state.Account, p2 string, p3 string) (api.TestAlertPresetResponse, *api.Problem) {
 	return r.sendTestAlertPresetCore(p0, p1, p2, p3)

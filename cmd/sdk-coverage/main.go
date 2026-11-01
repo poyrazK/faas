@@ -296,6 +296,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/agents":                                 true,
 	"POST /v1/agent-callbacks":                        true,
 	"POST /v1/agent-callbacks/{token}":                true,
+	"POST /v1/agent-callbacks/revocations":            true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,

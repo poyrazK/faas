@@ -310,9 +310,18 @@ func renderObjectStorageGatewayVars(o manifest.ObjectStorage) string {
 // renderComputeObjectGatewayVars runs the object gateway on a compute host
 // (ADR-20261031122757): the provider registry, the gateway-only credential,
 // and the host's share of its port in bytes per second, from its declared
-// port speed and api.ObjectGatewayNodePortSharePercent.
+// port speed and api.ObjectGatewayNodePortSharePercent. The control plane
+// gets only the switch, which turns on its scrape of the compute gateways
+// and their s3 tunnel connectors.
 func renderComputeObjectGatewayVars(o manifest.ObjectStorage, host manifest.Host) string {
-	if !o.ComputeNodes || host.Role != roleComputeOnly {
+	if !o.ComputeNodes {
+		return ""
+	}
+	switch host.Role {
+	case roleControlPlane:
+		return "faas_object_gateway_on_compute_nodes: true\n"
+	case roleComputeOnly:
+	default:
 		return ""
 	}
 	share := int64(host.PortMbps) * 1_000_000 / 8 * api.ObjectGatewayNodePortSharePercent / 100
