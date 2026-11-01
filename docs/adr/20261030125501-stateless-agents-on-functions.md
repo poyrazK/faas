@@ -153,6 +153,13 @@ Each step is one PR behind the `agents` capability.
      - It deploys the template with a managed Postgres store and publishes a question.
      - It reads the tool call, parks the agent, and posts the tool's result to the callback URL twice: it lands once.
      - It reads the answer the woken agent wrote, and checks that the answered thread refuses its callback URL.
+
+   **Step 4b, part one (2026-11-01): callback URLs take RAP's own messages**, as §3 decides. This is what lets Infinity's RAP tools post unchanged. RAP is pinned to the spec in `hydro-project/infinity` at 1abc6fcff1 (2026-10-27), the one its 0.2.0 crates implement. That answers half of open question 1; MCP's asynchronous tasks stay open.
+   - A body with a `type` is a RAP callback. Its `group_id` must be the URL's thread, and the inbox message's data is the RAP message itself.
+   - `tool_result` becomes kind `tool_result`. Its `message_id` is `rap-tool-result-` plus the call ID, or a digest of an ID that is not a valid message ID, so a retried result lands once.
+   - `subscription_event` becomes kind `event`. It carries no identity of its own, so each post is a new message, as in Infinity's receiver.
+   - `view_update` is acknowledged and not published: it is display state, not agent input.
+   - `oauth` and `user_choice` are refused until the platform has a flow for them.
 5. The platform tools: `gregale.sleep`, `gregale.run`, then `gregale.github.subscribe`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 

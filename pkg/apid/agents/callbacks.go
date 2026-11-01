@@ -6,7 +6,8 @@ package agents
 // thread's lane of the endpoint's agent-inbox channel, which the app's
 // realtime trigger delivers as the thread's next slice. The URL's token is
 // the only credential, and it cannot address another thread, endpoint or
-// account. A repeated message_id lands once.
+// account. A repeated message_id lands once. A tool may also post RAP's own
+// callback messages (rap_callback.go).
 
 import (
 	"bytes"
@@ -109,12 +110,15 @@ func (h *Handler) ReceiveCallback(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var post api.AgentCallbackPost
-	if err := httpkit.DecodeJSONSized(r, &post, api.AgentCallbackPayloadMaxBytes+callbackEnvelopeMaxBytes); err != nil {
-		api.WriteProblem(w, api.ErrValidation("the body must be a JSON callback of at most the payload limit"))
+	post, publish, problem := decodeCallbackPost(r, grant)
+	if problem == nil && !publish {
+		httpkit.WriteJSON(w, http.StatusAccepted, api.AgentCallbackReceipt{ThreadID: grant.ThreadID})
 		return
 	}
-	if problem := checkCallbackPost(grant, post); problem != nil {
+	if problem == nil {
+		problem = checkCallbackPost(grant, post)
+	}
+	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
