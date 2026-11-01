@@ -287,6 +287,8 @@ type Querier interface {
 	CancelRuntimeUpgradeBuilds(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error)
 	CancelRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg CancelRuntimeUpgradeCandidateParams) error
 	CancelRuntimeUpgradeReleaseTasks(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
+	// Each reservation is released on the counter it was taken from, which is a
+	// company's pooled counter once its reservations are pooled (ADR-202610171908).
 	CancelTrafficAppInvocations(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	// Explicit cancel from DELETE /v1/uploads/{id}. The handler also
 	// removes the .part file via os.Remove AFTER the UPDATE commits —
@@ -3698,6 +3700,7 @@ type Querier interface {
 	// the broker acknowledges it. The current delivery handle can be Acked
 	// without dispatching the application again.
 	ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error)
+	// aborted_canary is the H5-62 candidate: aborted before its rollout completed.
 	ListTrafficSiblingsInScope(ctx context.Context, db DBTX, arg ListTrafficSiblingsInScopeParams) ([]ListTrafficSiblingsInScopeRow, error)
 	ListTriggerDeadLetter(ctx context.Context, db DBTX, arg ListTriggerDeadLetterParams) ([]TriggerDeadLetter, error)
 	// Used by GET /v1/triggers/{id}/records (dashboard + apid handler).

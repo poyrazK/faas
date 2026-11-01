@@ -1,16 +1,23 @@
 ---
-- name: s3_gateway_compute_service — stop and disable the gateway
+# The connector first: it leaves the s3 tunnel and drains through the
+# still-running gateway. The token stays; the operator revokes it in
+# Cloudflare.
+- name: s3_gateway_compute_service — stop and disable the connector and the gateway
   ansible.builtin.systemd_service:
-    name: faas-s3-gatewayd-compute.service
+    name: "{{ item }}"
     state: stopped
     enabled: false
+  loop:
+    - faas-cloudflared-s3.service
+    - faas-s3-gatewayd-compute.service
   failed_when: false
 
-- name: s3_gateway_compute_service — remove the gateway's unit, drop-ins, registry and credential
+- name: s3_gateway_compute_service — remove the gateway's and connector's units, drop-ins, registry and credential
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
   loop:
+    - /etc/systemd/system/faas-cloudflared-s3.service
     - /etc/systemd/system/faas-s3-gatewayd-compute.service
     - /etc/systemd/system/faas-s3-gatewayd-compute.service.d
     - /etc/systemd/system/faas-gatewayd-internal.service.d/50-faas-s3-gateway-wants.conf

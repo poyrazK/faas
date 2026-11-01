@@ -51,6 +51,7 @@ alloy_journal_units:
   - faas-s3-gatewayd.service
   - faas-s3-gatewayd-compute.service
   - faas-cloudflared.service
+  - faas-cloudflared-s3.service
   # Host helpers and timers.
   - faas-serving-probe.service
   - faas-cgroup-metrics.service

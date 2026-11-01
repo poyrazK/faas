@@ -21,7 +21,7 @@ EnvironmentFile=-/etc/faas/secrets/object-storage/gateway-provider.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json
 Environment=FAAS_S3_GATEWAY_LISTEN_ADDR=127.0.0.1:8084
-Environment=FAAS_S3_GATEWAY_CONTROL_ADDR=127.0.0.1:9096
+Environment=FAAS_S3_GATEWAY_CONTROL_ADDR=0.0.0.0:9096
 Environment=FAAS_S3_GATEWAY_SPOOL_DIR=/var/spool/faas/s3-gatewayd
 NoNewPrivileges=yes
 ProtectSystem=strict

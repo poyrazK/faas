@@ -12,3 +12,16 @@
     state: restarted
   listen: restart faas-s3-gatewayd-compute
   when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+# try-restart touches only an active connector: one whose token is not staged
+# yet stays inactive.
+- name: s3_gateway_compute_service — daemon-reload for the connector
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-cloudflared-s3
+
+- name: s3_gateway_compute_service — try-restart faas-cloudflared-s3
+  ansible.builtin.command: systemctl try-restart faas-cloudflared-s3.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-cloudflared-s3
+  when: not (faas_join_defer_service_handlers | default(false) | bool)

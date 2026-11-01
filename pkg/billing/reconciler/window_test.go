@@ -1,4 +1,4 @@
-// adr: 049 §B.1 — compare the same completed hours that billing can deliver.
+// adr: 049 §B.1 — compare the same completed hours that billing can deliver; 20261031161842 receipts as the local side.
 package reconciler
 
 import (
@@ -38,8 +38,15 @@ func TestReconciliationUsesOnlyCompletedBillingHours(t *testing.T) {
 			now := time.Date(2026, 9, 15, 9, 25, 0, 0, time.UTC)
 			end := now.Truncate(time.Hour)
 			start := end.Add(-window.Truncate(time.Hour))
+			delivered := map[time.Time]int64{}
 			for i, at := range []time.Time{start.Add(-time.Minute), start.Add(10 * time.Minute), end.Add(-time.Minute), end.Add(10 * time.Minute)} {
 				if err := store.AppendUsage(ctx, acct.ID, "app", "instance", at, int64(100*(i+1)), 0, 0, 0, 0, 0, 0, 0); err != nil {
+					t.Fatal(err)
+				}
+				delivered[at.Truncate(time.Hour)] += int64(100 * (i + 1))
+			}
+			for hour, quantity := range delivered {
+				if err := store.RecordBillingUsageDelivery(ctx, "stripe", acct.ID, hour, quantity); err != nil {
 					t.Fatal(err)
 				}
 			}
