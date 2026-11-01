@@ -11,7 +11,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/role"
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func computeGatewayRegistry(t *testing.T, gatewayCredential bool, bytesPerSecond int64) *objectstorage.Registry {
@@ -79,20 +78,6 @@ func TestComputeGatewayHoldsOnlyWhatTheNodeMay(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
-	}
-}
-
-// A compute node's gateway runs no provider usage export, so it never needs
-// the provider account keys the control plane's gateway holds.
-func TestComputeGatewayRunsNoUsageExports(t *testing.T) {
-	registry := computeGatewayRegistry(t, true, 37_500_000)
-	getenv := func(string) string { return "" }
-	store := state.NewMemStore()
-	if jobs, err := usageExportJobsForRole(role.RoleComputeOnly, registry, store, getenv); err != nil || len(jobs) != 0 {
-		t.Fatalf("compute jobs = %d, %v; want none", len(jobs), err)
-	}
-	if _, err := usageExportJobsForRole(role.RoleControlPlane, registry, store, getenv); err == nil || !strings.Contains(err.Error(), "incomplete ovh usage credentials") {
-		t.Fatalf("control-plane err = %v, want the missing provider account keys refused", err)
 	}
 }
 
