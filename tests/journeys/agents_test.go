@@ -21,12 +21,12 @@ import (
 const agentThreadWait = 3 * time.Minute
 
 type agentJourney struct {
-	tg               *target
-	pg               *postgresJourney // the thread store's database
-	app, base, db    string
-	key, readToken   string
+	tg                 *target
+	pg                 *postgresJourney // the thread store's database
+	app, base, db      string
+	key, readToken     string
 	endpoint, threadID string
-	callbackURL      string
+	callbackURL        string
 }
 
 // TestStatelessAgent is the two-turn stateless agent journey (row 167).
