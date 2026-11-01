@@ -59,6 +59,7 @@
     {"path": "issues", "source": "docs/issues.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "jobs", "source": "docs/jobs.md"},
     {"path": "kubernetes", "source": "docs/kubernetes.md", "unpublished": "preview capability; published when it reaches beta"},
+    {"path": "labels", "source": "docs/labels.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "managed-postgres", "source": "docs/postgres.md"},
     {"path": "mcp", "source": "docs/mcp.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "multi-service", "source": "docs/multi-service-apps.md"},
