@@ -236,6 +236,32 @@ type leasedRealtimeOwner struct {
 	publishTargetCache        *managedRealtimePublishTargetCache
 	publishTargetCacheOnce    sync.Once
 	publishTargetLookups      singleflight.Group
+	// missing remembers connections a complete discovery did not find, so a
+	// burst of operations on made-up IDs does not list every node's
+	// connections each time.
+	missingMu sync.Mutex
+	missing   map[[2]string]time.Time
+}
+
+const (
+	managedRealtimeOwnerMissTTL = 5 * time.Second
+	managedRealtimeOwnerMissMax = 4096
+)
+
+func (o *leasedRealtimeOwner) recentlyMissing(endpointID, connectionID string, now time.Time) bool {
+	o.missingMu.Lock()
+	defer o.missingMu.Unlock()
+	expires, ok := o.missing[[2]string{endpointID, connectionID}]
+	return ok && now.Before(expires)
+}
+
+func (o *leasedRealtimeOwner) rememberMissing(endpointID, connectionID string, now time.Time) {
+	o.missingMu.Lock()
+	defer o.missingMu.Unlock()
+	if o.missing == nil || len(o.missing) >= managedRealtimeOwnerMissMax {
+		o.missing = make(map[[2]string]time.Time)
+	}
+	o.missing[[2]string{endpointID, connectionID}] = now.Add(managedRealtimeOwnerMissTTL)
 }
 
 func NewLeasedRealtimeOwner(registry state.ManagedRealtimeConnectionOwnerStore, nodes interface {
@@ -373,7 +399,15 @@ func (o *leasedRealtimeOwner) resolve(ctx context.Context, endpointID, connectio
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return state.ManagedRealtimeConnectionOwner{}, nil, fmt.Errorf("%w: read directory: %w", errManagedRealtimeOwnerUnavailable, err)
 	}
-	return o.discover(ctx, endpointID, connectionID)
+	now := time.Now()
+	if o.recentlyMissing(endpointID, connectionID, now) {
+		return state.ManagedRealtimeConnectionOwner{}, nil, realtime.ErrConnectionNotFound
+	}
+	lease, op, err := o.discover(ctx, endpointID, connectionID)
+	if errors.Is(err, realtime.ErrConnectionNotFound) {
+		o.rememberMissing(endpointID, connectionID, now)
+	}
+	return lease, op, err
 }
 
 func (o *leasedRealtimeOwner) connectionOperation(ctx context.Context, endpointID, connectionID string, closeAfter bool, fn func(state.ManagedRealtimeConnectionOwner, RealtimeNodeOperator) error) error {
