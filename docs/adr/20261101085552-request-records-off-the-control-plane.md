@@ -23,13 +23,18 @@
        (3, 7 or 14 days by plan). A per-node disk budget in `pkg/api/limits.go`
        bounds the directory. Past the budget the oldest hour goes first, and
        `gateway_request_id_journal_evicted_total` counts it.
-     - apid resolves a public request ID with a new `LookupRequestID` RPC on
-       each registered compute gateway's existing mTLS listener. It sends the
-       account, app, identifier and window, and gets back the record or a miss.
-       apid asks every live node at once, with a one-second deadline each, and
-       takes the newest hit. If a node did not answer, the API reports the
-       answer as `incomplete`. The gateway admits only apid's client
-       certificate and scopes every read to the account and app apid sends.
+     - apid resolves a public request ID through the `RequestIDLookups`
+       service it serves beside `RequestTelemetry`. Each gateway that keeps a
+       local journal holds one stream open to apid over its existing
+       request-telemetry connection: its first message names its node, then
+       apid sends questions (account, app, identifier, window) down the stream
+       and the gateway answers each one. Compute nodes take no new inbound port
+       or certificate, and apid knows exactly which gateways are connected.
+       apid asks every connected gateway at once, with a one-second deadline
+       each, and takes the newest hit. A gateway that does not answer is
+       logged as an incomplete lookup. The private mTLS listener is the trust
+       boundary, as for the other gateway telemetry services. The debug lookup
+       asks the nodes only after the control-plane table misses.
      - Request IDs the platform mints carry their minting time: the first 48
        bits are Unix milliseconds (UUIDv7 layout), the rest random, still 32
        hex characters. For such IDs apid narrows the window to that time ±1
@@ -83,8 +88,8 @@
     unreachable or retired node does not resolve, and the answer says so.
     ADR-634 already accepts journal loss; sampled telemetry and traces still
     cover those requests.
-  - apid gets its first outbound path to compute gateways: read-only, mTLS,
-    one RPC.
+  - apid gains a read-only lookup path into compute gateways, carried on the
+    connection gateways already open to it.
   - Compute disk carries the journal, estimated at ~60 bytes per record with
     its index. 1,000 req/s for 14 days is roughly 70 GB across the fleet, and
     the per-node budget caps it.
@@ -92,17 +97,19 @@
     of ~5 s; the dashboards that read them are minute-grained. A gateway crash
     or restart loses the open minute, not one batch, which widens ADR-634's
     loss allowance for telemetry.
-  - Mixed versions: the RPC is additive. apid keeps reading the
-    control-plane table for gateways that answer `Unimplemented`. Gateways
-    keep sending journal batches to apid until the `request_id_journal_local`
-    switch is on (default off). The publisher change sits behind
-    `request_telemetry_minute_collapse` (default off).
+  - Mixed versions: the service is additive. An apid that predates it answers
+    `Unimplemented`, and the gateway retries every five minutes. apid reads the
+    control-plane table first throughout. Gateways keep sending journal
+    batches to apid until `FAAS_REQUEST_ID_JOURNAL_LOCAL=1` (default off),
+    which is turned on only once every apid serves the lookups. The publisher change sits behind
+    `FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE` (default off).
 - **Rollout:** one step per release, each followed by the 300 → 600 req/s
   step test and the `pg_stat_statements` load-vs-idle diff.
   1. Telemetry minute collapse.
   2. Time-prefixed request IDs.
-  3. `LookupRequestID` and apid's fan-out, reading both sources.
-  4. Local journal writes behind `request_id_journal_local`.
+  3. The node-local store, the `RequestIDLookups` stream and apid's fan-out,
+     reading both sources.
+  4. Local journal writes behind `FAAS_REQUEST_ID_JOURNAL_LOCAL`.
   5. 14 days after the switch is on everywhere, drop `request_id_journal`.
 
   Target: fewer than 0.05 control-plane statements per warm request, and
