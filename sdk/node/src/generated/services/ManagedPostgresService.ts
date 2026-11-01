@@ -576,6 +576,7 @@ export class ManagedPostgresService {
   }
   /**
    * Restore a database into a new managed PostgreSQL database
+   * The restored database counts toward the plan's database limit. A restore may go one database past the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once the account has room; otherwise its delete is scheduled then. A second restore past the limit while a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
    * @returns Problem Invalid point in time, plan limit, or provider error
    * @returns ManagedPostgresDatabase Restore accepted or ready
    * @throws ApiError

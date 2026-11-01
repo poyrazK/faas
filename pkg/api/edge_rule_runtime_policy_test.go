@@ -8,7 +8,8 @@ import (
 )
 
 func TestExecutionBudgetClampsBeforeDurationConversion(t *testing.T) {
-	rule := EdgeRuleBudgetAction{BudgetMs: 2400}
+	// Naming the header opts the rule in to raising overrides.
+	rule := EdgeRuleBudgetAction{BudgetMs: 2400, AllowOverrideHeader: RequestBudgetDefaultOverrideHeader}
 	// The header accepts at most MaxInt32 (#4968); anything larger is invalid below.
 	for _, value := range []string{"2147483647", "6500"} {
 		t.Run(value, func(t *testing.T) {
@@ -22,6 +23,33 @@ func TestExecutionBudgetClampsBeforeDurationConversion(t *testing.T) {
 	policy := ResolveRequestExecutionBudget(3000, 5000, math.MaxInt, nil, nil)
 	if policy.ConfiguredMS != math.MaxInt64 || policy.BudgetMS != 5000 || policy.Source != "app" {
 		t.Fatalf("app timeout wrapped before clamp: %+v", policy)
+	}
+}
+
+// Any caller can send the default header, so without allow_override_header it
+// may only shorten the rule's budget (ADR-093 amendment 2026-11-01).
+func TestExecutionBudgetDefaultHeaderOnlyShortensTheRule(t *testing.T) {
+	header := func(value string) http.Header {
+		return http.Header{http.CanonicalHeaderKey(RequestBudgetDefaultOverrideHeader): []string{value}}
+	}
+	for _, tc := range []struct {
+		name      string
+		rule      EdgeRuleBudgetAction
+		value     string
+		budget    int64
+		source    string
+		overrides string
+	}{
+		{"default header shortens", EdgeRuleBudgetAction{BudgetMs: 2400}, "1000", 1000, "header_override", "applied"},
+		{"default header cannot raise", EdgeRuleBudgetAction{BudgetMs: 2400}, "4000", 2400, "rule", "ignored_raise"},
+		{"named header may raise", EdgeRuleBudgetAction{BudgetMs: 2400, AllowOverrideHeader: RequestBudgetDefaultOverrideHeader}, "4000", 4000, "header_override", "applied"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := ResolveRequestExecutionBudget(3000, 5000, 0, &tc.rule, header(tc.value))
+			if policy.BudgetMS != tc.budget || policy.Source != tc.source || policy.OverrideStatus != tc.overrides {
+				t.Fatalf("override %s on %+v = %+v", tc.value, tc.rule, policy)
+			}
+		})
 	}
 }
 

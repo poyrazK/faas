@@ -1,0 +1,78 @@
+---
+# The storage domain on a compute node that runs the S3 gateway
+# (ADR-20261031122757 §4, ADR 20261022111812). Only once the domain is
+# contracted: then every S3 credential opens with the domain alone, and the
+# compute unit has no fleet or host identity to fall back on. The node gets
+# the identity only, never the recipient, and apid stays the only writer.
+- name: seal_domains — require the contracted storage domain on a compute node
+  ansible.builtin.assert:
+    that:
+      - faas_seal_domain_storage_identity_src | length > 0
+      - faas_seal_domain_storage_writes == 'domain'
+      - faas_seal_domain_storage_contracted | bool
+    fail_msg: >-
+      The S3 gateway runs on a compute node only once the storage seal domain
+      is contracted (faas_seal_domain_storage_writes=domain and
+      faas_seal_domain_storage_contracted), so the node never needs the fleet
+      identity (ADR-20261031122757 §4). Set
+      faas_seal_domain_storage_identity_src to the domain identity.
+
+- name: seal_domains — install the storage domain identity on the compute node
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_storage_identity_src }}"
+    dest: /etc/faas/secrets/domains/storage.age
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-s3-gatewayd-compute for seal domains
+
+- name: seal_domains — install the previous storage domain identity on the compute node
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_storage_previous_identity_src }}"
+    dest: /etc/faas/secrets/domains/storage.age.previous
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-s3-gatewayd-compute for seal domains
+  when: faas_seal_domain_storage_previous_identity_src | length > 0
+
+- name: seal_domains — remove the previous storage domain identity on the compute node
+  ansible.builtin.file:
+    path: /etc/faas/secrets/domains/storage.age.previous
+    state: absent
+  notify: restart faas-s3-gatewayd-compute for seal domains
+  when: faas_seal_domain_storage_previous_identity_src | length == 0
+
+- name: seal_domains — create the compute gateway's drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-s3-gatewayd-compute.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: seal_domains — give the compute gateway the storage domain identity
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-storage-reader.conf.j2
+    dest: /etc/systemd/system/faas-s3-gatewayd-compute.service.d/60-faas-seal-domain-storage.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-s3-gatewayd-compute for seal domains
+
+- name: seal_domains — prove this node opens the storage domain probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - storage
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --metrics-file
+      - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_storage.prom"
+      - --json
+  changed_when: false

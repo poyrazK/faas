@@ -253,3 +253,76 @@ func TestPersonalOrganizationUsesAccountFreezes(t *testing.T) {
 		t.Fatalf("personal organization freeze = %d %s, want 409", rec.Code, rec.Body)
 	}
 }
+
+// memberKey mints another org key for member, with scopes, as a CI key is.
+func memberKey(t *testing.T, store state.Store, org state.Org, member state.Account, scopes []string) map[string]string {
+	t.Helper()
+	plain, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateOrgAPIKey(t.Context(), org.ID, member.ID, hash, "ci", scopes, nil); err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{"Authorization": "Bearer " + plain}
+}
+
+// adr: 20261020085706 amendment 5 — a key that can only deploy, as CI holds,
+// cannot switch off the guards it deploys past: lifting a freeze, deleting a
+// gate and changing or removing the approval policy need the admin scope,
+// even on an admin's key (release review 2026-11-01).
+func TestDeployKeysCannotSwitchOffReleaseGuards(t *testing.T) {
+	e, org := newCompanyFreezeApp(t, "guard-ci")
+	store := *e.Store()
+	admin, adminCLI := sharedAppMember(t, store, org, state.OrgRoleAdmin, api.ScopesAdminOnly)
+	ci := memberKey(t, store, org, admin, []string{api.ScopeDeployWrite})
+	var frz api.ReleaseFreeze
+	if code, body := orgFreezeDo(t, e, adminCLI, "POST", "/v1/apps/guard-ci/freezes",
+		api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "release train"}, &frz); code != http.StatusCreated {
+		t.Fatalf("admin freezes = %d %s", code, body)
+	}
+	for _, req := range []struct {
+		method, path string
+		body         any
+	}{
+		{"DELETE", "/v1/apps/guard-ci/freezes/" + frz.ID, nil},
+		{"DELETE", "/v1/orgs/" + org.Slug + "/freezes/" + frz.ID, nil},
+		{"DELETE", "/v1/apps/guard-ci/release-gates/checkout", nil},
+		{"PUT", "/v1/apps/guard-ci/release-approval-policy", api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}},
+		{"DELETE", "/v1/apps/guard-ci/release-approval-policy", nil},
+	} {
+		if code, body := orgFreezeDo(t, e, ci, req.method, req.path, req.body, nil); code != http.StatusForbidden || !strings.Contains(body, api.CodeForbidden) {
+			t.Fatalf("deploy key %s %s = %d %s, want 403 %s", req.method, req.path, code, body, api.CodeForbidden)
+		}
+	}
+	if code, body := orgFreezeDo(t, e, adminCLI, "DELETE", "/v1/apps/guard-ci/freezes/"+frz.ID, nil, nil); code != http.StatusOK {
+		t.Fatalf("admin lifts with an admin key = %d %s", code, body)
+	}
+}
+
+// adr: 20261019071733 amendment 5 — overriding a company's freeze needs the
+// right to lift it: a developer cannot ship past an admin's freeze, nor can
+// a key that can only deploy, while the admin signed in can (release review
+// 2026-11-01).
+func TestCompanyFreezeOverrideNeedsTheRightToLiftIt(t *testing.T) {
+	e, org := newCompanyFreezeApp(t, "frz-ovr")
+	store := *e.Store()
+	admin, adminCLI := sharedAppMember(t, store, org, state.OrgRoleAdmin, api.ScopesAdminOnly)
+	_, developer := sharedAppMember(t, store, org, state.OrgRoleDeveloper, api.ScopesAdminOnly)
+	ci := memberKey(t, store, org, admin, []string{api.ScopeDeployWrite})
+	if code, body := orgFreezeDo(t, e, adminCLI, "POST", "/v1/orgs/"+org.Slug+"/freezes",
+		api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "release train"}, nil); code != http.StatusCreated {
+		t.Fatalf("admin freezes the company = %d %s", code, body)
+	}
+	deploy := api.CreateDeploymentRequest{Image: imageRef('c'), OverrideFreeze: "hotfix 4711"}
+	for name, headers := range map[string]map[string]string{"developer": developer, "admin's deploy key": ci} {
+		code, body := orgFreezeDo(t, e, headers, "POST", "/v1/apps/frz-ovr/deployments", deploy, nil)
+		if code != http.StatusForbidden || !strings.Contains(body, api.CodeReleaseFreezeOverrideNotAllowed) {
+			t.Fatalf("%s overrides the company freeze = %d %s, want 403 %s", name, code, body, api.CodeReleaseFreezeOverrideNotAllowed)
+		}
+	}
+	code, body := orgFreezeDo(t, e, adminCLI, "POST", "/v1/apps/frz-ovr/deployments", deploy, nil)
+	if p := decodeProblemCode([]byte(body)); p == api.CodeReleaseFreezeOverrideNotAllowed || p == api.CodeReleaseFrozen {
+		t.Fatalf("admin overrides the company freeze = %d %s, want it accepted", code, body)
+	}
+}

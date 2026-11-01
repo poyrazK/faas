@@ -117,6 +117,7 @@ func (s *Service) reconcile(
 		return out, err
 	}
 	out.Added = applied.Added
+	s.labelAddedApps(ctx, applied.Added, scan.Workloads)
 	out.Changed = applied.Changed
 	out.Removed = applied.Removed
 	out.Alerts = append(out.Alerts, applied.Alerts...)

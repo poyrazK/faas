@@ -10023,6 +10023,7 @@
       "purge_after",
       "region",
       "restore_point_in_time",
+      "restore_slot_until",
       "restore_source_database_id",
       "restore_source_resource_id",
       "restore_window_seconds",
@@ -19559,6 +19560,16 @@
       "run_id",
       "samples",
       "unpaused_private_mb_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_callback_revocations",
+    "columns": [
+      "account_id",
+      "endpoint_id",
+      "revoked_at",
+      "thread_id"
     ],
     "kind": "operational"
   },
