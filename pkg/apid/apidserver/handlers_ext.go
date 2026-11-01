@@ -173,6 +173,13 @@ func validatePerInstanceConcurrency(requested int, acct state.Account, app state
 }
 
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
+	// An explicit min_instances is the floor even beside a scaling policy,
+	// whose min_instances cannot say "not set". The store writes the policy's
+	// floor over min_instances, so a policy copied from the app kept the old
+	// floor: `app <slug> --min 0 --max-queue-depth 40` left 2 (PulseWatch F12).
+	if req.MinInstances != nil && req.ScalingPolicy != nil {
+		req.ScalingPolicy.MinInstances = *req.MinInstances
+	}
 	if req.RetryPolicy != nil {
 		if _, problem := marshalAppRetryPolicy(req.RetryPolicy); problem != nil {
 			return problem
@@ -2314,6 +2321,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 				status = string(current.Status)
 			}
 			api.WriteProblem(w, api.ErrDeploymentNotLive(status))
+		case errors.Is(err, state.ErrTrafficResidualUnassigned):
+			api.WriteProblem(w, api.ErrTrafficResidualUnassigned(100-req.TrafficPercent))
 		case errors.Is(err, state.ErrTrafficPercentSumInvalid):
 			// Defensive 409 — unreachable in the live-siblings case
 			// (largest-remainder redistribution is Σ=100 by

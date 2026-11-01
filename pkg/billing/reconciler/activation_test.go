@@ -1,4 +1,4 @@
-// adr: 049 — drift compares usage owned by the selected billing provider.
+// adr: 049 — drift compares usage owned by the selected billing provider; 20261031161842 receipts as the local side.
 package reconciler
 
 import (
@@ -35,6 +35,15 @@ func TestReconciliationHonorsProviderActivation(t *testing.T) {
 					if err := store.AppendUsage(ctx, acct.ID, "app", "instance", at, quantity, 0, 0, 0, 0, 0, 0, 0); err != nil {
 						t.Fatal(err)
 					}
+				}
+				// The pusher stamps the first post-switch delivery at the start of
+				// the activation hour; a receipt from before the switch is not
+				// this identity's.
+				if err := store.RecordBillingUsageDelivery(ctx, "polar", acct.ID, activation.Truncate(time.Hour), api.SecondsPerGBHour); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.RecordBillingUsageDelivery(ctx, "polar", acct.ID, activation.Truncate(time.Hour).Add(-time.Hour), 999); err != nil {
+					t.Fatal(err)
 				}
 				provider := &windowProvider{stubProvider: stubProvider{pushed: api.SecondsPerGBHour, caps: billing.CapabilitySet(billing.CapUsageReconcile), mode: mode}}
 				rec := New("polar", store, provider, nil, nil)
