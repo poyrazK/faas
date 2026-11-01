@@ -260,7 +260,6 @@ func TestManagementBoundsAndLogFailures(t *testing.T) {
 		metrics          bool
 	}{
 		{"large-result", `{"source":"` + strings.Repeat("x", maxResultBytes) + `"}`, "response_too_large", true},
-		{"large-logs", strings.Repeat("x", maxLogBytes+1), "response_too_large", false},
 		{"malformed-entry", "event: log\ndata: {bad}\n\n", "invalid_response", false},
 		{"stream-error", "event: error\ndata: {\"code\":\"logs_denied\",\"detail\":\"not permitted\"}\n\n", "logs_denied", false},
 		{"degraded", "event: degraded\ndata: {}\n\n", "logs_unavailable", false},
@@ -278,6 +277,31 @@ func TestManagementBoundsAndLogFailures(t *testing.T) {
 				t.Fatalf("result=%s", out)
 			}
 		})
+	}
+}
+
+// A busy app's snapshot is megabytes. get_logs used to buffer it under a
+// 1 MiB bound and fail with response_too_large; it now keeps the newest
+// entries.
+func TestManagementLogsKeepNewestFromLargeSnapshot(t *testing.T) {
+	var body strings.Builder
+	for i := 0; i < 20000; i++ {
+		data, _ := json.Marshal(api.LogEvent{Seq: int64(i + 1), Line: fmt.Sprintf("line %05d %s", i, strings.Repeat("x", 80))})
+		body.WriteString("event: log\ndata: " + string(data) + "\n\n")
+	}
+	if body.Len() <= 1<<20 {
+		t.Fatalf("fixture is %d bytes, want over the old 1 MiB bound", body.Len())
+	}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body.String()) }))
+	defer backend.Close()
+	cs, ctx := connectTestServer(t, backend, 0, "")
+	out := callTool(t, ctx, cs, "gregale_get_logs", map[string]any{"app": "alpha", "limit": 3}, false)
+	var items []api.LogEvent
+	if err := json.Unmarshal(out["items"], &items); err != nil {
+		t.Fatalf("result=%s: %v", out, err)
+	}
+	if len(items) != 3 || !strings.HasPrefix(items[2].Line, "line 19999") {
+		t.Fatalf("items = %+v, want the newest three", items)
 	}
 }
 

@@ -107,6 +107,9 @@ type AppLogsHandler struct {
 	// Traffic enrolls the stream under the app's security scopes
 	// (admitPlatformTraffic); nil only in legacy fixtures.
 	Traffic *trafficrevocation.Registry
+	// Streams bounds an account's open log streams (LogStreamsMax); nil
+	// admits every stream.
+	Streams *logStreamSlots
 	// CapabilityAllowed hides the route while the logs capability is off
 	// for the caller's account (logsReleased); nil releases it.
 	CapabilityAllowed func(capability, accountID string) bool
@@ -126,6 +129,9 @@ type AppLogsHandler struct {
 // htmx-ext-sse library treats silence as a dead connection; 15s
 // keeps the connection alive without flooding the wire.
 const defaultAppLogsHeartbeat = 15 * time.Second
+
+// appLogsFrameBuffer absorbs bursts between schedd and the SSE writer.
+const appLogsFrameBuffer = 256
 
 // defaultAppLogsBackstop is the production SSE backstop. After
 // 10 minutes of idle, the handler emits `event: end {"reason":
@@ -170,9 +176,22 @@ func (h *AppLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	defer release()
+	releaseSlot, ok := h.Streams.admit(w, acct)
+	if !ok {
+		return
+	}
+	defer releaseSlot()
 	if _, err := h.Store.ListInstancesForApp(ctx, app.ID); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-			"No running instance", "the app is parked; wake it first"))
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+				"No running instance", "the app is parked; wake it first"))
+			return
+		}
+		// A store failure is not "parked": answer a retryable 503.
+		if h.Log != nil {
+			h.Log.Warn("app logs: list instances", "app_id", app.ID, "err", err)
+		}
+		api.WriteProblem(w, api.ErrAppLogsUnavailable())
 		return
 	}
 	level, grep, sinceWrittenAt, deploymentID, reason, ok := apislogs.ValidateLogFilters(r)
@@ -283,7 +302,14 @@ func (h *AppLogsHandler) serveAppLogsWithIdentityFollow(ctx_ context.Context, w 
 	// Resolve by splitting the send into two paths: regular frames
 	// may drop; terminal results block until the handler consumes
 	// them or the streamCtx cancels.
-	recvCh := make(chan recvResult, 1)
+	//
+	// Follow frames used to be sent without waiting into a one-slot
+	// channel and dropped when it was full, so a stack trace or an
+	// instance's first lines after a wake mostly vanished from
+	// `gregale logs -f` with no gap marker. Every frame now waits for the
+	// writer (backpressure reaches schedd through gRPC flow control); the
+	// buffer absorbs bursts.
+	recvCh := make(chan recvResult, appLogsFrameBuffer)
 	go func() {
 		defer close(recvCh)
 		for {
@@ -294,25 +320,10 @@ func (h *AppLogsHandler) serveAppLogsWithIdentityFollow(ctx_ context.Context, w 
 			default:
 			}
 			if err == nil {
-				if follow {
-					// Follow frame — drop rather than block
-					// when the SSE writer is behind.
-					select {
-					case recvCh <- recvResult{frame: f, err: nil}:
-					case <-streamCtx.Done():
-						return
-					default:
-						// Channel full — drop. The heartbeat
-						// keeps the client alive, and the
-						// ring is the durable source of truth.
-					}
-				} else {
-					// One-shot frame — retain every replayed line.
-					select {
-					case recvCh <- recvResult{frame: f, err: nil}:
-					case <-streamCtx.Done():
-						return
-					}
+				select {
+				case recvCh <- recvResult{frame: f, err: nil}:
+				case <-streamCtx.Done():
+					return
 				}
 				continue
 			}
@@ -395,6 +406,9 @@ func (h *AppLogsHandler) serveAppLogsWithIdentityFollow(ctx_ context.Context, w 
 			identity := resolveRuntimeLogIdentity(ctx_, h.Store, r.frame, accountID, appIdentity, deploymentID, identityCache)
 			apislogs.LogAppLogFrameWithIdentity(h.Log, r.frame, identity)
 			apislogs.RenderAppLogEvent(w, flusher, r.frame, appID, h.Ops)
+			// The backstop is an idle timeout: a busy follow stream used
+			// to end after a fixed 10 minutes.
+			backstopTimer.Reset(backstop)
 		}
 	}
 }

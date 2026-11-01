@@ -17,7 +17,7 @@ import (
 
 func TestLogAppLogFrameStructuredJournalRecord(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	f := scheddgrpc.LogFrame{
 		InstanceID: "instance-1\nspoofed",
 		Seq:        42,
@@ -31,8 +31,8 @@ func TestLogAppLogFrameStructuredJournalRecord(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
 		t.Fatalf("decode structured log: %v; output=%q", err, buf.String())
 	}
-	if record["msg"] != "app_log" {
-		t.Fatalf("msg=%v, want app_log", record["msg"])
+	if record["msg"] != "app_log" || record["level"] != "DEBUG" {
+		t.Fatalf("msg=%v level=%v, want app_log at DEBUG (customer lines stay out of Info platform logs)", record["msg"], record["level"])
 	}
 	for key, want := range map[string]string{
 		"account_id":    "acct-1·spoofed",
@@ -209,6 +209,9 @@ func TestRenderAppLogsError_Generic(t *testing.T) {
 	}
 	if !strings.Contains(out, `"reason":"schedd_unreachable"`) {
 		t.Errorf("missing schedd_unreachable reason: %s", out)
+	}
+	if strings.Contains(out, genericErrorStub().Error()) {
+		t.Errorf("internal error text reached the client: %s", out)
 	}
 }
 
