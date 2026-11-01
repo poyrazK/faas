@@ -912,8 +912,11 @@ func (d *VMMDriver) DiscardDeferredCache(h BuildHandle) {
 // seed. It also drops the build's result. A second VM that dies before
 // writing its own result still publishes nothing, because only that run
 // writes /build/out/cache. The edits use debugfs, as refreshWarmBuilderDrive's
-// do.
+// do, after the build's journal is replayed.
 func prepareCacheExportDrive(ctx context.Context, drivePath string, manifest api.BuildManifest) error {
+	if err := replayDriveJournal(ctx, drivePath); err != nil {
+		return err
+	}
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
@@ -929,6 +932,27 @@ func prepareCacheExportDrive(ctx context.Context, drivePath string, manifest api
 		return fmt.Errorf("replace entropy seed: %w", err)
 	}
 	_ = runDebugfs(ctx, drivePath, "rm /upper/etc/faas/build-done.json")
+	return nil
+}
+
+// replayDriveJournal replays an offline drive's ext4 journal. A builder VM
+// powers off without unmounting drive1, so its last transactions can still be
+// in the journal. debugfs ignores the journal and writes the blocks in place;
+// the next guest kernel replays the journal at mount and overwrites those
+// edits with the build's own blocks. In production (2026-11-01) that removed
+// a deferred cache export's entropy seed and brought back the build's own
+// manifest, and the export VM failed with "read build entropy seed: no such
+// file or directory".
+func replayDriveJournal(ctx context.Context, drivePath string) error {
+	output, err := exec.CommandContext(ctx, "e2fsck", "-E", "journal_only", "-y", drivePath).CombinedOutput()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		// 1 = file system changed, which a replay may report.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("replay drive journal: %w (%s)", err, strings.TrimSpace(string(output)))
+	}
 	return nil
 }
 

@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -439,5 +441,86 @@ func TestRunJanitorRemovesStaleBuildArtifacts(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("preserved directory %q: %v", path, err)
 		}
+	}
+}
+
+// A builder VM powers off with drive1 mounted, so prepareCacheExportDrive gets
+// a drive whose journal still needs recovery, and the export VM's kernel
+// replays it at mount. The export run's manifest and seed must survive that.
+func TestPrepareCacheExportDriveSurvivesJournalReplay(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("needs root for a loop mount")
+	}
+	if _, err := os.Stat("/dev/loop-control"); err != nil {
+		t.Skip("/dev/loop-control not available")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	faasDir := filepath.Join(dir, "tree", "upper", "etc", "faas")
+	if err := os.MkdirAll(faasDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"build.json": `{"build_id":"b-build"}`, "entropy.seed": "build seed", "build-done.json": "{}"} {
+		if err := os.WriteFile(filepath.Join(faasDir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drive := filepath.Join(dir, "drive1.ext4")
+	if err := os.WriteFile(drive, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(drive, 64<<20); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.CommandContext(ctx, buildMkfs, "-q", "-F", "-d", filepath.Join(dir, "tree"), drive).CombinedOutput(); err != nil {
+		t.Fatalf("mkfs: %v (%s)", err, out)
+	}
+
+	// Consume the seed as the build's guest does, then copy the image while it
+	// is still mounted: that copy is the drive a powered-off builder leaves.
+	mnt := filepath.Join(dir, "mnt")
+	if err := os.Mkdir(mnt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runMount(ctx, "-o", "loop,rw", drive, mnt); err != nil {
+		t.Fatalf("mount: %v (%s)", err, out)
+	}
+	if err := os.Remove(filepath.Join(mnt, "upper", "etc", "faas", "entropy.seed")); err != nil {
+		_, _ = runUmount(mnt)
+		t.Fatal(err)
+	}
+	syscall.Sync()
+	image, err := os.ReadFile(drive)
+	if out, umountErr := runUmount(mnt); umountErr != nil {
+		t.Fatalf("umount: %v (%s)", umountErr, out)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	offline := filepath.Join(dir, "offline.ext4")
+	if err := os.WriteFile(offline, image, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := prepareCacheExportDrive(ctx, offline, api.BuildManifest{SchemaVersion: 1, BuildID: "b-build", CacheExportOnly: true}); err != nil {
+		t.Fatalf("prepareCacheExportDrive: %v", err)
+	}
+	if out, err := runMount(ctx, "-o", "loop,rw", offline, mnt); err != nil {
+		t.Fatalf("mount export drive: %v (%s)", err, out)
+	}
+	defer func() { _, _ = runUmount(mnt) }()
+	var got api.BuildManifest
+	data, err := os.ReadFile(filepath.Join(mnt, "upper", "etc", "faas", "build.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil || !got.CacheExportOnly {
+		t.Fatalf("manifest after mount = %s (%v), want the cache export run's", data, err)
+	}
+	if info, err := os.Stat(filepath.Join(mnt, "upper", "etc", "faas", "entropy.seed")); err != nil || info.Size() != 256 {
+		t.Fatalf("entropy seed after mount: %v, %v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(mnt, "upper", "etc", "faas", "build-done.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("build-done.json after mount: %v, want removed", err)
 	}
 }
