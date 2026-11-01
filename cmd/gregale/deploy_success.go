@@ -479,7 +479,7 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		if receipt.Interrupted {
 			return printSessionWaitRecovery(ctx, context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
 		}
-		return printSessionWaitRecovery(ctx, context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
+		return printSessionWaitRecovery(ctx, deploymentWaitDeadlineError(deadline), receiptDep, appSlug, stage, deadline, waitForRollout, 3)
 	}
 	var configurationErr error
 	if session := sessionFromContext(ctx); session != nil && final.Status == statusLive && (!waitForRollout || final.RolloutState != rolloutStateAborted) && (!darkDeploy || final.TrafficPercent == 0) {
@@ -509,7 +509,7 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 	}
 	if configurationErr != nil {
 		receipt.WaitStage = "configuration"
-		receipt.Recovery = sessionFromContext(ctx).recovery("configuration")
+		receipt.Recovery = sessionFromContext(ctx).recoveryWithTimeout("configuration", deadline)
 	}
 	if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 		return code

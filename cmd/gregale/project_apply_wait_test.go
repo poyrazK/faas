@@ -68,11 +68,13 @@ func TestWaitForProjectApply_DeadlineMarksEveryPendingBuild(t *testing.T) {
 
 	client := NewClient(srv.URL, "token")
 	apply := api.ApplyResponse{Builds: []api.AppliedBuild{{Slug: "queued", DeploymentID: "dep-queued", BuildID: "build-queued"}}}
-	got, timedOut := waitForProjectApply(t.Context(), client, apply, 20*time.Millisecond)
-	if !timedOut {
-		t.Fatal("queued project wait did not report timeout")
+	got, timeouts := waitForProjectApplyTimeouts(t.Context(), client, apply, 20*time.Millisecond)
+	if len(timeouts) != 1 || timeouts[0].Slug != "queued" || timeouts[0].DeploymentID != "dep-queued" || timeouts[0].Phase != "deployment" {
+		t.Fatalf("queued project wait timeouts = %+v", timeouts)
 	}
-	if got.Builds[0].DeploymentStatus != "timeout" || got.Builds[0].BuildStatus != "timeout" || got.Builds[0].Error == "" {
+	// A timed-out row keeps the last status the server reported and no
+	// error: it is still deploying, not failed (CLI audit 2026-10-31).
+	if got.Builds[0].DeploymentStatus != "queued" || got.Builds[0].BuildStatus != "" || got.Builds[0].Error != "" {
 		t.Fatalf("timeout result = %+v", got.Builds[0])
 	}
 }
@@ -88,7 +90,7 @@ func TestWaitForProjectApply_ImageDeployment(t *testing.T) {
 	}{
 		{"live", statusLive, statusLive, false, false},
 		{"failed", deploymentStatusFailed, deploymentStatusFailed, true, false},
-		{"pending", "queued", "timeout", true, true},
+		{"pending", "queued", "queued", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -23,6 +23,9 @@ type projectApplyStatus struct {
 	// not return. It is kept separately so the text renderer can explain an
 	// empty/short builds array without inventing a workload slug.
 	missingBuilds int
+	// waitTimedOut counts workloads still deploying when the wait ran out;
+	// they are not failures (CLI audit 2026-10-31).
+	waitTimedOut int
 }
 
 // summarizeProjectApply classifies an apply response for both human and JSON
@@ -63,10 +66,21 @@ func summarizeProjectApply(apply api.ApplyResponse) projectApplyStatus {
 // process status. Every build row is retained, including failures, while the
 // summary makes partial success explicit to operators and shell callers.
 func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.ApplyResponse) int {
+	return renderProjectApplyResultWithTimeouts(w, plan, apply, nil)
+}
+
+// renderProjectApplyResultWithTimeouts also marks the workloads whose wait
+// timed out: they are still deploying, not failed.
+func renderProjectApplyResultWithTimeouts(w io.Writer, plan api.PlanResponse, apply api.ApplyResponse, timeouts []projectWaitTimeout) int {
 	status := summarizeProjectApply(apply)
-	if status.buildsFailed > 0 {
+	status.waitTimedOut = len(timeouts)
+	switch {
+	case status.buildsFailed > 0:
 		PrintFail(w, "Project %s applied with failures", apply.ProjectID)
-	} else {
+	case status.waitTimedOut > 0:
+		PrintWarn(w, "Project %s applied; the wait timed out with %d workload(s) still deploying; the server continues processing",
+			apply.ProjectID, status.waitTimedOut)
+	default:
 		PrintOK(w, "Created project %s with %d app(s) and %d cron(s)",
 			apply.ProjectID, len(apply.Apps), len(plan.Crons))
 	}
@@ -78,7 +92,14 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 		if build.Error == "" {
 			build.Error = projectConfigurationFailure(build.Configuration)
 		}
+		timeout, waiting := projectWaitTimeoutFor(timeouts, build.DeploymentID)
 		switch {
+		case build.Error == "" && waiting:
+			_, _ = fmt.Fprintf(w, "  ~ %s: %s (deployment=%s", build.Slug, timeout.Message, build.DeploymentID)
+			if build.DeploymentStatus != "" {
+				_, _ = fmt.Fprintf(w, " status=%s", build.DeploymentStatus)
+			}
+			_, _ = fmt.Fprintln(w, ")")
 		case build.Error != "":
 			if build.DeploymentStatus != "" || build.BuildStatus != "" {
 				_, _ = fmt.Fprintf(w, "  ! %s: %s (status=%s build_status=%s)\n",
@@ -124,11 +145,24 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 	if status.unchanged > 0 {
 		_, _ = fmt.Fprintf(w, ", unchanged=%d", status.unchanged)
 	}
+	if status.waitTimedOut > 0 {
+		_, _ = fmt.Fprintf(w, ", wait timed out=%d", status.waitTimedOut)
+	}
 	_, _ = fmt.Fprintln(w)
 	if status.buildsFailed > 0 {
 		return 1
 	}
 	return 0
+}
+
+// reportProjectApplyWaitTimeout explains exit 3 on stderr for --json when
+// the wait ran out while workloads were still deploying and none failed.
+func reportProjectApplyWaitTimeout(w io.Writer, status projectApplyStatus, resumeCommand string) {
+	_, _ = fmt.Fprintf(w, "project apply wait timed out: %d workload(s) still deploying; the server continues processing", status.waitTimedOut)
+	if resumeCommand != "" {
+		_, _ = fmt.Fprintf(w, "; resume with: %s", resumeCommand)
+	}
+	_, _ = fmt.Fprintln(w)
 }
 
 // reportProjectApplyFailure keeps --json stdout machine-readable while still

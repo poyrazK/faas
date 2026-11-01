@@ -57,10 +57,10 @@ func TestStartConfigurationReconcilesRuntimeKeyNames(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr := main.StartTestEnvironment(t)
 			source := main.StartTestSource(t)
-			main.WriteFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA);\n")
-			main.WriteFile(t, source, ".env", "FAAS_TEST_ALPHA=local-only-value\n")
+			main.WriteFile(t, source, "needs-env.js", "console.log(process.env.APP_TEST_ALPHA);\n")
+			main.WriteFile(t, source, ".env", "APP_TEST_ALPHA=local-only-value\n")
 			if tc.declared {
-				main.WriteFile(t, source, ".gregale/required-secrets.json", `["FAAS_TEST_ALPHA"]`)
+				main.WriteFile(t, source, ".gregale/required-secrets.json", `["APP_TEST_ALPHA"]`)
 			}
 			mutations := 0
 			main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -80,13 +80,13 @@ func TestStartConfigurationReconcilesRuntimeKeyNames(t *testing.T) {
 					}
 					metadata := api.AppSecretListResponse{}
 					if tc.secret {
-						metadata.Secrets = []api.AppSecretResponse{{Key: "FAAS_TEST_ALPHA", Scope: tc.secretScope}}
+						metadata.Secrets = []api.AppSecretResponse{{Key: "APP_TEST_ALPHA", Scope: tc.secretScope}}
 					}
 					_ = json.NewEncoder(w).Encode(metadata)
 				case "/v1/apps/first-app/env":
 					metadata := api.AppEnvListResponse{}
 					if tc.env {
-						metadata.Env = []api.AppEnvResponse{{Key: "FAAS_TEST_ALPHA"}}
+						metadata.Env = []api.AppEnvResponse{{Key: "APP_TEST_ALPHA"}}
 					}
 					_ = json.NewEncoder(w).Encode(metadata)
 				default:
@@ -101,7 +101,7 @@ func TestStartConfigurationReconcilesRuntimeKeyNames(t *testing.T) {
 					value = ""
 				}
 				(*runner.SecretsFile()) = filepath.Join(t.TempDir(), "selected.env")
-				main.WriteFile(t, filepath.Dir((*runner.SecretsFile())), "selected.env", "FAAS_TEST_ALPHA="+value+"\n")
+				main.WriteFile(t, filepath.Dir((*runner.SecretsFile())), "selected.env", "APP_TEST_ALPHA="+value+"\n")
 			}
 			report, ready, err := runner.SourcePreflight()
 			if ready != tc.ready || err != nil || mutations != 0 {
@@ -190,9 +190,9 @@ func TestStartSelectedDotenvIsSealedBeforeUpload(t *testing.T) {
 func TestStartUnverifiedConfigurationCanUseReviewedFile(t *testing.T) {
 	stdout, stderr := main.StartTestEnvironment(t)
 	source := main.StartTestSource(t)
-	main.WriteFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA);\n")
+	main.WriteFile(t, source, "needs-env.js", "console.log(process.env.APP_TEST_ALPHA);\n")
 	file := filepath.Join(t.TempDir(), "selected.env")
-	main.WriteFile(t, filepath.Dir(file), "selected.env", "FAAS_TEST_ALPHA=private-replacement-value\n")
+	main.WriteFile(t, filepath.Dir(file), "selected.env", "APP_TEST_ALPHA=private-replacement-value\n")
 	metadataReads, writes := 0, 0
 	main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

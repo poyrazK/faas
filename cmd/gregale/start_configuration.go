@@ -15,7 +15,9 @@ func startRequiredConfiguration(root string) (required, sealed []string, err err
 		optional[key] = true
 	}
 	for _, key := range scanEnvRefs(root, envVarRefRegex) {
-		if _, injected := platformInjectedEnvVars[key]; !injected && !optional[key] {
+		// The platform supplies PORT, GREGALE_* and FAAS_* itself; start
+		// must not block a launch on them (CLI audit 2026-10-31).
+		if !platformProvidedEnvVar(key) && !optional[key] {
 			required = append(required, key)
 		}
 	}

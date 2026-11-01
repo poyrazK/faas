@@ -98,9 +98,9 @@ func TestStartInvalidDirectoryCanChooseSourceWithoutRestart(t *testing.T) {
 func TestStartSuppliedSecretsResolveOnlyTheirKeys(t *testing.T) {
 	stdout, _ := startTestEnvironment(t)
 	source := startTestSource(t)
-	writeFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA, process.env.FAAS_TEST_BETA);\n")
+	writeFile(t, source, "needs-env.js", "console.log(process.env.APP_TEST_ALPHA, process.env.APP_TEST_BETA);\n")
 	file := filepath.Join(t.TempDir(), "credentials.txt")
-	writeFile(t, filepath.Dir(file), filepath.Base(file), "FAAS_TEST_ALPHA=a-value-that-must-not-be-printed\n")
+	writeFile(t, filepath.Dir(file), filepath.Base(file), "APP_TEST_ALPHA=a-value-that-must-not-be-printed\n")
 	runner := startTestRunner(t, source, "3\n")
 	runner.secretsFile = file
 	report, ready, err := runner.sourcePreflight()
@@ -108,7 +108,7 @@ func TestStartSuppliedSecretsResolveOnlyTheirKeys(t *testing.T) {
 		t.Fatalf("partial secrets unexpectedly resolved everything: ready=%t err=%v", ready, err)
 	}
 	for _, check := range report.Checks {
-		if check.Name == "env-required" && (len(check.Sources) != 1 || check.Sources[0] != "FAAS_TEST_BETA") {
+		if check.Name == "env-required" && (len(check.Sources) != 1 || check.Sources[0] != "APP_TEST_BETA") {
 			t.Fatalf("remaining keys=%v", check.Sources)
 		}
 	}
@@ -121,10 +121,10 @@ func TestStartGuidedSecretsStayOutOfSourceUploadAndSession(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
 	source := startTestSource(t)
 	withCwd(t, source)
-	writeFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA);\n")
+	writeFile(t, source, "needs-env.js", "console.log(process.env.APP_TEST_ALPHA);\n")
 	file := filepath.Join(source, "credentials.txt")
 	value := "credential-only-for-the-sealed-endpoint"
-	writeFile(t, source, "credentials.txt", "FAAS_TEST_ALPHA="+value+"\n")
+	writeFile(t, source, "credentials.txt", "APP_TEST_ALPHA="+value+"\n")
 	var created atomic.Bool
 	var secrets, deployments atomic.Int32
 	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -139,7 +139,7 @@ func TestStartGuidedSecretsStayOutOfSourceUploadAndSession(t *testing.T) {
 		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
 			created.Store(true)
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app"})
-		case r.URL.Path == "/v1/apps/first-app/secrets/FAAS_TEST_ALPHA" && r.Method == http.MethodPut:
+		case r.URL.Path == "/v1/apps/first-app/secrets/APP_TEST_ALPHA" && r.Method == http.MethodPut:
 			secrets.Add(1)
 			data, err := io.ReadAll(r.Body)
 			if err != nil || !bytes.Contains(data, []byte(value)) {
@@ -345,9 +345,9 @@ func TestStartRequestUsesAcceptedPreviewInsteadOfCurrentTraffic(t *testing.T) {
 func TestStartFailedDeploymentCanSupplySecretsBeforeRetry(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
 	source := startTestSource(t)
-	writeFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA);\n")
+	writeFile(t, source, "needs-env.js", "console.log(process.env.APP_TEST_ALPHA);\n")
 	file := filepath.Join(t.TempDir(), "retry-secrets.env")
-	writeFile(t, filepath.Dir(file), filepath.Base(file), "FAAS_TEST_ALPHA=private-retry-value\n")
+	writeFile(t, filepath.Dir(file), filepath.Base(file), "APP_TEST_ALPHA=private-retry-value\n")
 	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/apps/first-app" {
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app"})

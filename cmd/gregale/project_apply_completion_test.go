@@ -88,10 +88,10 @@ func TestProjectApplyWaitTimeoutRetainsLiveConfiguration(t *testing.T) {
 	}))
 	defer srv.Close()
 	apply := api.ApplyResponse{Builds: []api.AppliedBuild{{Slug: "demo", DeploymentID: "dep", BuildID: "build", Configuration: &pending}}}
-	got, timeout := waitForProjectApply(t.Context(), NewClient(srv.URL, "token"), apply, 40*time.Millisecond)
+	got, timeouts := waitForProjectApplyTimeouts(t.Context(), NewClient(srv.URL, "token"), apply, 40*time.Millisecond)
 	row := got.Builds[0]
-	if !timeout || row.DeploymentStatus != statusLive || row.BuildStatus != api.BuildStatusSucceeded || row.Configuration == nil || row.Configuration.Crons.Status != "pending" || !strings.Contains(row.Error, "configuration wait timed out") {
-		t.Fatalf("result=%+v timeout=%v", row, timeout)
+	if len(timeouts) != 1 || timeouts[0].Phase != "configuration" || !strings.Contains(timeouts[0].Message, "configuration wait timed out") || row.DeploymentStatus != statusLive || row.BuildStatus != api.BuildStatusSucceeded || row.Configuration == nil || row.Configuration.Crons.Status != "pending" || row.Error != "" {
+		t.Fatalf("result=%+v timeouts=%+v", row, timeouts)
 	}
 }
 

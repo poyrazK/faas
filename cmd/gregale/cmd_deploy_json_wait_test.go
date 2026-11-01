@@ -98,7 +98,8 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 		t.Fatal("default JSON deploy did not poll the deployment before timing out")
 	}
 	problem := assertOneProblem(t, stderr.String())
-	if problem.Code != "transport_error" || !strings.Contains(problem.Detail, "timed out") || !strings.Contains(problem.Hint, "saved deploy") {
+	// A wait deadline is not a network failure (CLI audit 2026-10-31).
+	if problem.Code != "deployment_wait_stopped" || !strings.Contains(problem.Detail, "timed out") || !strings.Contains(problem.Hint, "saved deploy") {
 		t.Fatalf("stderr missing timeout recovery: %+v", problem)
 	}
 	var receipt DeployReceipt

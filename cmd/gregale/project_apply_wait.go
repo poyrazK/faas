@@ -15,8 +15,39 @@ import (
 // Workloads are polled concurrently so a ten-app project does not take ten
 // sequential readiness windows.
 func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse, deadline time.Duration) (api.ApplyResponse, bool) {
+	waited, timeouts := waitForProjectApplyTimeouts(ctx, c, apply, deadline)
+	return waited, len(timeouts) > 0
+}
+
+// projectWaitTimeout names a workload the wait stopped watching before its
+// deployment completed. It is not a failure: the server keeps processing,
+// so the row keeps no error and the last status the CLI saw, and the
+// receipt lists it under wait_timed_out. Reporting these rows as
+// status "timeout" with an error printed "project apply failed … builds
+// failed=N" for a deploy that was still running (CLI audit 2026-10-31).
+type projectWaitTimeout struct {
+	Slug         string `json:"slug"`
+	DeploymentID string `json:"deployment_id"`
+	// Phase is the part of completion the wait was on: deployment,
+	// configuration or rollout.
+	Phase   string `json:"phase"`
+	Message string `json:"message"`
+}
+
+func projectWaitTimeoutFor(timeouts []projectWaitTimeout, deploymentID string) (projectWaitTimeout, bool) {
+	for _, timeout := range timeouts {
+		if deploymentID != "" && timeout.DeploymentID == deploymentID {
+			return timeout, true
+		}
+	}
+	return projectWaitTimeout{}, false
+}
+
+// waitForProjectApplyTimeouts is waitForProjectApply that also names the
+// workloads whose wait timed out.
+func waitForProjectApplyTimeouts(ctx context.Context, c *Client, apply api.ApplyResponse, deadline time.Duration) (api.ApplyResponse, []projectWaitTimeout) {
 	if c == nil || deadline <= 0 || len(apply.Builds) == 0 {
-		return apply, false
+		return apply, nil
 	}
 
 	waitCtx, cancelWait := context.WithTimeout(ctx, deadline)
@@ -43,7 +74,7 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 	}
 	wg.Wait()
 
-	timedOut := false
+	var timeouts []projectWaitTimeout
 	for i, build := range apply.Builds {
 		if build.Error != "" || build.DeploymentID == "" {
 			continue
@@ -55,25 +86,21 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 		}
 		switch {
 		case !waited.ok:
-			apply.Builds[i].DeploymentStatus = "timeout"
-			if build.BuildID != "" {
-				apply.Builds[i].BuildStatus = "timeout"
-			}
 			phase := waited.phase
 			if phase == "" {
 				phase = "deployment"
 			}
-			apply.Builds[i].Error = phase + " wait timed out; server continues processing"
+			message := phase + " wait timed out; server continues processing"
 			if ctx.Err() == context.Canceled {
-				apply.Builds[i].Error = phase + " wait interrupted; server continues processing"
+				message = phase + " wait interrupted; server continues processing"
 			}
-			if phase != "deployment" {
-				apply.Builds[i].DeploymentStatus = waited.deployment.Status
-				if build.BuildID != "" {
-					apply.Builds[i].BuildStatus = terminalBuildStatusForDeployment(waited.deployment.Status)
-				}
+			// The last status the server reported, not an invented one;
+			// empty when no read succeeded.
+			apply.Builds[i].DeploymentStatus = waited.deployment.Status
+			if phase != "deployment" && build.BuildID != "" {
+				apply.Builds[i].BuildStatus = terminalBuildStatusForDeployment(waited.deployment.Status)
 			}
-			timedOut = true
+			timeouts = append(timeouts, projectWaitTimeout{Slug: build.Slug, DeploymentID: build.DeploymentID, Phase: phase, Message: message})
 		default:
 			apply.Builds[i].DeploymentStatus = waited.deployment.Status
 			if build.BuildID != "" {
@@ -96,7 +123,7 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 			}
 		}
 	}
-	return apply, timedOut
+	return apply, timeouts
 }
 
 func terminalBuildStatusForDeployment(status string) string {

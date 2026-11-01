@@ -3365,7 +3365,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !deployFunction && !deployApp {
 			doctorShape = detectShape(sourceDir)
 		}
-		rep := runDoctorChecksForShape(sourceDir, doctorShape)
+		// --doctor-strict blocks on errors, so env-required compares the
+		// app's env and secret names first; a reference missing only from
+		// local files is a warning (CLI audit 2026-10-31).
+		var appEnv *doctorAppEnv
+		if *doctorStrict {
+			loaded := loadDoctorAppEnv(slug, sourceDir)
+			appEnv = &loaded
+		}
+		rep := runDoctorChecksForApp(sourceDir, doctorShape, appEnv)
 		if *doctorStrict && rep.HasErrors() {
 			if jsonOutput {
 				_ = json.NewEncoder(osStderr).Encode(struct {
@@ -3388,6 +3396,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// arch-mismatch scans so we don't double-walk the repo.
 		doctorPreflightRan = true
 	}
+	// localSourceWarning names credential-looking files a local-files
+	// upload (no Git archive) includes; the receipt repeats it for --json.
+	localSourceWarning := ""
 	if *image == "" && *tarball == "" {
 		if cwdErr != nil {
 			return printErr("Could not read current directory", cwdErr)
@@ -3518,6 +3529,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if packErr != nil {
 				return printErr("Could not pack project source", packErr)
 			}
+			localSourceWarning = warnLocalCredentialFiles(sourceDir, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 			if n == 0 {
 				_ = os.Remove(path)
 				return printErr("No project source found in "+filepath.Base(sourceDir), errors.New("the selected directory contains no regular source files after deploy exclusions"))
@@ -3572,6 +3584,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if err != nil {
 					return printErr("Could not pack deploy source", err)
 				}
+				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
 				PrintProgress(os.Stderr, "packing %d file(s) from %s", n, filepath.Base(sourceDir))
@@ -3592,6 +3605,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if err != nil {
 					return printErr("Could not pack deploy source", err)
 				}
+				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
 				if fw == fwDocker {
@@ -3904,6 +3918,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not save project submission attempt; no apply was submitted", saveErr)
 		}
 		defer func() { _ = projectLock.Close() }()
+		projectSession.addWarning(localSourceWarning)
 		applyCtx = api.ContextWithDeploymentAttempt(applyCtx, projectSession.record.Project.AttemptID)
 		apply, err := client.ApplyProjectPlanWithInitialSecrets(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
 			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken,
@@ -3944,12 +3959,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return waitForSafeProjectRelease(ctx, client, projectSession, time.Duration(*waitTimeoutSeconds)*time.Second)
 			}
 		}
-		var projectWaitTimedOut bool
+		var projectWaitTimeouts []projectWaitTimeout
 		if waitForDeploy && !*safeProjectDeploy && len(apply.Builds) > 0 {
-			apply, projectWaitTimedOut = waitForProjectApply(ctx, client, apply,
+			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(ctx, client, apply,
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
-		return renderProjectDeployReceipt(plan, apply, projectSession, projectWaitTimedOut, nil)
+		return renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
 	}
 
 	var workflowDefs []api.WorkflowSpec
@@ -4068,6 +4083,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Could not save deploy session", err)
 	}
 	defer func() { _ = sessionLock.Close() }()
+	savedSession.addWarning(localSourceWarning)
 	savedSession.record.SourceSHA256 = sourceSHA256
 	savedSession.record.SimpleAppPlan = newDeployReceipt(api.DeploymentResponse{}, nil, "", "", resolvedSimplePlan).SimpleAppPlan
 	if err := savedSession.save(); err != nil {
@@ -4434,7 +4450,54 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--acknowledge-releases] [--restore-databases] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+// rollbackValueFlags take a separate value argument, which is never the slug.
+var rollbackValueFlags = map[string]bool{"--to": true, "--expected-current": true, "--reason": true, "--timeout": true, "--poll-interval": true}
+
+// splitRollbackSlug takes the app from the one <slug> positional or --app,
+// wherever they appear, and returns the remaining flags in order. Rollback
+// read the slug only from the first argument, so `release rollback --app X`
+// and `rollback --to v41 X` failed although the reference documents
+// `[flags] <slug>` (CLI audit 2026-10-31).
+func splitRollbackSlug(args []string) (string, []string, error) {
+	var positional, flags []string
+	app := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--app":
+			if i+1 >= len(args) {
+				return "", nil, errors.New("--app requires an app slug")
+			}
+			i++
+			app = args[i]
+		case strings.HasPrefix(a, "--app="):
+			app = strings.TrimPrefix(a, "--app=")
+		case rollbackValueFlags[a]:
+			flags = append(flags, a)
+			if i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+		case strings.HasPrefix(a, "-"):
+			flags = append(flags, a)
+		default:
+			positional = append(positional, a)
+		}
+	}
+	if len(positional) > 1 {
+		return "", nil, fmt.Errorf("unexpected argument %q (rollback takes one <slug>; pass the target with --to)", positional[1])
+	}
+	merged, err := mergeAppFlag(positional, app, 1)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(merged) == 0 {
+		return "", flags, nil
+	}
+	return merged[0], flags, nil
+}
+
+const rollbackUsage = "usage: gregale rollback <slug>|--app <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--acknowledge-releases] [--restore-databases] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4464,7 +4527,14 @@ func cmdRollback(args []string) int {
 		PrintUsage(os.Stderr, rollbackUsage, "rollback")
 		return 1
 	}
-	slug := args[0]
+	slug, rest, slugErr := splitRollbackSlug(args)
+	if slugErr != nil {
+		return printErr("Invalid rollback", slugErr)
+	}
+	if slug == "" {
+		PrintUsage(os.Stderr, rollbackUsage, "rollback")
+		return 1
+	}
 	var to, current, reason string
 	interactive := false
 	checked := false
@@ -4474,7 +4544,6 @@ func cmdRollback(args []string) int {
 	var err error
 	wait, noWait := false, false
 	timeout, interval := 10*time.Minute, 2*time.Second
-	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
 		a := rest[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(rest).
 		switch {
