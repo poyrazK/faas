@@ -7439,6 +7439,20 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "gatewayd-public cannot write its batched public read counts"
           description: "Public bucket read count flushes on {{ $labels.instance }} have failed for 10 minutes. Public reads keep being served from cached decisions for up to 30 s and then fail closed; counts stay in memory until a flush succeeds."
+      # ADR-20261031122757 §7: a gateway on a compute node keeps to its share
+      # of the node's port. Past 10% of a week at the share, its cell moves to
+      # dedicated gateway machines.
+      - alert: FaasS3GatewayPortShareSaturated
+        expr: max by (instance) (rate(s3_gateway_transfer_throttled_seconds_total[7d])) > 0.1
+        for: 1h
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "s3-gatewayd spends more than 10% of the week at its port share"
+          description: "Transfers through {{ $labels.instance }} waited for the gateway's port share {{ $value | humanizePercentage }} of the last 7 days. Customers see slower transfers, not errors. Plan the cell's move to dedicated gateway machines (ADR-20261031122757 §7)."
       - alert: FaasObjectStorageUsageExportStale
         expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
         for: 15m

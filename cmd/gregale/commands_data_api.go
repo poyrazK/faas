@@ -19,7 +19,7 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|deploy|configure|server-key|usage|live|storage|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|delete|deploy|configure|server-key|usage|live|storage|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
 		return 1
 	}
 	switch args[0] {
@@ -45,6 +45,8 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPIDev(args[1:])
 	case "create":
 		return cmdDataAPICreate(args[1:])
+	case "delete":
+		return cmdDataAPIDelete(args[1:])
 	case "types":
 		return cmdDataAPITypes(args[1:])
 	case "check":
@@ -74,7 +76,7 @@ func cmdDataAPI(args []string) int {
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, deploy, configure, server-key, usage, live, storage, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, delete, deploy, configure, server-key, usage, live, storage, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 
@@ -252,13 +254,9 @@ func cmdDataAPICreate(args []string) int {
 		if err := attachDataAPIMigrationBinding(ctx, client, app, db.ID, *scope); err != nil {
 			return printErr("Migration binding failed; the app is retained for recovery", err)
 		}
-		return deploySingleAppDataAPI(ctx, app.Slug, *scope, *migrations, *releaseCommand, "15m")
+		return deploySingleAppDataAPI(ctx, client, app.Slug, *scope, *migrations, *releaseCommand, "15m")
 	}
-	deployArgs := []string{"--name", app.Slug, "--template", "data-api", "--dockerfile", "--healthcheck-path", "/healthz", "--no-doctor"}
-	if *scope != api.DefaultEnvScope {
-		deployArgs = append(deployArgs, "--environment", *scope)
-	}
-	return cmdDeployTarballToExisting(ctx, deployArgs, true)
+	return deployDataAPIRuntime(ctx, client, app.Slug, *scope, "")
 }
 
 func configureDataAPI(ctx context.Context, client *api.Client, app api.AppResponse, database, scope string, settings map[string]string) error {

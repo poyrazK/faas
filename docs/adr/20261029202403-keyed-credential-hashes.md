@@ -177,7 +177,12 @@ are checked by daemons other than the one that issues them.
 2. **Checkers on compute nodes ask apid.** gatewayd-internal checks
    operation capabilities and dev-bridge tokens, and realtimed checks Data
    API server keys. They ask apid's `MatchCredential`, as for consumer keys.
-   No ring other than `attach` reaches a compute node.
+   Two rings reach compute nodes:
+   - `attach`, held by vmmd (below);
+   - `uploads`, held by an s3-gatewayd that runs on a compute node
+     (ADR-20261031122757). That gateway already holds the object-storage
+     credentials, which write any object an upload grant could, so the ring
+     adds nothing a compromised node does not already have.
 
    realtimed asks over the connection it already holds to apid. When no
    preview opened that connection, it dials one for matches alone. If that

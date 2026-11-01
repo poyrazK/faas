@@ -124,13 +124,25 @@ type appErrorsRecorder struct {
 	cacheMu sync.Mutex
 	cache   map[string]*appErrorRow
 
-	// ring is the per-process ringbuffer the publisher drains.
-	// ringMu guards ring + head + len (NOT the LRU cache —
-	// that's cacheMu's job).
-	ringMu sync.Mutex
-	ring   []appErrorRow
-	head   int
-	len    int
+	// queue holds the records the publisher has not drained, oldest first,
+	// capped at appErrorsRingSize. A repeat of an app's error adds to the
+	// count of the newest queued record for it (latest) unless it is one of
+	// the request rows sampled for that error this flush, so a flood costs a
+	// few records per flush instead of one per request (bug hunt 2026-10-28
+	// H41). sampled counts the request rows queued per key since the last
+	// drain; budgets caps request rows per app per minute. ringMu guards
+	// them (NOT the LRU cache — that's cacheMu's job).
+	ringMu  sync.Mutex
+	queue   []appErrorRow
+	latest  map[string]int
+	sampled map[string]int
+	budgets map[string]appRowBudget
+}
+
+// appRowBudget is an app's request-row allowance in the current minute.
+type appRowBudget struct {
+	minute time.Time
+	used   int
 }
 
 // appErrorRow is the unit of work shared between recorder +
@@ -156,6 +168,11 @@ type appErrorRow struct {
 	RequestID           string
 	ReceivedAt          time.Time
 
+	// Count is how many requests the record stands for; RequestRowOmitted
+	// marks a record that only counts them (bug hunt 2026-10-28 H41).
+	Count             int64
+	RequestRowOmitted bool
+
 	// LastSeen is the LRU bookkeeping field (NOT a wire
 	// field). The recorder bumps LastSeen on every cache
 	// hit so the eviction policy knows which entries to
@@ -172,13 +189,15 @@ type appErrorRow struct {
 func newAppErrorsRecorder(cfg appErrorsRecorderConfig, pub *appErrorsPublisher, ops *wire.OpsMetrics, log *slog.Logger) *appErrorsRecorder {
 	cfg.setDefaults()
 	return &appErrorsRecorder{
-		cfg:    cfg,
-		pub:    pub,
-		redact: redact.New(cfg.SampleMessageCapBytes),
-		ops:    ops,
-		log:    log,
-		cache:  make(map[string]*appErrorRow, cfg.CardinalityLimit),
-		ring:   make([]appErrorRow, appErrorsRingSize),
+		cfg:     cfg,
+		pub:     pub,
+		redact:  redact.New(cfg.SampleMessageCapBytes),
+		ops:     ops,
+		log:     log,
+		cache:   make(map[string]*appErrorRow, cfg.CardinalityLimit),
+		latest:  make(map[string]int),
+		sampled: make(map[string]int),
+		budgets: make(map[string]appRowBudget),
 	}
 }
 
@@ -338,7 +357,7 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 
 	// Append to the ringbuffer. The publisher drains it on
 	// FlushInterval / FlushBatchSize.
-	r.enqueue(row)
+	r.enqueue(cacheKey, row)
 	if r.ops != nil {
 		r.ops.ObserveAppErrorsRecorded("ok")
 	}
@@ -397,47 +416,86 @@ func (r *appErrorsRecorder) cacheAdmit(key string) bool {
 	return true
 }
 
-// enqueue appends row to the ringbuffer. The publisher drains
-// it on the next tick. The ring is fixed-size; when full, the
-// oldest entry is overwritten (the publisher drains faster
-// than the ring fills in normal operation).
-func (r *appErrorsRecorder) enqueue(row appErrorRow) {
+// enqueue queues row for key (app + fingerprint), or adds it to the count of
+// the newest queued record for key. A request gets its own record while key
+// has fewer than api.AppErrorsRequestSamplesPerFlush request rows queued and
+// its app has request rows left this minute; the first record for key since
+// the last drain is queued either way, without a request row once the app's
+// budget is spent. A full queue keeps counting the records it holds and drops
+// requests for errors it has none of.
+func (r *appErrorsRecorder) enqueue(key string, row appErrorRow) {
 	r.ringMu.Lock()
 	defer r.ringMu.Unlock()
-	idx := (r.head + r.len) % len(r.ring)
-	r.ring[idx] = row
-	if r.len < len(r.ring) {
-		r.len++
-	} else {
-		// Ring full: overwrite the oldest (advance head).
-		r.head = (r.head + 1) % len(r.ring)
+	i, queued := r.latest[key]
+	sample := r.sampled[key] < api.AppErrorsRequestSamplesPerFlush && r.takeRequestRow(row.AppID, row.ReceivedAt)
+	if queued && (!sample || len(r.queue) >= appErrorsRingSize) {
+		r.queue[i].Count++
+		return
+	}
+	if len(r.queue) >= appErrorsRingSize {
+		if r.ops != nil {
+			r.ops.ObserveAppErrorsRecorded("rate_limited")
+		}
+		return
+	}
+	row.Count = 1
+	row.RequestRowOmitted = !sample
+	r.queue = append(r.queue, row)
+	r.latest[key] = len(r.queue) - 1
+	if sample {
+		r.sampled[key]++
 	}
 	if r.pub != nil {
 		r.pub.NotifyEnqueued()
 	}
 }
 
+// takeRequestRow spends one of app's request rows for the minute of at.
+func (r *appErrorsRecorder) takeRequestRow(app string, at time.Time) bool {
+	minute := at.Truncate(time.Minute)
+	b := r.budgets[app]
+	if !b.minute.Equal(minute) {
+		b = appRowBudget{minute: minute}
+	}
+	if b.used >= api.AppErrorsRequestRowsPerAppPerMinute {
+		return false
+	}
+	b.used++
+	r.budgets[app] = b
+	return true
+}
+
 // drainBatch is called by the publisher on FlushInterval /
-// FlushBatchSize. Returns the next batch of rows and the new
-// (head, len) state. The batch is bounded by maxRows; pass 0
-// for "drain everything currently in the ring".
+// FlushBatchSize. It returns up to maxRows of the oldest queued
+// records; pass 0 for "drain everything currently queued". Keys
+// whose records all left start a new flush: their next request
+// queues a fresh record and their samples reset.
 func (r *appErrorsRecorder) drainBatch(maxRows int) []appErrorRow {
 	r.ringMu.Lock()
 	defer r.ringMu.Unlock()
-	if r.len == 0 {
+	if len(r.queue) == 0 {
 		return nil
 	}
-	n := r.len
+	n := len(r.queue)
 	if maxRows > 0 && maxRows < n {
 		n = maxRows
 	}
 	out := make([]appErrorRow, n)
-	for i := 0; i < n; i++ {
-		out[i] = r.ring[(r.head+i)%len(r.ring)]
+	copy(out, r.queue)
+	r.queue = append(r.queue[:0], r.queue[n:]...)
+	for key, i := range r.latest {
+		if i < n {
+			delete(r.latest, key)
+			delete(r.sampled, key)
+			continue
+		}
+		r.latest[key] = i - n
 	}
-	// Advance head + shrink len.
-	r.head = (r.head + n) % len(r.ring)
-	r.len -= n
+	for app, b := range r.budgets {
+		if b.minute.Add(time.Minute).Before(r.cfg.Now()) {
+			delete(r.budgets, app)
+		}
+	}
 	return out
 }
 

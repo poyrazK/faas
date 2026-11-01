@@ -30566,6 +30566,18 @@ func (s *PgStore) IncrementAppError(ctx context.Context, arg sqlc.IncrementAppEr
 	return s.appErrorsQueries().IncrementAppError(ctx, s.pool, arg)
 }
 
+// AppErrorRequestCounter counts the request rows an error group keeps, so
+// apid can stop at the plan's AppErrorsMaxRequestRowsPerFingerprint (bug
+// hunt 2026-10-28 H41).
+type AppErrorRequestCounter interface {
+	CountAppErrorRequestsForFingerprint(ctx context.Context, arg sqlc.CountAppErrorRequestsForFingerprintParams) (int64, error)
+}
+
+// CountAppErrorRequestsForFingerprint implements AppErrorRequestCounter.
+func (s *PgStore) CountAppErrorRequestsForFingerprint(ctx context.Context, arg sqlc.CountAppErrorRequestsForFingerprintParams) (int64, error) {
+	return s.appErrorsQueries().CountAppErrorRequestsForFingerprint(ctx, s.pool, arg)
+}
+
 // InsertAppErrorRequest writes one drill-down row per request.
 // Paired with IncrementAppError on the same gRPC stream batch.
 func (s *PgStore) InsertAppErrorRequest(ctx context.Context, arg sqlc.InsertAppErrorRequestParams) error {
