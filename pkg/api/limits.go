@@ -3162,14 +3162,32 @@ type RealtimeLimits struct {
 	// the account's retained control-plane storage to about 4 MiB a channel:
 	// 128 MiB, 1 GiB and 4 GiB by plan (ADR-1323, amendment of 2026-10-27).
 	RetainedChannelsPerAccount int
+	// NotificationPreferencesPerAccount caps the users an account's endpoints
+	// keep notification preferences for. Preferences are settings with no
+	// expiry; one is at most 32 categories and 16 devices, a few KB, and
+	// setting a user's preferences back to the defaults frees its slot
+	// (ADR-1323, amendment of 2026-10-31).
+	NotificationPreferencesPerAccount int
 }
 
 var realtimeLimits = map[Plan]RealtimeLimits{
 	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32, NotificationPreferencesPerAccount: 1_000},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256, NotificationPreferencesPerAccount: 10_000},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024, NotificationPreferencesPerAccount: 50_000},
 }
+
+// Managed realtime per-user state and schemas (ADR-1323, amendment of
+// 2026-10-31). Each counts live rows only, so a cap is never used up for
+// good: an inbox counts while it holds unexpired messages (24 hours), a read
+// marker for 30 days after its last update. Event schema versions are
+// immutable configuration, capped per event type and per endpoint.
+const (
+	RealtimeInboxesHeldPerEndpoint          = 256
+	RealtimeReadMarkersPerEndpoint          = 1_024
+	RealtimeEventSchemaVersionsPerEventType = 64
+	RealtimeEventSchemasPerEndpoint         = 1_024
+)
 
 // RealtimeResumeSubscriptionsPerNodeFor maps the account connection allowance
 // apid sends with every endpoint under fair use back to the plan's resume

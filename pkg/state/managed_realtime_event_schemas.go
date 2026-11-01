@@ -18,7 +18,15 @@ import (
 )
 
 const ManagedRealtimeEventSchemaMaxBytes = 16 << 10
-const ManagedRealtimeEventSchemaMaxPerEndpoint = 64
+const ManagedRealtimeEventSchemaMaxPerEndpoint = api.RealtimeEventSchemasPerEndpoint
+
+// eventSchemaLimitReached reports whether one more version would pass the
+// per-event-type or per-endpoint cap. Versions are immutable and cannot be
+// deleted, so a single endpoint-wide 64 was used up by schema evolution
+// (ADR-1323, amendment of 2026-10-31).
+func eventSchemaLimitReached(endpointCount, typeCount int) bool {
+	return endpointCount >= api.RealtimeEventSchemasPerEndpoint || typeCount >= api.RealtimeEventSchemaVersionsPerEventType
+}
 
 var ErrManagedRealtimeEventSchemaLimit = errors.New("state: event schema limit reached")
 
@@ -254,13 +262,16 @@ func (m *MemStore) PutManagedRealtimeEventSchema(ctx context.Context, row Manage
 		old.Schema = append(json.RawMessage(nil), old.Schema...)
 		return old, nil
 	}
-	count := 0
+	endpointCount, typeCount := 0, 0
 	for key := range m.managedRealtimeEventSchemas {
 		if key.endpointID == row.EndpointID {
-			count++
+			endpointCount++
+			if key.channel == row.Channel && key.eventType == row.EventType {
+				typeCount++
+			}
 		}
 	}
-	if count >= 64 {
+	if eventSchemaLimitReached(endpointCount, typeCount) {
 		return row, ErrManagedRealtimeEventSchemaLimit
 	}
 	if m.managedRealtimeEventSchemas == nil {
@@ -323,11 +334,11 @@ func (s *PgStore) PutManagedRealtimeEventSchema(ctx context.Context, row Managed
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return row, err
 	}
-	var count int
-	if err = tx.QueryRow(ctx, `select count(*) from managed_realtime_event_schemas where endpoint_id=$1`, row.EndpointID).Scan(&count); err != nil {
+	var endpointCount, typeCount int
+	if err = tx.QueryRow(ctx, `select count(*),count(*) filter (where channel=$2 and event_type=$3) from managed_realtime_event_schemas where endpoint_id=$1`, row.EndpointID, row.Channel, row.EventType).Scan(&endpointCount, &typeCount); err != nil {
 		return row, err
 	}
-	if count >= 64 {
+	if eventSchemaLimitReached(endpointCount, typeCount) {
 		return row, ErrManagedRealtimeEventSchemaLimit
 	}
 	row.Schema = canonicalEventSchema(row.Schema)
