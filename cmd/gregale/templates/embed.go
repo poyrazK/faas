@@ -39,7 +39,7 @@ import (
 //
 // Include private Python module filenames, which directory embedding omits.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node
 //go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
@@ -101,6 +101,7 @@ var Names = []string{
 	"data-api-support-console",
 	"durable-entity-node",
 	"auth",
+	"agent-stateless-node",
 }
 
 // unlisted templates stay embedded and materializable by name but are left
@@ -108,8 +109,9 @@ var Names = []string{
 // unknown-template hints and the dashboard catalog. durable-entity-node
 // scaffolds the operator-only durable entity preview (ADR-712); auth is
 // application Auth, a dark launch (ADR-1190) that `gregale auth create`
-// materializes.
-var unlisted = map[string]bool{"durable-entity-node": true, "auth": true}
+// materializes. agent-stateless-node scaffolds a stateless agent, behind the
+// internal agents capability (ADR-20261030125501).
+var unlisted = map[string]bool{"durable-entity-node": true, "auth": true, "agent-stateless-node": true}
 
 // ListedNames returns Names without unlisted templates, in catalog order.
 func ListedNames() []string {
@@ -531,7 +533,7 @@ func CategoryFor(name string) string {
 		return "event-driven"
 	case "s3-uploader", "object-storage-node", "object-storage-python", "slack-bot", "rest-api-postgres", "rest-api-postgres-python", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter", "data-api-teams", "data-api-support-console", "auth":
 		return "stateless-contract"
-	case "ai-chat":
+	case "ai-chat", "agent-stateless-node":
 		return "ai"
 	case "mcp-node", "mcp-go", "mcp-python":
 		return "mcp"

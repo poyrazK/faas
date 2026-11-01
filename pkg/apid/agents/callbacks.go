@@ -6,7 +6,8 @@ package agents
 // thread's lane of the endpoint's agent-inbox channel, which the app's
 // realtime trigger delivers as the thread's next slice. The URL's token is
 // the only credential, and it cannot address another thread, endpoint or
-// account. A repeated message_id lands once.
+// account. A repeated message_id lands once. A tool may also post RAP's own
+// callback messages (rap_callback.go).
 
 import (
 	"bytes"
@@ -30,6 +31,13 @@ type CallbackInbox interface {
 	state.ManagedRealtimeMetadataStore
 }
 
+// CallbackRevocations records a thread's latest revocation (ADR-20261030125501
+// §3); *agentstore.Store implements it.
+type CallbackRevocations interface {
+	RevokeCallbacks(ctx context.Context, accountID, endpointID, threadID string) (time.Time, error)
+	CallbacksRevokedAt(ctx context.Context, endpointID, threadID string) (time.Time, bool, error)
+}
+
 // callbackRequestMaxBytes bounds an issue request; a post is bounded by its
 // payload limit plus room for its envelope.
 const (
@@ -38,8 +46,8 @@ const (
 )
 
 // CreateCallback handles POST /v1/agent-callbacks.
-func (h *Handler) CreateCallback(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if h.Callbacks == nil || h.Inbox == nil {
+func (h *Handler) CreateCallback(w http.ResponseWriter, r *http.Request, caller CallbackCaller) {
+	if !h.callbacksConfigured() {
 		api.WriteProblem(w, api.ErrCapacity("agent callbacks are unavailable on this control-plane host"))
 		return
 	}
@@ -48,23 +56,23 @@ func (h *Handler) CreateCallback(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrValidation("the body must be a JSON callback request"))
 		return
 	}
-	grant, problem := h.callbackGrant(r.Context(), acct, req)
+	grant, problem := h.callbackGrant(r.Context(), caller, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	token, err := h.Callbacks.Sign(grant)
 	if err != nil {
-		api.WriteProblem(w, h.problem(acct, "issue callback", err))
+		api.WriteProblem(w, h.problem(caller.Account, "issue callback", err))
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusCreated, api.AgentCallbackResponse{URL: h.CallbackBaseURL + "/v1/agent-callbacks/" + token,
 		ThreadID: grant.ThreadID, Kinds: grant.Kinds, ExpiresAt: grant.ExpiresAt})
 }
 
-// callbackGrant checks an issue request against the account's endpoints and
+// callbackGrant checks an issue request against the caller's endpoints and
 // returns the token it grants.
-func (h *Handler) callbackGrant(ctx context.Context, acct state.Account, req api.CreateAgentCallbackRequest) (CallbackToken, *api.Problem) {
+func (h *Handler) callbackGrant(ctx context.Context, caller CallbackCaller, req api.CreateAgentCallbackRequest) (CallbackToken, *api.Problem) {
 	kinds, ttl := req.Kinds, req.TTLSeconds
 	if len(kinds) == 0 {
 		kinds = []string{api.AgentCallbackKindToolResult}
@@ -80,12 +88,13 @@ func (h *Handler) callbackGrant(ctx context.Context, acct state.Account, req api
 	case ttl < 1 || ttl > api.AgentCallbackTokenTTLSec:
 		return CallbackToken{}, api.ErrValidation(fmt.Sprintf("ttl_seconds must be 1-%d; got %d", api.AgentCallbackTokenTTLSec, ttl))
 	}
-	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(ctx, req.EndpointID)
-	if err != nil || endpoint.AccountID != acct.ID {
-		return CallbackToken{}, errRealtimeEndpointNotFound()
+	endpoint, problem := caller.endpoint(ctx, h.Inbox, req.EndpointID)
+	if problem != nil {
+		return CallbackToken{}, problem
 	}
-	now := h.now().UTC().Truncate(time.Second)
-	return CallbackToken{AccountID: acct.ID, EndpointID: endpoint.ID, ThreadID: req.ThreadID, Kinds: kinds, IssuedAt: now,
+	// Not truncated: a token issued just after a revocation must compare later.
+	now := h.now().UTC()
+	return CallbackToken{AccountID: caller.Account.ID, EndpointID: endpoint.ID, ThreadID: req.ThreadID, Kinds: kinds, IssuedAt: now,
 		ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, nil
 }
 
@@ -93,27 +102,33 @@ func (h *Handler) callbackGrant(ctx context.Context, acct state.Account, req api
 // invalid, expired, for an account without the agents capability or for a
 // deleted endpoint answers like an unknown route.
 func (h *Handler) ReceiveCallback(w http.ResponseWriter, r *http.Request) {
-	if h.Callbacks == nil || h.Inbox == nil {
+	if !h.callbacksConfigured() {
 		api.WriteProblem(w, api.ErrCapacity("agent callbacks are unavailable on this control-plane host"))
 		return
 	}
-	grant, err := h.Callbacks.Verify(r.PathValue("token"), h.now())
-	if err != nil || h.AgentsEnabled == nil || !h.AgentsEnabled(r.Context(), grant.AccountID) {
-		http.NotFound(w, r)
+	grant, ok := h.callbackGranted(w, r)
+	if !ok {
 		return
 	}
-	var post api.AgentCallbackPost
-	if err := httpkit.DecodeJSONSized(r, &post, api.AgentCallbackPayloadMaxBytes+callbackEnvelopeMaxBytes); err != nil {
-		api.WriteProblem(w, api.ErrValidation("the body must be a JSON callback of at most the payload limit"))
+	post, publish, problem := decodeCallbackPost(r, grant)
+	if problem == nil && !publish {
+		httpkit.WriteJSON(w, http.StatusAccepted, api.AgentCallbackReceipt{ThreadID: grant.ThreadID})
 		return
 	}
-	if problem := checkCallbackPost(grant, post); problem != nil {
+	if problem == nil {
+		problem = checkCallbackPost(grant, post)
+	}
+	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(r.Context(), grant.EndpointID)
 	if err != nil || endpoint.AccountID != grant.AccountID {
 		http.NotFound(w, r)
+		return
+	}
+	if count, ok := h.callbackLimits.allow(grant.EndpointID+"\x00"+grant.ThreadID, h.now()); !ok {
+		api.WriteProblem(w, api.ErrAgentCallbackRateLimited(api.AgentCallbacksPerMinutePerThread, count))
 		return
 	}
 	message, err := h.Inbox.AppendManagedRealtimeChannelMetadata(r.Context(), grant.EndpointID, api.AgentInboxChannel, post.Data, false,
@@ -123,6 +138,58 @@ func (h *Handler) ReceiveCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusAccepted, api.AgentCallbackReceipt{Sequence: strconv.FormatInt(message.Sequence, 10), ThreadID: grant.ThreadID})
+}
+
+func (h *Handler) callbacksConfigured() bool {
+	return h.Callbacks != nil && h.Inbox != nil && h.Revocations != nil
+}
+
+// callbackGranted verifies the post's token at the moment the tool posts:
+// its signature and expiry, the account's agents capability, and that its
+// thread was not revoked after the token was issued. Each failure answers
+// like an unknown route.
+func (h *Handler) callbackGranted(w http.ResponseWriter, r *http.Request) (CallbackToken, bool) {
+	grant, err := h.Callbacks.Verify(r.PathValue("token"), h.now())
+	if err != nil || h.AgentsEnabled == nil || !h.AgentsEnabled(r.Context(), grant.AccountID) {
+		http.NotFound(w, r)
+		return CallbackToken{}, false
+	}
+	revokedAt, revoked, err := h.Revocations.CallbacksRevokedAt(r.Context(), grant.EndpointID, grant.ThreadID)
+	if err != nil {
+		api.WriteProblem(w, h.problem(state.Account{ID: grant.AccountID}, "check callback revocation", err))
+		return CallbackToken{}, false
+	}
+	if revoked && !grant.IssuedAt.After(revokedAt) {
+		http.NotFound(w, r)
+		return CallbackToken{}, false
+	}
+	return grant, true
+}
+
+// RevokeCallbacks handles POST /v1/agent-callbacks/revocations: every
+// callback URL issued for the thread until now stops working. A URL issued
+// later works, so a thread can reopen.
+func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, caller CallbackCaller) {
+	if !h.callbacksConfigured() {
+		api.WriteProblem(w, api.ErrCapacity("agent callbacks are unavailable on this control-plane host"))
+		return
+	}
+	var req api.RevokeAgentCallbacksRequest
+	if err := httpkit.DecodeJSONSized(r, &req, callbackRequestMaxBytes); err != nil || !ValidCallbackID(req.ThreadID, api.AgentCallbackThreadIDMaxBytes) {
+		api.WriteProblem(w, api.ErrValidation("the body must name an endpoint_id and a valid thread_id"))
+		return
+	}
+	endpoint, problem := caller.endpoint(r.Context(), h.Inbox, req.EndpointID)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	at, err := h.Revocations.RevokeCallbacks(r.Context(), caller.Account.ID, endpoint.ID, req.ThreadID)
+	if err != nil {
+		api.WriteProblem(w, h.problem(caller.Account, "revoke callbacks", err))
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, api.AgentCallbackRevocation{EndpointID: endpoint.ID, ThreadID: req.ThreadID, RevokedAt: at.UTC()})
 }
 
 // checkCallbackPost checks one post against its token.

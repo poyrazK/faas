@@ -1983,31 +1983,8 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 			release()
 			return WakeResult{}, fmt.Errorf("sched: wake: instance deployment: %w", depErr)
 		}
-		port := deploymentRuntimePort(dep)
 		release()
-		// Surface the existing row's wake_id so a Phase-1 fast-path
-		// response carries x-faas-wake-id just like a cold-wake
-		// response would. The correlation handle is the wake that
-		// brought the instance up; an operator tailing a warm request
-		// can still pin it back to the schedd slog line that stamped
-		// it (gaps analysis 2026-07-23 review finding #1).
-		identity := api.PlatformIdentity{
-			AppID:         appID,
-			DeploymentID:  resolvedDeploymentID,
-			InstanceID:    ins.ID,
-			NodeID:        ins.NodeID,
-			CommitSHA:     dep.CommitSHA,
-			DeploymentTag: dep.Tag,
-			ImageDigest:   dep.ImageDigest,
-		}
-		if !dep.CreatedAt.IsZero() {
-			identity.DeploymentCreatedAt = dep.CreatedAt.UTC().Format(time.RFC3339Nano)
-		}
-		identity.TenantID = app.AccountID
-		if node, nodeErr := e.store.ComputeNodeByID(ctx, ins.NodeID); nodeErr == nil {
-			identity.Region = stringValue(node.Region)
-		}
-		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID, Port: port, DeploymentID: resolvedDeploymentID, RequestCount: ins.RequestCount, Identity: identity}, nil
+		return e.runningWakeResult(ctx, appID, app.AccountID, ins, dep), nil
 	} else if err != nil && !errors.Is(err, state.ErrNotFound) {
 		// A fenced app reports the barrier, as it did before the lookup.
 		if barrierErr := e.checkManagedPostgresAdmission(ctx, appID); barrierErr != nil {
@@ -2029,10 +2006,17 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// as *api.Problem{Code: CodePlanLimitConcur}. The ledger's
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
 	// rather than lift into the typed AtCapacity result.
+	var res WakeResult
+	var err error
 	if deploymentID != "" {
-		return e.admitAndDispatchWithOptions(ctx, appID, deploymentID, string(state.InstanceModeNormal), trigger, false, false)
+		res, err = e.admitAndDispatchWithOptions(ctx, appID, deploymentID, string(state.InstanceModeNormal), trigger, false, false)
+	} else {
+		res, err = e.admitAndDispatch(ctx, appID, trigger, false)
 	}
-	return e.admitAndDispatch(ctx, appID, trigger, false)
+	if booted, ok := e.awaitBootingInstanceForWake(ctx, app.AccountID, appID, deploymentID, scope, err); ok {
+		return booted, nil
+	}
+	return res, err
 }
 
 // A wake can reuse only its selected deployment's running instance. Unscoped

@@ -1007,20 +1007,22 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	if tok := LeaseToken(leaseTokenStr); tok != "" && e.jobLeaser != nil {
 		_ = e.jobLeaser.Release(ctx, tok, leaseOwnerNodeID)
 	}
-	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
 	// Retry-on-failure: re-queue failed/timeout/oom tasks if budget
-	// remains.
+	// remains, before the VM teardown. Until the re-queue the task reads
+	// failed, and a sibling task's recompute in that window settled the
+	// whole run as failed (PulseWatch F7). JobTaskRetry reopens the run.
+	retryAttempted := retryRequested && retryMaxKnown && jobTaskHasRetryRemaining(task.Attempt, retryMax)
+	var retryErr error
+	if retryAttempted {
+		retryErr = e.store.JobTaskRetry(ctx, runID, taskIndex, time.Now().Add(jobRetryDelay(task.Attempt)))
+	}
+	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
+	if retryAttempted && retryErr == nil {
+		return nil
+	}
 	if retryRequested {
-		if retryMaxKnown && jobTaskHasRetryRemaining(task.Attempt, retryMax) {
-			delay := jobRetryDelay(task.Attempt)
-			next := time.Now().Add(delay)
-			rerr := e.store.JobTaskRetry(ctx, runID, taskIndex, next)
-			if rerr == nil {
-				// Skip recompute — the task is back in 'queued',
-				// aggregate will recompute on next claim.
-				return nil
-			}
-			e.settleRefusedJobRetry(ctx, runID, task, decision, rerr)
+		if retryAttempted {
+			e.settleRefusedJobRetry(ctx, runID, task, decision, retryErr)
 		}
 		// Exhausted retries → dead-letter. JobRunRecompute picks
 		// this up via the dead_letter_count column.

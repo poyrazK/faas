@@ -56,7 +56,14 @@ a month, each plan's included GB-RAM-hours count for the share of the month
 you held it: a whole month on Pro includes 1,000 GB-h, and half a month on
 Hobby then half on Pro includes 600 GB-h. The daily overage warning starts
 above that allowance too. A move to Free is the exception: Free stops
-workloads at its own allowance, counting the month's usage so far.
+workloads at its own allowance. If a paid plan ends during a month, that
+allowance counts usage from the day you return to Free; usage on the paid
+plan was billed on its terms (ADR-20261031090658).
+
+Overage is billed hour by hour against the allowance in force at the time,
+and the spend cap counts exactly that. After a downgrade, usage your larger
+allowance already covered is never billed and does not count toward the cap;
+after an upgrade, overage already billed stays billed and keeps counting.
 
 Overage is billed hour by hour against the allowance in force at the time,
 and the spend cap counts exactly that. After a downgrade, usage your larger
@@ -106,8 +113,9 @@ continues to use its existing source until correction reconciliation is accepted
 
 All amounts use integer millicents (1,000 millicents per cent). One shared
 account allowance applies to each usage meter for the month. When plans change,
-the compute allowance is each plan's grant for its share of the month, the
-allowance the provider bills against; other meters keep the largest recorded
+the compute allowance is what the provider pusher applies hour by hour: each
+hour above the grant in force for it, so the ledger's net compute equals the
+billed overage (ADR-20261031090658); other meters keep the largest recorded
 grant. Its quantities are shared proportionally across price versions. Within each version, net cost and
 allowance value are allocated by workload quantity using stable largest-remainder
 rounding. Allocated amounts sum exactly to the meter totals. Shadow and disabled

@@ -99,7 +99,7 @@ func (p *transferHTTPFixture) serve(t *testing.T, w http.ResponseWriter, r *http
 
 func transferIntegrationConfig(timeout int64) objectstorage.Config {
 	policy := api.ObjectStoragePolicy{MaxAccountBytes: 512 << 20, MaxBucketBytes: 512 << 20, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 100, MaxMonthlyRequests: 1000, MaxMonthlyEgressBytes: 512 << 20, MaxMonthlyAuthorizations: 1000, MaxReportAgeSeconds: 3600}
-	return objectstorage.Config{Accounting: &policy, MaxUploadBytes: 512 << 20, MaxSinglePutBytes: 96 << 20, MaxPartBytes: 96 << 20, Transfer: objectstorage.ObjectTransferConfig{Profile: "direct", TimeoutSeconds: timeout, MaxConcurrentUploads: 2, MaxSpoolBytes: 96 << 20, MinSpoolFreeBytes: 1}}
+	return objectstorage.Config{Accounting: &policy, MaxUploadBytes: 512 << 20, MaxSinglePutBytes: 96 << 20, MaxPartBytes: 96 << 20, Transfer: objectstorage.ObjectTransferConfig{Profile: "direct", TimeoutSeconds: timeout, MaxConcurrentUploads: 4, MaxSpoolBytes: 96 << 20, MinSpoolFreeBytes: 1}}
 }
 
 // adr: 553
@@ -148,8 +148,9 @@ func productionTransferEndToEnd(t *testing.T, st multipartCopyIntegrationStore) 
 		close(release)
 		t.Fatal("large PUT never reached provider")
 	}
-	// Both slots are available to policy, but two 65 MiB files exceed the
-	// configured 96 MiB aggregate spool. Rejection must precede dispatch.
+	// The account's share is two of the four slots, so the second upload
+	// takes a slot at once; but two 65 MiB files exceed the configured 96 MiB
+	// aggregate spool. Rejection must precede dispatch.
 	_, err = f.client.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("second.bin"), Body: io.NewSectionReader(source, 0, size), ContentLength: aws.Int64(size)}, func(o *awss3.Options) {
 		o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
 			return stack.Build.Add(middleware.BuildMiddlewareFunc("TransferExpectContinue", func(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
@@ -163,7 +164,7 @@ func productionTransferEndToEnd(t *testing.T, st multipartCopyIntegrationStore) 
 		})
 	})
 	var service smithy.APIError
-	if !errors.As(err, &service) || service.ErrorCode() != "SlowDown" {
+	if !errors.As(err, &service) || service.ErrorCode() != "SlowDown" || !strings.Contains(service.ErrorMessage(), "spool") {
 		close(release)
 		t.Fatal("aggregate spool did not stop the second request", err)
 	}

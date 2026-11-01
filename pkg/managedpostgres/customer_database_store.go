@@ -97,6 +97,9 @@ func databaseFromSQL(row sqlc.ManagedPostgresDatabase) Database {
 	if row.PurgeAfter.Valid {
 		database.PurgeAfter = row.PurgeAfter.Time
 	}
+	if row.RestoreSlotUntil.Valid {
+		database.RestoreSlotUntil = row.RestoreSlotUntil.Time
+	}
 	return database
 }
 

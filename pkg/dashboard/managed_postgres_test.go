@@ -74,3 +74,27 @@ func TestRenderManagedPostgresScheduledDelete(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderManagedPostgresRestoreRangeAndSlot shows where a restore can start
+// and a temporary copy's deadline (ADR-20261031123259).
+func TestRenderManagedPostgresRestoreRangeAndSlot(t *testing.T) {
+	out := httptest.NewRecorder()
+	page := Page{
+		Title: "Managed PostgreSQL", Body: "postgres",
+		Account: &AccountView{Email: "alice@example.com", Plan: "hobby"},
+		Data: ManagedPostgresData{Available: true, Databases: []ManagedPostgresDatabaseItem{
+			{ID: "db-1", Name: "orders", State: "ready", RestoreFrom: "2026-10-24T12:00:00Z"},
+			{ID: "db-2", Name: "orders-copy", State: "ready", RestoreSlotUntil: "2026-11-07T12:00:00Z"},
+		}},
+	}
+	if err := Render(out, slog.Default(), "nonce", page); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := out.Body.String()
+	for _, want := range []string{"Restorable points", "From 2026-10-24T12:00:00Z to now", "gregale postgres restore orders",
+		"Temporary copy", "before 2026-11-07T12:00:00Z"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}

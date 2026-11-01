@@ -1311,6 +1311,7 @@ export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
 export type { ManagedPostgresOverage } from './models/ManagedPostgresOverage.js';
 export type { ManagedPostgresOverageRequest } from './models/ManagedPostgresOverageRequest.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
+export type { ManagedPostgresRestoreRange } from './models/ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresUsageImportReading } from './models/ManagedPostgresUsageImportReading.js';
 export type { ManagedPostgresUsageImportRequest } from './models/ManagedPostgresUsageImportRequest.js';
 export type { ManagedPostgresUsageImportResult } from './models/ManagedPostgresUsageImportResult.js';

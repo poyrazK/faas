@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
 // Firecracker machine config + jailer invocation builders (spec §4.4, Appendix
@@ -15,9 +16,12 @@ import (
 // VMConfig is the Firecracker configuration file (`--config-file`). JSON tags
 // match the Firecracker API schema exactly — do not rename.
 type VMConfig struct {
-	BootSource        BootSource `json:"boot-source"`
-	Drives            []Drive    `json:"drives"`
-	MachineConfig     Machine    `json:"machine-config"`
+	BootSource    BootSource `json:"boot-source"`
+	Drives        []Drive    `json:"drives"`
+	MachineConfig Machine    `json:"machine-config"`
+	// NetworkInterfaces is never nil: Firecracker 1.7 rejects a JSON null
+	// here ("expected a sequence"), so networkless execution and database
+	// VMs (ADR-1027) carry an empty list.
 	NetworkInterfaces []NetIface `json:"network-interfaces"`
 	// Entropy is an empty object to attach virtio-rng (always on, spec §11).
 	Entropy *Entropy `json:"entropy,omitempty"`
@@ -83,7 +87,16 @@ type Drive struct {
 	IsRootDevice bool         `json:"is_root_device"`
 	IsReadOnly   bool         `json:"is_read_only"`
 	RateLimiter  *RateLimiter `json:"rate_limiter,omitempty"`
+	// CacheType is empty (Firecracker's "Unsafe") for app layers, which are
+	// disposable. Database volumes set DriveCacheWriteback (ADR-1027).
+	CacheType string `json:"cache_type,omitempty"`
 }
+
+// DriveCacheWriteback makes Firecracker advertise flush support and fsync
+// the host file on every guest flush. The default "Unsafe" ignores guest
+// flushes: acceptable for disposable app layers, data loss for a database
+// volume (ADR-1027).
+const DriveCacheWriteback = "Writeback"
 
 // RateLimiter is Firecracker's device rate limiter: token buckets on bytes
 // and on operations.
@@ -232,6 +245,17 @@ const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
+
+// DatabaseBootArgs is the kernel command line of a database VM (ADR-1027):
+// the networkless execution line, which configures no guest network, plus
+// guest-init's database-mode arguments for the given PostgreSQL major.
+func DatabaseBootArgs(major int) (string, error) {
+	mode, err := dbguest.BootArgs(major)
+	if err != nil {
+		return "", err
+	}
+	return withGuestTimer(executionBootArgs) + " " + mode, nil
+}
 
 // withGuestTimer inserts the timer profile after the console arguments.
 func withGuestTimer(args string) string {
@@ -682,9 +706,19 @@ type JailerSpec struct {
 	// the legacy/test command shape; production Manager.Wake supplies the
 	// billable VM ceiling before jailer drops privileges.
 	MemoryMaxBytes int64
+	// MemoryHighBytes, when set, is the cgroup's memory.high: above it the
+	// kernel throttles and reclaims instead of killing. Database VMs set it
+	// below MemoryMaxBytes (ADR-1027); app VMs leave it unset.
+	MemoryHighBytes int64
 	// Networkless omits jailer's --netns argument for disposable execution
 	// guests. Ordinary app and job VMs always retain their tenant namespace.
 	Networkless bool
+	// ChrootBase overrides JailChrootBase. Database VMs use their own base
+	// so the app-VM orphan sweep never touches them (ADR-1027).
+	ChrootBase string
+	// ParentCgroup overrides the plan-derived parent cgroup (relative to
+	// the cgroup v2 mount). Database VMs live under their own slice.
+	ParentCgroup string
 }
 
 // PerInstanceScope returns the cgroup scope name the jailer will create
@@ -751,6 +785,13 @@ func JailerCommand(s JailerSpec) []string {
 	if s.IsBuilder {
 		parentCgroup = BuilderCgroupParent
 	}
+	if s.ParentCgroup != "" {
+		parentCgroup = s.ParentCgroup
+	}
+	chrootBase := JailChrootBase
+	if s.ChrootBase != "" {
+		chrootBase = s.ChrootBase
+	}
 	cpuWeight := vmCPUWeight(s.Plan, s.IsBuilder)
 	args := []string{
 		"jailer",
@@ -758,7 +799,7 @@ func JailerCommand(s JailerSpec) []string {
 		"--uid", fmt.Sprintf("%d", s.UID),
 		"--gid", fmt.Sprintf("%d", s.GID),
 		"--exec-file", execFile,
-		"--chroot-base-dir", JailChrootBase,
+		"--chroot-base-dir", chrootBase,
 	}
 	if !s.Networkless {
 		// Ordinary app/job VMs join their private tenant namespace. Execution
@@ -772,6 +813,9 @@ func JailerCommand(s JailerSpec) []string {
 	)
 	if s.MemoryMaxBytes > 0 {
 		args = append(args, "--cgroup", fmt.Sprintf("memory.max=%d", s.MemoryMaxBytes))
+	}
+	if s.MemoryHighBytes > 0 {
+		args = append(args, "--cgroup", fmt.Sprintf("memory.high=%d", s.MemoryHighBytes))
 	}
 	args = append(args,
 		"--",
