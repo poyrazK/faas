@@ -885,6 +885,7 @@ type App struct {
 	DeploymentCronFingerprint         string
 	DeploymentCronBefore              []byte
 	DeploymentMailRevision            int64
+	Labels                            []byte
 }
 
 type AppApiRoute struct {
@@ -3077,6 +3078,12 @@ type CustomDomainTlsAdmission struct {
 	RegisteredDomain interface{}
 	OwnerID          pgtype.UUID
 	AdmittedAt       pgtype.Timestamptz
+}
+
+type CustomDomainTlsAllowedHost struct {
+	WildcardDomain interface{}
+	Name           interface{}
+	CreatedAt      pgtype.Timestamptz
 }
 
 type CustomDomainTlsHost struct {
@@ -7799,7 +7806,7 @@ type LogEvent struct {
 	Fields        []byte
 }
 
-type LogEvents202610 struct {
+type LogEvents202611 struct {
 	ID            pgtype.UUID
 	OccurredAt    pgtype.Timestamptz
 	AccountID     pgtype.UUID
@@ -7822,7 +7829,7 @@ type LogEvents202610 struct {
 	Fields        []byte
 }
 
-type LogEvents202611 struct {
+type LogEvents202612 struct {
 	ID            pgtype.UUID
 	OccurredAt    pgtype.Timestamptz
 	AccountID     pgtype.UUID
@@ -8258,6 +8265,17 @@ type ManagedPostgresLiveLogin struct {
 	Awake              string
 	CreatedAt          pgtype.Timestamptz
 	SealedLoginSig     []byte
+}
+
+// Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).
+type ManagedPostgresOverageDelivery struct {
+	Provider            string
+	SubjectID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	Live                bool
+	BilledUnitSeconds   int64
+	DeliveredMillicents int64
+	UpdatedAt           pgtype.Timestamptz
 }
 
 type ManagedPostgresResize struct {
@@ -13526,45 +13544,6 @@ type RequestTelemetry struct {
 	TraceInferred               bool
 }
 
-type RequestTelemetry202610 struct {
-	ID                          pgtype.UUID
-	AccountID                   pgtype.UUID
-	AppID                       pgtype.UUID
-	DeploymentID                pgtype.UUID
-	Route                       string
-	Method                      string
-	Status                      int32
-	LatencyMs                   int32
-	ColdBoot                    bool
-	TraceID                     pgtype.Text
-	SpansSummary                []byte
-	ReceivedAt                  pgtype.Timestamptz
-	Count                       int32
-	UaFamily                    string
-	ReferrerHost                string
-	Country                     string
-	WakeID                      pgtype.Text
-	InstanceID                  pgtype.Text
-	GuestDurationMs             int32
-	GuestRuntime                string
-	GuestOutcome                string
-	GuestErrorClass             string
-	ConsumerID                  pgtype.UUID
-	NodeID                      string
-	Region                      string
-	CommitSha                   string
-	DeploymentTag               string
-	DeploymentCreatedAt         string
-	ImageDigest                 string
-	PlatformTenantID            pgtype.UUID
-	GuestCpuTimeMs              int32
-	GuestPeakRssMb              int32
-	GuestResourceUsageAvailable bool
-	FlagEvidence                []byte
-	ContentOutcome              string
-	TraceInferred               bool
-}
-
 type RequestTelemetry202611 struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
@@ -13605,6 +13584,45 @@ type RequestTelemetry202611 struct {
 }
 
 type RequestTelemetry202612 struct {
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	DeploymentID                pgtype.UUID
+	Route                       string
+	Method                      string
+	Status                      int32
+	LatencyMs                   int32
+	ColdBoot                    bool
+	TraceID                     pgtype.Text
+	SpansSummary                []byte
+	ReceivedAt                  pgtype.Timestamptz
+	Count                       int32
+	UaFamily                    string
+	ReferrerHost                string
+	Country                     string
+	WakeID                      pgtype.Text
+	InstanceID                  pgtype.Text
+	GuestDurationMs             int32
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	ConsumerID                  pgtype.UUID
+	NodeID                      string
+	Region                      string
+	CommitSha                   string
+	DeploymentTag               string
+	DeploymentCreatedAt         string
+	ImageDigest                 string
+	PlatformTenantID            pgtype.UUID
+	GuestCpuTimeMs              int32
+	GuestPeakRssMb              int32
+	GuestResourceUsageAvailable bool
+	FlagEvidence                []byte
+	ContentOutcome              string
+	TraceInferred               bool
+}
+
+type RequestTelemetry202701 struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
 	AppID                       pgtype.UUID

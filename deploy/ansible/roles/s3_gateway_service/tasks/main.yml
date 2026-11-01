@@ -225,3 +225,9 @@
   retries: 15
   delay: 2
   when: faas_object_storage_gateway_enabled | bool
+
+- name: s3_gateway_service — uploads credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: uploads
+    credential_units: [faas-s3-gatewayd]

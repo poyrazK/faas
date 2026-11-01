@@ -23,6 +23,7 @@ OOMPolicy=continue
 AmbientCapabilities=
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/otel.env
+Environment=GOGC=200
 Environment=GOMEMLIMIT=384MiB
 Environment=FAAS_PUBLIC_EDGE_MODE=compute
 Environment=FAAS_GATEWAYD_PUBLIC_ROLE=compute-only

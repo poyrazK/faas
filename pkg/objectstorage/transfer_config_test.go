@@ -29,6 +29,12 @@ func TestObjectTransferConfigurationBoundaries(t *testing.T) {
 		{"small spool", ObjectTransferConfig{MaxSpoolBytes: 1}, 0, 0, true},
 		{"large spool", ObjectTransferConfig{MaxSpoolBytes: api.MaxObjectUploadSpoolBytes + 1}, 0, 0, true},
 		{"negative free reserve", ObjectTransferConfig{MinSpoolFreeBytes: -1}, 0, 0, true},
+		// ADR-20261031122757 §3: a gateway's port share.
+		{"port share", ObjectTransferConfig{MaxBytesPerSecond: 37_500_000}, 0, 0, false},
+		{"port share floor", ObjectTransferConfig{MaxBytesPerSecond: api.MinObjectGatewayTransferBytesPerSecond}, 0, 0, false},
+		{"port share below floor", ObjectTransferConfig{MaxBytesPerSecond: api.MinObjectGatewayTransferBytesPerSecond - 1}, 0, 0, true},
+		{"port share above ceiling", ObjectTransferConfig{MaxBytesPerSecond: api.MaxObjectGatewayTransferBytesPerSecond + 1}, 0, 0, true},
+		{"negative port share", ObjectTransferConfig{MaxBytesPerSecond: -1}, 0, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			config := base
@@ -45,6 +51,9 @@ func TestObjectTransferConfigurationBoundaries(t *testing.T) {
 			}
 			if tc.transfer.TimeoutSeconds != 0 && r.TransferTimeout() != time.Duration(tc.transfer.TimeoutSeconds)*time.Second {
 				t.Fatal("configured timeout lost", r.TransferTimeout())
+			}
+			if r.Transfer.MaxBytesPerSecond != tc.transfer.MaxBytesPerSecond {
+				t.Fatal("configured port share lost", r.Transfer.MaxBytesPerSecond)
 			}
 		})
 	}

@@ -224,7 +224,8 @@ func (s *Service) writeManagedRealtimeHistoryError(w http.ResponseWriter, r *htt
 		return
 	}
 	if errors.Is(err, state.ErrManagedRealtimeEventSchemaLimit) {
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Event schema limit reached", "an endpoint can register 64 immutable schema versions"))
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Event schema limit reached",
+			fmt.Sprintf("an event type can register %d immutable schema versions and an endpoint %d; see https://gregale.dev/docs/realtime", api.RealtimeEventSchemaVersionsPerEventType, api.RealtimeEventSchemasPerEndpoint)))
 		return
 	}
 	var account *state.ManagedRealtimeRetainedChannelLimitError

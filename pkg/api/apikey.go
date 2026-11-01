@@ -551,6 +551,15 @@ var (
 	// deployment it just created without receiving account-wide apps:read.
 	ScopesDeploymentReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite}
 
+	// ScopesDeployTargetReadSurface: read the app a deploy targets
+	// (GET /v1/apps/{slug}). Every CLI deploy reads its app first, so
+	// deploy:write is admitted for the same reason as above: a deploy
+	// token, a GitHub Actions OIDC bearer or a deploy:write key can deploy
+	// without account-wide apps:read. It reveals nothing new: deploy:write
+	// can already PATCH the app, which answers the same document, and a
+	// deploy token stays bound to its own app (ADR-20261031162858).
+	ScopesDeployTargetReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite}
+
 	// ScopesUsageReadSurface: the two narrow usage endpoints.
 	// Granted by admin or usage:read.
 	ScopesUsageReadSurface = []string{ScopeAdmin, ScopeUsageRead}

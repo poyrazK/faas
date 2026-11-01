@@ -1,6 +1,7 @@
 package vmmdgrpc
 
 import (
+	"strings"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -96,10 +97,13 @@ func (s *Server) Logs(req *vmmdpb.LogsRequest, stream vmmdpb.Vmmd_LogsServer) er
 		follow = req.GetFollow()
 	}
 	snapshotSince := req.GetSinceSeq()
-	if !follow && snapshotSince == 0 {
+	if snapshotSince == 0 && (!follow || !sinceTime.IsZero()) {
 		// The one-shot API has no cursor by default, so expose the
 		// retained page rather than the live-tail sentinel used by
-		// follow streams.
+		// follow streams. A follow stream with a time bound
+		// (`gregale logs -f --since 15m`) replays the retained lines
+		// inside that window first; it used to start from "now" and
+		// ignore --since.
 		snapshotSince = 1
 	}
 	// Gap-frame synthesis (issue #517 / PR-B acceptance #4). When
@@ -187,11 +191,13 @@ func (s *Server) Logs(req *vmmdpb.LogsRequest, stream vmmdpb.Vmmd_LogsServer) er
 // fields are 1:1; written_at is the host-side ingest time, never the
 // guest clock (ADR-022 entropy hazard).
 func lineToPb(l logbuf.Line) *vmmdpb.LogsResponse {
+	// proto3 strings must be valid UTF-8 or Send fails for the whole
+	// stream; the ring already sanitizes, this guards any other producer.
 	return &vmmdpb.LogsResponse{
 		Seq:       l.Seq,
-		Stream:    l.Stream,
-		Line:      l.Line,
-		Level:     l.Level,
+		Stream:    strings.ToValidUTF8(l.Stream, "�"),
+		Line:      strings.ToValidUTF8(l.Line, "�"),
+		Level:     strings.ToValidUTF8(l.Level, "�"),
 		WrittenAt: timestamppb.New(l.WrittenAt),
 	}
 }
