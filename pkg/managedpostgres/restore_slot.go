@@ -276,6 +276,43 @@ func (s *Service) restoreSlotRoom(ctx context.Context, store RestoreSlotStore, s
 	return count <= int64(limit), nil
 }
 
+// A database switch's copy becomes the app's database, so it must fit inside
+// its owner's database limit: when a restore slot ends, the copy's bindings
+// are revoked, the app's DATABASE_URL among them (ADR-20261031123259, GA
+// amendment). Its restore marks the reservation, and both stores refuse it
+// with ErrQuotaExceeded instead of granting the slot.
+type withinLimitKey struct{}
+
+func reserveWithinLimit(ctx context.Context) context.Context {
+	return context.WithValue(ctx, withinLimitKey{}, true)
+}
+
+// restoreSlotAllowed reports whether a reservation made with ctx may take
+// the restore slot.
+func restoreSlotAllowed(ctx context.Context) bool {
+	within, _ := ctx.Value(withinLimitKey{}).(bool)
+	return !within
+}
+
+// DatabaseRoom reports how many databases count toward accountID's database
+// limit (provisioning and restoring ones included) and the limit, so a
+// restore that must fit inside it can be refused before anything changes.
+func (s *Service) DatabaseRoom(ctx context.Context, accountID string) (int64, int, error) {
+	store, ok := s.store.(RestoreSlotStore)
+	if !ok {
+		return 0, 0, ErrUnsupported
+	}
+	limit, err := s.reservationLimit(ctx, accountID)
+	if err != nil {
+		return 0, 0, err
+	}
+	count, err := store.CountSubjectDatabases(ctx, PolicySubject(ctx, accountID))
+	if err != nil {
+		return 0, 0, err
+	}
+	return count, limit, nil
+}
+
 // undeleteNeedsRoom refuses to recover a copy whose restore slot has ended
 // unless its owner has room for it: the slot is never granted again, so it
 // cannot extend itself (ADR-20261031123259 decision 5).

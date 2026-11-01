@@ -177,6 +177,9 @@ every plan:
 - A copy cannot replace its source: the source cannot be deleted while the
   copy exists. To keep restored rows on a one-database plan, copy them back
   into the source, then purge the copy.
+- A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
+  never uses the slot: its copy becomes the app's database, so the account
+  needs room for it inside the limit.
 
 ## Change the compute class
 

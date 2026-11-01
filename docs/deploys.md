@@ -380,6 +380,14 @@ What to expect:
   otherwise the request is refused before anything changes.
 - **An account runs at most three switches at once.** A fourth is refused
   with `database_switches_active` (429) until one finishes or is cancelled.
+- **The restored copy must fit inside the plan's database limit.** It
+  becomes the app's database, so it cannot use the
+  [restore slot](postgres.md#restore-to-a-point-in-time) a plain restore may
+  take. At the limit the rollback is refused with
+  `managed_postgres_quota_exceeded` (403) before anything changes. Delete a
+  database you no longer need or upgrade, then roll back again. If the limit
+  fills after the request, the switch fails with `database_limit` and the app
+  keeps serving.
 
 After a switch, rolling back to a release whose migration it undid is refused
 with `rollback_target_database_restored`, and automated rollbacks cannot go

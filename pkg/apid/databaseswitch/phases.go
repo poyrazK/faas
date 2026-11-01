@@ -15,11 +15,17 @@ import (
 // under the switch's name is reused.
 func (w *Worker) restore(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
 	if sw.TargetDatabaseID == "" {
+		// The copy becomes the app's database, so it must fit inside the
+		// plan's limit: a restore slot's end would revoke its bindings
+		// (ADR-20261031123259).
 		target, err := w.Databases.Restore(ctx, managedpostgres.RestoreDatabaseRequest{
-			AccountID: sw.AccountID, SourceDatabaseID: sw.SourceDatabaseID, Name: sw.TargetName, PointInTime: sw.RestorePoint})
+			AccountID: sw.AccountID, SourceDatabaseID: sw.SourceDatabaseID, Name: sw.TargetName, PointInTime: sw.RestorePoint, WithinLimit: true})
 		switch {
 		case err == nil:
 			sw.TargetDatabaseID = target.ID
+		case errors.Is(err, managedpostgres.ErrQuotaExceeded):
+			return w.beginAbort(sw, codeDatabaseLimit, "The restored copy does not fit inside the plan's database limit, and a switch's copy cannot use the restore slot because it becomes the app's database. "+
+				"Delete a database you no longer need or upgrade the plan, then roll back again.")
 		case errors.Is(err, managedpostgres.ErrProvisioningClosed):
 			return w.beginAbort(sw, codeProvisioningClosed, "Managed PostgreSQL provisioning is not open for this account.")
 		case errors.Is(err, managedpostgres.ErrInvalid):

@@ -117,8 +117,9 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	}
 	if active >= limit {
 		// Only a restore may go one database past the limit, while no other
-		// database of the owner holds the slot (ADR-20261031123259).
-		if database.RestoreSourceDatabaseID == "" {
+		// database of the owner holds the slot (ADR-20261031123259), and
+		// not one that must fit inside it.
+		if database.RestoreSourceDatabaseID == "" || !restoreSlotAllowed(ctx) {
 			return Database{}, false, ErrQuotaExceeded
 		}
 		for _, existing := range s.databases {
