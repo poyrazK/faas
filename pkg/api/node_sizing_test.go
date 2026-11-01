@@ -190,3 +190,26 @@ func TestDeriveNodeSizingForRole_ComputeEdgeHoldsBackTheEdge(t *testing.T) {
 		t.Fatalf("1-CPU edge node registers %d CPUs, want 1", tiny.TenantCPUs)
 	}
 }
+
+// ADR-20261031122757 §1: a compute edge node that also runs the S3 gateway
+// holds back the gateway's RAM and CPU on top of the edge's.
+//
+// adr: 20261031122757
+func TestDeriveNodeSizingForRole_ObjectGatewayHoldsBackTheGateway(t *testing.T) {
+	const prodMemMB = 15_985
+	edge := DeriveNodeSizingForRole(prodMemMB, 8, NodeShapeComputeEdge)
+	gateway := DeriveNodeSizingForRole(prodMemMB, 8, NodeShapeComputeEdgeObjectGateway)
+	if got := gateway.NonTenantReserveMB - edge.NonTenantReserveMB; got != ComputeObjectGatewayReserveMB {
+		t.Fatalf("gateway reserve exceeds the edge's by %d MB, want %d", got, ComputeObjectGatewayReserveMB)
+	}
+	if got := edge.TenantSliceMaxMB - gateway.TenantSliceMaxMB; got != ComputeObjectGatewayReserveMB {
+		t.Fatalf("gateway tenant slice is %d MB smaller than the edge's, want %d", got, ComputeObjectGatewayReserveMB)
+	}
+	holdback := (ComputeObjectGatewayCPUHoldbackMillicores + 999) / 1000
+	if gateway.TenantCPUs != edge.TenantCPUs-holdback || gateway.VCPUSlots != gateway.TenantCPUs*CPUOvercommit {
+		t.Fatalf("gateway node registers %d CPUs (%d slots), want the edge's %d less %d", gateway.TenantCPUs, gateway.VCPUSlots, edge.TenantCPUs, holdback)
+	}
+	if tiny := DeriveNodeSizingForRole(prodMemMB, 2, NodeShapeComputeEdgeObjectGateway); tiny.TenantCPUs != 1 {
+		t.Fatalf("2-CPU gateway node registers %d CPUs, want 1", tiny.TenantCPUs)
+	}
+}

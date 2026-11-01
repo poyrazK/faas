@@ -49,7 +49,14 @@ type AccountErasure struct {
 // BeforeAccountDelete matches grace.Params.BeforeAccountDelete. It returns
 // ErrPending until every snapshotted instance's archive prefix is empty.
 func (e AccountErasure) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
-	if e.Store == nil || e.Objects == nil {
+	if e.Store == nil {
+		return nil
+	}
+	if e.Objects == nil {
+		// Nothing this apid can reach to delete. Say so per account: on a
+		// fleet whose nodes archive, this is an erasure gap, and
+		// apid_log_archive_enabled=0 pages it (FaasLogArchiveNodeDisabled).
+		e.log().Warn("log archive erasure skipped: this apid has no archive bucket", "account", acct.ID)
 		return nil
 	}
 	if acct.DeletionRequestedAt == nil {

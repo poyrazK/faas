@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/certexpiry"
 	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
@@ -978,6 +979,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if archiveClient != nil {
 			srv.logArchive = archiveClient
 		}
+		reportLogArchiveEnabled(srv, archiveClient != nil)
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
 			BeforeAccountDelete: srv.beforeAccountDelete,
@@ -1665,6 +1667,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.seedEnvPlatformFlags(deps.getenv) // ADR-1700 boot fallbacks for the gates above
 	registerPlatformFlagRetireBy(ops.Registry())
 
+	// Bug hunt 32 M6: the FaasTLSCertExpiry* alerts read edge certificate
+	// expiries; the domain doctor records them, nothing else can see them.
+	if expiryStore, ok := srv.store.(state.CustomDomainCertExpiryStore); ok {
+		ops.Registry().MustRegister(certexpiry.New(expiryStore, time.Now, srv.log))
+	}
+
 	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
 	srv.datadogIntegrationEnabled = deps.getenv("FAAS_DATADOG_INTEGRATION_ENABLED") == "1"
 	if srv.customMetricHistoryEnabled {
@@ -1689,7 +1697,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
-		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap}, ops.Registry())
+		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink}, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
@@ -3343,8 +3351,11 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest)
-	// Single-box realtimed reaches apid through this DAC-protected socket.
+	// Single-box realtimed reaches apid through this DAC-protected socket,
+	// and asks it to match Data API server keys there (ADR 20261029202403
+	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
+	receivers.RegisterAuthReceiver(srv, store)
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
 	} else {

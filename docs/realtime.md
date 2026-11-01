@@ -253,6 +253,14 @@ where realtime holds real capacity on our servers:
   A channel frees its slot when its messages expire. A publish that would
   retain on one more channel gets HTTP 409 naming the limit and the number
   held.
+- **Per-user state:** an endpoint keeps inboxes for at most 256 users with
+  unexpired messages at a time and at most 1,024 read markers updated in the
+  last 30 days. An account keeps notification preferences for 1,000 (Hobby),
+  10,000 (Pro) or 50,000 (Scale) users; setting a user's preferences back to
+  the defaults frees the slot. These refusals are HTTP 429 with code
+  `capacity_unavailable`.
+- **Event schemas:** 64 versions per channel and event type, and 1,024 per
+  endpoint.
 - **Functions triggered by channel messages** bill as normal compute.
 
 An endpoint's `max_connections` still caps that endpoint; the account limit

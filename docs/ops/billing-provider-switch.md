@@ -73,6 +73,9 @@ live object-storage charge under the overage cap:
 |---|---|
 | `FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE` | `off`, `shadow`, or `live` |
 | `FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM` | RFC3339 UTC-month boundary; earlier periods are never charged |
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE` | `off`, `shadow`, or `live`: managed PostgreSQL compute overage (ADR-20261031110037) |
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` | RFC3339 UTC-month boundary; earlier months are never charged |
+| `FAAS_POLAR_MANAGED_POSTGRES_METER_ID` | separate Polar meter summing `charge_millicents` for `faas_managed_postgres_usage` |
 | `FAAS_POLAR_OBJECT_STORAGE_METER_ID` | Separate meter that sums `charge_millicents` |
 | `FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME` | Event filter; default `faas_object_storage_usage` |
 

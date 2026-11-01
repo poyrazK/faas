@@ -48,6 +48,10 @@ The dashboard calls operator-authenticated routes:
 - `POST /v1/internal/hosting/sites/SITE/oidc-trusts` with the rules above
 - `DELETE /v1/internal/hosting/sites/SITE/oidc-trusts/TRUST`
 
+Creating and revoking a binding are provider-admin writes: they need an
+operator session with a TOTP step-up from the last five minutes, and an API key
+is refused with `step_up_required`.
+
 These routes cannot be called with a site CI credential. Bindings are immutable,
 with a limit of eight/site. Save the returned trust UUID and site UUID as ordinary
 workflow variables. No Gregale token is returned during binding creation.

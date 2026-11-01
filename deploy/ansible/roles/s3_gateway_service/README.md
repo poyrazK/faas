@@ -46,6 +46,13 @@ same project and import a policy with those actions. Add the gateway fields
 only once `apid`, `s3-gatewayd` and `gatewayd-public` all run a release that
 knows them: older releases refuse a registry with unknown fields.
 
+On a compute node (`FAAS_S3_GATEWAY_ROLE=compute-only`, ADR-20261031122757)
+the gateway refuses to start unless the storage seal domain is staged and no
+fleet or host identity is (`FAAS_HOST_AGE_IDENTITY_PATH` unset), every backend
+names a gateway credential, and `transfer.max_bytes_per_second` sets its port
+share. It runs no provider usage export there, so the compute node needs
+neither the OVH application keys nor the bucket-admin credential.
+
 Installing or changing the registry/provider environment also restarts
 `faas-gatewayd-public`. That daemon reads the registry at boot; restarting it
 here is required for public bucket mounts to become active when storage is

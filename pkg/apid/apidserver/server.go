@@ -1754,11 +1754,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/internal/hosting/sites/{site}/retention", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.SetRetentionPolicy))))
 	mux.Handle("POST /v1/internal/hosting/oidc/exchange", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.hosting.ExchangeOIDC)))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/oidc-trusts", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListOIDCTrusts))))
-	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/oidc-trusts", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CreateOIDCTrust))))
-	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/oidc-trusts/{trust}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RevokeOIDCTrust))))
+	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/oidc-trusts", s.authLimited(s.requireAdminCredentialMutation(s.hosting.CreateOIDCTrust)))
+	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/oidc-trusts/{trust}", s.authLimited(s.requireAdminCredentialMutation(s.hosting.RevokeOIDCTrust)))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/automation-credentials", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListAutomationCredentials))))
-	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/automation-credentials", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CreateAutomationCredential))))
-	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RevokeAutomationCredential))))
+	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/automation-credentials", s.authLimited(s.requireAdminCredentialMutation(s.hosting.CreateAutomationCredential)))
+	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}", s.authLimited(s.requireAdminCredentialMutation(s.hosting.RevokeAutomationCredential)))
 	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/ci/{run}/cancel", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CancelCIRun))))
 	mux.HandleFunc("PUT /v1/internal/hosting/sites/{site}/ci/{run}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CreateCIRun))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/ci/{run}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.GetCIRun))))
@@ -1890,6 +1890,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/runtime/data-api/usage", s.reportDataAPIUsage)
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/usage", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.appDataAPIConnectionBudget))))
+	// ADR-20261031095954: the CLI deploys the runtime apid serves.
+	mux.HandleFunc("GET /v1/apps/{slug}/data-api/runtime", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIRuntime)))
 	// ADR-20261027123814: owner contract inspection, gated by the Data API capability.
 	mux.HandleFunc("POST /v1/apps/{slug}/data-api/contract-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDataAPIContractTask)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/contract-tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDataAPIContractTask))))
@@ -2196,7 +2198,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteScenarioTest))))
 	mux.HandleFunc("POST /v1/dev/sessions/{project}/syncs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recordDevSync)))))
 	mux.HandleFunc("GET /v1/dev/sessions/{project}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDevSyncHistory))))
-	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getApp))))
+	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.getApp))))
 	// App-owned raw TCP listeners. The public port is stable and the
 	// listener can be fail-closed without changing the app deployment.
 	mux.HandleFunc("GET /v1/apps/{slug}/tcp-listeners", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTCPListeners))))
@@ -2640,6 +2642,7 @@ func (s *server) handler() http.Handler {
 	// on apps.account_id = $1 in the pgstore helper.
 	mux.HandleFunc("GET /v1/account/slo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getAccountSLO))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateApp))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/labels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppLabels))))
 	mux.HandleFunc("GET /v1/apps/{slug}/policy/status", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getRuntimePolicyStatus)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreApp))))
@@ -3169,6 +3172,10 @@ func (s *server) handler() http.Handler {
 	// message rather than a generic 404 (matches the pre-#911
 	// pattern in api/flags.go).
 	mux.HandleFunc("GET /v1/domains/{domain}/doctor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomainDoctor))))
+	// ADR-520 amendment 2: a wildcard domain's optional host allowlist.
+	mux.HandleFunc("GET /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomainHosts))))
+	mux.HandleFunc("PUT /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.setDomainHosts)))))
+	mux.HandleFunc("DELETE /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearDomainHosts))))
 
 	// Crons.
 	mux.HandleFunc("GET /v1/crons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCrons))))
@@ -3244,6 +3251,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputs))))
 	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs/files/{name...}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputFile))))
 	mux.HandleFunc("DELETE /v1/agent-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelAgentRun))))
+	// ADR-20261030125501 §3: a callback URL for one thread of an agent
+	// inbox, and the token-only route a tool posts its result to.
+	mux.HandleFunc("POST /v1/agent-callbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createAgentCallback))))
+	mux.Handle("POST /v1/agent-callbacks/{token}", middleware.AuthLimit(middleware.AuthLimitConfig{
+		Log:           s.log,
+		Window:        time.Minute,
+		MaxFailures:   api.AgentCallbackFailuresPerIPPerMinute,
+		CountStatuses: []int{http.StatusNotFound},
+	})(http.HandlerFunc(s.receiveAgentCallback)))
 	mux.HandleFunc("GET /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJob))))
 	mux.HandleFunc("DELETE /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteJob))))

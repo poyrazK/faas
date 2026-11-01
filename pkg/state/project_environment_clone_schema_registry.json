@@ -2568,6 +2568,7 @@
       "github_repo_id",
       "id",
       "idle_timeout_s",
+      "labels",
       "last_deploy_failed_email_at",
       "last_scale_in_at",
       "last_scale_out_at",
@@ -3884,6 +3885,25 @@
     "clone": {
       "owner": "app"
     }
+  },
+  {
+    "table": "custom_domain_tls_admissions",
+    "columns": [
+      "admitted_at",
+      "host",
+      "owner_id",
+      "registered_domain"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "custom_domain_tls_allowed_hosts",
+    "columns": [
+      "created_at",
+      "name",
+      "wildcard_domain"
+    ],
+    "kind": "operational"
   },
   {
     "table": "custom_domain_tls_hosts",
@@ -9687,6 +9707,19 @@
       "subject_id",
       "threshold",
       "used_unit_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "managed_postgres_overage_deliveries",
+    "columns": [
+      "billed_unit_seconds",
+      "delivered_millicents",
+      "live",
+      "period_start",
+      "provider",
+      "subject_id",
+      "updated_at"
     ],
     "kind": "account_identity"
   },
@@ -19507,6 +19540,25 @@
       "log_truncated",
       "result",
       "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_usage",
+    "columns": [
+      "account_id",
+      "billable_mb_ms",
+      "cold_boot",
+      "expected_samples",
+      "measured_ms",
+      "method",
+      "paused_ms",
+      "peak_private_mb",
+      "private_mb_ms",
+      "recorded_at",
+      "run_id",
+      "samples",
+      "unpaused_private_mb_ms"
     ],
     "kind": "operational"
   },

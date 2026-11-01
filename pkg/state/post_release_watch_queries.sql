@@ -28,6 +28,8 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
  WHERE d.status = 'live'
    AND d.rollback_on_5xx
    AND d.last_auto_rollback_reason IS NULL
+   -- A regression the watch could not roll back is judged once.
+   AND COALESCE(d.rollout_decision->>'rollback_skipped', '') = ''
    AND d.traffic_percent = 100
    AND d.rollout_state = 'complete'
    AND d.rollout_completed_at IS NOT NULL

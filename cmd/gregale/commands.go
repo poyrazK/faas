@@ -328,17 +328,34 @@ func cmdWhoami() int {
 	return 0
 }
 
-func cmdApps() int {
+func cmdApps(args []string) int {
+	fs := newFlagSet("app list", flag.ContinueOnError)
+	selector := addSelectorFlag(fs)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	apps, err := client.ListApps(context.Background())
+	var apps []api.AppResponse
+	if *selector != "" {
+		apps, err = selectedApps(context.Background(), client, *selector)
+	} else {
+		apps, err = client.ListApps(context.Background())
+	}
 	if err != nil {
 		return printErr("Could not list apps", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(apps))
+	}
+	if len(apps) == 0 && *selector != "" {
+		_, _ = fmt.Fprintf(osStdout, "No app matches %s\n", *selector)
+		return 0
 	}
 	if len(apps) == 0 {
 		// One line and one next action, as in the app picker. recoveryCLI
