@@ -20831,7 +20831,7 @@ WITH plan_retention AS (
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
       AND i.created_at < $3::timestamptz - make_interval(secs => $4::bigint)
-      AND i.created_at < $3::timestamptz - make_interval(secs => r.seconds)
+      AND coalesce(i.last_replayed_at, i.created_at) < $3::timestamptz - make_interval(secs => r.seconds)
     ORDER BY i.created_at
     LIMIT $5::integer
     FOR UPDATE OF i SKIP LOCKED
@@ -20861,6 +20861,10 @@ type ExpirePendingQueueMessagesRow struct {
 // ADR-20261022105723: a pending queue message past its plan's retention
 // moves to the dead letter. A message a worker holds (dispatching) is not
 // touched. The plan resolves as StampDefaultInvocationRetention's does.
+// ADR-20261101093812: retention counts from the message's last replay, so a
+// message replayed from the dead letter gets the whole retention again. A
+// replay is never earlier than the send, so the created_at bound still
+// narrows invocations_queue_pending_created_idx.
 func (q *Queries) ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error) {
 	rows, err := db.Query(ctx, expirePendingQueueMessages,
 		arg.Plans,
@@ -85941,6 +85945,31 @@ func (q *Queries) ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg Rea
 		return nil, err
 	}
 	return items, nil
+}
+
+const readQueueReplayAdmission = `-- name: ReadQueueReplayAdmission :one
+SELECT p.app_id, p.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM production_invocation_work p
+LEFT JOIN accounts a ON a.id = p.account_id
+LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE p.id = $1::uuid AND p.source = 'queue' AND p.state = 'dead_letter'
+`
+
+type ReadQueueReplayAdmissionRow struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Plan      string
+}
+
+// ADR-20261101093812: a production queue message replayed from the dead
+// letter re-enters its app's queue under the caps a send meets. The plan
+// resolves as ExpirePendingQueueMessages' does. Environment-owned messages
+// are not production work and keep their own caps.
+func (q *Queries) ReadQueueReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadQueueReplayAdmissionRow, error) {
+	row := db.QueryRow(ctx, readQueueReplayAdmission, id)
+	var i ReadQueueReplayAdmissionRow
+	err := row.Scan(&i.AppID, &i.AccountID, &i.Plan)
+	return i, err
 }
 
 const readReleaseWorkerRunningProof = `-- name: ReadReleaseWorkerRunningProof :many

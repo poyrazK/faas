@@ -3906,7 +3906,10 @@ type Limits struct {
 	// bounds what a backlog costs the control-plane database.
 	// QueueMessageRetentionSeconds is how long a pending queue message
 	// waits for a worker before schedd moves it to the dead letter,
-	// counted from its enqueue. A message a worker holds does not expire.
+	// counted from its enqueue or, once replayed from the dead letter, from
+	// its last replay (ADR-20261101093812). A message a worker holds does
+	// not expire. A replay meets MaxQueueDepth and
+	// MaxQueueBacklogBytesPerAccount as a send does.
 	MaxQueueBacklogBytesPerAccount int64
 	QueueMessageRetentionSeconds   int
 

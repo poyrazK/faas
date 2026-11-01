@@ -14,8 +14,9 @@ import (
 
 // QueueMessageExpiryStore moves pending queue messages that waited longer
 // than their plan's QueueMessageRetentionSeconds to the dead letter, oldest
-// first. A message a worker holds (dispatching) does not expire. It reports
-// how many it moved.
+// first. The wait counts from the message's send or, once replayed, from its
+// last replay (ADR-20261101093812). A message a worker holds (dispatching)
+// does not expire. It reports how many it moved.
 type QueueMessageExpiryStore interface {
 	ExpirePendingQueueMessages(ctx context.Context, now time.Time, limit int) (int, error)
 }
@@ -33,6 +34,15 @@ func queueMessageRetention(plan api.Plan) (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Duration(limits.QueueMessageRetentionSeconds) * time.Second, true
+}
+
+// queueMessageWaitStart is when a pending message's retention started: its
+// send, or its last replay from the dead letter.
+func queueMessageWaitStart(inv Invocation) time.Time {
+	if inv.LastReplayedAt != nil && inv.LastReplayedAt.After(inv.CreatedAt) {
+		return *inv.LastReplayedAt
+	}
+	return inv.CreatedAt
 }
 
 func (s *PgStore) ExpirePendingQueueMessages(ctx context.Context, now time.Time, limit int) (int, error) {
@@ -74,7 +84,7 @@ func (m *MemStore) ExpirePendingQueueMessages(_ context.Context, now time.Time, 
 		if !ok {
 			continue
 		}
-		if retention, ok := queueMessageRetention(plan); ok && inv.CreatedAt.Before(now.Add(-retention)) {
+		if retention, ok := queueMessageRetention(plan); ok && queueMessageWaitStart(inv).Before(now.Add(-retention)) {
 			due = append(due, inv)
 		}
 	}

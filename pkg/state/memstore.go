@@ -14940,6 +14940,12 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 	}
 	for _, id := range ids {
 		inv := m.invocations[id]
+		// A pull lease that lapsed on its message's last attempt
+		// dead-letters (ADR-20261101093812).
+		if m.queueLeaseExhaustedLocked(inv) {
+			m.setInvocationLocked(id, exhaustQueueLease(inv, now))
+			continue
+		}
 		quotaReserved := inv.QuotaReserved
 		inv.State = InvocationPending
 		inv.QuotaReserved = false
@@ -29073,6 +29079,7 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		limit = 200
 	}
 	replayed := 0
+	var capped error
 	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
 		if replayed >= limit || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
@@ -29086,12 +29093,18 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 			continue
 		}
+		if IsQueueCapError(err) {
+			if capped == nil {
+				capped = err
+			}
+			continue
+		}
 		if err != nil {
 			return replayed, err
 		}
 		replayed++
 	}
-	return replayed, nil
+	return replayedOrQueueCap(replayed, capped)
 }
 
 func (m *MemStore) DeleteDeadLetterEventForAccount(_ context.Context, accountID, eventID string) error {
@@ -29176,7 +29189,7 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		}
 		// ADR-20261031101000: replay resets attempts, so keyed work past its
 		// pending deadline would only expire again.
-		if inv.WorkPolicyName != "" && inv.WorkExpiresAt != nil && !inv.WorkExpiresAt.After(now) {
+		if KeyedReplayExpired(inv, now) {
 			return DeadLetterEvent{}, ErrKeyedReplayExpired
 		}
 		if _, err := m.retryQueueDeadLetterLocked(accountID, event.SourceID, now); err != nil {
@@ -29308,6 +29321,7 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 	}
 	events := m.deadLetterEventsLocked(appID)
 	replayed := 0
+	var capped error
 	for _, ev := range events {
 		if replayed >= limit || ev.AccountID != accountID || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
@@ -29316,11 +29330,17 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 				continue
 			}
+			if IsQueueCapError(err) {
+				if capped == nil {
+					capped = err
+				}
+				continue
+			}
 			return replayed, err
 		}
 		replayed++
 	}
-	return replayed, nil
+	return replayedOrQueueCap(replayed, capped)
 }
 
 // DeleteDeadLetterEvent purges only the unified ledger projection. The source

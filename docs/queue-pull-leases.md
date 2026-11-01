@@ -82,8 +82,10 @@ An empty `messages` list means nothing arrived during the wait; lease again.
 Each message is delivered at least once. A lease that is not acked, nacked or
 extended before its visibility timeout returns to the queue and is redelivered
 with a new attempt; the old receipt then reports `lease_expired`, so make
-handlers idempotent. The ack, nack and extend calls report each receipt
-separately in `succeeded` and `failed`.
+handlers idempotent. A lease that runs out on the message's last attempt moves
+the message to the dead-letter queue with outcome code
+`queue_lease_attempts_exhausted` as soon as it expires. The ack, nack and
+extend calls report each receipt separately in `succeeded` and `failed`.
 
 ## Authenticate
 

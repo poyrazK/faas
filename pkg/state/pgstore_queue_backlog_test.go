@@ -5,7 +5,9 @@ package state_test
 
 import (
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -81,4 +83,37 @@ func TestPgInvocationBacklogCountersTrackEveryChange(t *testing.T) {
 		t.Fatalf("expiry = %d, %v; want the waiting message", n, err)
 	}
 	check("expiry")
+}
+
+func pgQueueReplayHooks(pool *pgxpool.Pool) queueReplayHooks {
+	return queueReplayHooks{
+		backdate: func(t *testing.T, id string, at time.Time) {
+			t.Helper()
+			if _, err := pool.Exec(t.Context(), `UPDATE invocations SET created_at=$2, due_at=$2 WHERE id=$1`, id, at); err != nil {
+				t.Fatal(err)
+			}
+		},
+		fill: func(t *testing.T, app state.App, n int) {
+			t.Helper()
+			if _, err := pool.Exec(t.Context(), `INSERT INTO invocations (app_id, account_id, source, deployment_scope)
+				SELECT $1::uuid, $2::uuid, 'queue', '' FROM generate_series(1, $3::int)`, app.ID, app.AccountID, n); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+}
+
+func TestPgQueueReplayRestartsRetention(t *testing.T) {
+	store, _, pool := pgWithPool(t)
+	testQueueReplayRestartsRetention(t, store, pgQueueReplayHooks(pool))
+}
+
+func TestPgQueueReplayMeetsQueueDepth(t *testing.T) {
+	store, _, pool := pgWithPool(t)
+	testQueueReplayMeetsQueueDepth(t, store, pgQueueReplayHooks(pool))
+}
+
+func TestPgQueueLeaseLapsedOnLastAttemptDeadLetters(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testQueueLeaseLapsedOnLastAttempt(t, store)
 }
