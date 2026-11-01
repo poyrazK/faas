@@ -61,11 +61,25 @@ type ObjectUsageSnapshot struct {
 	PlanLimits api.ObjectStoragePlanLimits
 }
 
-// objectStoragePlanLimits returns the plan's object-storage limits, or none
-// for an unknown plan.
-func objectStoragePlanLimits(plan api.Plan) api.ObjectStoragePlanLimits {
+// objectStoragePlanLimits returns the plan's object-storage limits with the
+// storage ceiling the account's spend cap pays for (ADR-20261101214152), or
+// none for an unknown plan.
+func objectStoragePlanLimits(plan api.Plan, capCents *int64) api.ObjectStoragePlanLimits {
 	limits, _ := api.LimitsFor(plan)
-	return limits.ObjectStorage
+	return limits.ObjectStorage.WithSpendCap(capCents)
+}
+
+// storedOverPlanCeiling refuses object bodies while the account stores more
+// than its plan's ceiling (ADR-20261101214152). Writes already stop at the
+// ceiling, so this only happens when the ceiling moved below the bytes: a
+// subscription that ended, or a lowered spend cap. Listing, HEAD and DELETE
+// stay open so the customer can get back under it.
+func storedOverPlanCeiling(s ObjectUsageSnapshot, u api.ObjectStorageUsage) error {
+	ceiling := s.PlanLimits.MaxAccountBytes
+	if ceiling <= 0 || u.CapacityBytes <= ceiling {
+		return nil
+	}
+	return &ObjectStorageLimitError{Kind: "account_bytes", Observed: u.CapacityBytes, Limit: ceiling, Cause: ErrObjectBudget}
 }
 
 // planPolicy is the policy every admission and gateway check enforces: the

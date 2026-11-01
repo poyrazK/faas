@@ -101,4 +101,6 @@ single line item per account. A billing review found three gaps:
 ## Not covered
 
 Plan values for object storage, budget notifications, and a runtime cap gate
-for object storage.
+for object storage. ADR-20261101214152 adds the gate: a paid account's storage
+ceiling is its included storage plus what its spend cap buys, and downloads
+stop while it stores more.

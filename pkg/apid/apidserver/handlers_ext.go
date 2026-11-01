@@ -7128,7 +7128,7 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 			api.WriteProblem(w, api.ErrCapacity("could not calculate object storage usage"))
 			return
 		}
-		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges, acct.Plan)
+		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges, snapshot.PlanLimits)
 		out.ObjectStorage = &objectStorage
 	}
 

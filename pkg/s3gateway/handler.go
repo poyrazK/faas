@@ -770,6 +770,11 @@ func objectBudgetMessage(err error) string {
 	if !errors.As(err, &limit) {
 		return "The object storage safety budget has been reached."
 	}
+	if limit.Kind == "account_bytes" {
+		// ADR-20261101214152: downloads stop while the account stores more
+		// than its plan's ceiling; listing, HEAD and DELETE still work.
+		return fmt.Sprintf("The account stores more than its plan's object storage ceiling: limit %d bytes, observed %d. Delete objects, raise the spend cap or upgrade to download again. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
+	}
 	return fmt.Sprintf("The account reached its object storage %s limit for the month: limit %d, observed %d. See %s.", limit.Kind, limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 }
 

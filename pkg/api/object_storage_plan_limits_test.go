@@ -86,3 +86,48 @@ func TestObjectStoragePlanLimitsAllowanceUnits(t *testing.T) {
 		t.Fatalf("saturated allowance = %+v, want a valid ceiling value", got)
 	}
 }
+
+// adr: 20261101214152 — a paid account's storage ceiling is its included
+// storage plus what its spend cap buys at the published price; no cap keeps
+// the operator's ceiling, and Free keeps its own.
+func TestObjectStorageCeilingFollowsTheSpendCap(t *testing.T) {
+	const gib = int64(1 << 30)
+	capOf := func(cents int64) *int64 { return &cents }
+	defaultCap := func(plan Plan) *int64 {
+		cents, ok := plan.DefaultOverageCapCents()
+		if !ok {
+			t.Fatalf("%s has no default spend cap", plan)
+		}
+		return &cents
+	}
+	for _, tc := range []struct {
+		name string
+		plan Plan
+		cap  *int64
+		want int64
+	}{
+		{"hobby default cap", PlanHobby, defaultCap(PlanHobby), 76 * gib},
+		{"pro default cap", PlanPro, defaultCap(PlanPro), 383 * gib},
+		{"scale default cap", PlanScale, defaultCap(PlanScale), 1_200 * gib},
+		{"a raised cap raises it", PlanHobby, capOf(30_000), 10*gib + 10_000*gib},
+		{"a zero cap stops at the included storage", PlanPro, capOf(0), 50 * gib},
+		{"no cap keeps the operator's ceiling", PlanScale, nil, 0},
+		{"free keeps its own ceiling", PlanFree, nil, gib},
+		{"free's ceiling is tighter than any cap", PlanFree, capOf(1_000_000), gib},
+		{"an absurd cap saturates", PlanScale, capOf(1 << 62), MaxObjectStoragePolicyValue},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MustLimitsFor(tc.plan).ObjectStorage.WithSpendCap(tc.cap)
+			if got.MaxAccountBytes != tc.want {
+				t.Fatalf("ceiling = %d bytes (%d GiB), want %d (%d GiB)", got.MaxAccountBytes, got.MaxAccountBytes/gib, tc.want, tc.want/gib)
+			}
+			if got.IncludedBytes != MustLimitsFor(tc.plan).ObjectStorage.IncludedBytes || got.MaxMonthlyEgressBytes != MustLimitsFor(tc.plan).ObjectStorage.MaxMonthlyEgressBytes {
+				t.Fatalf("the cap changed more than the ceiling: %+v", got)
+			}
+		})
+	}
+	operator := ObjectStoragePolicy{MaxAccountBytes: 100 * gib, MaxBucketBytes: 100 * gib}
+	if got := MustLimitsFor(PlanPro).ObjectStorage.WithSpendCap(defaultCap(PlanPro)).Policy(operator); got.MaxAccountBytes != 100*gib {
+		t.Fatalf("a lower operator ceiling must still win: %+v", got)
+	}
+}

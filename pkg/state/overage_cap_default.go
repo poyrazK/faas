@@ -11,6 +11,13 @@ import "github.com/onebox-faas/faas/pkg/api"
 //   - Any other cap, and a cap cleared on a paid plan, is the customer's
 //     choice and stays as it is.
 func planChangeOverageCap(from, to api.Plan, current *int64) *int64 {
+	return PlanChangeOverageCap(from, to, current)
+}
+
+// PlanChangeOverageCap is planChangeOverageCap for callers that need the cap
+// a plan change would leave before making it, such as the pre-downgrade
+// object-storage check (ADR-20261101214152).
+func PlanChangeOverageCap(from, to api.Plan, current *int64) *int64 {
 	newDefault, newHasDefault := to.DefaultOverageCapCents()
 	if current == nil {
 		if newHasDefault && !from.IsPaid() {

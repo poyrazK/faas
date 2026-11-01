@@ -5379,6 +5379,13 @@ SELECT id FROM resource_namespaces WHERE id = $1 FOR UPDATE;
 -- name: ObjectUsageAccountPlan :one
 SELECT a.plan FROM accounts a WHERE a.id=$1 UNION ALL SELECT o.plan FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
 
+-- name: ObjectUsageAccountPlanCap :one
+-- The plan and spend cap that set an account's object-storage ceilings
+-- (ADR-1320, ADR-20261101214152). A null cap is no cap.
+SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+UNION ALL
+SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
+
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
 
