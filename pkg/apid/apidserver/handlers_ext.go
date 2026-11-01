@@ -1140,6 +1140,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.executionModeApprovalProblem(r.Context(), app, &req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	// An enabled gate with no explicit route list requires an imported OpenAPI
 	// document. Evaluate the post-PATCH state so clearing a list on an already
 	// enabled app cannot leave the gateway with an unusable contract.

@@ -71,7 +71,8 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Stop requiring release approvals.
 
-     Releases waiting for approval continue on the canary's next step.
+     Needs the admin scope (a signed-in session or an admin key). Releases waiting for approval continue
+    on the canary's next step.
 
     Args:
         slug (str):
@@ -102,7 +103,8 @@ def sync(
 ) -> Any | Problem | None:
     """Stop requiring release approvals.
 
-     Releases waiting for approval continue on the canary's next step.
+     Needs the admin scope (a signed-in session or an admin key). Releases waiting for approval continue
+    on the canary's next step.
 
     Args:
         slug (str):
@@ -128,7 +130,8 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Stop requiring release approvals.
 
-     Releases waiting for approval continue on the canary's next step.
+     Needs the admin scope (a signed-in session or an admin key). Releases waiting for approval continue
+    on the canary's next step.
 
     Args:
         slug (str):
@@ -157,7 +160,8 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Stop requiring release approvals.
 
-     Releases waiting for approval continue on the canary's next step.
+     Needs the admin scope (a signed-in session or an admin key). Releases waiting for approval continue
+    on the canary's next step.
 
     Args:
         slug (str):

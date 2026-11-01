@@ -973,6 +973,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodeReleaseFreezeOverrideNotAllowed means the caller may not override a
+	// company organization's freeze: only someone who may lift it, signed in
+	// or with an admin key, can (ADR-20261019071733 amendment 5).
+	CodeReleaseFreezeOverrideNotAllowed = "release_freeze_override_not_allowed"
 	// CodePlatformReleasePaused means an operator paused every release on the
 	// platform (ADR 20261022140000), for example while a security incident is
 	// contained. Nothing the caller sends overrides it; rollbacks still work.
