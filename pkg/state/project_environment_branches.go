@@ -28,6 +28,12 @@ const (
 	// no_snapshot_reason schedd sends for such a deployment: it goes live
 	// without a boot and its first request cold boots.
 	EnvironmentBranchActivationReason = "environment_branch"
+
+	// A branch's managed data (slice 2: PostgreSQL copies as of the branch
+	// point). Its workloads activate only once the data is ready.
+	EnvironmentBranchDataReady   = "ready"
+	EnvironmentBranchDataPending = "pending"
+	EnvironmentBranchDataFailed  = "failed"
 )
 
 var (
@@ -51,6 +57,61 @@ type ProjectEnvironmentBranch struct {
 	EgressMode          string
 	Depth               int
 	CreatedAt           time.Time
+	// DataState is ready, pending or failed. DataError explains a failure or
+	// the last retryable error; DataLeaseToken is set on a claimed branch.
+	DataState      string
+	DataError      string
+	DataAttempts   int
+	DataLeaseToken string
+	// MemStore bookkeeping; PgStore keeps these in columns.
+	dataNextAttemptAt time.Time
+	dataLeaseUntil    time.Time
+}
+
+// ProjectEnvironmentBranchDatabase is one managed PostgreSQL copy a branch
+// owns. The row exists before the restore and outlives the branch until the
+// copy and its bindings are deleted.
+type ProjectEnvironmentBranchDatabase struct {
+	ID               string
+	AccountID        string
+	ProjectID        string
+	EnvironmentID    string
+	EnvironmentSlug  string
+	SourceDatabaseID string
+	CopyName         string
+	CopyDatabaseID   string
+	PointInTime      time.Time
+	LeaseToken       string
+	CreatedAt        time.Time
+	leaseUntil       time.Time // MemStore bookkeeping
+}
+
+// ProjectEnvironmentBranchDataStore is the branch data reconciler's state:
+// branches waiting for their data and the copies they own.
+type ProjectEnvironmentBranchDataStore interface {
+	// ClaimProjectEnvironmentBranchData leases one branch whose data is due.
+	// ErrNotFound means none is.
+	ClaimProjectEnvironmentBranchData(ctx context.Context, leaseToken string, now time.Time, lease time.Duration) (ProjectEnvironmentBranch, error)
+	// CompleteProjectEnvironmentBranchData marks the branch's data ready.
+	CompleteProjectEnvironmentBranchData(ctx context.Context, environmentID, leaseToken string) error
+	// RetryProjectEnvironmentBranchData records an error and releases the
+	// lease until next; failed ends the attempts.
+	RetryProjectEnvironmentBranchData(ctx context.Context, environmentID, leaseToken string, next time.Time, message string, failed bool) error
+	// RecordProjectEnvironmentBranchDatabase records (or returns) the copy of
+	// a source database before it is restored.
+	RecordProjectEnvironmentBranchDatabase(ctx context.Context, copy ProjectEnvironmentBranchDatabase) (ProjectEnvironmentBranchDatabase, error)
+	SetProjectEnvironmentBranchDatabaseCopy(ctx context.Context, id, copyDatabaseID string) error
+	ListProjectEnvironmentBranchDatabases(ctx context.Context, environmentID string) ([]ProjectEnvironmentBranchDatabase, error)
+	// ClaimOrphanedProjectEnvironmentBranchDatabase leases one copy whose
+	// branch no longer exists. ErrNotFound means none is.
+	ClaimOrphanedProjectEnvironmentBranchDatabase(ctx context.Context, leaseToken string, now time.Time, lease time.Duration) (ProjectEnvironmentBranchDatabase, error)
+	// RemoveProjectEnvironmentBranchDatabase forgets a copy once it and its
+	// bindings are deleted.
+	RemoveProjectEnvironmentBranchDatabase(ctx context.Context, id, leaseToken string) error
+	// ProjectEnvironmentBranchDeploymentsAwaitingActivation lists the branch
+	// deployments still in snapshotting, so the reconciler can prime them once
+	// the data is ready.
+	ProjectEnvironmentBranchDeploymentsAwaitingActivation(ctx context.Context, environmentID string) ([]Deployment, error)
 }
 
 // ProjectEnvironmentBranchCreate asks for a new branch of ParentSlug.
@@ -123,6 +184,9 @@ type ProjectEnvironmentBranchStore interface {
 // activates without a boot.
 type EnvironmentBranchDeploymentReader interface {
 	EnvironmentBranchDeployment(ctx context.Context, deploymentID string) (bool, error)
+	// EnvironmentBranchDataReady reports whether the branch that created the
+	// deployment has its data. A deployment no branch created is ready.
+	EnvironmentBranchDataReady(ctx context.Context, deploymentID string) (bool, error)
 }
 
 type projectEnvironmentBranchDeploymentInput struct {
@@ -168,7 +232,7 @@ func (m *MemStore) CreateProjectEnvironmentBranch(ctx context.Context, req Proje
 
 // prepareProjectEnvironmentBranchLocked checks depth and the account cap
 // before the clone writes anything.
-func (m *MemStore) prepareProjectEnvironmentBranchLocked(req ProjectEnvironmentBranchCreate, parent ProjectEnvironment, now time.Time) (ProjectEnvironmentBranch, error) {
+func (m *MemStore) prepareProjectEnvironmentBranchLocked(req ProjectEnvironmentBranchCreate, parent ProjectEnvironment, now time.Time, dataPending bool) (ProjectEnvironmentBranch, error) {
 	depth := 1
 	if parentBranch, ok := m.projectEnvironmentBranches[parent.ID]; ok {
 		depth = parentBranch.Depth + 1
@@ -194,9 +258,32 @@ func (m *MemStore) prepareProjectEnvironmentBranchLocked(req ProjectEnvironmentB
 	if point.IsZero() {
 		point = now
 	}
+	dataState := EnvironmentBranchDataReady
+	if dataPending {
+		dataState = EnvironmentBranchDataPending
+	}
+	// PostgreSQL keeps microseconds; restore identity checks compare points.
 	return ProjectEnvironmentBranch{AccountID: req.AccountID, ProjectID: req.ProjectID,
-		ParentEnvironmentID: parent.ID, ParentSlug: parent.Slug, BranchPoint: point.UTC(),
-		ExpiresAt: req.ExpiresAt.UTC(), EgressMode: req.EgressMode, Depth: depth, CreatedAt: now}, nil
+		ParentEnvironmentID: parent.ID, ParentSlug: parent.Slug, BranchPoint: point.UTC().Truncate(time.Microsecond),
+		ExpiresAt: req.ExpiresAt.UTC(), EgressMode: req.EgressMode, Depth: depth, CreatedAt: now,
+		DataState: dataState, dataNextAttemptAt: now}, nil
+}
+
+// projectCloneManagedSecretKindsLocked counts the source's managed
+// PostgreSQL and object-storage secrets separately.
+func (m *MemStore) projectCloneManagedSecretKindsLocked(apps map[string]string, scopes map[string]string) (postgres, objects int) {
+	for _, secret := range m.secrets {
+		if _, ok := apps[secret.AppID]; !ok || secret.Scope != scopes[secret.AppID] {
+			continue
+		}
+		if secret.ManagedPostgresBindingID != "" {
+			postgres++
+		}
+		if secret.ManagedObjectStorageCredentialID != "" {
+			objects++
+		}
+	}
+	return postgres, objects
 }
 
 func (m *MemStore) projectEnvironmentHasBranchesLocked(environmentID string) bool {

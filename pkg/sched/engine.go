@@ -6739,6 +6739,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 			return err
 		}
 		if lazy {
+			// The branch's database copies must exist first: the workload reads
+			// its binding URLs at boot. The branch data reconciler primes the
+			// deployment again once they do.
+			ready, err := e.environmentBranchDataReady(ctx, dep.ID)
+			if err != nil || !ready {
+				return err
+			}
 			if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
 				return err
 			}

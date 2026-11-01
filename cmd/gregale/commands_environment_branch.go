@@ -64,6 +64,7 @@ func renderProjectEnvironmentBranch(environment api.ProjectEnvironmentResponse) 
 	_, _ = fmt.Fprintf(osStdout, "%s\n", environment.Slug)
 	if b := environment.Branch; b != nil {
 		_, _ = fmt.Fprintf(osStdout, "  branched from: %s at %s\n  expires: %s\n  egress: %s\n", b.Parent, b.BranchPoint, b.ExpiresAt, b.Egress)
+		_, _ = fmt.Fprintf(osStdout, "  data: %s\n", environmentBranchDataLine(b.Data, b.DataError))
 		if len(b.Workloads) == 0 {
 			_, _ = fmt.Fprintln(osStdout, "  workloads: none live in the parent")
 		}
@@ -83,7 +84,25 @@ func renderProjectEnvironmentBranches(list api.ProjectEnvironmentBranchListRespo
 		return 0
 	}
 	for _, b := range list.Branches {
-		_, _ = fmt.Fprintf(osStdout, "%s  from %s  expires %s  depth %d\n", b.Slug, b.Parent, b.ExpiresAt, b.Depth)
+		_, _ = fmt.Fprintf(osStdout, "%s  from %s  expires %s  depth %d  data %s\n", b.Slug, b.Parent, b.ExpiresAt, b.Depth, environmentBranchDataLine(b.Data, b.DataError))
 	}
 	return 0
+}
+
+// environmentBranchDataLine explains a branch's data state in one phrase.
+func environmentBranchDataLine(state, message string) string {
+	switch state {
+	case "pending":
+		line := "pending (copying the parent's databases; workloads start once they exist)"
+		if message != "" {
+			line += ": " + message
+		}
+		return line
+	case "failed":
+		return "failed: " + message
+	case "":
+		return "ready"
+	default:
+		return state
+	}
 }

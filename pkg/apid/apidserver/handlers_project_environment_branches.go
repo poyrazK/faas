@@ -114,12 +114,16 @@ func (s *server) publishEnvironmentBranchWorkloads(ctx context.Context, store st
 		if err != nil {
 			return nil, fmt.Errorf("branch workload %q: %w", parent.WorkloadSlug, err)
 		}
-		payload, err := json.Marshal(map[string]string{"app_id": d.AppID, "deployment_id": d.ID})
-		if err != nil {
-			return nil, err
-		}
-		if err := s.notif.Notify(ctx, db.NotifySnapshotPrime, string(payload)); err != nil && s.log != nil {
-			s.log.Warn("environment branch activation notification failed; prime recovery will retry", "deployment_id", d.ID, "err", err)
+		// With data pending, the branch data reconciler primes the deployment
+		// once the database copies exist.
+		if branch.DataState == state.EnvironmentBranchDataReady {
+			payload, err := json.Marshal(map[string]string{"app_id": d.AppID, "deployment_id": d.ID})
+			if err != nil {
+				return nil, err
+			}
+			if err := s.notif.Notify(ctx, db.NotifySnapshotPrime, string(payload)); err != nil && s.log != nil {
+				s.log.Warn("environment branch activation notification failed; prime recovery will retry", "deployment_id", d.ID, "err", err)
+			}
 		}
 		workloads = append(workloads, api.ProjectEnvironmentBranchWorkload{
 			Workload: parent.WorkloadSlug, DeploymentID: d.ID, SourceDeployment: parent.SourceDeploymentID, Status: string(d.Status),
@@ -134,8 +138,8 @@ func (s *server) environmentBranchCreateProblem(ctx context.Context, acct state.
 	switch {
 	case errors.As(err, &managed):
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchManagedData,
-			"Environment branch cannot copy managed data yet",
-			"the parent environment binds managed PostgreSQL or object storage, which environment branches do not copy yet")
+			"Environment branch cannot copy object storage yet",
+			"the parent environment binds managed object storage, which environment branches do not copy yet")
 	case errors.As(err, &quota):
 		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Environment branch exceeds a configuration quota",
 			fmt.Sprintf("workload %s would hold %d %s; the plan allows %d", quota.WorkloadSlug, quota.Observed, quota.Resource, quota.Limit))
@@ -205,7 +209,7 @@ func (s *server) listProjectEnvironmentBranches(w http.ResponseWriter, r *http.R
 		out.Branches = append(out.Branches, api.ProjectEnvironmentBranchSummary{
 			Slug: b.Slug, Parent: b.ParentSlug, BranchPoint: b.BranchPoint.Format(time.RFC3339Nano),
 			ExpiresAt: b.ExpiresAt.Format(time.RFC3339Nano), Egress: b.EgressMode, Depth: b.Depth,
-			CreatedAt: b.CreatedAt.Format(time.RFC3339Nano),
+			Data: b.DataState, DataError: b.DataError, CreatedAt: b.CreatedAt.Format(time.RFC3339Nano),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -215,6 +219,7 @@ func environmentBranchResponse(b state.ProjectEnvironmentBranch) *api.ProjectEnv
 	return &api.ProjectEnvironmentBranchResponse{
 		Parent: b.ParentSlug, BranchPoint: b.BranchPoint.Format(time.RFC3339Nano),
 		ExpiresAt: b.ExpiresAt.Format(time.RFC3339Nano), Egress: b.EgressMode, Depth: b.Depth,
+		Data: b.DataState, DataError: b.DataError,
 	}
 }
 

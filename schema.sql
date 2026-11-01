@@ -50118,6 +50118,33 @@ CREATE TABLE public.project_environment_approvals (
 
 
 --
+-- Name: project_environment_branch_databases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_branch_databases (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    source_database_id uuid NOT NULL,
+    copy_name text NOT NULL,
+    copy_database_id uuid,
+    point_in_time timestamp with time zone NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE project_environment_branch_databases; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.project_environment_branch_databases IS 'ADR-20261031193635 managed PostgreSQL copies owned by an environment branch; deleted with their bindings after the branch is gone.';
+
+
+--
 -- Name: project_environment_branch_deployments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -50151,7 +50178,15 @@ CREATE TABLE public.project_environment_branches (
     expires_at timestamp with time zone NOT NULL,
     egress_mode text DEFAULT 'live'::text NOT NULL,
     depth smallint NOT NULL,
+    data_state text DEFAULT 'ready'::text NOT NULL,
+    data_error text DEFAULT ''::text NOT NULL,
+    data_attempts integer DEFAULT 0 NOT NULL,
+    data_next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    data_lease_token uuid,
+    data_lease_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_branches_data_attempts CHECK ((data_attempts >= 0)),
+    CONSTRAINT project_environment_branches_data_state CHECK ((data_state = ANY (ARRAY['pending'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT project_environment_branches_depth CHECK (((depth >= 1) AND (depth <= 8))),
     CONSTRAINT project_environment_branches_egress_mode CHECK ((egress_mode = ANY (ARRAY['live'::text, 'contained'::text, 'simulated'::text]))),
     CONSTRAINT project_environment_branches_expiry CHECK ((expires_at > created_at)),
@@ -66303,6 +66338,30 @@ ALTER TABLE ONLY public.project_environment_approvals
 
 
 --
+-- Name: project_environment_branch_databases project_environment_branch_databases_copy_name; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_databases
+    ADD CONSTRAINT project_environment_branch_databases_copy_name UNIQUE (account_id, copy_name);
+
+
+--
+-- Name: project_environment_branch_databases project_environment_branch_databases_one_copy; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_databases
+    ADD CONSTRAINT project_environment_branch_databases_one_copy UNIQUE (environment_id, source_database_id);
+
+
+--
+-- Name: project_environment_branch_databases project_environment_branch_databases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_databases
+    ADD CONSTRAINT project_environment_branch_databases_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: project_environment_branch_deployments project_environment_branch_deployments_one_per_app; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -77429,6 +77488,20 @@ CREATE INDEX project_environment_approvals_id_lookup_idx ON public.project_envir
 --
 
 CREATE INDEX project_environment_approvals_lookup_idx ON public.project_environment_approvals USING btree (account_id, project_slug, environment_slug, plan_token_hash, expires_at);
+
+
+--
+-- Name: project_environment_branch_databases_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branch_databases_environment_idx ON public.project_environment_branch_databases USING btree (environment_id);
+
+
+--
+-- Name: project_environment_branches_data_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branches_data_due_idx ON public.project_environment_branches USING btree (data_next_attempt_at) WHERE (data_state = 'pending'::text);
 
 
 --
@@ -98254,6 +98327,14 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 ALTER TABLE ONLY public.project_environment_approvals
     ADD CONSTRAINT project_environment_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_databases project_environment_branch_databases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_databases
+    ADD CONSTRAINT project_environment_branch_databases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

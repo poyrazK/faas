@@ -16,6 +16,12 @@ import (
 // seedEnvironmentBranch publishes a live production deployment of one app and
 // returns the deployment a branch of production created from it.
 func seedEnvironmentBranch(t *testing.T, store *state.MemStore, mode string) (state.App, state.Deployment) {
+	return seedEnvironmentBranchWithData(t, store, mode, false)
+}
+
+// seedEnvironmentBranchWithData optionally binds a managed PostgreSQL
+// credential in production, so the branch starts with its data pending.
+func seedEnvironmentBranchWithData(t *testing.T, store *state.MemStore, mode string, managedPostgres bool) (state.App, state.Deployment) {
 	t.Helper()
 	ctx := context.Background()
 	acct, err := store.CreateAccount(ctx, "branch@example.com", api.PlanPro)
@@ -45,6 +51,13 @@ func seedEnvironmentBranch(t *testing.T, store *state.MemStore, mode string) (st
 	}
 	if err := store.MarkDeploymentLive(ctx, parent.ID); err != nil {
 		t.Fatal(err)
+	}
+	if managedPostgres {
+		if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{AccountID: acct.ID, AppID: app.ID, Scope: "production", Key: "DATABASE_URL",
+			Ciphertext: []byte("sealed"), ManagedPostgresBindingID: "binding-1", ManagedCredentialRef: "ref-1", ManagedCredentialGeneration: 1,
+			ManagedPostgresAccess: "read_write"}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if _, _, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
@@ -92,6 +105,23 @@ func TestPrimeEnvironmentBranchRequestActivatesWithoutBoot(t *testing.T) {
 	if ready.DeploymentID != dep.ID || ready.ExecutionMode != api.ExecutionModeRequest || ready.InstanceID != "" ||
 		ready.NoSnapshotReason != state.EnvironmentBranchActivationReason {
 		t.Fatalf("branch readiness = %s", payload)
+	}
+}
+
+// While the branch copies its parent's databases, the workload stays dark:
+// it would boot without its binding URLs.
+func TestPrimeEnvironmentBranchWaitsForData(t *testing.T) {
+	store := state.NewMemStore()
+	app, dep := seedEnvironmentBranchWithData(t, store, api.ExecutionModeRequest, true)
+	vmm := &fakeVMM{}
+	notifier := &fakeNotifier{}
+	engine := newEngine(t, store, vmm, notifier, "1.10.0")
+
+	if err := engine.Prime(context.Background(), app.ID, dep.ID); err != nil {
+		t.Fatalf("Prime(branch with pending data): %v", err)
+	}
+	if vmm.coldBoots != 0 || notifier.count(db.NotifyDeploymentReady) != 0 {
+		t.Fatalf("pending data activated the branch: cold=%d ready=%d", vmm.coldBoots, notifier.count(db.NotifyDeploymentReady))
 	}
 }
 

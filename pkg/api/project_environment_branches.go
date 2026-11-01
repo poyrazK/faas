@@ -31,8 +31,8 @@ const (
 
 	// CodeEnvironmentBranchUnavailable: branches are switched off.
 	CodeEnvironmentBranchUnavailable = "environment_branch_unavailable"
-	// CodeEnvironmentBranchManagedData: the parent binds managed PostgreSQL or
-	// object storage, which branches cannot copy yet.
+	// CodeEnvironmentBranchManagedData: the parent binds managed object
+	// storage, which branches cannot copy yet.
 	CodeEnvironmentBranchManagedData = "environment_branch_managed_data_unsupported"
 	// CodeEnvironmentBranchDepth: a branch of a branch went too deep.
 	CodeEnvironmentBranchDepth = "environment_branch_depth_exceeded"
@@ -54,12 +54,17 @@ type CreateProjectEnvironmentBranchRequest struct {
 // ProjectEnvironmentBranchResponse describes a branch and the workloads it
 // published from its parent.
 type ProjectEnvironmentBranchResponse struct {
-	Parent      string                             `json:"parent"`
-	BranchPoint string                             `json:"branch_point"`
-	ExpiresAt   string                             `json:"expires_at"`
-	Egress      string                             `json:"egress"`
-	Depth       int                                `json:"depth"`
-	Workloads   []ProjectEnvironmentBranchWorkload `json:"workloads,omitempty"`
+	Parent      string `json:"parent"`
+	BranchPoint string `json:"branch_point"`
+	ExpiresAt   string `json:"expires_at"`
+	Egress      string `json:"egress"`
+	Depth       int    `json:"depth"`
+	// Data is ready, pending or failed. A branch whose parent binds managed
+	// PostgreSQL copies each database as of the branch point; its workloads
+	// start only once the copies exist.
+	Data      string                             `json:"data"`
+	DataError string                             `json:"data_error,omitempty"`
+	Workloads []ProjectEnvironmentBranchWorkload `json:"workloads,omitempty"`
 }
 
 // ProjectEnvironmentBranchWorkload is one workload a branch published from
@@ -84,6 +89,8 @@ type ProjectEnvironmentBranchSummary struct {
 	ExpiresAt   string `json:"expires_at"`
 	Egress      string `json:"egress"`
 	Depth       int    `json:"depth"`
+	Data        string `json:"data"`
+	DataError   string `json:"data_error,omitempty"`
 	CreatedAt   string `json:"created_at"`
 }
 

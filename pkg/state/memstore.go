@@ -1415,6 +1415,7 @@ type MemStore struct {
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentBranches                map[string]ProjectEnvironmentBranch           // environment ID
 	projectEnvironmentBranchDeployments       map[string]projectEnvironmentBranchDeployment // deployment ID
+	projectEnvironmentBranchDatabases         map[string]ProjectEnvironmentBranchDatabase   // copy row ID
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
 	projectEnvironmentPromotionFlags          map[string]promotionFeatureFlags
 	projectEnvironmentQualifications          map[string][]ProjectEnvironmentQualification
@@ -2015,6 +2016,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		projectEnvironmentEdgePolicies:            map[string]ProjectEnvironmentEdgePolicy{},
 		projectEnvironmentBranches:                map[string]ProjectEnvironmentBranch{},
 		projectEnvironmentBranchDeployments:       map[string]projectEnvironmentBranchDeployment{},
+		projectEnvironmentBranchDatabases:         map[string]ProjectEnvironmentBranchDatabase{},
 		projectEnvironmentPromotions:              map[string]ProjectEnvironmentPromotion{},
 		projectEnvironmentQualifications:          map[string][]ProjectEnvironmentQualification{},
 		projectEnvironmentPromotionWorkloads:      map[string][]ProjectEnvironmentPromotionWorkload{},

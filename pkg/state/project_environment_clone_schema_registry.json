@@ -15041,6 +15041,24 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_branch_databases",
+    "columns": [
+      "account_id",
+      "copy_database_id",
+      "copy_name",
+      "created_at",
+      "environment_id",
+      "environment_slug",
+      "id",
+      "lease_token",
+      "lease_until",
+      "point_in_time",
+      "project_id",
+      "source_database_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_branch_deployments",
     "columns": [
       "app_id",
@@ -15057,6 +15075,12 @@
       "account_id",
       "branch_point",
       "created_at",
+      "data_attempts",
+      "data_error",
+      "data_lease_token",
+      "data_lease_until",
+      "data_next_attempt_at",
+      "data_state",
       "depth",
       "egress_mode",
       "environment_id",

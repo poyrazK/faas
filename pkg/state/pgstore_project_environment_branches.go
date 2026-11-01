@@ -18,7 +18,8 @@ import (
 const projectEnvironmentBranchSelect = `
 	select b.environment_id::text, b.account_id::text, b.project_id::text, e.slug,
 	       b.parent_environment_id::text, p.slug, b.branch_point, b.expires_at,
-	       b.egress_mode, b.depth::int, b.created_at
+	       b.egress_mode, b.depth::int, b.created_at,
+	       b.data_state, b.data_error, b.data_attempts, coalesce(b.data_lease_token::text, '')
 	  from project_environment_branches b
 	  join project_environments e on e.id = b.environment_id
 	  join project_environments p on p.id = b.parent_environment_id`
@@ -26,7 +27,8 @@ const projectEnvironmentBranchSelect = `
 func scanProjectEnvironmentBranch(row pgx.Row) (ProjectEnvironmentBranch, error) {
 	var b ProjectEnvironmentBranch
 	err := row.Scan(&b.EnvironmentID, &b.AccountID, &b.ProjectID, &b.Slug, &b.ParentEnvironmentID, &b.ParentSlug,
-		&b.BranchPoint, &b.ExpiresAt, &b.EgressMode, &b.Depth, &b.CreatedAt)
+		&b.BranchPoint, &b.ExpiresAt, &b.EgressMode, &b.Depth, &b.CreatedAt,
+		&b.DataState, &b.DataError, &b.DataAttempts, &b.DataLeaseToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ProjectEnvironmentBranch{}, ErrNotFound
 	}
@@ -53,7 +55,7 @@ func (s *PgStore) CreateProjectEnvironmentBranch(ctx context.Context, req Projec
 
 // insertProjectEnvironmentBranchTx records the branch inside the clone
 // transaction, after its environment row exists.
-func insertProjectEnvironmentBranchTx(ctx context.Context, tx pgx.Tx, req ProjectEnvironmentBranchCreate, created ProjectEnvironment) (ProjectEnvironmentBranch, error) {
+func insertProjectEnvironmentBranchTx(ctx context.Context, tx pgx.Tx, req ProjectEnvironmentBranchCreate, created ProjectEnvironment, dataPending bool) (ProjectEnvironmentBranch, error) {
 	var parentID string
 	var parentDepth int
 	err := tx.QueryRow(ctx, `
@@ -95,14 +97,18 @@ func insertProjectEnvironmentBranchTx(ctx context.Context, tx pgx.Tx, req Projec
 	if expired {
 		return ProjectEnvironmentBranch{}, ErrInvalidArgument
 	}
+	dataState := EnvironmentBranchDataReady
+	if dataPending {
+		dataState = EnvironmentBranchDataPending
+	}
 	branch := ProjectEnvironmentBranch{EnvironmentID: created.ID, AccountID: req.AccountID, ProjectID: req.ProjectID, Slug: created.Slug,
-		ParentEnvironmentID: parentID, ParentSlug: req.ParentSlug, EgressMode: req.EgressMode, Depth: parentDepth + 1}
+		ParentEnvironmentID: parentID, ParentSlug: req.ParentSlug, EgressMode: req.EgressMode, Depth: parentDepth + 1, DataState: dataState}
 	err = tx.QueryRow(ctx, `
 		insert into project_environment_branches
-		    (environment_id, account_id, project_id, parent_environment_id, branch_point, expires_at, egress_mode, depth)
-		values ($1, $2, $3, $4, coalesce($5::timestamptz, now()), $6, $7, $8)
+		    (environment_id, account_id, project_id, parent_environment_id, branch_point, expires_at, egress_mode, depth, data_state)
+		values ($1, $2, $3, $4, coalesce($5::timestamptz, now()), $6, $7, $8, $9)
 		returning branch_point, expires_at, created_at
-	`, created.ID, req.AccountID, req.ProjectID, parentID, point, req.ExpiresAt.UTC(), req.EgressMode, branch.Depth).Scan(
+	`, created.ID, req.AccountID, req.ProjectID, parentID, point, req.ExpiresAt.UTC(), req.EgressMode, branch.Depth, dataState).Scan(
 		&branch.BranchPoint, &branch.ExpiresAt, &branch.CreatedAt)
 	if err != nil {
 		return ProjectEnvironmentBranch{}, mapErr(err)

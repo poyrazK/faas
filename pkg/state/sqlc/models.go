@@ -11955,7 +11955,29 @@ type ProjectEnvironmentBranch struct {
 	ExpiresAt           pgtype.Timestamptz
 	EgressMode          string
 	Depth               int16
+	DataState           string
+	DataError           string
+	DataAttempts        int32
+	DataNextAttemptAt   pgtype.Timestamptz
+	DataLeaseToken      pgtype.UUID
+	DataLeaseUntil      pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+}
+
+// ADR-20261031193635 managed PostgreSQL copies owned by an environment branch; deleted with their bindings after the branch is gone.
+type ProjectEnvironmentBranchDatabase struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	EnvironmentSlug  string
+	SourceDatabaseID pgtype.UUID
+	CopyName         string
+	CopyDatabaseID   pgtype.UUID
+	PointInTime      pgtype.Timestamptz
+	LeaseToken       pgtype.UUID
+	LeaseUntil       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
 }
 
 // ADR-20261031193635 deployments an environment branch created from its parent's artifacts; they activate on first request.

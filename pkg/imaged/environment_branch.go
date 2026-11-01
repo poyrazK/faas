@@ -31,5 +31,12 @@ func (h *Handler) validateEnvironmentBranchActivation(ctx context.Context, dep s
 	if !branched {
 		return errors.New("imaged: environment branch activation requires a deployment the branch created")
 	}
+	ready, err := reader.EnvironmentBranchDataReady(ctx, dep.ID)
+	if err != nil {
+		return err
+	}
+	if !ready {
+		return errors.New("imaged: environment branch activation waits for the branch's data")
+	}
 	return nil
 }

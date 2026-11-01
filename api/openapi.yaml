@@ -37730,8 +37730,11 @@ paths:
         Creates a new environment that copies the parent's configuration and
         publishes each of the parent's live workloads from its existing build.
         Nothing starts until a workload is called: its first request starts it
-        cold. The branch is deleted when its time to live ends. Parents that
-        bind managed PostgreSQL or object storage cannot be branched yet.
+        cold. Each managed PostgreSQL database the parent binds is copied as of
+        the branch point and bound to the branch with new credentials; while
+        `branch.data` is `pending`, the branch's workloads wait for the copies.
+        The branch is deleted when its time to live ends. Parents that bind
+        managed object storage cannot be branched yet.
       requestBody:
         required: true
         content:
@@ -37752,7 +37755,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Branches are unavailable, the slug is taken, the branch would be too deep, or the parent binds managed data.
+          description: Branches are unavailable, the slug is taken, the branch would be too deep, or the parent binds managed object storage.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -105008,13 +105011,18 @@ components:
     ProjectEnvironmentBranchResponse:
       description: How an environment branches from its parent.
       type: object
-      required: [parent, branch_point, expires_at, egress, depth]
+      required: [parent, branch_point, expires_at, egress, depth, data]
       properties:
         parent: { type: string, description: Slug of the parent environment. }
         branch_point: { type: string, format: date-time, description: The moment the branch copied its parent. }
         expires_at: { type: string, format: date-time, description: When the branch is deleted. }
         egress: { type: string }
         depth: { type: integer, minimum: 1, description: 1 for a branch of an ordinary environment, 2 for a branch of a branch. }
+        data:
+          type: string
+          enum: [ready, pending, failed]
+          description: Whether the copies of the parent's managed PostgreSQL databases exist. The branch's workloads start only when this is ready.
+        data_error: { type: string, description: Why copying the parent's data failed or is being retried. }
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBranchWorkload' }
@@ -105039,7 +105047,7 @@ components:
 
     ProjectEnvironmentBranchSummary:
       type: object
-      required: [slug, parent, branch_point, expires_at, egress, depth, created_at]
+      required: [slug, parent, branch_point, expires_at, egress, depth, data, created_at]
       properties:
         slug: { type: string }
         parent: { type: string }
@@ -105047,6 +105055,8 @@ components:
         expires_at: { type: string, format: date-time }
         egress: { type: string }
         depth: { type: integer, minimum: 1 }
+        data: { type: string, enum: [ready, pending, failed] }
+        data_error: { type: string }
         created_at: { type: string, format: date-time }
 
     PutAppSecretReferenceRequest:
