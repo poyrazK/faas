@@ -286,6 +286,8 @@ var routeExclude = map[string]bool{
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 	"POST /v1/agents":                                 true,
+	"POST /v1/agent-callbacks":                        true,
+	"POST /v1/agent-callbacks/{token}":                true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -2717,6 +2719,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/domains/{domain}/status":                 "GetDomainStatus", // ADR-20261030151810
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
+	"GET /v1/domains/{domain}/hosts":                  "GetDomainHosts",   // ADR-520 amendment 2
+	"PUT /v1/domains/{domain}/hosts":                  "SetDomainHosts",   // ADR-520 amendment 2
+	"DELETE /v1/domains/{domain}/hosts":               "ClearDomainHosts", // ADR-520 amendment 2
 
 	"POST /v1/apps/{slug}/github/activity/retry":                                                    "RetryGitHubActivity",
 	"PATCH /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":          "UpdateAccountWorkflowReadinessNotification",
@@ -2800,6 +2805,7 @@ func (r *reportT) print() {
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
 	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
+	"ListAppsSelected": "GET /v1/apps",
 }
 
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {

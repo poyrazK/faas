@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"net/http"
@@ -155,4 +156,30 @@ func (s *server) singleAppLabels(r *http.Request, acct state.Account, app state.
 
 func labelKeys(m map[string]string) []string {
 	return slices.Sorted(maps.Keys(m))
+}
+
+// applyManifestLabels sets the labels a deploy's manifest declares and removes
+// none (ADR-20261031100025 §7). It runs before anything else the manifest
+// stages, so a refused write leaves nothing to undo; a set label is metadata
+// and stays if the deploy fails later. While the capability is off for the app
+// the manifest's labels are ignored.
+func (s *server) applyManifestLabels(ctx context.Context, acct state.Account, app state.App, declared map[string]string) *api.Problem {
+	if len(declared) == 0 || !s.capabilityEnabledFor(resourcelabels.Capability, acct, app) {
+		return nil
+	}
+	store, ok := s.appLabelStore()
+	if !ok {
+		return errLabelsUnavailable()
+	}
+	if _, err := store.UpdateAppLabels(ctx, app.ID, labels.Change{Set: declared}); err != nil {
+		if problem := resourcelabels.Problem(err); problem != nil {
+			return problem
+		}
+		s.log.ErrorContext(ctx, "apply manifest labels", "app_id", app.ID, "err", err)
+		return api.ErrCapacity("could not apply the manifest's labels")
+	}
+	s.audit.Emit(ctx, "resource.labels.changed", &acct.ID, map[string]any{
+		"kind": "app", "app_id": app.ID, "set": labelKeys(declared), "removed": []string{}, "source": "manifest",
+	})
+	return nil
 }

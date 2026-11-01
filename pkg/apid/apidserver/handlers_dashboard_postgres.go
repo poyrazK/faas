@@ -60,6 +60,12 @@ func projectManagedPostgresDashboard(databases []managedpostgres.Database) []das
 		if managedPostgresDeleteScheduled(database) {
 			item.RestorableUntil = database.PurgeAfter.UTC().Format(time.RFC3339)
 		}
+		if earliest, _, ok := database.RestoreRange(time.Now().UTC()); ok {
+			item.RestoreFrom = earliest.UTC().Format(time.RFC3339)
+		}
+		if !database.RestoreSlotUntil.IsZero() && database.State != managedpostgres.StateDeleted {
+			item.RestoreSlotUntil = database.RestoreSlotUntil.UTC().Format(time.RFC3339)
+		}
 		items = append(items, item)
 	}
 	return items

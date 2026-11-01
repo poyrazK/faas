@@ -3897,6 +3897,15 @@
     "kind": "operational"
   },
   {
+    "table": "custom_domain_tls_allowed_hosts",
+    "columns": [
+      "created_at",
+      "name",
+      "wildcard_domain"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "custom_domain_tls_hosts",
     "columns": [
       "admitted_at",
@@ -10014,6 +10023,7 @@
       "purge_after",
       "region",
       "restore_point_in_time",
+      "restore_slot_until",
       "restore_source_database_id",
       "restore_source_resource_id",
       "restore_window_seconds",

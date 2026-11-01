@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/connectioncapacity"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -101,8 +102,9 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 	if err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
-	if active >= int64(limit) {
-		return Database{}, false, ErrQuotaExceeded
+	slot, err := s.reservationTakesRestoreSlot(ctx, tx, database, active, limit)
+	if err != nil {
+		return Database{}, false, err
 	}
 	row, err = q.InsertManagedPostgresLifecycleDatabase(ctx, tx, sqlc.InsertManagedPostgresLifecycleDatabaseParams{
 		ID: databaseID, AccountID: accountID, OrgID: databaseNullableUUID(database.OrgID), Name: database.Name, Region: database.Spec.Region,
@@ -115,6 +117,13 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 	})
 	if err != nil {
 		return Database{}, false, mapPostgresError(err)
+	}
+	if slot {
+		row, err = q.TakeManagedPostgresRestoreSlot(ctx, tx, sqlc.TakeManagedPostgresRestoreSlotParams{
+			ID: databaseID, Until: databaseNullableTime(database.CreatedAt.Add(api.ManagedPostgresRestoreSlotWindow))})
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Database{}, false, mapPostgresError(err)

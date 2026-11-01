@@ -8332,6 +8332,7 @@ paths:
     post:
       operationId: restoreManagedPostgresDatabase
       summary: Restore a database into a new managed PostgreSQL database
+      description: "The restored database counts toward the plan's database limit. A restore may go one database past the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once the account has room; otherwise its delete is scheduled then. A second restore past the limit while a copy holds the slot answers 403 managed_postgres_restore_slot_in_use."
       tags: [managed_postgres]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -31224,7 +31225,7 @@ paths:
       tags: [deployments]
       operationId: liftReleaseFreeze
       summary: Lift a deploy freeze.
-      description: "Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID."
+      description: "Stops the freeze from withholding releases. Needs the admin scope (a signed-in session or an admin key); a deploy:write key gets 403. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID."
       responses:
         '200':
           description: The lifted freeze.
@@ -31307,7 +31308,7 @@ paths:
       tags: [deployments]
       operationId: liftAppReleaseFreeze
       summary: Lift a deploy freeze on an app.
-      description: "Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID."
+      description: "Lifts a freeze on this app. Needs the admin scope (a signed-in session or an admin key). Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID."
       responses:
         '200':
           description: The lifted freeze on the app.
@@ -31374,7 +31375,7 @@ paths:
       tags: [orgs]
       operationId: liftOrgReleaseFreeze
       summary: Lift a company organization's deploy freeze.
-      description: "Lifts one of the organization's freezes. A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID."
+      description: "Lifts one of the organization's freezes. Needs the admin scope (a signed-in session or an admin key). A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID."
       responses:
         '200':
           description: The organization's lifted freeze.
@@ -31439,7 +31440,7 @@ paths:
       tags: [deployments]
       operationId: deleteReleaseGate
       summary: Remove a release gate.
-      description: "404 `release_gate_not_found` when the app has no gate with this name."
+      description: "Needs the admin scope (a signed-in session or an admin key); a deploy:write key cannot remove the gates it deploys past. 404 `release_gate_not_found` when the app has no gate with this name."
       responses:
         '200':
           description: The removed release gate.
@@ -31471,7 +31472,7 @@ paths:
       tags: [deployments]
       operationId: setReleaseApprovalPolicy
       summary: Require approvals for an app's production releases.
-      description: "Creates or replaces the policy. Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval."
+      description: "Creates or replaces the policy. Needs the admin scope (a signed-in session or an admin key). Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval."
       requestBody:
         required: true
         content:
@@ -31494,7 +31495,7 @@ paths:
       tags: [deployments]
       operationId: deleteReleaseApprovalPolicy
       summary: Stop requiring release approvals.
-      description: "Releases waiting for approval continue on the canary's next step."
+      description: "Needs the admin scope (a signed-in session or an admin key). Releases waiting for approval continue on the canary's next step."
       responses:
         '204':
           description: The policy was removed.
@@ -33497,6 +33498,73 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
 
   # ─── Crons ────────────────────────────────────────────────────────────────
+
+  /v1/domains/{domain}/hosts:
+    parameters:
+      - name: domain
+        in: path
+        required: true
+        schema: { type: string, pattern: '^\*\.[a-z0-9.\-]+$' }
+        description: The wildcard custom domain (e.g. `*.example.com`).
+    get:
+      tags: [domains]
+      operationId: getDomainHosts
+      summary: Read a wildcard domain's host allowlist.
+      description: |
+        Returns the names below the wildcard that may hold an on-demand
+        certificate. `restricted: false` means no
+        allowlist is set and every name below the wildcard may.
+      responses:
+        '200':
+          description: The host allowlist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDomainHostsResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Only a wildcard custom domain has a host allowlist to read. }
+    put:
+      tags: [domains]
+      operationId: setDomainHosts
+      summary: Replace a wildcard domain's host allowlist.
+      description: |
+        Only the listed names below the wildcard get certificates; the edge
+        refuses every other server name, so random names cannot spend the
+        wildcard's new-host budget. Names are the part of the host before
+        the wildcard's suffix (`eu.shop` for `eu.shop.example.com`), or the
+        full host. Routing is unchanged, and certificates the edge already
+        holds for a removed name keep serving until their next reload or
+        renewal. The domain doctor's probe host is always allowed.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetCustomDomainHostsRequest'
+      responses:
+        '200':
+          description: The saved host allowlist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDomainHostsResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: 'Not a wildcard domain, an invalid name, or more than 100 names (the problem carries `limit` and `observed`).' }
+    delete:
+      tags: [domains]
+      operationId: clearDomainHosts
+      summary: Remove a wildcard domain's host allowlist.
+      description: Every name below the wildcard may hold a certificate again.
+      responses:
+        '204': { description: The allowlist was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Only a wildcard custom domain has a host allowlist to remove. }
 
   /v1/crons:
     get:
@@ -83183,6 +83251,25 @@ components:
           type: string
           format: date-time
           description: "Set while the database's delete is scheduled: it can be undeleted until then, and is purged after."
+        restore_slot_until:
+          type: string
+          format: date-time
+          description: "Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time."
+        restore_range:
+          $ref: '#/components/schemas/ManagedPostgresRestoreRange'
+    ManagedPostgresRestoreRange:
+      description: "The span a point-in-time restore from this database can target now. Absent while the database cannot be restored from."
+      type: object
+      required: [earliest, latest]
+      properties:
+        earliest:
+          type: string
+          format: date-time
+          description: "The later of the database's creation and the start of its restore window."
+        latest:
+          type: string
+          format: date-time
+          description: "When the response was made; a restore point must be before it."
     ManagedPostgresDatabaseList:
       description: Account-scoped managed PostgreSQL database collection.
       type: object
@@ -103565,6 +103652,22 @@ components:
           type: array
           description: "DNS records to publish: the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone apex when the platform publishes edge addresses."
           items: { $ref: '#/components/schemas/DNSRecordInstruction' }
+
+    CustomDomainHostsResponse:
+      description: "A wildcard custom domain's host allowlist. Names are the parts of hosts before the wildcard's suffix."
+      type: object
+      required: [domain, names, restricted]
+      properties:
+        domain: { type: string, example: "*.example.com" }
+        names: { type: array, maxItems: 100, items: { type: string }, example: ["app", "api", "eu.shop"] }
+        restricted: { type: boolean, description: "False when no allowlist is set: every name below the wildcard may hold a certificate." }
+
+    SetCustomDomainHostsRequest:
+      description: "Replaces a wildcard custom domain's host allowlist; DELETE the allowlist to allow every name again."
+      type: object
+      required: [names]
+      properties:
+        names: { type: array, minItems: 1, maxItems: 100, items: { type: string }, description: "Names below the wildcard (or full hosts) that may hold certificates." }
 
     DNSRecordInstruction:
       description: "One DNS record a customer publishes for a custom domain. `alternative` marks an A/AAAA routing record that replaces the CNAME where a CNAME is not allowed, such as at a zone apex."

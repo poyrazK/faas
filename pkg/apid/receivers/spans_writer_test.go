@@ -43,13 +43,15 @@ type fakeSpansWriterStore struct {
 	updateFn   func(traceID string, accountID uuid.UUID, summary []byte) error
 	calls      int
 	lastAcctID uuid.UUID
+	lastMax    int
 }
 
-func (f *fakeSpansWriterStore) UpdateSpansSummary(_ context.Context, traceID string, accountID uuid.UUID, summary []byte) error {
+func (f *fakeSpansWriterStore) UpdateSpansSummary(_ context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	f.lastAcctID = accountID
+	f.lastMax = maxSpans
 	if f.updateFn == nil {
 		return nil
 	}

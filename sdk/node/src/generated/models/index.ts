@@ -544,6 +544,7 @@ export type { CreateWorkflowCallbackWebhookBindingRequest } from './CreateWorkfl
 export type { CreatedOutboundAIAccessToken } from './CreatedOutboundAIAccessToken.js';
 export type { CronResponse } from './CronResponse.js';
 export type { CronRun } from './CronRun.js';
+export type { CustomDomainHostsResponse } from './CustomDomainHostsResponse.js';
 export type { CustomDomainResponse } from './CustomDomainResponse.js';
 export type { CustomMetricListResponse } from './CustomMetricListResponse.js';
 export type { CustomMetricRequest } from './CustomMetricRequest.js';
@@ -1396,6 +1397,7 @@ export type { ManagedPostgresID } from './ManagedPostgresID.js';
 export type { ManagedPostgresOverage } from './ManagedPostgresOverage.js';
 export type { ManagedPostgresOverageRequest } from './ManagedPostgresOverageRequest.js';
 export type { ManagedPostgresResize } from './ManagedPostgresResize.js';
+export type { ManagedPostgresRestoreRange } from './ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresUsageImportReading } from './ManagedPostgresUsageImportReading.js';
 export type { ManagedPostgresUsageImportRequest } from './ManagedPostgresUsageImportRequest.js';
 export type { ManagedPostgresUsageImportResult } from './ManagedPostgresUsageImportResult.js';
@@ -2942,6 +2944,7 @@ export type { SetAutomationFailurePolicyRequest } from './SetAutomationFailurePo
 export type { SetAutomationPublishPolicyRequest } from './SetAutomationPublishPolicyRequest.js';
 export type { SetBindingReleasePolicyRequest } from './SetBindingReleasePolicyRequest.js';
 export type { SetCanaryRouteGateRequest } from './SetCanaryRouteGateRequest.js';
+export type { SetCustomDomainHostsRequest } from './SetCustomDomainHostsRequest.js';
 export type { SetDeploymentAliasRequest } from './SetDeploymentAliasRequest.js';
 export type { SetEnvironmentRouteBudgetsRequest } from './SetEnvironmentRouteBudgetsRequest.js';
 export type { SetFinancialBudgetChannelsRequest } from './SetFinancialBudgetChannelsRequest.js';

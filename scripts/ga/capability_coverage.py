@@ -137,6 +137,8 @@ RULES = [
     # Keyed credential hashes (ADR 20261029202403): storage plumbing under
     # every credential, no capability of its own.
     (r"^credhash$", "INFRA"),
+    # Each family's ring and rollout switches (amendment 1).
+    (r"^credential-(scheduler|outbound|uploads|attach|dev-bridge|data-api)-(keys-file|writes|plain-lookup)$", "INFRA"),
     # vmmd's instance bridge switches (connection-survival ADR): data-path plumbing.
     (r"^(instance-)?bridge-(unprivileged|sessions|unit|drop-to-uid)$", "INFRA"),
     (r"auth-rpc|rekey|standby-warmup|service-capacity-policy|service-recovery|worker-recovery|production-lifecycle-review|app-service-address-cursor|warm-hint|capdecl|renderer|role-templating|safetext|publicdest|cursor|^data$|dispatch|hostsize|authcode|cosign|daemonenv|daemonunit|cpstate|drills|grafana|pki|guestmemproto|resumetimingproto|loglevel|logsanitize|lruutil|jsonschemautil|httpjson|middleware|nodeclaim|nodejoin|nodereport|promql|redact|crashcrypt|crashcapturewire|markers-internal", "INFRA"),
@@ -168,7 +170,7 @@ RULES = [
     (r"internal/hosting|hosting-|internal-frontend|^sites$|^hosting|frontend-hosting|site-", "Internal frontend hosting"),
     (r"internal-?mail|maild|mailctl|mail-feedback|mail-metrics|mail-report|productemail|product-email", "Internal mail service"),
     (r"product-control|productcontrol|product_control|/product/|^product$|product-customers", "Product control"),
-    (r"agent-run|agent-execution|^agent|agents", "Gregale Agents"),
+    (r"agent-run|agent-execution|agent-callback|^agent|agents", "Gregale Agents"),
     (r"oci/registry|^/v2/?$|registry-storage|ociregistry", "Platform OCI registry"),
     (r"^/v1/admin|^admin|gregalectl|compute-nodes|operator|break-glass|abuse|^/admin|deployctl|nodes?-|fleet|cluster-signing", "Operator admin"),
     (r"data-repair|datarepair|repair", "Selective data repair"),

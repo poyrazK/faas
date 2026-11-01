@@ -537,7 +537,8 @@ const (
 // ImagedImagePrepWorkers is how many deployments one imaged prepares at once
 // with FAAS_IMAGED_PARALLEL_PREP on (ADR-20261029174438); off, it prepares one
 // at a time. Each preparation can run a Grype scan, and the imaged unit's
-// MemoryMax (4 GiB) covers all of them, so the count stays small.
+// memory, bounded by the 6 GiB control-plane slice, covers all of them, so the
+// count stays small.
 const ImagedImagePrepWorkers = 2
 
 // ImagedPublishedLayerDigests bounds how many just-published app layers one
@@ -633,6 +634,14 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // PostgreSQL delete can be undone before the provider resource is deleted
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
+
+// ManagedPostgresRestoreSlots is how many databases a point-in-time restore
+// may hold past the plan's database limit, and ManagedPostgresRestoreSlotWindow
+// how long such a copy lasts before its delete is scheduled when the account
+// still has no room (ADR-20261031123259). Without the slot a one-database plan
+// could not restore at all.
+const ManagedPostgresRestoreSlots = 1
+const ManagedPostgresRestoreSlotWindow = 7 * 24 * time.Hour
 const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 
 // Fleet safety ceilings bound what operators may configure as the platform's
@@ -1520,7 +1529,8 @@ const (
 
 // RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
 // realtime trigger may bind (ADR-1322): one GatewaySynthDispatchTimeout
-// invocation plus wake and queueing margin.
+// invocation plus wake and queueing margin. A longer run keeps its claim
+// because schedd renews it while the delivery lasts (ADR-1322 amendment).
 const RealtimeTriggerMinLeaseSeconds = 120
 
 // RealtimeTriggerDefaultBatchSize is how many messages one invocation of a
@@ -3162,14 +3172,32 @@ type RealtimeLimits struct {
 	// the account's retained control-plane storage to about 4 MiB a channel:
 	// 128 MiB, 1 GiB and 4 GiB by plan (ADR-1323, amendment of 2026-10-27).
 	RetainedChannelsPerAccount int
+	// NotificationPreferencesPerAccount caps the users an account's endpoints
+	// keep notification preferences for. Preferences are settings with no
+	// expiry; one is at most 32 categories and 16 devices, a few KB, and
+	// setting a user's preferences back to the defaults frees its slot
+	// (ADR-1323, amendment of 2026-10-31).
+	NotificationPreferencesPerAccount int
 }
 
 var realtimeLimits = map[Plan]RealtimeLimits{
 	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32, NotificationPreferencesPerAccount: 1_000},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256, NotificationPreferencesPerAccount: 10_000},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024, NotificationPreferencesPerAccount: 50_000},
 }
+
+// Managed realtime per-user state and schemas (ADR-1323, amendment of
+// 2026-10-31). Each counts live rows only, so a cap is never used up for
+// good: an inbox counts while it holds unexpired messages (24 hours), a read
+// marker for 30 days after its last update. Event schema versions are
+// immutable configuration, capped per event type and per endpoint.
+const (
+	RealtimeInboxesHeldPerEndpoint          = 256
+	RealtimeReadMarkersPerEndpoint          = 1_024
+	RealtimeEventSchemaVersionsPerEventType = 64
+	RealtimeEventSchemasPerEndpoint         = 1_024
+)
 
 // RealtimeResumeSubscriptionsPerNodeFor maps the account connection allowance
 // apid sends with every endpoint under fair use back to the plan's resume
@@ -3949,8 +3977,8 @@ type Limits struct {
 	// and of all apps sharing a billing subject (ADR-20261031130000). Every
 	// publish is matched against each enabled subscription of its account,
 	// so the count bounds the routing work one event can cause. Enforced
-	// under the cron quota subject lock in
-	// pkg/state.PgStore.UpsertEventSubscriptionWithinLimits.
+	// after every manifest apply that adds or re-enables a subscription, by
+	// checkSourceRefEventSubscriptionLimits in pkg/apid/apidserver.
 	EventSubscriptionsPerApp     int
 	EventSubscriptionsPerAccount int
 
@@ -6936,6 +6964,19 @@ const (
 	FrozenCompressMinAgeSeconds             = 60
 	FrozenCompressPerNodePerTick            = 4
 	FrozenCompressUnavailableBackoffSeconds = 600
+	// Frozen VMs yield their memory to admission (ADR 20261031190030). When
+	// compression has nothing left to try on a node still at the high-water
+	// mark, or the node cannot compress, the reaper parks its longest-frozen
+	// VMs frozen at least FrozenCompressMinAgeSeconds, at most
+	// FrozenYieldPerNodePerTick per tick, until the node is under the
+	// low-water mark. A wake refused for RAM parks at most
+	// FrozenYieldPerRefusedWake frozen VMs on one node, when that frees what
+	// the node lacks, and waits up to FrozenYieldFreshViewMillis for the
+	// node's memory measurement and vmmd capacity report to show it before
+	// its one retry.
+	FrozenYieldPerNodePerTick  = 8
+	FrozenYieldPerRefusedWake  = 8
+	FrozenYieldFreshViewMillis = 1500
 	// FrozenEarlyFreezeMinSeconds and FrozenEarlyFreezeMaxSeconds bound
 	// schedd's frozen_tier_early_freeze_after_s (ADR-20261021215353): at
 	// least the 2 s quiet pause, and well inside the shortest app idle
@@ -8839,6 +8880,11 @@ const (
 	OnDemandTLSHostRetryResetSeconds           = 24 * 60 * 60
 	OnDemandTLSHostRetryEntries                = 10000
 	OnDemandTLSIssuanceGraceSeconds            = 900
+	// CustomDomainTLSAllowedHostsMax caps the names in one wildcard custom
+	// domain's optional host allowlist (ADR-520 amendment 2). With an
+	// allowlist only the listed names below the wildcard get certificates,
+	// so random server names cannot spend the wildcard's new-host budgets.
+	CustomDomainTLSAllowedHostsMax = 100
 	// The edge asks on every TLS handshake whose server name has no
 	// certificate in memory, and 443 is open to the internet, so random
 	// server names would otherwise turn into unbounded Postgres lookups.
@@ -9376,6 +9422,19 @@ const (
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
+	// Agent callbacks (ADR-20261030125501 §3): a tool posts its result to a
+	// signed per-thread URL, and apid publishes it into that thread's lane of
+	// the app's AgentInboxChannel. A token lives at most
+	// AgentCallbackTokenTTLSec. A thread or message ID is 1 to its maximum
+	// bytes of letters, digits, '.', '_', ':' and '-', which keeps the
+	// message's idempotency key within the realtime limit. A result is one
+	// realtime message: AgentCallbackPayloadMaxBytes is the channel history's
+	// payload limit.
+	AgentCallbackTokenTTLSec            = 86_400
+	AgentCallbackThreadIDMaxBytes       = 64
+	AgentCallbackMessageIDMaxBytes      = 54
+	AgentCallbackPayloadMaxBytes        = 4096
+	AgentCallbackFailuresPerIPPerMinute = 30
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).

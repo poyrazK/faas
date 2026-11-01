@@ -3970,6 +3970,15 @@ CREATE FUNCTION public.application_standard_runtime_inputs_match(captured jsonb,
 BEGIN
  IF jsonb_typeof(captured) IS DISTINCT FROM 'object' OR jsonb_typeof(current_input) IS DISTINCT FROM 'object' THEN RETURN false; END IF;
  captured:=application_standard_stable_runtime_input(captured); current_input:=application_standard_stable_runtime_input(current_input);
+ -- ADR 20261031190030: an image rescan renews the deployment's scan mirrors
+ -- (scan_status, scan_result_hash) and changes nothing the instance runs; a
+ -- regressed scan parks the deployment, and artifact.parked_reason stays compared.
+ IF jsonb_typeof(captured->'artifact')='object' THEN
+  captured:=captured #- '{artifact,scan_status}' #- '{artifact,scan_result_hash}';
+ END IF;
+ IF jsonb_typeof(current_input->'artifact')='object' THEN
+  current_input:=current_input #- '{artifact,scan_status}' #- '{artifact,scan_result_hash}';
+ END IF;
  IF NOT application_standard_runtime_requires_native(captured)
   AND NOT application_standard_runtime_requires_native(current_input)
   AND captured ? 'account_plan' AND current_input ? 'account_plan' THEN
@@ -6078,6 +6087,11 @@ DECLARE
  targets uuid[] := '{}';
  watched text[] := string_to_array(TG_ARGV[0],',');
 BEGIN
+ -- ADR 20261029202403 amendment 1: rewriting a credential hash for the same
+ -- token (plain to keyed, or a key rotation) is not a binding change.
+ IF current_setting('faas.credential_rekey', true) = 'on' THEN
+  watched := array_remove(watched, 'token_hash');
+ END IF;
  IF TG_OP='UPDATE' THEN
   SELECT jsonb_object_agg(key,value) INTO old_facts FROM jsonb_each(old_row) WHERE key=ANY(watched);
   SELECT jsonb_object_agg(key,value) INTO new_facts FROM jsonb_each(new_row) WHERE key=ANY(watched);
@@ -31149,7 +31163,7 @@ CREATE TABLE public.app_task_attach_sessions (
     node_recorded_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_task_attach_sessions_node_chk CHECK ((((node_id IS NULL) AND (node_recorded_at IS NULL)) OR (((octet_length(node_id) >= 1) AND (octet_length(node_id) <= 255)) AND (node_recorded_at IS NOT NULL)))),
-    CONSTRAINT app_task_attach_sessions_token_chk CHECK ((octet_length(attach_token_sha256) = 32))
+    CONSTRAINT app_task_attach_sessions_token_credhash_chk CHECK ((octet_length(attach_token_sha256) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -32999,7 +33013,7 @@ CREATE TABLE public.ci_job_runtime (
     transfer_token uuid,
     transfer_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ci_job_runtime_capability_hash_check CHECK ((octet_length(capability_hash) = 32)),
+    CONSTRAINT ci_job_runtime_capability_credhash_chk CHECK ((octet_length(capability_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT ci_job_runtime_check CHECK (((result IS NULL) = (sealed_at IS NULL))),
     CONSTRAINT ci_job_runtime_check1 CHECK (((transfer_token IS NULL) = (transfer_until IS NULL))),
     CONSTRAINT ci_job_runtime_check2 CHECK ((expires_at > created_at)),
@@ -33798,6 +33812,19 @@ CREATE TABLE public.custom_domain_tls_admissions (
     owner_id uuid NOT NULL,
     admitted_at timestamp with time zone NOT NULL,
     CONSTRAINT custom_domain_tls_admissions_host_chk CHECK (((host OPERATOR(public.!~~) '%*%'::public.citext) AND (host OPERATOR(public.~~) ('%.'::text || (registered_domain)::text))))
+);
+
+
+--
+-- Name: custom_domain_tls_allowed_hosts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.custom_domain_tls_allowed_hosts (
+    wildcard_domain public.citext NOT NULL,
+    name public.citext NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT custom_domain_tls_allowed_hosts_name_chk CHECK ((name OPERATOR(public.~) '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'::public.citext)),
+    CONSTRAINT custom_domain_tls_allowed_hosts_wildcard_chk CHECK ((wildcard_domain OPERATOR(public.~~) '*.%'::public.citext))
 );
 
 
@@ -35929,8 +35956,8 @@ CREATE TABLE public.dev_bridge_sessions (
     revoked_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT dev_bridge_scope_shape CHECK (((jsonb_typeof(scope) = 'object'::text) AND (scope ?& ARRAY['account_id'::text, 'target_app_id'::text, 'environment_id'::text, 'developer_id'::text, 'project_id'::text]) AND ((scope ->> 'account_id'::text) = (account_id)::text) AND ((scope ->> 'target_app_id'::text) = (target_app_id)::text) AND ((scope ->> 'environment_id'::text) = (environment_id)::text) AND (jsonb_typeof((scope -> 'dependency_app_ids'::text)) = ANY (ARRAY['array'::text, 'null'::text])) AND ((length((scope ->> 'developer_id'::text)) >= 1) AND (length((scope ->> 'developer_id'::text)) <= 128)))),
-    CONSTRAINT dev_bridge_sessions_attachment_digest_check CHECK ((octet_length(attachment_digest) = 32)),
-    CONSTRAINT dev_bridge_sessions_request_digest_check CHECK ((octet_length(request_digest) = 32))
+    CONSTRAINT dev_bridge_sessions_attachment_credhash_chk CHECK ((octet_length(attachment_digest) = ANY (ARRAY[32, 33]))),
+    CONSTRAINT dev_bridge_sessions_request_credhash_chk CHECK ((octet_length(request_digest) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -37548,7 +37575,7 @@ CREATE TABLE public.event_delivery_acknowledgments (
     CONSTRAINT event_delivery_acknowledgments_rejection_check CHECK (((phase = 'rejected'::text) = (rejection_status IS NOT NULL))),
     CONSTRAINT event_delivery_acknowledgments_replay_generation_check CHECK ((replay_generation >= 0)),
     CONSTRAINT event_delivery_acknowledgments_retry_delay_ms_check CHECK ((retry_delay_ms > 0)),
-    CONSTRAINT event_delivery_acknowledgments_token_digest_check CHECK ((octet_length(token_digest) = 32))
+    CONSTRAINT event_delivery_acknowledgments_token_credhash_chk CHECK ((octet_length(token_digest) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -42522,7 +42549,7 @@ CREATE TABLE public.job_run_attach_sessions (
     attach_timeout_s integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT job_run_attach_sessions_timeout_chk CHECK (((attach_timeout_s >= 1) AND (attach_timeout_s <= 300))),
-    CONSTRAINT job_run_attach_sessions_token_chk CHECK ((octet_length(attach_token_sha256) = 32))
+    CONSTRAINT job_run_attach_sessions_token_credhash_chk CHECK ((octet_length(attach_token_sha256) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -42802,10 +42829,10 @@ PARTITION BY RANGE (occurred_at);
 
 
 --
--- Name: log_events_202610; Type: TABLE; Schema: public; Owner: -
+-- Name: log_events_202611; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.log_events_202610 (
+CREATE TABLE public.log_events_202611 (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     occurred_at timestamp with time zone NOT NULL,
     account_id uuid NOT NULL,
@@ -42844,10 +42871,10 @@ CREATE TABLE public.log_events_202610 (
 
 
 --
--- Name: log_events_202611; Type: TABLE; Schema: public; Owner: -
+-- Name: log_events_202612; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.log_events_202611 (
+CREATE TABLE public.log_events_202612 (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     occurred_at timestamp with time zone NOT NULL,
     account_id uuid NOT NULL,
@@ -43514,6 +43541,7 @@ CREATE TABLE public.managed_postgres_databases (
     accounting_required boolean DEFAULT true NOT NULL,
     org_id uuid NOT NULL,
     purge_after timestamp with time zone,
+    restore_slot_until timestamp with time zone,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -44101,6 +44129,7 @@ CREATE TABLE public.managed_realtime_consumer_group_messages (
     CONSTRAINT managed_realtime_consumer_group_messages_check CHECK (((status = 'leased'::text) = ((token_hash IS NOT NULL) AND (lease_until IS NOT NULL)))),
     CONSTRAINT managed_realtime_consumer_group_messages_check1 CHECK (((status = 'leased'::text) OR ((token_hash IS NULL) AND (lease_until IS NULL)))),
     CONSTRAINT managed_realtime_consumer_group_messages_check2 CHECK (((NOT deadline_invalid) OR (delivery_deadline IS NULL))),
+    CONSTRAINT managed_realtime_consumer_group_messages_credhash_chk CHECK (((token_hash IS NULL) OR (octet_length(token_hash) = ANY (ARRAY[32, 33])))),
     CONSTRAINT managed_realtime_consumer_group_messages_failure_code_check CHECK ((octet_length(failure_code) <= 64)),
     CONSTRAINT managed_realtime_consumer_group_messages_fencing_token_check CHECK ((fencing_token > 0)),
     CONSTRAINT managed_realtime_consumer_group_messages_message_check CHECK ((jsonb_typeof(message) = 'object'::text)),
@@ -44109,7 +44138,6 @@ CREATE TABLE public.managed_realtime_consumer_group_messages (
     CONSTRAINT managed_realtime_consumer_group_messages_release_count_check CHECK ((release_count >= 0)),
     CONSTRAINT managed_realtime_consumer_group_messages_sequence_check CHECK ((sequence > 0)),
     CONSTRAINT managed_realtime_consumer_group_messages_status_check CHECK ((status = ANY (ARRAY['ready'::text, 'leased'::text, 'dead'::text]))),
-    CONSTRAINT managed_realtime_consumer_group_messages_token_hash_check CHECK (((token_hash IS NULL) OR (octet_length(token_hash) = 32))),
     CONSTRAINT managed_realtime_consumer_group_messages_worker_check CHECK ((octet_length(worker) <= 128)),
     CONSTRAINT realtime_dead_retention_state CHECK (((status = 'dead'::text) = (dead_since IS NOT NULL))),
     CONSTRAINT realtime_dead_warning_state CHECK (((expiry_warned_at IS NULL) OR (status = 'dead'::text)))
@@ -46727,7 +46755,7 @@ CREATE TABLE public.object_storage_upload_grants (
     CONSTRAINT object_storage_upload_grants_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
     CONSTRAINT object_storage_upload_grants_physical_name_check CHECK ((physical_name <> ''::text)),
     CONSTRAINT object_storage_upload_grants_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5368709120'::bigint))),
-    CONSTRAINT object_storage_upload_grants_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))
+    CONSTRAINT object_storage_upload_grants_token_credhash_chk CHECK ((token_hash ~ '^[0-9a-f]{64}([0-9a-f]{2})?$'::text))
 );
 
 
@@ -47460,7 +47488,7 @@ CREATE TABLE public.outbound_ai_access_tokens (
     revoked_at timestamp with time zone,
     CONSTRAINT outbound_ai_access_tokens_name_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text)),
     CONSTRAINT outbound_ai_access_tokens_scope_chk CHECK (((cardinality(integration_ids) <= 32) AND (expires_at > created_at))),
-    CONSTRAINT outbound_ai_access_tokens_secret_chk CHECK (((octet_length(token_hash) = 32) AND (token_prefix ~ '^ggai_[A-Za-z0-9_-]{7}$'::text)))
+    CONSTRAINT outbound_ai_access_tokens_secret_credhash_chk CHECK (((octet_length(token_hash) = ANY (ARRAY[32, 33])) AND (token_prefix ~ '^ggai_[A-Za-z0-9_-]{7}$'::text)))
 );
 
 
@@ -48267,7 +48295,7 @@ CREATE TABLE public.outbound_integrations (
     CONSTRAINT outbound_integrations_request_timeout_ms_check CHECK ((request_timeout_ms > 0)),
     CONSTRAINT outbound_integrations_response_cache_ttl_chk CHECK (((response_cache_ttl_seconds >= 0) AND (response_cache_ttl_seconds <= 300))),
     CONSTRAINT outbound_integrations_retry_budget_chk CHECK (((retry_budget_per_minute >= 0) AND (retry_budget_per_minute <= 3000))),
-    CONSTRAINT outbound_integrations_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT outbound_integrations_token_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -53137,67 +53165,6 @@ PARTITION BY RANGE (received_at);
 
 
 --
--- Name: request_telemetry_202610; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.request_telemetry_202610 (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    route text NOT NULL,
-    method text NOT NULL,
-    status integer NOT NULL,
-    latency_ms integer NOT NULL,
-    cold_boot boolean DEFAULT false NOT NULL,
-    trace_id text,
-    spans_summary jsonb,
-    received_at timestamp with time zone DEFAULT now() NOT NULL,
-    count integer DEFAULT 1 NOT NULL,
-    ua_family text DEFAULT '__unknown__'::text NOT NULL,
-    referrer_host text DEFAULT '__none__'::text NOT NULL,
-    country text DEFAULT '__unknown__'::text NOT NULL,
-    wake_id text,
-    instance_id text,
-    guest_duration_ms integer DEFAULT 0 NOT NULL,
-    guest_runtime text DEFAULT '__unknown__'::text NOT NULL,
-    guest_outcome text DEFAULT 'missing'::text NOT NULL,
-    guest_error_class text DEFAULT ''::text NOT NULL,
-    consumer_id uuid,
-    node_id text DEFAULT ''::text NOT NULL,
-    region text DEFAULT ''::text NOT NULL,
-    commit_sha text DEFAULT ''::text NOT NULL,
-    deployment_tag text DEFAULT ''::text NOT NULL,
-    deployment_created_at text DEFAULT ''::text NOT NULL,
-    image_digest text DEFAULT ''::text NOT NULL,
-    platform_tenant_id uuid,
-    guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
-    guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
-    guest_resource_usage_available boolean DEFAULT false NOT NULL,
-    flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
-    content_outcome text DEFAULT ''::text NOT NULL,
-    trace_inferred boolean DEFAULT false NOT NULL,
-    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'stale'::text]))),
-    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
-    CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
-    CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
-    CONSTRAINT request_telemetry_guest_cpu_time_ms_check CHECK (((guest_cpu_time_ms >= 0) AND (guest_cpu_time_ms <= 86400000))),
-    CONSTRAINT request_telemetry_guest_duration_ms_check CHECK (((guest_duration_ms >= 0) AND (guest_duration_ms <= 86400000))),
-    CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
-    CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
-    CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
-    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
-    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
-    CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
-    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
-    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
-    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
-    CONSTRAINT request_telemetry_ua_family_check CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text])))
-);
-
-
---
 -- Name: request_telemetry_202611; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -53263,6 +53230,67 @@ CREATE TABLE public.request_telemetry_202611 (
 --
 
 CREATE TABLE public.request_telemetry_202612 (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    ua_family text DEFAULT '__unknown__'::text NOT NULL,
+    referrer_host text DEFAULT '__none__'::text NOT NULL,
+    country text DEFAULT '__unknown__'::text NOT NULL,
+    wake_id text,
+    instance_id text,
+    guest_duration_ms integer DEFAULT 0 NOT NULL,
+    guest_runtime text DEFAULT '__unknown__'::text NOT NULL,
+    guest_outcome text DEFAULT 'missing'::text NOT NULL,
+    guest_error_class text DEFAULT ''::text NOT NULL,
+    consumer_id uuid,
+    node_id text DEFAULT ''::text NOT NULL,
+    region text DEFAULT ''::text NOT NULL,
+    commit_sha text DEFAULT ''::text NOT NULL,
+    deployment_tag text DEFAULT ''::text NOT NULL,
+    deployment_created_at text DEFAULT ''::text NOT NULL,
+    image_digest text DEFAULT ''::text NOT NULL,
+    platform_tenant_id uuid,
+    guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
+    guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
+    guest_resource_usage_available boolean DEFAULT false NOT NULL,
+    flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    content_outcome text DEFAULT ''::text NOT NULL,
+    trace_inferred boolean DEFAULT false NOT NULL,
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'stale'::text]))),
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
+    CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
+    CONSTRAINT request_telemetry_guest_cpu_time_ms_check CHECK (((guest_cpu_time_ms >= 0) AND (guest_cpu_time_ms <= 86400000))),
+    CONSTRAINT request_telemetry_guest_duration_ms_check CHECK (((guest_duration_ms >= 0) AND (guest_duration_ms <= 86400000))),
+    CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
+    CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
+    CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
+    CONSTRAINT request_telemetry_ua_family_check CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text])))
+);
+
+
+--
+-- Name: request_telemetry_202701; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_telemetry_202701 (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
@@ -56741,13 +56769,6 @@ ALTER TABLE ONLY public.data_upstream_probes ATTACH PARTITION public.data_upstre
 
 
 --
--- Name: log_events_202610; Type: TABLE ATTACH; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
-
-
---
 -- Name: log_events_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
@@ -56755,17 +56776,17 @@ ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR
 
 
 --
+-- Name: log_events_202612; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202612 FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
+
+
+--
 -- Name: log_events_default; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_default DEFAULT;
-
-
---
--- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
 
 
 --
@@ -56780,6 +56801,13 @@ ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_teleme
 --
 
 ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
+
+
+--
+-- Name: request_telemetry_202701; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202701 FOR VALUES FROM ('2027-01-01 00:00:00+00') TO ('2027-02-01 00:00:00+00');
 
 
 --
@@ -59321,6 +59349,14 @@ ALTER TABLE ONLY public.crons
 
 ALTER TABLE ONLY public.custom_domain_tls_admissions
     ADD CONSTRAINT custom_domain_tls_admissions_pkey PRIMARY KEY (host, admitted_at);
+
+
+--
+-- Name: custom_domain_tls_allowed_hosts custom_domain_tls_allowed_hosts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.custom_domain_tls_allowed_hosts
+    ADD CONSTRAINT custom_domain_tls_allowed_hosts_pkey PRIMARY KEY (wildcard_domain, name);
 
 
 --
@@ -63316,19 +63352,19 @@ ALTER TABLE ONLY public.log_events
 
 
 --
--- Name: log_events_202610 log_events_202610_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.log_events_202610
-    ADD CONSTRAINT log_events_202610_pkey PRIMARY KEY (id, occurred_at);
-
-
---
 -- Name: log_events_202611 log_events_202611_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.log_events_202611
     ADD CONSTRAINT log_events_202611_pkey PRIMARY KEY (id, occurred_at);
+
+
+--
+-- Name: log_events_202612 log_events_202612_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_events_202612
+    ADD CONSTRAINT log_events_202612_pkey PRIMARY KEY (id, occurred_at);
 
 
 --
@@ -67668,14 +67704,6 @@ ALTER TABLE ONLY public.request_telemetry
 
 
 --
--- Name: request_telemetry_202610 request_telemetry_202610_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.request_telemetry_202610
-    ADD CONSTRAINT request_telemetry_202610_pkey PRIMARY KEY (id, received_at);
-
-
---
 -- Name: request_telemetry_202611 request_telemetry_202611_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67689,6 +67717,14 @@ ALTER TABLE ONLY public.request_telemetry_202611
 
 ALTER TABLE ONLY public.request_telemetry_202612
     ADD CONSTRAINT request_telemetry_202612_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_202701 request_telemetry_202701_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_202701
+    ADD CONSTRAINT request_telemetry_202701_pkey PRIMARY KEY (id, received_at);
 
 
 --
@@ -74768,10 +74804,10 @@ CREATE INDEX log_events_app_deployment_time_idx ON ONLY public.log_events USING 
 
 
 --
--- Name: log_events_202610_account_id_app_id_deployment_id_occurred__idx; Type: INDEX; Schema: public; Owner: -
+-- Name: log_events_202611_account_id_app_id_deployment_id_occurred__idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX log_events_202610_account_id_app_id_deployment_id_occurred__idx ON public.log_events_202610 USING btree (account_id, app_id, deployment_id, occurred_at DESC, id DESC) WHERE (deployment_id IS NOT NULL);
+CREATE INDEX log_events_202611_account_id_app_id_deployment_id_occurred__idx ON public.log_events_202611 USING btree (account_id, app_id, deployment_id, occurred_at DESC, id DESC) WHERE (deployment_id IS NOT NULL);
 
 
 --
@@ -74782,10 +74818,10 @@ CREATE INDEX log_events_app_time_idx ON ONLY public.log_events USING btree (acco
 
 
 --
--- Name: log_events_202610_account_id_app_id_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: log_events_202611_account_id_app_id_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX log_events_202610_account_id_app_id_occurred_at_id_idx ON public.log_events_202610 USING btree (account_id, app_id, occurred_at DESC, id DESC);
+CREATE INDEX log_events_202611_account_id_app_id_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, occurred_at DESC, id DESC);
 
 
 --
@@ -74796,10 +74832,10 @@ CREATE INDEX log_events_app_request_time_idx ON ONLY public.log_events USING btr
 
 
 --
--- Name: log_events_202610_account_id_app_id_request_id_occurred_at__idx; Type: INDEX; Schema: public; Owner: -
+-- Name: log_events_202611_account_id_app_id_request_id_occurred_at__idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX log_events_202610_account_id_app_id_request_id_occurred_at__idx ON public.log_events_202610 USING btree (account_id, app_id, request_id, occurred_at DESC, id DESC) WHERE (request_id IS NOT NULL);
+CREATE INDEX log_events_202611_account_id_app_id_request_id_occurred_at__idx ON public.log_events_202611 USING btree (account_id, app_id, request_id, occurred_at DESC, id DESC) WHERE (request_id IS NOT NULL);
 
 
 --
@@ -74810,10 +74846,10 @@ CREATE INDEX log_events_app_route_time_idx ON ONLY public.log_events USING btree
 
 
 --
--- Name: log_events_202610_account_id_app_id_route_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: log_events_202611_account_id_app_id_route_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX log_events_202610_account_id_app_id_route_occurred_at_id_idx ON public.log_events_202610 USING btree (account_id, app_id, route, occurred_at DESC, id DESC) WHERE (route IS NOT NULL);
+CREATE INDEX log_events_202611_account_id_app_id_route_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, route, occurred_at DESC, id DESC) WHERE (route IS NOT NULL);
 
 
 --
@@ -74824,10 +74860,10 @@ CREATE INDEX log_events_app_source_time_idx ON ONLY public.log_events USING btre
 
 
 --
--- Name: log_events_202610_account_id_app_id_source_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: log_events_202611_account_id_app_id_source_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX log_events_202610_account_id_app_id_source_occurred_at_id_idx ON public.log_events_202610 USING btree (account_id, app_id, source, occurred_at DESC, id DESC);
+CREATE INDEX log_events_202611_account_id_app_id_source_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, source, occurred_at DESC, id DESC);
 
 
 --
@@ -74838,10 +74874,10 @@ CREATE UNIQUE INDEX log_events_source_dedupe_idx ON ONLY public.log_events USING
 
 
 --
--- Name: log_events_202610_account_id_app_id_source_source_event_id__idx; Type: INDEX; Schema: public; Owner: -
+-- Name: log_events_202611_account_id_app_id_source_source_event_id__idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX log_events_202610_account_id_app_id_source_source_event_id__idx ON public.log_events_202610 USING btree (account_id, app_id, source, source_event_id, occurred_at) WHERE (source_event_id IS NOT NULL);
+CREATE UNIQUE INDEX log_events_202611_account_id_app_id_source_source_event_id__idx ON public.log_events_202611 USING btree (account_id, app_id, source, source_event_id, occurred_at) WHERE (source_event_id IS NOT NULL);
 
 
 --
@@ -74852,10 +74888,10 @@ CREATE INDEX log_events_app_status_time_idx ON ONLY public.log_events USING btre
 
 
 --
--- Name: log_events_202610_account_id_app_id_status_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: log_events_202611_account_id_app_id_status_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX log_events_202610_account_id_app_id_status_occurred_at_id_idx ON public.log_events_202610 USING btree (account_id, app_id, status, occurred_at DESC, id DESC) WHERE (status IS NOT NULL);
+CREATE INDEX log_events_202611_account_id_app_id_status_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, status, occurred_at DESC, id DESC) WHERE (status IS NOT NULL);
 
 
 --
@@ -74866,10 +74902,10 @@ CREATE INDEX log_events_app_trace_time_idx ON ONLY public.log_events USING btree
 
 
 --
--- Name: log_events_202610_account_id_app_id_trace_id_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: log_events_202611_account_id_app_id_trace_id_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX log_events_202610_account_id_app_id_trace_id_occurred_at_id_idx ON public.log_events_202610 USING btree (account_id, app_id, trace_id, occurred_at DESC, id DESC) WHERE (trace_id IS NOT NULL);
+CREATE INDEX log_events_202611_account_id_app_id_trace_id_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, trace_id, occurred_at DESC, id DESC) WHERE (trace_id IS NOT NULL);
 
 
 --
@@ -74880,73 +74916,73 @@ CREATE INDEX log_events_retention_time_idx ON ONLY public.log_events USING btree
 
 
 --
--- Name: log_events_202610_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX log_events_202610_occurred_at_id_idx ON public.log_events_202610 USING btree (occurred_at, id);
-
-
---
--- Name: log_events_202611_account_id_app_id_deployment_id_occurred__idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX log_events_202611_account_id_app_id_deployment_id_occurred__idx ON public.log_events_202611 USING btree (account_id, app_id, deployment_id, occurred_at DESC, id DESC) WHERE (deployment_id IS NOT NULL);
-
-
---
--- Name: log_events_202611_account_id_app_id_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX log_events_202611_account_id_app_id_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, occurred_at DESC, id DESC);
-
-
---
--- Name: log_events_202611_account_id_app_id_request_id_occurred_at__idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX log_events_202611_account_id_app_id_request_id_occurred_at__idx ON public.log_events_202611 USING btree (account_id, app_id, request_id, occurred_at DESC, id DESC) WHERE (request_id IS NOT NULL);
-
-
---
--- Name: log_events_202611_account_id_app_id_route_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX log_events_202611_account_id_app_id_route_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, route, occurred_at DESC, id DESC) WHERE (route IS NOT NULL);
-
-
---
--- Name: log_events_202611_account_id_app_id_source_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX log_events_202611_account_id_app_id_source_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, source, occurred_at DESC, id DESC);
-
-
---
--- Name: log_events_202611_account_id_app_id_source_source_event_id__idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX log_events_202611_account_id_app_id_source_source_event_id__idx ON public.log_events_202611 USING btree (account_id, app_id, source, source_event_id, occurred_at) WHERE (source_event_id IS NOT NULL);
-
-
---
--- Name: log_events_202611_account_id_app_id_status_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX log_events_202611_account_id_app_id_status_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, status, occurred_at DESC, id DESC) WHERE (status IS NOT NULL);
-
-
---
--- Name: log_events_202611_account_id_app_id_trace_id_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX log_events_202611_account_id_app_id_trace_id_occurred_at_id_idx ON public.log_events_202611 USING btree (account_id, app_id, trace_id, occurred_at DESC, id DESC) WHERE (trace_id IS NOT NULL);
-
-
---
 -- Name: log_events_202611_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX log_events_202611_occurred_at_id_idx ON public.log_events_202611 USING btree (occurred_at, id);
+
+
+--
+-- Name: log_events_202612_account_id_app_id_deployment_id_occurred__idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_events_202612_account_id_app_id_deployment_id_occurred__idx ON public.log_events_202612 USING btree (account_id, app_id, deployment_id, occurred_at DESC, id DESC) WHERE (deployment_id IS NOT NULL);
+
+
+--
+-- Name: log_events_202612_account_id_app_id_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_events_202612_account_id_app_id_occurred_at_id_idx ON public.log_events_202612 USING btree (account_id, app_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: log_events_202612_account_id_app_id_request_id_occurred_at__idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_events_202612_account_id_app_id_request_id_occurred_at__idx ON public.log_events_202612 USING btree (account_id, app_id, request_id, occurred_at DESC, id DESC) WHERE (request_id IS NOT NULL);
+
+
+--
+-- Name: log_events_202612_account_id_app_id_route_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_events_202612_account_id_app_id_route_occurred_at_id_idx ON public.log_events_202612 USING btree (account_id, app_id, route, occurred_at DESC, id DESC) WHERE (route IS NOT NULL);
+
+
+--
+-- Name: log_events_202612_account_id_app_id_source_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_events_202612_account_id_app_id_source_occurred_at_id_idx ON public.log_events_202612 USING btree (account_id, app_id, source, occurred_at DESC, id DESC);
+
+
+--
+-- Name: log_events_202612_account_id_app_id_source_source_event_id__idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX log_events_202612_account_id_app_id_source_source_event_id__idx ON public.log_events_202612 USING btree (account_id, app_id, source, source_event_id, occurred_at) WHERE (source_event_id IS NOT NULL);
+
+
+--
+-- Name: log_events_202612_account_id_app_id_status_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_events_202612_account_id_app_id_status_occurred_at_id_idx ON public.log_events_202612 USING btree (account_id, app_id, status, occurred_at DESC, id DESC) WHERE (status IS NOT NULL);
+
+
+--
+-- Name: log_events_202612_account_id_app_id_trace_id_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_events_202612_account_id_app_id_trace_id_occurred_at_id_idx ON public.log_events_202612 USING btree (account_id, app_id, trace_id, occurred_at DESC, id DESC) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: log_events_202612_occurred_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_events_202612_occurred_at_id_idx ON public.log_events_202612 USING btree (occurred_at, id);
 
 
 --
@@ -75374,6 +75410,13 @@ CREATE INDEX managed_realtime_inbox_fallbacks_due_idx ON public.managed_realtime
 --
 
 CREATE INDEX managed_realtime_inbox_gap_candidates_idx ON public.managed_realtime_inbox_cursors USING btree (updated_at, endpoint_id) WHERE (NOT gap_reported);
+
+
+--
+-- Name: managed_realtime_inbox_heads_held_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_heads_held_idx ON public.managed_realtime_inbox_heads USING btree (endpoint_id) WHERE (oldest_sequence < next_sequence);
 
 
 --
@@ -78107,10 +78150,10 @@ CREATE INDEX request_telemetry_platform_tenant_received_idx ON ONLY public.reque
 
 
 --
--- Name: request_telemetry_202610_account_id_platform_tenant_id_rece_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202611_account_id_platform_tenant_id_rece_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202610_account_id_platform_tenant_id_rece_idx ON public.request_telemetry_202610 USING btree (account_id, platform_tenant_id, received_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
+CREATE INDEX request_telemetry_202611_account_id_platform_tenant_id_rece_idx ON public.request_telemetry_202611 USING btree (account_id, platform_tenant_id, received_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
 
 
 --
@@ -78121,10 +78164,10 @@ CREATE INDEX request_telemetry_app_consumer_received_idx ON ONLY public.request_
 
 
 --
--- Name: request_telemetry_202610_app_id_consumer_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202611_app_id_consumer_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202610_app_id_consumer_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, consumer_id, received_at DESC) WHERE (consumer_id IS NOT NULL);
+CREATE INDEX request_telemetry_202611_app_id_consumer_id_received_at_idx ON public.request_telemetry_202611 USING btree (app_id, consumer_id, received_at DESC) WHERE (consumer_id IS NOT NULL);
 
 
 --
@@ -78135,10 +78178,10 @@ CREATE INDEX request_telemetry_app_dep_received_idx ON ONLY public.request_telem
 
 
 --
--- Name: request_telemetry_202610_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202611_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202610_app_id_deployment_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, deployment_id, received_at DESC);
+CREATE INDEX request_telemetry_202611_app_id_deployment_id_received_at_idx ON public.request_telemetry_202611 USING btree (app_id, deployment_id, received_at DESC);
 
 
 --
@@ -78149,10 +78192,10 @@ CREATE INDEX request_telemetry_app_received_idx ON ONLY public.request_telemetry
 
 
 --
--- Name: request_telemetry_202610_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202611_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202610_app_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, received_at DESC);
+CREATE INDEX request_telemetry_202611_app_id_received_at_idx ON public.request_telemetry_202611 USING btree (app_id, received_at DESC);
 
 
 --
@@ -78163,10 +78206,10 @@ CREATE INDEX request_telemetry_app_wake_received_idx ON ONLY public.request_tele
 
 
 --
--- Name: request_telemetry_202610_app_id_wake_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202611_app_id_wake_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202610_app_id_wake_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, wake_id, received_at DESC) WHERE (wake_id IS NOT NULL);
+CREATE INDEX request_telemetry_202611_app_id_wake_id_received_at_idx ON public.request_telemetry_202611 USING btree (app_id, wake_id, received_at DESC) WHERE (wake_id IS NOT NULL);
 
 
 --
@@ -78174,48 +78217,6 @@ CREATE INDEX request_telemetry_202610_app_id_wake_id_received_at_idx ON public.r
 --
 
 CREATE INDEX request_telemetry_trace_idx ON ONLY public.request_telemetry USING btree (trace_id) WHERE (trace_id IS NOT NULL);
-
-
---
--- Name: request_telemetry_202610_trace_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202610_trace_id_idx ON public.request_telemetry_202610 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
-
-
---
--- Name: request_telemetry_202611_account_id_platform_tenant_id_rece_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202611_account_id_platform_tenant_id_rece_idx ON public.request_telemetry_202611 USING btree (account_id, platform_tenant_id, received_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
-
-
---
--- Name: request_telemetry_202611_app_id_consumer_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202611_app_id_consumer_id_received_at_idx ON public.request_telemetry_202611 USING btree (app_id, consumer_id, received_at DESC) WHERE (consumer_id IS NOT NULL);
-
-
---
--- Name: request_telemetry_202611_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202611_app_id_deployment_id_received_at_idx ON public.request_telemetry_202611 USING btree (app_id, deployment_id, received_at DESC);
-
-
---
--- Name: request_telemetry_202611_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202611_app_id_received_at_idx ON public.request_telemetry_202611 USING btree (app_id, received_at DESC);
-
-
---
--- Name: request_telemetry_202611_app_id_wake_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202611_app_id_wake_id_received_at_idx ON public.request_telemetry_202611 USING btree (app_id, wake_id, received_at DESC) WHERE (wake_id IS NOT NULL);
 
 
 --
@@ -78265,6 +78266,48 @@ CREATE INDEX request_telemetry_202612_app_id_wake_id_received_at_idx ON public.r
 --
 
 CREATE INDEX request_telemetry_202612_trace_id_idx ON public.request_telemetry_202612 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202701_account_id_platform_tenant_id_rece_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202701_account_id_platform_tenant_id_rece_idx ON public.request_telemetry_202701 USING btree (account_id, platform_tenant_id, received_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202701_app_id_consumer_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202701_app_id_consumer_id_received_at_idx ON public.request_telemetry_202701 USING btree (app_id, consumer_id, received_at DESC) WHERE (consumer_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202701_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202701_app_id_deployment_id_received_at_idx ON public.request_telemetry_202701 USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202701_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202701_app_id_received_at_idx ON public.request_telemetry_202701 USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202701_app_id_wake_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202701_app_id_wake_id_received_at_idx ON public.request_telemetry_202701 USING btree (app_id, wake_id, received_at DESC) WHERE (wake_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202701_trace_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202701_trace_id_idx ON public.request_telemetry_202701 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
 
 
 --
@@ -79518,76 +79561,6 @@ ALTER INDEX public.data_upstream_probes_pkey ATTACH PARTITION public.data_upstre
 
 
 --
--- Name: log_events_202610_account_id_app_id_deployment_id_occurred__idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_app_deployment_time_idx ATTACH PARTITION public.log_events_202610_account_id_app_id_deployment_id_occurred__idx;
-
-
---
--- Name: log_events_202610_account_id_app_id_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_app_time_idx ATTACH PARTITION public.log_events_202610_account_id_app_id_occurred_at_id_idx;
-
-
---
--- Name: log_events_202610_account_id_app_id_request_id_occurred_at__idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_app_request_time_idx ATTACH PARTITION public.log_events_202610_account_id_app_id_request_id_occurred_at__idx;
-
-
---
--- Name: log_events_202610_account_id_app_id_route_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_app_route_time_idx ATTACH PARTITION public.log_events_202610_account_id_app_id_route_occurred_at_id_idx;
-
-
---
--- Name: log_events_202610_account_id_app_id_source_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_app_source_time_idx ATTACH PARTITION public.log_events_202610_account_id_app_id_source_occurred_at_id_idx;
-
-
---
--- Name: log_events_202610_account_id_app_id_source_source_event_id__idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_source_dedupe_idx ATTACH PARTITION public.log_events_202610_account_id_app_id_source_source_event_id__idx;
-
-
---
--- Name: log_events_202610_account_id_app_id_status_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_app_status_time_idx ATTACH PARTITION public.log_events_202610_account_id_app_id_status_occurred_at_id_idx;
-
-
---
--- Name: log_events_202610_account_id_app_id_trace_id_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_app_trace_time_idx ATTACH PARTITION public.log_events_202610_account_id_app_id_trace_id_occurred_at_id_idx;
-
-
---
--- Name: log_events_202610_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_retention_time_idx ATTACH PARTITION public.log_events_202610_occurred_at_id_idx;
-
-
---
--- Name: log_events_202610_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.log_events_pkey ATTACH PARTITION public.log_events_202610_pkey;
-
-
---
 -- Name: log_events_202611_account_id_app_id_deployment_id_occurred__idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -79658,6 +79631,76 @@ ALTER INDEX public.log_events_pkey ATTACH PARTITION public.log_events_202611_pke
 
 
 --
+-- Name: log_events_202612_account_id_app_id_deployment_id_occurred__idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_app_deployment_time_idx ATTACH PARTITION public.log_events_202612_account_id_app_id_deployment_id_occurred__idx;
+
+
+--
+-- Name: log_events_202612_account_id_app_id_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_app_time_idx ATTACH PARTITION public.log_events_202612_account_id_app_id_occurred_at_id_idx;
+
+
+--
+-- Name: log_events_202612_account_id_app_id_request_id_occurred_at__idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_app_request_time_idx ATTACH PARTITION public.log_events_202612_account_id_app_id_request_id_occurred_at__idx;
+
+
+--
+-- Name: log_events_202612_account_id_app_id_route_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_app_route_time_idx ATTACH PARTITION public.log_events_202612_account_id_app_id_route_occurred_at_id_idx;
+
+
+--
+-- Name: log_events_202612_account_id_app_id_source_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_app_source_time_idx ATTACH PARTITION public.log_events_202612_account_id_app_id_source_occurred_at_id_idx;
+
+
+--
+-- Name: log_events_202612_account_id_app_id_source_source_event_id__idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_source_dedupe_idx ATTACH PARTITION public.log_events_202612_account_id_app_id_source_source_event_id__idx;
+
+
+--
+-- Name: log_events_202612_account_id_app_id_status_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_app_status_time_idx ATTACH PARTITION public.log_events_202612_account_id_app_id_status_occurred_at_id_idx;
+
+
+--
+-- Name: log_events_202612_account_id_app_id_trace_id_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_app_trace_time_idx ATTACH PARTITION public.log_events_202612_account_id_app_id_trace_id_occurred_at_id_idx;
+
+
+--
+-- Name: log_events_202612_occurred_at_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_retention_time_idx ATTACH PARTITION public.log_events_202612_occurred_at_id_idx;
+
+
+--
+-- Name: log_events_202612_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.log_events_pkey ATTACH PARTITION public.log_events_202612_pkey;
+
+
+--
 -- Name: log_events_default_account_id_app_id_deployment_id_occurred_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -79725,55 +79768,6 @@ ALTER INDEX public.log_events_retention_time_idx ATTACH PARTITION public.log_eve
 --
 
 ALTER INDEX public.log_events_pkey ATTACH PARTITION public.log_events_default_pkey;
-
-
---
--- Name: request_telemetry_202610_account_id_platform_tenant_id_rece_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_platform_tenant_received_idx ATTACH PARTITION public.request_telemetry_202610_account_id_platform_tenant_id_rece_idx;
-
-
---
--- Name: request_telemetry_202610_app_id_consumer_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_app_consumer_received_idx ATTACH PARTITION public.request_telemetry_202610_app_id_consumer_id_received_at_idx;
-
-
---
--- Name: request_telemetry_202610_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_app_dep_received_idx ATTACH PARTITION public.request_telemetry_202610_app_id_deployment_id_received_at_idx;
-
-
---
--- Name: request_telemetry_202610_app_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_app_received_idx ATTACH PARTITION public.request_telemetry_202610_app_id_received_at_idx;
-
-
---
--- Name: request_telemetry_202610_app_id_wake_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_app_wake_received_idx ATTACH PARTITION public.request_telemetry_202610_app_id_wake_id_received_at_idx;
-
-
---
--- Name: request_telemetry_202610_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_telemetry_202610_pkey;
-
-
---
--- Name: request_telemetry_202610_trace_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_202610_trace_id_idx;
 
 
 --
@@ -79872,6 +79866,55 @@ ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_teleme
 --
 
 ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_202612_trace_id_idx;
+
+
+--
+-- Name: request_telemetry_202701_account_id_platform_tenant_id_rece_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_platform_tenant_received_idx ATTACH PARTITION public.request_telemetry_202701_account_id_platform_tenant_id_rece_idx;
+
+
+--
+-- Name: request_telemetry_202701_app_id_consumer_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_consumer_received_idx ATTACH PARTITION public.request_telemetry_202701_app_id_consumer_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202701_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_dep_received_idx ATTACH PARTITION public.request_telemetry_202701_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202701_app_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_received_idx ATTACH PARTITION public.request_telemetry_202701_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202701_app_id_wake_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_wake_received_idx ATTACH PARTITION public.request_telemetry_202701_app_id_wake_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202701_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_telemetry_202701_pkey;
+
+
+--
+-- Name: request_telemetry_202701_trace_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_202701_trace_id_idx;
 
 
 --
@@ -89851,6 +89894,14 @@ ALTER TABLE ONLY public.crons
 
 ALTER TABLE ONLY public.crons
     ADD CONSTRAINT crons_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: custom_domain_tls_allowed_hosts custom_domain_tls_allowed_hosts_wildcard_domain_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.custom_domain_tls_allowed_hosts
+    ADD CONSTRAINT custom_domain_tls_allowed_hosts_wildcard_domain_fkey FOREIGN KEY (wildcard_domain) REFERENCES public.custom_domains(domain) ON DELETE CASCADE;
 
 
 --

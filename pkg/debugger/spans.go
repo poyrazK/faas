@@ -12,8 +12,10 @@ import (
 )
 
 var (
-	debugEvidenceQuotedLiteral  = regexp.MustCompile(`'(?:''|[^'])*'`)
-	debugEvidenceNumericLiteral = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+	debugEvidenceQuotedLiteral = regexp.MustCompile(`'(?:''|\\.|[^'\\])*'`)
+	debugEvidenceJSONValue     = regexp.MustCompile(`(:\s*)"(?:\\.|[^"\\])*"`)
+	// A number not preceded by `$`, so Postgres placeholders ($1) stay.
+	debugEvidenceNumericLiteral = regexp.MustCompile(`(^|[^$\w.])\d+(?:\.\d+)?\b`)
 )
 
 type StoredSpan struct {
@@ -170,10 +172,21 @@ func sanitizeDebugErrorType(status, errorType string) string {
 }
 
 func sanitizeDebugDBStatement(statement string) string {
-	statement = debugEvidenceQuotedLiteral.ReplaceAllString(statement, "?")
-	statement = debugEvidenceNumericLiteral.ReplaceAllString(statement, "?")
+	statement = ScrubStatementLiterals(statement)
 	statement = strings.Join(strings.Fields(statement), " ")
 	return boundDebugEvidenceText(statement, 512)
+}
+
+// ScrubStatementLiterals replaces the literal values in a database statement
+// with "?": single-quoted strings (doubled ” and backslash escapes), JSON
+// string values (Mongo-style documents, `"key": "value"`) and numbers.
+// Double-quoted SQL identifiers stay, so table names survive. Span ingest
+// applies it so stored spans keep no customer values (docs/tracing.md); the
+// read path applies it again for rows stored before.
+func ScrubStatementLiterals(statement string) string {
+	statement = debugEvidenceQuotedLiteral.ReplaceAllString(statement, "?")
+	statement = debugEvidenceJSONValue.ReplaceAllString(statement, "$1?")
+	return debugEvidenceNumericLiteral.ReplaceAllString(statement, "${1}?")
 }
 
 func minDebugDependencyDuration(duration uint64) uint64 {

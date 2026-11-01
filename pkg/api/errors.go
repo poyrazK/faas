@@ -973,6 +973,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodeReleaseFreezeOverrideNotAllowed means the caller may not override a
+	// company organization's freeze: only someone who may lift it, signed in
+	// or with an admin key, can (ADR-20261019071733 amendment 5).
+	CodeReleaseFreezeOverrideNotAllowed = "release_freeze_override_not_allowed"
 	// CodePlatformReleasePaused means an operator paused every release on the
 	// platform (ADR 20261022140000), for example while a security incident is
 	// contained. Nothing the caller sends overrides it; rollbacks still work.
@@ -5072,6 +5076,16 @@ func ErrWildcardDomainsNotAllowed(p Plan) *Problem {
 		"Wildcard domains unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include wildcard custom domains; upgrade to Pro or Scale.", p)).
 		WithDocs(docsBase + "/domains#wildcard-domains")
+}
+
+// ErrCustomDomainHostsTooMany is a 422: a wildcard custom domain's host
+// allowlist names more than CustomDomainTLSAllowedHostsMax hosts.
+func ErrCustomDomainHostsTooMany(observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+		"Too many allowlisted hosts",
+		fmt.Sprintf("a wildcard domain's host allowlist holds at most %d names; got %d.", CustomDomainTLSAllowedHostsMax, observed)).
+		WithLimit(int64(CustomDomainTLSAllowedHostsMax), int64(observed)).
+		WithDocs(docsBase + "/domains#wildcard-host-allowlist")
 }
 
 // ErrWildcardDomainTenantSurfaceOverlap is a typed 409: a wildcard cannot
