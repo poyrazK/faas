@@ -8753,6 +8753,9 @@ const (
 	// GatewayRequestJournalDiskBudgetBytes bounds one node's journal directory.
 	// Past it the oldest closed segments are removed before they expire.
 	GatewayRequestJournalDiskBudgetBytes int64 = 20 << 30
+	// RequestJournalNodeLookupTimeout bounds how long apid waits for each
+	// gateway's answer when it resolves a request ID kept on compute nodes.
+	RequestJournalNodeLookupTimeout = time.Second
 	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
 	// sending new requests to a compute node whose gatewayd-internal stopped
 	// answering (for example while it restarts behind its durable socket)
