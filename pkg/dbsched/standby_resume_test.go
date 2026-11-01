@@ -117,11 +117,20 @@ func TestWakeWithoutAResumableStandbyStartsAsynchronous(t *testing.T) {
 			s, store, vmm := newStandbyScheduler(t, "db-a", "db-b", "db-c")
 			vm, _ := parkedSynchronized(t, s, store, vmm)
 			prepare(s, store)
+			// The standby the wake leaves to the background boots only
+			// after the check: once it streams, the primary is rightly
+			// synchronous again.
+			hold := make(chan struct{})
+			vmm.mu.Lock()
+			vmm.standbyHold = hold
+			vmm.mu.Unlock()
 			woke, err := s.Wake(context.Background(), vm.DatabaseID)
-			if mode, _ := vmm.replicationOf(vm.DatabaseID); err != nil || woke.StandbySynced || mode == dbguest.ReplicationSync {
+			mode, _ := vmm.replicationOf(vm.DatabaseID)
+			close(hold)
+			s.standbyWG.Wait()
+			if err != nil || woke.StandbySynced || mode == dbguest.ReplicationSync {
 				t.Fatalf("wake = %+v, %v, primary %s; want it asynchronous and the standby untrusted", woke, err, mode)
 			}
-			s.standbyWG.Wait()
 		})
 	}
 }

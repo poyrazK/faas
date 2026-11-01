@@ -75,14 +75,16 @@ type fakeVMM struct {
 	// standbyOn where its standby runs, standbyVol where its standby
 	// volume is; replMode is its primary's replication, unsynced keeps a
 	// standby from becoming synchronous, promoted is where it was
-	// promoted. standbyErr fails standby boots.
-	primaryOn  map[string]string
-	standbyOn  map[string]string
-	standbyVol map[string]string
-	replMode   map[string]dbguest.ReplicationMode
-	unsynced   map[string]bool
-	promoted   map[string]string
-	standbyErr error
+	// promoted. standbyErr fails standby boots, and standbyHold keeps
+	// them booting until closed.
+	primaryOn   map[string]string
+	standbyOn   map[string]string
+	standbyVol  map[string]string
+	replMode    map[string]dbguest.ReplicationMode
+	unsynced    map[string]bool
+	promoted    map[string]string
+	standbyErr  error
+	standbyHold chan struct{}
 	// imports is each database's import, as its guest reports it.
 	imports map[string]dbguest.ImportStatus
 	// down are nodes whose vmmd does not answer.
@@ -661,6 +663,12 @@ func (f *fakeVMM) ReleaseVolume(_ context.Context, node Node, id string) error {
 }
 
 func (f *fakeVMM) StartStandby(_ context.Context, node, primary Node, vm VM) error {
+	f.mu.Lock()
+	hold := f.standbyHold
+	f.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("start_standby")
