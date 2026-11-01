@@ -3931,6 +3931,16 @@ type DeploymentDependencyGate struct {
 	Blocker      string
 }
 
+type DeploymentEventSubscriptionIntent struct {
+	DeploymentID            pgtype.UUID
+	AppID                   pgtype.UUID
+	DeclaredSubscriptionIds []pgtype.UUID
+	Status                  string
+	Reason                  string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+}
+
 type DeploymentImagePreparation struct {
 	DeploymentID   pgtype.UUID
 	NodeName       string

@@ -233,11 +233,15 @@ gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
 
 On a production deploy, the `event_triggers` in `gregale.yaml` are the app's
 whole set of event subscriptions
-([ADR 20261031130000](adr/20261031130000-event-subscription-reconcile.md)):
+([ADR 20261031130000](adr/20261031130000-event-subscription-reconcile.md)).
+The set takes effect when that release serves all production traffic
+([ADR 20261101030512](adr/20261101030512-event-subscriptions-go-live.md)):
+a scheduled, `--no-traffic`, failed or cancelled deploy disables nothing, and
+the old release's triggers keep delivering until the new one is live.
 
-- A trigger you remove is disabled. Events not yet routed to it are not
-  delivered; their receipts show it as filtered. Deliveries that already
-  started finish.
+- A trigger you remove is disabled once the release is live. Events not yet
+  routed to it are not delivered; their receipts show it as filtered.
+  Deliveries that already started finish.
 - Changing a trigger's filter replaces its subscription; the old filter stops
   delivering.
 - Declaring a trigger again re-enables the same subscription, with its
@@ -255,9 +259,13 @@ Each plan caps the enabled subscriptions per app and per account:
 | Pro | 20 | 50 |
 | Scale | 100 | 500 |
 
-A deploy that would go past a cap is refused with `403
+A deploy is counted as its declared set will stand once live, so replacing
+every trigger of an app at its cap works. A deploy, stage deploy or batch
+trigger create that would go past a cap is refused with `403
 plan_event_subscription_quota`, naming the limit and the count it would have
-reached, and changes nothing. Numbers in filters are kept exactly, so a filter
+reached, and changes nothing. If an `event_triggers` entry names an app that
+doesn't exist (for example after a rename), the deploy only adds
+subscriptions and disables none; update `gregale.yaml` to the new name. Numbers in filters are kept exactly, so a filter
 on an integer ID larger than 2^53 matches only that ID.
 
 ### Delivery identity

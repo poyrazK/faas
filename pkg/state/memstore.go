@@ -603,8 +603,10 @@ type MemStore struct {
 	deploymentPolicyStates       map[string]deploymentPolicyState
 	deploymentCronStates         map[string]deploymentPolicyState
 	deploymentCronActivations    map[string]cronActivation
-	deploymentCronOutcomes       map[string]cronOutcome
-	deploymentCronBefore         map[string][]Cron
+	// eventSubscriptionIntents is keyed by deployment id (ADR-20261101030512).
+	eventSubscriptionIntents map[string]memEventSubscriptionIntent
+	deploymentCronOutcomes   map[string]cronOutcome
+	deploymentCronBefore     map[string][]Cron
 	// deploymentServingEndedAt mirrors deployments.serving_ended_at; see
 	// putDeploymentLocked.
 	deploymentServingEndedAt map[string]time.Time
@@ -8151,6 +8153,7 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // it has always lacked.
 func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.eventSubscriptionIntent = deploymentEventSubscriptionIntent(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -8160,6 +8163,7 @@ func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployme
 
 func (m *MemStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.eventSubscriptionIntent = deploymentEventSubscriptionIntent(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -8507,6 +8511,9 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	}
 	if d.submissionAttemptID != "" {
 		m.saveDeploymentSubmissionLocked(d.submissionAttemptID, d)
+	}
+	if d.eventSubscriptionIntent != nil {
+		m.recordDeploymentEventSubscriptionIntentLocked(d, *d.eventSubscriptionIntent)
 	}
 	if dependencyGate != nil {
 		m.deploymentDependencyGates[d.ID] = *dependencyGate

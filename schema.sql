@@ -35262,6 +35262,19 @@ CREATE VIEW public.deployment_code_pin_deadlines AS
 -- Name: deployment_cron_activations; Type: TABLE; Schema: public; Owner: -
 --
 
+CREATE TABLE public.deployment_event_subscription_intents (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    declared_subscription_ids uuid[] NOT NULL,
+    status text DEFAULT 'prepared'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_event_subscription_intents_reason_check CHECK ((char_length(reason) <= 64)),
+    CONSTRAINT deployment_event_subscription_intents_status_check CHECK ((status = ANY (ARRAY['prepared'::text, 'activated'::text, 'discarded'::text])))
+);
+
+
 CREATE TABLE public.deployment_cron_activations (
     app_id uuid NOT NULL,
     upload_id text,

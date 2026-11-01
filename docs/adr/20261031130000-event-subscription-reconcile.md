@@ -2,6 +2,7 @@
 
 Date: 2026-10-31
 Status: Accepted
+Amended by: [ADR 20261101030512](20261101030512-event-subscriptions-go-live.md) (the declared set takes effect when the release is live)
 Related: [ADR 20261029093000](20261029093000-event-ga-gate.md) (event GA gate), [ADR 20261027125625](20261027125625-events-kill-switch.md) (events kill switch)
 
 ## Context

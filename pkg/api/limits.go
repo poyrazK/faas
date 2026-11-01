@@ -3967,9 +3967,9 @@ type Limits struct {
 	// enabled event subscriptions (gregale.yaml event_triggers) of one app
 	// and of all apps sharing a billing subject (ADR-20261031130000). Every
 	// publish is matched against each enabled subscription of its account,
-	// so the count bounds the routing work one event can cause. Enforced
-	// under the cron quota subject lock in
-	// pkg/state.PgStore.UpsertEventSubscriptionWithinLimits.
+	// so the count bounds the routing work one event can cause. Checked after
+	// a manifest apply's writes in pkg/apid/apidserver
+	// checkSourceRefEventSubscriptionQuota.
 	EventSubscriptionsPerApp     int
 	EventSubscriptionsPerAccount int
 
