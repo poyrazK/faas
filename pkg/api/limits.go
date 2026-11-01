@@ -537,7 +537,8 @@ const (
 // ImagedImagePrepWorkers is how many deployments one imaged prepares at once
 // with FAAS_IMAGED_PARALLEL_PREP on (ADR-20261029174438); off, it prepares one
 // at a time. Each preparation can run a Grype scan, and the imaged unit's
-// MemoryMax (4 GiB) covers all of them, so the count stays small.
+// memory, bounded by the 6 GiB control-plane slice, covers all of them, so the
+// count stays small.
 const ImagedImagePrepWorkers = 2
 
 // ImagedPublishedLayerDigests bounds how many just-published app layers one
@@ -3968,8 +3969,8 @@ type Limits struct {
 	// and of all apps sharing a billing subject (ADR-20261031130000). Every
 	// publish is matched against each enabled subscription of its account,
 	// so the count bounds the routing work one event can cause. Enforced
-	// under the cron quota subject lock in
-	// pkg/state.PgStore.UpsertEventSubscriptionWithinLimits.
+	// after every manifest apply that adds or re-enables a subscription, by
+	// checkSourceRefEventSubscriptionLimits in pkg/apid/apidserver.
 	EventSubscriptionsPerApp     int
 	EventSubscriptionsPerAccount int
 
@@ -6955,6 +6956,19 @@ const (
 	FrozenCompressMinAgeSeconds             = 60
 	FrozenCompressPerNodePerTick            = 4
 	FrozenCompressUnavailableBackoffSeconds = 600
+	// Frozen VMs yield their memory to admission (ADR 20261031190030). When
+	// compression has nothing left to try on a node still at the high-water
+	// mark, or the node cannot compress, the reaper parks its longest-frozen
+	// VMs frozen at least FrozenCompressMinAgeSeconds, at most
+	// FrozenYieldPerNodePerTick per tick, until the node is under the
+	// low-water mark. A wake refused for RAM parks at most
+	// FrozenYieldPerRefusedWake frozen VMs on one node, when that frees what
+	// the node lacks, and waits up to FrozenYieldFreshViewMillis for the
+	// node's memory measurement and vmmd capacity report to show it before
+	// its one retry.
+	FrozenYieldPerNodePerTick  = 8
+	FrozenYieldPerRefusedWake  = 8
+	FrozenYieldFreshViewMillis = 1500
 	// FrozenEarlyFreezeMinSeconds and FrozenEarlyFreezeMaxSeconds bound
 	// schedd's frozen_tier_early_freeze_after_s (ADR-20261021215353): at
 	// least the 2 s quiet pause, and well inside the shortest app idle
