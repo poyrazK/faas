@@ -55,14 +55,21 @@ func TestTrafficPreviewAgreesWithForwardedExecutionBudget(t *testing.T) {
 		wantSource   string
 		// planCeiling expects the plan's request-budget ceiling (ADR-1150).
 		planCeiling bool
+		// allowOverride has the original rule name the default header in
+		// allow_override_header, so the header may raise its budget
+		// (ADR-093 amendment 2026-11-01).
+		allowOverride bool
 	}{
 		{name: "total_pins_original_rule", ingressTotal: 4000, wantRule: "original", wantMS: 1200, wantTotal: 4000, wantSource: "rule"},
 		{name: "execution_only_uses_rewritten_rule", wantRule: "rewritten", wantMS: 2400, wantSource: "rule"},
 		// Above MaxInt32 the override is invalid (#4968), so the rule budget stands.
 		{name: "large_override_cannot_wrap_or_extend_total", ingressTotal: 4000, override: "18446744078709", wantRule: "original", wantMS: 1200, wantTotal: 4000, wantSource: "rule"},
-		{name: "max_override_clamps_without_extending_total", ingressTotal: 4000, override: "2147483647", wantRule: "original", planCeiling: true, wantTotal: 4000, wantSource: "ceiling_clamp"},
+		// Without allow_override_header the default header may only shorten the budget.
+		{name: "default_override_cannot_raise_budget", ingressTotal: 4000, override: "2147483647", wantRule: "original", wantMS: 1200, wantTotal: 4000, wantSource: "rule"},
+		{name: "max_override_clamps_without_extending_total", ingressTotal: 4000, override: "2147483647", allowOverride: true, wantRule: "original", planCeiling: true, wantTotal: 4000, wantSource: "ceiling_clamp"},
 		{name: "header_action_cannot_create_selector", headerAction: "set", selector: true, wantMS: api.RequestBudgetDefault.Milliseconds(), wantSource: "plan_default"},
-		{name: "header_action_cannot_remove_selector", headerAction: "remove", selector: true, wantRule: "rewritten", wantMS: 3000, wantSource: "header_override"},
+		// The header action's 1800 ms shortens the rewritten rule's 2400 ms.
+		{name: "header_action_cannot_remove_selector", headerAction: "remove", selector: true, wantRule: "rewritten", wantMS: 1800, wantSource: "header_override"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,12 +88,17 @@ func TestTrafficPreviewAgreesWithForwardedExecutionBudget(t *testing.T) {
 				original.MatchHeaders = map[string]string{"X-Selector": "original"}
 				rewritten.MatchHeaders = map[string]string{"X-Selector": "original"}
 			}
+			originalAction := api.EdgeRuleBudgetAction{BudgetMs: 1200, TotalDeadlineMs: tc.ingressTotal}
+			if tc.allowOverride {
+				original.AllowOverrideHeader = api.RequestBudgetDefaultOverrideHeader
+				originalAction.AllowOverrideHeader = api.RequestBudgetDefaultOverrideHeader
+			}
 			matcher := previewParityMatcher{entry: HostEntry{
 				Budget:  []EdgeRuleBudgetResolved{rewritten, original},
 				Rewrite: []EdgeRuleRewriteResolved{{ID: "rewrite", AccountID: backend.app.AccountID, From: "/public", To: "/backend"}},
 			}}
 			rules := []api.EdgeRuleResponse{
-				previewParityRule(t, backend.host, "original", "budget", "/public", 20, api.EdgeRuleBudgetAction{BudgetMs: 1200, TotalDeadlineMs: tc.ingressTotal}),
+				previewParityRule(t, backend.host, "original", "budget", "/public", 20, originalAction),
 				previewParityRule(t, backend.host, "rewritten", "budget", "/backend", 10, api.EdgeRuleBudgetAction{BudgetMs: 2400, TotalDeadlineMs: 2000}),
 				previewParityRule(t, backend.host, "rewrite", "rewrite", "*", 1, api.EdgeRuleRewriteAction{From: "/public", To: "/backend"}),
 			}
@@ -96,8 +108,8 @@ func TestTrafficPreviewAgreesWithForwardedExecutionBudget(t *testing.T) {
 				req.Header.Set(api.RequestBudgetDefaultOverrideHeader, tc.override)
 			}
 			if tc.headerAction != "" {
-				ops := []api.EdgeRuleHeaderOp{{Name: "X-Selector", Action: tc.headerAction, Value: "original"}, {Name: api.RequestBudgetDefaultOverrideHeader, Action: "set", Value: "3000"}}
-				matcher.entry.Headers = []EdgeRuleHeadersResolved{{AccountID: backend.app.AccountID, RequestHeaders: []EdgeRuleHeaderOp{{Name: "X-Selector", Action: tc.headerAction, Value: "original"}, {Name: api.RequestBudgetDefaultOverrideHeader, Action: "set", Value: "3000"}}}}
+				ops := []api.EdgeRuleHeaderOp{{Name: "X-Selector", Action: tc.headerAction, Value: "original"}, {Name: api.RequestBudgetDefaultOverrideHeader, Action: "set", Value: "1800"}}
+				matcher.entry.Headers = []EdgeRuleHeadersResolved{{AccountID: backend.app.AccountID, RequestHeaders: []EdgeRuleHeaderOp{{Name: "X-Selector", Action: tc.headerAction, Value: "original"}, {Name: api.RequestBudgetDefaultOverrideHeader, Action: "set", Value: "1800"}}}}
 				rules = append(rules, previewParityRule(t, backend.host, "headers", "headers", "*", 1, api.EdgeRuleHeadersAction{RequestHeaders: ops}))
 				if tc.headerAction == "remove" {
 					req.Header.Add("X-Selector", "original")
