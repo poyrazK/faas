@@ -16,7 +16,18 @@ export type GitHubInstallStatus = {
   health: 'not_connected' | 'unknown' | 'healthy' | 'degraded';
   connected: boolean;
   installation_id?: number;
+  /**
+   * The GitHub user or organization the App is installed on.
+   */
   github_login?: string;
+  /**
+   * Empty for installations connected since ADR-20261101160300: an
+   * installation has no default branch, and a bind without a branch
+   * takes the repository's default branch. Older connections report
+   * the `main` they stored.
+   *
+   * @deprecated
+   */
   default_branch?: string;
   repo_full_name?: string;
   production_branch?: string;

@@ -177,7 +177,8 @@ export class GithubService {
    * project. Legacy allow_marked compatibility rows are migrated to deny;
    * customers can explicitly opt back in when production calls are safe.
    * An app without a project reports the defaults with an empty
-   * `project_id` and its own `production_trigger`.
+   * `project_id` and its own `production_trigger` and
+   * `preview_enabled`.
    *
    * @returns GitHubDeploymentPolicy Current GitHub deployment policy.
    * @throws ApiError
@@ -212,9 +213,9 @@ export class GithubService {
    * trailing `**` directory patterns. `preview_service_policy=deny`
    * rejects preview calls to production dependencies before discovery or
    * wake-up; `allow_marked` preserves the marked-call compatibility mode.
-   * An app without a project can set only `production_trigger`, once it
-   * is bound to a repository; other fields answer 409
-   * `project_required`. Mutations require MFA.
+   * An app without a project can set only `production_trigger` and
+   * `preview_enabled`, once it is bound to a repository; other fields
+   * answer 409 `project_required`. Mutations require MFA.
    *
    * @returns GitHubDeploymentPolicy Updated GitHub deployment policy.
    * @throws ApiError

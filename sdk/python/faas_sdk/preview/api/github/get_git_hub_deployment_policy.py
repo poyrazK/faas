@@ -83,7 +83,8 @@ def sync_detailed(
     project. Legacy allow_marked compatibility rows are migrated to deny;
     customers can explicitly opt back in when production calls are safe.
     An app without a project reports the defaults with an empty
-    `project_id` and its own `production_trigger`.
+    `project_id` and its own `production_trigger` and
+    `preview_enabled`.
 
     Args:
         slug (str):
@@ -120,7 +121,8 @@ def sync(
     project. Legacy allow_marked compatibility rows are migrated to deny;
     customers can explicitly opt back in when production calls are safe.
     An app without a project reports the defaults with an empty
-    `project_id` and its own `production_trigger`.
+    `project_id` and its own `production_trigger` and
+    `preview_enabled`.
 
     Args:
         slug (str):
@@ -152,7 +154,8 @@ async def asyncio_detailed(
     project. Legacy allow_marked compatibility rows are migrated to deny;
     customers can explicitly opt back in when production calls are safe.
     An app without a project reports the defaults with an empty
-    `project_id` and its own `production_trigger`.
+    `project_id` and its own `production_trigger` and
+    `preview_enabled`.
 
     Args:
         slug (str):
@@ -187,7 +190,8 @@ async def asyncio(
     project. Legacy allow_marked compatibility rows are migrated to deny;
     customers can explicitly opt back in when production calls are safe.
     An app without a project reports the defaults with an empty
-    `project_id` and its own `production_trigger`.
+    `project_id` and its own `production_trigger` and
+    `preview_enabled`.
 
     Args:
         slug (str):

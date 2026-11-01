@@ -98,9 +98,9 @@ def sync_detailed(
     trailing `/**` directory patterns. `preview_service_policy=deny`
     rejects preview calls to production dependencies before discovery or
     wake-up; `allow_marked` preserves the marked-call compatibility mode.
-    An app without a project can set only `production_trigger`, once it
-    is bound to a repository; other fields answer 409
-    `project_required`. Mutations require MFA.
+    An app without a project can set only `production_trigger` and
+    `preview_enabled`, once it is bound to a repository; other fields
+    answer 409 `project_required`. Mutations require MFA.
 
     Args:
         slug (str):
@@ -141,9 +141,9 @@ def sync(
     trailing `/**` directory patterns. `preview_service_policy=deny`
     rejects preview calls to production dependencies before discovery or
     wake-up; `allow_marked` preserves the marked-call compatibility mode.
-    An app without a project can set only `production_trigger`, once it
-    is bound to a repository; other fields answer 409
-    `project_required`. Mutations require MFA.
+    An app without a project can set only `production_trigger` and
+    `preview_enabled`, once it is bound to a repository; other fields
+    answer 409 `project_required`. Mutations require MFA.
 
     Args:
         slug (str):
@@ -179,9 +179,9 @@ async def asyncio_detailed(
     trailing `/**` directory patterns. `preview_service_policy=deny`
     rejects preview calls to production dependencies before discovery or
     wake-up; `allow_marked` preserves the marked-call compatibility mode.
-    An app without a project can set only `production_trigger`, once it
-    is bound to a repository; other fields answer 409
-    `project_required`. Mutations require MFA.
+    An app without a project can set only `production_trigger` and
+    `preview_enabled`, once it is bound to a repository; other fields
+    answer 409 `project_required`. Mutations require MFA.
 
     Args:
         slug (str):
@@ -220,9 +220,9 @@ async def asyncio(
     trailing `/**` directory patterns. `preview_service_policy=deny`
     rejects preview calls to production dependencies before discovery or
     wake-up; `allow_marked` preserves the marked-call compatibility mode.
-    An app without a project can set only `production_trigger`, once it
-    is bound to a repository; other fields answer 409
-    `project_required`. Mutations require MFA.
+    An app without a project can set only `production_trigger` and
+    `preview_enabled`, once it is bound to a repository; other fields
+    answer 409 `project_required`. Mutations require MFA.
 
     Args:
         slug (str):
