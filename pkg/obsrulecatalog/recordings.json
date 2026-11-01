@@ -3,7 +3,7 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "12af47fb3ebf6fe83fe8360abb4888b7431621d82fcdc73d0de3e23fb4988406",
+      "revision": "b0ff4519834f364b91d852ac51d98e386f5b90f6c7a50b4bf41ac41160e9dffc",
       "expected": {
         "id": "gregale-core-v1",
         "revision": "1687432ce22245d54fe46a82da0b2068207e9022db7e9145254836b44065449e",
@@ -1248,8 +1248,8 @@
           }
         ]
       },
-      "alert_set_revision": "8e8c63c2e5acfeae57f0f486a1b84e71176876f12a91134f4e08f5c3f8d149a8",
-      "alert_count": 504,
+      "alert_set_revision": "56441e7161860274d807190917e1ccfcf22d62bebb1f3ebddaa77b56eecd1ccd",
+      "alert_count": 505,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -2716,6 +2716,12 @@
           "rule_name": "FaasAuditWriteFailuresSpike"
         },
         {
+          "id": "2d4365da69c177562c463e3c9a2da84a5dfaa2b9dc38f2f2b71426bfc6b9ea1f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasLogArchiveNodeDisabled"
+        },
+        {
           "id": "370f7fc7ec225c508a3e052656283e0ae70132803a97e98b7e103d1f6e4074b4",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -2826,7 +2832,7 @@
       ]
     },
     {
-      "revision": "ce6b68b2ebef2f85854292f6960e6e6d889e9d2bb989ea6b4a02919c252aad36",
+      "revision": "2bbb5317eb992f41410992e27912501d46a67f8fd0896201792aa04313edd645",
       "expected": {
         "id": "gregale-full-v1",
         "revision": "fdfb015f00046499c20f4d13eaa6971fa728e8e3292a3f6186a2965c135f13d1",
@@ -4075,8 +4081,8 @@
           }
         ]
       },
-      "alert_set_revision": "9e4415bfc1196c3b19cd615215d975095f6939bd6dc8c9267b01b5602adba14f",
-      "alert_count": 527,
+      "alert_set_revision": "0ee835b904b8998e69b407b2f57486c23c02d9073fd891fa71d899ef947a1c6c",
+      "alert_count": 528,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -5541,6 +5547,12 @@
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
           "rule_name": "FaasAuditWriteFailuresSpike"
+        },
+        {
+          "id": "2d4365da69c177562c463e3c9a2da84a5dfaa2b9dc38f2f2b71426bfc6b9ea1f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasLogArchiveNodeDisabled"
         },
         {
           "id": "370f7fc7ec225c508a3e052656283e0ae70132803a97e98b7e103d1f6e4074b4",
