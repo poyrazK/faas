@@ -287,6 +287,8 @@ type Querier interface {
 	CancelRuntimeUpgradeBuilds(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error)
 	CancelRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg CancelRuntimeUpgradeCandidateParams) error
 	CancelRuntimeUpgradeReleaseTasks(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
+	// Each reservation is released on the counter it was taken from, which is a
+	// company's pooled counter once its reservations are pooled (ADR-202610171908).
 	CancelTrafficAppInvocations(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	// Explicit cancel from DELETE /v1/uploads/{id}. The handler also
 	// removes the .part file via os.Remove AFTER the UPDATE commits —

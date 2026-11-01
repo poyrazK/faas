@@ -10038,19 +10038,21 @@ WHERE created_at < sqlc.arg(before)::timestamptz
   AND id < (SELECT MAX(current.id) FROM response_cache_purge_change_log current WHERE current.app_id = response_cache_purge_change_log.app_id);
 
 -- name: CancelTrafficAppInvocations :exec
+-- Each reservation is released on the counter it was taken from, which is a
+-- company's pooled counter once its reservations are pooled (ADR-202610171908).
 WITH target AS MATERIALIZED (
-    SELECT id, account_id, quota_reserved FROM invocations
+    SELECT id, coalesce(async_quota_subject_id,account_id) AS quota_subject_id, quota_reserved FROM invocations
     WHERE app_id=sqlc.arg(app_id)::uuid AND state IN ('pending','dispatching')
       AND (work_policy_name IS NULL OR state='pending') FOR UPDATE
 ), cancelled AS (
     UPDATE invocations i SET state='cancelled',quota_reserved=false,
         completed_at=coalesce(i.completed_at,now()) FROM target t WHERE i.id=t.id
-    RETURNING t.account_id,t.quota_reserved
+    RETURNING t.quota_subject_id,t.quota_reserved
 ), reservations AS (
-    SELECT account_id,count(*) AS slots FROM cancelled WHERE quota_reserved GROUP BY account_id
+    SELECT quota_subject_id,count(*) AS slots FROM cancelled WHERE quota_reserved GROUP BY quota_subject_id
 )
 UPDATE account_async_quota q SET current_inflight=greatest(q.current_inflight-r.slots,0),updated_at=now()
-FROM reservations r WHERE q.account_id=r.account_id;
+FROM reservations r WHERE q.account_id=r.quota_subject_id;
 
 -- name: LockTrafficAppAccount :one
 SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::uuid FOR UPDATE;
