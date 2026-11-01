@@ -187,6 +187,7 @@ func TestCIJobsProgressAuthorityGatesAndRollback(t *testing.T) {
 	if _, err := h.pool.Exec(t.Context(), strings.Split(string(data), "-- +goose Down")[1]); err == nil || !strings.Contains(err.Error(), "retain CI live progress") {
 		t.Fatal("rollback discarded progress evidence")
 	}
+	forgetJobAttempt(t, h, proof.RunID)
 	if _, err := h.pool.Exec(t.Context(), "UPDATE job_tasks SET lease_token=$2 WHERE run_id=$1", proof.RunID, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}

@@ -283,7 +283,8 @@ Each step is its own PR, in this order:
 
 ## Not covered
 
-- The price of overage and its invoicing.
+- The price of overage and its invoicing: decided in
+  [ADR 20261031110037](20261031110037-managed-postgres-overage-invoicing.md).
 - A per-database cap, or per-database priority within an account's pool.
 - Native (non-Neon) providers. A provider without a compute quota is skipped
   and counted as `unsupported`; its databases are capped only by admission.

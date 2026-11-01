@@ -205,8 +205,9 @@ func scrapeReconciler(t *testing.T, rec *Reconciler) string {
 	return string(body)
 }
 
-// ADR-20261031161842: the provider is compared with what the pusher recorded
-// as delivered, not with usage. Usage the pusher correctly withheld (above
+// ADR-20261031161842: a provider that stamps the usage hour (Paddle, Stripe)
+// is compared with what the pusher recorded as delivered for those hours, not
+// with usage. Usage the pusher correctly withheld (above
 // the spend cap every paid plan starts with, in an hour not final yet, or of
 // a suspended subject) is not drift; a delivered hour the provider lacks is.
 func TestReconciler_ComparesDeliveredNotUsage(t *testing.T) {
@@ -223,8 +224,8 @@ func TestReconciler_ComparesDeliveredNotUsage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store, id := seedMemStore(t, "acct_overage", api.PlanHobby, overage, tc.delivered)
 			prov := &stubProvider{pushed: tc.pushed, mode: billing.UsageModeOverage, caps: billing.CapabilitySet(billing.CapUsageReconcile)}
-			body := scrapeReconciler(t, New("polar", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
-			want := `meterd_billing_drift_mb_seconds{account_id="` + id + `",provider="polar"} ` + tc.drift
+			body := scrapeReconciler(t, New("paddle", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+			want := `meterd_billing_drift_mb_seconds{account_id="` + id + `",provider="paddle"} ` + tc.drift
 			if !strings.Contains(body, want+"\n") {
 				t.Fatalf("missing %q in scrape:\n%s", want, body)
 			}
@@ -250,15 +251,15 @@ func TestReconciler_ReconcilesOrganizationSubjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.UpsertBillingIdentity(ctx, state.BillingIdentity{
-		AccountID: org.ID, Provider: "polar", CustomerID: "polar-customer-" + org.ID,
-		SubscriptionID: "polar-subscription-" + org.ID, BillingFrom: time.Unix(0, 0).UTC(),
+		AccountID: org.ID, Provider: "paddle", CustomerID: "paddle-customer-" + org.ID,
+		SubscriptionID: "paddle-subscription-" + org.ID, BillingFrom: time.Unix(0, 0).UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	seedDelivery(t, store, org.ID, 1000)
 	prov := &stubProvider{pushed: 400, mode: billing.UsageModeOverage, caps: billing.CapabilitySet(billing.CapUsageReconcile)}
-	body := scrapeReconciler(t, New("polar", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
-	want := `meterd_billing_drift_mb_seconds{account_id="` + org.ID + `",provider="polar"} 600`
+	body := scrapeReconciler(t, New("paddle", store, prov, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+	want := `meterd_billing_drift_mb_seconds{account_id="` + org.ID + `",provider="paddle"} 600`
 	if !strings.Contains(body, want) {
 		t.Fatalf("missing %q in scrape:\n%s", want, body)
 	}

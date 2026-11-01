@@ -382,12 +382,21 @@ func (r EgressUpstream) Key() string { return r.key() }
 func (r *Engine) BootBudget() *func(state.State) time.Duration { return &r.bootBudget }
 func (r *Engine) DeadNodeSettle() *storeSettle                 { return &r.deadNodeSettle }
 func (r *Engine) DefaultLocalNodeID() *string                  { return &r.defaultLocalNodeID }
-func (r *Engine) FrozenFastPath() *atomic.Bool                 { return &r.frozenFastPath }
-func (r *Engine) Log() **slog.Logger                           { return &r.log }
-func (r *Engine) NodePresence() **nodePresenceTracker          { return &r.nodePresence }
-func (r *Engine) Now() *func() time.Time                       { return &r.now }
-func (r *Engine) Ops() **wire.OpsMetrics                       { return &r.ops }
-func (r *Engine) Owners() *ownerCache                          { return &r.owners }
+func (r *Engine) FrozenCompressOne() *func(context.Context, string) string {
+	return &r.frozenCompressOne
+}
+func (r *Engine) FrozenYieldOne() *func(context.Context, string, string) bool {
+	return &r.frozenYieldOne
+}
+func (r *Engine) ParkFrozenToYield(ctx context.Context, id, reason string) bool {
+	return r.parkFrozenToYield(ctx, id, reason)
+}
+func (r *Engine) FrozenFastPath() *atomic.Bool        { return &r.frozenFastPath }
+func (r *Engine) Log() **slog.Logger                  { return &r.log }
+func (r *Engine) NodePresence() **nodePresenceTracker { return &r.nodePresence }
+func (r *Engine) Now() *func() time.Time              { return &r.now }
+func (r *Engine) Ops() **wire.OpsMetrics              { return &r.ops }
+func (r *Engine) Owners() *ownerCache                 { return &r.owners }
 func (r *Engine) ServiceReconcileSubmit() *func(context.Context, string) {
 	return &r.serviceReconcileSubmit
 }
@@ -621,7 +630,7 @@ func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
 func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
 
 // AppStatus makes the fake gateway answer as if the app's own code returned
-// that status (ADR-20261031100000).
+// that status (ADR-20261031100001).
 func (r *drainSynth) AppStatus() *atomic.Int64 { return &r.appStatus }
 
 // XHTTPGatewaySynth is the drain's real gateway client pointed at base.
@@ -1015,4 +1024,11 @@ func (d *Drain) XHoldFinancialAdmission(err error) {
 // refusal, built from a refusal carrying the given blockers.
 func CustomerCapacityProblem(detail string, blockers ...api.WorkerAdmissionBlocker) *api.Problem {
 	return customerCapacityProblem(explainAdmission(api.ErrCapacity(detail), blockers...))
+}
+
+// NodeCapacityProblem and AdmissionBlockers reach the durable guard's refusal
+// mapping (ADR 20261031190030).
+func (r *Engine) NodeCapacityProblem(err error) error { return r.nodeCapacityProblem(err) }
+func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
+	return admissionBlockers(err)
 }

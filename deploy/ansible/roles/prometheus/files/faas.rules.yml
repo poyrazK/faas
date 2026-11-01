@@ -3363,10 +3363,11 @@ groups:
       # shipper and the compute-side vmmd producer/shipper.
       - alert: FaasLogArchiveShipperDegraded
         expr: |
-          sum(rate({__name__=~"^(apid|vmmd)_log_archive_failures_total$"}[5m])) > 0
+          sum by (job, instance) (rate({__name__=~"^(apid|vmmd)_log_archive_failures_total$"}[5m])) > 0
           or (
-            sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"}) > 0
-            and sum(rate({__name__=~"^(apid|vmmd)_log_archive_files_uploaded_total$",status="ok"}[30m])) == 0
+            sum by (job, instance) ({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"}) > 0
+            and on (job, instance)
+            sum by (job, instance) (rate({__name__=~"^(apid|vmmd)_log_archive_files_uploaded_total$",status="ok"}[30m])) == 0
           )
         for: 10m
         labels:
@@ -3378,10 +3379,30 @@ groups:
           description: "The apid or vmmd log archive shipper has recorded failures or has pending local spool data without a successful upload for 30m. Check failure reasons, S3 credentials, bucket reachability, and the local spool."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
 
+      # A node that came up without archiving (no envelope, the `{}`
+      # placeholder, a client that failed) while others archive: its parked
+      # instances' logs are lost and, on apid, account erasure cannot reach
+      # the bucket. Fleets that archive nowhere never fire.
+      - alert: FaasLogArchiveNodeDisabled
+        expr: |
+          min by (job, instance) ({__name__=~"^(apid|vmmd)_log_archive_enabled$"}) == 0
+            and on () max({__name__=~"^(apid|vmmd)_log_archive_enabled$"}) == 1
+        for: 15m
+        labels:
+          severity: warn
+          component: platform
+          family: log_archive
+        annotations:
+          summary: "A daemon's log archive is off while the fleet archives"
+          description: "{{ $labels.job }} on {{ $labels.instance }} reports its log archive disabled while other daemons archive. Its parked instances' logs are not archived and, on apid, account erasure cannot reach the bucket. Check the node's archive credential envelope and the daemon's startup warnings."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
+
+      # Per scrape target: a sum across apid and every vmmd averaged one full
+      # node with the empty ones and could never reach 80%.
       - alert: FaasLogArchiveSpoolNearCap
         expr: |
-          sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"})
-            / sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes_max$"}) > 0.8
+          max by (job, instance) ({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"})
+            / on (job, instance) max by (job, instance) ({__name__=~"^(apid|vmmd)_log_archive_local_bytes_max$"}) > 0.8
         for: 15m
         labels:
           severity: warn
@@ -3569,21 +3590,21 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
 
       # ─────────────────────────────────────────────────────────────────
-      # TLS cert expiry (gatewayd-public / gateway_tls_cert_expiry_seconds).
-      # ADR-024 H3 closure: page at ≤14 days, warn between 14 and 30.
-      # The gauge carries min(notAfter − now) across cached certs on
-      # cfg.StorageDir/certificates/...; first-mint pre-boot state is
-      # +Inf (the gauge default), which legitimately fails the < 14d
-      # comparator. Operators expect a missing cert at startup, not a
-      # page.
+      # TLS cert expiry (gateway_tls_cert_expiry_seconds and
+      # gateway_tls_cert_expiry_by_host_seconds). ADR-024 H3 closure: page
+      # at ≤14 days, warn between 14 and 30; ADR-1236 adds the 72-hour page.
       #
-      # The gauge is ticked every 5 minutes by
-      # pkg/gateway.StartCertExpiryRefresher; a stale gauge would mean
-      # the refresher goroutine died (visible as gateway_tls_cert_expiry_seconds
-      # not changing for > 6m — separate drift signal, not in this rule).
+      # Caddy on the public edge holds every customer certificate, obtained
+      # on demand (ADR-520). apid exports these gauges from the expiries its
+      # domain doctor records when it completes a TLS handshake with each
+      # verified custom domain (custom_domains.cert_expires_at, at most
+      # every 30 s; pkg/apid/certexpiry). Before bug hunt 32 M6 nothing in
+      # production set them, so these rules could never fire. Every apid
+      # replica exports the same values, hence min(). No series until a
+      # certificate is observed; a store error exports none.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasTLSCertExpiryPage
-        expr: gateway_tls_cert_expiry_seconds < (14 * 86400)
+        expr: min(gateway_tls_cert_expiry_seconds) < (14 * 86400)
         for: 5m
         labels:
           severity: warn
@@ -3591,13 +3612,13 @@ groups:
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expires in ≤14 days"
-          description: "The smallest remaining lifetime across cached certs is below 14 days. A renewal has failed (or never ran) — HTTPS serving across the box will start failing within hours. Re-run `make bootstrap` on the EX44 to refresh certmagic + the Hetzner DNS-01 token, then force-renew via `faas cert refresh`."
+          description: "The soonest-expiring edge certificate apid's domain doctor observed on a verified custom domain has under 14 days left. Caddy renews on-demand certificates at about 30 days, so renewal has been failing for two weeks. Check the public edge's Caddy log for that host, the on-demand ask decisions (gateway_tls_on_demand_* on gatewayd-public), HTTP-01 reachability on port 80 and the domain's CAA records."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
 
       # ADR-1236: the 14-day alert above is warn; this is the page, sized
       # so a failed renewal still leaves time to issue by hand.
       - alert: FaasTLSCertExpiryImminent
-        expr: gateway_tls_cert_expiry_seconds < (3 * 86400)
+        expr: min(gateway_tls_cert_expiry_seconds) < (3 * 86400)
         for: 5m
         labels:
           severity: page
@@ -3605,11 +3626,11 @@ groups:
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expires in under 72 hours"
-          description: "The smallest remaining lifetime across cached certs is below 72 hours, so renewal has failed for at least eleven days. HTTPS for the affected hosts fails when the cert expires; renew it now."
+          description: "The soonest-expiring edge certificate on a verified custom domain has under 72 hours left, so renewal has failed for at least eleven days. HTTPS for that host fails when the certificate expires; renew it now."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
 
       - alert: FaasTLSCertExpiryWarn
-        expr: gateway_tls_cert_expiry_seconds < (30 * 86400) and gateway_tls_cert_expiry_seconds >= (14 * 86400)
+        expr: min(gateway_tls_cert_expiry_seconds) < (30 * 86400) and min(gateway_tls_cert_expiry_seconds) >= (14 * 86400)
         for: 5m
         labels:
           severity: warn
@@ -3617,21 +3638,17 @@ groups:
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expiry < 30 days"
-          description: "Smallest remaining lifetime is between 14 and 30 days. Renewals normally fire at 30d; verify certmagic's renew-loop is alive (a log line every few minutes post-first-mint) and that the Hetzner DNS-01 token still has zone-write permission on the apps domain."
+          description: "The soonest-expiring edge certificate on a verified custom domain has between 14 and 30 days left. Caddy renews at about 30 days, so this is usually a renewal that has just started failing; check the public edge's Caddy log for the host."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarn.md"
 
       # ─────────────────────────────────────────────────────────────────
-      # Per-host TLS cert expiry (Finding 2 / ADR-024 H3 follow-up).
-      # The aggregate rule above covers the box-level signal; these
-      # rules attach a hostname + kind label so the alert routes to
-      # the right custom domain. `hostname!="__other__"` excludes the
-      # bounded-admission overflow (an admission overflow means we've
-      # run past hostnameLabelSetCap and don't have a real host name
-      # to attribute). `kind!="unknown"` excludes misclassifications
-      # so an issuer-key wiring bug doesn't page.
+      # Per-host TLS cert expiry (ADR-024 H3 follow-up). apid exports the
+      # soonest-expiring verified domains (CustomDomainCertExpiryExportMaxHosts)
+      # with kind="ondemand"; the __other__ and unknown filters stay for the
+      # old refresher's label shape.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasTLSCertExpiryPageByHost
-        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (14 * 86400)
+        expr: min by (hostname, kind) (gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"}) < (14 * 86400)
         for: 5m
         labels:
           severity: warn
@@ -3641,11 +3658,11 @@ groups:
           kind: "{{ $labels.kind }}"
         annotations:
           summary: "TLS cert for {{ $labels.hostname }} expires in ≤14 days"
-          description: "Per-host cert expiry below 14 days. kind={{ $labels.kind }} tells you whether the wildcard (DNS-01) or an on-demand (HTTP-01) cert is affected — wildcard renewals auto-recover via DNS-01; on-demand renewals need the customer to keep the custom_domains row active and the HTTP-01 challenge endpoint reachable. Verify certmagic's renew-loop for this host (check the slog for {{ $labels.hostname }} renew lines)."
+          description: "The edge certificate apid's domain doctor observed for {{ $labels.hostname }} has under 14 days left. On-demand renewals need the custom_domains row verified, the ask endpoint allowing the host, HTTP-01 reachable on port 80 and CAA allowing Let's Encrypt. Check the public edge's Caddy log for {{ $labels.hostname }}."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPageByHost.md"
 
       - alert: FaasTLSCertExpiryWarnByHost
-        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (30 * 86400) and gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} >= (14 * 86400)
+        expr: min by (hostname, kind) (gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"}) < (30 * 86400) and min by (hostname, kind) (gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"}) >= (14 * 86400)
         for: 10m
         labels:
           severity: warn
@@ -3655,7 +3672,7 @@ groups:
           kind: "{{ $labels.kind }}"
         annotations:
           summary: "TLS cert for {{ $labels.hostname }} expiry < 30 days"
-          description: "Per-host cert expiry is between 14 and 30 days. Renewals normally fire at 30d; if no renew log line surfaces for this host within the next 12h, force-renew via `faas cert refresh --host={{ $labels.hostname }}`."
+          description: "The edge certificate for {{ $labels.hostname }} has between 14 and 30 days left. Caddy renews at about 30 days; if the Caddy log shows no renewal for this host within the next 12 hours, follow the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarnByHost.md"
 
       # ─────────────────────────────────────────────────────────────────
@@ -6886,6 +6903,7 @@ groups:
           or (
             sum(increase(schedd_event_routing_outcomes_total{outcome="claim_error"}[10m])) > 0
             and sum(increase(schedd_event_routing_outcomes_total{outcome=~"routed|waiting|retry|failed"}[10m])) == 0
+            and max(schedd_event_routing_oldest_pending_seconds) > 600
           )
         for: 5m
         labels:
@@ -6895,7 +6913,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Event routing has stopped on every schedd"
-          description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work and routed nothing, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
+          description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work, routed nothing and left events waiting over ten minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasEventRoutingSweepSlow
         expr: |
@@ -7089,6 +7107,17 @@ groups:
           summary: "Custom-domain certificate checks are being rate-limited"
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
           description: "TLS handshakes with unknown server names exceed the ask endpoint's lookup budget for 15m, usually a scan. Legitimate names are retried on the client's next handshake but may see failed first connections."
+      - alert: FaasCustomDomainTLSFleetBudget
+        expr: sum(increase(gateway_tls_on_demand_ask_total{decision="deny_fleet_budget"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: custom_domain_tls
+        annotations:
+          summary: "New wildcard custom-domain hosts are refused at the fleet issuance cap"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+          description: "The deployment admitted OnDemandTLSFleetNewHostsPer3h new hosts below wildcard custom domains in 3 hours, so no tenant can add another until admissions age out. The cap keeps the shared ACME account under Let's Encrypt's order limit; find the owners and registered domains that drew it."
       - alert: FaasCustomDomainCertIssuanceFailing
         expr: sum(increase(apid_cert_issuance_failed_total[1h])) >= 5
         for: 5m
@@ -7410,6 +7439,20 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "gatewayd-public cannot write its batched public read counts"
           description: "Public bucket read count flushes on {{ $labels.instance }} have failed for 10 minutes. Public reads keep being served from cached decisions for up to 30 s and then fail closed; counts stay in memory until a flush succeeds."
+      # ADR-20261031122757 §7: a gateway on a compute node keeps to its share
+      # of the node's port. Past 10% of a week at the share, its cell moves to
+      # dedicated gateway machines.
+      - alert: FaasS3GatewayPortShareSaturated
+        expr: max by (instance) (rate(s3_gateway_transfer_throttled_seconds_total[7d])) > 0.1
+        for: 1h
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "s3-gatewayd spends more than 10% of the week at its port share"
+          description: "Transfers through {{ $labels.instance }} waited for the gateway's port share {{ $value | humanizePercentage }} of the last 7 days. Customers see slower transfers, not errors. Plan the cell's move to dedicated gateway machines (ADR-20261031122757 §7)."
       - alert: FaasObjectStorageUsageExportStale
         expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
         for: 15m

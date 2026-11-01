@@ -675,6 +675,10 @@ type Engine struct {
 	// (ADR-20261024085817). Thaw, warm-pool resume and freeze consult it
 	// so a draining node does not take resident work back.
 	leavingNodes atomic.Pointer[map[string]struct{}]
+	// admittingCeilings holds each admitting, active node's RAM admission
+	// ceiling from the same node list, so the floor's headroom counts nodes
+	// this ledger holds nothing on (ADR 20261031190030, floor_headroom.go).
+	admittingCeilings atomic.Pointer[map[string]int]
 	// drainRequestBound bounds how long a drain park waits for a withdrawn
 	// instance's in-flight requests; zero is
 	// api.ServiceReplicaDrainTimeoutSeconds.
@@ -812,6 +816,16 @@ type Engine struct {
 	// (ADR 20261030100950, node_cpu_pressure.go).
 	cpuPressureReadings CPUPressureReadings
 	cpuPressureHolds    *cpuPressureHolds
+	// frozenProactiveCompress, compressBackoff and frozenCompressOne drive
+	// proactive compression of frozen VMs (ADR 20261031143521,
+	// frozen_proactive_compress.go); frozenCompressOne replaces the vmmd
+	// call in tests.
+	frozenProactiveCompress bool
+	compressBackoff         *frozenCompressBackoff
+	frozenCompressOne       func(ctx context.Context, instanceID string) string
+	// frozenYieldOne replaces parking a frozen VM for admission in tests
+	// (ADR 20261031190030, frozen_yield.go); it reports whether it parked.
+	frozenYieldOne func(ctx context.Context, instanceID, reason string) bool
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -2058,7 +2072,7 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 			return state.Instance{}, err
 		}
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return state.Instance{}, err
 	}
@@ -5704,7 +5718,7 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 // appHasResidentInstances reports whether any instance of appID still holds
 // resident RAM (state.CountsForRAM), wherever it runs.
 func (e *Engine) appHasResidentInstances(ctx context.Context, appID string) (bool, error) {
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return false, err
 	}
@@ -8107,7 +8121,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+		instances, err := e.liveInstancesForApp(ctx, app.ID)
 		if err != nil {
 			continue
 		}

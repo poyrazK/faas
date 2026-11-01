@@ -103,7 +103,15 @@ func ResolveRequestExecutionBudget(defaultMS, ceilingMS int64, timeoutS int, rul
 		if value := headers.Get(policy.OverrideHeader); value != "" {
 			policy.OverrideStatus = "ignored_invalid"
 			if parsed, ok := ParseRequestBudgetOverrideMS(value); ok {
-				candidate, policy.Source, policy.OverrideStatus = int64(parsed), "header_override", "applied"
+				// Any caller can send the default header, so it may only
+				// shorten the rule's budget. Raising it needs the header the
+				// rule names in allow_override_header (ADR-093 amendment
+				// 2026-11-01).
+				if rule.AllowOverrideHeader == "" && int64(parsed) > candidate {
+					policy.OverrideStatus = "ignored_raise"
+				} else {
+					candidate, policy.Source, policy.OverrideStatus = int64(parsed), "header_override", "applied"
+				}
 			}
 		}
 	}

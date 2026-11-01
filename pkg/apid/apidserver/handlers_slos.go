@@ -158,7 +158,35 @@ func (s *server) sloGateProblem(ctx context.Context, app state.App, sloID string
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeConflict, "SLO used by release gates",
 		fmt.Sprintf("Release gates judge releases of %s on this SLO: %s.", app.Slug, strings.Join(names, ", "))).
-		WithHint(fmt.Sprintf("Remove those gates first with `gregale release-gates rm NAME --app %s`, then delete the SLO.", app.Slug))
+		WithHint(fmt.Sprintf("Remove those gates first with `gregale release gate delete NAME --app %s`, then delete the SLO.", app.Slug))
+}
+
+// syntheticCheckGateProblem refuses to delete or pause a synthetic check
+// that release gates probe (ADR-20261022082305 amendment 1). Deleting it
+// cascaded to the gates and pausing it left them never judged, so a member
+// without the right to remove a gate could switch it off (release review
+// 2026-10-31).
+func (s *server) syntheticCheckGateProblem(ctx context.Context, app state.App, checkID, action string) *api.Problem {
+	gates, ok := s.store.(state.ReleaseGateStore)
+	if !ok {
+		return nil
+	}
+	rows, err := gates.ListReleaseGates(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not read the app's release gates")
+	}
+	var names []string
+	for _, g := range rows {
+		if g.SyntheticCheckID == checkID {
+			names = append(names, g.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Synthetic check used by release gates",
+		fmt.Sprintf("Release gates probe releases of %s with this check: %s.", app.Slug, strings.Join(names, ", "))).
+		WithHint(fmt.Sprintf("Remove those gates first with `gregale release gate delete NAME --app %s`, then %s the check.", app.Slug, action))
 }
 
 func sloResponse(row state.SLO) api.SLOResponse {

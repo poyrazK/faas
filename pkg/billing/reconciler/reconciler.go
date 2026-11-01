@@ -4,8 +4,9 @@
 // (pkg/meter/pusher.go). Every FAAS_RECONCILE_INTERVAL it walks
 // every paid billing subject (accounts and company organizations), sums the
 // pusher's delivery receipts (billing_usage_deliveries) for the last 24
-// complete hours, and asks the active billing.Provider for the matching
-// summary. The diff between delivered and provider totals is exposed as
+// complete hours, by delivery time for a provider that stamps usage when it
+// is sent (Polar) and by usage hour otherwise, and asks the active
+// billing.Provider for the matching summary. The diff between delivered and provider totals is exposed as
 // Prometheus gauges so the BillingDrift alert pages when events the pusher
 // recorded as delivered are missing or duplicated at the provider (revenue
 // leakage / over-billing).
@@ -247,12 +248,17 @@ func (r *Reconciler) reconcileOne(ctx context.Context, deliveries state.BillingD
 	if !start.Before(end) {
 		return nil
 	}
-	// The pusher stamps each delivery at the start of its hour, including
-	// the first hour after BillingFrom, so both sides read whole hours.
+	if r.stampsUsageAtDelivery() {
+		return r.reconcileDelivered(ctx, acct, start, end)
+	}
+	// A provider that stamps usage at its hour gets each delivery at the
+	// start of that hour, including the first hour after BillingFrom, so both
+	// sides read whole hours.
 	start = start.UTC().Truncate(time.Hour)
 	// Receipts are what the pusher handed the provider: an hour that is not
 	// final yet, is above the spend cap, or belongs to a suspended subject
-	// has none, and the provider has nothing for it either.
+	// has none, and the provider has nothing for it either
+	// (ADR-20261031161842).
 	delivered, err := deliveries.DeliveredComputeMBSeconds(ctx, r.ProviderName, acct.ID, start, end)
 	if err != nil {
 		return &reconcileError{reason: "usage", err: fmt.Errorf("delivered usage: %w", err)}
@@ -267,6 +273,41 @@ func (r *Reconciler) reconcileOne(ctx context.Context, deliveries state.BillingD
 	}
 	drift := delivered - pushed
 	r.emit(acct.ID, delivered, pushed, drift)
+	return nil
+}
+
+// stampsUsageAtDelivery reports whether the provider totals usage by the time
+// meterd sent it (Polar, ADR-20261028101500).
+func (r *Reconciler) stampsUsageAtDelivery() bool {
+	stamper, ok := r.Provider.(billing.DeliveryTimeStamper)
+	return ok && stamper.StampsUsageAtDelivery()
+}
+
+// reconcileDelivered compares what meterd delivered in the window, from its
+// delivery ledger, with what the provider counted in it. Both are bucketed by
+// delivery time. Comparing the provider's total with local usage by the hour
+// it was used showed the delivery lag, a new account's first day and every
+// meterd catch-up as several percent of drift (bug hunt 2026-10-28 B22).
+// Usage meterd has not delivered yet is the delivery alerts' concern
+// (FaasMeterdUsageDeliveryStalled, FaasMeterdBillingPushFailing).
+func (r *Reconciler) reconcileDelivered(ctx context.Context, acct state.Account, start, end time.Time) error {
+	ledger, ok := r.Store.(state.BillingUsageDeliveredSummer)
+	if !ok {
+		return &reconcileError{reason: "store", err: errors.New("store cannot sum delivered usage")}
+	}
+	local, err := ledger.SumBillingUsageDelivered(ctx, r.ProviderName, acct.ID, start, end)
+	if err != nil {
+		return &reconcileError{reason: "usage", err: fmt.Errorf("delivered usage: %w", err)}
+	}
+	pushed, err := r.Provider.ReconcileUsage(ctx, acct, start, end)
+	if err != nil {
+		if errors.Is(err, billing.ErrNotImplemented) {
+			r.supported.WithLabelValues(r.ProviderName).Set(0)
+			return &reconcileError{reason: "unsupported", err: fmt.Errorf("provider reconcile: %w", err)}
+		}
+		return &reconcileError{reason: "provider", err: fmt.Errorf("provider reconcile: %w", err)}
+	}
+	r.emit(acct.ID, local, pushed, local-pushed)
 	return nil
 }
 

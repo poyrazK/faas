@@ -7,7 +7,9 @@ import (
 )
 
 // rolloutFlagConflicts are the flags --rollout replaces or contradicts.
-var rolloutFlagConflicts = []string{"safe", "canary-preset", "canary-stages", "traffic-percent", "rollback-on-5xx"}
+// --rollback-on-5xx is not one: it adds the first-wake 5xx rollback to any
+// rollout (docs/deploys.md), and a safe rollout refuses only turning it off.
+var rolloutFlagConflicts = []string{"safe", "canary-preset", "canary-stages", "traffic-percent"}
 
 // applyRolloutFlag maps `gregale deploy --rollout` onto the rollout flags the
 // rest of deploy already understands (ADR-1450): safe is --safe, fast and

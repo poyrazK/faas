@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
@@ -303,6 +304,11 @@ func envOr(key, fallback string) string {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the scheduler credential ring: schedd offers event acknowledgements and
+	// consumer-group leases and issues CI and job operation capabilities.
+	if err := credhash.Install(os.Getenv, credhash.FamilyScheduler); err != nil {
+		return fmt.Errorf("schedd: %w", err)
+	}
 	return runWithDeps(ctx, log, defaultDeps())
 }
 
@@ -1783,6 +1789,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.FrozenTierEarlyFreezeAfterS > 0 {
 			engine.EnableEarlyFreeze(time.Duration(cfg.FrozenTierEarlyFreezeAfterS) * time.Second)
 		}
+		if cfg.FrozenProactiveCompress {
+			engine.EnableFrozenProactiveCompress()
+			log.Info("proactive frozen compression enabled (ADR 20261031143521)",
+				"high_water_percent", api.FrozenCompressHighWaterPercent,
+				"low_water_percent", api.FrozenCompressLowWaterPercent,
+				"min_age_seconds", api.FrozenCompressMinAgeSeconds,
+				"per_node_per_tick", api.FrozenCompressPerNodePerTick)
+		}
 		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
 			"early_freeze_after_s", cfg.FrozenTierEarlyFreezeAfterS,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
@@ -1944,7 +1958,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// systemd watchdog (started next to NotifyReadyWhen below) stops
 	// pinging when the beat is older than sched.MainLoopBudget.
 	liveness := wire.NewLiveness()
+	// One app snapshot for every poller that lists apps each second: the
+	// scale-up, targets and floor triggers, the reaper and the scaling-policy
+	// observer. It rereads the rows only when their version changed.
+	appSnapshot := sched.NewAppSnapshot(store)
 	loop := sched.NewLoop(pool, engine, log).
+		WithAppSnapshot(appSnapshot).
 		WithEventRecipientClaims(eventRecipientClaimsEnabled(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED"))).
 		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
@@ -2130,7 +2149,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// same interface but the scaleup trigger itself does
 		// not read it (the concurrent_requests axis lives in
 		// pkg/sched/targets — see loop.WithTargets below).
-		store, autoscaleReader, scraper,
+		appSnapshot, autoscaleReader, scraper,
 		schedScaleUpEngine{engine: engine},
 		engine.Ledger(),
 		scaleup.Options{
@@ -2149,7 +2168,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance stats enabled, but queue-depth autoscaling must still run.
 	// Tick treats a missing reader as no-signal for that metric.
 	targetsTrigger := targets.New(
-		store, autoscaleReader,
+		appSnapshot, autoscaleReader,
 		schedTargetsEngine{engine: engine},
 		schedTargetsLedger{ledger: engine.Ledger()},
 		targets.Options{
@@ -2200,9 +2219,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		floorInterval = time.Duration(n) * time.Second
 	}
 	floorTrigger := floor.New(
-		store,
+		appSnapshot,
 		store, // deploymentStore — issue #557 closure / ADR-074 (per-deployment walk)
-		schedFloorLedger{ledger: engine.Ledger()},
+		schedFloorLedger{ledger: engine.Ledger(), headroom: engine.FloorHeadroomMB},
 		schedFloorEngine{engine: engine},
 		floor.Options{
 			Logger:       log,
@@ -3127,6 +3146,8 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 // trigger adds.
 type schedFloorLedger struct {
 	ledger *sched.NodeLedger
+	// headroom is Engine.FloorHeadroomMB; nil falls back to the ledger.
+	headroom func() int
 }
 
 // Concurrency implements floor.Ledger.
@@ -3145,10 +3166,14 @@ func (s schedFloorLedger) ResidentRAM() int {
 	return s.ledger.ResidentRAM()
 }
 
-// HeadroomMB implements floor.Ledger with the best single node's admission
-// headroom, the figure Admit places against; the fleet sum went negative
-// under measured admission and stopped every floor refill.
+// HeadroomMB implements floor.Ledger with the best single admitting node's
+// admission headroom, the figure Admit places against; the fleet sum went
+// negative under measured admission and stopped every floor refill, and the
+// ledger alone missed nodes it held nothing on (ADR 20261031190030).
 func (s schedFloorLedger) HeadroomMB() int {
+	if s.headroom != nil {
+		return s.headroom()
+	}
 	return s.ledger.AdmissionHeadroomMB()
 }
 

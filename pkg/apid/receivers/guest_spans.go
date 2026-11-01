@@ -113,7 +113,7 @@ func (g *GuestSpansIngester) ingest(ctx context.Context, req *apidpb.IngestGuest
 	if taken, retryMs := g.limiter.Take(accountID, limits.DebugTelemetryRequestsPerMinute); !taken {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansRateLimited, RetryAfterMs: retryMs}
 	}
-	accepted, rejected, err := g.acc.AddOTLPTraceExport(accountID, contentType, contentEncoding, req.GetPayload(), api.TraceMaxDecodedBytes)
+	accepted, rejected, err := g.acc.AddOTLPTraceExport(accountID, string(limits.Plan), contentType, contentEncoding, req.GetPayload(), api.TraceMaxDecodedBytes)
 	if err != nil {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansInvalid}
 	}
@@ -132,11 +132,8 @@ func (g *GuestSpansIngester) Run(ctx context.Context, interval time.Duration, wr
 			return resp.GetOutcome(), resp.GetRetryAfterMs(), nil
 		},
 		Log: g.log,
-		// UpdateSpansSummary keeps the slowest Scale-tier maximum across all
-		// producers; per-trace volume is bounded upstream by the rate cap.
-		MaxSpansPerTrace: func(string) int {
-			return api.MustLimitsFor(api.PlanScale).DebugTelemetrySpansPerTrace
-		},
+		// Each trace is bounded by its account's plan (ingest passes it).
+		MaxSpansPerTrace: gateway.MaxSpansPerTraceForPlan,
 	})
 }
 

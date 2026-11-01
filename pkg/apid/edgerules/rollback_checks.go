@@ -71,7 +71,7 @@ func (s *Service) restoredRuleProblem(ctx context.Context, acct state.Account, a
 		if err != nil {
 			return api.ErrCapacity("could not check the route target")
 		}
-		return s.RouteTargetProblem(ctx, acct.ID, kind, raw)
+		return s.RouteTargetProblem(ctx, acct.ID, app.ID, kind, raw)
 	case rule.Kind == state.EdgeRuleKindAsync && rule.Action.Async != nil:
 		raw, err := json.Marshal(rule.Action.Async)
 		if err != nil {

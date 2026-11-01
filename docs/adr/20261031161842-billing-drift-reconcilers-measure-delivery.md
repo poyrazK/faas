@@ -4,16 +4,17 @@
 - **Date:** 2026-10-31
 - **Owner:** billing maintainers
 - **Amends:** ADR-049 §B.1 (the provider drift check's local figure), ADR-20261019193600 (the ledger dual run's capped result), ADR-1162 (consequence: recent undelivered hours read as drift)
-- **Related:** ADR-1162, ADR-20261031100000, #6029 (organization billing subjects)
+- **Related:** ADR-1162, ADR-20261031100000, ADR-20261028101500 and #6209 (Polar compared by delivery time), #6029 (organization billing subjects)
 
 ## Context
 
 A code review of meterd's billing checks on main 5d037cfc2c (2026-10-31)
 found three gaps in the two drift checks, and one boundary to state.
 
-1. **The provider drift check paged on correct billing.** It compared the
-   provider's total for the last 24 complete hours with the subject's
-   overage computed from usage. The pusher rightly delivers less than that:
+1. **The provider drift check paged on correct billing.** For a provider
+   that stamps the usage hour (Stripe, Paddle) it compared the provider's
+   total for the last 24 complete hours with the subject's overage computed
+   from usage. The pusher rightly delivers less than that:
    nothing above the spend cap, nothing for an hour not yet final
    (ADR-1162), nothing for a suspended or deletion-pending subject. Every
    paid plan now starts with a spend cap, so any account at its cap read a
@@ -37,15 +38,20 @@ found three gaps in the two drift checks, and one boundary to state.
 
 ## Decision
 
-1. **The provider check compares the provider with delivery receipts.** For
-   each paid billing subject it sums the compute MB-seconds the pusher
-   recorded as delivered (`billing_usage_deliveries`) over the whole hours
-   of the window from the subject's `billing_from`, and compares the
-   provider's total over the same hours. Withheld usage has no receipt and
-   no provider event, so it is not drift; an event the pusher recorded but
-   the provider lacks, or one the provider counts twice, is. Whether the
-   receipts are right is the ledger dual run's question. Gauge names, labels
-   and alert thresholds are unchanged.
+1. **The provider check compares the provider with delivery receipts, for
+   every provider.** A provider that stamps usage when it is sent (Polar,
+   ADR-20261028101500) already compares receipts summed by `delivered_at`
+   (#6209, bug hunt 2026-10-28 B22). A provider that stamps each event at
+   its usage hour (Stripe, Paddle) now does the same by hour: for each paid
+   billing subject the check sums the compute MB-seconds the pusher recorded
+   as delivered (`billing_usage_deliveries`) for the whole hours of the
+   window from the subject's `billing_from`, and compares the provider's
+   total over the same hours. Usage is no longer the local side for any
+   provider. Withheld usage has no receipt and no provider event, so it is
+   not drift; an event the pusher recorded but the provider lacks, or one
+   the provider counts twice, is. Whether the receipts are right is the
+   ledger dual run's question. Gauge names, labels and alert thresholds are
+   unchanged.
 2. **A cap excuses a shortfall only when the pusher could not have
    delivered more.** The pusher clamps each hour to the cap less the month's
    live egress overage and object-storage charge at that hour; both only

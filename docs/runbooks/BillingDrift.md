@@ -112,9 +112,11 @@ curl -fsS http://127.0.0.1:9090/metrics | grep meterd_billing_drift_reconcile_fa
 curl -fsS http://127.0.0.1:9090/metrics | grep meterd_billing_drift
 
 # Cross-check the delivered receipts for the offending subject over
-# the reconciler's window, hour by hour (replace $ACCOUNT_ID)
+# the reconciler's window (replace $ACCOUNT_ID). Polar buckets usage
+# by the time meterd sent it, so its receipts are read by delivered_at;
+# Stripe and Paddle bucket by usage hour (window_start).
 ACCOUNT_ID=<uuid>
-psql -t -A -c "select window_start, mb_seconds from billing_usage_deliveries where provider = 'polar' and account_id = '${ACCOUNT_ID}' and window_start >= date_trunc('hour', now()) - interval '24 hours' and window_start < date_trunc('hour', now()) order by window_start"
+psql -t -A -c "select delivered_at, window_start, mb_seconds from billing_usage_deliveries where provider = 'polar' and account_id = '${ACCOUNT_ID}' and delivered_at >= date_trunc('hour', now()) - interval '24 hours' and delivered_at < date_trunc('hour', now()) order by delivered_at"
 ```
 
 Compare the hours with the provider's hourly quantities for the same

@@ -42,6 +42,16 @@ func openLogArchive(log *slog.Logger) (logarchive.Config, *logarchive.S3Client) 
 	return cfg, client
 }
 
+// reportLogArchiveEnabled exports apid_log_archive_enabled, so an apid whose
+// archive is off (and whose erasure step therefore cannot reach archived
+// logs) is visible to FaasLogArchiveNodeDisabled.
+func reportLogArchiveEnabled(srv *server, enabled bool) {
+	if srv.ops == nil {
+		return
+	}
+	logarchive.ReportEnabled(srv.ops.Registry(), "apid", enabled)
+}
+
 // logArchiveErasure is the grace sweep's archived-log step: it deletes the
 // archived runtime logs of an account before the account row goes (DPA §11).
 // It does nothing on a store without erasure tracking or an apid without an

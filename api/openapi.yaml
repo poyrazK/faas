@@ -8400,6 +8400,36 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/data-api/runtime:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: getDataAPIRuntime
+      summary: Download the current Data API runtime
+      description: |
+        Returns the Data API runtime this control plane serves: its version,
+        and a gzipped tar of the runtime under one `data-api/` directory with
+        its SHA-256. `gregale data-api create` and `gregale data-api deploy`
+        deploy this archive, so an older CLI release does not redeploy an older
+        runtime. A running Data API reports the version it was built from as
+        `runtime_version` on `/healthz`; a different version is not the
+        platform's current runtime.
+      tags: [managed_postgres]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The current runtime
+          headers:
+            Cache-Control: { schema: { type: string }, description: Prevents caching across control-plane releases. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIRuntime' }
+        default:
+          description: App lookup, permission or runtime failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/data-api/contract-tasks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -21589,6 +21619,47 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/labels:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    patch:
+      tags: [apps]
+      operationId: updateAppLabels
+      summary: Set and remove an app's labels.
+      description: |
+        Preview (resource-labels capability). Sets and removes labels in one
+        atomic write and returns every label the app carries after it. The
+        write is idempotent. A result over 32 labels is refused with
+        label_limit_exceeded; an invalid key or value with invalid_label_key
+        or invalid_label_value; a key under gregale.dev/ with
+        reserved_label_key. Emits a resource.labels.changed audit event.
+        Requires apps:deploy or admin scope and MFA. While the capability is
+        on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+        and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+        label selector such as team=billing,tier in (web,api),!canary (=,
+        ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+        through its app. An invalid selector is a 400
+        invalid_label_selector, and a selector while the capability is off
+        a 403 capability_not_released. These fields join the GA
+        description of those routes when the capability does.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelChange'
+      responses:
+        '200':
+          description: The app's labels after the write.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelsResponse'
+        default:
+          description: An invalid change, missing sign-in, deploy scope or MFA, an app this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/health/history:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -32277,7 +32348,7 @@ paths:
       tags: [deployments]
       operationId: decideReleaseApproval
       summary: Approve or reject a release.
-      description: "Records one decision per person. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one."
+      description: "Records one decision per person. An approval needs a signed-in dashboard session: 403 `release_approval_session_required` to an API key or token, with the release's approval page as the hint; a rejection is accepted from either. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one."
       requestBody:
         required: true
         content:
@@ -32317,6 +32388,24 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ReleaseDiff' }
         '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/deployments/{id}/timeline:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getReleaseTimeline
+      summary: Show a release's phase and history.
+      description: "Composes what Gregale recorded about one release into a phase, a one-line summary and its events, oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and gate results behind it, holds, completion, the post-release watch, abort or rollback, and the release that replaced it. Reads at most 500 audit rows; truncated=true means older history was left out."
+      responses:
+        '200':
+          description: The release timeline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseTimeline' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -33408,6 +33497,73 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
 
   # ─── Crons ────────────────────────────────────────────────────────────────
+
+  /v1/domains/{domain}/hosts:
+    parameters:
+      - name: domain
+        in: path
+        required: true
+        schema: { type: string, pattern: '^\*\.[a-z0-9.\-]+$' }
+        description: The wildcard custom domain (e.g. `*.example.com`).
+    get:
+      tags: [domains]
+      operationId: getDomainHosts
+      summary: Read a wildcard domain's host allowlist.
+      description: |
+        Returns the names below the wildcard that may hold an on-demand
+        certificate. `restricted: false` means no
+        allowlist is set and every name below the wildcard may.
+      responses:
+        '200':
+          description: The host allowlist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDomainHostsResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Only a wildcard custom domain has a host allowlist to read. }
+    put:
+      tags: [domains]
+      operationId: setDomainHosts
+      summary: Replace a wildcard domain's host allowlist.
+      description: |
+        Only the listed names below the wildcard get certificates; the edge
+        refuses every other server name, so random names cannot spend the
+        wildcard's new-host budget. Names are the part of the host before
+        the wildcard's suffix (`eu.shop` for `eu.shop.example.com`), or the
+        full host. Routing is unchanged, and certificates the edge already
+        holds for a removed name keep serving until their next reload or
+        renewal. The domain doctor's probe host is always allowed.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetCustomDomainHostsRequest'
+      responses:
+        '200':
+          description: The saved host allowlist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDomainHostsResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: 'Not a wildcard domain, an invalid name, or more than 100 names (the problem carries `limit` and `observed`).' }
+    delete:
+      tags: [domains]
+      operationId: clearDomainHosts
+      summary: Remove a wildcard domain's host allowlist.
+      description: Every name below the wildcard may hold a certificate again.
+      responses:
+        '204': { description: The allowlist was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Only a wildcard custom domain has a host allowlist to remove. }
 
   /v1/crons:
     get:
@@ -83375,6 +83531,15 @@ components:
         last_error_code: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    DataAPIRuntime:
+      description: The Data API runtime the control plane serves.
+      type: object
+      additionalProperties: false
+      required: [version, archive_sha256, archive]
+      properties:
+        version: { type: string, pattern: '^[0-9a-f]{16}$', description: Digest of the runtime's image files; running Data APIs report it as runtime_version on /healthz. }
+        archive_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Lowercase hex SHA-256 of the decoded archive. }
+        archive: { type: string, format: byte, maxLength: 2796204, description: 'Base64 gzipped tar of the runtime under one data-api/ directory, at most 2 MiB decoded.' }
     DataAPIConnectionBudgets:
       description: Read-only planning snapshots. Not applicable means the app has no visible Data API binding.
       type: object
@@ -94273,6 +94438,7 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/ReleaseGateResult' }
           description: "The release gates judged with this decision."
+        rollback_skipped: { type: string, description: "Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix." }
         decided_at: { type: string, format: date-time }
 
     RolloutDecisionSample:
@@ -103467,6 +103633,22 @@ components:
           description: "DNS records to publish: the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone apex when the platform publishes edge addresses."
           items: { $ref: '#/components/schemas/DNSRecordInstruction' }
 
+    CustomDomainHostsResponse:
+      description: "A wildcard custom domain's host allowlist. Names are the parts of hosts before the wildcard's suffix."
+      type: object
+      required: [domain, names, restricted]
+      properties:
+        domain: { type: string, example: "*.example.com" }
+        names: { type: array, maxItems: 100, items: { type: string }, example: ["app", "api", "eu.shop"] }
+        restricted: { type: boolean, description: "False when no allowlist is set: every name below the wildcard may hold a certificate." }
+
+    SetCustomDomainHostsRequest:
+      description: "Replaces a wildcard custom domain's host allowlist; DELETE the allowlist to allow every name again."
+      type: object
+      required: [names]
+      properties:
+        names: { type: array, minItems: 1, maxItems: 100, items: { type: string }, description: "Names below the wildcard (or full hosts) that may hold certificates." }
+
     DNSRecordInstruction:
       description: "One DNS record a customer publishes for a custom domain. `alternative` marks an A/AAAA routing record that replaces the CNAME where a CNAME is not allowed, such as at a zone apex."
       type: object
@@ -111401,16 +111583,19 @@ components:
       required: [name, kind, min_samples, created_by, created_at]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change] }
         slo: { type: string, description: "slo gates: the SLO judged." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: the burn rate that fails the gate." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: new error groups allowed." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: events before a group counts." }
-        metric: { type: string, description: "custom_metric gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
-        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails." }
+        metric: { type: string, description: "custom_metric and metric_change gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails; metric_change gates: which direction of change fails." }
         threshold: { type: number, description: "custom_metric gates: the bound on the metric's average." }
         max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: the largest increase over the baseline, in percent." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
+        check: { type: string, description: "synthetic gates: the synthetic check probed on the canary and its stable revision." }
+        max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: the share of the candidate's probes that may fail." }
+        max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: how far the metric may move from its average before the rollout, in percent." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, probes, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
     CreateReleaseGateRequest:
@@ -111419,16 +111604,19 @@ components:
       required: [name, kind]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change] }
         slo: { type: string, description: "slo gates: the name of one of the app's SLOs." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: default 10." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: default 0." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: default 3." }
-        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
-        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold." }
+        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric and metric_change gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold. metric_change gates: fail when the average fell (below) or rose (above) too far." }
         threshold: { type: number, description: "custom_metric gates: the bound." }
         max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: fail when the release's metric is this many percent above its baseline's, and above a floor (1 percentage point, 50 ms or 1 millicent). Default 50." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20." }
+        check: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$', description: "synthetic gates: the name of one of the app's synthetic checks." }
+        max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: default 10." }
+        max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: the change, in percent of the average before the rollout, that fails the gate." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20; 6 probes for synthetic gates." }
     ListReleaseGatesResponse:
       description: "An app's release gates, by name."
       type: object
@@ -111595,6 +111783,54 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalStatus' } }
+    ReleaseTimeline:
+      description: "One release's phase and what happened to it."
+      type: object
+      required: [deployment_id, app, status, phase, summary, traffic_percent, created_at, events]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        app: { type: string }
+        revision: { type: integer, minimum: 0 }
+        scope: { type: string }
+        status: { type: string, description: "The deployment's status, such as live or superseded." }
+        phase:
+          type: string
+          enum: [building, failed, cancelled, rolled_back, scheduled, awaiting_approval, superseded, held, rolling_out, watching, released]
+          description: "Where the release is, matched in this order."
+        summary: { type: string, description: "One line, such as \"Rolling out: step 2 of 4, 10% of traffic\"." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        canary_step: { type: integer, minimum: 0, description: "Zero-based current canary step." }
+        canary_total_steps: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        deployed_by: { type: string }
+        commit_sha: { type: string }
+        pr_number: { type: integer, minimum: 0 }
+        tag: { type: string }
+        reason: { type: string }
+        stable_deployment_id: { type: string, format: uuid, description: "The release this one replaces; an abort returns traffic to it." }
+        stable_revision: { type: integer, minimum: 0 }
+        replaced_by_deployment_id: { type: string, format: uuid, description: "The newer release of the same scope that took over." }
+        replaced_by_revision: { type: integer, minimum: 0 }
+        watch_until: { type: string, format: date-time, description: "When the post-release watch stops judging the release." }
+        approval: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        schedule: { $ref: '#/components/schemas/ScheduledRelease' }
+        gates: { type: array, items: { $ref: '#/components/schemas/ReleaseGateResult' }, description: "The results of the newest decision that judged release gates." }
+        events: { type: array, items: { $ref: '#/components/schemas/ReleaseTimelineEvent' } }
+        truncated: { type: boolean, description: "Older audit history was left out." }
+    ReleaseTimelineEvent:
+      description: "One thing that happened to a release."
+      type: object
+      required: [at, summary, kind]
+      properties:
+        at: { type: string, format: date-time }
+        kind:
+          type: string
+          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, watch_regressed, superseded, note]
+        summary: { type: string, description: "What happened, in one sentence." }
+        actor: { type: string, description: "A person's email, or Gregale for automatic steps." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100, description: "The release's traffic share after this event." }
+        repeats: { type: integer, minimum: 0, description: "Further holds with the same rule this event stands for." }
+        decision: { $ref: '#/components/schemas/RolloutDecision' }
     ReleaseDiff:
       description: "What changed between two releases of one app."
       type: object
@@ -111689,12 +111925,13 @@ components:
       required: [name, kind, passed, summary, observed, bound, samples]
       properties:
         name: { type: string }
-        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change] }
         passed: { type: boolean }
-        observed: { type: number, description: "The burn rate, new error groups, metric average, or the release's AI metric." }
+        observed: { type: number, description: "The burn rate, new error groups, metric average, the release's AI metric, failed-probe percentage, or signed change in percent." }
         bound: { type: number, description: "The value that fails the gate." }
-        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, metric values or AI calls." }
+        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, probes, metric values or AI calls." }
         baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
+        baseline: { type: number, description: "synthetic gates: the stable revision's failed-probe percentage; metric_change gates: the metric's average before the rollout." }
         error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
         summary: { type: string, description: "What the gate measured, in one line." }
         not_judged: { type: boolean, description: "True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says what it was waiting for." }
@@ -112143,6 +112380,33 @@ components:
           type: string
           enum: [healthy, degraded, unhealthy, unknown]
         assessment: { $ref: '#/components/schemas/AppHealthResponse' }
+    LabelChange:
+      description: "Labels to set and keys to remove, applied together. Setting a key to its current value and removing an absent key change nothing. A key may not be both set and removed, and keys under gregale.dev/ cannot be changed."
+      type: object
+      additionalProperties: false
+      properties:
+        set:
+          description: "Keys to set and their values."
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, maxLength: 63 }
+        remove:
+          description: "Keys to remove."
+          type: array
+          maxItems: 32
+          items: { type: string, maxLength: 317 }
+      example: {"set":{"team":"billing"},"remove":["tier"]}
+    LabelsResponse:
+      description: "Every label the resource carries after a write."
+      type: object
+      required: [labels]
+      properties:
+        labels:
+          description: "Key/value labels with Kubernetes syntax, at most 32. A key is an optional DNS-subdomain prefix and a slash, then a name of 1-63 letters, digits, '.', '_' or '-' that starts and ends with a letter or digit; a value is empty or 1-63 of the same. Keys under gregale.dev/ belong to Gregale. Labels are not secret: they appear in lists and audit events."
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, maxLength: 63 }
+          example: {"team":"billing","tier":"web"}
     ResourceStatus:
       type: object
       description: "A resource's status subresource: conditions derived when read, never stored."

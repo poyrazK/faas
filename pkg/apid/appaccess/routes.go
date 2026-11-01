@@ -74,6 +74,8 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/deployments/{id}/approvals":            authz.OrgActionApproveAppRelease,
 	// Release diff (ADR-20261021101117).
 	"GET /v1/deployments/{id}/diff": authz.OrgActionReadApp,
+	// Release timeline (ADR-20261022120744).
+	"GET /v1/deployments/{id}/timeline": authz.OrgActionReadApp,
 	// Scheduled releases (ADR-20261021152201): scheduling a release is
 	// deploying it.
 	"GET /v1/deployments/{id}/schedule":    authz.OrgActionReadApp,
@@ -237,6 +239,9 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/domains/{domain}/verify":         authz.OrgActionConfigureApp,
 	"POST /v1/domains/{domain}/default":        authz.OrgActionConfigureApp,
 	"POST /v1/domains/{domain}/retry":          authz.OrgActionConfigureApp,
+	"GET /v1/domains/{domain}/hosts":           authz.OrgActionReadApp,
+	"PUT /v1/domains/{domain}/hosts":           authz.OrgActionConfigureApp,
+	"DELETE /v1/domains/{domain}/hosts":        authz.OrgActionConfigureApp,
 	"GET /v1/crons":                            authz.OrgActionReadApp,
 	"POST /v1/crons":                           authz.OrgActionConfigureApp,
 	"GET /v1/crons/{id}":                       authz.OrgActionReadApp,

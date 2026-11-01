@@ -41,6 +41,20 @@ func TestMemoryShadow(t *testing.T) {
 	}
 }
 
+// adr: 20261031143521 — a frozen instance is charged with the frozen floor
+// (8 MB), a running one with the measured floor (64 MB).
+func TestMemoryShadowChargesFrozenInstancesTheirFrozenFloor(t *testing.T) {
+	instances := []state.Instance{
+		{ID: "frozen", NodeID: "n1", State: string(state.StateFrozen), RAMMB: 1024},
+		{ID: "running", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+	}
+	rows := []InstanceStat{{InstanceID: "frozen", RSSMB: 4}, {InstanceID: "running", RSSMB: 4}}
+	got := memoryShadow(instances, rows, nil)
+	if want := 10 + 80; got["n1"].MeasuredMB != want {
+		t.Fatalf("measured = %d MB, want %d (a compressed frozen VM at 10, a running one at 80)", got["n1"].MeasuredMB, want)
+	}
+}
+
 func TestReaderMeasuredMB(t *testing.T) {
 	r := NewReader()
 	now := time.Unix(1_800_000_000, 0)
@@ -68,6 +82,28 @@ func TestReaderMeasuredMB(t *testing.T) {
 		if mb != tc.wantMB || ok != tc.wantOK || (ok && !asOf.Equal(now)) {
 			t.Errorf("%s: MeasuredMB = %d, %v, %v; want %d, %v, %v", tc.name, mb, asOf, ok, tc.wantMB, now, tc.wantOK)
 		}
+	}
+}
+
+// adr: 20261031190030 — a frozen instance is charged its latest sample: a
+// running one keeps the window's p95, but the memory a compression frees from
+// a paused VM reached admission only ten minutes later.
+func TestFrozenInstancesSkipThePeakHold(t *testing.T) {
+	r := NewReader()
+	p := &Poller{Reader: r}
+	t0 := time.Unix(1_800_000_000, 0)
+	tick := func(at time.Time, runningMB, frozenMB float64) {
+		p.publishMemoryShadow([]state.Instance{
+			{ID: "a", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+			{ID: "b", NodeID: "n1", State: string(state.StateFrozen), RAMMB: 1024},
+		}, []InstanceStat{{InstanceID: "a", RSSMB: runningMB}, {InstanceID: "b", RSSMB: frozenMB}}, at)
+	}
+	tick(t0, 400, 400)
+	at := t0.Add(2 * time.Duration(api.MeasuredChargeSampleSeconds) * time.Second)
+	tick(at, 100, 40) // b was compressed
+	// a: the p95 of 400 and 100 is 400, x1.25 = 500. b: 40 x 1.25 = 50.
+	if mb, _, ok := r.MeasuredMB("n1", at); !ok || mb != 500+50 {
+		t.Fatalf("MeasuredMB = %d, %v; want 550", mb, ok)
 	}
 }
 

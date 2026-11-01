@@ -165,7 +165,7 @@ func ErrReleaseApprovalRequired(status ReleaseApprovalStatus) *Problem {
 		detail = fmt.Sprintf("Release %s of %s waited past its approval timeout and is being aborted.", status.DeploymentID, status.App)
 	}
 	p := NewProblem(http.StatusConflict, CodeReleaseApprovalRequired, "Release waiting for approval", detail).
-		WithHint("An eligible teammate approves with `gregale approvals approve " + status.DeploymentID + "`; the rollout then continues on its next tick.").
+		WithHint("An eligible teammate approves it on its approval page in the dashboard; the rollout then continues on its next tick.").
 		WithDocs(docsBase + "/deploys#release-approvals")
 	p.ReleaseApproval = &status
 	return p
@@ -235,7 +235,21 @@ func ErrReleaseApprovalPromotionSelf(app, environment string) *Problem {
 func ErrReleaseApprovalSelf() *Problem {
 	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSelf, "Self-approval not allowed",
 		"You deployed this release, and the app's approval policy needs someone else to approve it.").
-		WithHint("Ask an eligible teammate to run `gregale approvals approve`.")
+		WithHint("Ask an eligible teammate to approve it on the release's approval page in the dashboard.")
+}
+
+// ErrReleaseApprovalSessionRequired refuses an approval sent with an API key
+// or token (ADR-20261020085706 amendment 4). A key lets automation, or a
+// teammate's key in a CI job, approve without a person. pageURL is the
+// release's approval page.
+func ErrReleaseApprovalSessionRequired(pageURL string) *Problem {
+	hint := "Approve it on the release's approval page in the dashboard."
+	if pageURL != "" {
+		hint = "Approve it in the dashboard: " + pageURL
+	}
+	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSessionRequired, "Approve in the dashboard",
+		"A person signed in to Gregale approves a release; an API key or token cannot.").
+		WithHint(hint).WithDocs(docsBase + "/deploys#release-approvals")
 }
 
 // ErrReleaseApprovalDecided refuses a second decision, or a decision on a
