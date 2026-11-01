@@ -41,6 +41,9 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	if inbox, ok := s.store.(agents.CallbackInbox); ok {
 		h.Inbox = inbox
 	}
+	if revocations, ok := h.Store.(agents.CallbackRevocations); ok {
+		h.Revocations = revocations
+	}
 	if s.sessions != nil {
 		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
 			h.Callbacks = signer
@@ -164,6 +167,14 @@ func (s *server) createAgentCallback(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	s.agentAPI.CreateCallback(w, r, acct)
+}
+
+func (s *server) revokeAgentCallbacks(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if s.agentAPI == nil {
+		api.WriteProblem(w, api.ErrCapacity("the agent API is unavailable on this control-plane host"))
+		return
+	}
+	s.agentAPI.RevokeCallbacks(w, r, acct)
 }
 
 // receiveAgentCallback serves the token-only callback route; it needs the

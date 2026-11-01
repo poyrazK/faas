@@ -3254,6 +3254,7 @@ func (s *server) handler() http.Handler {
 	// ADR-20261030125501 §3: a callback URL for one thread of an agent
 	// inbox, and the token-only route a tool posts its result to.
 	mux.HandleFunc("POST /v1/agent-callbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createAgentCallback))))
+	mux.HandleFunc("POST /v1/agent-callbacks/revocations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeAgentCallbacks))))
 	mux.Handle("POST /v1/agent-callbacks/{token}", middleware.AuthLimit(middleware.AuthLimitConfig{
 		Log:           s.log,
 		Window:        time.Minute,
