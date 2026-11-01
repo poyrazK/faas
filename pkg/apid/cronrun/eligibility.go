@@ -31,27 +31,44 @@ func OverPlan(ctx context.Context, store Store, app state.App, c state.Cron) *ap
 	if !c.Enabled || c.SuspendedReason != "" {
 		return nil
 	}
+	r, refused := refuse(ctx, store, app, c)
+	if !refused {
+		return nil
+	}
+	return api.ErrCronRunOverPlan(r.plan, r.scope, r.limit, r.observed)
+}
+
+// refusal is the plan limit a cron is over.
+type refusal struct {
+	plan            api.Plan
+	scope           string
+	limit, observed int
+}
+
+// refuse reports the limit c is over, or false when c may run or a read
+// failed.
+func refuse(ctx context.Context, store Store, app state.App, c state.Cron) (refusal, bool) {
 	owner, err := state.AppResourceAccount(ctx, store, app)
 	if err != nil {
-		return nil
+		return refusal{}, false
 	}
 	limits, ok := api.LimitsFor(owner.Plan)
 	if !ok {
-		return nil
+		return refusal{}, false
 	}
 	subject := owner.ResourceOwnerID()
 	eligible, err := store.BillingSubjectEligibleCronIDs(ctx, subject, limits.CronLimitPerApp, limits.CronLimitPerAccount)
 	if err != nil || contains(eligible, c.ID) {
-		return nil
+		return refusal{}, false
 	}
 	if rank, count, err := appRank(ctx, store, c); err == nil && rank > limits.CronLimitPerApp {
-		return api.ErrCronRunOverPlan(owner.Plan, string(state.CronQuotaScopeApp), limits.CronLimitPerApp, count)
+		return refusal{owner.Plan, string(state.CronQuotaScopeApp), limits.CronLimitPerApp, count}, true
 	}
 	withinApps, err := store.BillingSubjectEligibleCronIDs(ctx, subject, limits.CronLimitPerApp, math.MaxInt32)
 	if err != nil {
-		return nil
+		return refusal{}, false
 	}
-	return api.ErrCronRunOverPlan(owner.Plan, string(state.CronQuotaScopeAccount), limits.CronLimitPerAccount, len(withinApps))
+	return refusal{owner.Plan, string(state.CronQuotaScopeAccount), limits.CronLimitPerAccount, len(withinApps)}, true
 }
 
 // appRank returns c's 1-based age rank among its app's enabled, unsuspended

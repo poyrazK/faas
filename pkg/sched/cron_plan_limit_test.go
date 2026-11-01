@@ -42,6 +42,9 @@ func (s cronPlanStore) OrgByID(_ context.Context, id string) (state.Org, error) 
 	if !ok {
 		return state.Org{}, state.ErrNotFound
 	}
+	if org.Status == "" {
+		org.Status = state.OrgStatusActive
+	}
 	return org, nil
 }
 

@@ -21,15 +21,11 @@ const cronPendingCancelBatch = 100
 // or waiting to retry, so a deleted cron never calls the app again. A run
 // already dispatched finishes. An id that is not a UUID has no runs.
 func (s *PgStore) cancelPendingCronRuns(ctx context.Context, cronID, appID string) error {
-	cron, cronErr := uuid.Parse(cronID)
-	app, appErr := uuid.Parse(appID)
-	if cronErr != nil || appErr != nil {
+	cron, app, ok := pgUUIDPair(cronID, appID)
+	if !ok {
 		return nil
 	}
-	params := sqlc.ListPendingCronInvocationIDsParams{
-		CronID: pgtype.UUID{Bytes: cron, Valid: true}, AppID: pgtype.UUID{Bytes: app, Valid: true},
-		RowLimit: cronPendingCancelBatch,
-	}
+	params := sqlc.ListPendingCronInvocationIDsParams{CronID: cron, AppID: app, RowLimit: cronPendingCancelBatch}
 	for {
 		ids, err := sqlc.New().ListPendingCronInvocationIDs(ctx, s.pool, params)
 		if err != nil {
@@ -44,6 +40,14 @@ func (s *PgStore) cancelPendingCronRuns(ctx context.Context, cronID, appID strin
 			return nil
 		}
 	}
+}
+
+// pgUUIDPair parses two ids, or reports false when either is not a UUID.
+func pgUUIDPair(a, b string) (pgtype.UUID, pgtype.UUID, bool) {
+	x, errA := uuid.Parse(a)
+	y, errB := uuid.Parse(b)
+	ok := errA == nil && errB == nil
+	return pgtype.UUID{Bytes: x, Valid: ok}, pgtype.UUID{Bytes: y, Valid: ok}, ok
 }
 
 // cancelPendingCronRunsLocked is the MemStore mirror of cancelPendingCronRuns.
