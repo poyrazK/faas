@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -258,4 +259,25 @@ func financialMeterCosts(account string, start, end, asOf, now, retained time.Ti
 	}
 	out.Forecast = forecast
 	return out, nil
+}
+
+// grantBoundaries returns the sorted UTC hours strictly inside (start, end)
+// from which a recorded compute activation first applies. An activation at
+// instant e counts for every hour that ends after e, so it starts applying
+// at e truncated to its hour.
+func grantBoundaries(snapshots []state.FinancialPriceSnapshot, start, end time.Time) []time.Time {
+	seen := map[time.Time]bool{}
+	var out []time.Time
+	for _, s := range snapshots {
+		if s.Price.Meter != "compute" {
+			continue
+		}
+		boundary := s.EffectiveFrom.UTC().Truncate(time.Hour)
+		if boundary.After(start) && boundary.Before(end) && !seen[boundary] {
+			seen[boundary] = true
+			out = append(out, boundary)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out
 }
