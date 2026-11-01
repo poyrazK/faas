@@ -72,6 +72,7 @@ const (
 	subDomainsShow       = "show"
 	subDomainsStatus     = "status"
 	subDomainsDoctor     = "doctor"
+	subDomainsHost       = "host"
 
 	statusPending  = "pending"
 	statusVerified = "verified"
@@ -5195,7 +5196,7 @@ func cmdTraffic(args []string) int {
 func cmdDomains(args []string) int {
 	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|wait|doctor> [args]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|wait|doctor|host> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
@@ -5284,6 +5285,8 @@ func cmdDomains(args []string) int {
 		return cmdDomainsStatus(args[1:])
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
+	case subDomainsHost:
+		return cmdDomainsHost(args[1:])
 	case subWait:
 		return domainConditions.wait(args[1:])
 	}

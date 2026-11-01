@@ -33498,6 +33498,73 @@ paths:
 
   # ─── Crons ────────────────────────────────────────────────────────────────
 
+  /v1/domains/{domain}/hosts:
+    parameters:
+      - name: domain
+        in: path
+        required: true
+        schema: { type: string, pattern: '^\*\.[a-z0-9.\-]+$' }
+        description: The wildcard custom domain (e.g. `*.example.com`).
+    get:
+      tags: [domains]
+      operationId: getDomainHosts
+      summary: Read a wildcard domain's host allowlist.
+      description: |
+        Returns the names below the wildcard that may hold an on-demand
+        certificate. `restricted: false` means no
+        allowlist is set and every name below the wildcard may.
+      responses:
+        '200':
+          description: The host allowlist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDomainHostsResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Only a wildcard custom domain has a host allowlist to read. }
+    put:
+      tags: [domains]
+      operationId: setDomainHosts
+      summary: Replace a wildcard domain's host allowlist.
+      description: |
+        Only the listed names below the wildcard get certificates; the edge
+        refuses every other server name, so random names cannot spend the
+        wildcard's new-host budget. Names are the part of the host before
+        the wildcard's suffix (`eu.shop` for `eu.shop.example.com`), or the
+        full host. Routing is unchanged, and certificates the edge already
+        holds for a removed name keep serving until their next reload or
+        renewal. The domain doctor's probe host is always allowed.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetCustomDomainHostsRequest'
+      responses:
+        '200':
+          description: The saved host allowlist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDomainHostsResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: 'Not a wildcard domain, an invalid name, or more than 100 names (the problem carries `limit` and `observed`).' }
+    delete:
+      tags: [domains]
+      operationId: clearDomainHosts
+      summary: Remove a wildcard domain's host allowlist.
+      description: Every name below the wildcard may hold a certificate again.
+      responses:
+        '204': { description: The allowlist was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Only a wildcard custom domain has a host allowlist to remove. }
+
   /v1/crons:
     get:
       tags: [crons]
@@ -103565,6 +103632,22 @@ components:
           type: array
           description: "DNS records to publish: the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone apex when the platform publishes edge addresses."
           items: { $ref: '#/components/schemas/DNSRecordInstruction' }
+
+    CustomDomainHostsResponse:
+      description: "A wildcard custom domain's host allowlist. Names are the parts of hosts before the wildcard's suffix."
+      type: object
+      required: [domain, names, restricted]
+      properties:
+        domain: { type: string, example: "*.example.com" }
+        names: { type: array, maxItems: 100, items: { type: string }, example: ["app", "api", "eu.shop"] }
+        restricted: { type: boolean, description: "False when no allowlist is set: every name below the wildcard may hold a certificate." }
+
+    SetCustomDomainHostsRequest:
+      description: "Replaces a wildcard custom domain's host allowlist; DELETE the allowlist to allow every name again."
+      type: object
+      required: [names]
+      properties:
+        names: { type: array, minItems: 1, maxItems: 100, items: { type: string }, description: "Names below the wildcard (or full hosts) that may hold certificates." }
 
     DNSRecordInstruction:
       description: "One DNS record a customer publishes for a custom domain. `alternative` marks an A/AAAA routing record that replaces the CNAME where a CNAME is not allowed, such as at a zone apex."

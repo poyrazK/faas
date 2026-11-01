@@ -5713,6 +5713,36 @@ Run a 5-check domain readiness report
 
 Exits nonzero when unhealthy, including in JSON mode.
 
+### domain host
+
+Choose which names below a wildcard domain get certificates
+
+With an allowlist, the edge refuses certificates for every other name, so random names cannot use up the wildcard&#39;s issuance budget. Routing is unchanged.
+
+#### domain host set
+
+Allow only these names (replaces the list)
+
+`gregale domain host set <*.domain> <name>...`
+
+Examples:
+
+```sh
+gregale domain host set '*.example.com' app api eu.shop
+```
+
+#### domain host get
+
+Show the allowlist
+
+`gregale domain host get <*.domain>`
+
+#### domain host clear
+
+Remove the allowlist so every name may get a certificate
+
+`gregale domain host clear <*.domain>`
+
 
 ## edge
 
