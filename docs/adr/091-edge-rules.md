@@ -1215,7 +1215,8 @@ Decision:
   change only when the fence set changes. The fence TTL drops from 30 s to
   10 s: a live mutation acknowledges prepare within 3 s and publishes apply
   right after its commit, so the TTL only bounds how long a crashed apid can
-  hold a host.
+  hold a host. (ADR-20261101141123: a fence no longer refuses requests; the
+  host serves its current rules until apply.)
 4. **Header ops are HTTP fields with case-insensitive reserved names.** apid
   compares names in canonical form, requires a valid HTTP token name and
   rejects control characters in values (`httpguts`), for header ops and

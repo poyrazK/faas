@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/apid/agentconnections"
 	"github.com/onebox-faas/faas/pkg/apid/aiconsole"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
@@ -4271,6 +4272,17 @@ func (s *server) handler() http.Handler {
 	// gate (POST /v1/keys) and avoids a non-admin scope-expanding
 	// via the rotation path.
 	mux.HandleFunc("POST /v1/keys/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.rotateKey)))))
+
+	// The agents connected to the account (ADR-20261030133644): listing is
+	// read like GET /v1/keys and revoking is admin-only like DELETE
+	// /v1/keys/{id}. A hosted MCP key may name its own client and retire
+	// itself.
+	agentConnections := s.agentConnectionDeps()
+	mux.HandleFunc("GET /v1/agent-connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(agentconnections.List(agentConnections)))))
+	mux.HandleFunc("PUT /v1/agent-connections/self", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.Name(agentConnections))))
+	mux.HandleFunc("DELETE /v1/agent-connections/self", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.Disconnect(agentConnections))))
+	mux.HandleFunc("DELETE /v1/agent-connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.Revoke(agentConnections)))))
+	mux.HandleFunc("POST /v1/agent-connections/revoke_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.RevokeAll(agentConnections)))))
 
 	// Per-app deploy tokens. These credentials are minted by an
 	// administrator, carry only deploy:write, and are accepted by
