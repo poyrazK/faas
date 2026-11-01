@@ -54740,7 +54740,12 @@ SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object
  'binding',application_standard_log_binding(d.app_id,d.id)) ORDER BY d.created_at,d.id)
  FROM app_log_drains d WHERE d.enabled),'[]'::jsonb),
  'inventories',coalesce((SELECT jsonb_agg(i.inventory ORDER BY i.app_id) FROM
- (SELECT e.app_id,application_standard_log_inventory(e.app_id) AS inventory FROM app_application_standards e) i
+ -- The join and predicates repeat conditions application_standard_log_inventory
+ -- requires, so rows that can only yield NULL (deleted apps above all) skip the
+ -- per-row function call and its plan.
+ (SELECT e.app_id,application_standard_log_inventory(e.app_id) AS inventory FROM app_application_standards e
+  JOIN apps a ON a.id=e.app_id
+  WHERE a.status='active' AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision) i
  WHERE i.inventory IS NOT NULL),'[]'::jsonb))::jsonb AS snapshot
 `
 

@@ -51,3 +51,64 @@ func TestWorkflowTickEvaluatesFailurePoliciesBeforeScheduleAdmission(t *testing.
 		t.Fatalf("paused workflow was armed: %+v %v", cursors, err)
 	}
 }
+
+func TestWorkflowTickSpacesFailurePolicyPasses(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := t.Context()
+	account, err := store.CreateAccount(ctx, "failure-interval@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "failure-interval", Type: state.AppTypeApp, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`[{"name":"report","trigger":{"type":"schedule","schedule":"* * * * *"},"steps":[{"name":"main","path":"/report"}]}]`)
+	if _, err = store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive, ImageDigest: "sha256:abc", Workflows: raw}); err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	if _, err = store.SetAutomationFailurePolicy(ctx, app.ID, "report", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+	engine, _ := sched.MakeEngine(t, store, &sched.FakeWakeVMM{})
+	now := time.Now().UTC()
+	loop := sched.NewLoop(nil, engine, nil).WithClock(func() time.Time { return now }).WithWorkflowsDispatched(true)
+	paused := func() bool {
+		t.Helper()
+		out, err := store.GetAutomationFailurePolicy(ctx, app.ID, "report")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.Paused
+	}
+	if err = loop.RunWorkflowSchedulesTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if paused() {
+		t.Fatal("paused before any failure")
+	}
+
+	run := &state.WorkflowRun{AppID: app.ID, WorkflowName: "report", DefinitionSnapshot: json.RawMessage(`{"name":"report","steps":[{"name":"main","path":"/report"}]}`)}
+	if err = store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Second)
+	if err = loop.RunWorkflowSchedulesTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if paused() {
+		t.Fatal("a tick inside the interval evaluated the policy again")
+	}
+
+	now = now.Add(10 * time.Second)
+	if err = loop.RunWorkflowSchedulesTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !paused() {
+		t.Fatal("the next pass after the interval did not latch the pause")
+	}
+}
