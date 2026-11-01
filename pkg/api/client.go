@@ -3098,6 +3098,19 @@ func (c *Client) ListCrons(ctx context.Context, slug string) ([]CronResponse, er
 	var out []CronResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
+
+// ListCronsSelected lists the crons a label selector picks, on the app named
+// by slug or, when slug is empty, on every app (ADR-20261031100025). An apid
+// without labels ignores the selector, so callers match the returned labels
+// again.
+func (c *Client) ListCronsSelected(ctx context.Context, slug, selector string) ([]CronResponse, error) {
+	q := url.Values{"selector": {selector}}
+	if slug != "" {
+		q.Set("slug", slug)
+	}
+	var out []CronResponse
+	return out, c.do(ctx, "GET", "/v1/crons?"+q.Encode(), nil, &out)
+}
 func (c *Client) CreateCron(ctx context.Context, slug string, req CreateCronRequest) (CronResponse, error) {
 	var out CronResponse
 	return out, c.do(ctx, "POST", "/v1/crons", req, &out)
@@ -3150,6 +3163,22 @@ func (c *Client) ListJobs(ctx context.Context, pagination ...int) (ListJobsRespo
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListJobsSelected returns one page of the jobs a label selector picks
+// (ADR-20261031100025); limit and offset page the matches, and zero uses the
+// server default. An apid without labels ignores the selector and pages every
+// job, so callers match the returned labels again.
+func (c *Client) ListJobsSelected(ctx context.Context, selector string, limit, offset int) (ListJobsResponse, error) {
+	q := url.Values{"selector": {selector}}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	var out ListJobsResponse
+	return out, c.do(ctx, "GET", "/v1/jobs?"+q.Encode(), nil, &out)
 }
 
 // CreateJob creates a new job under the calling account. Idempotent
