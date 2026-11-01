@@ -7924,7 +7924,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Edge-rule changes are not converging ({{ $labels.phase }})"
-          description: "apid_edge_rule_convergence_failures_total{phase=\"{{ $labels.phase }}\"} rose more than twice in 10m. prepare: customers' edge-rule edits are refused with 503 and nothing changes. apply: edits committed but a gateway did not acknowledge them, so its hosts stay held with 503 until the 10s fence expires."
+          description: "apid_edge_rule_convergence_failures_total{phase=\"{{ $labels.phase }}\"} rose more than twice in 10m. prepare: customers' edge-rule edits are refused with 503 and nothing changes. apply: edits committed but a gateway did not acknowledge them, so it serves the old rules until its cache entries reload (up to 30s)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
       - alert: FaasEdgeRuleConvergenceStuck
         expr: min_over_time(gateway_edge_rule_converging_hosts[5m]) > 0
@@ -7936,7 +7936,7 @@ groups:
           public_status: internal
         annotations:
           summary: "{{ $labels.instance }} has held hosts behind edge-rule fences for 10 minutes"
-          description: "gateway_edge_rule_converging_hosts on {{ $labels.instance }} has not dropped to zero for 10m. Requests to fenced hosts get 503 Edge policy update in progress. A fence expires 10s after its change is prepared, so one that never clears means changes keep being prepared without being applied."
+          description: "gateway_edge_rule_converging_hosts on {{ $labels.instance }} has not dropped to zero for 10m. Those hosts keep serving their current rules. A fence expires 10s after its change is prepared, so one that never clears means changes keep being prepared without being applied."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
       - alert: FaasEdgeRuleJWTFailures
         expr: sum(rate(gateway_edge_rule_match_total{kind="jwt",outcome="failed"}[5m])) * 60 > 5

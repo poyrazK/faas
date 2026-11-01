@@ -302,8 +302,9 @@ type Metrics struct {
 	// edgeRuleLoadedGeneration is the latest durable policy generation this
 	// gateway acknowledged. Prometheus's scrape target identifies the node.
 	edgeRuleLoadedGeneration prometheus.Gauge
-	// edgeRuleConvergingHosts is the number of hostnames temporarily fenced
-	// while a two-phase policy mutation crosses the serving fleet.
+	// edgeRuleConvergingHosts is the number of hostnames with a prepared,
+	// not yet applied, two-phase policy mutation (ADR-20261101141123: they
+	// keep serving their current rules meanwhile).
 	edgeRuleConvergingHosts prometheus.Gauge
 	// edgeRuleGenerationLag is the distance from the newest prepared policy
 	// generation to the last applied generation on this gateway.
@@ -1088,7 +1089,7 @@ func NewMetrics() *Metrics {
 		}),
 		edgeRuleConvergingHosts: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_edge_rule_converging_hosts",
-			Help: "Hostnames temporarily fail-closed while an edge-rule generation converges.",
+			Help: "Hostnames with a prepared edge-rule change this gateway has not applied yet.",
 		}),
 		edgeRuleGenerationLag: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_edge_rule_generation_lag",
@@ -3442,7 +3443,7 @@ func (m *Metrics) SetEdgeRuleLoadedGeneration(generation int64) {
 	m.edgeRuleLoadedGeneration.Set(float64(generation))
 }
 
-// SetEdgeRuleConvergingHosts exposes the size of the local fail-closed fence.
+// SetEdgeRuleConvergingHosts exposes how many hostnames have a pending change.
 func (m *Metrics) SetEdgeRuleConvergingHosts(count int) {
 	if m == nil || m.edgeRuleConvergingHosts == nil {
 		return
