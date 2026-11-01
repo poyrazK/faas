@@ -237,12 +237,17 @@ func TestReconciler_ComparesDeliveredNotUsage(t *testing.T) {
 func TestReconciler_ReconcilesOrganizationSubjects(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	org, err := store.CreateOrg(ctx, state.Org{Slug: "drift-co", Name: "Drift Co", Plan: api.PlanPro, Status: state.OrgStatusActive})
+	// MemStore turns resource ownership on for a Free organization; the
+	// organization then subscribes.
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "drift-co", Name: "Drift Co", Plan: api.PlanFree, Status: state.OrgStatusActive})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !org.ResourceOwnershipEnabled {
 		t.Fatal("fixture organization must be its own billing subject")
+	}
+	if err := store.UpdateOrgPlan(ctx, org.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
 	}
 	if err := store.UpsertBillingIdentity(ctx, state.BillingIdentity{
 		AccountID: org.ID, Provider: "polar", CustomerID: "polar-customer-" + org.ID,

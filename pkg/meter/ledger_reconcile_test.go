@@ -100,8 +100,16 @@ func TestLedgerReconcilerClassifiesAccounts(t *testing.T) {
 	}
 	// A company organization is a billing subject of its own (#6029); its
 	// delivered hour is reconciled like an account's.
-	org, err := mem.CreateOrg(ctx, state.Org{Slug: "ledger-co", Name: "Ledger Co", Plan: api.PlanHobby, Status: state.OrgStatusActive})
+	// MemStore turns resource ownership on for a Free organization; the
+	// organization then subscribes.
+	org, err := mem.CreateOrg(ctx, state.Org{Slug: "ledger-co", Name: "Ledger Co", Plan: api.PlanFree, Status: state.OrgStatusActive})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if !org.ResourceOwnershipEnabled {
+		t.Fatal("fixture organization must be its own billing subject")
+	}
+	if err := mem.UpdateOrgPlan(ctx, org.ID, api.PlanHobby); err != nil {
 		t.Fatal(err)
 	}
 	if err := mem.UpsertBillingIdentity(ctx, state.BillingIdentity{
