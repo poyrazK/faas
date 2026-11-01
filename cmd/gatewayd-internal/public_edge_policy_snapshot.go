@@ -144,7 +144,7 @@ func resolvePublicCompiledPolicy(ctx context.Context, reader state.PublicHostPol
 	}
 	app.PublicCompiledPolicies = make(map[string]*gateway.HostEntry, len(hosts))
 	for _, host := range hosts {
-		entry, err := graphs.owner.compilePublicOwnerPolicy(ctx, reader, host, app.AccountID, app.ID, graphs.claims[host].Source)
+		entry, err := graphs.owner.compilePublicOwnerPolicy(ctx, reader, host, app.AccountID, app.ID, app.ProductionAppID, graphs.claims[host].Source)
 		if err != nil {
 			return err
 		}
@@ -222,12 +222,12 @@ func verifyPublicRouteGraph(prior, fresh *gateway.HostEntry, account string) err
 
 // All reads happen before the compiled cache lookup, inside the app resolver's
 // transaction. Cache entries can save compilation, never replace a fresh read.
-func (g *gatewaydEdgeRules) compilePublicOwnerPolicy(ctx context.Context, reader state.PublicHostPolicyReader, host, account, appID string, source *gateway.PublicAppPolicySource) (*gateway.HostEntry, error) {
+func (g *gatewaydEdgeRules) compilePublicOwnerPolicy(ctx context.Context, reader state.PublicHostPolicyReader, host, account, appID, productionAppID string, source *gateway.PublicAppPolicySource) (*gateway.HostEntry, error) {
 	rules, err := publicHostAppEdgeRules(ctx, reader, host, account, appID, false)
 	if err != nil {
 		return nil, err
 	}
-	inherited, err := publicPreviewInheritedRules(ctx, reader, host, account, appID)
+	inherited, err := publicPreviewInheritedRules(ctx, reader, host, account, productionAppID)
 	if err != nil {
 		return nil, err
 	}
@@ -345,11 +345,7 @@ func publicHostAppEdgeRules(ctx context.Context, reader state.PublicHostPolicyRe
 	if err != nil {
 		return nil, err
 	}
-	rules, err = withAliasHostRules(rules, host, func(alias string) ([]state.EdgeRule, error) {
+	return withAliasHostRules(rules, host, func(alias string) ([]state.EdgeRule, error) {
 		return reader.PublicHostAppEdgeRules(ctx, alias, account, appID, routesOnly)
 	})
-	if err != nil {
-		return nil, err
-	}
-	return scopePublicHostRules(ctx, reader, appID, rules)
 }

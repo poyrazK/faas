@@ -5639,7 +5639,10 @@ type Querier interface {
 	// through the row's JSON so historical-schema upgrade fixtures can still run
 	// the traffic analysis; on the current schema the projection is identical.
 	// A non-null app_id adds that app's app-wide rules (match_host "@app",
-	// ADR-1191) in the same ordered, bounded projection.
+	// ADR-1191) in the same ordered, bounded projection. As on the cached path
+	// (ADR-091 amendments 2026-10-28 and 2026-10-31), rules of deleted apps are
+	// left out and, with an app_id, so are rules of apps outside its edge-rule
+	// scope: the owning company organization, or none for a personal app.
 	ReadPublicHostEdgeRules(ctx context.Context, db DBTX, arg ReadPublicHostEdgeRulesParams) (ReadPublicHostEdgeRulesRow, error)
 	ReadPublicHostEnvironment(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]byte, error)
 	ReadPublicHostEnvironmentPolicy(ctx context.Context, db DBTX, arg ReadPublicHostEnvironmentPolicyParams) (ReadPublicHostEnvironmentPolicyRow, error)

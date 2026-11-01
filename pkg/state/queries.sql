@@ -8934,7 +8934,9 @@ ORDER BY app_id, environment_slug, created_at DESC, id;
 SELECT (jsonb_build_object(
     'ID', a.id,
     'AccountID', a.account_id,
-    'OrgID', a.org_id,
+    -- OrgID names a company organization only: a personal one reads as none, so
+    -- a personal app's policy costs no organization read in the snapshot.
+    'OrgID', (SELECT o.id FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org),
     'Slug', a.slug,
     'Type', a.type,
     'Status', a.status,
@@ -9164,7 +9166,10 @@ WHERE app_id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uui
 -- through the row's JSON so historical-schema upgrade fixtures can still run
 -- the traffic analysis; on the current schema the projection is identical.
 -- A non-null app_id adds that app's app-wide rules (match_host "@app",
--- ADR-1191) in the same ordered, bounded projection.
+-- ADR-1191) in the same ordered, bounded projection. As on the cached path
+-- (ADR-091 amendments 2026-10-28 and 2026-10-31), rules of deleted apps are
+-- left out and, with an app_id, so are rules of apps outside its edge-rule
+-- scope: the owning company organization, or none for a personal app.
 WITH matching AS (
     SELECT id, priority, created_at,
         jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
@@ -9181,6 +9186,11 @@ WITH matching AS (
       AND (match_host = sqlc.arg(host)::text OR match_host = '*'
            OR sqlc.arg(host)::text LIKE replace(replace(match_host, '*', '%'), '?', '_')
            OR (app_id = sqlc.narg(app_id)::uuid AND lower(match_host) = '@app'))
+      AND NOT EXISTS (SELECT 1 FROM apps deleted WHERE deleted.id = edge_rules.app_id AND deleted.status = 'deleted')
+      AND (sqlc.narg(app_id)::uuid IS NULL OR edge_rules.app_id = sqlc.narg(app_id)::uuid
+           OR (SELECT ro.id FROM apps ra JOIN orgs ro ON ro.id = ra.org_id AND NOT ro.personal_org WHERE ra.id = edge_rules.app_id)
+              IS NOT DISTINCT FROM
+              (SELECT so.id FROM apps sa JOIN orgs so ON so.id = sa.org_id AND NOT so.personal_org WHERE sa.id = sqlc.narg(app_id)::uuid))
     ORDER BY priority, created_at, id LIMIT (sqlc.arg(max_rows)::integer + 1)
 ), bounds AS (
     SELECT count(*) > sqlc.arg(max_rows)::integer

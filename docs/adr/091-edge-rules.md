@@ -1575,6 +1575,13 @@ path does. None changes the rule format.
    read in a Postgres snapshot and compiled without `hostStoreRules`, which
    had none of the later filters: another owner scope's rules (round 6), rules
    of deleted apps (amendment 2026-10-28) and a preview's inherited production
-   rules (amendment 2026-10-30). The snapshot read now drops the first two and
-   the owner policy adds the third, reading through the snapshot so the
-   policy stays consistent.
+   rules (amendment 2026-10-30). The snapshot's rule query
+   (`ReadPublicHostEdgeRules`) now leaves out the first two in the same read,
+   because the snapshot runs under a short budget and a read per rule's app
+   timed out under load; the owner policy adds the third from the resolved
+   app's `ProductionAppID`, reading only for a preview. The snapshot's app
+   projection now carries `OrgID` for a company organization (a personal one
+   reads as none, so a personal app costs no organization read), so the
+   gateway's route-target scope check and the app's resource account work in
+   this mode too; before, every app read as personal there, and a company
+   app's plan and limits came from its creator's account.

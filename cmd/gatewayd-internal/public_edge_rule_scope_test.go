@@ -76,18 +76,20 @@ func TestPublicPreviewInheritedRulesPostgres(t *testing.T) {
 		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindRoute, Route: &state.EdgeRuleRouteAction{TargetAppSlug: f.app.Slug}}}); err != nil {
 		t.Fatal(err)
 	}
-	preview, err := f.store.CreateApp(ctx, state.App{AccountID: f.app.AccountID, Slug: "public-routing-pr-7", Type: state.AppTypeApp, RAMMB: 128,
-		PreviewOfSlug: f.app.Slug})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var inherited []state.EdgeRule
+	var inherited, none []state.EdgeRule
 	if err := f.store.WithPublicHostPolicySnapshot(ctx, func(reader state.PublicHostPolicyReader) error {
 		var readErr error
-		inherited, readErr = publicPreviewInheritedRules(ctx, reader, preview.Slug+".apps.gregale.dev", f.app.AccountID, preview.ID)
+		// The resolved preview carries its production app's ID.
+		if inherited, readErr = publicPreviewInheritedRules(ctx, reader, "public-routing-pr-7.apps.gregale.dev", f.app.AccountID, f.app.ID); readErr != nil {
+			return readErr
+		}
+		none, readErr = publicPreviewInheritedRules(ctx, reader, f.app.Slug+".apps.gregale.dev", f.app.AccountID, "")
 		return readErr
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("an app that is no preview inherited %+v", none)
 	}
 	if len(inherited) != 1 || inherited[0].ID != gate.ID {
 		t.Fatalf("inherited = %+v, want only the production app-wide headers rule %s (not its route)", inherited, gate.ID)
