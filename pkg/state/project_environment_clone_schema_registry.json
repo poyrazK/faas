@@ -3897,6 +3897,15 @@
     "kind": "operational"
   },
   {
+    "table": "custom_domain_tls_allowed_hosts",
+    "columns": [
+      "created_at",
+      "name",
+      "wildcard_domain"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "custom_domain_tls_hosts",
     "columns": [
       "admitted_at",

@@ -645,6 +645,9 @@ type MemStore struct {
 	// customDomainTLSAdmissions mirrors custom_domain_tls_admissions
 	// (ADR-520 amendment 1), oldest first.
 	customDomainTLSAdmissions []customDomainTLSAdmission
+	// customDomainTLSAllowedHosts mirrors custom_domain_tls_allowed_hosts
+	// (ADR-520 amendment 2): wildcard → sorted names.
+	customDomainTLSAllowedHosts map[string][]string
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole

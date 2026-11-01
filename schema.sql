@@ -6078,6 +6078,11 @@ DECLARE
  targets uuid[] := '{}';
  watched text[] := string_to_array(TG_ARGV[0],',');
 BEGIN
+ -- ADR 20261029202403 amendment 1: rewriting a credential hash for the same
+ -- token (plain to keyed, or a key rotation) is not a binding change.
+ IF current_setting('faas.credential_rekey', true) = 'on' THEN
+  watched := array_remove(watched, 'token_hash');
+ END IF;
  IF TG_OP='UPDATE' THEN
   SELECT jsonb_object_agg(key,value) INTO old_facts FROM jsonb_each(old_row) WHERE key=ANY(watched);
   SELECT jsonb_object_agg(key,value) INTO new_facts FROM jsonb_each(new_row) WHERE key=ANY(watched);
@@ -31149,7 +31154,7 @@ CREATE TABLE public.app_task_attach_sessions (
     node_recorded_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_task_attach_sessions_node_chk CHECK ((((node_id IS NULL) AND (node_recorded_at IS NULL)) OR (((octet_length(node_id) >= 1) AND (octet_length(node_id) <= 255)) AND (node_recorded_at IS NOT NULL)))),
-    CONSTRAINT app_task_attach_sessions_token_chk CHECK ((octet_length(attach_token_sha256) = 32))
+    CONSTRAINT app_task_attach_sessions_token_credhash_chk CHECK ((octet_length(attach_token_sha256) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -32999,7 +33004,7 @@ CREATE TABLE public.ci_job_runtime (
     transfer_token uuid,
     transfer_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ci_job_runtime_capability_hash_check CHECK ((octet_length(capability_hash) = 32)),
+    CONSTRAINT ci_job_runtime_capability_credhash_chk CHECK ((octet_length(capability_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT ci_job_runtime_check CHECK (((result IS NULL) = (sealed_at IS NULL))),
     CONSTRAINT ci_job_runtime_check1 CHECK (((transfer_token IS NULL) = (transfer_until IS NULL))),
     CONSTRAINT ci_job_runtime_check2 CHECK ((expires_at > created_at)),
@@ -33798,6 +33803,19 @@ CREATE TABLE public.custom_domain_tls_admissions (
     owner_id uuid NOT NULL,
     admitted_at timestamp with time zone NOT NULL,
     CONSTRAINT custom_domain_tls_admissions_host_chk CHECK (((host OPERATOR(public.!~~) '%*%'::public.citext) AND (host OPERATOR(public.~~) ('%.'::text || (registered_domain)::text))))
+);
+
+
+--
+-- Name: custom_domain_tls_allowed_hosts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.custom_domain_tls_allowed_hosts (
+    wildcard_domain public.citext NOT NULL,
+    name public.citext NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT custom_domain_tls_allowed_hosts_name_chk CHECK ((name OPERATOR(public.~) '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'::public.citext)),
+    CONSTRAINT custom_domain_tls_allowed_hosts_wildcard_chk CHECK ((wildcard_domain OPERATOR(public.~~) '*.%'::public.citext))
 );
 
 
@@ -35929,8 +35947,8 @@ CREATE TABLE public.dev_bridge_sessions (
     revoked_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT dev_bridge_scope_shape CHECK (((jsonb_typeof(scope) = 'object'::text) AND (scope ?& ARRAY['account_id'::text, 'target_app_id'::text, 'environment_id'::text, 'developer_id'::text, 'project_id'::text]) AND ((scope ->> 'account_id'::text) = (account_id)::text) AND ((scope ->> 'target_app_id'::text) = (target_app_id)::text) AND ((scope ->> 'environment_id'::text) = (environment_id)::text) AND (jsonb_typeof((scope -> 'dependency_app_ids'::text)) = ANY (ARRAY['array'::text, 'null'::text])) AND ((length((scope ->> 'developer_id'::text)) >= 1) AND (length((scope ->> 'developer_id'::text)) <= 128)))),
-    CONSTRAINT dev_bridge_sessions_attachment_digest_check CHECK ((octet_length(attachment_digest) = 32)),
-    CONSTRAINT dev_bridge_sessions_request_digest_check CHECK ((octet_length(request_digest) = 32))
+    CONSTRAINT dev_bridge_sessions_attachment_credhash_chk CHECK ((octet_length(attachment_digest) = ANY (ARRAY[32, 33]))),
+    CONSTRAINT dev_bridge_sessions_request_credhash_chk CHECK ((octet_length(request_digest) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -37548,7 +37566,7 @@ CREATE TABLE public.event_delivery_acknowledgments (
     CONSTRAINT event_delivery_acknowledgments_rejection_check CHECK (((phase = 'rejected'::text) = (rejection_status IS NOT NULL))),
     CONSTRAINT event_delivery_acknowledgments_replay_generation_check CHECK ((replay_generation >= 0)),
     CONSTRAINT event_delivery_acknowledgments_retry_delay_ms_check CHECK ((retry_delay_ms > 0)),
-    CONSTRAINT event_delivery_acknowledgments_token_digest_check CHECK ((octet_length(token_digest) = 32))
+    CONSTRAINT event_delivery_acknowledgments_token_credhash_chk CHECK ((octet_length(token_digest) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -42522,7 +42540,7 @@ CREATE TABLE public.job_run_attach_sessions (
     attach_timeout_s integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT job_run_attach_sessions_timeout_chk CHECK (((attach_timeout_s >= 1) AND (attach_timeout_s <= 300))),
-    CONSTRAINT job_run_attach_sessions_token_chk CHECK ((octet_length(attach_token_sha256) = 32))
+    CONSTRAINT job_run_attach_sessions_token_credhash_chk CHECK ((octet_length(attach_token_sha256) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -44102,6 +44120,7 @@ CREATE TABLE public.managed_realtime_consumer_group_messages (
     CONSTRAINT managed_realtime_consumer_group_messages_check CHECK (((status = 'leased'::text) = ((token_hash IS NOT NULL) AND (lease_until IS NOT NULL)))),
     CONSTRAINT managed_realtime_consumer_group_messages_check1 CHECK (((status = 'leased'::text) OR ((token_hash IS NULL) AND (lease_until IS NULL)))),
     CONSTRAINT managed_realtime_consumer_group_messages_check2 CHECK (((NOT deadline_invalid) OR (delivery_deadline IS NULL))),
+    CONSTRAINT managed_realtime_consumer_group_messages_credhash_chk CHECK (((token_hash IS NULL) OR (octet_length(token_hash) = ANY (ARRAY[32, 33])))),
     CONSTRAINT managed_realtime_consumer_group_messages_failure_code_check CHECK ((octet_length(failure_code) <= 64)),
     CONSTRAINT managed_realtime_consumer_group_messages_fencing_token_check CHECK ((fencing_token > 0)),
     CONSTRAINT managed_realtime_consumer_group_messages_message_check CHECK ((jsonb_typeof(message) = 'object'::text)),
@@ -44110,7 +44129,6 @@ CREATE TABLE public.managed_realtime_consumer_group_messages (
     CONSTRAINT managed_realtime_consumer_group_messages_release_count_check CHECK ((release_count >= 0)),
     CONSTRAINT managed_realtime_consumer_group_messages_sequence_check CHECK ((sequence > 0)),
     CONSTRAINT managed_realtime_consumer_group_messages_status_check CHECK ((status = ANY (ARRAY['ready'::text, 'leased'::text, 'dead'::text]))),
-    CONSTRAINT managed_realtime_consumer_group_messages_token_hash_check CHECK (((token_hash IS NULL) OR (octet_length(token_hash) = 32))),
     CONSTRAINT managed_realtime_consumer_group_messages_worker_check CHECK ((octet_length(worker) <= 128)),
     CONSTRAINT realtime_dead_retention_state CHECK (((status = 'dead'::text) = (dead_since IS NOT NULL))),
     CONSTRAINT realtime_dead_warning_state CHECK (((expiry_warned_at IS NULL) OR (status = 'dead'::text)))
@@ -46728,7 +46746,7 @@ CREATE TABLE public.object_storage_upload_grants (
     CONSTRAINT object_storage_upload_grants_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
     CONSTRAINT object_storage_upload_grants_physical_name_check CHECK ((physical_name <> ''::text)),
     CONSTRAINT object_storage_upload_grants_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5368709120'::bigint))),
-    CONSTRAINT object_storage_upload_grants_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))
+    CONSTRAINT object_storage_upload_grants_token_credhash_chk CHECK ((token_hash ~ '^[0-9a-f]{64}([0-9a-f]{2})?$'::text))
 );
 
 
@@ -47461,7 +47479,7 @@ CREATE TABLE public.outbound_ai_access_tokens (
     revoked_at timestamp with time zone,
     CONSTRAINT outbound_ai_access_tokens_name_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text)),
     CONSTRAINT outbound_ai_access_tokens_scope_chk CHECK (((cardinality(integration_ids) <= 32) AND (expires_at > created_at))),
-    CONSTRAINT outbound_ai_access_tokens_secret_chk CHECK (((octet_length(token_hash) = 32) AND (token_prefix ~ '^ggai_[A-Za-z0-9_-]{7}$'::text)))
+    CONSTRAINT outbound_ai_access_tokens_secret_credhash_chk CHECK (((octet_length(token_hash) = ANY (ARRAY[32, 33])) AND (token_prefix ~ '^ggai_[A-Za-z0-9_-]{7}$'::text)))
 );
 
 
@@ -48268,7 +48286,7 @@ CREATE TABLE public.outbound_integrations (
     CONSTRAINT outbound_integrations_request_timeout_ms_check CHECK ((request_timeout_ms > 0)),
     CONSTRAINT outbound_integrations_response_cache_ttl_chk CHECK (((response_cache_ttl_seconds >= 0) AND (response_cache_ttl_seconds <= 300))),
     CONSTRAINT outbound_integrations_retry_budget_chk CHECK (((retry_budget_per_minute >= 0) AND (retry_budget_per_minute <= 3000))),
-    CONSTRAINT outbound_integrations_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT outbound_integrations_token_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33])))
 );
 
 
@@ -59322,6 +59340,14 @@ ALTER TABLE ONLY public.crons
 
 ALTER TABLE ONLY public.custom_domain_tls_admissions
     ADD CONSTRAINT custom_domain_tls_admissions_pkey PRIMARY KEY (host, admitted_at);
+
+
+--
+-- Name: custom_domain_tls_allowed_hosts custom_domain_tls_allowed_hosts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.custom_domain_tls_allowed_hosts
+    ADD CONSTRAINT custom_domain_tls_allowed_hosts_pkey PRIMARY KEY (wildcard_domain, name);
 
 
 --
@@ -75378,6 +75404,13 @@ CREATE INDEX managed_realtime_inbox_gap_candidates_idx ON public.managed_realtim
 
 
 --
+-- Name: managed_realtime_inbox_heads_held_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_inbox_heads_held_idx ON public.managed_realtime_inbox_heads USING btree (endpoint_id) WHERE (oldest_sequence < next_sequence);
+
+
+--
 -- Name: managed_realtime_inbox_messages_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -89852,6 +89885,14 @@ ALTER TABLE ONLY public.crons
 
 ALTER TABLE ONLY public.crons
     ADD CONSTRAINT crons_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: custom_domain_tls_allowed_hosts custom_domain_tls_allowed_hosts_wildcard_domain_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.custom_domain_tls_allowed_hosts
+    ADD CONSTRAINT custom_domain_tls_allowed_hosts_wildcard_domain_fkey FOREIGN KEY (wildcard_domain) REFERENCES public.custom_domains(domain) ON DELETE CASCADE;
 
 
 --

@@ -3084,6 +3084,11 @@ var cliCommands = []cliCommand{
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
 			}},
 			{Name: subDomainsDoctor, Short: "Run a 5-check domain readiness report", Notes: []string{"Exits nonzero when unhealthy, including in JSON mode."}, Positionals: []string{"<domain>"}},
+			{Name: subDomainsHost, Short: "Choose which names below a wildcard domain get certificates", Notes: []string{"With an allowlist, the edge refuses certificates for every other name, so random names cannot use up the wildcard's issuance budget. Routing is unchanged."}, Subcommands: []cliSub{
+				{Name: "set", Short: "Allow only these names (replaces the list)", Positionals: []string{"<*.domain>", "<name>..."}, Examples: []string{"gregale domain host set '*.example.com' app api eu.shop"}},
+				{Name: subGet, Short: "Show the allowlist", Positionals: []string{"<*.domain>"}},
+				{Name: "clear", Short: "Remove the allowlist so every name may get a certificate", Positionals: []string{"<*.domain>"}},
+			}},
 		},
 	},
 	{
