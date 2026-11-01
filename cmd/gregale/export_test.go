@@ -697,6 +697,7 @@ var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
 var CmdReleaseGates = cmdReleaseGates
+var CmdApprovals = cmdApprovals
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
 var CmdAccountDelete = cmdAccountDelete

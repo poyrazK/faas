@@ -94663,7 +94663,7 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/ReleaseGateResult' }
           description: "The release gates judged with this decision."
-        rollback_skipped: { type: string, description: "Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix." }
+        rollback_skipped: { type: string, description: "Post-release decisions only: why an automatic rollback did not take the release off: the problem code that refused it, such as rollback_crosses_release, or rollback_failed when it ran and did not restore the previous release. The regression was found; the release keeps serving until someone rolls back or ships a fix." }
         decided_at: { type: string, format: date-time }
 
     RolloutDecisionSample:
@@ -111915,7 +111915,7 @@ components:
         timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "Default 1440." }
         approvers: { type: string, enum: [admin, developer], description: "Default admin." }
         allow_self_approval: { type: boolean, description: "Default false; always true for an app outside an organization." }
-        notify_channels: { type: array, maxItems: 5, uniqueItems: true, items: { type: string }, description: "Names of Slack or email notification channels; PagerDuty channels are refused. Slack messages link to the approval page." }
+        notify_channels: { type: array, maxItems: 5, uniqueItems: true, items: { type: string }, description: "Names of Slack or email notification channels; at least one is needed, so the approvers learn a release waits, and PagerDuty channels are refused. Slack messages link to the approval page." }
     DecideReleaseApprovalRequest:
       description: "One person's decision on a release. A rejection needs a comment."
       type: object

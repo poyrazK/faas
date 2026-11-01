@@ -32,8 +32,8 @@ class SetReleaseApprovalPolicyRequest:
     allow_self_approval: bool | Unset = UNSET
     """Default false; always true for an app outside an organization."""
     notify_channels: list[str] | Unset = UNSET
-    """Names of Slack or email notification channels; PagerDuty channels are refused. Slack messages link to the
-    approval page."""
+    """Names of Slack or email notification channels; at least one is needed, so the approvers learn a release
+    waits, and PagerDuty channels are refused. Slack messages link to the approval page."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

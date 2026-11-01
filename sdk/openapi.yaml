@@ -27537,7 +27537,7 @@ components:
           maxItems: 10
           items: {$ref: '#/components/schemas/ReleaseGateResult'}
           description: "The release gates judged with this decision."
-        rollback_skipped: {type: string, description: "Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix."}
+        rollback_skipped: {type: string, description: "Post-release decisions only: why an automatic rollback did not take the release off: the problem code that refused it, such as rollback_crosses_release, or rollback_failed when it ran and did not restore the previous release. The regression was found; the release keeps serving until someone rolls back or ships a fix."}
         decided_at: {type: string, format: date-time}
     RolloutDecisionSample:
       description: "One side's aggregates over the observation window. Request counts are organic requests; probe counts are reported separately."
