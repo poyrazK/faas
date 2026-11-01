@@ -230,19 +230,24 @@ func (m *MemStore) appendManagedRealtimeInboxMessage(ctx context.Context, endpoi
 	}
 	key := managedRealtimeHistoryKey{endpointID: endpointID, channel: channel}
 	state := m.managedRealtimeInboxStreams[key]
-	if state == nil {
+	cutoff := time.Now().UTC().Add(-ManagedRealtimeInboxRetention)
+	if !state.holds(cutoff) {
+		// Only inboxes holding unexpired messages count (ADR-1323,
+		// amendment of 2026-10-31).
 		channels := 0
-		for existing := range m.managedRealtimeInboxStreams {
-			if existing.endpointID == endpointID {
+		for existing, other := range m.managedRealtimeInboxStreams {
+			if existing.endpointID == endpointID && other.holds(cutoff) {
 				channels++
 			}
 		}
 		if channels >= ManagedRealtimeInboxMaxPrincipals {
 			return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryLimit
 		}
+	}
+	if state == nil {
 		state = &managedRealtimeInboxStreamState{next: 1, oldest: 1}
 	}
-	state.trimExpired(time.Now().UTC().Add(-ManagedRealtimeInboxRetention))
+	state.trimExpired(cutoff)
 	if idempotencyKey != "" {
 		for _, existing := range state.messages {
 			if existing.TargetMessageID == idempotencyKey {
@@ -349,6 +354,14 @@ func (m *MemStore) readManagedRealtimeInbox(_ context.Context, endpointID, chann
 		}
 	}
 	return history, nil
+}
+
+// holds reports whether the inbox keeps any message trimExpired(cutoff)
+// would not remove: trimming drops the prefix up to the newest expired
+// message, so the inbox holds messages exactly when its newest has not
+// expired.
+func (state *managedRealtimeInboxStreamState) holds(cutoff time.Time) bool {
+	return state != nil && len(state.messages) > 0 && !state.messages[len(state.messages)-1].CreatedAt.Before(cutoff)
 }
 
 func (state *managedRealtimeInboxStreamState) trimExpired(cutoff time.Time) int64 {
