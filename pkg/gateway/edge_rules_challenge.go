@@ -102,8 +102,12 @@ const (
 	// challenge rule. The page posts to it with its token in the query, so
 	// the gateway knows the post is its own before reading the body.
 	ChallengeSolvePath = "/.well-known/gregale-challenge"
-	// ChallengeCookieName holds the signed pass.
-	ChallengeCookieName = "gregale_challenge"
+	// ChallengeCookieName holds the signed pass. Browsers accept a __Host-
+	// cookie only from the host itself (Secure, Path=/, no Domain), so a page
+	// on another host of a shared apps domain, which is not on the Public
+	// Suffix List, cannot plant one that hides the visitor's pass (ADR-831
+	// amendment 18).
+	ChallengeCookieName = "__Host-gregale_challenge"
 
 	// Version 2 (amendment 17) binds to the host and its account; version 1
 	// bound to the app, and neither version honours the other.
@@ -249,17 +253,19 @@ func challengeWorkValid(token, counter string, difficulty int) bool {
 }
 
 // validPass reports whether the request carries an unexpired pass for its
-// host, issued while app's account owned it.
+// host, issued while app's account owned it. Every cookie of the pass's name
+// is tried, so another cookie of that name sent first, such as one the app
+// set on a longer path, cannot hide the pass.
 func validPass(key []byte, r *http.Request, app App, now time.Time) bool {
-	c, err := r.Cookie(ChallengeCookieName)
-	if err != nil {
-		return false
+	binding, host := bindingFor(r), challengeHost(r)
+	for _, c := range r.CookiesNamed(ChallengeCookieName) {
+		var p challengePass
+		if openChallenge(key, "pass", challengePassPrefix, c.Value, binding, &p) &&
+			p.AccountID == app.AccountID && p.Host == host && now.Unix() < p.Expires {
+			return true
+		}
 	}
-	var p challengePass
-	if !openChallenge(key, "pass", challengePassPrefix, c.Value, bindingFor(r), &p) {
-		return false
-	}
-	return p.AccountID == app.AccountID && p.Host == challengeHost(r) && now.Unix() < p.Expires
+	return false
 }
 
 // isBrowserNavigation reports whether a request is a top-level page load:

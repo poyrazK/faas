@@ -13,6 +13,7 @@ func TestOpsMetrics_CronDelivery(t *testing.T) {
 	m.ObserveCronDelivery(wire.CronDeliverySuccess)
 	m.ObserveCronDelivery(wire.CronDeliveryFailed)
 	m.ObserveCronDelivery(wire.CronDeliveryFailed)
+	m.ObserveCronDelivery(wire.CronDeliveryAppError)
 	m.ObserveCronDelivery("unbounded-error-text")
 	m.ObserveCronScheduleLag(3 * time.Second)
 	m.ObserveCronScheduleLag(-time.Second)
@@ -23,6 +24,7 @@ func TestOpsMetrics_CronDelivery(t *testing.T) {
 		`schedd_cron_delivery_total{outcome="retry"} 0`,
 		`schedd_cron_delivery_total{outcome="failed"} 2`,
 		`schedd_cron_delivery_total{outcome="dead_letter"} 0`,
+		`schedd_cron_delivery_total{outcome="app_error"} 1`,
 		`schedd_cron_schedule_lag_seconds_bucket{le="5"} 1`,
 		`schedd_cron_schedule_lag_seconds_count 1`,
 	} {

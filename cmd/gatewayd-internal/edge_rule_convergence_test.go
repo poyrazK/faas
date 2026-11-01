@@ -36,7 +36,7 @@ func TestEdgeRuleConvergenceFenceMatchesPatternsAndGeneration(t *testing.T) {
 
 // A rule's match_host is free-form, so any account can write "*" or another
 // tenant's hostname. Request-time matching ignores that account's rules on
-// hosts it does not own, so its mutation must not 503 those hosts.
+// hosts it does not own, so its mutation must not mark those hosts pending.
 func TestEdgeRuleConvergenceFenceIsScopedToMutatingAccount(t *testing.T) {
 	for _, tc := range []struct {
 		name          string

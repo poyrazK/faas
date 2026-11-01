@@ -43,6 +43,9 @@ refused there. An agent key always includes `apps:read`, can never include
 `admin`, and expires after 90 days unless you choose otherwise. Its other
 scopes pick the agent's tools; see
 [headless agents](mcp.md#headless-agents-with-an-agent-key).
+`gregale mcp connection list` shows agent keys beside hosted MCP sign-ins, and
+`gregale mcp connection revoke` revokes one or all of them; see
+[connected agents](mcp.md#see-and-revoke-connected-agents).
 
 Interactive users can enable MFA from the account settings page. Each authenticator code works once: a code that already verified a session is refused if it is sent again, so wait for the next code. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
 

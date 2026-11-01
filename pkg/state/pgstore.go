@@ -14472,6 +14472,9 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 const cronDeleteBatch = 1000
 
 func (s *PgStore) DeleteCron(ctx context.Context, id, appID string) error {
+	if err := s.cancelPendingCronRuns(ctx, id, appID); err != nil {
+		return err
+	}
 	for _, detach := range []string{
 		`update invocations set cron_id = null where id in (select i.id from invocations i join crons c on c.id = i.cron_id where i.cron_id = $1 and c.app_id = $2 limit $3)`,
 		`update app_tasks set cron_id = null where id in (select t.id from app_tasks t join crons c on c.id = t.cron_id where t.cron_id = $1 and c.app_id = $2 limit $3)`,

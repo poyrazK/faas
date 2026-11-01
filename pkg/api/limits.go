@@ -652,6 +652,11 @@ const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 // total managed PostgreSQL databases and monthly provider cost (integer
 // millicents). They are COGS breakers across every account, not plan quotas.
 const ManagedPostgresFleetDatabasesCeiling = 100000
+
+// ManagedPostgresFleetPaidReservePercent is the share of the fleet's database
+// cap only paid plans may add when the operator sets no paid reserve
+// (ADR-20261031091607).
+const ManagedPostgresFleetPaidReservePercent = 20
 const ManagedPostgresFleetMonthlyCostCeilingMillicents = 10_000_000_000
 
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
@@ -1467,6 +1472,17 @@ const (
 const (
 	CronPlatformAttempts   = 3
 	CronPlatformRetryDelay = 5 * time.Second
+)
+
+// CronCatchUpRecordedMax bounds the due occurrences a schedule-policy or
+// command cron records in one tick after an outage or suspension: the newest
+// is dispatched and the ones before it are recorded as missed or coalesced.
+// Each is a database write on schedd's main loop, so older due occurrences
+// are passed over. CronCatchUpScanMax bounds how far the in-memory walk goes
+// (about four years of minutes).
+const (
+	CronCatchUpRecordedMax = 20
+	CronCatchUpScanMax     = 1 << 21
 )
 
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
