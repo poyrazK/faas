@@ -16841,6 +16841,16 @@ func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, sta
 	for _, s := range states {
 		wanted[s] = true
 	}
+	// A job task keeps its instance (job_tasks.instance_id has no delete
+	// action): PgStore leaves such rows out, so the sweep never fails on them.
+	referenced := map[string]bool{}
+	for _, tasks := range m.jobTasks {
+		for _, task := range tasks {
+			if task.InstanceID != nil {
+				referenced[*task.InstanceID] = true
+			}
+		}
+	}
 	var out []Instance
 	for _, ins := range m.instances {
 		if !wanted[State(ins.State)] {
@@ -16849,7 +16859,7 @@ func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, sta
 		if ins.TerminalAt == nil {
 			continue
 		}
-		if !ins.TerminalAt.Before(threshold) {
+		if !ins.TerminalAt.Before(threshold) || referenced[ins.ID] {
 			continue
 		}
 		out = append(out, ins)
@@ -28402,7 +28412,7 @@ func (m *MemStore) ListAppsWithRecentTelemetry(_ context.Context, _ pgtype.Inter
 
 // UpdateSpansSummary is intentionally unsupported by MemStore. The writer
 // updates request_telemetry rows and must be covered against PgStore.
-func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte) error {
+func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte, _ int) error {
 	panic("memstore: UpdateSpansSummary unimplemented")
 }
 
