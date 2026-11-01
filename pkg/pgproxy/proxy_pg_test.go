@@ -247,7 +247,19 @@ func TestProxyAuthenticatesBeforeWaking(t *testing.T) {
 			t.Errorf("%s: woke the database before authenticating", tc.name)
 		}
 	}
-	for result, want := range map[string]float64{"ok": 1, "28P01": 3, "tls": 1, "08004": 1} {
+	// The proxy counts a refusal after sending it to the client, so the
+	// last count can trail the client's error.
+	results := map[string]float64{"ok": 1, "28P01": 3, "tls": 1, "08004": 1}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		settled := true
+		for result, want := range results {
+			settled = settled && testutil.ToFloat64(h.metrics.sessions.WithLabelValues(result)) == want
+		}
+		if settled {
+			break
+		}
+	}
+	for result, want := range results {
 		if got := testutil.ToFloat64(h.metrics.sessions.WithLabelValues(result)); got != want {
 			t.Errorf("pgproxyd_sessions_total{result=%q} = %v, want %v", result, got, want)
 		}
