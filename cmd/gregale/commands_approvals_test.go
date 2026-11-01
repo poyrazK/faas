@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
@@ -44,5 +45,20 @@ func TestApprovalPolicyRequest(t *testing.T) {
 				t.Fatalf("request = %+v", req)
 			}
 		})
+	}
+}
+
+// adr: 20261020085706 amendment 6 — a policy without --notify would let
+// releases wait unannounced, so the CLI refuses it before calling apid.
+func TestApprovalRequireNeedsNotify(t *testing.T) {
+	t.Setenv("FAAS_API", "http://127.0.0.1:1")
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	stderr, restore := main.CaptureStderr(t)
+	defer restore()
+	if code := main.CmdApprovals([]string{"require", "--app", "shop", "--approvals", "1"}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "--notify is required") {
+		t.Fatalf("stderr:\n%s", stderr.String())
 	}
 }
