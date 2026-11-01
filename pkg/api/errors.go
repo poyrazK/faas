@@ -5830,6 +5830,16 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
+// ErrTrafficResidualUnassigned is the same 409 for a manual traffic change
+// whose remaining percent could only go to an aborted canary candidate, which
+// never receives traffic unless named.
+func ErrTrafficResidualUnassigned(remaining int) *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
+		"No deployment can take the remaining traffic",
+		fmt.Sprintf("the other live deployments in this environment are aborted canaries, which receive traffic only when named; set the remaining %d%% on a deployment explicitly, or keep this one at 100%%.", remaining)).
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
 // ErrTrafficServingChanged makes a stale promotion actionable without
 // disclosing any deployment the caller has not already been authorized to
 // read through the target app.
@@ -5845,7 +5855,7 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
+		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry. `gregale release traffic status` shows the canary's current step.").
 		WithDocs(docsBase + "/deployments#canary")
 }
 

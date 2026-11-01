@@ -39,7 +39,10 @@ WHERE app_id=sqlc.arg(app_id)::uuid AND environment_slug=sqlc.arg(scope)::text F
 SELECT app_id::text,scope FROM deployments WHERE id=sqlc.arg(id)::uuid;
 
 -- name: ListTrafficSiblingsInScope :many
-SELECT id::text,traffic_percent FROM deployments
+-- aborted_canary is the H5-62 candidate: aborted before its rollout completed.
+SELECT id::text,traffic_percent,
+    (canary_total_steps > 0 AND rollout_state = 'aborted' AND rollout_completed_at IS NULL)::boolean AS aborted_canary
+FROM deployments
 WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='live' AND id<>sqlc.arg(id)::uuid ORDER BY id;
 
 -- name: ReadLiveTrafficSumInScope :one
