@@ -6950,17 +6950,17 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	// .CPUHours() — keep them in lockstep by going through
 	// meter.CPUHours.
 	usedCPUHours := meter.CPUHours(cpuUsec)
-	limits := api.MustLimitsFor(acct.Plan)
-	included := int64(limits.IncludedGBHours)
-	overage := usedGB - float64(included)
-	if overage < 0 {
-		overage = 0
+	// The month's allowance and billed overage follow its plan history and
+	// match the billing page and the provider (ADR-20261101113742): usage
+	// above today's plan allowance overstated a month with an upgrade and
+	// understated one with a downgrade. Cents are integer (spec §Conventions).
+	compute, err := s.monthComputeView(ctx, acct, month, mbSec)
+	if err != nil {
+		return api.UsageSummaryResponse{}, err
 	}
-	// Spec §1 / financial model: $0.01/GB-h overage → 1 cent per
-	// GB-h. Plan's overage rate can vary in the model; constants here
-	// are the production default. Storing cents as int64 keeps
-	// floats away from money (spec §Conventions).
-	overageCents := int64(overage * 1.0)
+	included := compute.IncludedGBHours
+	overage := compute.OverageGBHours
+	overageCents := compute.OverageCents
 	eligibleEgressBytes, err := egressUsageBytesForPolicy(ctx, s.store, s.billingProvider, acct, month)
 	if err != nil {
 		return api.UsageSummaryResponse{}, err

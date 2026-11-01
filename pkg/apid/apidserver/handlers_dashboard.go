@@ -1427,8 +1427,14 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 	}
 	perApp := usageAppData(rows, apps, used)
 	daily, dailySparkline := usageDailyView(dailyRows, apps)
-	limits := api.MustLimitsFor(acct.Plan)
-	included := int64(limits.IncludedGBHours)
+	// The month's allowance and billed overage follow its plan history, as
+	// the bill does (ADR-20261101113742).
+	compute, err := s.monthComputeView(r.Context(), acct, month, mbSec)
+	if err != nil {
+		renderProblem(w, log, err)
+		return
+	}
+	included := compute.IncludedGBHours
 	pct := 0.0
 	if included > 0 {
 		pct = used / float64(included) * 100
@@ -1443,7 +1449,7 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		Month:                 month.Format("2006-01"),
 		UsedGBHours:           used,
 		IncludedGBHours:       included,
-		OverageGBHours:        max(0, used-float64(included)),
+		OverageGBHours:        compute.OverageGBHours,
 		UsedPct:               pct,
 		Requests:              requests,
 		UsedEgressGB:          usedEgressGB,

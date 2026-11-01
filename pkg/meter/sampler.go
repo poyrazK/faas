@@ -102,6 +102,24 @@ type EgressSource interface {
 	ReadUsageDeltas(instanceID string) (UsageDeltas, bool)
 }
 
+// CumulativeNetworkSource is an EgressSource whose host-interface bytes are
+// vmmd's cumulative per-instance counters (UsageDeltas.NetworkCumulative),
+// which the Store checkpoints exactly once. A missed, failed or caught-up
+// tick then loses no bytes: the next reading carries them into the minute it
+// is taken, and a counter reset counts its new value in full. So a minute the
+// compute sampler rolled in full is complete egress evidence too
+// (ADR-20261101113742). cmd/meterd's egress aggregator implements it.
+type CumulativeNetworkSource interface {
+	CumulativeNetworkCounters() bool
+}
+
+// cumulativeNetwork reports whether the sampler's egress source keeps
+// cumulative, checkpointed network counters.
+func (s *Sampler) cumulativeNetwork() bool {
+	source, ok := s.egress.(CumulativeNetworkSource)
+	return ok && source.CumulativeNetworkCounters()
+}
+
 // TailSecondsSource (issue #667 / ADR-078) is the per-instance
 // tail-seconds reader the sampler uses to populate
 // usage_minutes.tail_seconds. The reader is backed by vmmd
@@ -911,8 +929,11 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// outlives a downgrade, and schedd then holds none (Free) or no more
 		// than the plan allows, while the gap was still billed. An unknown
 		// plan (a failed prefetch) keeps the stored floor, as before.
+		// The billing subject's plan, as schedd's floor trigger reads it: a
+		// company app's floor follows its organization's plan, not its
+		// creator's (ADR-20261101113742).
 		floorCap := floor
-		if plan, known := planByAccount[app.AccountID]; known {
+		if plan, known := planByAccount[subject]; known {
 			floorCap = planFloorCap(app, plan)
 		}
 		floor = min(floor, floorCap)
