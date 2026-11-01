@@ -68,6 +68,38 @@
     default and a separate, higher maximum let such apps raise their own
     limit, while apps that declare nothing still scale out where Scale does
     today.
+  - **An open request costs the platform about 80 KB, plus the gateway's
+    HTTP side.** Measured on 2026-11-01 with `TestOpenRequestCostBench`
+    (`pkg/vmmdgrpc/open_request_cost_bench_test.go`) on
+    gregale-internal-test-1, two runs that agreed within 10%. vmmd's
+    forward server and real `vmmd-stream-bridge` binaries, with
+    `bridge_stream_headroom` on, held 1 to 2,000 requests open against a
+    loopback guest that never answers. There were 100 per instance, one
+    bridge each, because of the 128-exchange limit below.
+
+    | Process | Per open request | Fixed |
+    |---|---:|---:|
+    | vmmd | 32 KB RSS | — |
+    | Stream bridge | 31 KB RSS, 1 fd (the guest connection) | 15 MB RSS per instance, shared binary pages included |
+    | gRPC client (gatewayd-internal's vmmd leg) | 15 KB heap and stack, 2 goroutines | — |
+    | Guest (Go `net/http`, the customer's RAM) | 14 KB | — |
+    | Kernel TCP buffers | none measurable while idle | — |
+
+    gatewayd-internal's HTTP server side and gatewayd-public were not
+    measured. Even at about 100 KB per request, 1,000 open requests on one
+    instance hold about 100 MB of host memory outside the tenant budget. The
+    limit that matters is therefore the node's total, not the per-instance
+    one.
+  - **A bridge drops every open request past 128 today.**
+    `bridgecompletion` tracks at most `api.TrafficBridgeCompletionMaxEntries`
+    (128) open exchanges per bridge. It answers the 129th with 503 "invalid
+    bridge exchange", without recording it. vmmd's completion wait for that
+    exchange then gets 404, and vmmd fences the bridge, which ends every
+    other open request on the instance with `unexpected EOF`. The bench
+    reproduced it at 150 open requests on one instance: 22 got 503, and the
+    other 128 failed. Production reaches this when more than 128 requests are
+    open on one instance, for example Scale's 80 per gateway through two
+    gateways. It also blocks any maximum above 128.
   - **Tuning values should not need a release.** The CPU baseline, the
     ceiling floor, the vCPU rule and the request limits will be adjusted from
     production evidence (A/B runs, step tests). The runtime-config store
@@ -92,9 +124,18 @@
     `concurrency_per_vm` report the applied values, and plan pages and docs
     must change when a value does. The config history is the record of when.
 - **Rollout:**
-  1. **Measure** gatewayd-internal and vmmd memory and goroutines per open
-     request: held long-poll requests against one instance, from 0 to 2,000,
-     on the test host. Set the maximum's bound from the result.
+  1. **Measure** memory per open request (done 2026-11-01, above). The
+     maximum's compiled default is 1,000 and its bound 10,000. A node-wide
+     cap on open requests, sized from about 100 KB each, belongs with them.
+  1a. **Fix the bridge's exchange limit first.**
+     - A refused exchange carries `X-Faas-Bridge-Exchange-Refused`. vmmd skips
+       the completion wait and the fence for it, and returns `Unavailable`
+       for that request alone, so the gateway retries or queues it.
+     - `TrafficBridgeCompletionMaxEntries` rises to the request maximum's
+       bound. An open entry is a map entry and a channel, about 200 bytes.
+     - vmmd starts its bridges from its own release bundle, and they die
+       with it, so a vmmd and its bridges always run the same release. A
+       bridge or vmmd without the header behaves as today.
   2. **Add the keys, bounds and readers** in apid, gatewayd-internal and
      schedd, with unset keys keeping today's behavior. Replace
      ADR-20261101160231's `FAAS_GUEST_VCPU_FROM_CPU_APPS` environment switch
