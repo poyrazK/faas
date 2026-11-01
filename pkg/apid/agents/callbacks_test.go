@@ -434,3 +434,76 @@ func TestPropertyRevokedCallbackNeverPublishes(t *testing.T) {
 		}
 	}
 }
+
+// postRaw sends one callback body as is.
+func (f *callbackFixture) postRaw(t *testing.T, token, body string) (int, api.AgentCallbackReceipt) {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/v1/agent-callbacks/token", strings.NewReader(body))
+	r.SetPathValue("token", token)
+	w := httptest.NewRecorder()
+	f.h.ReceiveCallback(w, r)
+	var receipt api.AgentCallbackReceipt
+	_ = json.Unmarshal(w.Body.Bytes(), &receipt)
+	return w.Code, receipt
+}
+
+// A RAP tool posts RAP's own messages (ADR-20261030125501 §3): a tool
+// result lands once under a message_id from its call ID, with the RAP
+// message as its data.
+func TestCallbackAcceptsRAPToolResult(t *testing.T) {
+	f := newCallbackFixture(t)
+	token, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+	first, a := f.postRaw(t, token, `{"type":"tool_result","group_id":"t","id":"toolu_01","text":"Valletta"}`)
+	again, b := f.postRaw(t, token, `{ "type": "tool_result", "group_id": "t", "id": "toolu_01", "text": "Valletta" }`)
+	if first != http.StatusAccepted || again != http.StatusAccepted || a.Sequence != b.Sequence || len(f.inbox.messages) != 1 {
+		t.Fatalf("posts = %d %d, sequences %q %q, %d messages", first, again, a.Sequence, b.Sequence, len(f.inbox.messages))
+	}
+	m := f.inbox.messages[0]
+	if m.Metadata["kind"] != api.AgentCallbackKindToolResult || m.Metadata["message_id"] != "rap-tool-result-toolu_01" ||
+		m.Metadata["thread_id"] != "t" || string(m.Data) != `{"type":"tool_result","group_id":"t","id":"toolu_01","text":"Valletta"}` {
+		t.Fatalf("message %+v data %s", m, m.Data)
+	}
+	long := strings.Repeat("x", api.AgentCallbackMessageIDMaxBytes) + " y"
+	if code, _ := f.postRaw(t, token, `{"type":"tool_result","group_id":"t","id":"`+long+`","text":"ok"}`); code != http.StatusAccepted {
+		t.Fatalf("a call ID that is not a message ID = %d, want 202", code)
+	}
+	if id := f.inbox.messages[1].Metadata["message_id"]; !agents.ValidCallbackID(id, api.AgentCallbackMessageIDMaxBytes) {
+		t.Fatalf("derived message_id %q is not valid", id)
+	}
+}
+
+func TestCallbackRAPRules(t *testing.T) {
+	f := newCallbackFixture(t)
+	results, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+	events, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t", Kinds: []string{"event"}})
+	for _, tc := range []struct {
+		name, token, body string
+		want              int
+	}{
+		{"another thread's group_id", results, `{"type":"tool_result","group_id":"u","id":"c","text":"x"}`, http.StatusForbidden},
+		{"no call id", results, `{"type":"tool_result","group_id":"t","text":"x"}`, http.StatusBadRequest},
+		{"an event on a results URL", results, `{"type":"subscription_event","group_id":"t","tool_call_id":"c","text":"x"}`, http.StatusForbidden},
+		{"oauth", results, `{"type":"oauth","group_id":"t","id":"c","auth_url":"https://example.test"}`, http.StatusBadRequest},
+		{"unknown type", results, `{"type":"shell","group_id":"t"}`, http.StatusBadRequest},
+		{"too large", results, `{"type":"tool_result","group_id":"t","id":"c","text":"` + strings.Repeat("x", api.AgentCallbackPayloadMaxBytes) + `"}`, http.StatusRequestEntityTooLarge},
+		{"a view update is acknowledged", events, `{"type":"view_update","group_id":"t","view_type":"progress","content":{}}`, http.StatusAccepted},
+	} {
+		if code, _ := f.postRaw(t, tc.token, tc.body); code != tc.want {
+			t.Errorf("%s: post = %d, want %d", tc.name, code, tc.want)
+		}
+	}
+	if len(f.inbox.messages) != 0 {
+		t.Fatalf("a refused or display-only post published %+v", f.inbox.messages)
+	}
+	// A subscription event has no identity of its own: each post is a new message.
+	event := `{"type":"subscription_event","group_id":"t","tool_call_id":"c","text":"tick"}`
+	for range 2 {
+		if code, _ := f.postRaw(t, events, event); code != http.StatusAccepted {
+			t.Fatalf("event post = %d", code)
+		}
+	}
+	if len(f.inbox.messages) != 2 || f.inbox.messages[0].Metadata["kind"] != api.AgentCallbackKindEvent ||
+		f.inbox.messages[0].Metadata["message_id"] == f.inbox.messages[1].Metadata["message_id"] {
+		t.Fatalf("events %+v", f.inbox.messages)
+	}
+}
