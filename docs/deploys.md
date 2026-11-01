@@ -768,6 +768,15 @@ gregale release traffic set --app my-api --release v42 --percent 10
 ```
 
 `gregale release traffic status my-api` lists the live revisions and their weights.
+While a canary rolls out it also prints the canary's current step and the
+`gregale deployment advance --expected-step` command for it.
+
+Setting one revision's weight hands the rest to the other live revisions, in
+proportion to their current weights, or evenly when all of them are at 0%. A
+canary its rollout aborted stays live at 0% but never takes that remainder: it
+receives traffic only when you name it. A change that would leave it the only
+recipient fails with `traffic_percent_sum_invalid` (409).
+
 Revision numbers are per app, so `v41` of one app is unrelated to `v41` of
 another. Numbers may skip values: preview deploys and retries consume them
 too.

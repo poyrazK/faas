@@ -3672,9 +3672,12 @@ type DeploymentResponse struct {
 	// is the wall-clock anchor for the current step's Duration
 	// gate. omitempty keeps pre-PR rows byte-identical to the
 	// old wire shape (every column defaulted to 'none'/0/NULL
-	// at the schema layer via PG11+ fast-default).
+	// at the schema layer via PG11+ fast-default). CanaryStep is
+	// always sent: step 0 is a real ladder position, and omitting
+	// it left `canary advance --expected-step` guessing
+	// (PulseWatch F17).
 	CanaryPreset        string     `json:"canary_preset,omitempty"`
-	CanaryStep          int        `json:"canary_step,omitempty"`
+	CanaryStep          int        `json:"canary_step"`
 	CanaryTotalSteps    int        `json:"canary_total_steps,omitempty"`
 	CanaryStepStartedAt *time.Time `json:"canary_step_started_at,omitempty"`
 	// Rollout state machine echo (issue #976 / ADR-122 /

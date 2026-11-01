@@ -1437,6 +1437,12 @@ func (s *PgStore) JobRunRecompute(ctx context.Context, runID string) (JobRun, er
 		return JobRun{}, fmt.Errorf("state: begin job run recompute: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Lock the run before counting its tasks. Concurrent recomputes then count
+	// in turn, so one that read a task before its retry cannot write its stale
+	// verdict over the reopened run (PulseWatch F7).
+	if _, err := sqlc.New().LockCustomerOperationJobRun(ctx, tx, mustPgUUID(runID)); err != nil {
+		return JobRun{}, mapErr(err)
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, tx, mustPgUUID(runID)); err != nil {
 		return JobRun{}, err
 	} else if owned {
@@ -1524,6 +1530,9 @@ func queryJobRunRecompute(ctx context.Context, q pgxQueryRower, runID string, pr
 		       when not $2::boolean and coalesce((select queued_or_claimed from counts), 0) = 0
 		            and coalesce((select running from counts), 0) = 0
 		            and r.finished_at is null then now()
+		       -- A retried task reopens a run a recompute had settled.
+		       when not $2::boolean and coalesce((select queued_or_claimed from counts), 0) +
+		            coalesce((select running from counts), 0) > 0 then null
 		       else r.finished_at
 		   end
 		 where r.id = $1::uuid
@@ -2144,6 +2153,12 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	// Reopen the run with the task. A sibling task's recompute while this one
+	// was failed settled the run as failed, and `job wait` exited before the
+	// retry ran (PulseWatch F7).
+	if _, err := queryJobRunRecompute(ctx, tx, runID, false); err != nil {
+		return fmt.Errorf("state: reopen run after retrying task (%s, %d): %w", runID, taskIndex, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: commit retry job task: %w", err)

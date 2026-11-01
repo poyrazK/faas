@@ -3680,6 +3680,7 @@ type Querier interface {
 	// the broker acknowledges it. The current delivery handle can be Acked
 	// without dispatching the application again.
 	ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error)
+	// aborted_canary is the H5-62 candidate: aborted before its rollout completed.
 	ListTrafficSiblingsInScope(ctx context.Context, db DBTX, arg ListTrafficSiblingsInScopeParams) ([]ListTrafficSiblingsInScopeRow, error)
 	ListTriggerDeadLetter(ctx context.Context, db DBTX, arg ListTriggerDeadLetterParams) ([]TriggerDeadLetter, error)
 	// Used by GET /v1/triggers/{id}/records (dashboard + apid handler).
