@@ -74207,6 +74207,13 @@ CREATE UNIQUE INDEX instance_application_standard_initial_boot_identity ON publi
 
 
 --
+-- Name: instance_billing_intervals_ended_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_billing_intervals_ended_idx ON public.instance_billing_intervals USING btree (ended_at);
+
+
+--
 -- Name: instance_billing_intervals_open_idx; Type: INDEX; Schema: public; Owner: -
 --
 

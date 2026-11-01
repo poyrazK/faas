@@ -18152,7 +18152,7 @@ func (s *PgStore) ListBillingWindowInstances(ctx context.Context, since, end tim
 		         or id in (select instance_id
 		                     from instance_billing_intervals
 		                    where started_at < $3
-		                      and coalesce(ended_at, $3) > $2))
+		                      and (ended_at > $2 or (ended_at is null and $3::timestamptz > $2::timestamptz))))
 		  order by app_id, started_at desc`,
 		LiveStates(), since.UTC(), end.UTC())
 	if err != nil {
@@ -22059,7 +22059,9 @@ func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Ti
 		                - greatest(started_at, $1::timestamptz))))::bigint) as resident_seconds
 		   from instance_billing_intervals
 		  where started_at < $2
-		    and coalesce(ended_at, $2) > $1
+		    -- coalesce(ended_at, $2) > $1 (start < end is checked above),
+		    -- spelled so instance_billing_intervals_ended_idx serves it.
+		    and (ended_at > $1 or ended_at is null)
 		  group by instance_id`, start.UTC(), end.UTC())
 	if err != nil {
 		return nil, err

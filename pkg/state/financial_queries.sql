@@ -6,7 +6,11 @@ WHERE app.status = 'deleted' AND EXISTS (
   JOIN instance_billing_intervals residency ON residency.instance_id = instance.id
   WHERE instance.app_id = app.id
     AND residency.started_at < sqlc.arg(window_end)::timestamptz
-    AND COALESCE(residency.ended_at, sqlc.arg(window_end)::timestamptz) > sqlc.arg(window_start)::timestamptz
+    -- COALESCE(ended_at, window_end) > window_start, spelled so
+    -- instance_billing_intervals_ended_idx can find the few intervals still
+    -- open or ended inside the window instead of reading all history.
+    AND (residency.ended_at > sqlc.arg(window_start)::timestamptz
+         OR (residency.ended_at IS NULL AND sqlc.arg(window_end)::timestamptz > sqlc.arg(window_start)::timestamptz))
 )
 ORDER BY app.id;
 
@@ -19,7 +23,10 @@ WHERE instance.kind = 'job_task'
     SELECT 1 FROM instance_billing_intervals residency
     WHERE residency.instance_id = instance.id
       AND residency.started_at < sqlc.arg(window_end)::timestamptz
-      AND COALESCE(residency.ended_at, sqlc.arg(window_end)::timestamptz) > sqlc.arg(window_start)::timestamptz
+      -- Index-friendly COALESCE(ended_at, window_end) > window_start; see
+      -- DeletedAppIDsInBillingWindow.
+      AND (residency.ended_at > sqlc.arg(window_start)::timestamptz
+           OR (residency.ended_at IS NULL AND sqlc.arg(window_end)::timestamptz > sqlc.arg(window_start)::timestamptz))
   )
 ORDER BY instance.started_at NULLS LAST, instance.id;
 
