@@ -12999,6 +12999,7 @@ func (m *MemStore) CreateCustomDomain(ctx context.Context, domain, appID, token 
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
 		return CustomDomain{}, err
 	}
+	m.dropCustomDomainTLSHostsLocked(domain)
 	m.domains[domain] = d
 	return d, nil
 }
