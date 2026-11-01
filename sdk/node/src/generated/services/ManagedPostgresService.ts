@@ -8,6 +8,7 @@ import type { CreateDataAPIContractTaskRequest } from '../models/CreateDataAPICo
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
 import type { DataAPIConnectionBudgets } from '../models/DataAPIConnectionBudgets.js';
+import type { DataAPIRuntime } from '../models/DataAPIRuntime.js';
 import type { DataAPIRuntimeConnectionReport } from '../models/DataAPIRuntimeConnectionReport.js';
 import type { DataAPIUsage } from '../models/DataAPIUsage.js';
 import type { DataAPIUsageReport } from '../models/DataAPIUsageReport.js';
@@ -651,6 +652,36 @@ export class ManagedPostgresService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/data-api/connection-budget',
+      path: {
+        'slug': slug,
+      },
+    });
+  }
+  /**
+   * Download the current Data API runtime
+   * Returns the Data API runtime this control plane serves: its version,
+   * and a gzipped tar of the runtime under one `data-api/` directory with
+   * its SHA-256. `gregale data-api create` and `gregale data-api deploy`
+   * deploy this archive, so an older CLI release does not redeploy an older
+   * runtime. A running Data API reports the version it was built from as
+   * `runtime_version` on `/healthz`; a different version is not the
+   * platform's current runtime.
+   *
+   * @returns DataAPIRuntime The current runtime
+   * @returns Problem App lookup, permission or runtime failure
+   * @throws ApiError
+   */
+  public static getDataApiRuntime({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DataAPIRuntime | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/data-api/runtime',
       path: {
         'slug': slug,
       },

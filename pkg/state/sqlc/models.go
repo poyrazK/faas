@@ -8253,6 +8253,17 @@ type ManagedPostgresLiveLogin struct {
 	SealedLoginSig     []byte
 }
 
+// Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).
+type ManagedPostgresOverageDelivery struct {
+	Provider            string
+	SubjectID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	Live                bool
+	BilledUnitSeconds   int64
+	DeliveredMillicents int64
+	UpdatedAt           pgtype.Timestamptz
+}
+
 type ManagedPostgresResize struct {
 	ID                 pgtype.UUID
 	AccountID          pgtype.UUID

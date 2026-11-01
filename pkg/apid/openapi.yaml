@@ -8401,6 +8401,36 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/data-api/runtime:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: getDataAPIRuntime
+      summary: Download the current Data API runtime
+      description: |
+        Returns the Data API runtime this control plane serves: its version,
+        and a gzipped tar of the runtime under one `data-api/` directory with
+        its SHA-256. `gregale data-api create` and `gregale data-api deploy`
+        deploy this archive, so an older CLI release does not redeploy an older
+        runtime. A running Data API reports the version it was built from as
+        `runtime_version` on `/healthz`; a different version is not the
+        platform's current runtime.
+      tags: [managed_postgres]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The current runtime
+          headers:
+            Cache-Control: { schema: { type: string }, description: Prevents caching across control-plane releases. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIRuntime' }
+        default:
+          description: App lookup, permission or runtime failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/data-api/contract-tasks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -83454,6 +83484,15 @@ components:
         last_error_code: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    DataAPIRuntime:
+      description: The Data API runtime the control plane serves.
+      type: object
+      additionalProperties: false
+      required: [version, archive_sha256, archive]
+      properties:
+        version: { type: string, pattern: '^[0-9a-f]{16}$', description: Digest of the runtime's image files; running Data APIs report it as runtime_version on /healthz. }
+        archive_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Lowercase hex SHA-256 of the decoded archive. }
+        archive: { type: string, format: byte, maxLength: 2796204, description: 'Base64 gzipped tar of the runtime under one data-api/ directory, at most 2 MiB decoded.' }
     DataAPIConnectionBudgets:
       description: Read-only planning snapshots. Not applicable means the app has no visible Data API binding.
       type: object

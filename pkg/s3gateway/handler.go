@@ -81,6 +81,10 @@ type Config struct {
 	OrgAccess      *objectstorage.OrgAccessCache
 	AccountLimiter *objectstorage.AccountRequestLimiter
 	Credentials    *CredentialCache
+	// Transfers paces request and object response bodies to the gateway's
+	// share of its node's port; nil leaves them unpaced
+	// (ADR-20261031122757 §3).
+	Transfers *objectstorage.TransferLimiter
 }
 
 type Handler struct {
@@ -92,6 +96,7 @@ type Handler struct {
 	orgAccess       *objectstorage.OrgAccessCache
 	credentials     *CredentialCache
 	accountLimiter  *objectstorage.AccountRequestLimiter
+	transfers       *objectstorage.TransferLimiter
 	openSecret      func([]byte) (string, error)
 	client          *http.Client
 	enabled         func() bool
@@ -191,7 +196,7 @@ func New(c Config) (*Handler, error) {
 		c.Log = slog.Default()
 	}
 	return &Handler{
-		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, openSecret: c.OpenSecret, client: c.HTTPClient,
+		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, transfers: c.Transfers, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
 		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
@@ -273,7 +278,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.setTransferDeadlines(w, ctx)
 	if r.Body != nil && r.Body != http.NoBody {
 		deadline, _ := ctx.Deadline()
-		r.Body = newProgressBody(w, r.Body, deadline)
+		r.Body = newProgressBody(w, h.transfers.ReadCloser(ctx, r.Body, objectstorage.TransferUpload), deadline)
 	}
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
@@ -1270,7 +1275,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {
-		body := io.Reader(response.Body)
+		body := h.transfers.Reader(r.Context(), response.Body, objectstorage.TransferDownload)
 		if h.registry.Accounting.GatewaySafety() {
 			body = io.LimitReader(body, response.ContentLength)
 		}
