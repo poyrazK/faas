@@ -7008,14 +7008,15 @@ type Querier interface {
 	// Multiple trusted producers can contribute to one trace (for example,
 	// gatewayd-internal service bindings and outboundd provider calls), so merge
 	// by span identity instead of allowing a later writer to erase earlier spans.
-	// Keep the slowest 1000 unique spans, the Scale-tier maximum, to bound storage.
+	// Keep the slowest unique spans up to the plan's cap ($4, at most the
+	// Scale-tier 1000) to bound storage.
 	// $N::jsonb cast is load-bearing — without it sqlc binds as text and
 	// Postgres raises SQLSTATE 22P02 (invalid_text_representation).
 	//
 	// PR-D code-review #1: the WHERE clause now also pins account_id.
 	// Defense in depth against cross-customer overwrite. The
-	// gateway-side accumulator already rejects trace_id/account_id
-	// mismatches (pkg/gateway/spans_accumulator.go ErrAccountMismatch),
+	// gateway-side accumulator buffers each (account, trace) separately
+	// (pkg/gateway/spans_accumulator_buckets.go),
 	// and the apid gRPC handler forwards the same account_id, but a
 	// bug at any layer could otherwise let account A's flush wipe
 	// account B's row. Adding the account_id = $3::uuid predicate
