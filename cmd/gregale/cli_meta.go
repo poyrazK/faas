@@ -5681,7 +5681,7 @@ var cliCommands = []cliCommand{
 				}},
 			}},
 			{Name: "hooks", Short: "Change hooks: publish committed row changes as events", Subcommands: []cliSub{
-				{Name: "sql", Short: "Print the change hooks migration (change event table, trigger, enable/disable helpers)", Flags: []cliFlag{
+				{Name: "sql", Short: "Print the change hooks migration", Notes: []string{"Creates the change event table, its trigger and the enable and disable helpers."}, Flags: []cliFlag{
 					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
 				}, Examples: []string{"gregale data-api hooks sql > migrations/0006_change_hooks.sql"}},
 				{Name: "enable", Short: "Publish recorded changes as events from the Data API app's source", Positionals: []string{"<name>"}, Flags: []cliFlag{

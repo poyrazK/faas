@@ -9397,7 +9397,7 @@ Change hooks: publish committed row changes as events
 
 #### data-api hooks sql
 
-Print the change hooks migration (change event table, trigger, enable/disable helpers)
+Print the change hooks migration
 
 `gregale data-api hooks sql [--schema <SCHEMA>]`
 
@@ -9411,15 +9411,17 @@ Examples:
 gregale data-api hooks sql > migrations/0006_change_hooks.sql
 ```
 
+Creates the change event table, its trigger and the enable and disable helpers.
+
 #### data-api hooks enable
 
 Publish recorded changes as events from the Data API app&#39;s source
 
-`gregale data-api hooks enable [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api hooks enable [--env <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
+| `--env <SCOPE>` | environment scope (also --scope) |  |
 | `--no-restart` | store settings without a fresh restart |  |
 
 Examples:
@@ -9432,21 +9434,21 @@ gregale data-api hooks enable shop-data
 
 Show whether change hooks are on and their event source
 
-`gregale data-api hooks status [--scope <SCOPE>] <name>`
+`gregale data-api hooks status [--env <SCOPE>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
+| `--env <SCOPE>` | environment scope (also --scope) |  |
 
 #### data-api hooks disable
 
 Stop publishing; recorded changes stay in the table
 
-`gregale data-api hooks disable [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api hooks disable [--env <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
+| `--env <SCOPE>` | environment scope (also --scope) |  |
 | `--no-restart` | store settings without a fresh restart |  |
 
 ### data-api live
