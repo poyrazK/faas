@@ -180,6 +180,10 @@ const (
 	// A compute cap warning is useful for a day; later sweeps never resend it.
 	InternalMailManagedPostgresCapTTL         = 24 * time.Hour
 	InternalMailManagedPostgresCapMaxBytes    = 512
+	// A restore slot notice is useful for a day; an 'ending' notice no later
+	// than the slot's end (ADR-20261031123259).
+	InternalMailManagedPostgresRestoreSlotTTL      = 24 * time.Hour
+	InternalMailManagedPostgresRestoreSlotMaxBytes = 512
 	InternalMailDunningSuspendAfter           = 7 * 24 * time.Hour
 	InternalMailDunningDeleteAfter            = 21 * 24 * time.Hour
 	InternalMailSuspensionFollowupLease       = 5 * time.Minute

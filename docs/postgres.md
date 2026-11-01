@@ -163,6 +163,9 @@ every plan:
   ordinary database.
 - Otherwise its delete is scheduled at `restore_slot_until`, with the usual
   7-day undo. Its bindings are removed first. The source is never touched.
+- The account that ran the restore gets an email 48 hours before
+  `restore_slot_until` while there is still no room, and another when the
+  delete is scheduled.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
 - A copy cannot replace its source: the source cannot be deleted while the

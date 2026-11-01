@@ -8303,6 +8303,16 @@ type ManagedPostgresRestoreProof struct {
 	DataResourceID     pgtype.Text
 }
 
+// Restore slot notices for a managed PostgreSQL copy (ending soon, delete scheduled); written only by apid (ADR-20261031123259).
+type ManagedPostgresRestoreSlotNotice struct {
+	DatabaseID      pgtype.UUID
+	Kind            string
+	SlotUntil       pgtype.Timestamptz
+	RestorableUntil pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+	MailIntentID    pgtype.UUID
+}
+
 type ManagedPostgresRestoreVerification struct {
 	DatabaseID         pgtype.UUID
 	AccountID          pgtype.UUID

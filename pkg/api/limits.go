@@ -642,6 +642,10 @@ const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
 // could not restore at all.
 const ManagedPostgresRestoreSlots = 1
 const ManagedPostgresRestoreSlotWindow = 7 * 24 * time.Hour
+
+// ManagedPostgresRestoreSlotNoticeLead is how long before a restore slot ends
+// without room the restoring account is emailed (ADR-20261031123259).
+const ManagedPostgresRestoreSlotNoticeLead = 48 * time.Hour
 const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 
 // Fleet safety ceilings bound what operators may configure as the platform's
