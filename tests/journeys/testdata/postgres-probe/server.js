@@ -4,6 +4,7 @@
 //
 //   POST /notes?env=KEY&body=TEXT  inserts a row, returns {body, at}
 //   GET  /notes?env=KEY            returns {bodies, now}
+//   node server.js migrate STEP    runs a release command (see migrations)
 //
 // KEY names the environment variable holding the URL (DATABASE_URL by
 // default). TEXT is [a-z0-9-]{1,40}, so it can be quoted safely; writing the
@@ -211,20 +212,48 @@ async function notes(req, url) {
   return [200, { bodies: rows.map((row) => row[0]), now: now[0][0] }];
 }
 
-http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://probe");
-  let status = 200, payload = { ok: true };
-  if (url.pathname === "/notes") {
-    try {
-      [status, payload] = await notes(req, url);
-    } catch (err) {
-      status = 502;
-      payload = { error: err.message, code: err.code || "" };
+// migrations are the database rollback journey's release commands
+// (TestManagedPostgresRollbackRestore). They connect through the migration
+// binding, MIGRATION_DATABASE_URL, which only the release task receives.
+const migrations = {
+  create: schema,
+  // The bad migration the journey rolls back: it deletes every row.
+  wipe: `${schema} DELETE FROM journey_notes;`,
+};
+
+async function migrate(step) {
+  const database = process.env.MIGRATION_DATABASE_URL;
+  if (!database) throw new Error("MIGRATION_DATABASE_URL is not set");
+  if (!migrations[step]) throw new Error(`unknown migration ${step}`);
+  await query(database, migrations[step]);
+  console.log(`migration ${step} done`);
+}
+
+if (process.argv[2] === "migrate") {
+  migrate(process.argv[3]).catch((err) => {
+    console.error(`migration ${process.argv[3]} failed: ${err.message}`);
+    process.exit(1);
+  });
+} else {
+  serve();
+}
+
+function serve() {
+  http.createServer(async (req, res) => {
+    const url = new URL(req.url, "http://probe");
+    let status = 200, payload = { ok: true };
+    if (url.pathname === "/notes") {
+      try {
+        [status, payload] = await notes(req, url);
+      } catch (err) {
+        status = 502;
+        payload = { error: err.message, code: err.code || "" };
+      }
+    } else if (url.pathname !== "/" && url.pathname !== "/healthz") {
+      status = 404;
+      payload = { error: "not found" };
     }
-  } else if (url.pathname !== "/" && url.pathname !== "/healthz") {
-    status = 404;
-    payload = { error: "not found" };
-  }
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(payload) + "\n");
-}).listen(port, () => console.log(`postgres probe listening on ${port}`));
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(payload) + "\n");
+  }).listen(port, () => console.log(`postgres probe listening on ${port}`));
+}
