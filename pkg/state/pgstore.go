@@ -16802,6 +16802,12 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 	if err != nil {
 		return 0, err
 	}
+	// A pull lease that lapsed on its message's last attempt dead-letters
+	// (ADR-20261101093812); the sweep below requeues the rest.
+	leases, err := exhaustExpiredQueueLeasesTx(ctx, tx, now, limit-operations)
+	if err != nil {
+		return 0, err
+	}
 	var requeued int
 	err = tx.QueryRow(ctx, `
 		with expired as (
@@ -16838,14 +16844,14 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 			  from per_account as p
 			 where q.account_id = p.account_id
 		)
-		select count(*) from requeued`, now.UTC(), limit-operations).Scan(&requeued)
+		select count(*) from requeued`, now.UTC(), limit-operations-leases).Scan(&requeued)
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired commit: %w", err)
 	}
-	return requeued + operations, nil
+	return requeued + operations + leases, nil
 }
 
 func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
@@ -32023,6 +32029,9 @@ func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocatio
 	if err := refreshEventReplayCapacity(ctx, tx, invocationID); err != nil {
 		return Invocation{}, err
 	}
+	if err := checkQueueReplayAdmissionTx(ctx, tx, id); err != nil {
+		return Invocation{}, err
+	}
 	row, err := sqlc.New().RetryProductionQueueDeadLetter(ctx, tx, sqlc.RetryProductionQueueDeadLetterParams{ID: id, AccountID: account})
 	if err != nil {
 		return Invocation{}, mapErr(err)
@@ -32159,6 +32168,9 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		}
 		if err := refreshEventReplayCapacity(ctx, tx, ev.SourceID); err != nil {
 			return time.Time{}, mapErr(err)
+		}
+		if err := checkQueueReplayAdmissionTx(ctx, tx, args.EventID); err != nil {
+			return time.Time{}, err
 		}
 		n, updateErr := sqlc.New().ReplayProductionDeadLetterInvocation(ctx, tx, sqlc.ReplayProductionDeadLetterInvocationParams{
 			InvocationID: args.EventID, AccountID: args.AccountID, AppID: args.AppID,

@@ -1561,6 +1561,7 @@ type Querier interface {
 	ExecutionUsageRecord(ctx context.Context, db DBTX, executionID pgtype.UUID) error
 	ExecutionWorkflowSummary(ctx context.Context, db DBTX, arg ExecutionWorkflowSummaryParams) (ExecutionWorkflowSummaryRow, error)
 	ExhaustEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg ExhaustEnvironmentQueueDeliveryInvocationParams) (int64, error)
+	ExhaustExpiredQueueLease(ctx context.Context, db DBTX, arg ExhaustExpiredQueueLeaseParams) (int64, error)
 	ExistsManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg ExistsManagedPostgresLifecycleDatabaseParams) (bool, error)
 	// The hostnames of captured identities whose claims or reservations follow
 	// other rows: an app's primary URL, domains, redirects, tenant hostnames and
@@ -1572,6 +1573,10 @@ type Querier interface {
 	// ADR-20261022105723: a pending queue message past its plan's retention
 	// moves to the dead letter. A message a worker holds (dispatching) is not
 	// touched. The plan resolves as StampDefaultInvocationRetention's does.
+	// ADR-20261101093812: retention counts from the message's last replay, so a
+	// message replayed from the dead letter gets the whole retention again. A
+	// replay is never earlier than the send, so the created_at bound still
+	// narrows invocations_queue_pending_created_idx.
 	ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error)
 	ExpireProfileCanaryChecks(ctx context.Context, db DBTX, arg ExpireProfileCanaryChecksParams) error
 	ExpireProfileDeploymentChecks(ctx context.Context, db DBTX, arg ExpireProfileDeploymentChecksParams) error
@@ -1593,6 +1598,10 @@ type Querier interface {
 	// for now; future multi-replica deployment needs SELECT ... FOR
 	// UPDATE SKIP LOCKED).
 	ExpireUploadSession(ctx context.Context, db DBTX, id string) error
+	// ADR-20261101093812: pull leases that lapsed, with what their attempt budget
+	// comes from. A lease on the message's last attempt dead-letters when it
+	// lapses instead of waiting, pending, for a lease call that may never come.
+	ExpiredQueueLeases(ctx context.Context, db DBTX, arg ExpiredQueueLeasesParams) ([]ExpiredQueueLeasesRow, error)
 	ExtendEnvironmentGitOpsEffectTargets(ctx context.Context, db DBTX, arg ExtendEnvironmentGitOpsEffectTargetsParams) (EnvironmentGitopsEffect, error)
 	ExtendQueueLeaseInvocation(ctx context.Context, db DBTX, arg ExtendQueueLeaseInvocationParams) (pgtype.Timestamptz, error)
 	ExtendQueueLeaseReceipt(ctx context.Context, db DBTX, arg ExtendQueueLeaseReceiptParams) error
@@ -5805,6 +5814,11 @@ type Querier interface {
 	ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingWeightsParams) ([]ReadPublicRoutingWeightsRow, error)
 	ReadQueueCanary(ctx context.Context, db DBTX, arg ReadQueueCanaryParams) (ReadQueueCanaryRow, error)
 	ReadQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationQueueLeaseReceipt, error)
+	// ADR-20261101093812: a production queue message replayed from the dead
+	// letter re-enters its app's queue under the caps a send meets. The plan
+	// resolves as ExpirePendingQueueMessages' does. Environment-owned messages
+	// are not production work and keep their own caps.
+	ReadQueueReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadQueueReplayAdmissionRow, error)
 	ReadReleaseAdditionApp(ctx context.Context, db DBTX, appID string) (ReadReleaseAdditionAppRow, error)
 	ReadReleaseReview(ctx context.Context, db DBTX, arg ReadReleaseReviewParams) (ReadReleaseReviewRow, error)
 	ReadReleaseWorkerRunningProof(ctx context.Context, db DBTX, deploymentID string) ([]ReadReleaseWorkerRunningProofRow, error)

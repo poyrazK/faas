@@ -84,8 +84,7 @@ func (m *MemStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest
 			break
 		}
 		if environmentQueueDeliveryAttemptsExhausted(inv, limits) {
-			inv = exhaustEnvironmentQueueDelivery(inv, now)
-			inv.LastError = "queue lease attempt budget exhausted after lease expiry"
+			inv = exhaustQueueLease(inv, now)
 			m.invocations[inv.ID] = inv
 			continue
 		}

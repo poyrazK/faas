@@ -540,10 +540,21 @@ same moment may pass it by their own sizes.
 
 ### Message expiry
 
-A message that waits longer than its plan allows, counted from its send, moves to
-the dead-letter queue with outcome code `queue_message_expired`. Replay it from
-there (`gregale dlq list <app>`) once a worker can take it. A message a worker holds
-under a lease does not expire.
+A message that waits longer than its plan allows moves to the dead-letter queue
+with outcome code `queue_message_expired`. The wait counts from the send or, for a
+replayed message, from its last replay. Replay it from there
+(`gregale dlq list <app>`) once a worker can take it, and it gets the plan's whole
+wait again. A message a worker holds under a lease does not expire.
+
+### Replaying into a full queue
+
+A replayed queue message goes back into its app's queue, so it is subject to the
+queue depth and queue backlog limits a send is. Replaying one message into a full
+queue fails with the same `403 plan_queue_depth` or `403 plan_queue_backlog_bytes`
+problem, and the message stays in the dead-letter queue. A replay-all skips such
+messages and replays the rest; when it could replay nothing else, it answers with
+the limit problem. See
+[ADR-20261101093812](adr/20261101093812-queue-replay-meets-queue-limits.md).
 
 ## Application inbox
 

@@ -2,6 +2,9 @@
 
 - **Status:** accepted and implemented. Decisions 2 and 3 change nothing.
 - **Date:** 2026-10-22
+- **Amended by:** [ADR-20261101093812](20261101093812-queue-replay-meets-queue-limits.md)
+  (retention counts from a message's last replay; replay meets the queue
+  depth and backlog caps)
 - **Builds on:** ADR-1140 (worker pull leases), ADR-152 (configurable app
   CPU), ADR-1430 (plan entitlements from the October 2026 COGS report),
   spec §4.7 (billing on plan RAM + 8 MB).

@@ -135,10 +135,19 @@ func (s *PgStore) productionDeadLetterReplayMany(ctx context.Context, accountID,
 		return 0, err
 	}
 	replayed := 0
+	var capped error
 	for _, row := range rows {
 		ev := deadLetterEventFromSQLC(row)
 		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, ev.AppID, ev); err != nil {
 			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
+				continue
+			}
+			// A queue message its app or account has no room for stays
+			// in the dead letter (ADR-20261101093812).
+			if IsQueueCapError(err) {
+				if capped == nil {
+					capped = err
+				}
 				continue
 			}
 			return 0, err
@@ -147,6 +156,16 @@ func (s *PgStore) productionDeadLetterReplayMany(ctx context.Context, accountID,
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
+	}
+	return replayedOrQueueCap(replayed, capped)
+}
+
+// replayedOrQueueCap reports a replay of many dead letters. When queue caps
+// refused every message it tried, it returns the first refusal, so the caller
+// learns why nothing replayed.
+func replayedOrQueueCap(replayed int, capped error) (int, error) {
+	if replayed == 0 && capped != nil {
+		return 0, capped
 	}
 	return replayed, nil
 }
