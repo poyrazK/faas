@@ -59,7 +59,7 @@ func cmdDataAPIHooksSQL(args []string) int {
 	fs := newFlagSet("data-api hooks sql", flag.ContinueOnError)
 	schema := fs.String("schema", "api", "the Data API's first exposed schema")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api hooks sql [--schema api]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api hooks export [--schema api]", "data-api")
 		return 1
 	}
 	sql, err := dataAPIHooksSQL(*schema)
@@ -76,7 +76,7 @@ func cmdDataAPIHooksSetting(verb string, args []string) int {
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
 	usage := fmt.Sprintf("usage: gregale data-api hooks %s NAME [--scope SCOPE] [--no-restart]", verb)
 	if verb == "status" {
-		usage = "usage: gregale data-api hooks status NAME [--scope SCOPE]"
+		usage = "usage: gregale data-api hooks status NAME [--env SCOPE]"
 	}
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || (verb == "status" && *noRestart) {
 		PrintUsage(os.Stderr, usage, "data-api")
@@ -173,7 +173,7 @@ func printDataAPIHooks(verb string, receipt dataAPIHooksReceipt) {
 		_, _ = fmt.Fprintf(osStdout, "change hooks  %s\nsource        %s\n", onOff(receipt.Enabled), receipt.Source)
 	default:
 		PrintOK(osStdout, "Change hooks on for %s: recorded changes publish as events from %s", receipt.App, receipt.Source)
-		_, _ = fmt.Fprintf(osStdout, `Record changes with a migration: add the table (gregale data-api hooks sql), then hook tables:
+		_, _ = fmt.Fprintf(osStdout, `Record changes with a migration: add the table (gregale data-api hooks export), then hook tables:
   SELECT gregale_hooks.enable('api.orders');
 Subscribe from any app's gregale.yaml, in commit order per row:
   work_policies:

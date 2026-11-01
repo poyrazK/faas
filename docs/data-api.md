@@ -1528,7 +1528,7 @@ uses the event router's retries, dead-letter queue and replay.
    needs a primary key:
 
    ```sh
-   gregale data-api hooks sql > migrations/0006_change_hooks.sql
+   gregale data-api hooks export > migrations/0006_change_hooks.sql
    ```
 
    ```sql
