@@ -652,6 +652,11 @@ const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 // total managed PostgreSQL databases and monthly provider cost (integer
 // millicents). They are COGS breakers across every account, not plan quotas.
 const ManagedPostgresFleetDatabasesCeiling = 100000
+
+// ManagedPostgresFleetPaidReservePercent is the share of the fleet's database
+// cap only paid plans may add when the operator sets no paid reserve
+// (ADR-20261031091607).
+const ManagedPostgresFleetPaidReservePercent = 20
 const ManagedPostgresFleetMonthlyCostCeilingMillicents = 10_000_000_000
 
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.

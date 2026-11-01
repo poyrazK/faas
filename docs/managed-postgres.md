@@ -75,6 +75,10 @@ Provisioning opens while all of the following hold:
 - usage metering (`usage.enabled`) is on;
 - the `fleet` block sets both `max_databases` and
   `max_monthly_cost_millicents`;
+- `max_databases_per_account` allows every plan its databases (at least 10,
+  Scale's limit). apid takes the lower of it and the plan's limit, so a smaller
+  value would sell Scale fewer databases; unset, production uses 10. A smaller
+  value keeps provisioning closed with `database_limit_below_plan`;
 - an operator approval pins the single default backend:
   `FAAS_MANAGED_POSTGRES_PRODUCTION_BACKEND` and
   `FAAS_MANAGED_POSTGRES_PRODUCTION_FINGERPRINT`, approved from
@@ -85,7 +89,12 @@ Provisioning opens while all of the following hold:
 the configured backend's fingerprint without contacting the provider.
 
 The `managed-postgres` capability flag decides which accounts may create
-databases. The staging canary list is not read in production. When the
+databases. The staging canary list is not read in production. Until
+`FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` and
+`FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` are both `on`, only an account
+a flag rule names, or one that opted in, is released: the flag's default, the
+GA tier included, releases nobody while databases would run uncapped. apid
+logs `managed postgres release held to accounts a flag rule names` at start. When the
 approval ends, new databases, bindings, restores and resizes close; existing
 databases and credentials keep working.
 
@@ -93,6 +102,10 @@ The fleet ceilings apply across every account:
 
 - At `max_databases`, new databases, restores and snapshot copies answer
   `503 managed_postgres_new_databases_paused`.
+- The last `paid_reserve_databases` of `max_databases` are for paid plans: a
+  Free account cannot add a database once the fleet holds `max_databases`
+  minus the reserve, and its refusal suggests upgrading. Unset, the reserve is
+  20% of `max_databases`; 0 reserves none.
 - Once this UTC month's provider cost reaches `max_monthly_cost_millicents`,
   cost-raising resizes pause as well, until the next month.
 
@@ -128,7 +141,8 @@ customers out until the owner has tested production
 2. Qualify the backend in an isolated Neon project with
    `managed-postgres-qualify --compute-cap` and `--storage-cap`. The deletion
    hold check runs with every qualification.
-3. Turn on enforcement after each shadow readout:
+3. Turn on enforcement after each shadow readout (until both caps are `on`,
+   step 6's default releases nobody):
    `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`,
    `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
