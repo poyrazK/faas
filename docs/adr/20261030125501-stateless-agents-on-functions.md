@@ -160,6 +160,20 @@ Each step is one PR behind the `agents` capability.
    - `subscription_event` becomes kind `event`. It carries no identity of its own, so each post is a new message, as in Infinity's receiver.
    - `view_update` is acknowledged and not published: it is display state, not agent input.
    - `oauth` and `user_choice` are refused until the platform has a flow for them.
+
+   **Step 4b, part two (2026-11-01): template `agent-infinity-rust`, Infinity's step mode on a function.** It is unlisted while `agents` is internal.
+   - **Runtime.** It is a Rust function on the binary runtime (ADR-987), and Infinity's crates are 0.2.0 from crates.io.
+     - Each inbox message runs one `AgentSystem::step` with `NoDeferral`. The consumer group's per-thread order is step mode's serialization contract.
+     - A trigger record becomes Infinity input: user text from kind `user`; a RAP callback through Infinity's own `prepare_callback`; the runtime's loopback from `infinity_input`. The inbox `message_id` is the dedup ID.
+   - **The Infinity store adapter** (`src/store.rs`). `ConversationStore` and `StateStore` run on plain Postgres (`DATABASE_URL`), with tables created on first use.
+     - Message orders are one-based and contiguous per thread, and a batch is numbered and inserted in one statement.
+     - Each slice opens one connection and drops it on return. TLS certificates are verified unless `sslmode=disable`.
+     - A contract test checks the adapter against the in-memory stores' semantics on a real Postgres.
+   - **RAP tools.** A tool's callback URL is issued for the calling thread just before the call goes out, through `RapInvocationParams.callback_url`. With `TOOL_URL` set, the call goes to that RAP server. Without it, the call is held, and `GET /threads/:id` shows it for the seller's backend to answer.
+   - **Loopback.** Infinity's `InputSender` posts through a callback URL issued for the target thread, so child threads, reports and tool errors need no API key either.
+   - **Answer.** A thread that answered and has no active subscription revokes its callback URLs.
+   - **Model.** It is still scripted. Model access through the AI gateway (§6) waits on the relay in production.
+   - **Journey.** `TestStatelessAgent` now runs once per template. The Infinity run's tool answers with a RAP `tool_result`.
 5. The platform tools: `gregale.sleep`, `gregale.run`, then `gregale.github.subscribe`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 
