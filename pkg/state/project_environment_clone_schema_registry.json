@@ -4835,6 +4835,19 @@
     ]
   },
   {
+    "table": "deployment_event_subscription_intents",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "created_at",
+      "declared_subscription_ids",
+      "deployment_id",
+      "reason",
+      "status",
+      "updated_at"
+    ]
+  },
+  {
     "table": "deployment_dependency_gates",
     "columns": [
       "blocker",
