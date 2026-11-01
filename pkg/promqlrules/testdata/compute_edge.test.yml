@@ -77,6 +77,54 @@ tests:
         alertname: FaasComputeEdgeUnavailable
         exp_alerts: []
 
+  # ADR-20261031122757: the s3 tunnel's connectors export the same metric
+  # under job cloudflared-s3. Their connections must not hide an app tunnel
+  # that lost all of its own, nor fire the app edge's alerts.
+  - name: s3 tunnel connectors neither mask nor trip the app edge alerts
+    interval: 1m
+    input_series:
+      - series: up{job="gatewayd-public-edge",node="cn-1"}
+        values: 1+0x10
+      - series: up{job="cloudflared",node="cn-1"}
+        values: 1+0x10
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared",node="cn-1"}
+        values: 4 4 0 0 0 0 0 0 0 0
+      - series: up{job="cloudflared-s3",node="cn-1"}
+        values: 1+0x10
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared-s3",node="cn-1"}
+        values: 4+0x10
+      - series: up{job="cloudflared-s3",node="cn-2"}
+        values: 1+0x10
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared-s3",node="cn-2"}
+        values: 0+0x10
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasComputeEdgeUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: gatewayd-public
+              family: compute_edge
+              public_status: internal
+            exp_annotations:
+              summary: "No compute-node app edge is serving"
+              description: "Every compute edge is down or every Cloudflare Tunnel connector has lost its connections for 2 minutes. App requests routed through the tunnel are failing."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+      - eval_time: 6m
+        alertname: FaasComputeEdgeConnectorDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: cloudflared
+              family: compute_edge
+              public_status: internal
+              job: cloudflared
+              node: cn-1
+            exp_annotations:
+              summary: "The Cloudflare Tunnel connector on cn-1 is not connected"
+              description: "faas-cloudflared on cn-1 is down or holds no tunnel connections. The node serves no app traffic until it reconnects; the other connectors carry its share."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
   - name: sustained local fallback and misdirected hosts warn
     interval: 1m
     input_series:

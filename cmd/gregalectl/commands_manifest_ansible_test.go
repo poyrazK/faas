@@ -874,7 +874,12 @@ func TestRenderManifestAnsibleFiles_ComputeObjectGateway(t *testing.T) {
 	if strings.Contains(computeVars, "provider_env_src: \"/operator/provider.env\"") {
 		t.Errorf("compute host got the bucket-admin credential:\n%s", computeVars)
 	}
-	if strings.Contains(controlVars, "faas_object_gateway_") || strings.Contains(controlVars, "gateway_provider_env_src") {
+	// The control plane scrapes the compute gateways, and holds nothing else
+	// of theirs.
+	if !strings.Contains(controlVars, "faas_object_gateway_on_compute_nodes: true\n") {
+		t.Errorf("control host vars miss the compute gateway switch:\n%s", controlVars)
+	}
+	if strings.Contains(controlVars, "faas_object_gateway_max_bytes_per_second") || strings.Contains(controlVars, "gateway_provider_env_src") {
 		t.Errorf("control host got compute gateway vars:\n%s", controlVars)
 	}
 }
