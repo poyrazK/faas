@@ -2636,6 +2636,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// H5-34: one gate across both telemetry listeners bounds their share of
 	// apid's database pool.
 	ingest := receivers.NewIngestGate(api.TelemetryIngestDBConcurrency)
+	// ADR-20261101085552: gateways that keep the request-ID journal on their
+	// node hold a lookup stream on whichever listener carries their request
+	// telemetry; one hub serves both and the debug request lookup.
+	srv.requestIDLookups = receivers.NewRequestIDLookupHub(log)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
 		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
@@ -2643,6 +2647,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
 		}
+		receivers.RegisterRequestIDLookups(rtSrv, srv.requestIDLookups)
 		go func() {
 			log.Info("apid request telemetry server listening")
 			if err := rtSrv.Serve(rtLis); err != nil {
@@ -2663,6 +2668,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
+		}
+		if !isUnixSocketPath(appErrTarget) { // where runAppErrorsServer serves RequestTelemetry
+			receivers.RegisterRequestIDLookups(appErrSrv, srv.requestIDLookups)
 		}
 		go func() {
 			log.Info("apid app errors server listening", "target", appErrTarget)
@@ -2727,6 +2735,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
+		receivers.RegisterRequestIDLookups(appErrSrv, srv.requestIDLookups)
 		go func() {
 			if err := appErrSrv.Serve(appErrLis); err != nil {
 				log.Error("apid consumer usage serve", "err", err)
