@@ -277,6 +277,12 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 		if m.retireLogDrainWorkerLocked(worker) {
 			delete(m.workers, id)
 		}
+		if !ok {
+			// No longer this node's drain (the app moved, or the drain was
+			// disabled or deleted): stop writing its health, or this node's
+			// frozen "inactive" row keeps overwriting the new owner's.
+			m.forgetHealth(id)
+		}
 	}
 	for _, spec := range desired {
 		if _, exists := m.workers[spec.ID]; exists {
@@ -451,6 +457,10 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 	provenanceCache := make(map[string]appLogDrainProvenance)
 	backoff := time.Second
 	streamEstablished := false
+	// refused is set when the durable queue refused a record: the next
+	// stream would replay into the same full queue, so keep backing off
+	// instead of reconnecting every second.
+	refused := false
 	for {
 		if ctx.Err() != nil {
 			return
@@ -460,14 +470,22 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 			err = errors.New("log stream resolver returned nil streamer")
 		}
 		if err == nil {
-			stream, streamErr := streamer.StreamAppLogs(ctx, spec.AppID, 0, time.Time{}, true, "", "", "")
+			// Replay each instance's retained ring (seq 1) and skip what the
+			// durable cursor already delivered. Cursor 0 meant "new lines
+			// only", so every reconnect (gateway restart, drain edit, schedd
+			// restart, stream error) silently lost the lines written while
+			// the drain was detached. Lines older than the drain are not
+			// forwarded.
+			stream, streamErr := streamer.StreamAppLogs(ctx, spec.AppID, 1, spec.CreatedAt, true, "", "", "")
 			if streamErr == nil {
 				if streamEstablished {
 					m.metrics.ObserveLogDrainStreamReconnect(spec.AppID, string(spec.Kind))
 					m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) { health.StreamReconnectsTotal++ })
 				}
 				streamEstablished = true
-				backoff = time.Second
+				if !refused {
+					backoff = time.Second
+				}
 				for {
 					frame, recvErr := stream.Recv()
 					if ctx.Err() != nil {
@@ -482,18 +500,15 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 					}
 					if frame.IsGap {
 						standardHealth.failed("source_gap", true)
-						m.metrics.IncLogDrainGap(spec.AppID, string(spec.Kind))
-						m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
-							health.GapsTotal++
-							if health.Active {
-								health.Status = appLogDrainHealthDegraded
-							}
-							health.LastError = "source log gap observed"
-						})
+						m.observeLogDrainGap(spec)
 						continue
 					}
 					if frame.InstanceID == "" || frame.Seq <= lastSeq[frame.InstanceID] {
 						continue
+					}
+					if last := lastSeq[frame.InstanceID]; last > 0 && frame.Seq > last+1 {
+						// The ring evicted lines this drain never delivered.
+						m.observeLogDrainGap(spec)
 					}
 					provenance := m.provenanceForFrame(ctx, frame, provenanceCache)
 					deploymentID := frame.DeploymentID
@@ -510,10 +525,12 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 						Sequence:    uint64(frame.Seq), Stream: frame.Stream, Line: frame.Line, WrittenAt: frame.WrittenAt,
 					}) {
 						// Keep the source cursor unchanged and reconnect rather than
-						// consuming later frames. A later stream can retry this record
-						// once capacity or the filesystem has recovered.
+						// consuming later frames. A later stream replays this record
+						// from the ring once capacity or the filesystem has recovered.
+						refused = true
 						break
 					}
+					refused = false
 					lastSeq[frame.InstanceID] = frame.Seq
 				}
 			} else {
@@ -535,6 +552,19 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 			backoff *= 2
 		}
 	}
+}
+
+// observeLogDrainGap records lines the drain could not deliver because the
+// source no longer had them.
+func (m *appLogDrainManager) observeLogDrainGap(spec state.AppLogDrain) {
+	m.metrics.IncLogDrainGap(spec.AppID, string(spec.Kind))
+	m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
+		health.GapsTotal++
+		if health.Active {
+			health.Status = appLogDrainHealthDegraded
+		}
+		health.LastError = "source log gap observed"
+	})
 }
 
 // provenanceForFrame resolves immutable deployment identity once per instance

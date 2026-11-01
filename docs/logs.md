@@ -114,8 +114,12 @@ LOG_TOKEN='Bearer …' gregale logs drain create --app my-api \
 gregale logs drain health my-api <drain-id>
 ```
 
-- `--kind http_json` (the default) posts batches of JSON lines; `--kind otlp`
-  sends OTLP/HTTP log records.
+- `--kind http_json` (the default) posts each line as one JSON object;
+  `--kind otlp` sends OTLP/HTTP log records in batches of up to 100 lines,
+  as does the Datadog integration.
+- A drain picks up where it left off after a restart or a change: lines
+  still held by the running instances are forwarded once, and lines that
+  were no longer available are counted as gaps in `health`.
 - The credential is read from an environment variable, stored encrypted, and
   shown masked.
 - The destination must be a public `https://` or `http://` URL; private,

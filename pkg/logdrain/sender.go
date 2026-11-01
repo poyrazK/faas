@@ -284,7 +284,7 @@ func (s *Sender) Run(ctx context.Context) {
 
 func (s *Sender) runDurable(ctx context.Context) {
 	for {
-		item, ok, err := s.durable.Next()
+		items, err := s.durable.NextBatch(s.batchRecords(), deliveryBatchBytes)
 		if err != nil {
 			s.queueStorageError(err)
 			if !waitForQueueWake(ctx, s.wake, time.Second) {
@@ -292,13 +292,13 @@ func (s *Sender) runDurable(ctx context.Context) {
 			}
 			continue
 		}
-		if !ok {
+		if len(items) == 0 {
 			if !waitForQueueWake(ctx, s.wake, 0) {
 				return
 			}
 			continue
 		}
-		if err := s.deliverDurable(ctx, item); err != nil {
+		if err := s.deliverDurableBatch(ctx, items); err != nil {
 			if !waitForQueueWake(ctx, s.wake, time.Second) {
 				return
 			}
@@ -330,16 +330,47 @@ func waitForQueueWake(ctx context.Context, wake <-chan struct{}, retry time.Dura
 	}
 }
 
-// deliverDurable returns storage failures or cancellation so the worker can
-// back off instead of immediately retrying against a broken disk.
+// Delivery batches. One POST used to carry one line, sent one at a time
+// with three fsyncs each, so a drain managed roughly one line per round trip
+// and a chatty app filled its spool. OTLP and Datadog take a batch per
+// request; http_json keeps its one-object-per-request wire shape.
+const (
+	deliveryBatchRecords = 100
+	deliveryBatchBytes   = 512 << 10
+)
+
+func (s *Sender) batchRecords() int {
+	if s.cfg.Kind == KindHTTPJSON {
+		return 1
+	}
+	return deliveryBatchRecords
+}
+
+// deliverDurable delivers one queued record.
 func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) error {
+	return s.deliverDurableBatch(ctx, []QueueItem{item})
+}
+
+// deliverDurableBatch returns storage failures or cancellation so the worker
+// can back off instead of immediately retrying against a broken disk. The
+// batch shares the head record's attempt count.
+func (s *Sender) deliverDurableBatch(ctx context.Context, items []QueueItem) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	record := item.Record
-	attempts := item.Attempts
+	records := make([]Record, len(items))
+	for i, item := range items {
+		records[i] = item.Record
+	}
+	head := items[0]
+	record := head.Record
+	attempts := head.Attempts
 	var lastErr error
-	for attempts < s.cfg.MaxAttempts || s.withinRetryWindow(item) {
+	// The retry window runs from the batch's first failure. It used to run
+	// from enqueue time, so once a backlog was older than the window one
+	// transient 429 dead-lettered records after three quick attempts.
+	var firstFailure time.Time
+	for attempts < s.cfg.MaxAttempts || s.withinRetryWindowSince(firstFailure) {
 		attempts++
 		if attempts > 1 {
 			if s.cfg.OnRetry != nil {
@@ -359,24 +390,29 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err := s.durable.MarkAttempt(item, attempts); err != nil {
+		if err := s.durable.MarkAttempt(head, attempts); err != nil {
 			s.queueStorageError(err)
 			return err
 		}
-		status, err := s.post(ctx, record)
+		status, err := s.postBatch(ctx, records)
 		if err == nil && status >= 200 && status < 300 {
-			if err := s.durable.Ack(item); err != nil {
+			if err := s.durable.AckBatch(items); err != nil {
 				s.queueStorageError(err)
 				return err
 			}
-			if s.cfg.OnDelivered != nil {
-				s.cfg.OnDelivered(record)
-			}
-			if s.cfg.OnDeliveredLatency != nil && !item.EnqueuedAt.IsZero() {
-				s.cfg.OnDeliveredLatency(record, time.Since(item.EnqueuedAt))
+			for _, item := range items {
+				if s.cfg.OnDelivered != nil {
+					s.cfg.OnDelivered(item.Record)
+				}
+				if s.cfg.OnDeliveredLatency != nil && !item.EnqueuedAt.IsZero() {
+					s.cfg.OnDeliveredLatency(item.Record, time.Since(item.EnqueuedAt))
+				}
 			}
 			s.observeDurableQueue()
 			return nil
+		}
+		if firstFailure.IsZero() {
+			firstFailure = time.Now()
 		}
 		if err != nil {
 			lastErr = err
@@ -393,15 +429,17 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) error {
 	if lastErr == nil {
 		lastErr = errors.New("log drain: delivery failed")
 	}
-	if err := s.durable.DeadLetter(item, attempts, lastErr); err != nil {
-		s.queueStorageError(err)
-		return err
-	}
-	if s.cfg.OnFailed != nil {
-		s.cfg.OnFailed(record, lastErr)
-	}
-	if s.cfg.OnDeadLetter != nil {
-		s.cfg.OnDeadLetter(record, lastErr)
+	for _, item := range items {
+		if err := s.durable.DeadLetter(item, attempts, lastErr); err != nil {
+			s.queueStorageError(err)
+			return err
+		}
+		if s.cfg.OnFailed != nil {
+			s.cfg.OnFailed(item.Record, lastErr)
+		}
+		if s.cfg.OnDeadLetter != nil {
+			s.cfg.OnDeadLetter(item.Record, lastErr)
+		}
 	}
 	s.observeDurableQueue()
 	return nil
@@ -413,6 +451,12 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) error {
 // dead-lettered every record an endpoint failed to accept for ~0.3 s.
 func (s *Sender) withinRetryWindow(item QueueItem) bool {
 	return s.cfg.RetryWindow > 0 && !item.EnqueuedAt.IsZero() && time.Since(item.EnqueuedAt) < s.cfg.RetryWindow
+}
+
+// withinRetryWindowSince reports whether a batch that first failed at
+// firstFailure is still inside the retry window (zero: not failed yet).
+func (s *Sender) withinRetryWindowSince(firstFailure time.Time) bool {
+	return s.cfg.RetryWindow > 0 && !firstFailure.IsZero() && time.Since(firstFailure) < s.cfg.RetryWindow
 }
 
 // durableBackoff is the wait before attempt (two-based): linear 100 ms steps
@@ -538,7 +582,11 @@ func (s *Sender) dropQueued() {
 }
 
 func (s *Sender) post(ctx context.Context, record Record) (int, error) {
-	body, contentType, err := encode(s.cfg.Kind, s.cfg.Service, record)
+	return s.postBatch(ctx, []Record{record})
+}
+
+func (s *Sender) postBatch(ctx context.Context, records []Record) (int, error) {
+	body, contentType, err := encodeBatch(s.cfg.Kind, s.cfg.Service, records)
 	if err != nil {
 		return 0, err
 	}
@@ -563,15 +611,33 @@ func (s *Sender) post(ctx context.Context, record Record) (int, error) {
 }
 
 func encode(kind Kind, service string, record Record) ([]byte, string, error) {
+	return encodeBatch(kind, service, []Record{record})
+}
+
+// encodeBatch encodes records as one request body: one OTLP export with a
+// resource per record, or one Datadog array. http_json is one object per
+// request (batchRecords keeps its batches at one record).
+func encodeBatch(kind Kind, service string, records []Record) ([]byte, string, error) {
 	switch kind {
 	case KindHTTPJSON:
-		body, err := json.Marshal(record)
+		if len(records) != 1 {
+			return nil, "", fmt.Errorf("log drain: http_json sends one record per request, got %d", len(records))
+		}
+		body, err := json.Marshal(records[0])
 		return body, "application/json", err
 	case KindOTLP:
-		body, err := json.Marshal(makeOTLPPayload(record))
+		payload := otlpLogsPayload{}
+		for _, record := range records {
+			payload.ResourceLogs = append(payload.ResourceLogs, makeOTLPPayload(record).ResourceLogs...)
+		}
+		body, err := json.Marshal(payload)
 		return body, "application/json", err
 	case KindDatadog:
-		body, err := json.Marshal([]datadogLog{makeDatadogLog(service, record)})
+		logs := make([]datadogLog, 0, len(records))
+		for _, record := range records {
+			logs = append(logs, makeDatadogLog(service, record))
+		}
+		body, err := json.Marshal(logs)
 		return body, "application/json", err
 	default:
 		return nil, "", fmt.Errorf("log drain: unsupported kind %q", kind)
