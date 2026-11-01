@@ -9400,6 +9400,19 @@ const (
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
+	// Agent callbacks (ADR-20261030125501 §3): a tool posts its result to a
+	// signed per-thread URL, and apid publishes it into that thread's lane of
+	// the app's AgentInboxChannel. A token lives at most
+	// AgentCallbackTokenTTLSec. A thread or message ID is 1 to its maximum
+	// bytes of letters, digits, '.', '_', ':' and '-', which keeps the
+	// message's idempotency key within the realtime limit. A result is one
+	// realtime message: AgentCallbackPayloadMaxBytes is the channel history's
+	// payload limit.
+	AgentCallbackTokenTTLSec            = 86_400
+	AgentCallbackThreadIDMaxBytes       = 64
+	AgentCallbackMessageIDMaxBytes      = 54
+	AgentCallbackPayloadMaxBytes        = 4096
+	AgentCallbackFailuresPerIPPerMinute = 30
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).
