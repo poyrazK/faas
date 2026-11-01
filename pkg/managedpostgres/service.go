@@ -815,7 +815,8 @@ func retryDelay(err error, attempt int32) time.Duration {
 // (production-us live test 2026-10-14; CLAUDE.md: limit errors carry the
 // limit and the observed value).
 func quotaDetail(err error, limit int) error {
-	if !errors.Is(err, ErrQuotaExceeded) {
+	// The restore slot refusal names the copy to purge itself.
+	if !errors.Is(err, ErrQuotaExceeded) || errors.Is(err, ErrRestoreSlotInUse) {
 		return err
 	}
 	return fmt.Errorf("%w: the account already has %d of %d databases (provisioning and restoring ones count); delete one or upgrade the plan", err, limit, limit)
