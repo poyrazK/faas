@@ -798,11 +798,14 @@
       # ADR-1343 §4: a node that runs the app edge also holds back the edge
       # daemons' CPU and RAM. --edge is passed only then, so a fleet without
       # the edge keeps working with an operator binary that predates it.
+      # ADR-20261031122757: a node that also runs the S3 gateway holds back
+      # the gateway's too (--object-gateway, only with --edge).
       ansible.builtin.command:
         argv: >-
           {{ ['/usr/local/bin/gregalectl', 'compute-nodes', 'sizing',
               '--role', faas_box_role | default('compute-only', true), '--json']
-             + (['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else []) }}
+             + (['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else [])
+             + (['--object-gateway'] if (faas_object_gateway_on_compute_nodes | default(false) | bool) else []) }}
       changed_when: false
       register: faas_node_sizing_raw
 
@@ -1552,7 +1555,13 @@
         - faas-schedd.service
         - faas-vmmd.service
 
-    - name: Install the verified release while keeping the row drained
+    # A drained rollout keeps the row out of service until readiness passes.
+    # A no-drain restart never leaves service, so its row stays active: an
+    # unavailable row makes the scheduler evacuate the node. On production-us
+    # (rc.312 and rc.313, 2026-10-31) it parked every guest on fsn-2 seconds
+    # before vmmd restarted; the restarted vmmd adopted them, and its orphan
+    # reaper then killed them because their rows were parked.
+    - name: Install the verified release, keeping a drained row drained
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -1566,7 +1575,7 @@
           - "{{ faas_join_database_node }}"
           - --role
           - compute-only
-          - --defer-activation
+          - "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"
       register: faas_release_install
       changed_when: faas_release_install.rc == 0
       failed_when: >-
@@ -1615,7 +1624,7 @@
           - "{{ faas_join_database_node }}"
           - --role
           - compute-only
-          - --defer-activation
+          - "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"
       when: >-
         faas_release_install.rc != 0 and
         'SBoM gate requires a prior baseline' in

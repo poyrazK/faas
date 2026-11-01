@@ -152,6 +152,9 @@ test('real lock timeouts and deadlocks roll back REST/RPC writes and recover wit
   // Pinned PostgREST retries its deadlock victim inside the SQL transaction.
   // A nontransactional counter proves the retry; row values prove that the
   // victim's first partial update rolled back before its successful retry.
+  // The retry can lock its first row before the survivor, which then holds the
+  // barrier, reaches that row: a second deadlock and a second retry. So the
+  // counter shows at least one retry, not exactly one.
   const beforeDeadlock = calls, beforeValues = await all()
   await owner.query('SELECT pg_advisory_lock(734928149)')
   const pairs = Promise.all([
@@ -162,7 +165,7 @@ test('real lock timeouts and deadlocks roll back REST/RPC writes and recover wit
   await owner.query('SELECT pg_advisory_unlock(734928149)')
   const results = await pairs
   assert.equal(results.filter(result => result.error === null).length, 2)
-  assert.equal(Number((await owner.query('SELECT last_value FROM api.deadlock_invocations')).rows[0].last_value), 3)
+  assert.ok(Number((await owner.query('SELECT last_value FROM api.deadlock_invocations')).rows[0].last_value) >= 3, 'a deadlock victim must be retried')
   assert.equal(calls, beforeDeadlock + 2, 'the SDK must not replay either HTTP mutation')
   assert.deepEqual(await all(), beforeValues.map(row => ({ ...row, value: row.id === 3 ? row.value : row.value + 2 })))
   assert.deepEqual((await db.from('notes').select('id').order('id')).data, [{ id: 1 }, { id: 2 }])

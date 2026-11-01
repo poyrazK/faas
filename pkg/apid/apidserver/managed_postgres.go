@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -33,6 +34,36 @@ type managedPostgresHooks struct {
 	Released managedPostgresRelease
 	// NotifyCap queues a compute cap email (ADR-20261025094915 decision 8).
 	NotifyCap func(context.Context, managedpostgres.CapEvent) error
+	// Charges returns the billing provider's managed PostgreSQL overage sink,
+	// or nil (ADR-20261031110037). It is read at each sweep because apid
+	// attaches the billing provider after loading managed PostgreSQL.
+	Charges func() billing.ManagedPostgresChargeSink
+	// RestoreSlotExpired records a copy whose delete was scheduled because
+	// its restore slot ended without room (ADR-20261031123259).
+	RestoreSlotExpired func(context.Context, managedpostgres.Database)
+	// NotifyRestoreSlot queues a restore slot email (ADR-20261031123259).
+	NotifyRestoreSlot func(context.Context, managedpostgres.RestoreSlotNotice) error
+}
+
+func (h *managedPostgresHooks) charges() billing.ManagedPostgresChargeSink {
+	if h == nil || h.Charges == nil {
+		return nil
+	}
+	return h.Charges()
+}
+
+func (h *managedPostgresHooks) restoreSlotExpired() func(context.Context, managedpostgres.Database) {
+	if h == nil {
+		return nil
+	}
+	return h.RestoreSlotExpired
+}
+
+func (h *managedPostgresHooks) notifyRestoreSlot() func(context.Context, managedpostgres.RestoreSlotNotice) error {
+	if h == nil {
+		return nil
+	}
+	return h.NotifyRestoreSlot
 }
 
 func (h *managedPostgresHooks) overage() managedPostgresOverageGate {
@@ -84,10 +115,12 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, nil, err
 	}
 	var fleet *managedpostgres.Service
+	capLimits := managedPostgresCapLimits(store, accountStore, overage)
 	usageOptions.AfterSweep = func(ctx context.Context) {
 		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("managed postgres compute cap sweep failed", "error", err)
 		}
+		deliverManagedPostgresOverage(ctx, store, hooks.charges(), capLimits, log)
 		observeManagedPostgresFleet(ctx, fleet, metrics, log)
 	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
@@ -216,6 +249,15 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	restoreSlots, err := managedpostgres.NewRestoreSlotSweeper(service, bindingService, managedpostgres.RestoreSlotSweeperOptions{
+		Expired: hooks.restoreSlotExpired(),
+		Notify:  hooks.notifyRestoreSlot(),
+		Logger:  log,
+	})
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	reconciler.SetRestoreSlots(restoreSlots)
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
 		IncludeProvisioning: provisioningGate,
 		Observe: func(ob managedpostgres.BindingReconcileObservation) {
@@ -276,7 +318,6 @@ func hostCredentialIdentities() []*age.X25519Identity {
 // allowance, or twice it with overage on; the enforcer intersects it with the
 // operator's usage cap.
 func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *managedpostgres.PostgresStore, accountStore state.AppOwnerReader, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.CapEnforcer, error) {
-	overage := hooks.overage()
 	mode, err := managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
 	if err != nil {
 		return nil, err
@@ -290,20 +331,7 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		StorageMode: storageMode,
 		Logger:      log,
 		Notify:      hooks.notifyCap(),
-		Ceiling: func(ctx context.Context, subject string) (managedpostgres.CapLimits, error) {
-			account, err := state.BillingResourceAccount(ctx, accountStore, subject)
-			if err != nil {
-				return managedpostgres.CapLimits{}, err
-			}
-			limits, _ := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
-			overageOn, err := managedPostgresStoredOverage(ctx, store, overage, account, subject)
-			if err != nil {
-				return managedpostgres.CapLimits{}, err
-			}
-			return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
-				Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
-				StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
-		},
+		Ceiling:     managedPostgresCapLimits(store, accountStore, hooks.overage()),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
@@ -327,6 +355,57 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		options.Observe = metrics.Observe
 	}
 	return managedpostgres.NewCapEnforcer(registry, store, options)
+}
+
+// managedPostgresCapLimits returns a subject's compute limits: its plan's
+// monthly allowance, and the ceiling, twice it with overage on. A deleted
+// subject is managedpostgres.ErrNotFound.
+func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore state.AppOwnerReader, overage managedPostgresOverageGate) managedpostgres.CapCeiling {
+	return func(ctx context.Context, subject string) (managedpostgres.CapLimits, error) {
+		account, err := state.BillingResourceAccount(ctx, accountStore, subject)
+		if errors.Is(err, state.ErrNotFound) {
+			return managedpostgres.CapLimits{}, managedpostgres.ErrNotFound
+		}
+		if err != nil {
+			return managedpostgres.CapLimits{}, err
+		}
+		limits, _ := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+		overageOn, err := managedPostgresStoredOverage(ctx, store, overage, account, subject)
+		if err != nil {
+			return managedpostgres.CapLimits{}, err
+		}
+		return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
+			Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
+			StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
+	}
+}
+
+// deliverManagedPostgresOverage charges overage through the billing provider
+// after a cap sweep (ADR-20261031110037). Without a provider, or with its
+// managed PostgreSQL policy off, nothing is charged or recorded.
+func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.UsageStore, sink billing.ManagedPostgresChargeSink, limits managedpostgres.CapCeiling, log *slog.Logger) {
+	if sink == nil {
+		return
+	}
+	policy, ok := sink.ManagedPostgresChargePolicy()
+	if !ok {
+		return
+	}
+	options := managedpostgres.OverageBillerOptions{Provider: policy.Provider, EffectiveFrom: policy.EffectiveFrom, Allowance: limits, Logger: log}
+	if policy.Live {
+		options.Publish = func(ctx context.Context, step managedpostgres.OverageChargeStep) error {
+			return sink.PublishManagedPostgresCharge(ctx, billing.ManagedPostgresChargeStep(step))
+		}
+	}
+	biller, err := managedpostgres.NewOverageBiller(store, options)
+	if err != nil {
+		log.Warn("managed postgres overage billing misconfigured", "error", err)
+		return
+	}
+	summary, err := biller.Deliver(ctx)
+	if err != nil && ctx.Err() == nil {
+		log.Warn("managed postgres overage delivery failed", "error", err, "subjects", summary.Subjects, "failed", summary.Failed)
+	}
 }
 
 // configureManagedPostgresCapMode records the compute cap enforcement mode for

@@ -285,6 +285,7 @@ sql:
       - "pkg/state/managed_postgres_cap_event_queries.sql"
       - "pkg/state/managed_postgres_egress_queries.sql"
       - "pkg/state/managed_postgres_overage_queries.sql"
+      - "pkg/state/managed_postgres_overage_delivery_queries.sql"
       - "pkg/state/managed_postgres_preflight_queries.sql"
       - "pkg/state/managed_postgres_source_fence_queries.sql"
       - "pkg/state/mcp_access_policy_queries.sql"
@@ -549,6 +550,26 @@ sql:
       go:
         package: sqlc
         out: pkg/state/appquota/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
+    queries: pkg/state/resourcelabels/queries.sql
+    schema: pkg/state/resourcelabels/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/resourcelabels/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
+    queries: pkg/state/applabels/queries.sql
+    schema: pkg/state/applabels/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/applabels/sqlc
         sql_package: pgx/v5
         emit_methods_with_db_argument: true
         omit_unused_structs: true

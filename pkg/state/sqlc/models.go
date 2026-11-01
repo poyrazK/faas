@@ -200,6 +200,14 @@ type Agent struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
+// ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
+type AgentCallbackRevocation struct {
+	EndpointID pgtype.UUID
+	ThreadID   string
+	AccountID  pgtype.UUID
+	RevokedAt  pgtype.Timestamptz
+}
+
 // ADR-20261027090010 §8 deliveries of succeeded agent runs; agentd's delivery worker (ADR-20261027090014) is the only writer.
 type AgentDelivery struct {
 	ID             pgtype.UUID
@@ -322,6 +330,23 @@ type AgentRunOutput struct {
 	LogTail      string
 	LogTruncated bool
 	CreatedAt    pgtype.Timestamptz
+}
+
+// ADR-20261027090011 measured private memory of agent run VMs, written by agentd from vmmd's usage frame; not billed yet.
+type AgentRunUsage struct {
+	RunID               pgtype.UUID
+	AccountID           pgtype.UUID
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+	RecordedAt          pgtype.Timestamptz
 }
 
 // ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.
@@ -859,6 +884,7 @@ type App struct {
 	DeploymentCronFingerprint         string
 	DeploymentCronBefore              []byte
 	DeploymentMailRevision            int64
+	Labels                            []byte
 }
 
 type AppApiRoute struct {
@@ -3012,6 +3038,7 @@ type Cron struct {
 	FailureRules          []byte
 	ScheduleRevision      int64
 	ScheduleAnchorAt      pgtype.Timestamptz
+	Labels                []byte
 }
 
 type CronFireNowRequest struct {
@@ -3044,6 +3071,19 @@ type CustomDomain struct {
 	VerificationAttempts          int32
 	VerificationExpiresAt         pgtype.Timestamptz
 	EnvironmentID                 pgtype.UUID
+}
+
+type CustomDomainTlsAdmission struct {
+	Host             interface{}
+	RegisteredDomain interface{}
+	OwnerID          pgtype.UUID
+	AdmittedAt       pgtype.Timestamptz
+}
+
+type CustomDomainTlsAllowedHost struct {
+	WildcardDomain interface{}
+	Name           interface{}
+	CreatedAt      pgtype.Timestamptz
 }
 
 type CustomDomainTlsHost struct {
@@ -7613,6 +7653,7 @@ type Job struct {
 	ScheduleRevision                  int64
 	ImageEntrypoint                   []string
 	ImageCmd                          []string
+	Labels                            []byte
 }
 
 type JobRegistryCredential struct {
@@ -7766,7 +7807,7 @@ type LogEvent struct {
 	Fields        []byte
 }
 
-type LogEvents202610 struct {
+type LogEvents202611 struct {
 	ID            pgtype.UUID
 	OccurredAt    pgtype.Timestamptz
 	AccountID     pgtype.UUID
@@ -7789,7 +7830,7 @@ type LogEvents202610 struct {
 	Fields        []byte
 }
 
-type LogEvents202611 struct {
+type LogEvents202612 struct {
 	ID            pgtype.UUID
 	OccurredAt    pgtype.Timestamptz
 	AccountID     pgtype.UUID
@@ -8175,6 +8216,8 @@ type ManagedPostgresDatabase struct {
 	AccountingRequired          bool
 	OrgID                       pgtype.UUID
 	PurgeAfter                  pgtype.Timestamptz
+	RestoreSlotUntil            pgtype.Timestamptz
+	Labels                      []byte
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
@@ -8227,6 +8270,17 @@ type ManagedPostgresLiveLogin struct {
 	SealedLoginSig     []byte
 }
 
+// Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).
+type ManagedPostgresOverageDelivery struct {
+	Provider            string
+	SubjectID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	Live                bool
+	BilledUnitSeconds   int64
+	DeliveredMillicents int64
+	UpdatedAt           pgtype.Timestamptz
+}
+
 type ManagedPostgresResize struct {
 	ID                 pgtype.UUID
 	AccountID          pgtype.UUID
@@ -8258,6 +8312,16 @@ type ManagedPostgresRestoreProof struct {
 	Generation         int64
 	ObservedAt         pgtype.Timestamptz
 	DataResourceID     pgtype.Text
+}
+
+// Restore slot notices for a managed PostgreSQL copy (ending soon, delete scheduled); written only by apid (ADR-20261031123259).
+type ManagedPostgresRestoreSlotNotice struct {
+	DatabaseID      pgtype.UUID
+	Kind            string
+	SlotUntil       pgtype.Timestamptz
+	RestorableUntil pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+	MailIntentID    pgtype.UUID
 }
 
 type ManagedPostgresRestoreVerification struct {
@@ -13493,45 +13557,6 @@ type RequestTelemetry struct {
 	TraceInferred               bool
 }
 
-type RequestTelemetry202610 struct {
-	ID                          pgtype.UUID
-	AccountID                   pgtype.UUID
-	AppID                       pgtype.UUID
-	DeploymentID                pgtype.UUID
-	Route                       string
-	Method                      string
-	Status                      int32
-	LatencyMs                   int32
-	ColdBoot                    bool
-	TraceID                     pgtype.Text
-	SpansSummary                []byte
-	ReceivedAt                  pgtype.Timestamptz
-	Count                       int32
-	UaFamily                    string
-	ReferrerHost                string
-	Country                     string
-	WakeID                      pgtype.Text
-	InstanceID                  pgtype.Text
-	GuestDurationMs             int32
-	GuestRuntime                string
-	GuestOutcome                string
-	GuestErrorClass             string
-	ConsumerID                  pgtype.UUID
-	NodeID                      string
-	Region                      string
-	CommitSha                   string
-	DeploymentTag               string
-	DeploymentCreatedAt         string
-	ImageDigest                 string
-	PlatformTenantID            pgtype.UUID
-	GuestCpuTimeMs              int32
-	GuestPeakRssMb              int32
-	GuestResourceUsageAvailable bool
-	FlagEvidence                []byte
-	ContentOutcome              string
-	TraceInferred               bool
-}
-
 type RequestTelemetry202611 struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
@@ -13572,6 +13597,45 @@ type RequestTelemetry202611 struct {
 }
 
 type RequestTelemetry202612 struct {
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	DeploymentID                pgtype.UUID
+	Route                       string
+	Method                      string
+	Status                      int32
+	LatencyMs                   int32
+	ColdBoot                    bool
+	TraceID                     pgtype.Text
+	SpansSummary                []byte
+	ReceivedAt                  pgtype.Timestamptz
+	Count                       int32
+	UaFamily                    string
+	ReferrerHost                string
+	Country                     string
+	WakeID                      pgtype.Text
+	InstanceID                  pgtype.Text
+	GuestDurationMs             int32
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	ConsumerID                  pgtype.UUID
+	NodeID                      string
+	Region                      string
+	CommitSha                   string
+	DeploymentTag               string
+	DeploymentCreatedAt         string
+	ImageDigest                 string
+	PlatformTenantID            pgtype.UUID
+	GuestCpuTimeMs              int32
+	GuestPeakRssMb              int32
+	GuestResourceUsageAvailable bool
+	FlagEvidence                []byte
+	ContentOutcome              string
+	TraceInferred               bool
+}
+
+type RequestTelemetry202701 struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
 	AppID                       pgtype.UUID

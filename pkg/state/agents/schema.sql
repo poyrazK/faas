@@ -119,6 +119,21 @@ CREATE TABLE agent_run_outputs (
  log_truncated boolean NOT NULL DEFAULT false,
  created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE agent_run_usage (
+ run_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ method smallint NOT NULL,
+ samples integer NOT NULL,
+ expected_samples integer NOT NULL,
+ measured_ms bigint NOT NULL,
+ paused_ms bigint NOT NULL,
+ private_mb_ms bigint NOT NULL,
+ unpaused_private_mb_ms bigint NOT NULL,
+ billable_mb_ms bigint NOT NULL,
+ peak_private_mb bigint NOT NULL,
+ cold_boot boolean NOT NULL,
+ recorded_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE agent_deliveries (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  account_id uuid NOT NULL,
@@ -167,4 +182,11 @@ CREATE TABLE workflow_events (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  run_id uuid NOT NULL,
  event_name text NOT NULL
+);
+CREATE TABLE agent_callback_revocations (
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ account_id uuid NOT NULL,
+ revoked_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (endpoint_id, thread_id)
 );

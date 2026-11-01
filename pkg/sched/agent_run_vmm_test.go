@@ -24,6 +24,7 @@ type agentRunVmmd struct {
 	start  *vmmdpb.RunAgentStart
 	result agentrunproto.Result
 	output string
+	usage  *vmmdpb.AgentRunUsage
 }
 
 func (v *agentRunVmmd) RunAgent(stream vmmdpb.Vmmd_RunAgentServer) error {
@@ -39,6 +40,9 @@ func (v *agentRunVmmd) RunAgent(stream vmmdpb.Vmmd_RunAgentServer) error {
 		if frame, err := stream.Recv(); err != nil || frame.GetCancel() == nil {
 			return errors.New("expected a cancel frame")
 		}
+	}
+	if v.usage != nil {
+		_ = stream.Send(&vmmdpb.RunAgentEvent{Frame: &vmmdpb.RunAgentEvent_Usage{Usage: v.usage}})
 	}
 	body, _ := json.Marshal(result)
 	return stream.Send(&vmmdpb.RunAgentEvent{Frame: &vmmdpb.RunAgentEvent_Result{Result: &vmmdpb.RunAgentResult{Result: body}}})
@@ -71,6 +75,22 @@ func agentRunClient(t *testing.T, fake *agentRunVmmd) *sched.VMMClient {
 func agentRunRequest() agentrunproto.Request {
 	return agentrunproto.Request{Version: agentrunproto.Version, RunID: "run-1", Command: []string{"codex"}, TimeoutSec: 30,
 		MaxLogBytes: 64, MaxResultBytes: 1024, MaxOutputFiles: 1, MaxOutputBytes: 1024}
+}
+
+// vmmd's usage frame reaches the Usage hook before the result.
+func TestVMMClientRunAgentForwardsUsage(t *testing.T) {
+	fake := &agentRunVmmd{result: agentrunproto.Result{Status: agentrunproto.StatusSucceeded},
+		usage: &vmmdpb.AgentRunUsage{Method: 1, Samples: 4, ExpectedSamples: 5, MeasuredMs: 5000, PausedMs: 2000, PrivateMbMs: 1_500_000,
+			UnpausedPrivateMbMs: 900_000, BillableMbMs: 924_000, PeakPrivateMb: 320, ColdBoot: true}}
+	var got []sched.AgentRunUsage
+	_, err := agentRunClient(t, fake).RunAgent(context.Background(), sched.AgentRunSpec{Plan: api.PlanPro}, agentRunRequest(), sched.AgentRunHooks{
+		Usage: func(_ context.Context, u sched.AgentRunUsage) error { got = append(got, u); return nil },
+	}, nil)
+	want := sched.AgentRunUsage{Method: 1, Samples: 4, ExpectedSamples: 5, MeasuredMillis: 5000, PausedMillis: 2000, PrivateMBMillis: 1_500_000,
+		UnpausedPrivateMBMillis: 900_000, BillableMBMillis: 924_000, PeakPrivateMB: 320, ColdBoot: true}
+	if err != nil || len(got) != 1 || got[0] != want {
+		t.Fatalf("usage %+v, %v", got, err)
+	}
 }
 
 func TestVMMClientRunAgent(t *testing.T) {

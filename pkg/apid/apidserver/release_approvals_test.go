@@ -180,8 +180,12 @@ func TestReleaseApprovalHoldsTheCanaryUntilApproved(t *testing.T) {
 		t.Fatalf("rollout_hold = %+v", hold)
 	}
 
+	// adr: 20261020085706 amendment 4 — an API key cannot approve; the
+	// signed-in person can.
+	apidserver.AssertProblem(t, f.e.Do(t, http.MethodPost, "/v1/deployments/"+id+"/approvals",
+		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove}, nil), http.StatusForbidden, api.CodeReleaseApprovalSessionRequired)
 	var status api.ReleaseApprovalStatus
-	rec = guardDo(t, f.e, http.MethodPost, "/v1/deployments/"+id+"/approvals",
+	rec = sessionDo(t, f.e, http.MethodPost, "/v1/deployments/"+id+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "canary looks clean"}, &status)
 	if rec.Code != http.StatusOK || status.State != api.ReleaseApprovalStateApproved || status.Approvals != 1 ||
 		len(status.Decisions) != 1 || status.Decisions[0].Role != state.ReleaseApproverRolePersonal || !status.Decisions[0].Counted {
@@ -247,7 +251,7 @@ func TestReleaseApprovalRefusesTheDeployersOwnApproval(t *testing.T) {
 	if _, err := approvals.SetReleaseApprovalPolicy(ctx, policy, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	apidserver.AssertProblem(t, f.e.Do(t, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+	apidserver.AssertProblem(t, f.e.DoSession(t, "", http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove}, nil), http.StatusForbidden, api.CodeReleaseApprovalSelf)
 	// The deployer may still reject their own release.
 	var status api.ReleaseApprovalStatus
@@ -381,7 +385,7 @@ func TestReleaseApprovalEventsAreRecordedOncePerTransition(t *testing.T) {
 		!strings.HasSuffix(requested.ReviewURL, "/dashboard/releases/"+f.canary.ID+"/approval") {
 		t.Fatalf("events = %+v", events)
 	}
-	if rec := f.e.Do(t, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+	if rec := f.e.DoSession(t, "", http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "looks clean"}, nil); rec.Code != http.StatusOK {
 		t.Fatalf("approve = %d %s", rec.Code, rec.Body)
 	}
@@ -491,5 +495,29 @@ func TestRollbackToADarkReleaseMeetsItsApprovals(t *testing.T) {
 	got, err := store.DeploymentByID(ctx, dark.ID)
 	if err != nil || got.Status != state.DeployLive || got.TrafficPercent != 0 {
 		t.Fatalf("dark release after the refused rollbacks = %+v, %v; want still live at 0%%", got, err)
+	}
+}
+
+// adr: 20261020085706 amendment 5 — an app that requires approvals stays in
+// request mode: a service, worker or job has no canary stage to wait in, so
+// the policy would stay set and stop gating (release review 2026-11-01).
+func TestApprovalPolicyKeepsTheAppInRequestMode(t *testing.T) {
+	ctx := context.Background()
+	f := newApprovalFixture(ctx, t, "approval-mode", time.Now(), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1})
+	service, one := api.ExecutionModeService, 1
+	toService := api.UpdateAppRequest{ExecutionMode: &service, MaxConcurrency: &one}
+	rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", toService, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	if !strings.Contains(rec.Body.String(), "release approval disable") {
+		t.Fatalf("refusal = %s, want the way to remove the policy", rec.Body)
+	}
+	if got, err := (*f.e.Store()).AppByID(ctx, f.app.ID); err != nil || got.Manifest.ExecutionMode != "" {
+		t.Fatalf("app mode after the refusal = %q, %v; want request", got.Manifest.ExecutionMode, err)
+	}
+	if rec := f.e.Do(t, http.MethodDelete, "/v1/apps/approval-mode/release-approval-policy", nil, nil); rec.Code >= 300 {
+		t.Fatalf("remove policy = %d %s", rec.Code, rec.Body)
+	}
+	if rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", toService, nil); strings.Contains(rec.Body.String(), "requires release approvals") {
+		t.Fatalf("mode change without a policy = %d %s, want no approval refusal", rec.Code, rec.Body)
 	}
 }

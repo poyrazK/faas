@@ -1,0 +1,72 @@
+# ADR-20261031122757 §2: per-node alerts for the S3 gateway on compute nodes.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a gateway that stops answering warns for its node
+    interval: 1m
+    input_series:
+      - series: up{job="s3-gatewayd-compute",node="cn-1"}
+        values: 1 1 0 0 0 0 0 0
+      - series: up{job="s3-gatewayd-compute",node="cn-2"}
+        values: 1+0x10
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasComputeObjectGatewayDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FaasComputeObjectGatewayDown
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: s3-gatewayd
+              family: object_storage
+              public_status: internal
+              job: s3-gatewayd-compute
+              node: cn-1
+            exp_annotations:
+              summary: "The S3 gateway on cn-1 is not answering"
+              description: "Prometheus cannot scrape s3-gatewayd's control listener on cn-1. Its s3 tunnel connector leaves the tunnel once the gateway's unit stops; check faas-s3-gatewayd-compute on that node."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
+  - name: an s3 connector that is down or holds no connections warns; the app connector's are not its
+    interval: 1m
+    input_series:
+      - series: up{job="cloudflared-s3",node="cn-1"}
+        values: 1+0x10
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared-s3",node="cn-1"}
+        values: 4 4 0 0 0 0 0 0 0 0
+      - series: up{job="cloudflared-s3",node="cn-2"}
+        values: 1 1 0 0 0 0 0 0 0 0
+      - series: up{job="cloudflared",node="cn-3"}
+        values: 1+0x10
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared",node="cn-3"}
+        values: 0+0x10
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasComputeObjectGatewayConnectorDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: cloudflared
+              family: object_storage
+              public_status: internal
+              job: cloudflared-s3
+              node: cn-1
+            exp_annotations:
+              summary: "The s3 tunnel connector on cn-1 is not connected"
+              description: "faas-cloudflared-s3 on cn-1 is down or holds no tunnel connections. The node serves no S3 traffic until it reconnects; the other connectors carry its share. A node whose s3 tunnel token is not staged yet stays here."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          - exp_labels:
+              severity: warn
+              component: cloudflared
+              family: object_storage
+              public_status: internal
+              job: cloudflared-s3
+              node: cn-2
+            exp_annotations:
+              summary: "The s3 tunnel connector on cn-2 is not connected"
+              description: "faas-cloudflared-s3 on cn-2 is down or holds no tunnel connections. The node serves no S3 traffic until it reconnects; the other connectors carry its share. A node whose s3 tunnel token is not staged yet stays here."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"

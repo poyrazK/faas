@@ -47,7 +47,7 @@ A stateless agent's handler receives one inbox message and does at most this:
 
 A handler that blocks on a tool for longer than its invocation limit fails the slice, and the consumer group retries it.
 
-The invocation limit is the app's request timeout under ADR-1180: Hobby 1 min, Pro 5 min, Scale 15 min. A completion has to finish inside it. ADR-1322 currently limits each realtime-trigger invocation to 30 s. Rollout step 2 raises that to the request timeout for agent inboxes, as ADR-1180 did for async, queue and cron invocations.
+The invocation limit is the app's request timeout under ADR-1180: Hobby 1 min, Pro 5 min, Scale 15 min. A completion has to finish inside it. Realtime-trigger invocations reach it since rollout step 2 (ADR-1322's 2026-10-31 amendment).
 
 ## 2. The inbox
 
@@ -106,8 +106,8 @@ The slice calls the model through the app's managed AI integration over the rela
 | Limit | Value | Basis |
 |---|---|---|
 | `AgentCallbackTokenTTLSec` | 86,400 | A tool call's result window. Subscriptions use their own lifetime. |
-| `AgentCallbackPayloadMaxBytes` | the realtime message limit | A result is one inbox message |
-| `AgentCallbacksPerMinutePerThread` | 600 | Stops a runaway tool from flooding one thread |
+| `AgentCallbackPayloadMaxBytes` | 4,096, the realtime message limit | A result is one inbox message |
+| `AgentCallbacksPerMinutePerThread` | 600, per apid replica | Stops a runaway tool from flooding one thread |
 
 ## Rollout
 
@@ -115,8 +115,41 @@ Each step is one PR behind the `agents` capability.
 
 1. This ADR.
 2. Raise the realtime-trigger invocation limit to the app's request timeout for agent inboxes (amends ADR-1322).
+
+   **Built (2026-10-31), for every realtime trigger.** The gateway already gave each trigger record the app's timeout (ADR-1180). The limit was the consumer group's unrenewed claim lease. schedd now renews a realtime delivery's claim while it runs (ADR-1322 amendment), so no agent-inbox marker is needed.
 3. The signed callback endpoint in `pkg/apid/agents`, which publishes into a thread's lane, with property tests: a token never publishes outside its thread, an expired or revoked token is refused, and a redelivered `message_id` is delivered once.
+
+   **Built, part one (2026-11-01).**
+   - **Routes.** `POST /v1/agent-callbacks` issues a URL for one thread of one of the account's realtime endpoints. `POST /v1/agent-callbacks/{token}` is the token-only route a tool posts to; it is limited per IP like `/v1/hooks/{token}`. The root is not `/v1/agents/callbacks/…` because that pattern conflicts with `/v1/agents/{agent}/runs` in Go's router. Both routes belong to the `agents` capability.
+   - **Token.** `agcb1.<payload>.<mac>`: an HMAC-SHA256 over account, endpoint, thread, allowed kinds, issue time and expiry. Its key is derived with HKDF from apid's session key, which every replica shares. Decoding is strict, so a token has one spelling.
+   - **When a tool posts.** The token's expiry is checked, then the account's `agents` capability, then that the endpoint still belongs to the account. A failure answers like an unknown route.
+   - **Publish.** `data` (JSON, at most `AgentCallbackPayloadMaxBytes`, the realtime message limit) is appended to the endpoint's `agent-inbox` channel with metadata `thread_id`, `kind` and `message_id`, and idempotency key `callback:{thread}:{message_id}`. A retried post lands once and gets the first sequence; the same `message_id` with other data is a 409.
+   - **Tests.** Unit and property tests in `pkg/apid/agents` cover the thread scope against tampered tokens, issue and post rules, refusal after issue, and landing once.
+   **Built, part two (2026-11-01).**
+   - **Revocation.** `POST /v1/agent-callbacks/revocations` with `{endpoint_id, thread_id}` closes a thread to every URL issued for it until then. apid records the time in `agent_callback_revocations`, one row per endpoint and thread. A post is refused like an unknown route when its token was issued at or before that time. A URL issued later works, so a thread can reopen.
+   - **Rate limit.** Each apid counts one thread's posts in fixed one-minute windows. Past `AgentCallbacksPerMinutePerThread` (600) it answers `429 agent_callback_rate_limited` with the limit and the count. Each replica counts alone, so N replicas accept at most N × 600: the limit stops a runaway tool, and a post needs a valid token anyway.
+   - **Tests.** `TestPropertyRevokedCallbackNeverPublishes`: over random issues, revocations and posts, a URL publishes exactly when it was issued after its thread's latest revocation. Tests also cover the revoke and rate-limit rules and the store's revocation record.
 4. The Infinity Postgres store adapter and the template app, and a journey in `tests/journeys`: a two-turn stateless agent that sleeps, wakes on its callback and answers.
+
+   **Built, part one (2026-11-01): what the template needs from the platform.**
+   - **The app's own credential.** `POST /v1/agent-callbacks` and `POST /v1/agent-callbacks/revocations` also take a `gregale:agents` workload token (docs/workload-identity.md), so the app holds no account key.
+     - The token must come from a live instance of a production deployment of an active account's app, as for queue leases (ADR-1141 amendment 2026-10-27).
+     - It reaches only that app's realtime endpoints. An API key with `deploy:write` still reaches every endpoint of its account.
+     - A JWT-shaped bearer takes the workload path. No API key, OIDC or hosting token is JWT-shaped, so no key is misrouted.
+   - **The inbox in `gregale.yaml`.** A manifest consumer group takes `ordering_metadata_key`, `deduplication_metadata_key` and `dead_letter_policy`, so the app declares §2's `slices` group itself. A deploy still creates a missing group and never changes an existing one.
+   - **Tests.** `TestWorkloadCaller` covers the audience, environment, account, app, instance and deployment checks. `TestCallbackAppCallerOwnsOnlyItsEndpoints` covers the app scope. The manifest tests cover the new fields' loading, validation and reconcile.
+
+   **Built, part two (2026-11-01): the template and the journey.**
+   - **Template `agent-stateless-node`.** It is unlisted while `agents` is internal, and `gregale deploy --template agent-stateless-node` deploys it.
+     - Its `gregale.yaml` declares the `agent` endpoint, the `slices` group on `agent-inbox` (§2's ordering, deduplication and `block` dead-letter policy) and the realtime trigger. The endpoint refuses client connections; the seller's backend publishes.
+     - Each slice keeps §1's contract. History and seen-message IDs are rows in the seller's Postgres (`DATABASE_URL`). The turn is persisted before its tool call goes out. A redelivery finishes a dispatch or a revocation the first delivery did not.
+     - Each slice opens one Postgres connection and closes it, so a parked agent holds no connection and no snapshot captures a socket.
+     - Callback URLs are issued and revoked with the app's own `gregale:agents` workload token. The answer revokes the thread's URLs.
+     - The model is scripted, so the starter runs with no provider key. Step 4b replaces it with Infinity's step mode and adds the Infinity store adapter.
+   - **Journey `TestStatelessAgent`** (inventory row 167, full tier). It skips while `agents` or `realtime` is hidden or managed Postgres provisioning is closed.
+     - It deploys the template with a managed Postgres store and publishes a question.
+     - It reads the tool call, parks the agent, and posts the tool's result to the callback URL twice: it lands once.
+     - It reads the answer the woken agent wrote, and checks that the answered thread refuses its callback URL.
 5. The platform tools: `gregale.sleep`, `gregale.run`, then `gregale.github.subscribe`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 

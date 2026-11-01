@@ -1072,10 +1072,15 @@ credential environment-variable names, and configure `request_log_bucket` (and
 optionally `request_log_prefix`) for a dedicated same-region bucket receiving
 [OVH Server Access Logging](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-server-access-logging)
 from every managed physical bucket. Keep
-`usage_reports_path` in the operator-owned registry. `s3-gatewayd` runs the
-exporter immediately and every five minutes, atomically replaces that file, and
-exposes `s3_gateway_usage_exports_total` plus the last-success timestamp on its
-control-plane metrics endpoint. OVH access logs are delivered asynchronously
+`usage_reports_path` in the operator-owned registry, in a directory `apid` owns
+(for example `/var/spool/faas/object-storage-usage/<backend>.json`; apid
+creates the directory). `apid` runs the exporter immediately and every five
+minutes with its bucket-admin credential and the OVH application keys from the
+provider environment, atomically replaces that file, imports it each accounting
+sweep, and exposes `faas_object_storage_usage_exports_total` plus
+`faas_object_storage_usage_export_last_success_timestamp_seconds` (0 until the
+first success) on its metrics endpoint. No S3 gateway runs the export
+(ADR-20261031122757). OVH access logs are delivered asynchronously
 (normally about one hour later), so the report's `observed_at` is intentionally
 one hour behind the wall clock. Missing credentials, an unreadable/malformed
 log object, or a failed export does not publish a partial report; `apid`
@@ -2124,6 +2129,16 @@ parts stream through upload slots and durable admission without whole-part
 staging. Admission returns `SlowDown`; HTTP/1 connections with unread uploads
 close after the error. Clients using `Expect: 100-continue` can avoid sending a
 rejected body.
+
+`max_bytes_per_second` is the gateway's share of its node's port
+(ADR-20261031122757 §3): 0 (the default) leaves transfers unpaced, otherwise
+1 MiB/s–12.5 GB/s. Request bodies and object response bodies draw on that one
+budget, in steps of 1 MiB, so the port carries at most the budget each way.
+Transfers over it slow down; none fail, and the time a body waits for the
+budget does not count against the client's minimum upload rate. Set it on
+gateways that share a compute node's port with tenant apps, at
+`api.ObjectGatewayNodePortSharePercent` (30%) of the port speed; the compute
+play will render it (ADR step 4). Releases before this one refuse the field.
 
 The bucket catalog advertises `max_single_put_bytes`, `max_part_bytes`,
 `max_upload_bytes`, `transfer_timeout_seconds` and `upload_profile`, including

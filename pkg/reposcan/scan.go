@@ -182,6 +182,10 @@ type Workload struct {
 	// not publish, or a service .gregale/project.yaml declares internal. A new
 	// app for it is internal (ADR-20261022131852, ADR-20261025093331).
 	Unpublished bool
+	// Labels are the source's labels for the app reconcile creates: a
+	// Kubernetes object's metadata.labels, without gregale.dev/ keys or
+	// invalid ones (ADR-20261031100025 §7). Nil declares none.
+	Labels map[string]string `json:",omitempty"`
 	// InternalPorts are internal-only TCP listeners from compose expose:
 	// (ADR-576). Nil means the source declares none, so reconcile keeps the
 	// app's existing internal listeners; non-nil replaces them.
@@ -377,6 +381,10 @@ type ScanOptions struct {
 	// private-service-https capability is off (ADR-20261029230000). The zero
 	// value keeps the transport, so an offline scan is unchanged.
 	HTTPSTransportUnavailable bool
+	// ResourceLabels carries a Kubernetes Deployment's and CronJob's
+	// metadata.labels to its workload (ADR-20261031100025 §7, the
+	// resource-labels capability). The zero value drops them, as before.
+	ResourceLabels bool
 }
 
 // ScanWithOptions is Scan with opts. Every caller that scans a project for

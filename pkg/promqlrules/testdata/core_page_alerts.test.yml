@@ -309,27 +309,45 @@ tests:
   - interval: 30s
     name: "a cert expiring in 10 days pages"
     input_series:
-      - series: 'gateway_tls_cert_expiry_seconds{job="gatewayd",instance="127.0.0.1:9092"}'
+      - series: 'gateway_tls_cert_expiry_seconds{job="apid",instance="10.0.0.1:9101"}'
         values: '864000x30'
     alert_rule_test:
       - eval_time: 10m
         alertname: FaasTLSCertExpiryPage
         exp_alerts:
           - exp_labels:
-              job: "gatewayd"
-              instance: "127.0.0.1:9092"
               severity: "warn"
               component: "gatewayd-public"
               family: "tls_cert_expiry"
             exp_annotations:
               summary: "TLS cert expires in ≤14 days"
-              description: "The smallest remaining lifetime across cached certs is below 14 days. A renewal has failed (or never ran) — HTTPS serving across the box will start failing within hours. Re-run `make bootstrap` on the EX44 to refresh certmagic + the Hetzner DNS-01 token, then force-renew via `faas cert refresh`."
+              description: "The soonest-expiring edge certificate apid's domain doctor observed on a verified custom domain has under 14 days left. Caddy renews on-demand certificates at about 30 days, so renewal has been failing for two weeks. Check the public edge's Caddy log for that host, the on-demand ask decisions (gateway_tls_on_demand_* on gatewayd-public), HTTP-01 reachability on port 80 and the domain's CAA records."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
+
+  - interval: 30s
+    name: "two apid replicas exporting one expiry raise one alert"
+    input_series:
+      - series: 'gateway_tls_cert_expiry_seconds{job="apid",instance="10.0.0.1:9101"}'
+        values: '864000x30'
+      - series: 'gateway_tls_cert_expiry_seconds{job="apid",instance="10.0.0.2:9101"}'
+        values: '864000x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasTLSCertExpiryPage
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "gatewayd-public"
+              family: "tls_cert_expiry"
+            exp_annotations:
+              summary: "TLS cert expires in ≤14 days"
+              description: "The soonest-expiring edge certificate apid's domain doctor observed on a verified custom domain has under 14 days left. Caddy renews on-demand certificates at about 30 days, so renewal has been failing for two weeks. Check the public edge's Caddy log for that host, the on-demand ask decisions (gateway_tls_on_demand_* on gatewayd-public), HTTP-01 reachability on port 80 and the domain's CAA records."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
 
   - interval: 30s
     name: "a cert with 30 days left does not page"
     input_series:
-      - series: 'gateway_tls_cert_expiry_seconds{job="gatewayd",instance="127.0.0.1:9092"}'
+      - series: 'gateway_tls_cert_expiry_seconds{job="apid",instance="10.0.0.1:9101"}'
         values: '2592000x30'
     alert_rule_test:
       - eval_time: 10m
@@ -353,7 +371,7 @@ tests:
               public_status: "internal"
             exp_annotations:
               summary: "Provider stripe push drift > 0.5% for 1h"
-              description: "Provider push totals are diverging from local usage_minutes totals by more than 0.5% for an hour (ADR-049 §B.1). Revenue leakage if local > pushed, refund liability if pushed > local. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
+              description: "Provider usage totals are diverging from the usage meterd recorded as delivered (billing_usage_deliveries) by more than 0.5% for an hour (ADR-049 §B.1, ADR-20261031161842). Revenue leakage if delivered > provider, refund liability if provider > delivered. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
 
   - interval: 1m

@@ -99,6 +99,15 @@ func (c *Client) ListManagedPostgresDatabases(ctx context.Context) (ManagedPostg
 	return out, err
 }
 
+// ListManagedPostgresDatabasesSelected lists the databases a label selector
+// picks (ADR-20261031100025). An apid without labels ignores the selector and
+// returns every database, so callers match the returned labels again.
+func (c *Client) ListManagedPostgresDatabasesSelected(ctx context.Context, selector string) (ManagedPostgresDatabaseList, error) {
+	var out ManagedPostgresDatabaseList
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases?"+url.Values{"selector": {selector}}.Encode(), nil, &out)
+	return out, err
+}
+
 func (c *Client) CreateManagedPostgresDatabase(ctx context.Context, req CreateManagedPostgresDatabaseRequest) (ManagedPostgresDatabase, error) {
 	var out ManagedPostgresDatabase
 	err := c.do(ctx, http.MethodPost, "/v1/postgres/databases", req, &out)

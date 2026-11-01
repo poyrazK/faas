@@ -108,5 +108,18 @@ Four small PRs, each behind the retained-realtime preview:
 
 - Customers get serverless consumers for realtime channels, with ordering, retries and replay they already know from consumer groups.
 - Throughput per trigger is bounded by the plan's concurrency and one message per invocation. High-volume channels may need multi-message invocations later.
-- A long-running handler must finish within the 30 s invocation limit, as for every other trigger.
+- A long-running handler must finish within the 30 s invocation limit, as for every other trigger. (Superseded by the 2026-10-31 amendment below: the app's own timeout, as ADR-1180 gives every other trigger kind.)
 - Realtime adds one ledger row per delivery, as other kinds add one per broker record. schedd reaps the ledger only with `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED=1`: terminal rows past their explicit `result_retention_until`, or past the default ages (`TriggerRecordRetention` 7 days, `TriggerDeadLetterRetention` 30 days). Off, the default, ledger rows are kept as before.
+
+## Amendment (2026-10-31): invocations run for the app's timeout
+
+ADR-20261030125501 (stateless agents on functions), rollout step 2.
+
+- **What limited a run.** ADR-1180 already gives every trigger record the app's `request_timeout_s` at the gateway: Hobby 1 min, Pro 5 min, Scale 15 min. But the group's claim lease (`lease_seconds`, at most 300 s) was never renewed. A handler that ran past the lease lost its claim. The group then handed the message out again while the first run continued, freed its ordering key, and refused the first run's settlement.
+- **The change.** While a realtime batch is delivered, schedd renews each claim through the group's `renew` settlement, every third of its remaining lease. It stops once the claim is settled, its lease is lost, or the message's `delivery_deadline` caps the lease. So a realtime trigger's invocation runs for the app's timeout, like a queue, cron or async invocation.
+- **Unchanged.**
+  - `RealtimeTriggerMinLeaseSeconds` stays 120 s, enough for the wake and the first renewal.
+  - A message's `delivery_deadline` still bounds its delivery.
+  - Ordering, retries and dead letters stay the group's.
+- **Agent inboxes.** These are realtime triggers on an `agent-inbox` channel. They need nothing more: a slice runs for its app's request timeout.
+- **Tests.** `TestRealtimeTriggerRunsPastTheGroupLease`: a handler that runs 5 s on a 2 s lease completes on its first attempt, with one call.

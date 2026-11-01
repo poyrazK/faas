@@ -167,6 +167,12 @@ func (e *Engine) parkForCapacity(ctx context.Context, appID, trigger string, err
 	if app, appErr := e.store.AppByID(ctx, appID); appErr == nil {
 		ramMB = app.RAMMB
 	}
+	// Frozen VMs go first: they are not billed and need no snapshot, where a
+	// running candidate is another customer's live instance (ADR
+	// 20261031190030).
+	if e.parkFrozenForRefusedWake(ctx, ramMB, err) {
+		return true
+	}
 	for range pressureParkAttempts {
 		now := time.Now()
 		if e.now != nil {
@@ -216,7 +222,7 @@ func (e *Engine) parkZeroTrafficSibling(ctx context.Context, appID, requested st
 	if ctx.Err() != nil {
 		return false
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return false
 	}

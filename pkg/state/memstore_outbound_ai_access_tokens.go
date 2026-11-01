@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 var _ OutboundAIAccessTokenStore = (*MemStore)(nil)
@@ -14,6 +15,7 @@ func (m *MemStore) CreateOutboundAIAccessToken(_ context.Context, token Outbound
 	if len(token.TokenHash) != 32 || len(token.IntegrationIDs) > api.OutboundAIAccessTokenIntegrationsMax {
 		return OutboundAIAccessToken{}, ErrInvalidArgument
 	}
+	token.TokenHash = familyStoredCredential(credhash.FamilyOutbound, credTagOutboundAIAccessToken, token.TokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.outboundAIAccessTokens == nil {

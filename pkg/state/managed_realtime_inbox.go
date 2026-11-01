@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
-	ManagedRealtimeInboxMaxPrincipals            = 256
+	ManagedRealtimeInboxMaxPrincipals            = api.RealtimeInboxesHeldPerEndpoint
 	ManagedRealtimeInboxMaxMessages              = 256
 	ManagedRealtimeInboxMaxConsumers             = 1024
 	ManagedRealtimeInboxMaxConsumersPerPrincipal = 16

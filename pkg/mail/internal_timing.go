@@ -28,6 +28,7 @@ func (s *InternalSender) WithOutbox(enabled func() bool) *InternalSender {
 // Both the sender and maild gate it independently from deletion notifications.
 func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -50,6 +51,7 @@ func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSe
 
 func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -72,6 +74,7 @@ func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalS
 
 func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -94,6 +97,7 @@ func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSende
 
 func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -116,6 +120,7 @@ func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *Intern
 
 func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -138,6 +143,7 @@ func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSend
 
 func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -160,6 +166,7 @@ func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *Intern
 
 func (s *InternalSender) WithPasswordChangedAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -182,6 +189,7 @@ func (s *InternalSender) WithPasswordChangedAlertOutbox(enabled func() bool) *In
 
 func (s *InternalSender) WithMFAEnabledAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -204,6 +212,7 @@ func (s *InternalSender) WithMFAEnabledAlertOutbox(enabled func() bool) *Interna
 
 func (s *InternalSender) WithPaymentFailedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -226,6 +235,7 @@ func (s *InternalSender) WithPaymentFailedOutbox(enabled func() bool) *InternalS
 
 func (s *InternalSender) WithAccountSuspendedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -247,6 +257,7 @@ func (s *InternalSender) WithAccountSuspendedOutbox(enabled func() bool) *Intern
 
 func (s *InternalSender) WithAccountRestoredOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -269,6 +280,7 @@ func (s *InternalSender) WithAccountRestoredOutbox(enabled func() bool) *Interna
 
 func (s *InternalSender) WithNonpaymentDeletionOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -291,6 +303,7 @@ func (s *InternalSender) WithNonpaymentDeletionOutbox(enabled func() bool) *Inte
 
 func (s *InternalSender) WithQuotaWarningOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -313,6 +326,7 @@ func (s *InternalSender) WithQuotaWarningOutbox(enabled func() bool) *InternalSe
 
 func (s *InternalSender) WithSubscriptionEndedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = enabled
@@ -335,6 +349,7 @@ func (s *InternalSender) WithSubscriptionEndedOutbox(enabled func() bool) *Inter
 
 func (s *InternalSender) WithDeploymentFailedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = enabled
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -357,6 +372,7 @@ func (s *InternalSender) WithDeploymentFailedOutbox(enabled func() bool) *Intern
 // WithAgentRunDeliveredOutbox admits agent run summaries (ADR-20261027090010 §8).
 func (s *InternalSender) WithAgentRunDeliveredOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = enabled
 	copy.subscriptionEndedEnabled = nil
@@ -381,6 +397,7 @@ func (s *InternalSender) WithAgentRunDeliveredOutbox(enabled func() bool) *Inter
 // warning (ADR-20261025094915) on its own switch.
 func (s *InternalSender) WithManagedPostgresCapOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.verificationEnabled = nil
 	copy.passwordResetEnabled = nil
 	copy.magicLinkEnabled = nil
@@ -400,7 +417,35 @@ func (s *InternalSender) WithManagedPostgresCapOutbox(enabled func() bool) *Inte
 	return &copy
 }
 
+// WithManagedPostgresRestoreSlotOutbox gates the managed PostgreSQL restore
+// slot notices (ADR-20261031123259) on their own switch.
+func (s *InternalSender) WithManagedPostgresRestoreSlotOutbox(enabled func() bool) *InternalSender {
+	copy := *s
+	copy.verificationEnabled = nil
+	copy.passwordResetEnabled = nil
+	copy.magicLinkEnabled = nil
+	copy.mfaRecoveryAlertEnabled = nil
+	copy.mfaDisabledAlertEnabled = nil
+	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
+	copy.subscriptionEndedEnabled = nil
+	copy.quotaWarningEnabled = nil
+	copy.nonpaymentDeletionEnabled = nil
+	copy.accountSuspendedEnabled = nil
+	copy.accountRestoredEnabled = nil
+	copy.paymentFailedEnabled = nil
+	copy.mfaEnabledAlertEnabled = nil
+	copy.passwordChangedAlertEnabled = nil
+	copy.mfaDisableEnabled = nil
+	copy.managedPostgresCapEnabled = nil
+	copy.managedPostgresRestoreSlotEnabled = enabled
+	return &copy
+}
+
 func (s *InternalSender) credentialOutboxGate() (string, func() bool) {
+	if s.managedPostgresRestoreSlotEnabled != nil {
+		return internalmail.ProducerOutboxManagedPostgresRestoreSlotTemplate, s.managedPostgresRestoreSlotEnabled
+	}
 	if s.managedPostgresCapEnabled != nil {
 		return internalmail.ProducerOutboxManagedPostgresCapTemplate, s.managedPostgresCapEnabled
 	}

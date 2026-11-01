@@ -88,7 +88,7 @@ func TestMetalAgentRun(t *testing.T) {
 			t.Fatalf("wake %s: method %s, networkless %v", id, inst.Method, inst.Lease.Networkless)
 		}
 		start := time.Now()
-		result, err := m.RunAgent(ctx, id, req, nil, cancel)
+		result, _, err := m.RunAgent(ctx, id, req, nil, cancel)
 		if err != nil {
 			t.Fatalf("run %s: %v", id, err)
 		}
@@ -173,7 +173,7 @@ touch /input/repo/edited`)
 			t.Fatalf("wake %s: %v", id, err)
 		}
 		t.Cleanup(func() { _ = m.Destroy(context.Background(), id) })
-		result, err := m.RunAgent(ctx, id, req, nil, nil)
+		result, _, err := m.RunAgent(ctx, id, req, nil, nil)
 		if err != nil {
 			t.Fatalf("run %s: %v", id, err)
 		}

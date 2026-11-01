@@ -173,6 +173,24 @@ UPDATE agent_runs SET state='running', running_at=now(), node_id=sqlc.arg(node_i
 UPDATE agent_runs SET boot_ms=sqlc.arg(boot_ms)::integer, updated_at=now()
  WHERE id=sqlc.arg(run_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='running';
 
+-- name: RecordAgentRunUsage :execrows
+-- ADR-20261027090011: vmmd's measured memory of the run VM. Only the first
+-- record of a run is kept.
+INSERT INTO agent_run_usage (run_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
+    private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot)
+SELECT r.id, r.account_id, sqlc.arg(method)::smallint, sqlc.arg(samples)::integer, sqlc.arg(expected_samples)::integer,
+       sqlc.arg(measured_ms)::bigint, sqlc.arg(paused_ms)::bigint, sqlc.arg(private_mb_ms)::bigint,
+       sqlc.arg(unpaused_private_mb_ms)::bigint, sqlc.arg(billable_mb_ms)::bigint, sqlc.arg(peak_private_mb)::bigint,
+       sqlc.arg(cold_boot)::boolean
+  FROM agent_runs r
+ WHERE r.id=sqlc.arg(run_id)::text::uuid AND r.lease_token=sqlc.arg(lease_token)::text AND r.state='running'
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: GetAgentRunUsage :one
+SELECT method, samples, expected_samples, measured_ms, paused_ms, private_mb_ms, unpaused_private_mb_ms,
+       billable_mb_ms, peak_private_mb, cold_boot
+  FROM agent_run_usage WHERE run_id=sqlc.arg(run_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
 -- name: RenewAgentRunLease :one
 UPDATE agent_runs SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
  WHERE id=sqlc.arg(run_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','running','delivering')
@@ -361,3 +379,14 @@ SELECT r.id::text AS id,r.account_id::text AS account_id,r.workflow_run_id::text
  AND EXISTS (SELECT 1 FROM workflow_runs w WHERE w.id=r.workflow_run_id AND w.status IN ('pending','running','awaiting_event'))
  AND NOT EXISTS (SELECT 1 FROM workflow_events e WHERE e.run_id=r.workflow_run_id AND e.event_name=r.workflow_event)
  ORDER BY r.finished_at,r.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: RevokeAgentCallbacks :one
+-- ADR-20261030125501 §3: revoke every callback URL of a thread issued until now.
+INSERT INTO agent_callback_revocations (endpoint_id, thread_id, account_id, revoked_at)
+VALUES (sqlc.arg(endpoint_id)::text::uuid, sqlc.arg(thread_id)::text, sqlc.arg(account_id)::text::uuid, clock_timestamp())
+ON CONFLICT (endpoint_id, thread_id) DO UPDATE SET revoked_at = clock_timestamp(), account_id = excluded.account_id
+RETURNING revoked_at;
+
+-- name: AgentCallbacksRevokedAt :one
+SELECT revoked_at FROM agent_callback_revocations
+ WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND thread_id = sqlc.arg(thread_id)::text;

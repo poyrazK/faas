@@ -30,11 +30,11 @@ func TestPgStoreUpdateSpansSummaryMergesAndDeduplicatesWriters(t *testing.T) {
 	}
 
 	first := []byte(`[{"span_id":"service","end_time_unix_nano":"10","duration_nanos":11000000}]`)
-	if err := store.UpdateSpansSummary(ctx, traceID, accountID, first); err != nil {
+	if err := store.UpdateSpansSummary(ctx, traceID, accountID, first, 1000); err != nil {
 		t.Fatalf("write first producer summary: %v", err)
 	}
 	second := []byte(`[{"span_id":"outbound","end_time_unix_nano":"20","duration_nanos":49000000},{"span_id":"service","end_time_unix_nano":"10","duration_nanos":12000000}]`)
-	if err := store.UpdateSpansSummary(ctx, traceID, accountID, second); err != nil {
+	if err := store.UpdateSpansSummary(ctx, traceID, accountID, second, 1000); err != nil {
 		t.Fatalf("write second producer summary: %v", err)
 	}
 
@@ -59,7 +59,7 @@ func TestPgStoreUpdateSpansSummaryMergesAndDeduplicatesWriters(t *testing.T) {
 	// The composite account predicate must still prevent a different tenant's
 	// writer from replacing or appending evidence to this trace.
 	// The foreign write matches no row, which the store reports as such (ADR-958).
-	if err := store.UpdateSpansSummary(ctx, traceID, uuid.New(), []byte(`[{"span_id":"foreign"}]`)); !errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
+	if err := store.UpdateSpansSummary(ctx, traceID, uuid.New(), []byte(`[{"span_id":"foreign"}]`), 1000); !errors.Is(err, state.ErrRequestTelemetryRowNotFound) {
 		t.Fatalf("cross-account update: %v, want ErrRequestTelemetryRowNotFound", err)
 	}
 	var afterForeign []byte

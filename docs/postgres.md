@@ -4,8 +4,8 @@ Managed PostgreSQL gives an app its own PostgreSQL database. Gregale creates
 the database, delivers its connection URL to your app as a secret, keeps a
 point-in-time restore window, and stops the compute while the database is idle.
 
-Managed PostgreSQL is a preview, enabled per account. To see whether your
-account and a region can create databases, and what they support, run:
+Every plan includes managed PostgreSQL. To see what your plan and a region
+support, run:
 
 ```sh
 gregale postgres capabilities --region eu-central-1
@@ -28,6 +28,9 @@ Operators: see the [operator guide](managed-postgres.md).
   these plans.
 - Storage and compute are limits. Nothing past them is billed while managed
   PostgreSQL has no invoicing.
+- A database runs in a single zone. Gregale makes no high-availability
+  promise for it; point-in-time restore and the 7-day undo of a delete are the
+  recovery paths.
 
 ## Create a database
 
@@ -40,7 +43,9 @@ The database starts in `provisioning` and moves to `ready`. Options:
 
 - `--class development|burstable|production`: the compute class your plan
   allows. The default is `development`.
-- `--postgres-major N`: the PostgreSQL major version.
+- `--postgres-major N`: the PostgreSQL major version, 15 to 18. The default is
+  16. PostgreSQL 14 reaches its end of life in November 2026, so new databases
+  cannot choose it.
 - `--storage-bytes N` and `--restore-window-seconds N`: default to your plan's
   allowance.
 
@@ -140,11 +145,36 @@ gregale postgres restore orders --name orders-before-import --point-in-time 2026
 gregale postgres attach orders-before-import my-api --env RESTORED_DATABASE_URL
 ```
 
+`gregale postgres get` shows `restore_range`: the earliest and latest point a
+restore can target now. The earliest is the later of the database's creation
+and the start of its restore window.
+
 Attach the restored database under its own environment key when you want an
-app to read it. A source cannot
-be deleted while a database restored from it exists.
+app to read it. A source cannot be deleted while a database restored from it
+exists.
+
+The restored database counts toward your plan's database limit. When the
+account is at its limit, one restore may still go one database past it, on
+every plan:
+
+- The copy shows `restore_slot_until`, 7 days out, in `get`, `list` and the
+  API.
+- If you purge another database or upgrade before then, the copy becomes an
+  ordinary database.
+- Otherwise its delete is scheduled at `restore_slot_until`, with the usual
+  7-day undo. Its bindings are removed first. The source is never touched.
+- The account that ran the restore gets an email 48 hours before
+  `restore_slot_until` while there is still no room, and another when the
+  delete is scheduled.
+- A second restore past the limit while a copy holds the slot returns
+  `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
+- A copy cannot replace its source: the source cannot be deleted while the
+  copy exists. To keep restored rows on a one-database plan, copy them back
+  into the source, then purge the copy.
 
 ## Change the compute class
+
+Resizing is in beta.
 
 ```sh
 REQUEST_ID=$(uuidgen | tr A-Z a-z)
@@ -218,7 +248,7 @@ delete and bind with the CLI or the API.
 ## API and SDKs
 
 Every command uses the public API under `/v1/postgres/*`, and the SDKs cover
-the same operations. Company databases use
+the same operations. Company databases, in beta, use
 `/v1/orgs/{organization}/postgres/databases`.
 - API keys need `postgres:read` to read databases and usage.
 - They need `postgres:manage` to create, restore, resize, delete, undelete or

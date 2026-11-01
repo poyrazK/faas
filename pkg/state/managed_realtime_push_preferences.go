@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,29 @@ func copyPreferences(p api.RealtimeNotificationPreferences) api.RealtimeNotifica
 	_ = json.Unmarshal(data, &out)
 	return out
 }
+
+// defaultPreferences reports whether p behaves exactly like having no stored
+// preferences, so storing it would only use a slot.
+func defaultPreferences(p api.RealtimeNotificationPreferences) bool {
+	if len(p.Categories) == 0 {
+		p.Categories = map[string]bool{}
+	}
+	if len(p.Devices) == 0 {
+		p.Devices = nil
+	}
+	got, _ := json.Marshal(p)
+	want, _ := json.Marshal(api.DefaultRealtimeNotificationPreferences())
+	return bytes.Equal(got, want)
+}
+
+// notificationPreferencesLimit is the account's cap on users with stored
+// preferences, or 0 for no cap (a plan without realtime never reaches here:
+// its endpoints are not served).
+func notificationPreferencesLimit(plan api.Plan) int {
+	limits, _ := api.RealtimeLimitsFor(plan)
+	return limits.NotificationPreferencesPerAccount
+}
+
 func (m *MemStore) GetManagedRealtimeNotificationPreferences(ctx context.Context, ep, principal string) (api.RealtimeNotificationPreferences, error) {
 	key, err := preferencesKey(ep, principal)
 	if err != nil {
@@ -67,18 +91,26 @@ func (m *MemStore) PutManagedRealtimeNotificationPreferences(ctx context.Context
 	if _, ok := m.managedRealtimeEndpoints[ep]; !ok {
 		return ErrNotFound
 	}
-	if _, exists := m.managedRealtimePushPreferences[key]; !exists {
-		count := 0
-		for k := range m.managedRealtimePushPreferences {
-			if k.endpointID == ep {
-				count++
+	if defaultPreferences(p) {
+		// The defaults need no row; deleting it frees the user's slot.
+		delete(m.managedRealtimePushPreferences, key)
+	} else {
+		if _, exists := m.managedRealtimePushPreferences[key]; !exists {
+			account := m.managedRealtimeEndpoints[ep].AccountID
+			if limit := notificationPreferencesLimit(m.accounts[account].Plan); limit > 0 {
+				count := 0
+				for k := range m.managedRealtimePushPreferences {
+					if endpoint, ok := m.managedRealtimeEndpoints[k.endpointID]; ok && endpoint.AccountID == account {
+						count++
+					}
+				}
+				if count >= limit {
+					return ErrManagedRealtimeDurableCursorLimit
+				}
 			}
 		}
-		if count >= 256 {
-			return ErrManagedRealtimeDurableCursorLimit
-		}
+		m.managedRealtimePushPreferences[key] = copyPreferences(p)
 	}
-	m.managedRealtimePushPreferences[key] = copyPreferences(p)
 	now := time.Now().UTC()
 	for id, j := range m.managedRealtimePushDeliveries {
 		if j.EndpointID == ep && j.Principal == key.channel && j.Status == "pending" && (j.Code == "quiet_hours" || j.Code == "digest_wait" || j.Code == "rate_limited" || j.Code == "scheduled") {
@@ -223,16 +255,13 @@ func (s *PgStore) PutManagedRealtimeNotificationPreferences(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	var exists bool
-	var count int
-	err = tx.QueryRow(ctx, `select exists(select 1 from managed_realtime_push_preferences where endpoint_id=$1 and principal=$2),(select count(*) from managed_realtime_push_preferences where endpoint_id=$1)`, ep, key.channel).Scan(&exists, &count)
-	if err != nil {
-		return err
+	if defaultPreferences(p) {
+		// The defaults need no row; deleting it frees the user's slot
+		// (ADR-1323, amendment of 2026-10-31).
+		_, err = tx.Exec(ctx, `delete from managed_realtime_push_preferences where endpoint_id=$1 and principal=$2`, ep, key.channel)
+	} else {
+		err = s.storeNotificationPreferences(ctx, tx, ep, key.channel, raw)
 	}
-	if !exists && count >= 256 {
-		return ErrManagedRealtimeDurableCursorLimit
-	}
-	_, err = tx.Exec(ctx, `insert into managed_realtime_push_preferences(endpoint_id,principal,preferences) values($1,$2,$3) on conflict(endpoint_id,principal) do update set preferences=excluded.preferences,updated_at=clock_timestamp()`, ep, key.channel, raw)
 	if err != nil {
 		return err
 	}
@@ -242,6 +271,32 @@ func (s *PgStore) PutManagedRealtimeNotificationPreferences(ctx context.Context,
 	}
 	return tx.Commit(ctx)
 }
+
+// storeNotificationPreferences upserts a user's preferences, refusing a new
+// user once the account holds its plan's NotificationPreferencesPerAccount.
+// The caller holds the endpoint's row lock; users are counted per account.
+func (s *PgStore) storeNotificationPreferences(ctx context.Context, tx pgx.Tx, ep, principal string, raw []byte) error {
+	var exists bool
+	var plan api.Plan
+	err := tx.QueryRow(ctx, `select exists(select 1 from managed_realtime_push_preferences where endpoint_id=$1 and principal=$2),a.plan
+ from managed_realtime_endpoints e join accounts a on a.id=e.account_id where e.id=$1`, ep, principal).Scan(&exists, &plan)
+	if err != nil {
+		return err
+	}
+	if limit := notificationPreferencesLimit(plan); !exists && limit > 0 {
+		var count int
+		if err = tx.QueryRow(ctx, `select count(*) from managed_realtime_push_preferences p join managed_realtime_endpoints e on e.id=p.endpoint_id
+ where e.account_id=(select account_id from managed_realtime_endpoints where id=$1)`, ep).Scan(&count); err != nil {
+			return err
+		}
+		if count >= limit {
+			return ErrManagedRealtimeDurableCursorLimit
+		}
+	}
+	_, err = tx.Exec(ctx, `insert into managed_realtime_push_preferences(endpoint_id,principal,preferences) values($1,$2,$3) on conflict(endpoint_id,principal) do update set preferences=excluded.preferences,updated_at=clock_timestamp()`, ep, principal, raw)
+	return err
+}
+
 func (s *PgStore) PrepareManagedRealtimePush(ctx context.Context, id, lease string) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

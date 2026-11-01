@@ -48,13 +48,14 @@ func TestPgStoreListAppErrorGroupsPagesEveryGroupOnce(t *testing.T) {
 	}
 	seen := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
 	// Four groups that tie on count and last_seen_at (one burst, same
-	// millisecond), plus one older group.
+	// millisecond), plus one older group. Each record stands for one request,
+	// as the receiver writes it (a count of 0 would read as "no cursor").
 	fingerprints := []string{strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)}
 	for _, fp := range fingerprints {
 		if _, err := store.IncrementAppError(ctx, sqlc.IncrementAppErrorParams{
 			ID: pgUUID(t, uuid.NewString()), AccountID: pgUUID(t, acct.ID), AppID: pgUUID(t, app.ID),
 			Fingerprint: fp, Route: "/" + fp[:4], HttpStatus: 500, ErrorClass: "unhandled",
-			FirstSeenAt: pgtype.Timestamptz{Time: seen, Valid: true},
+			FirstSeenAt: pgtype.Timestamptz{Time: seen, Valid: true}, Count: 1,
 		}); err != nil {
 			t.Fatalf("increment %s: %v", fp, err)
 		}
@@ -62,7 +63,7 @@ func TestPgStoreListAppErrorGroupsPagesEveryGroupOnce(t *testing.T) {
 	if _, err := store.IncrementAppError(ctx, sqlc.IncrementAppErrorParams{
 		ID: pgUUID(t, uuid.NewString()), AccountID: pgUUID(t, acct.ID), AppID: pgUUID(t, app.ID),
 		Fingerprint: strings.Repeat("e", 64), Route: "/old", HttpStatus: 502, ErrorClass: "unhandled",
-		FirstSeenAt: pgtype.Timestamptz{Time: seen.Add(-time.Hour), Valid: true},
+		FirstSeenAt: pgtype.Timestamptz{Time: seen.Add(-time.Hour), Valid: true}, Count: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}

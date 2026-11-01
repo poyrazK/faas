@@ -85,9 +85,11 @@ needs no extra step and no label can outlive its resource.
 
 - **Writer.** Only apid writes `labels`, through one sqlc statement per table
   that sets and removes keys in a single `UPDATE` and refuses the write when the
-  result would exceed the limit. No other component reads them yet; schedd,
-  vmmd and the gateways never do, and nothing on the request path selects the
-  column.
+  result would exceed the limit. The one exception is the repository reconcile
+  (`pkg/reconcile`), which already creates apps in apid and in githubd: it sets
+  the imported labels of an app it has just created, through the same
+  statement (§7). No other component reads them yet; schedd, vmmd and the
+  gateways never do, and nothing on the request path selects the column.
 - **Migration.** Expand only: `ADD COLUMN … DEFAULT '{}'` is a metadata change,
   and the object `CHECK` is added `NOT VALID` and validated in a separate
   statement, each after `SET LOCAL lock_timeout = '5s'`.
@@ -117,9 +119,12 @@ database and cron lists are per account and bounded by plan limits (100
 deployed apps, 10 databases, 500 crons on Scale), and `GET /v1/apps` already
 reads the whole account list. Translating selectors to SQL would need either
 string-built queries, which `CLAUDE.md` forbids, or a fixed query per selector
-shape. Jobs have no per-account cap and their list is paginated, so step 5
-decides between a job count limit and an index before jobs take a selector;
-filtering one page at a time would return short pages and is not done.
+shape. Jobs are bounded too: `JobMaxPerAccount` caps an account's job
+templates (100 on Scale) and image-run jobs are capped apart, so a selected
+`GET /v1/jobs` reads the account's whole list, filters it, and then pages the
+matches; `total` and `next_offset` count the matches. Filtering one page at a
+time would return short pages and is not done. (Step 5 settled this: the
+existing cap is the count limit, and no index is needed.)
 
 ### 5. API
 
@@ -160,8 +165,14 @@ read once at the start, so a resource labelled during the wait is not added.
   `gregale app label unset` removes it. Tracking which keys a manifest last
   applied, as `kubectl apply` does, waits for a need.
 - **The Kubernetes importer** carries each Deployment's and CronJob's
-  `metadata.labels` to the app or cron it creates, drops `gregale.dev/` keys and
-  reports invalid ones. Pod template labels stay matching-only, as today.
+  `metadata.labels` to the app it creates (a CronJob imports as a job-class
+  app with its schedules), drops `gregale.dev/` keys and reports invalid ones
+  and any past the per-resource limit as scan warnings. Pod template labels
+  stay matching-only, as today. The scan reads labels only while the account
+  has the capability (`reposcan.ScanOptions.ResourceLabels`, decided the same
+  way by apid and githubd so a push deploy matches the reviewed plan), and only
+  a newly created app is labelled: an existing app keeps the labels its owner
+  set.
 
 ### 8. Rollout
 
@@ -178,9 +189,14 @@ read once at the start, so a resource labelled during the wait is not added.
      app responses, `?selector=` on `GET /v1/apps` and `GET /v1/domains`.
   4. CLI: `app label list|set|unset`, `app list -l`, `domain list -l`,
      `app wait -l`.
-  5. Databases, crons and jobs.
+  5. Databases, crons and jobs: `PATCH /v1/postgres/databases/{id}/labels`,
+     `PATCH /v1/crons/{id}/labels`, `PATCH /v1/jobs/{name}/labels`, `labels`
+     in their responses, and `?selector=` on their lists.
   6. Manifest `labels` and the Kubernetes importer.
-  7. Docs, dashboard, MCP tools and a journey; then beta.
+  7. Docs, dashboard, MCP tools and a journey; then beta. The management
+     MCP server reads first: app views carry labels and `gregale_list_apps`
+     takes a `selector`. A label write follows its plan/apply consent and
+     waits for a need.
 
 ## Consequences
 

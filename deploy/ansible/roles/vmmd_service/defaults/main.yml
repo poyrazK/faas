@@ -94,3 +94,11 @@ faas_workload_identity_source_dir: ""
 faas_workload_identity_key_path: /etc/faas/secrets/workload-identity.key
 faas_workload_identity_kid_path: /etc/faas/secrets/workload-identity.kid
 faas_workload_identity_issuer: ""
+
+# ADR 20261029202403 amendment 1: the attach credential ring (interactive attach tokens vmmd checks; apid issues them with the same ring),
+# an operator-local file from `gregalectl credentials keygen`. Empty
+# removes it. Set keyed writes only once every holder runs the release
+# that reads keyed digests; turn plain lookup off only at the contract step.
+faas_credential_attach_keys_src: ""
+faas_credential_attach_writes: plain
+faas_credential_attach_plain_lookup: true

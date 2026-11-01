@@ -83,7 +83,9 @@ func (c DataAPIAccessConfig) Validate() error {
 	slots := map[string]bool{}
 	for _, k := range c.ServerKeys {
 		raw, err := hex.DecodeString(k.SHA256)
-		if (k.Slot != "a" && k.Slot != "b") || slots[k.Slot] || err != nil || len(raw) != 32 || hex.EncodeToString(raw) != k.SHA256 {
+		// 33 bytes is the keyed digest apid stores (ADR 20261029202403
+		// amendment 1); the runtime reports a plain SHA-256.
+		if (k.Slot != "a" && k.Slot != "b") || slots[k.Slot] || err != nil || (len(raw) != 32 && len(raw) != 33) || hex.EncodeToString(raw) != k.SHA256 {
 			return errors.New("data api access: invalid server key slot or hash")
 		}
 		slots[k.Slot] = true

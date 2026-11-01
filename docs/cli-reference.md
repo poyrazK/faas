@@ -49,6 +49,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`api`](#api) | Manage your API: routes, OpenAPI spec, consumers and tenants |
 | [`flag`](#flag) | Roll out feature flags to selected customers |
+| [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
 | [`bucket`](#bucket) | Manage object storage buckets |
 | [`pipeline`](#pipeline) | Sync PostgreSQL sources into read-only mirrors |
 | [`data-api`](#data-api) | Generate an API from a PostgreSQL schema |
@@ -1966,7 +1967,7 @@ Examples:
 gregale release approval require --app my-api --approvals 2 --notify releases
 gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h
 gregale release approval pending --app my-api
-gregale release approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment "canary looks clean"
+gregale release approval status v42 --app my-api
 gregale release reject v42 --app my-api --reason "checkout latency is up"
 ```
 
@@ -2028,7 +2029,7 @@ Show a release&#39;s approvals
 
 ### release approve
 
-Approve a release
+Approve a release (in the dashboard; prints its approval page)
 
 `gregale release approve [--app <slug>] [--comment <TEXT>] <deployment>`
 
@@ -2036,6 +2037,8 @@ Approve a release
 |---|---|---|
 | `--app <slug>` | app slug, to resolve a vN revision |  |
 | `--comment <TEXT>` | note recorded with the approval |  |
+
+A person signed in to the dashboard approves a release; the CLI&#39;s login token, an API key or CI cannot. The command fails with the release&#39;s approval page to open. `gregale release reject` works from the CLI.
 
 ### release reject
 
@@ -3982,10 +3985,11 @@ Inspect, change, scale and operate apps
 
 List your apps
 
-`gregale app list [--dry-run] [--quiet|-q] [--yes]`
+`gregale app list [--selector|-l <SELECTOR>] [--dry-run] [--quiet|-q] [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--selector|-l <SELECTOR>` | only apps whose labels match (preview) |  |
 | `--dry-run` | preview app deletion without changing resources |  |
 | `--quiet|-q` | delete one app without prompting |  |
 | `--yes` | confirm app deletion without prompting |  |
@@ -3995,6 +3999,7 @@ Examples:
 ```sh
 gregale app list
 gregale app list --json
+gregale app list -l team=billing
 gregale app delete my-api --dry-run
 gregale app delete my-api --yes
 ```
@@ -4594,11 +4599,12 @@ Conditions are derived from the health assessment; `app health` shows the eviden
 
 Wait until a condition holds (preview)
 
-`gregale app wait [--for <CONDITION>] [--env <SLUG>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale app wait [--for <CONDITION>] [--selector|-l <SELECTOR>] [--env <SLUG>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--for <CONDITION>` | TYPE or TYPE=True\|False\|Unknown (default Ready) |  |
+| `--selector|-l <SELECTOR>` | wait on every app whose labels match, instead of one app (preview) |  |
 | `--env <SLUG>` | wait on this project environment&#39;s conditions instead of the default scope (also --environment) |  |
 | `--timeout <DURATION>` | maximum wait (default 2m) |  |
 | `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
@@ -4611,6 +4617,42 @@ gregale app wait my-api --for Progressing=False --timeout 10m
 ```
 
 Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout.
+
+With -l, waits on every matching app within one timeout and exits 4 when none matches.
+
+### app label
+
+List, set or unset an app&#39;s labels (preview)
+
+Examples:
+
+```sh
+gregale app label set my-api team=billing tier=web
+gregale app label unset my-api tier
+gregale app label list my-api
+```
+
+Labels are key/value pairs with Kubernetes syntax; select apps with -l on app list, app wait and domain list.
+
+Labels are not secret.
+
+#### app label list
+
+Show an app&#39;s labels
+
+`gregale app label list [<app>] <app>`
+
+#### app label set
+
+Set labels; an empty value is KEY=
+
+`gregale app label set [<app>] <app> KEY=VALUE...`
+
+#### app label unset
+
+Remove labels
+
+`gregale app label unset [<app>] <app> KEY...`
 
 ### app health
 
@@ -5638,11 +5680,12 @@ Offers a default-domain change at the end.
 
 List custom domain bindings
 
-`gregale domain list [--app <SLUG>]`
+`gregale domain list [--app <SLUG>] [--selector|-l <SELECTOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | only this app&#39;s domains |  |
+| `--selector|-l <SELECTOR>` | only domains of apps whose labels match (preview) |  |
 
 ### domain create
 
@@ -5718,6 +5761,36 @@ Run a 5-check domain readiness report
 `gregale domain doctor <domain>`
 
 Exits nonzero when unhealthy, including in JSON mode.
+
+### domain host
+
+Choose which names below a wildcard domain get certificates
+
+With an allowlist, the edge refuses certificates for every other name, so random names cannot use up the wildcard&#39;s issuance budget. Routing is unchanged.
+
+#### domain host set
+
+Allow only these names (replaces the list)
+
+`gregale domain host set <*.domain> <name>...`
+
+Examples:
+
+```sh
+gregale domain host set '*.example.com' app api eu.shop
+```
+
+#### domain host get
+
+Show the allowlist
+
+`gregale domain host get <*.domain>`
+
+#### domain host clear
+
+Remove the allowlist so every name may get a certificate
+
+`gregale domain host clear <*.domain>`
 
 
 ## edge
@@ -7774,6 +7847,377 @@ Promote a targeting rule rollout
 | `--expected-version <number>` | current configuration version | required |
 
 
+## postgres
+
+Create, attach and restore managed PostgreSQL databases
+
+`gregale postgres [<subcommand>]`
+
+### postgres overage
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage <get|set> [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+#### postgres overage get
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage get [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage get on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+#### postgres overage set
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage set [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage set on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+### postgres compute-policy
+
+Durably switch between idle suspension and always-on compute
+
+`gregale postgres compute-policy <set|status> --scale-to-zero <BOOL> --request-id <UUID> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scale-to-zero <BOOL>` | true for idle suspension, false for always-on | required; one of `true` · `false` |
+| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
+
+#### postgres compute-policy set
+
+Durably switch between idle suspension and always-on compute
+
+`gregale postgres compute-policy set --scale-to-zero <BOOL> --request-id <UUID> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scale-to-zero <BOOL>` | true for idle suspension, false for always-on | required; one of `true` · `false` |
+| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
+
+#### postgres compute-policy status
+
+Read compute policy change progress
+
+`gregale postgres compute-policy status <database> <request_uuid>`
+
+### postgres resize
+
+Durably resize compute; clients may disconnect
+
+`gregale postgres resize <status> --class <CLASS> --request-id <UUID> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--class <CLASS>` | target service class | required; one of `development` · `burstable` · `production` |
+| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
+
+#### postgres resize status
+
+Read compute resize progress
+
+`gregale postgres resize status <database> <request_uuid>`
+
+### postgres list
+
+List managed PostgreSQL databases
+
+`gregale postgres list [--selector|-l <SELECTOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--selector|-l <SELECTOR>` | only databases whose labels match (preview) |  |
+
+### postgres capabilities
+
+Show plan and region PostgreSQL feature support
+
+`gregale postgres capabilities [--region <REGION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <REGION>` | region (defaults to configured region) |  |
+
+Examples:
+
+```sh
+gregale postgres capabilities --json
+```
+
+### postgres usage
+
+Show monthly managed PostgreSQL usage and guardrail state
+
+### postgres create
+
+Create a managed PostgreSQL database
+
+`gregale postgres create --region <REGION> [--postgres-major <N>] [--class <CLASS>] [--availability <MODE>] [--scale-to-zero] [--storage-bytes <N>] [--restore-window-seconds <N>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <REGION>` | provider-neutral region | required |
+| `--postgres-major <N>` | PostgreSQL major version |  |
+| `--class <CLASS>` | service class | one of `development` · `burstable` · `production` |
+| `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
+| `--scale-to-zero` | suspend compute when idle |  |
+| `--storage-bytes <N>` | storage limit in bytes |  |
+| `--restore-window-seconds <N>` | point-in-time restore window |  |
+
+Examples:
+
+```sh
+gregale postgres create orders --region us-east-2 --class development --scale-to-zero
+```
+
+### postgres get
+
+Show one managed PostgreSQL database
+
+`gregale postgres get <database>`
+
+### postgres status
+
+Show the database&#39;s conditions (preview)
+
+`gregale postgres status <database>`
+
+Examples:
+
+```sh
+gregale postgres status orders
+```
+
+Ready, Progressing and Degraded, from its state and cached health.
+
+### postgres wait
+
+Wait until a condition holds (preview)
+
+`gregale postgres wait [--for <CONDITION>] [--timeout <DURATION>] [--poll-interval <DURATION>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--for <CONDITION>` | Ready, Progressing or Degraded; TYPE or TYPE=True\|False\|Unknown (default Ready) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m) |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+
+Examples:
+
+```sh
+gregale postgres wait orders
+```
+
+Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found.
+
+### postgres label
+
+List, set or unset a database&#39;s labels (preview)
+
+Examples:
+
+```sh
+gregale postgres label set orders team=billing
+gregale postgres label list orders
+```
+
+Labels are key/value pairs with Kubernetes syntax; select databases with -l on postgres list.
+
+Labels are not secret.
+
+#### postgres label list
+
+Show a database&#39;s labels
+
+`gregale postgres label list <database>`
+
+#### postgres label set
+
+Set labels; an empty value is KEY=
+
+`gregale postgres label set <database> KEY=VALUE...`
+
+#### postgres label unset
+
+Remove labels
+
+`gregale postgres label unset <database> KEY...`
+
+### postgres delete
+
+Delete a managed PostgreSQL database; it can be undone for 7 days
+
+`gregale postgres delete [--purge] [--yes] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--purge` | delete at once with its restore history; cannot be undone |  |
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
+
+Examples:
+
+```sh
+gregale postgres delete orders
+gregale postgres delete orders --purge
+```
+
+The database stops at once; `gregale postgres recover` brings it back until its restorable_until.
+
+A deleted database still counts toward the plan&#39;s database limit until it is purged.
+
+### postgres recover
+
+Bring back a deleted managed PostgreSQL database
+
+`gregale postgres recover <database>`
+
+Examples:
+
+```sh
+gregale postgres recover orders
+```
+
+Works until the database&#39;s restorable_until, 7 days after the delete; a purged database is gone.
+
+### postgres restore
+
+Restore a database to a new database
+
+`gregale postgres restore --name <NAME> --point-in-time <TIMESTAMP> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | name for the restored database | required |
+| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
+
+### postgres cutover
+
+Stage and verify a restore target without moving workloads
+
+#### postgres cutover prepare
+
+Stage all source bindings for one app and scope
+
+`gregale postgres cutover prepare [--env <SCOPE>] <source> <target> <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+
+#### postgres cutover get
+
+Read cutover progress and SQL evidence
+
+`gregale postgres cutover get <id>`
+
+#### postgres cutover verify
+
+Queue control-plane SQL verification
+
+`gregale postgres cutover verify <id>`
+
+#### postgres cutover cancel
+
+Revoke staged credentials and release pins
+
+`gregale postgres cutover cancel <id>`
+
+### postgres bindings
+
+Manage app database bindings
+
+#### postgres bindings list
+
+List a database&#39;s bindings
+
+`gregale postgres bindings list <database>`
+
+#### postgres bindings create
+
+Bind a database to an app by app ID (attach takes slugs)
+
+`gregale postgres bindings create --app <APP_ID> --env <SCOPE> --environment-key <KEY> [--access <MODE>] <database_id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP_ID>` | app ID | required |
+| `--env <SCOPE>` | environment scope (also --scope) | required |
+| `--environment-key <KEY>` | environment variable name | required |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+
+#### postgres bindings get
+
+Show one binding
+
+`gregale postgres bindings get <id>`
+
+#### postgres bindings delete
+
+Delete a binding
+
+`gregale postgres bindings delete <id>`
+
+#### postgres bindings rotate
+
+Rotate a binding, optionally waiting for the old credential
+
+`gregale postgres bindings rotate [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the previous credential to retire |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
+
+Examples:
+
+```sh
+gregale postgres bindings rotate BINDING_ID --wait
+```
+
+Waits until the previous credential retires.
+
+### postgres attach
+
+Attach a database to an app
+
+`gregale postgres attach [--scope <SCOPE>] [--env <KEY>] [--access <MODE>] <database> <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope (defaults to linked project environment, otherwise default) |  |
+| `--env <KEY>` | connection environment variable |  |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+
+Examples:
+
+```sh
+gregale postgres attach orders my-api --env DATABASE_URL --access read_write
+```
+
+
 ## bucket
 
 Manage object storage buckets
@@ -8872,16 +9316,44 @@ gregale data-api create shop-data --database shop-db --issuer https://id.example
 
 ### data-api deploy
 
-Deploy a single-app Data API with its migrations as the release task
+Deploy the current Data API runtime and run migrations on release
 
-`gregale data-api deploy --migrations <DIR> [--release-command <COMMAND>] [--env <SCOPE>] [--timeout <DURATION>] <name>`
+`gregale data-api deploy [--migrations <DIR>] [--release-command <COMMAND>] [--env <SCOPE>] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL | required |
+| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL |  |
 | `--release-command <COMMAND>` | release command (default node migrations/release.mjs) |  |
 | `--env <SCOPE>` | environment scope (also --scope) |  |
 | `--timeout <DURATION>` | deployment and release wait (default 15m) |  |
+
+Examples:
+
+```sh
+gregale data-api deploy shop-data --migrations migrations
+gregale data-api deploy shop-data
+```
+
+Deploys the runtime the control plane serves; without --migrations it upgrades the runtime only.
+
+### data-api delete
+
+Revoke a Data API&#39;s database bindings and delete the app
+
+`gregale data-api delete [--yes] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | confirm deletion without prompting |  |
+| `--timeout <DURATION>` | maximum time for the API calls (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api delete shop-data --yes
+```
+
+Deleting the app alone is refused while its bindings are live.
 
 ### data-api configure
 
@@ -9905,11 +10377,12 @@ gregale cron run get REQUEST_ID --wait --timeout 5m
 
 List cron rules
 
-`gregale cron list --app <slug> [--one-off]`
+`gregale cron list [--app <slug>] [--selector|-l <SELECTOR>] [--one-off]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (required without -l) |  |
+| `--selector|-l <SELECTOR>` | only crons whose labels match (preview) |  |
 | `--one-off` | list one-off requests (--at or --in) instead of cron rules |  |
 
 ### cron create
@@ -9981,6 +10454,39 @@ gregale cron wait CRON_ID
 ```
 
 Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found.
+
+### cron label
+
+List, set or unset a cron&#39;s labels (preview)
+
+Examples:
+
+```sh
+gregale cron label set CRON_ID team=billing
+gregale cron label list CRON_ID
+```
+
+Labels are key/value pairs with Kubernetes syntax; select crons with -l on cron list.
+
+Labels are not secret.
+
+#### cron label list
+
+Show a cron&#39;s labels
+
+`gregale cron label list <id>`
+
+#### cron label set
+
+Set labels; an empty value is KEY=
+
+`gregale cron label set <id> KEY=VALUE...`
+
+#### cron label unset
+
+Remove labels
+
+`gregale cron label unset <id> KEY...`
 
 ### cron get
 
@@ -10369,13 +10875,47 @@ gregale job resume --run RUN_ID
 
 List jobs in this account
 
-`gregale job list [--limit <N>] [--offset <N>] [--all]`
+`gregale job list [--limit <N>] [--offset <N>] [--all] [--selector|-l <SELECTOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--limit <N>` | page size (1..200, default 50) |  |
 | `--offset <N>` | starting offset (&gt;= 0) |  |
 | `--all` | walk every page using --limit and --offset |  |
+| `--selector|-l <SELECTOR>` | only jobs whose labels match (preview) |  |
+
+### job label
+
+List, set or unset a job&#39;s labels (preview)
+
+Examples:
+
+```sh
+gregale job label set nightly-report team=billing
+gregale job label list nightly-report
+```
+
+Labels are key/value pairs with Kubernetes syntax; select jobs with -l on job list.
+
+Labels are not secret.
+
+#### job label list
+
+Show a job&#39;s labels
+
+`gregale job label list <job>`
+
+#### job label set
+
+Set labels; an empty value is KEY=
+
+`gregale job label set <job> KEY=VALUE...`
+
+#### job label unset
+
+Remove labels
+
+`gregale job label unset <job> KEY...`
 
 ### job create
 
