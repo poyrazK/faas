@@ -2033,6 +2033,8 @@ type Querier interface {
 	HasDeploymentReleaseEnvironmentSnapshot(ctx context.Context, db DBTX, deploymentID string) (bool, error)
 	HasDormantReleaseAdditions(ctx context.Context, db DBTX, projectID string) (bool, error)
 	HasEarlierMCPNotification(ctx context.Context, db DBTX, arg HasEarlierMCPNotificationParams) (bool, error)
+	// A managed source or runtime field is drift until the reviewed graph that
+	// carries it for the current generation and approved revision has served.
 	HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
 	HasManagedPostgresIncompatibleUsageWindow(ctx context.Context, db DBTX, arg HasManagedPostgresIncompatibleUsageWindowParams) (bool, error)

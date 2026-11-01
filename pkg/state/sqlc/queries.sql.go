@@ -27966,10 +27966,17 @@ const hasEnvironmentGitOpsRuntimeDrift = `-- name: HasEnvironmentGitOpsRuntimeDr
 SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = $1::uuid
 AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)
  UNION ALL
- SELECT 1 FROM environment_managed_fields WHERE source_id=$1::uuid
- AND (field_path='source' OR starts_with(field_path,'runtime/'))) AS drifted
+ SELECT 1 FROM environment_managed_fields f WHERE f.source_id=$1::uuid
+ AND (f.field_path='source' OR starts_with(f.field_path,'runtime/'))
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_serving_receipts r
+  JOIN environment_workload_graphs g ON g.id=r.graph_id
+  JOIN environment_git_sources s ON s.id=g.source_id
+  WHERE g.source_id=f.source_id AND g.generation=s.generation AND g.revision_id=s.approved_revision_id
+   AND r.phase='served' AND EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m WHERE m->>'resource'=f.resource))) AS drifted
 `
 
+// A managed source or runtime field is drift until the reviewed graph that
+// carries it for the current generation and approved revision has served.
 func (q *Queries) HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error) {
 	row := db.QueryRow(ctx, hasEnvironmentGitOpsRuntimeDrift, sourceID)
 	var drifted bool

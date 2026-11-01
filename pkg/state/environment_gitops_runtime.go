@@ -64,9 +64,12 @@ type EnvironmentGitOpsRuntimeStore interface {
 	ReconcileEnvironmentGitOpsRuntime(context.Context, EnvironmentGitOpsLease, string) (EnvironmentGitOpsRuntimeProgress, error)
 }
 
-func gitOpsRuntimeReady(targets []EnvironmentGitOpsRuntimeTarget) bool {
+// gitOpsRuntimeReadyAfterServing reports whether every runtime target is
+// ready. A reviewed graph that served meets the unqualified-workload fence
+// (ADR-568 note, 2026-10-31); freshness still applies.
+func gitOpsRuntimeReadyAfterServing(targets []EnvironmentGitOpsRuntimeTarget, served bool) bool {
 	for _, target := range targets {
-		if !target.Ready() {
+		if !target.Fresh() || target.UnqualifiedWorkloads != 0 && !served {
 			return false
 		}
 	}
