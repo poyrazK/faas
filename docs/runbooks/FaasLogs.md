@@ -58,9 +58,9 @@ drain failure loses or delays log lines, never requests.
   `gregalectl flags disable --key log_drains --reason <incident> --yes`. apid
   hides the drain API and pages, and each gatewayd-internal stops its drain
   workers at the next reconcile (30 s). Drain rows and their health stay.
-  On re-enable each drain resumes from what is still in the instance rings;
-  lines that left the rings while drains were off are not forwarded (they
-  are still in the archive). The Datadog integration stops with it.
+  On re-enable each drain forwards new lines only: lines written while
+  drains were off are not forwarded (they are still in the instance rings
+  and the archive). The Datadog integration stops with it.
 - **Stop one account's drains:**
   `gregalectl flags deny --key log_drains --account-id <uuid> --reason <why>`.
   To stop one drain, pause it as the customer would

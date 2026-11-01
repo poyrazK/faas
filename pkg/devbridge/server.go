@@ -38,7 +38,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.Serve
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	session, err := s.session(r)
-	if err != nil || session.AuthorizeAttachment(time.Now(), r.Header.Get(TokenHeader)) != nil {
+	if err != nil || session.AuthorizeAttachment(r.Context(), time.Now(), r.Header.Get(TokenHeader)) != nil {
 		bridgeProblem(w, 403, "dev_bridge_unauthorized")
 		return
 	}
@@ -68,7 +68,7 @@ func (s *Server) session(r *http.Request) (Session, error) {
 
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	session, err := s.session(r)
-	if err != nil || session.AuthorizeAttachment(time.Now(), r.Header.Get(TokenHeader)) != nil {
+	if err != nil || session.AuthorizeAttachment(r.Context(), time.Now(), r.Header.Get(TokenHeader)) != nil {
 		bridgeProblem(w, 403, "dev_bridge_unauthorized")
 		return
 	}
@@ -86,8 +86,8 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	done := make(chan struct{})
 	token := r.Header.Get(TokenHeader)
-	go s.watchAuthorization(ctx, cancel, done, session, func(current Session) error {
-		return current.AuthorizeAttachment(time.Now(), token)
+	go s.watchAuthorization(ctx, cancel, done, session, func(ctx context.Context, current Session) error {
+		return current.AuthorizeAttachment(ctx, time.Now(), token)
 	})
 	_ = s.relay.Attach(ctx, session, NewWebSocketConn(socket))
 	close(done)
@@ -95,7 +95,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 
 // Revocation by any apid replica also closes idle laptop connections and
 // long-lived upgraded sockets; authorize repeats the entry check.
-func (s *Server) watchAuthorization(ctx context.Context, cancel func(), done <-chan struct{}, session Session, authorize func(Session) error) {
+func (s *Server) watchAuthorization(ctx context.Context, cancel func(), done <-chan struct{}, session Session, authorize func(context.Context, Session) error) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -106,7 +106,7 @@ func (s *Server) watchAuthorization(ctx context.Context, cancel func(), done <-c
 			return
 		case <-ticker.C:
 			current, err := s.lookup(ctx, session.Scope.AccountID, session.ID)
-			if err != nil || authorize(current) != nil {
+			if err != nil || authorize(ctx, current) != nil {
 				cancel()
 				return
 			}
@@ -120,7 +120,7 @@ func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { r
 
 func (s *Server) traffic(w http.ResponseWriter, r *http.Request) {
 	session, err := s.session(r)
-	if err != nil || session.AuthorizeRequest(time.Now(), r.Header.Get(TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID) != nil {
+	if err != nil || session.AuthorizeRequest(r.Context(), time.Now(), r.Header.Get(TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID) != nil {
 		bridgeProblem(w, 403, "dev_bridge_unauthorized")
 		return
 	}
@@ -151,13 +151,13 @@ func (s *Server) traffic(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dependency(w http.ResponseWriter, r *http.Request) {
 	session, err := s.session(r)
-	if err != nil || session.AuthorizeDependency(time.Now(), r.Header.Get(TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, r.PathValue("app")) != nil {
+	if err != nil || session.AuthorizeDependency(r.Context(), time.Now(), r.Header.Get(TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, r.PathValue("app")) != nil {
 		bridgeProblem(w, 403, "dev_bridge_dependency_denied")
 		return
 	}
 	if value := r.Header.Get(ContextHeader); value != "" {
 		c, err := ParseRequestContext(value)
-		if err != nil || len(r.Header.Values(ContextHeader)) != 1 || session.AuthorizeContextRoute(time.Now(), c, session.Scope.EnvironmentID, r.PathValue("app")) != nil {
+		if err != nil || len(r.Header.Values(ContextHeader)) != 1 || session.AuthorizeContextRoute(r.Context(), time.Now(), c, session.Scope.EnvironmentID, r.PathValue("app")) != nil {
 			bridgeProblem(w, 403, "dev_bridge_dependency_denied")
 			return
 		}

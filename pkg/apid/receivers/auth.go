@@ -32,6 +32,7 @@ import (
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -149,16 +150,17 @@ func (r *authReceiver) AuthenticateCredential(ctx context.Context, req *apidpb.A
 
 // MatchCredential answers whether a stored credential hash a gateway read
 // is the one the presented token may hold (ADR 20261029202403). It answers
-// only yes or no, and only for the columns gateways check.
+// only yes or no, and only for the columns gateways check, under apid's
+// policy for the column's family (amendment 1, decision 2).
 func (r *authReceiver) MatchCredential(_ context.Context, req *apidpb.MatchCredentialRequest) (*apidpb.MatchCredentialResponse, error) {
-	tag, ok := state.GatewayCheckedCredential(req.GetColumn())
+	tag, family, ok := state.GatewayCheckedCredential(req.GetColumn())
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "column is not a gateway-checked credential")
 	}
 	if len(req.GetSha256()) != sha256.Size {
 		return nil, status.Error(codes.InvalidArgument, "sha256 must be 32 bytes")
 	}
-	return &apidpb.MatchCredentialResponse{Match: state.CredentialMatches(tag, req.GetSha256(), req.GetStored())}, nil
+	return &apidpb.MatchCredentialResponse{Match: credhash.For(family).Matches(tag, req.GetSha256(), req.GetStored())}, nil
 }
 
 // RegisterAuthReceiver binds the AuthServer onto a gRPC server.

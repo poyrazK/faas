@@ -328,6 +328,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	if m == nil {
 		return staged, nil
 	}
+	if problem := s.applyManifestLabels(ctx, acct, app, m.Labels); problem != nil {
+		return staged, problem
+	}
 	if !s.operation.OperationDefinitionsAdmission(acct.ID, app.ID, deploymentScope, sourceOperationSpecs(m)) {
 		return staged, api.ErrCapacity("new operation admission is disabled for this preview cohort")
 	}
@@ -760,18 +763,18 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 			FairnessSelector: declaration.WorkFairnessKey,
 			Action:           declaration.EffectiveWorkAction(), Ordered: declaration.Ordered}
 	}
-	if !sourceManifestReconcilesEvents(ctx) {
-		return nil
+	if sourceManifestReconcilesEvents(ctx) {
+		if problem := s.reconcileSourceRefEventSubscriptions(ctx, acct, app, subscriptions, declared, staged); problem != nil {
+			return problem
+		}
 	}
-	return s.reconcileSourceRefEventSubscriptions(ctx, acct, app, subscriptions, declared, staged)
+	// A stage deploy or a batch trigger create does not reconcile, but what
+	// it adds counts against the same caps.
+	return s.checkSourceRefEventSubscriptionLimits(ctx, acct, app, staged)
 }
 
 // reconcileSourceRefEventSubscriptions disables the app's enabled
-// subscriptions the manifest no longer declares, then holds the result to the
-// plan's caps (ADR-20261031130000). Counting after writing makes concurrent
-// deploys of one account safe without a lock: the later of two counts sees
-// both. A count already over the cap fails only a deploy that added or
-// re-enabled a subscription, so an older app over the cap can still shrink.
+// subscriptions the manifest no longer declares (ADR-20261031130000).
 func (s *server) reconcileSourceRefEventSubscriptions(ctx context.Context, acct state.Account, app state.App, existing []state.EventSubscription, declared map[string]bool, staged *sourceRefManifestStaged) *api.Problem {
 	reconcile, ok := s.store.(state.EventSubscriptionReconcileStore)
 	if !ok {
@@ -792,8 +795,22 @@ func (s *server) reconcileSourceRefEventSubscriptions(ctx context.Context, acct 
 			"type": subscription.Type, "source_ref": true, "reason": "undeclared",
 		})
 	}
+	return nil
+}
+
+// checkSourceRefEventSubscriptionLimits holds the app's enabled subscriptions
+// to the plan's caps after a manifest apply wrote them (ADR-20261031130000).
+// Counting after writing makes concurrent deploys of one account safe without
+// a lock: the later of two counts sees both. A count already over the cap
+// fails only an apply that added or re-enabled a subscription, so an older app
+// over the cap can still shrink.
+func (s *server) checkSourceRefEventSubscriptionLimits(ctx context.Context, acct state.Account, app state.App, staged *sourceRefManifestStaged) *api.Problem {
 	if len(staged.eventSubscriptionIDs) == 0 && len(staged.eventSubscriptionsEnabled) == 0 {
 		return nil
+	}
+	reconcile, ok := s.store.(state.EventSubscriptionReconcileStore)
+	if !ok {
+		return api.ErrCapacity("event subscription limits are unavailable")
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {

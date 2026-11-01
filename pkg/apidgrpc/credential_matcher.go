@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 // MatchCredential asks apid whether stored, read from column, is the value
@@ -81,4 +82,12 @@ func (m *CredentialMatcher) Match(ctx context.Context, column string, stored, su
 	m.matched[key] = struct{}{}
 	m.mu.Unlock()
 	return true, nil
+}
+
+// Remote adapts m to credhash.Remote, for a daemon that holds no ring for a
+// family and asks apid instead (ADR 20261029202403 amendment 1).
+func (m *CredentialMatcher) Remote() credhash.Remote {
+	return func(ctx context.Context, tag credhash.Tag, stored, sum []byte) (bool, error) {
+		return m.Match(ctx, string(tag), stored, sum)
+	}
 }

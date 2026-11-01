@@ -14,7 +14,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"log/slog"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -53,8 +52,7 @@ type Host interface {
 type Service struct {
 	AccessPreviewEnabled  bool
 	TicketsPreviewEnabled bool
-	ClaimWaitOnce         sync.Once
-	ClaimWaitSlots        chan struct{}
+	claimWaiters          claimWaiters
 	AuthLimiter           *middleware.Limiter
 	Host                  Host
 

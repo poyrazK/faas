@@ -2568,6 +2568,7 @@
       "github_repo_id",
       "id",
       "idle_timeout_s",
+      "labels",
       "last_deploy_failed_email_at",
       "last_scale_in_at",
       "last_scale_out_at",
@@ -3892,6 +3893,15 @@
       "host",
       "owner_id",
       "registered_domain"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "custom_domain_tls_allowed_hosts",
+    "columns": [
+      "created_at",
+      "name",
+      "wildcard_domain"
     ],
     "kind": "operational"
   },
@@ -9697,6 +9707,19 @@
       "subject_id",
       "threshold",
       "used_unit_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "managed_postgres_overage_deliveries",
+    "columns": [
+      "billed_unit_seconds",
+      "delivered_millicents",
+      "live",
+      "period_start",
+      "provider",
+      "subject_id",
+      "updated_at"
     ],
     "kind": "account_identity"
   },

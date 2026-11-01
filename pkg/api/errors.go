@@ -5078,6 +5078,16 @@ func ErrWildcardDomainsNotAllowed(p Plan) *Problem {
 		WithDocs(docsBase + "/domains#wildcard-domains")
 }
 
+// ErrCustomDomainHostsTooMany is a 422: a wildcard custom domain's host
+// allowlist names more than CustomDomainTLSAllowedHostsMax hosts.
+func ErrCustomDomainHostsTooMany(observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+		"Too many allowlisted hosts",
+		fmt.Sprintf("a wildcard domain's host allowlist holds at most %d names; got %d.", CustomDomainTLSAllowedHostsMax, observed)).
+		WithLimit(int64(CustomDomainTLSAllowedHostsMax), int64(observed)).
+		WithDocs(docsBase + "/domains#wildcard-host-allowlist")
+}
+
 // ErrWildcardDomainTenantSurfaceOverlap is a typed 409: a wildcard cannot
 // take ownership of a hostname already claimed by a tenant surface.
 func ErrWildcardDomainTenantSurfaceOverlap(domain, hostname string) *Problem {

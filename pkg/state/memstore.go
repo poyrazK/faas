@@ -645,6 +645,9 @@ type MemStore struct {
 	// customDomainTLSAdmissions mirrors custom_domain_tls_admissions
 	// (ADR-520 amendment 1), oldest first.
 	customDomainTLSAdmissions []customDomainTLSAdmission
+	// customDomainTLSAllowedHosts mirrors custom_domain_tls_allowed_hosts
+	// (ADR-520 amendment 2): wildcard → sorted names.
+	customDomainTLSAllowedHosts map[string][]string
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole
@@ -1459,6 +1462,10 @@ type MemStore struct {
 	// runtimeSecretSignatures maps an envelope's SHA-256 to its writer
 	// signature (ADR 20261028161502), created on first use.
 	runtimeSecretSignatures map[string][]byte
+
+	// appLabels holds each app's labels (ADR-20261031100025), created on
+	// first write; an app absent from it has none.
+	appLabels map[string]map[string]string
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -16833,6 +16840,16 @@ func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, sta
 	for _, s := range states {
 		wanted[s] = true
 	}
+	// A job task keeps its instance (job_tasks.instance_id has no delete
+	// action): PgStore leaves such rows out, so the sweep never fails on them.
+	referenced := map[string]bool{}
+	for _, tasks := range m.jobTasks {
+		for _, task := range tasks {
+			if task.InstanceID != nil {
+				referenced[*task.InstanceID] = true
+			}
+		}
+	}
 	var out []Instance
 	for _, ins := range m.instances {
 		if !wanted[State(ins.State)] {
@@ -16841,7 +16858,7 @@ func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, sta
 		if ins.TerminalAt == nil {
 			continue
 		}
-		if !ins.TerminalAt.Before(threshold) {
+		if !ins.TerminalAt.Before(threshold) || referenced[ins.ID] {
 			continue
 		}
 		out = append(out, ins)
@@ -20717,6 +20734,7 @@ type billingUsageDelivery struct {
 	meter               BillingMeter
 	hour                time.Time
 	quantity            int64
+	deliveredAt         time.Time
 }
 
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
@@ -20804,7 +20822,7 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	defer m.mu.Unlock()
 	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
 	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
-		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity, deliveredAt: m.clock()}
 	}
 	return nil
 }

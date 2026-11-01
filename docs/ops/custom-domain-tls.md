@@ -76,7 +76,9 @@ cover this path; see
   `deny_backoff` means the edge asked for a host again and again right after
   allowing it, which is what failing ACME orders look like; it is refused for
   an hour, doubling on repeats up to a day, and a gatewayd-public restart
-  forgets it. A sustained
+  forgets it. `deny_not_allowlisted` means the wildcard's owner set a
+  host allowlist (`gregale domain host get`) that does not name the
+  host; it is the customer's choice, not a fault. A sustained
   `deny_overload` means handshakes with unknown server names are arriving
   faster than `OnDemandTLSAskLookupsPerSecond`, usually a scan; legitimate
   names are retried on the client's next handshake. Hostnames with no

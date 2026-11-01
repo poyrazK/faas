@@ -45,6 +45,17 @@ func (s *server) relayTestSend(ctx context.Context, accountID, kind, subjectID s
 			s.log.Warn("delete alert test send", "id", id, "err", err)
 		}
 	}()
+	// Stop waiting a second before the request budget ends, so a send that
+	// outlives it answers "timed out, check the deliveries" rather than
+	// "cancelled" (bug hunt 2026-10-28 B35).
+	if budget, ok := ctx.Deadline(); ok {
+		if left := time.Until(budget) - time.Second; left < wait {
+			wait = left
+		}
+	}
+	if wait < 0 {
+		wait = 0
+	}
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	tick := time.NewTicker(testRelayPoll)

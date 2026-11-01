@@ -33,6 +33,7 @@ type MemoryStore struct {
 	overage                   map[string]bool
 	capEvents                 map[memoryCapEventKey]CapEvent
 	capEventsMailed           map[memoryCapEventKey]bool
+	overageDeliveries         map[memoryOverageKey]OverageDelivery
 	usageWaivers              map[string][]usageWaiver
 }
 
@@ -58,6 +59,7 @@ func NewMemoryStore() *MemoryStore {
 		overage:                   map[string]bool{},
 		capEvents:                 map[memoryCapEventKey]CapEvent{},
 		capEventsMailed:           map[memoryCapEventKey]bool{},
+		overageDeliveries:         map[memoryOverageKey]OverageDelivery{},
 		usageWaivers:              map[string][]usageWaiver{},
 	}
 }

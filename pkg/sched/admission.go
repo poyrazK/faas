@@ -123,6 +123,10 @@ type reservation struct {
 	// (ADR 20261031143521): compressing again frees little.
 	frozenAt      time.Time
 	compressTried bool
+	// frozenSeeded marks a frozen reservation SeedLedger re-booked after a
+	// restart at a stand-in charge; the first measurement replaces it
+	// (SettleSeededFrozenCharge, ADR 20261031190030).
+	frozenSeeded bool
 	// agentRun marks an agent run VM (KindAgentRun). It has no instances
 	// row, so no node measurement includes it.
 	agentRun bool
@@ -1024,6 +1028,18 @@ func (l *NodeLedger) AdmissionUsedMB(nodeID string) int {
 	}
 	used, _ := l.admissionUsed_locked(nodeID, node.residentRAM, node.frozenRAM, ceiling)
 	return used
+}
+
+// MeasuredAsOf is when the measurement measured admission uses for nodeID
+// was taken; ok is false without measured admission or a fresh measurement.
+func (l *NodeLedger) MeasuredAsOf(nodeID string) (asOf time.Time, ok bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.measured == nil {
+		return time.Time{}, false
+	}
+	_, asOf, ok = l.measured(nodeID)
+	return asOf, ok
 }
 
 // MeasuredAdmissionEnabled reports whether EnableMeasuredAdmission is on.
