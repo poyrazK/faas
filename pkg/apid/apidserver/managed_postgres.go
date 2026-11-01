@@ -41,6 +41,8 @@ type managedPostgresHooks struct {
 	// RestoreSlotExpired records a copy whose delete was scheduled because
 	// its restore slot ended without room (ADR-20261031123259).
 	RestoreSlotExpired func(context.Context, managedpostgres.Database)
+	// NotifyRestoreSlot queues a restore slot email (ADR-20261031123259).
+	NotifyRestoreSlot func(context.Context, managedpostgres.RestoreSlotNotice) error
 }
 
 func (h *managedPostgresHooks) charges() billing.ManagedPostgresChargeSink {
@@ -55,6 +57,13 @@ func (h *managedPostgresHooks) restoreSlotExpired() func(context.Context, manage
 		return nil
 	}
 	return h.RestoreSlotExpired
+}
+
+func (h *managedPostgresHooks) notifyRestoreSlot() func(context.Context, managedpostgres.RestoreSlotNotice) error {
+	if h == nil {
+		return nil
+	}
+	return h.NotifyRestoreSlot
 }
 
 func (h *managedPostgresHooks) overage() managedPostgresOverageGate {
@@ -242,6 +251,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	restoreSlots, err := managedpostgres.NewRestoreSlotSweeper(service, bindingService, managedpostgres.RestoreSlotSweeperOptions{
 		Expired: hooks.restoreSlotExpired(),
+		Notify:  hooks.notifyRestoreSlot(),
 		Logger:  log,
 	})
 	if err != nil {

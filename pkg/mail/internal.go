@@ -46,6 +46,8 @@ type InternalSender struct {
 	mfaEnabledAlertEnabled      func() bool
 	passwordChangedAlertEnabled func() bool
 	mfaDisableEnabled           func() bool
+
+	managedPostgresRestoreSlotEnabled func() bool
 }
 
 func NewInternalSender(socket, token, from string, enabled func() bool) (*InternalSender, error) {

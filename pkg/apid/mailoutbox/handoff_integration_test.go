@@ -51,6 +51,7 @@ CREATE TABLE deployments(id uuid PRIMARY KEY,app_id uuid NOT NULL REFERENCES app
 CREATE TABLE org_memberships(org_id uuid NOT NULL,account_id uuid NOT NULL,role text NOT NULL,removed_at timestamptz,PRIMARY KEY(org_id,account_id));
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz);
 CREATE TABLE resource_namespaces(id uuid PRIMARY KEY);
+CREATE TABLE managed_postgres_databases(id uuid PRIMARY KEY);
 CREATE TABLE agents(id uuid PRIMARY KEY,account_id uuid NOT NULL,name text NOT NULL);
 CREATE TABLE agent_runs(id uuid PRIMARY KEY,account_id uuid NOT NULL,agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE);
 CREATE TABLE agent_deliveries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),account_id uuid NOT NULL,run_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,destination text NOT NULL,state text NOT NULL DEFAULT 'pending',body text NOT NULL DEFAULT '',body_truncated boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),deadline_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes');

@@ -10153,6 +10153,18 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_restore_slot_notices",
+    "columns": [
+      "database_id",
+      "kind",
+      "mail_intent_id",
+      "recorded_at",
+      "restorable_until",
+      "slot_until"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_usage",
     "columns": [
       "account_id",

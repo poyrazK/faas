@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // ADR-20261031123259: a point-in-time restore may reserve one database past
@@ -47,13 +49,21 @@ type RestoreSlotSummary struct {
 	Expired  int
 	Waiting  int
 	Failed   int
+	// Noticed counts notices recorded; NotifyFailed notices whose email
+	// was not queued (the next sweep retries them).
+	Noticed      int
+	NotifyFailed int
 }
 
 // RestoreSlotSweeperOptions configures a RestoreSlotSweeper.
 type RestoreSlotSweeperOptions struct {
 	// Expired is called once a copy's delete is scheduled because its slot
-	// ended without room (audit event, email).
-	Expired   func(context.Context, Database)
+	// ended without room (audit event).
+	Expired func(context.Context, Database)
+	// Notify queues the email for a recorded notice. It is retried each
+	// sweep until it links an email to the notice or the notice is a day
+	// old, so it must mail a notice at most once.
+	Notify    func(context.Context, RestoreSlotNotice) error
 	BatchSize int
 	Now       func() time.Time
 	Logger    *slog.Logger
@@ -65,6 +75,7 @@ type RestoreSlotSweeper struct {
 	service   *Service
 	bindings  RestoreSlotBindings
 	expired   func(context.Context, Database)
+	notify    func(context.Context, RestoreSlotNotice) error
 	batchSize int
 	now       func() time.Time
 	logger    *slog.Logger
@@ -89,7 +100,7 @@ func NewRestoreSlotSweeper(service *Service, bindings RestoreSlotBindings, optio
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
-	return &RestoreSlotSweeper{service: service, bindings: bindings, expired: options.Expired,
+	return &RestoreSlotSweeper{service: service, bindings: bindings, expired: options.Expired, notify: options.Notify,
 		batchSize: options.BatchSize, now: options.Now, logger: options.Logger}, nil
 }
 
@@ -109,7 +120,7 @@ func (w *RestoreSlotSweeper) Sweep(ctx context.Context) (RestoreSlotSummary, err
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		outcome, err := w.visit(ctx, store, holder)
+		outcome, err := w.visit(ctx, store, holder, &summary)
 		switch {
 		case err != nil:
 			summary.Failed++
@@ -122,6 +133,7 @@ func (w *RestoreSlotSweeper) Sweep(ctx context.Context) (RestoreSlotSummary, err
 			summary.Waiting++
 		}
 	}
+	w.mailNotices(ctx, &summary)
 	return summary, errors.Join(failures...)
 }
 
@@ -134,7 +146,7 @@ const (
 	restoreSlotWaiting
 )
 
-func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, holder RestoreSlotHolder) (restoreSlotOutcome, error) {
+func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, holder RestoreSlotHolder, summary *RestoreSlotSummary) (restoreSlotOutcome, error) {
 	database := holder.Database
 	room, err := w.service.restoreSlotRoom(ctx, store, holder.SubjectID)
 	if err != nil {
@@ -149,7 +161,14 @@ func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, 
 	}
 	// A delete already scheduled, by the customer or an earlier sweep, keeps
 	// the slot until the copy is purged.
-	if now.Before(database.RestoreSlotUntil) || database.State == StateDeleting {
+	if database.State == StateDeleting {
+		return restoreSlotHeld, nil
+	}
+	if now.Before(database.RestoreSlotUntil) {
+		if !now.Before(database.RestoreSlotUntil.Add(-api.ManagedPostgresRestoreSlotNoticeLead)) {
+			w.recordNotice(ctx, RestoreSlotNotice{DatabaseID: database.ID, Kind: RestoreSlotNoticeEnding,
+				SlotUntil: database.RestoreSlotUntil, RecordedAt: now}, summary)
+		}
 		return restoreSlotHeld, nil
 	}
 	pending, err := w.revokeBindings(ctx, database)
@@ -170,7 +189,49 @@ func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, 
 	if w.expired != nil {
 		w.expired(ctx, scheduled)
 	}
+	w.recordNotice(ctx, RestoreSlotNotice{DatabaseID: database.ID, Kind: RestoreSlotNoticeExpired,
+		SlotUntil: database.RestoreSlotUntil, RestorableUntil: scheduled.PurgeAfter, RecordedAt: now}, summary)
 	return restoreSlotExpired, nil
+}
+
+// recordNotice records a notice once. A failure is logged and does not undo
+// the slot decision: an 'ending' notice is retried by the next sweep, while an
+// 'expired' one is lost with its email, since the copy no longer expires.
+func (w *RestoreSlotSweeper) recordNotice(ctx context.Context, notice RestoreSlotNotice, summary *RestoreSlotSummary) {
+	store, ok := w.service.store.(RestoreSlotNoticeStore)
+	if !ok {
+		return
+	}
+	recorded, err := store.RecordRestoreSlotNotice(ctx, notice)
+	if err != nil {
+		w.logger.Warn("managed postgres restore slot notice not recorded", "database", notice.DatabaseID, "kind", notice.Kind, "error", err)
+		return
+	}
+	if recorded {
+		summary.Noticed++
+	}
+}
+
+// mailNotices queues the email for each notice still unmailed and under a
+// day old. A failed email does not fail the sweep; the next sweep retries it.
+func (w *RestoreSlotSweeper) mailNotices(ctx context.Context, summary *RestoreSlotSummary) {
+	store, ok := w.service.store.(RestoreSlotNoticeStore)
+	if !ok || w.notify == nil {
+		return
+	}
+	now := w.now()
+	notices, err := store.UnmailedRestoreSlotNotices(ctx, now.Add(-api.InternalMailManagedPostgresRestoreSlotTTL), now, w.batchSize)
+	if err != nil {
+		summary.NotifyFailed++
+		w.logger.Warn("managed postgres restore slot notices not listed", "error", err)
+		return
+	}
+	for _, notice := range notices {
+		if err := w.notify(ctx, notice); err != nil {
+			summary.NotifyFailed++
+			w.logger.Warn("managed postgres restore slot email not queued", "database", notice.DatabaseID, "kind", notice.Kind, "error", err)
+		}
+	}
 }
 
 // revokeBindings deletes the copy's live bindings. It reports whether any are
