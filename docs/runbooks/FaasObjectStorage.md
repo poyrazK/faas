@@ -6,13 +6,13 @@ Alerts: `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
 `FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`,
 `FaasComputeObjectGatewayDown`, `FaasComputeObjectGatewayConnectorDisconnected`.
 Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
-`s3-gatewayd` (`pkg/s3gateway`) and its usage exporter
-(`cmd/s3-gatewayd/main.go`), and public bucket reads in `gatewayd-public`
+`s3-gatewayd` (`pkg/s3gateway`), apid's provider usage exporter
+(`pkg/apid/object/usage_export.go`), and public bucket reads in `gatewayd-public`
 (`pkg/objectstorage/public_read.go`).
 Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `faas_object_storage_inventory_provider_requests_total`,
 `s3_gateway_ops_total{op="s3_request",code}`,
-`s3_gateway_usage_export_last_success_timestamp_seconds{backend}`,
+`faas_object_storage_usage_export_last_success_timestamp_seconds{backend}`,
 `faas_object_storage_backend_buckets{region,backend}`,
 `faas_object_storage_backend_bucket_limit{region,backend}`,
 `faas_object_storage_region_full{region}`,
@@ -84,8 +84,12 @@ Severity: warn.
    Compare with the provider's status page. Many `SlowDown` answers on one
    bucket mean customer concurrency on the same keys, or an uncertain delete
    holding its key, not an outage.
-3. Usage export: `s3_gateway_usage_exports_total{outcome}` by backend, and the
-   exporter's provider credentials.
+3. Usage export: `faas_object_storage_usage_exports_total{outcome}` by
+   backend, and `journalctl -u faas-apid | grep "usage export"`. A last-success
+   time of 0 means the export never ran: apid logs "object storage usage
+   exports not configured" with the backend and the missing OVH application
+   key, or "object storage usage report directory" when it cannot create the
+   report's directory.
 4. Read counts: `journalctl -u faas-s3-gatewayd | grep "read usage flush failed"`
    and `s3_gateway_read_admission_decisions_total{source="failed"|"stale"}`
    for database reachability from the gateway;
@@ -114,7 +118,8 @@ Severity: warn.
    longer than an hour (about 1M keys at more than 1.5 s per page) never
    completes: ask the customer to split the bucket or delete keys.
 3. Usage export: rotate or repair the provider usage credentials in the
-   operator config, then restart `faas-s3-gatewayd`.
+   operator config, or move `usage_reports_path` into a directory apid can
+   write, then restart `faas-apid`.
 4. Read count flushes: restore the gateway's database connection. Counts
    held in memory are written by the next successful flush; a restart
    writes them once before exiting.
