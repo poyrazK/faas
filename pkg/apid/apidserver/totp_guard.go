@@ -9,8 +9,14 @@ import (
 // TOTP guesses are limited per account as well as per IP. The auth limiter
 // counts failures per IP only, so someone holding the password and many
 // addresses could walk the code space: a six-digit code with one step of
-// skew accepts three values per attempt. Ten failures in fifteen minutes
-// hold that account's TOTP checks until the window has moved on.
+// skew accepts three values per attempt. Ten attempts in fifteen minutes
+// hold that account's TOTP checks until the window has moved on; a correct
+// code clears the count.
+//
+// An attempt is counted when it is admitted, before its code is checked.
+// Counting failures after the check let every request of a concurrent burst
+// pass a check meant to allow ten (bug hunt 2026-10-28 H74). The count lives
+// in this apid process, which is the control plane's only one today.
 const (
 	totpMaxFailures   = 10
 	totpFailureWindow = 15 * time.Minute
@@ -23,28 +29,21 @@ type totpGuard struct {
 
 func newTOTPGuard() *totpGuard { return &totpGuard{fails: map[string][]time.Time{}} }
 
-// retryAfter is zero when the account may attempt a code, else how long
-// until its oldest counted failure leaves the window.
-func (g *totpGuard) retryAfter(accountID string, now time.Time) time.Duration {
+// reserve counts an attempt and returns zero when the account may try a
+// code, else how long until its oldest counted attempt leaves the window
+// (counting nothing).
+func (g *totpGuard) reserve(accountID string, now time.Time) time.Duration {
 	if g == nil {
 		return 0
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	recent := g.pruneLocked(accountID, now)
-	if len(recent) < totpMaxFailures {
-		return 0
+	if len(recent) >= totpMaxFailures {
+		return recent[0].Add(totpFailureWindow).Sub(now)
 	}
-	return recent[0].Add(totpFailureWindow).Sub(now)
-}
-
-func (g *totpGuard) fail(accountID string, now time.Time) {
-	if g == nil {
-		return
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.fails[accountID] = append(g.pruneLocked(accountID, now), now)
+	g.fails[accountID] = append(recent, now)
+	return 0
 }
 
 func (g *totpGuard) reset(accountID string) {

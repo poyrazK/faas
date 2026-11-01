@@ -3,7 +3,6 @@ package apidserver
 import (
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
@@ -56,7 +55,6 @@ func (s *server) tryMFAEnabledAlert(w http.ResponseWriter, r *http.Request, acct
 func (s *server) writeMFAEnabledAlertError(w http.ResponseWriter, r *http.Request, acct state.Account, err error) {
 	switch {
 	case errors.Is(err, mailoutbox.ErrMFAEnrollmentInvalidCode):
-		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_confirm_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode, "Invalid code", "the TOTP code did not match"))
 	case errors.Is(err, mailoutbox.ErrMFAEnrollmentAlreadyEnabled):

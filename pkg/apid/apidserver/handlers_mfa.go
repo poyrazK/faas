@@ -227,7 +227,6 @@ func (s *server) confirmInlineMFA(w http.ResponseWriter, r *http.Request, acct s
 		return // readSealedSecret wrote the problem
 	}
 	if !auth.VerifyCode(confirmSecret, code) {
-		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_confirm_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
 			"Invalid code", "the TOTP code did not match"))
@@ -242,6 +241,7 @@ func (s *server) confirmInlineMFA(w http.ResponseWriter, r *http.Request, acct s
 }
 
 func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.totp.reset(acct.ID) // a correct code clears the counted attempts
 	if err := s.reissueSessionCookie(w, r, acct, false); err != nil {
 		// Cookie re-issue failure is non-fatal — the customer's
 		// enrollment landed; the next request will trip
@@ -293,7 +293,6 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if reason != "" {
-		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": reason})
 		detail := "the TOTP code did not match"
 		if reason == totpCodeReplayed {
@@ -1065,10 +1064,10 @@ func consumeRecoveryCode(ctx context.Context, st consumeRecoveryCodeSelector, ac
 	return st.ConsumeRecoveryCode(ctx, accountID, presented)
 }
 
-// totpAttemptAllowed answers 429 while the account has used up its TOTP
-// guesses (totp_guard.go).
+// totpAttemptAllowed counts a TOTP attempt, or answers 429 while the account
+// has used up its attempts (totp_guard.go).
 func (s *server) totpAttemptAllowed(w http.ResponseWriter, acct state.Account) bool {
-	wait := s.totp.retryAfter(acct.ID, time.Now())
+	wait := s.totp.reserve(acct.ID, time.Now())
 	if wait <= 0 {
 		return true
 	}
