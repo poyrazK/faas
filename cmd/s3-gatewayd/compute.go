@@ -8,7 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/role"
-	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/s3gateway"
 )
 
 // checkComputeGateway holds a gateway on a compute node to what
@@ -35,12 +35,17 @@ func checkComputeGateway(getenv func(string) string, storage []*age.X25519Identi
 	return nil
 }
 
-// usageExportJobsForRole keeps provider usage exports, and the provider
-// account keys they need, on the control plane: a compute node's gateway
-// runs none (ADR-20261031122757 §4).
-func usageExportJobsForRole(r role.Role, registry *objectstorage.Registry, store state.ObjectStorageProviderUsageStore, getenv func(string) string) ([]objectstorage.UsageExportJob, error) {
-	if r == role.RoleComputeOnly {
-		return nil, nil
+// checkListeners keeps the data listener on loopback behind the TLS edge or
+// the node's s3 tunnel connector. The control listener (readiness, metrics)
+// may bind beyond loopback only on a compute node, where the control plane
+// scrapes it and nftables admits only control-plane addresses
+// (ADR-20261031122757 §2).
+func checkListeners(r role.Role, listenAddr, controlAddr string) error {
+	if !s3gateway.IsLoopbackAddress(listenAddr) {
+		return errors.New("s3-gatewayd: the data listener must be a loopback address behind the TLS edge")
 	}
-	return usageExportJobs(registry, store, getenv)
+	if r != role.RoleComputeOnly && !s3gateway.IsLoopbackAddress(controlAddr) {
+		return errors.New("s3-gatewayd: the control listener must be a loopback address outside a compute node")
+	}
+	return nil
 }

@@ -21,6 +21,9 @@ import (
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
+	// DatabaseScheduler enables the database scheduler (ADR-1027).
+	DatabaseScheduler *DatabaseSchedulerConfig `toml:"database_scheduler"`
+
 	// AppsDomain matches public routing for deployment alias activation checks.
 	AppsDomain                      string `toml:"apps_domain"`
 	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
@@ -585,7 +588,7 @@ func LoadConfig(path string) (*Config, error) {
 			c.Role = role.FromConfig(string(c.Role), "FAAS_SCHEDD_ROLE")
 			applyRoutingEnv()
 			c.overlayEventAcknowledgmentWriterEnv()
-			return c, nil
+			return c, loadDatabaseSchedulerFile(c)
 		}
 		return nil, fmt.Errorf("schedd: read %q: %w", path, err)
 	}
@@ -688,7 +691,36 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("schedd: frozen_tier_early_freeze_after_s must be 0 or %d-%d (got %d)", api.FrozenEarlyFreezeMinSeconds, api.FrozenEarlyFreezeMaxSeconds, s)
 	}
 	applyRoutingEnv()
-	return c, nil
+	return c, loadDatabaseSchedulerFile(c)
+}
+
+// loadDatabaseSchedulerFile reads [database_scheduler] from the file
+// FAAS_SCHEDD_DATABASE_CONFIG names (ADR-1027). Ansible renders that file
+// from the deployment manifest's database hosts, beside the operator's
+// schedd.toml; the table may live in only one of them.
+func loadDatabaseSchedulerFile(c *Config) error {
+	path := os.Getenv("FAAS_SCHEDD_DATABASE_CONFIG")
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // operator-configured path
+	if err != nil {
+		return fmt.Errorf("schedd: read FAAS_SCHEDD_DATABASE_CONFIG: %w", err)
+	}
+	var file struct {
+		DatabaseScheduler *DatabaseSchedulerConfig `toml:"database_scheduler"`
+	}
+	if err := toml.Unmarshal(b, &file); err != nil {
+		return fmt.Errorf("schedd: parse %q: %w", path, err)
+	}
+	if file.DatabaseScheduler == nil {
+		return fmt.Errorf("schedd: %q has no [database_scheduler]", path)
+	}
+	if c.DatabaseScheduler != nil {
+		return fmt.Errorf("schedd: [database_scheduler] is in both the config and %q", path)
+	}
+	c.DatabaseScheduler = file.DatabaseScheduler
+	return nil
 }
 
 func (c *Config) overlayEventAcknowledgmentWriterEnv() {

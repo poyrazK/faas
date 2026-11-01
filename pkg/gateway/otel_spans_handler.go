@@ -143,7 +143,7 @@ func (h *OTelSpansHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accountID, authorized := h.authorizeOTLP(w, r, codec)
+	accountID, plan, authorized := h.authorizeOTLP(w, r, codec)
 	if !authorized {
 		return
 	}
@@ -163,18 +163,18 @@ func (h *OTelSpansHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		codec.problem(w, http.StatusBadRequest, "invalid OTLP body")
 		return
 	}
-	h.acceptTraceBatches(w, codec, accountID, batches)
+	h.acceptTraceBatches(w, codec, accountID, plan, batches)
 }
 
 // authorizeOTLP completes authentication and quota checks without reading
 // customer-controlled payloads or initializing a decompressor.
-func (h *OTelSpansHandler) authorizeOTLP(w http.ResponseWriter, r *http.Request, codec otlpTraceCodec) (uuid.UUID, bool) {
+func (h *OTelSpansHandler) authorizeOTLP(w http.ResponseWriter, r *http.Request, codec otlpTraceCodec) (uuid.UUID, string, bool) {
 	// ---- Step 2: Bearer parse (no body read) ----
 	tok := bearerToken(r)
 	if tok == "" {
 		h.observeAuthFailure("unauthenticated")
 		codec.problem(w, http.StatusUnauthorized, "missing bearer token")
-		return uuid.Nil, false
+		return uuid.Nil, "", false
 	}
 
 	// ---- Step 3: apid Auth RPC (no body read) ----
@@ -183,18 +183,18 @@ func (h *OTelSpansHandler) authorizeOTLP(w http.ResponseWriter, r *http.Request,
 		if status.Code(err) == codes.Unauthenticated {
 			h.observeAuthFailure("unauthenticated")
 			codec.problem(w, http.StatusUnauthorized, "unauthenticated")
-			return uuid.Nil, false
+			return uuid.Nil, "", false
 		}
 		h.observeAuthFailure("internal")
 		h.cfg.Log.Warn("apid auth RPC failed", "err", err)
 		codec.problem(w, http.StatusInternalServerError, "auth unavailable")
-		return uuid.Nil, false
+		return uuid.Nil, "", false
 	}
 	accountID, err := uuid.Parse(accountIDStr)
 	if err != nil {
 		h.observeAuthFailure("unauthenticated")
 		codec.problem(w, http.StatusUnauthorized, "malformed account_id")
-		return uuid.Nil, false
+		return uuid.Nil, "", false
 	}
 
 	// ---- Step 4: Plan gate ----
@@ -203,7 +203,7 @@ func (h *OTelSpansHandler) authorizeOTLP(w http.ResponseWriter, r *http.Request,
 		h.observeAuthFailure("plan_disabled")
 		w.Header().Set("Retry-After", "0")
 		codec.problem(w, http.StatusPaymentRequired, "plan does not include telemetry")
-		return uuid.Nil, false
+		return uuid.Nil, "", false
 	}
 
 	// ---- Step 5: Per-account token bucket ----
@@ -212,10 +212,10 @@ func (h *OTelSpansHandler) authorizeOTLP(w http.ResponseWriter, r *http.Request,
 		h.observeIngest("rate_limited")
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryMs/1000))
 		codec.problem(w, http.StatusTooManyRequests, "rate limited")
-		return uuid.Nil, false
+		return uuid.Nil, "", false
 	}
 
-	return accountID, true
+	return accountID, plan, true
 }
 
 func readTraceBatches(w http.ResponseWriter, r *http.Request, codec otlpTraceCodec) ([]traceSpanBatch, error) {
@@ -233,13 +233,15 @@ func readTraceBatches(w http.ResponseWriter, r *http.Request, codec otlpTraceCod
 // acceptTraceBatches keeps per-trace account isolation while allowing standard
 // exporter batches. Contested traces are rejected without discarding the other
 // traces in the request or inviting retries of data already accepted.
-func (h *OTelSpansHandler) acceptTraceBatches(w http.ResponseWriter, codec otlpTraceCodec, accountID uuid.UUID, batches []traceSpanBatch) {
+func (h *OTelSpansHandler) acceptTraceBatches(w http.ResponseWriter, codec otlpTraceCodec, accountID uuid.UUID, plan string, batches []traceSpanBatch) {
 	var rejected int64
 	accepted := 0
 	for _, batch := range batches {
-		if _, err := h.cfg.Acc.Add(batch.traceID, accountID, batch.spans); err != nil {
+		if _, err := h.cfg.Acc.AddForPlan(batch.traceID, accountID, plan, batch.spans); err != nil {
+			// The trace buffer is full for this account or this process;
+			// the spans are rejected in the partial success, not retried.
 			rejected += int64(len(batch.spans))
-			h.observeAuthFailure("unauthenticated")
+			h.observeIngest("buffer_full")
 			continue
 		}
 		accepted += len(batch.spans)
@@ -319,7 +321,9 @@ func summarizeSpan(sp *tracepb.Span) summarizedSpan {
 	if status == "error" {
 		errorType = spanErrorType(attrs, sp.GetEvents())
 	}
-	return summarizedSpan{
+	// boundSpan caps every field's size and drops the status message, so a
+	// customer span cannot carry megabytes into the shared telemetry rows.
+	return boundSpan(summarizedSpan{
 		TraceID:           formatTraceID(sp.GetTraceId()),
 		SpanID:            formatSpanID(sp.GetSpanId()),
 		ParentSpanID:      formatSpanID(sp.GetParentSpanId()),
@@ -333,7 +337,7 @@ func summarizeSpan(sp *tracepb.Span) summarizedSpan {
 		Attributes:        attrs,
 		DBStatement:       extractDBStatement(attrs),
 		ErrorType:         errorType,
-	}
+	})
 }
 
 // spanStatus maps an OTLP status code to the vocabulary the retained

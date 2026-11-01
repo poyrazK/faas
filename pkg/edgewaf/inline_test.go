@@ -193,3 +193,33 @@ func TestCheckInlineWaitsForASlot(t *testing.T) {
 		t.Errorf("no wait: %s (%s) after %v, want an immediate busy skip", res.Outcome, res.SkipReason, time.Since(start))
 	}
 }
+
+// adr: 831 — amendment 18: a page on another host of a shared apps domain can
+// plant a cookie in a visitor's browser, so a detection that comes only from
+// request cookies is marked; the gateway still blocks it but boxes nobody.
+func TestCheckInlineMarksCookieOnlyDetections(t *testing.T) {
+	i := New(&recordingObserver{}, nil)
+	planted := func(s gateway.WAFSample) gateway.WAFSample {
+		s.Header.Set("Cookie", "theme=dark; promo=1' OR '1'='1' --")
+		return s
+	}
+	for _, tc := range []struct {
+		name        string
+		s           gateway.WAFSample
+		cookiesOnly bool
+	}{
+		{name: "attack only in a cookie", s: planted(sample(http.MethodGet, "/api/orders?page=2", nil, "")), cookiesOnly: true},
+		{name: "attack only in the query", s: sample(http.MethodGet, "/api/items?q=1%27%20OR%201%3D1--", nil, "")},
+		{name: "attack in a cookie and the query", s: planted(sample(http.MethodGet, "/api/items?q=1%27%20OR%201%3D1--", nil, ""))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := i.CheckInline(tc.s)
+			if res.Outcome != gateway.WAFInlineDetected {
+				t.Fatalf("outcome = %s, want detected", res.Outcome)
+			}
+			if res.CookiesOnly != tc.cookiesOnly {
+				t.Fatalf("CookiesOnly = %v, want %v (rules %v)", res.CookiesOnly, tc.cookiesOnly, res.RuleIDs)
+			}
+		})
+	}
+}

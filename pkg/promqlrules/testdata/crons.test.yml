@@ -58,7 +58,7 @@ tests:
         family: crons
       exp_annotations:
         summary: "Most HTTP cron runs are failing"
-        description: "More than half of HTTP cron deliveries across the fleet have ended failed or dead-lettered for thirty minutes. Check wake failures, gateway errors and recent deploys before blaming individual apps."
+        description: "More than half of HTTP cron deliveries across the fleet have failed on the platform side (failed or dead-lettered, not app errors) for thirty minutes. Check wake failures, gateway errors and recent deploys."
         runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCronDelivery.md"
 - name: a handful of failures is below the volume floor
   interval: 1m
@@ -78,6 +78,19 @@ tests:
     values: '0+1x90'
   - series: 'schedd_cron_delivery_total{outcome="success"}'
     values: '0+4x90'
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: FaasCronDeliveryFailing
+    exp_alerts: []
+- name: apps answering with errors do not page
+  interval: 1m
+  input_series:
+  - series: 'schedd_cron_delivery_total{outcome="app_error"}'
+    values: '0+3x90'
+  - series: 'schedd_cron_delivery_total{outcome="success"}'
+    values: '0+1x90'
+  - series: 'schedd_cron_delivery_total{outcome="failed"}'
+    values: '0+0x90'
   alert_rule_test:
   - eval_time: 70m
     alertname: FaasCronDeliveryFailing

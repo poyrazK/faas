@@ -1,0 +1,16 @@
+{
+  "name": "agent-stateless-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "handler.js",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

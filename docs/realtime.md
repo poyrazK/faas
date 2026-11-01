@@ -176,6 +176,9 @@ realtime:
         - channel: orders
           name: billing
           lease_seconds: 120
+          ordering_metadata_key: customer_id     # optional: one message per customer at a time, in order
+          deduplication_metadata_key: event_id   # optional: drop a repeated event_id within the window
+          dead_letter_policy: block              # block (default) holds the key's later messages; skip moves on
 ```
 
 - The first deploy creates the endpoint and stores a callback token in the app
@@ -184,7 +187,9 @@ realtime:
 - Later deploys update changed settings. An endpoint you remove from the file is
   disabled, not deleted, so its history and consumer groups survive; delete it
   with `gregale realtime delete` when you are sure.
-- Consumer groups are created when missing and never deleted by a deploy.
+- Consumer groups are created when missing and never deleted by a deploy. A
+  deploy does not change an existing group's settings; change them through the
+  group's own API.
 - Endpoints created without a slug (API, CLI, dashboard) are never touched. Give
   one a slug with `PATCH …/endpoints/{id}` `{"slug": "chat"}` to manage it from
   the file.

@@ -270,7 +270,8 @@ export class OrgsService {
    * `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
    * trimmed-non-empty (1..256 chars). Personal orgs cannot be
    * created via this endpoint — every account already has a
-   * personal org (backfill).
+   * personal org (backfill). A new org starts on the Free plan,
+   * and an account may own one Free org at a time.
    *
    * @returns OrgResponse The new shared org.
    * @throws ApiError
@@ -298,6 +299,10 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `\`403 Forbidden\` — the caller already owns as many Free orgs
+        as an account may (\`org_free_limit_exceeded\`, with the limit
+        and the observed count). Upgrade or delete one first.
+        `,
         409: `\`409 Conflict\` — slug already taken (\`org_slug_taken\`) or the
         caller is already a member of an org with the same slug
         (\`org_already_member\`).

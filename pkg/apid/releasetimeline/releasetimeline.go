@@ -175,7 +175,7 @@ func regressionKeptText(dec *api.RolloutDecision) string {
 	if dec.RollbackSkipped == api.CodeRollbackCrossesRelease {
 		why = "rolling back would cross a release command, so a person decides"
 	}
-	return "the post-release watch found a regression (" + decisionText(dec) + ") and did not roll back: " + why
+	return "a regression was found after the rollout (" + decisionText(dec) + ") and Gregale did not roll back: " + why
 }
 
 // rolledBackWhy prefers the abort decision's summary, then the recorded

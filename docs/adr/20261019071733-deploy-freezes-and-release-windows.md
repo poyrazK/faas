@@ -163,3 +163,7 @@ freezes on company apps went away with their account.
 
 Freezes existing before this amendment keep their account. On 2026-10-29
 production held three freezes, all lifted, so none needed converting.
+
+## Amendment 5 (2026-11-01): overriding a company's freeze needs the right to lift it
+
+Any principal allowed to deploy could override, which amendment 4 kept. For a company organization that let a developer, or any member's CI key, ship past a freeze an owner or admin set for the whole company, with nobody but the audit log told. An override of a company organization's freeze now needs what lifting it needs: an owner or admin, or the member who created the window, with a signed-in session or an admin-scoped key (lifting needs the admin scope since ADR-20261020085706 amendment 5). Others get `403 release_freeze_override_not_allowed`. An account's own freezes keep the open, audited override: one person both sets and overrides them.

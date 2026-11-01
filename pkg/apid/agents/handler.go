@@ -59,6 +59,10 @@ type Handler struct {
 	CallbackBaseURL string
 	AgentsEnabled   func(ctx context.Context, accountID string) bool
 	Now             func() time.Time
+	// Revocations records closed threads; without it the callback routes
+	// answer capacity_unavailable.
+	Revocations    CallbackRevocations
+	callbackLimits callbackLimiter
 }
 
 // CreateAgent handles POST /v1/agents.

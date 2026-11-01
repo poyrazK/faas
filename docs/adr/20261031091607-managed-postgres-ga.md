@@ -73,6 +73,11 @@
   3. **Invoicing.** Nothing past the allowances is billed, so overage stays `internal`. Billing it needs an invoice line and a financial-model decision.
   4. **Restore-history cost.** Neon bills instant restore at $0.20 per GB-month of history. A database with heavy writes costs more history than its storage limit suggests, and no plan limit bounds it yet (Neon's written-data quota is the candidate).
   5. **More than about 1,000 databases.** This needs a second Neon organization behind the provider-neutral backend, or an agreement with Neon.
+- **GA hardening (2026-11-01).** A code review before the public release found four gaps the rollout left to operators. Each is now enforced:
+  - **Uncapped release.** In production, while the compute or storage cap is not `on`, only an account a flag rule names (or one that opted in) is released. The GA default releases nobody while databases would run uncapped.
+  - **Plan downgrade.** A downgrade is refused, with a task list, while the subject's databases exceed the target plan's count or use a class it does not include, as apps already are (spec §10). A database whose delete is scheduled does not count.
+  - **Per-account limit.** apid takes the lower of the registry's `max_databases_per_account` and the plan's limit. Production defaults it to the highest plan limit (10), and production readiness refuses a smaller value (`database_limit_below_plan`), so Scale is never sold fewer databases than it includes.
+  - **Paid reserve.** The fleet's last `paid_reserve_databases` (default 20% of `max_databases`) are for paid plans. A Free subject's new database is refused inside the reserve (`ErrFleetFreePaused`, the same `503 managed_postgres_new_databases_paused` with an upgrade hint), so Free sign-ups cannot pause paying customers.
 - **Why:**
   - The GA blockers from the 2026-10-23 review are closed in code:
     - production provisioning and fleet ceilings (ADR-20261028103115);

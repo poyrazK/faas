@@ -31,7 +31,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -130,23 +129,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		stopReads()
 		<-readsDone
 	}()
-	usageJobs, err := usageExportJobsForRole(gatewayRole, registry, requestMetrics, os.Getenv)
-	if err != nil {
-		return err
-	}
-	if len(usageJobs) > 0 {
-		usageRuns := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "s3_gateway_usage_exports_total", Help: "Object-storage provider usage export attempts."}, []string{"backend", "outcome"})
-		usageLastSuccess := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "s3_gateway_usage_export_last_success_timestamp_seconds", Help: "Unix timestamp of the last successful object-storage usage export."}, []string{"backend"})
-		ops.Registry().MustRegister(usageRuns, usageLastSuccess)
-		go objectstorage.RunUsageExports(ctx, func() []objectstorage.UsageExportJob { return usageJobs }, objectstorage.DefaultUsageExportInterval, time.Now, func(backend, outcome string, err error) {
-			usageRuns.WithLabelValues(backend, outcome).Inc()
-			if outcome == "success" {
-				usageLastSuccess.WithLabelValues(backend).Set(float64(time.Now().Unix()))
-				return
-			}
-			log.Warn("s3-gatewayd: object storage usage export failed", "backend_id", backend, "err", err)
-		})
-	}
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Storage, len(storageIdentities) > 0)
 	log.Info("storage seal domain", "domain_identity", len(storageIdentities) > 0, "fleet_identity", len(identities) > 0)
 	// A contracted gateway has no fleet or host identity to rekey from:
@@ -217,8 +199,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	listenAddr := envOr("FAAS_S3_GATEWAY_LISTEN_ADDR", defaultListenAddr)
 	controlAddr := envOr("FAAS_S3_GATEWAY_CONTROL_ADDR", defaultControlAddr)
-	if !s3gateway.IsLoopbackAddress(listenAddr) || !s3gateway.IsLoopbackAddress(controlAddr) {
-		return errors.New("s3-gatewayd: data and control listeners must be loopback addresses behind the TLS edge")
+	if err := checkListeners(gatewayRole, listenAddr, controlAddr); err != nil {
+		return err
 	}
 	dataListener, err := net.Listen("tcp", listenAddr)
 	if err != nil {

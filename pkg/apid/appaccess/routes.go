@@ -14,11 +14,17 @@ import (
 var routeActions = map[string]authz.OrgAction{
 	// The resumable upload routes name their app in the request body or the
 	// stored session, so the handlers call Authorize once they resolve it.
+	// The agent callback routes name a realtime endpoint in the body and
+	// authorize its app (ADR-20261030125501 §3). A callback URL keeps working
+	// after the member who asked for it leaves, so issuing and revoking take
+	// the permission of the app's other credentials.
 	"POST /v1/uploads":                      authz.OrgActionDeployApp,
 	"GET /v1/uploads/{id}":                  authz.OrgActionDeployApp,
 	"PATCH /v1/uploads/{id}":                authz.OrgActionDeployApp,
 	"POST /v1/uploads/{id}/commit":          authz.OrgActionDeployApp,
 	"DELETE /v1/uploads/{id}":               authz.OrgActionDeployApp,
+	"POST /v1/agent-callbacks":              authz.OrgActionManageAppSecurity,
+	"POST /v1/agent-callbacks/revocations":  authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}":                   authz.OrgActionReadApp,
 	"PATCH /v1/apps/{slug}":                 authz.OrgActionConfigureApp,
 	"DELETE /v1/apps/{slug}":                authz.OrgActionDeleteApp,

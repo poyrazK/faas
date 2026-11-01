@@ -25,6 +25,13 @@ type Agent struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
+type AgentCallbackRevocation struct {
+	EndpointID pgtype.UUID
+	ThreadID   string
+	AccountID  pgtype.UUID
+	RevokedAt  pgtype.Timestamptz
+}
+
 type AgentDelivery struct {
 	ID             pgtype.UUID
 	AccountID      pgtype.UUID

@@ -57,7 +57,8 @@ func LoadProductionApproval(getenv func(string) string) ProductionApproval {
 
 // ProductionReadiness checks the production gate's preconditions without
 // provider IO: provisioning switched on, usage metering on, both fleet
-// ceilings set, a single default backend matching the pin, and an approval
+// ceilings set, a per-account database limit no plan exceeds, a single
+// default backend matching the pin, and an approval
 // window that has started, has not ended and spans at most the approval
 // maximum. Reasons are stable codes for operators.
 func (r *Registry) ProductionReadiness(approval ProductionApproval, now time.Time) QualificationReadiness {
@@ -74,6 +75,11 @@ func (r *Registry) ProductionReadiness(approval ProductionApproval, now time.Tim
 	}
 	if !r.Fleet().Complete() {
 		add("fleet_policy_incomplete")
+	}
+	if r.MaxDatabasesPerAccount < api.ManagedPostgresPlanDatabasesMax() {
+		// apid takes the lower of this and the plan's limit, so a smaller
+		// value silently sells a plan fewer databases.
+		add("database_limit_below_plan")
 	}
 	regions := r.Regions()
 	if len(regions) != 1 {

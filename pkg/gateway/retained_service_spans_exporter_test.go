@@ -38,7 +38,7 @@ func TestRetainedServiceSpansExporterKeepsOnlyAuthorizedServiceSpans(t *testing.
 	root.End()
 
 	traceID := serviceSpan.SpanContext().TraceID().String()
-	spans, gotAccountID := acc.DrainAndRemove(traceID)
+	spans, gotAccountID := acc.DrainAndRemove(traceID, accountID)
 	if gotAccountID != accountID {
 		t.Fatalf("account id = %s, want %s", gotAccountID, accountID)
 	}
@@ -109,7 +109,7 @@ func TestRetainedServiceSpansExporterKeepsAuthorizedOutboundDependency(t *testin
 	dependency.End()
 	root.End()
 
-	spans, gotAccountID := acc.DrainAndRemove(dependency.SpanContext().TraceID().String())
+	spans, gotAccountID := acc.DrainAndRemove(dependency.SpanContext().TraceID().String(), accountID)
 	if gotAccountID != accountID || len(spans) != 1 {
 		t.Fatalf("retained outbound spans = %d account=%s, want one for %s", len(spans), gotAccountID, accountID)
 	}

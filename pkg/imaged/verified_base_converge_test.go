@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -110,6 +112,41 @@ func TestVerifiedBaseAdoptsCanonicalPublicationOverStaleCache(t *testing.T) {
 	}
 	if !imagechain.ValidBaseKey(baseKey) {
 		t.Fatal("fixture key must be a valid base key")
+	}
+}
+
+// rc.314: a phased rollout prepares every node at once, so two pre-stages found
+// no producer for the release, built the same base and published. The later
+// producer superseded the earlier while that node was still scanning; its scan
+// publication was refused as stale and the pre-stage failed (fsn-2, twice). The
+// node must adopt the publication that won.
+func TestVerifiedBaseAdoptsAProducerPublishedDuringItsScan(t *testing.T) {
+	h, store, _, _, ref := verifiedBaseFixture(t, "complete")
+	const baseKey, digestKey = "base/verified.ext4", "base/verified.digest"
+	var rival state.BaseImageProducer
+	h.WithGrypeRun(func(ctx context.Context, _ string) (*ScanResult, error) {
+		if rival.ID == "" {
+			mine, err := store.GetCurrentBaseImageProducer(ctx, baseKey)
+			if err != nil {
+				t.Fatalf("scan ran before this node published its producer: %v", err)
+			}
+			in := mine.Input
+			in.ID = uuid.NewString()
+			if rival, err = store.PublishBaseImageProducer(ctx, in); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return producedScanResult(t, false), nil
+	})
+	result, err := h.EnsureBaseExt4(t.Context(), ref, baseKey, digestKey, "", "", "")
+	if err != nil {
+		t.Fatalf("stage after another node's concurrent publication: %v", err)
+	}
+	if rival.ID == "" || result.Producer.ID != rival.ID || !result.Skipped {
+		t.Fatalf("stage kept producer %s (skipped=%v), want the winning publication %s adopted", result.Producer.ID, result.Skipped, rival.ID)
+	}
+	if _, err := store.GetFreshBaseImageScan(t.Context(), rival.ID, rival.InputHash); err != nil {
+		t.Fatalf("adopted producer has no fresh scan: %v", err)
 	}
 }
 

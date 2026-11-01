@@ -286,6 +286,12 @@ var ErrInvalidPreviewPrState = errors.New("state: invalid preview_pr_state")
 // api.ErrTrafficPercentSumInvalid (409 Conflict).
 var ErrTrafficPercentSumInvalid = errors.New("state: traffic_percent sum != 100")
 
+// ErrTrafficResidualUnassigned refuses a manual traffic change whose remaining
+// weight has no recipient but aborted canary candidates, which receive traffic
+// only when named (RedistributeManualTraffic). It wraps
+// ErrTrafficPercentSumInvalid: applied, the change would leave Σ below 100.
+var ErrTrafficResidualUnassigned = fmt.Errorf("%w: only an aborted canary could take the remaining traffic", ErrTrafficPercentSumInvalid)
+
 // ErrInvalidMirrorPercent is returned by CreateMirrorRule /
 // UpdateMirrorRule when the requested percent falls outside
 // [0, 100]. The CHECK constraint on mirror_rules.percent
@@ -6617,10 +6623,10 @@ type Store interface {
 	// accountID is REQUIRED — PR-D code-review #1 pins the
 	// WHERE clause on (trace_id, account_id) so a buggy upstream
 	// caller can't overwrite a different customer's row. The
-	// gateway-side accumulator already rejects
-	// trace_id/account_id collisions (ErrAccountMismatch); this
+	// gateway-side accumulator buffers each (account, trace)
+	// separately and maxSpans bounds the row to the plan; this
 	// is the SQL-side defense in depth.
-	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte) error
+	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error
 
 	// ListRequestTelemetryByApp backs GET /v1/apps/{slug}/debug/requests.
 	// Time-windowed (since, until) with hard limit; cursor pagination

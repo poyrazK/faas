@@ -295,6 +295,8 @@ func TestComputeDaemonMetricsDiscoveryUsesCanonicalPorts(t *testing.T) {
 		{name: "schedd", path: apidserver.ScheddMetricsDiscoveryPath, handler: srv.ScheddMetricsDiscovery, want: "192.0.2.2:9103", job: "schedd-compute"},
 		{name: "gatewayd-public-edge", path: apidserver.GatewaydPublicEdgeMetricsDiscoveryPath, handler: srv.GatewaydPublicEdgeMetricsDiscovery, want: "192.0.2.2:9109", job: "gatewayd-public-edge"},
 		{name: "cloudflared", path: apidserver.CloudflaredMetricsDiscoveryPath, handler: srv.CloudflaredMetricsDiscovery, want: "192.0.2.2:20241", job: "cloudflared"},
+		{name: "s3-gatewayd-compute", path: apidserver.S3GatewayComputeMetricsDiscoveryPath, handler: srv.S3GatewayComputeMetricsDiscovery, want: "192.0.2.2:9096", job: "s3-gatewayd-compute"},
+		{name: "cloudflared-s3", path: apidserver.CloudflaredS3MetricsDiscoveryPath, handler: srv.CloudflaredS3MetricsDiscovery, want: "192.0.2.2:20242", job: "cloudflared-s3"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
