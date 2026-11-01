@@ -9726,6 +9726,22 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_overage_pending",
+    "columns": [
+      "allowance_unit_seconds",
+      "billed_unit_seconds",
+      "from_millicents",
+      "live",
+      "period_start",
+      "provider",
+      "step_at",
+      "subject_id",
+      "target_millicents",
+      "used_unit_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_bindings",
     "columns": [
       "access",
@@ -13129,6 +13145,7 @@
       "business_name",
       "created_at",
       "deleted_pending",
+      "deletion_requested_at",
       "id",
       "last_quota_warning_at",
       "name",

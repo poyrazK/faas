@@ -924,6 +924,11 @@ apid delivers the charge after each compute cap sweep
 - The month's total is cumulative. Each step sends only the difference from
   the last delivered total, keyed by that total, so a retry is a duplicate,
   never a second charge.
+- A step is reserved in `managed_postgres_overage_pending` before it is sent
+  and recorded with the reservation cleared in one transaction. A step that
+  was sent but not recorded, after a failed write, a crash or a second apid,
+  is sent again unchanged rather than replaced by a new one
+  ([ADR-20261101143527](adr/20261101143527-billing-settles-free-hours-and-reserves-postgres-steps.md)).
 - For seven days after a month ends
   (`api.ManagedPostgresOverageCloseWindow`), late provider usage windows still
   add to that month.

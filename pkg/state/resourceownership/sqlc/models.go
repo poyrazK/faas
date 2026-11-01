@@ -28,6 +28,7 @@ type Org struct {
 	BusinessName             string
 	BillingAddress           string
 	TaxID                    string
+	DeletionRequestedAt      pgtype.Timestamptz
 }
 
 type Project struct {

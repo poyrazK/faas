@@ -64,11 +64,9 @@ Overage is billed hour by hour against the allowance in force at the time,
 and the spend cap counts exactly that. After a downgrade, usage your larger
 allowance already covered is never billed and does not count toward the cap;
 after an upgrade, overage already billed stays billed and keeps counting.
-
-Overage is billed hour by hour against the allowance in force at the time,
-and the spend cap counts exactly that. After a downgrade, usage your larger
-allowance already covered is never billed and does not count toward the cap;
-after an upgrade, overage already billed stays billed and keeps counting.
+Hours you spent on the Free plan are never billed, also when you subscribe
+again later. When an organization is deleted, the usage it ran before the
+deletion is still billed on its subscription (ADR-20261101143527).
 
 An organization that owns its resources is billed apart from its members and
 has its own cap, with the same defaults. Its owner sets it with

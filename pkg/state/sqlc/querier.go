@@ -452,6 +452,7 @@ type Querier interface {
 	ClearExpiredAppForkExecOutput(ctx context.Context, db DBTX, arg ClearExpiredAppForkExecOutputParams) (int64, error)
 	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
 	ClearMFA(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	ClearManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ClearManagedPostgresOveragePendingParams) error
 	ClearManagedPostgresRestoreSlot(ctx context.Context, db DBTX, arg ClearManagedPostgresRestoreSlotParams) (int64, error)
 	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
@@ -4225,6 +4226,10 @@ type Querier interface {
 	ManagedPostgresOverageDelivered(ctx context.Context, db DBTX, arg ManagedPostgresOverageDeliveredParams) (ManagedPostgresOverageDeliveredRow, error)
 	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
+	// ADR-20261101143527: a step is reserved before apid sends it to the
+	// provider, so a step that was sent but not recorded is sent again with the
+	// same target instead of a new one charged on top of it.
+	ManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ManagedPostgresOveragePendingParams) (ManagedPostgresOveragePendingRow, error)
 	// ADR-20261031110037: managed PostgreSQL overage charges delivered per
 	// billing provider, usage subject and UTC month.
 	ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, periodStart pgtype.Timestamptz) ([]ManagedPostgresOverageSubjectsRow, error)
@@ -6273,6 +6278,9 @@ type Querier interface {
 	// (its first 4 bytes) is not taken over: the key stays bound to its first
 	// request for the whole window.
 	ReserveIdempotentRequest(ctx context.Context, db DBTX, arg ReserveIdempotentRequestParams) (bool, error)
+	// One reservation per provider, subject and month: a replica that finds one
+	// reserves nothing.
+	ReserveManagedPostgresOverage(ctx context.Context, db DBTX, arg ReserveManagedPostgresOverageParams) (bool, error)
 	ReserveProjectReleaseAddition(ctx context.Context, db DBTX, arg ReserveProjectReleaseAdditionParams) error
 	ReserveProjectSubmission(ctx context.Context, db DBTX, arg ReserveProjectSubmissionParams) (int64, error)
 	ReserveRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg ReserveRuntimeUpgradeCandidateParams) (pgtype.UUID, error)

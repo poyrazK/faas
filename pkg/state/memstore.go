@@ -26434,6 +26434,13 @@ func (m *MemStore) MarkDunningStep(_ context.Context, id string, from, to Accoun
 			a.PastDueAt = &now
 		}
 		org.Status = OrgStatus(to)
+		switch deleting := to == AccountDeletedPending; {
+		case deleting && !org.DeletedPending:
+			now := time.Now().UTC()
+			org.DeletionRequestedAt = &now
+		case !deleting:
+			org.DeletionRequestedAt = nil
+		}
 		org.DeletedPending = to == AccountDeletedPending
 		m.orgs[id] = org
 		m.saveOrgResourcePolicyLocked(a)
@@ -27050,9 +27057,13 @@ func (m *MemStore) SoftDeleteOrg(ctx context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	now := time.Now().UTC()
+	if !o.DeletedPending {
+		o.DeletionRequestedAt = &now
+	}
 	o.DeletedPending = true
 	o.Status = OrgStatusDeletedPending
-	o.UpdatedAt = time.Now().UTC()
+	o.UpdatedAt = now
 	m.orgs[id] = o
 	return nil
 }

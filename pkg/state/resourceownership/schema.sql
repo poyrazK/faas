@@ -4,7 +4,8 @@ CREATE TABLE orgs (
  deleted_pending boolean NOT NULL, provider_customer_id text, stripe_subscription_item text,
  created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, past_due_at timestamptz, last_quota_warning_at timestamptz,
  suspended_reason text, abuse_hold_at timestamptz, abuse_hold_reason text,
- billing_email text NOT NULL, business_name text NOT NULL, billing_address text NOT NULL, tax_id text NOT NULL
+ billing_email text NOT NULL, business_name text NOT NULL, billing_address text NOT NULL, tax_id text NOT NULL,
+ deletion_requested_at timestamptz
 );
 CREATE TABLE managed_postgres_databases(id uuid PRIMARY KEY,account_id uuid NOT NULL,org_id uuid NOT NULL);
 CREATE TABLE resource_namespaces (id uuid PRIMARY KEY);

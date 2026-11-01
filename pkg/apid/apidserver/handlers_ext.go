@@ -6043,21 +6043,32 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// (it's a real "event happened" — the second delivery is a
 		// different event in time). The dedupe happens upstream
 		// (the ingress dedupe has provider-specific retry semantics).
+		invoiceKnown := true
 		if ev.ProviderRefundID != "" && ev.ChargeID != "" && ev.AmountCents > 0 {
 			provider := providerName(s.billingProvider)
 			inv, err := s.store.GetInvoiceByProviderID(ctx, acct.ID, provider, ev.ChargeID)
-			if err != nil {
+			switch {
+			case errors.Is(err, state.ErrNotFound):
+				// A refund for an order apid never projected is recorded in
+				// the audit log and acknowledged: failing it would have the
+				// provider retry it forever, and Polar disables an endpoint
+				// after repeated failures (ADR-20261101143527).
+				invoiceKnown = false
+				s.log.Warn("apid: refund for an unknown invoice", "account", acct.ID,
+					"charge_id", logsanitize.Field(ev.ChargeID), "provider_refund_id", logsanitize.Field(ev.ProviderRefundID))
+			case err != nil:
 				return fmt.Errorf("load refunded invoice: %w", err)
-			}
-			if err := s.store.RecordInvoiceRefund(ctx, state.InvoiceRefund{
-				InvoiceID:        inv.ID,
-				ProviderRefundID: ev.ProviderRefundID,
-				IdempotencyKey:   "webhook-" + ev.ProviderRefundID,
-				AmountCents:      ev.AmountCents,
-				Source:           "webhook",
-				Status:           normalizedRefundStatus(ev.RefundStatus),
-			}); err != nil {
-				return fmt.Errorf("record refund webhook: %w", err)
+			default:
+				if err := s.store.RecordInvoiceRefund(ctx, state.InvoiceRefund{
+					InvoiceID:        inv.ID,
+					ProviderRefundID: ev.ProviderRefundID,
+					IdempotencyKey:   "webhook-" + ev.ProviderRefundID,
+					AmountCents:      ev.AmountCents,
+					Source:           "webhook",
+					Status:           normalizedRefundStatus(ev.RefundStatus),
+				}); err != nil {
+					return fmt.Errorf("record refund webhook: %w", err)
+				}
 			}
 		}
 		s.audit.Emit(ctx, "refund.processed", &acct.ID, map[string]any{
@@ -6067,6 +6078,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			"charge_id":          ev.ChargeID,
 			"amount_cents":       ev.AmountCents,
 			"currency":           ev.Currency,
+			"invoice_known":      invoiceKnown,
 		})
 	}
 	return nil

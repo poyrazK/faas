@@ -75,6 +75,83 @@ func (s *PostgresStore) RecordOverageDelivery(ctx context.Context, delivery Over
 	return true, nil
 }
 
+func (s *PostgresStore) OveragePending(ctx context.Context, provider, subjectID string, periodStart time.Time) (OveragePendingStep, bool, error) {
+	subject, err := postgresUUID(subjectID)
+	if err != nil || provider == "" || periodStart.IsZero() {
+		return OveragePendingStep{}, false, ErrInvalid
+	}
+	month := monthStart(periodStart)
+	row, err := sqlc.New().ManagedPostgresOveragePending(ctx, s.catalog, sqlc.ManagedPostgresOveragePendingParams{
+		Provider: provider, SubjectID: subject, PeriodStart: pgtype.Timestamptz{Time: month, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OveragePendingStep{}, false, nil
+	}
+	if err != nil {
+		return OveragePendingStep{}, false, mapPostgresError(err)
+	}
+	return OveragePendingStep{Provider: provider, Live: row.Live, Step: OverageChargeStep{
+		SubjectID: subjectID, PeriodStart: month, At: row.StepAt.Time.UTC(),
+		UsedUnitSeconds: row.UsedUnitSeconds, AllowanceSeconds: row.AllowanceUnitSeconds, BilledUnitSeconds: row.BilledUnitSeconds,
+		DeliveredMillicents: row.FromMillicents, TargetMillicents: row.TargetMillicents,
+	}}, true, nil
+}
+
+func (s *PostgresStore) ReserveOverage(ctx context.Context, pending OveragePendingStep) (bool, error) {
+	step := pending.Step
+	subject, err := postgresUUID(step.SubjectID)
+	if err != nil || !validOveragePending(pending) {
+		return false, ErrInvalid
+	}
+	_, err = sqlc.New().ReserveManagedPostgresOverage(ctx, s.catalog, sqlc.ReserveManagedPostgresOverageParams{
+		Provider: pending.Provider, SubjectID: subject, PeriodStart: pgtype.Timestamptz{Time: step.PeriodStart.UTC(), Valid: true},
+		Live: pending.Live, StepAt: pgtype.Timestamptz{Time: step.At.UTC(), Valid: true},
+		UsedUnitSeconds: step.UsedUnitSeconds, AllowanceUnitSeconds: step.AllowanceSeconds, BilledUnitSeconds: step.BilledUnitSeconds,
+		FromMillicents: step.DeliveredMillicents, TargetMillicents: step.TargetMillicents,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, mapPostgresError(err)
+	}
+	return true, nil
+}
+
+// CompleteOverage records a reserved step as delivered and clears it in one
+// transaction. When the month's charge no longer starts where the step does,
+// the step is cleared without recording it.
+func (s *PostgresStore) CompleteOverage(ctx context.Context, pending OveragePendingStep) (bool, error) {
+	step := pending.Step
+	subject, err := postgresUUID(step.SubjectID)
+	if err != nil || !validOveragePending(pending) {
+		return false, ErrInvalid
+	}
+	period := pgtype.Timestamptz{Time: step.PeriodStart.UTC(), Valid: true}
+	recorded := false
+	err = pgx.BeginFunc(ctx, s.catalog, func(tx pgx.Tx) error {
+		q := sqlc.New()
+		_, err := q.RecordManagedPostgresOverageDelivery(ctx, tx, sqlc.RecordManagedPostgresOverageDeliveryParams{
+			Provider: pending.Provider, SubjectID: subject, PeriodStart: period,
+			Live: pending.Live, BilledUnitSeconds: step.BilledUnitSeconds, DeliveredMillicents: step.TargetMillicents,
+			UpdatedAt: pgtype.Timestamptz{Time: step.At.UTC(), Valid: true}, PreviousMillicents: step.DeliveredMillicents,
+		})
+		switch {
+		case err == nil:
+			recorded = true
+		case !errors.Is(err, pgx.ErrNoRows):
+			return err
+		}
+		return q.ClearManagedPostgresOveragePending(ctx, tx, sqlc.ClearManagedPostgresOveragePendingParams{
+			Provider: pending.Provider, SubjectID: subject, PeriodStart: period, TargetMillicents: step.TargetMillicents,
+		})
+	})
+	if err != nil {
+		return false, mapPostgresError(err)
+	}
+	return recorded, nil
+}
+
 type memoryOverageKey struct {
 	provider string
 	subject  string

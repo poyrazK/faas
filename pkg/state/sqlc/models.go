@@ -8281,6 +8281,20 @@ type ManagedPostgresOverageDelivery struct {
 	UpdatedAt           pgtype.Timestamptz
 }
 
+// A managed PostgreSQL overage step reserved before it is sent to the billing provider; written only by apid (ADR-20261101143527).
+type ManagedPostgresOveragePending struct {
+	Provider             string
+	SubjectID            pgtype.UUID
+	PeriodStart          pgtype.Timestamptz
+	Live                 bool
+	StepAt               pgtype.Timestamptz
+	UsedUnitSeconds      int64
+	AllowanceUnitSeconds int64
+	BilledUnitSeconds    int64
+	FromMillicents       int64
+	TargetMillicents     int64
+}
+
 type ManagedPostgresResize struct {
 	ID                 pgtype.UUID
 	AccountID          pgtype.UUID
@@ -10313,6 +10327,8 @@ type Org struct {
 	AsyncQuotaPooledAt       pgtype.Timestamptz
 	// Monthly spend cap in cents for an organization that owns its resources; NULL = no cap (ADR-20261030093512).
 	OverageCapCents pgtype.Int8
+	// When the organization was marked for deletion; meterd delivers usage from before it (ADR-20261101143527).
+	DeletionRequestedAt pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only

@@ -19869,7 +19869,9 @@ CREATE TABLE public.orgs (
     object_storage_owned_from timestamp with time zone,
     async_quota_pooled_at timestamp with time zone,
     overage_cap_cents bigint,
+    deletion_requested_at timestamp with time zone,
     CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
+    CONSTRAINT orgs_deletion_requested_at_chk CHECK (((deletion_requested_at IS NULL) OR (deleted_pending AND isfinite(deletion_requested_at)))),
     CONSTRAINT orgs_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
     CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
     CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
@@ -19884,6 +19886,13 @@ CREATE TABLE public.orgs (
 --
 
 COMMENT ON COLUMN public.orgs.overage_cap_cents IS 'Monthly spend cap in cents for an organization that owns its resources; NULL = no cap (ADR-20261030093512).';
+
+
+--
+-- Name: COLUMN orgs.deletion_requested_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.orgs.deletion_requested_at IS 'When the organization was marked for deletion; meterd delivers usage from before it (ADR-20261101143527).';
 
 
 --
@@ -27526,6 +27535,23 @@ BEGIN
    RAISE EXCEPTION 'organization access revoked' USING ERRCODE='42501';
   END IF;
   NEW.issuer_access_revision=issuer_revision;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: stamp_org_deletion_requested_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_org_deletion_requested_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NOT NEW.deleted_pending THEN
+  NEW.deletion_requested_at := NULL;
+ ELSIF NEW.deletion_requested_at IS NULL OR (TG_OP = 'UPDATE' AND NOT OLD.deleted_pending) THEN
+  NEW.deletion_requested_at := now();
  END IF;
  RETURN NEW;
 END $$;
@@ -43709,6 +43735,39 @@ CREATE TABLE public.managed_postgres_overage_deliveries (
 --
 
 COMMENT ON TABLE public.managed_postgres_overage_deliveries IS 'Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).';
+
+
+--
+-- Name: managed_postgres_overage_pending; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_overage_pending (
+    provider text NOT NULL,
+    subject_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    live boolean NOT NULL,
+    step_at timestamp with time zone NOT NULL,
+    used_unit_seconds bigint NOT NULL,
+    allowance_unit_seconds bigint NOT NULL,
+    billed_unit_seconds bigint NOT NULL,
+    from_millicents bigint NOT NULL,
+    target_millicents bigint NOT NULL,
+    CONSTRAINT managed_postgres_overage_pending_allowance_unit_seconds_check CHECK ((allowance_unit_seconds >= 0)),
+    CONSTRAINT managed_postgres_overage_pending_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
+    CONSTRAINT managed_postgres_overage_pending_check CHECK ((isfinite(step_at) AND (step_at >= period_start))),
+    CONSTRAINT managed_postgres_overage_pending_from_millicents_check CHECK ((from_millicents >= 0)),
+    CONSTRAINT managed_postgres_overage_pending_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT managed_postgres_overage_pending_provider_check CHECK ((provider ~ '^[a-z][a-z0-9_]{0,31}$'::text)),
+    CONSTRAINT managed_postgres_overage_pending_target_check CHECK ((target_millicents > from_millicents)),
+    CONSTRAINT managed_postgres_overage_pending_used_unit_seconds_check CHECK ((used_unit_seconds >= 0))
+);
+
+
+--
+-- Name: TABLE managed_postgres_overage_pending; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_overage_pending IS 'A managed PostgreSQL overage step reserved before it is sent to the billing provider; written only by apid (ADR-20261101143527).';
 
 
 --
@@ -63713,6 +63772,14 @@ ALTER TABLE ONLY public.managed_postgres_live_logins
 
 ALTER TABLE ONLY public.managed_postgres_overage_deliveries
     ADD CONSTRAINT managed_postgres_overage_deliveries_pkey PRIMARY KEY (provider, subject_id, period_start);
+
+
+--
+-- Name: managed_postgres_overage_pending managed_postgres_overage_pending_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_overage_pending
+    ADD CONSTRAINT managed_postgres_overage_pending_pkey PRIMARY KEY (provider, subject_id, period_start);
 
 
 --
@@ -85071,6 +85138,13 @@ CREATE TRIGGER org_streaming_plan BEFORE UPDATE OF plan ON public.orgs FOR EACH 
 
 
 --
+-- Name: orgs orgs_deletion_requested_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER orgs_deletion_requested_at BEFORE INSERT OR UPDATE OF deleted_pending, deletion_requested_at ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.stamp_org_deletion_requested_at();
+
+
+--
 -- Name: outbound_app_bindings outbound_app_binding_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -95193,6 +95267,14 @@ ALTER TABLE ONLY public.managed_postgres_live_logins
 
 ALTER TABLE ONLY public.managed_postgres_overage_deliveries
     ADD CONSTRAINT managed_postgres_overage_deliveries_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_overage_pending managed_postgres_overage_pending_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_overage_pending
+    ADD CONSTRAINT managed_postgres_overage_pending_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

@@ -30,7 +30,8 @@ func orgResourceAccount(row ownersql.Org) Account {
 		StripeSubscriptionItem: row.StripeSubscriptionItem.String, CreatedAt: row.CreatedAt.Time,
 		PastDueAt: resourceTime(row.PastDueAt), LastQuotaWarningAt: resourceTime(row.LastQuotaWarningAt),
 		AbuseHoldAt: resourceTime(row.AbuseHoldAt), AbuseHoldReason: row.AbuseHoldReason.String,
-		BusinessName: row.BusinessName, BillingAddress: row.BillingAddress, TaxID: row.TaxID}
+		BusinessName: row.BusinessName, BillingAddress: row.BillingAddress, TaxID: row.TaxID,
+		DeletionRequestedAt: resourceTime(row.DeletionRequestedAt)}
 }
 
 func (s *PgStore) OrgResourceAccount(ctx context.Context, id string) (Account, error) {

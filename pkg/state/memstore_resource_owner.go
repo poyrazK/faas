@@ -15,6 +15,7 @@ func (m *MemStore) orgResourceAccountLocked(org Org) Account {
 	out.AbuseHoldAt = org.AbuseHoldAt
 	out.AbuseHoldReason = org.AbuseHoldReason
 	out.ProviderCustomerID, out.StripeSubscriptionItem, out.CreatedAt = base.ProviderCustomerID, base.StripeSubscriptionItem, base.CreatedAt
+	out.DeletionRequestedAt = base.DeletionRequestedAt
 	return out
 }
 
