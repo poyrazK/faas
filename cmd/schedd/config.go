@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -239,6 +240,12 @@ type Config struct {
 	// On by default (ADR-1151 amendment 2026-10-27) and ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
+	// GuestVCPUFromCPUApps (ADR-20261101160231) lists the apps, by ID or "*"
+	// for all, that boot one guest vCPU per 1,000 sustained millicores
+	// instead of their plan's count. Empty by default. Turn it on only once
+	// every vmmd refuses a restore at another vCPU count.
+	// FAAS_GUEST_VCPU_FROM_CPU_APPS (comma-separated) overrides it.
+	GuestVCPUFromCPUApps []string `toml:"guest_vcpu_from_cpu_apps"`
 	// FrozenTierWorkers (ADR-20261019103000) lets a worker pool freeze a
 	// surplus worker that holds no queue lease instead of stopping it, and
 	// thaw it before booting a new one. Off by default and ignored unless
@@ -643,6 +650,9 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_OWNER_CACHE must be a boolean (got %q)", v)
 		}
 		c.OwnerCache = enabled
+	}
+	if v, ok := os.LookupEnv("FAAS_GUEST_VCPU_FROM_CPU_APPS"); ok {
+		c.GuestVCPUFromCPUApps = strings.Split(v, ",")
 	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
 		enabled, err := strconv.ParseBool(v)

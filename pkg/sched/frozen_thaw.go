@@ -256,7 +256,7 @@ func (e *Engine) readmitFrozenLocked(ctx context.Context, plan frozenThawPlan) b
 	if err := e.ledger.Admit(Request{
 		Instance: frozen.ID, AppID: plan.app.ID, DeploymentID: plan.dep.ID, DeploymentScope: plan.dep.Scope, Plan: plan.acct.Plan,
 		EnvironmentKey: plan.environmentKey, ProductionEnvironment: plan.production,
-		RAMMB: plan.app.RAMMB, VCPU: plan.limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(plan.app), MaxConcurrency: plan.app.MaxConcurrency,
+		RAMMB: plan.app.RAMMB, VCPU: e.guestVCPUs(plan.app, plan.limits.VCPU), CPUMillicores: effectiveAppCPUMillicores(plan.app), MaxConcurrency: plan.app.MaxConcurrency,
 		NodeID: frozen.NodeID, NodeCeilingMB: plan.node.ceilingMB, VCPUBudget: plan.node.vcpuBudget,
 		CPUBudgetMillicores: plan.node.cpuBudgetMillicores,
 	}); err != nil {

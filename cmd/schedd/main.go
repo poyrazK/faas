@@ -1779,6 +1779,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
 			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
+	if err := engine.SetGuestVCPUFromCPUApps(cfg.GuestVCPUFromCPUApps); err != nil {
+		return err
+	}
+	if len(cfg.GuestVCPUFromCPUApps) > 0 {
+		log.Info("guest vCPUs follow CPU quota for listed apps (ADR-20261101160231)", "apps", cfg.GuestVCPUFromCPUApps)
+	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
 		if cfg.FrozenTierApps {

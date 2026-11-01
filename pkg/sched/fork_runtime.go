@@ -78,7 +78,7 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	// incompatible node and fault on resume.
 	restoreSnap := snap
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
+		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits.VCPU),
 		CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID, restoreSnapshot: &restoreSnap,
 	})
@@ -92,7 +92,7 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	}
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
+		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits.VCPU), CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindFork, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,
@@ -167,7 +167,7 @@ func (e *Engine) bootFork(ctx context.Context, ins state.Instance, app state.App
 	limits := api.MustLimitsFor(acct.Plan)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), //nolint:gosec // plan-bounded
+		VCPUCount: int32(e.guestVCPUs(app, limits.VCPU)), MemSizeMiB: int32(app.RAMMB), //nolint:gosec // plan-bounded
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit), //nolint:gosec // plan-bounded
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,

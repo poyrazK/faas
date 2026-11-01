@@ -131,7 +131,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 				EnvironmentKey:        runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
 				ProductionEnvironment: production,
-				RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+				RAMMB:                 app.RAMMB, VCPU: e.guestVCPUs(app, limits.VCPU), CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 				NodeID: warm.NodeID, NodeCeilingMB: node.ceilingMB, VCPUBudget: node.vcpuBudget, CPUBudgetMillicores: node.cpuBudgetMillicores, Kind: KindWarmPool,
 			}); admitErr != nil {
 				if e.discardWarmPromotion(ctx, warm, "ledger_repair_failed") {

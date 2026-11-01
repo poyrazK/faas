@@ -82,7 +82,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
+		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits.VCPU),
 		CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID,
 	})
@@ -155,7 +155,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	spec := AppSpec{
 		RehearsalRunID: runID,
 		BaseKey:        pinnedBase, LayerKey: request.ArtifactKey,
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
+		VCPUCount: int32(e.guestVCPUs(app, limits.VCPU)), MemSizeMiB: int32(app.RAMMB),
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit),
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
@@ -187,7 +187,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	if err := e.ledger.Admit(Request{
 		Instance: runtimeID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
+		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits.VCPU), CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindAppTask, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,

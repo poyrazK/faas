@@ -2999,6 +2999,17 @@ var VCPUPerPlan = map[Plan]int{
 	PlanScale: 4,
 }
 
+// GuestVCPUMillicores is the sustained CPU quota one guest vCPU stands for
+// when an app's topology follows its quota instead of its plan
+// (ADR-20261101160231).
+const GuestVCPUMillicores = 1000
+
+// GuestVCPUsForCPUMillicores is the guest vCPU count for a sustained CPU
+// quota: one per GuestVCPUMillicores, at least one (ADR-20261101160231).
+func GuestVCPUsForCPUMillicores(millicores int) int {
+	return max(1, (millicores+GuestVCPUMillicores-1)/GuestVCPUMillicores)
+}
+
 // BlockRateLimit is a VM's sustained limit on its writable app-layer drive
 // (ADR-910): Firecracker token buckets on bandwidth and on operations. It
 // keeps one tenant's disk flood from starving its neighbours' I/O; the

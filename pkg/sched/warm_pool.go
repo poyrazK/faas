@@ -362,7 +362,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	// is the correct outcome for a warm fill (ADR-193).
 	restoreSnap := snap
 	placementRequest := Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
+		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits.VCPU), CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint, restoreSnapshot: &restoreSnap,
 	}
 	wakeID := uuid.NewString()
@@ -410,7 +410,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        runtimeEnvironmentAdmissionKey(owner.Scope, owner.EnvironmentID),
 		ProductionEnvironment: reaperProductionScope(owner.Scope),
-		RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		RAMMB:                 app.RAMMB, VCPU: e.guestVCPUs(app, limits.VCPU), CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		NodeID: placement.NodeID, NodeCeilingMB: placement.CeilingMB,
 		VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores, Kind: KindWarmPool,
 	}); err != nil {

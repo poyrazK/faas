@@ -1032,3 +1032,6 @@ func (r *Engine) NodeCapacityProblem(err error) error { return r.nodeCapacityPro
 func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
+
+// GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
+func (e *Engine) GuestVCPUs(app state.App, planVCPUs int) int { return e.guestVCPUs(app, planVCPUs) }
