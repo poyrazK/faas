@@ -9395,11 +9395,11 @@ Per hour or per day.
 
 Change hooks: publish committed row changes as events
 
-#### data-api hooks sql
+#### data-api hooks export
 
 Print the change hooks migration
 
-`gregale data-api hooks sql [--schema <SCHEMA>]`
+`gregale data-api hooks export [--schema <SCHEMA>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9408,7 +9408,7 @@ Print the change hooks migration
 Examples:
 
 ```sh
-gregale data-api hooks sql > migrations/0006_change_hooks.sql
+gregale data-api hooks export > migrations/0006_change_hooks.sql
 ```
 
 Creates the change event table, its trigger and the enable and disable helpers.
