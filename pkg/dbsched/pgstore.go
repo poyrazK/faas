@@ -360,6 +360,26 @@ func (s *PgStore) ClaimRestore(ctx context.Context, id string, held time.Time, l
 	return until.Time, nil
 }
 
+func (s *PgStore) ClaimProvision(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error) {
+	key, err := pgUUID(id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	until, err := s.q.ClaimDatabaseVMProvision(ctx, s.pool, sqlc.ClaimDatabaseVMProvisionParams{
+		LeaseSeconds: lease.Seconds(), DatabaseID: key, Held: pgtype.Timestamptz{Time: held, Valid: !held.IsZero()},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := s.Get(ctx, id); err != nil {
+			return time.Time{}, err
+		}
+		return time.Time{}, ErrConflict
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("dbsched: claim provision %s: %w", id, err)
+	}
+	return until.Time, nil
+}
+
 func (s *PgStore) RecordRestore(ctx context.Context, id string, recoveredTo time.Time) error {
 	key, err := pgUUID(id)
 	if err != nil {

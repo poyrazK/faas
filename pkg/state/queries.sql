@@ -25593,6 +25593,17 @@ WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore
        OR restore_lease_until = sqlc.narg(held)::timestamptz)
 RETURNING restore_lease_until;
 
+-- name: ClaimDatabaseVMProvision :one
+-- ClaimDatabaseVMRestore for a provisioning database that is not a restore:
+-- the lease on its bootstrap, in the restore lease's column, since a
+-- database is never both.
+UPDATE database_vms
+SET restore_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NULL
+  AND (restore_lease_until IS NULL OR restore_lease_until < now()
+       OR restore_lease_until = sqlc.narg(held)::timestamptz)
+RETURNING restore_lease_until;
+
 -- name: RecordDatabaseVMBackup :execrows
 UPDATE database_vms SET last_backup_at = sqlc.arg(at)
 WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';

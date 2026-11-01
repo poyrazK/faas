@@ -28,9 +28,7 @@ func TestMetalCancelThroughTheProxy(t *testing.T) {
 	defer cancel()
 	id := uuid.NewString()
 	t.Cleanup(func() { _ = st.sched.Delete(context.Background(), id) })
-	if _, err := st.p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: id, Spec: devSpec()}); err != nil {
-		t.Fatal(err)
-	}
+	provisionReady(ctx, t, st.p, managedpostgres.ProvisionRequest{ResourceID: id, Spec: devSpec()})
 	m, err := st.p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: id, IdentityKey: "rw", Access: managedpostgres.CredentialReadWrite})
 	if err != nil {
 		t.Fatal(err)

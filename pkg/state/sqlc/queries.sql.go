@@ -5385,6 +5385,31 @@ func (q *Queries) ClaimDatabaseStandby(ctx context.Context, db DBTX, databaseID 
 	return result.RowsAffected(), nil
 }
 
+const claimDatabaseVMProvision = `-- name: ClaimDatabaseVMProvision :one
+UPDATE database_vms
+SET restore_lease_until = now() + make_interval(secs => $1::double precision)
+WHERE database_id = $2 AND state = 'provisioning' AND restore_source IS NULL
+  AND (restore_lease_until IS NULL OR restore_lease_until < now()
+       OR restore_lease_until = $3::timestamptz)
+RETURNING restore_lease_until
+`
+
+type ClaimDatabaseVMProvisionParams struct {
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+	Held         pgtype.Timestamptz
+}
+
+// ClaimDatabaseVMRestore for a provisioning database that is not a restore:
+// the lease on its bootstrap, in the restore lease's column, since a
+// database is never both.
+func (q *Queries) ClaimDatabaseVMProvision(ctx context.Context, db DBTX, arg ClaimDatabaseVMProvisionParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, claimDatabaseVMProvision, arg.LeaseSeconds, arg.DatabaseID, arg.Held)
+	var restore_lease_until pgtype.Timestamptz
+	err := row.Scan(&restore_lease_until)
+	return restore_lease_until, err
+}
+
 const claimDatabaseVMRestore = `-- name: ClaimDatabaseVMRestore :one
 UPDATE database_vms
 SET restore_lease_until = now() + make_interval(secs => $1::double precision)

@@ -492,6 +492,8 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
 				Verification: recorded,
 			})
+		} else if inspector, ok := backend.Provider.(ProvisionInspector); ok && database.RestoreSourceResourceID == "" {
+			observed, err = inspector.InspectProvision(providerContext, database.ProviderResourceID)
 		} else {
 			observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
 		}

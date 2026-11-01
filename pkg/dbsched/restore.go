@@ -251,7 +251,9 @@ func (s *Scheduler) runRestore(ctx context.Context, id string) {
 	renewed := make(chan struct{})
 	go func() {
 		defer close(renewed)
-		s.renewRestore(ctx, id, lease, func() { lost.Store(true); cancel() })
+		s.renewLease(ctx, lease, func(ctx context.Context, held time.Time) (time.Time, error) {
+			return s.store.ClaimRestore(ctx, id, held, s.cfg.RestoreLease)
+		}, func() { lost.Store(true); cancel() })
 	}()
 	defer func() { cancel(); <-renewed }()
 	vm, err := s.store.Get(ctx, id)
@@ -279,9 +281,9 @@ func (s *Scheduler) runRestore(ctx context.Context, id string) {
 	_ = s.store.Transition(cleanup, id, []State{StateProvisioning}, StateFailed, TransitionOptions{LastError: errCodeRestore})
 }
 
-// renewRestore keeps the lease until ctx ends; failing to renew it calls
-// lost.
-func (s *Scheduler) renewRestore(ctx context.Context, id string, lease time.Time, lost func()) {
+// renewLease keeps a restore's or a bootstrap's lease, renewing it with
+// claim, until ctx ends; failing to renew it calls lost.
+func (s *Scheduler) renewLease(ctx context.Context, lease time.Time, claim func(context.Context, time.Time) (time.Time, error), lost func()) {
 	ticker := time.NewTicker(s.cfg.RestoreLease / 3)
 	defer ticker.Stop()
 	for {
@@ -290,7 +292,7 @@ func (s *Scheduler) renewRestore(ctx context.Context, id string, lease time.Time
 			return
 		case <-ticker.C:
 		}
-		next, err := s.store.ClaimRestore(ctx, id, lease, s.cfg.RestoreLease)
+		next, err := claim(ctx, lease)
 		if err != nil {
 			if ctx.Err() == nil {
 				lost()
