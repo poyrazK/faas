@@ -1817,6 +1817,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 		if reopened {
 			return reconcile.Result{}, nil
 		}
+		kept, keepErr := s.keepLivePreviewOnReady(ctx, ev, install.InstallationID,
+			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
+		if keepErr != nil {
+			return reconcile.Result{}, keepErr
+		}
+		if kept {
+			return reconcile.Result{}, nil
+		}
 		skipped, skipErr := s.skipIgnoredPullRequestPush(ctx, ev, install.InstallationID, policy,
 			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
 		if skipErr != nil {

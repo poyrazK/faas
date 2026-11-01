@@ -12850,6 +12850,7 @@
     "table": "oidc_exchanged_tokens",
     "columns": [
       "account_id",
+      "app_id",
       "audience",
       "created_at",
       "expires_at",

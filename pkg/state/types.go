@@ -9338,6 +9338,10 @@ type OIDCExchangedToken struct {
 	Audience  []string
 	JTI       string
 	CreatedAt time.Time
+	// AppID binds the bearer to one app (ADR-20261101100000): set for a
+	// deploy bearer minted under a trust policy Gregale created, and
+	// enforced like a per-app deploy token. Empty is account-wide.
+	AppID string
 }
 
 // ToAPIKey projects the OIDC-bearer row into a synthetic state.APIKey
@@ -9368,6 +9372,7 @@ func (e OIDCExchangedToken) ToAPIKey() APIKey {
 		AccountID: e.AccountID,
 		Scopes:    scopes,
 		Status:    string(APIKeyStatusActive),
+		AppID:     e.AppID,
 	}
 }
 
