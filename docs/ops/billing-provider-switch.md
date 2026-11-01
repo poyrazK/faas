@@ -73,6 +73,9 @@ live object-storage charge under the overage cap:
 |---|---|
 | `FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE` | `off`, `shadow`, or `live` |
 | `FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM` | RFC3339 UTC-month boundary; earlier periods are never charged |
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE` | `off`, `shadow`, or `live`: managed PostgreSQL compute overage (ADR-20261031110037) |
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` | RFC3339 UTC-month boundary; earlier months are never charged |
+| `FAAS_POLAR_MANAGED_POSTGRES_METER_ID` | separate Polar meter summing `charge_millicents` for `faas_managed_postgres_usage` |
 | `FAAS_POLAR_OBJECT_STORAGE_METER_ID` | Separate meter that sums `charge_millicents` |
 | `FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME` | Event filter; default `faas_object_storage_usage` |
 
@@ -105,18 +108,28 @@ do not add a Polar meter-credit benefit to these products.
 
 In the organization's settings (Settings, Subscriptions), turn off multiple
 subscriptions per customer. Gregale follows one subscription per account;
-with the setting on, a customer who completes two checkouts pays twice.
+with the setting on, a customer who completes two checkouts pays twice. Set
+proration to invoice immediately (`proration_behavior: invoice`): with
+"prorate", a plan upgrade in the customer portal applies at once and its
+charge waits for the next renewal, which a cancellation may never reach.
 
 `apid` validates the catalog at boot. `meterd` validates it before starting
-the usage loop. An organization that allows multiple subscriptions, a token
-that does not see exactly one organization, a missing product, archived
-resource, wrong recurring period, wrong fixed price, wrong meter, or
-meter-credit benefit prevents startup (ADR-20261029180000). Polar being
+the usage loop. An organization that allows multiple subscriptions or does
+not invoice prorations immediately, a token that does not see exactly one
+organization, a missing product, archived resource, wrong recurring period,
+wrong fixed price, wrong meter, or meter-credit benefit prevents startup
+(ADR-20261029180000, ADR-20261031090658). Polar being
 unreachable does not: on a timeout, connection failure, HTTP 429 or 5xx the
 daemon starts, logs `billing: Polar unreachable at boot`, and retries the
 check in the background until it passes; a configuration problem it then
 finds is logged as `billing: Polar catalog does not satisfy the billing
 contract` on every retry (ADR-20261031100000).
+
+`PATCH /v1/account/billing` sends the business name to the Polar customer's
+name, which Polar prints on invoices. Polar needs a structured billing
+address with a country and validates tax IDs against it, so the free-form
+address and tax ID stay in Gregale; customers enter them at checkout or in
+the customer portal (ADR-20261031090658).
 
 ## Runtime behavior
 

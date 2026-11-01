@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -42,4 +43,35 @@ func ManagedPostgresUsageLineItems(accountID string, snapshot managedpostgres.Us
 		})
 	}
 	return out, nil
+}
+
+// ManagedPostgresChargePolicy is the rollout boundary for managed PostgreSQL
+// overage charges (ADR-20261031110037). EffectiveFrom is a UTC month; Live
+// false is shadow: steps are recorded and never sent.
+type ManagedPostgresChargePolicy struct {
+	Provider      string
+	Live          bool
+	EffectiveFrom time.Time
+}
+
+// ManagedPostgresChargeStep raises one usage subject's month charge from
+// DeliveredMillicents to TargetMillicents.
+type ManagedPostgresChargeStep struct {
+	SubjectID           string
+	PeriodStart         time.Time
+	At                  time.Time
+	UsedUnitSeconds     int64
+	AllowanceSeconds    int64
+	BilledUnitSeconds   int64
+	DeliveredMillicents int64
+	TargetMillicents    int64
+}
+
+// ManagedPostgresChargeSink is the provider seam for managed PostgreSQL
+// overage. Implementations bill TargetMillicents - DeliveredMillicents and key
+// their idempotency on the subject, the month and TargetMillicents. Off is a
+// policy returning ok=false.
+type ManagedPostgresChargeSink interface {
+	ManagedPostgresChargePolicy() (ManagedPostgresChargePolicy, bool)
+	PublishManagedPostgresCharge(ctx context.Context, step ManagedPostgresChargeStep) error
 }

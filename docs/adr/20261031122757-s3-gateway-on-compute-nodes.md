@@ -77,12 +77,17 @@ Two things make replicas possible now:
 
 - Each gateway limits its transfer to `api.ObjectGatewayNodePortSharePercent`
   (30) of the node's port speed, per direction.
+- Uploads and downloads draw on one budget. Every byte a gateway moves
+  crosses the port once each way (in from the provider and out to the
+  client for a read, the reverse for a write), so one budget of the share
+  keeps both directions within it.
 - The manifest declares each node's port speed. Ansible renders the share
   into the registry as `transfer.max_bytes_per_second`.
 - Over the share, transfers slow down through TCP backpressure; they do not
-  fail. App traffic keeps the rest of the port.
+  fail. App traffic keeps the rest of the port. Time a request body waits
+  for the share does not count against the client's minimum upload rate.
 - `s3_gateway_transfer_throttled_seconds_total{direction}` counts the
-  seconds spent at the share.
+  wall-clock seconds during which a transfer waited for the share.
 
 ### 4. Compute nodes hold storage credentials, scoped to the gateway
 
@@ -106,7 +111,10 @@ credentials".
 - **Usage exports stay on the control plane.** A compute gateway runs no
   provider usage export, so it never holds the provider's account API keys
   (OVH application key, secret and consumer key), which reach more than
-  storage.
+  storage. apid runs the exports (amended 2026-11-01): it already holds those
+  keys and the bucket-admin credential that reads the access-log bucket, and
+  it imports the reports, so the control-plane gateway is no longer needed
+  for accounting.
 - **Blast radius.** Root on a compute node can read and write every object
   in the cell's backends and open every S3 credential. The node already holds
   `compute-db.env`, which gives row DML on the shared schema. Tenant code
@@ -158,6 +166,12 @@ egress ceiling".
 - Their count, placement and TLS are decided by a later ADR, written when the
   alert first fires. The traffic that fires it is large enough to pay for
   them.
+- That ADR must also lift a registry rule. `gateway_safety_v1` accounting,
+  which bills storage and admits reads without the database
+  (ADR-20261024132844, ADR-20261030075301), refuses any transfer profile but
+  `proxied` (`pkg/objectstorage/config.go`). Moving to `direct` as it stands
+  means provider-report accounting, which puts every read back on the
+  control-plane database.
 
 ### Steps
 
@@ -170,18 +184,25 @@ egress ceiling".
    - `s3_gateway_service` in the compute play, with the compute unit variant;
    - the `faas-cloudflared-s3` connector;
    - manifest `object_storage.gateway_on_compute` and per-node port speed;
-   - the two reserves in schedd's admission.
+   - the two reserves: the node join runs `gregalectl compute-nodes sizing
+     --edge --object-gateway`, which registers the node's tenant capacity
+     without them.
 5. Load test on one node, as the acceptance gate. Measure small GETs per
    second, large-GET throughput at the share, and PUTs per second for one
    account. It passes when:
    - the gateway holds its share;
    - the node's `gateway_wake_latency_seconds` p95 stays within noise;
    - control-plane Postgres stays under its CPU alert.
+
+   The test reaches the compute gateways on a pilot hostname
+   (`faas_object_gateway_public_endpoint`, the s3 tunnel's only ingress
+   until the cutover) while `s3.<domain>` stays on the control plane.
+   Procedure and readout: `docs/runbooks/S3GatewayComputeLoadTest.md`.
 6. Cutover of `s3.gregale.dev` from the control-plane origin to the s3
    tunnel, one pilot first (as in `docs/runbooks/AppEdgeCutover.md`). The
    control-plane gateway stays as a fallback for one release, then leaves
-   the route. It keeps running the provider usage exports until they move
-   to apid.
+   the route. The provider usage exports run in apid, so the route is all
+   it serves.
 7. The compute edge serves public object routes locally.
 
 ## Consequences

@@ -3976,10 +3976,11 @@ Inspect, change, scale and operate apps
 
 List your apps
 
-`gregale app list [--dry-run] [--quiet|-q] [--yes]`
+`gregale app list [--selector|-l <SELECTOR>] [--dry-run] [--quiet|-q] [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--selector|-l <SELECTOR>` | only apps whose labels match (preview) |  |
 | `--dry-run` | preview app deletion without changing resources |  |
 | `--quiet|-q` | delete one app without prompting |  |
 | `--yes` | confirm app deletion without prompting |  |
@@ -3989,6 +3990,7 @@ Examples:
 ```sh
 gregale app list
 gregale app list --json
+gregale app list -l team=billing
 gregale app delete my-api --dry-run
 gregale app delete my-api --yes
 ```
@@ -4588,11 +4590,12 @@ Conditions are derived from the health assessment; `app health` shows the eviden
 
 Wait until a condition holds (preview)
 
-`gregale app wait [--for <CONDITION>] [--env <SLUG>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale app wait [--for <CONDITION>] [--selector|-l <SELECTOR>] [--env <SLUG>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--for <CONDITION>` | TYPE or TYPE=True\|False\|Unknown (default Ready) |  |
+| `--selector|-l <SELECTOR>` | wait on every app whose labels match, instead of one app (preview) |  |
 | `--env <SLUG>` | wait on this project environment&#39;s conditions instead of the default scope (also --environment) |  |
 | `--timeout <DURATION>` | maximum wait (default 2m) |  |
 | `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
@@ -4605,6 +4608,42 @@ gregale app wait my-api --for Progressing=False --timeout 10m
 ```
 
 Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout.
+
+With -l, waits on every matching app within one timeout and exits 4 when none matches.
+
+### app label
+
+List, set or unset an app&#39;s labels (preview)
+
+Examples:
+
+```sh
+gregale app label set my-api team=billing tier=web
+gregale app label unset my-api tier
+gregale app label list my-api
+```
+
+Labels are key/value pairs with Kubernetes syntax; select apps with -l on app list, app wait and domain list.
+
+Labels are not secret.
+
+#### app label list
+
+Show an app&#39;s labels
+
+`gregale app label list [<app>] <app>`
+
+#### app label set
+
+Set labels; an empty value is KEY=
+
+`gregale app label set [<app>] <app> KEY=VALUE...`
+
+#### app label unset
+
+Remove labels
+
+`gregale app label unset [<app>] <app> KEY...`
 
 ### app health
 
@@ -5632,11 +5671,12 @@ Offers a default-domain change at the end.
 
 List custom domain bindings
 
-`gregale domain list [--app <SLUG>]`
+`gregale domain list [--app <SLUG>] [--selector|-l <SELECTOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | only this app&#39;s domains |  |
+| `--selector|-l <SELECTOR>` | only domains of apps whose labels match (preview) |  |
 
 ### domain create
 
@@ -5712,6 +5752,36 @@ Run a 5-check domain readiness report
 `gregale domain doctor <domain>`
 
 Exits nonzero when unhealthy, including in JSON mode.
+
+### domain host
+
+Choose which names below a wildcard domain get certificates
+
+With an allowlist, the edge refuses certificates for every other name, so random names cannot use up the wildcard&#39;s issuance budget. Routing is unchanged.
+
+#### domain host set
+
+Allow only these names (replaces the list)
+
+`gregale domain host set <*.domain> <name>...`
+
+Examples:
+
+```sh
+gregale domain host set '*.example.com' app api eu.shop
+```
+
+#### domain host get
+
+Show the allowlist
+
+`gregale domain host get <*.domain>`
+
+#### domain host clear
+
+Remove the allowlist so every name may get a certificate
+
+`gregale domain host clear <*.domain>`
 
 
 ## edge
@@ -7865,6 +7935,12 @@ Read compute resize progress
 
 List managed PostgreSQL databases
 
+`gregale postgres list [--selector|-l <SELECTOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--selector|-l <SELECTOR>` | only databases whose labels match (preview) |  |
+
 ### postgres capabilities
 
 Show plan and region PostgreSQL feature support
@@ -7946,6 +8022,39 @@ gregale postgres wait orders
 ```
 
 Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found.
+
+### postgres label
+
+List, set or unset a database&#39;s labels (preview)
+
+Examples:
+
+```sh
+gregale postgres label set orders team=billing
+gregale postgres label list orders
+```
+
+Labels are key/value pairs with Kubernetes syntax; select databases with -l on postgres list.
+
+Labels are not secret.
+
+#### postgres label list
+
+Show a database&#39;s labels
+
+`gregale postgres label list <database>`
+
+#### postgres label set
+
+Set labels; an empty value is KEY=
+
+`gregale postgres label set <database> KEY=VALUE...`
+
+#### postgres label unset
+
+Remove labels
+
+`gregale postgres label unset <database> KEY...`
 
 ### postgres delete
 
@@ -9198,16 +9307,44 @@ gregale data-api create shop-data --database shop-db --issuer https://id.example
 
 ### data-api deploy
 
-Deploy a single-app Data API with its migrations as the release task
+Deploy the current Data API runtime and run migrations on release
 
-`gregale data-api deploy --migrations <DIR> [--release-command <COMMAND>] [--env <SCOPE>] [--timeout <DURATION>] <name>`
+`gregale data-api deploy [--migrations <DIR>] [--release-command <COMMAND>] [--env <SCOPE>] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL | required |
+| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL |  |
 | `--release-command <COMMAND>` | release command (default node migrations/release.mjs) |  |
 | `--env <SCOPE>` | environment scope (also --scope) |  |
 | `--timeout <DURATION>` | deployment and release wait (default 15m) |  |
+
+Examples:
+
+```sh
+gregale data-api deploy shop-data --migrations migrations
+gregale data-api deploy shop-data
+```
+
+Deploys the runtime the control plane serves; without --migrations it upgrades the runtime only.
+
+### data-api delete
+
+Revoke a Data API&#39;s database bindings and delete the app
+
+`gregale data-api delete [--yes] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | confirm deletion without prompting |  |
+| `--timeout <DURATION>` | maximum time for the API calls (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api delete shop-data --yes
+```
+
+Deleting the app alone is refused while its bindings are live.
 
 ### data-api configure
 
@@ -10231,11 +10368,12 @@ gregale cron run get REQUEST_ID --wait --timeout 5m
 
 List cron rules
 
-`gregale cron list --app <slug> [--one-off]`
+`gregale cron list [--app <slug>] [--selector|-l <SELECTOR>] [--one-off]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (required without -l) |  |
+| `--selector|-l <SELECTOR>` | only crons whose labels match (preview) |  |
 | `--one-off` | list one-off requests (--at or --in) instead of cron rules |  |
 
 ### cron create
@@ -10307,6 +10445,39 @@ gregale cron wait CRON_ID
 ```
 
 Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found.
+
+### cron label
+
+List, set or unset a cron&#39;s labels (preview)
+
+Examples:
+
+```sh
+gregale cron label set CRON_ID team=billing
+gregale cron label list CRON_ID
+```
+
+Labels are key/value pairs with Kubernetes syntax; select crons with -l on cron list.
+
+Labels are not secret.
+
+#### cron label list
+
+Show a cron&#39;s labels
+
+`gregale cron label list <id>`
+
+#### cron label set
+
+Set labels; an empty value is KEY=
+
+`gregale cron label set <id> KEY=VALUE...`
+
+#### cron label unset
+
+Remove labels
+
+`gregale cron label unset <id> KEY...`
 
 ### cron get
 
@@ -10695,13 +10866,47 @@ gregale job resume --run RUN_ID
 
 List jobs in this account
 
-`gregale job list [--limit <N>] [--offset <N>] [--all]`
+`gregale job list [--limit <N>] [--offset <N>] [--all] [--selector|-l <SELECTOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--limit <N>` | page size (1..200, default 50) |  |
 | `--offset <N>` | starting offset (&gt;= 0) |  |
 | `--all` | walk every page using --limit and --offset |  |
+| `--selector|-l <SELECTOR>` | only jobs whose labels match (preview) |  |
+
+### job label
+
+List, set or unset a job&#39;s labels (preview)
+
+Examples:
+
+```sh
+gregale job label set nightly-report team=billing
+gregale job label list nightly-report
+```
+
+Labels are key/value pairs with Kubernetes syntax; select jobs with -l on job list.
+
+Labels are not secret.
+
+#### job label list
+
+Show a job&#39;s labels
+
+`gregale job label list <job>`
+
+#### job label set
+
+Set labels; an empty value is KEY=
+
+`gregale job label set <job> KEY=VALUE...`
+
+#### job label unset
+
+Remove labels
+
+`gregale job label unset <job> KEY...`
 
 ### job create
 

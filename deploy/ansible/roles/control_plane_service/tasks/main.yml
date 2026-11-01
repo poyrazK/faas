@@ -250,6 +250,36 @@
     mode: "0644"
   notify: restart faas-apid
 
+- name: control_plane_service — scheduler credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: scheduler
+    credential_units: [faas-apid, faas-schedd]
+
+- name: control_plane_service — outbound credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: outbound
+    credential_units: [faas-apid, faas-outboundd]
+
+- name: control_plane_service — attach credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: attach
+    credential_units: [faas-apid]
+
+- name: control_plane_service — dev-bridge credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: dev-bridge
+    credential_units: [faas-apid, faas-bridged]
+
+- name: control_plane_service — data-api credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: data-api
+    credential_units: [faas-apid]
+
 - name: control_plane_service — set developer live patch gate (ADR-740)
   ansible.builtin.template:
     src: 99-faas-dev-patch.conf.j2
@@ -683,6 +713,39 @@
     owner: root
     group: root
     mode: "0644"
+
+# ADR-1027: schedd's database scheduler, from the manifest's database hosts
+# (faas_schedd_database_scheduler, rendered by `gregalectl manifest ansible`).
+# A fleet without database hosts keeps neither file.
+- name: control_plane_service — render schedd's database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: schedd-database.toml.j2
+    dest: /etc/faas/schedd-database.toml
+    owner: root
+    group: faas
+    mode: "0640"
+  when: faas_schedd_database_scheduler is defined
+
+- name: control_plane_service — point schedd at its database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: 99-faas-schedd-database.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-database.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_schedd_database_scheduler is defined
+
+- name: control_plane_service — remove schedd's database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/faas-schedd.service.d/99-faas-database.conf
+    - /etc/faas/schedd-database.toml
+  when: faas_schedd_database_scheduler is not defined
 
 # Issue #585 / ADR-127 — per-daemon secret file perm-asserts. The
 # shared block checks ALL new per-daemon secret files (schedd +

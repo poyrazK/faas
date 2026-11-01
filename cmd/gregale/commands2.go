@@ -72,6 +72,7 @@ const (
 	subDomainsShow       = "show"
 	subDomainsStatus     = "status"
 	subDomainsDoctor     = "doctor"
+	subDomainsHost       = "host"
 
 	statusPending  = "pending"
 	statusVerified = "verified"
@@ -488,6 +489,10 @@ func cmdApp(args []string) int {
 		}
 		if explicit["per-instance-concurrency"] {
 			policy.PerInstanceConcurrency = *perInstanceConcurrency
+		}
+		if explicit["min"] {
+			// The policy was copied from the app, so it holds the old floor.
+			policy.MinInstances = *min
 		}
 		req.ScalingPolicy = policy
 	}
@@ -1911,7 +1916,7 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// ADR-987: built from the template's Dockerfile; the handler value
 		// is vestigial, but the deploy API requires it to be non-empty.
 		return runtimeBinary, "handler", true
-	case "cron-worker", "event-worker", "queue-worker":
+	case "cron-worker", "event-worker", "queue-worker", "agent-stateless-node":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
 		return "", "", false
@@ -4158,6 +4163,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestQueueBindings(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest queue bindings failed", err)
 	}
+	if err := deployManifestLabels(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest labels failed", err)
+	}
 
 	recordQueued := func(dep api.DeploymentResponse) int {
 		realtimeTriggers.commit()
@@ -5086,6 +5094,7 @@ func cmdTrafficStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
 		return 0
 	}
+	defer printCanaryProgress(live)
 	if len(byScope) > 1 {
 		printScopedTrafficStatus(live, byScope)
 		return 0
@@ -5104,6 +5113,19 @@ func cmdTrafficStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
+}
+
+// printCanaryProgress names each rolling canary's current step. Traffic
+// changes are refused while a canary runs, and advancing it needs that step;
+// it appeared only in the refusal of a wrong guess (PulseWatch F17).
+func printCanaryProgress(live []api.DeploymentResponse) {
+	for _, d := range live {
+		if d.CanaryTotalSteps <= 0 || d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+			continue
+		}
+		_, _ = fmt.Fprintf(osStdout, "Canary %s is rolling out at canary_step=%d (step %d of %d). Advance it with:\n  %s deployment advance %s --expected-step %d\n",
+			deploymentLabel(d), d.CanaryStep, d.CanaryStep+1, d.CanaryTotalSteps, recoveryCLI(), recoveryArgument(d.ID), d.CanaryStep)
+	}
 }
 
 // trafficScope names a deployment's traffic scope; an unscoped row is the
@@ -5195,7 +5217,7 @@ func cmdTraffic(args []string) int {
 func cmdDomains(args []string) int {
 	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|wait|doctor> [args]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|wait|doctor|host> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
@@ -5284,6 +5306,8 @@ func cmdDomains(args []string) int {
 		return cmdDomainsStatus(args[1:])
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
+	case subDomainsHost:
+		return cmdDomainsHost(args[1:])
 	case subWait:
 		return domainConditions.wait(args[1:])
 	}
@@ -5305,6 +5329,8 @@ func cmdCrons(args []string) int {
 		return cronConditions.status(args[1:])
 	case subWait:
 		return cronConditions.wait(args[1:])
+	case subLabel:
+		return cmdCronLabel(args[1:])
 	case subList:
 		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
 			if delayedTasksHidden() {
@@ -5313,27 +5339,38 @@ func cmdCrons(args []string) int {
 			return cmdDelayedTaskList(rest)
 		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
-		slug := fs.String("app", "", "app slug (required)")
+		slug := fs.String("app", "", "app slug (required without -l)")
+		selector := addSelectorFlag(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
-		if *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug>", "crons")
+		if *slug == "" && *selector == "" {
+			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
 			return 1
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		out, err := client.ListCrons(context.Background(), *slug)
+		var out []api.CronResponse
+		if *selector != "" {
+			// -l without --app selects across every app (ADR-20261031100025).
+			out, err = selectedCrons(context.Background(), client, *slug, *selector)
+		} else {
+			out, err = client.ListCrons(context.Background(), *slug)
+		}
 		if err != nil {
 			return printErr("Could not list crons", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
+		}
+		if len(out) == 0 && *selector != "" {
+			_, _ = fmt.Fprintf(osStdout, "No cron matches %s\n", *selector)
+			return 0
 		}
 		// The ID leads because `crons info|update|rm|runs` all require it
 		// and nothing else printed it (issue #3362).
@@ -8540,11 +8577,12 @@ func warnDeployStreamInterrupted(quiet bool) {
 func cmdDomainsList(args []string) int {
 	fs := newFlagSet("domains list", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "only this app's domains")
+	selector := addSelectorFlag(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale domain list [--app <slug>]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domain list [--app <slug>] [-l SELECTOR]", "domains")
 		return 1
 	}
 	client, err := authedClient()
@@ -8570,6 +8608,18 @@ func cmdDomainsList(args []string) int {
 	}
 	if appID != "" {
 		out = slices.DeleteFunc(out, func(d api.CustomDomainResponse) bool { return d.AppID != appID })
+	}
+	if *selector != "" {
+		// A domain matches through its app (ADR-20261031100025).
+		apps, err := selectedApps(ctx, client, *selector)
+		if err != nil {
+			return printErr("Could not list apps", err)
+		}
+		matched := make(map[string]bool, len(apps))
+		for _, a := range apps {
+			matched[a.ID] = true
+		}
+		out = slices.DeleteFunc(out, func(d api.CustomDomainResponse) bool { return !matched[d.AppID] })
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(out))

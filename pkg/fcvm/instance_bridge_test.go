@@ -165,8 +165,11 @@ func TestAdoptedInstanceBridgeProof(t *testing.T) {
 	}
 	f.bridgeProcess(900, f.bridgeUID())
 	exe := filepath.Join(f.proc, fmt.Sprint(bridgeTestPID), "exe")
-	f.must(os.Remove(exe))
-	f.write(exe, "another binary")
+	// Write the other binary beside the recorded one and rename it over:
+	// removing first lets the filesystem hand the new file the freed inode,
+	// which is the same identity.
+	f.write(exe+".next", "another binary")
+	f.must(os.Rename(exe+".next", exe))
 	if successor.ProveInstanceBridge(idLive, bridgeTestPID) == nil {
 		t.Fatal("proved a bridge running another executable")
 	}

@@ -69,7 +69,7 @@ func TestPgRouteLatencyInvestigationSuccessfulResponsesBoundedScopesAndWarmRows(
 		}
 		span := debugger.StoredSpan{TraceID: trace, SpanID: "db", Name: "secret database host", DBStatement: "SELECT password", StartTimeUnixNano: uint64(at.UnixNano()), EndTimeUnixNano: uint64(at.Add(time.Duration(spanMS) * time.Millisecond).UnixNano()), DurationNanos: uint64(time.Duration(spanMS) * time.Millisecond), Attributes: map[string]string{"gregale.dependency.type": "managed_binding", "gregale.dependency.kind": "postgres"}}
 		body, _ := json.Marshal([]debugger.StoredSpan{span})
-		if _, err := q.UpdateSpansSummary(t.Context(), pool, sqlc.UpdateSpansSummaryParams{TraceID: pgtype.Text{String: trace, Valid: true}, Column2: body, Column3: mustPgUUID(t, a.ID)}); err != nil {
+		if _, err := q.UpdateSpansSummary(t.Context(), pool, sqlc.UpdateSpansSummaryParams{TraceID: pgtype.Text{String: trace, Valid: true}, Column2: body, Column3: mustPgUUID(t, a.ID), Column4: 1000}); err != nil {
 			t.Fatal(err)
 		}
 	}

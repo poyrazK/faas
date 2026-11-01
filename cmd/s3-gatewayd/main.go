@@ -19,6 +19,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -30,7 +31,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -43,7 +43,14 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	if err := role.Require("s3-gatewayd", role.FromConfig("", "FAAS_S3_GATEWAY_ROLE"), role.RoleSingleBox, role.RoleControlPlane); err != nil {
+	// ADR 20261029202403 amendment 1: the uploads credential ring: s3-gatewayd checks object upload grants.
+	if err := credhash.Install(os.Getenv, credhash.FamilyUploads); err != nil {
+		return fmt.Errorf("s3-gatewayd: %w", err)
+	}
+	// A compute node runs a gateway too (ADR-20261031122757), held to what
+	// checkComputeGateway allows there.
+	gatewayRole := role.FromConfig("", "FAAS_S3_GATEWAY_ROLE")
+	if err := role.Require("s3-gatewayd", gatewayRole, role.RoleSingleBox, role.RoleControlPlane, role.RoleComputeOnly); err != nil {
 		return err
 	}
 	ops := wire.NewOpsMetrics("s3_gateway")
@@ -75,6 +82,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	storageIdentities, err := loadStorageSealDomain(os.Getenv)
 	if err != nil {
 		return err
+	}
+	if gatewayRole == role.RoleComputeOnly {
+		if err := checkComputeGateway(os.Getenv, storageIdentities, registry); err != nil {
+			return err
+		}
 	}
 	identities, err := loadIdentities(os.Getenv, len(storageIdentities) > 0)
 	if err != nil {
@@ -117,23 +129,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		stopReads()
 		<-readsDone
 	}()
-	usageJobs, err := usageExportJobs(registry, requestMetrics, os.Getenv)
-	if err != nil {
-		return err
-	}
-	if len(usageJobs) > 0 {
-		usageRuns := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "s3_gateway_usage_exports_total", Help: "Object-storage provider usage export attempts."}, []string{"backend", "outcome"})
-		usageLastSuccess := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "s3_gateway_usage_export_last_success_timestamp_seconds", Help: "Unix timestamp of the last successful object-storage usage export."}, []string{"backend"})
-		ops.Registry().MustRegister(usageRuns, usageLastSuccess)
-		go objectstorage.RunUsageExports(ctx, func() []objectstorage.UsageExportJob { return usageJobs }, objectstorage.DefaultUsageExportInterval, time.Now, func(backend, outcome string, err error) {
-			usageRuns.WithLabelValues(backend, outcome).Inc()
-			if outcome == "success" {
-				usageLastSuccess.WithLabelValues(backend).Set(float64(time.Now().Unix()))
-				return
-			}
-			log.Warn("s3-gatewayd: object storage usage export failed", "backend_id", backend, "err", err)
-		})
-	}
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Storage, len(storageIdentities) > 0)
 	log.Info("storage seal domain", "domain_identity", len(storageIdentities) > 0, "fleet_identity", len(identities) > 0)
 	// A contracted gateway has no fleet or host identity to rekey from:
@@ -181,9 +176,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// (ADR-20261030075301 step 4).
 	credentials := s3gateway.NewCredentialCache(nil)
 	ops.Registry().MustRegister(credentials.Collectors()...)
+	// A gateway on a compute node keeps to its share of the node's port
+	// (ADR-20261031122757 §3).
+	transfers := objectstorage.NewTransferLimiter(registry.Transfer.MaxBytesPerSecond, "s3_gateway")
+	if transfers != nil {
+		ops.Registry().MustRegister(transfers.Collectors()...)
+	}
 	handler, err := s3gateway.New(s3gateway.Config{
 		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: serving, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
-		ReadAdmitter: readAdmitter, OrgAccess: orgAccess, AccountLimiter: objectstorage.NewAccountRequestLimiter(), Credentials: credentials,
+		ReadAdmitter: readAdmitter, OrgAccess: orgAccess, AccountLimiter: objectstorage.NewAccountRequestLimiter(), Credentials: credentials, Transfers: transfers,
 		OpenSecret: func(sealed []byte) (string, error) {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(readers, sealed)
 			if err != nil || namespace != s3gateway.CredentialSecretNamespace || len(plaintext) != 40 {
@@ -198,8 +199,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	listenAddr := envOr("FAAS_S3_GATEWAY_LISTEN_ADDR", defaultListenAddr)
 	controlAddr := envOr("FAAS_S3_GATEWAY_CONTROL_ADDR", defaultControlAddr)
-	if !s3gateway.IsLoopbackAddress(listenAddr) || !s3gateway.IsLoopbackAddress(controlAddr) {
-		return errors.New("s3-gatewayd: data and control listeners must be loopback addresses behind the TLS edge")
+	if err := checkListeners(gatewayRole, listenAddr, controlAddr); err != nil {
+		return err
 	}
 	dataListener, err := net.Listen("tcp", listenAddr)
 	if err != nil {

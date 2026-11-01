@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -59,6 +60,7 @@ func TestManagedRealtimeExpandedStoreParity(t *testing.T) {
 				{"schedule_group_fences", expandedRealtimeSchedules},
 				{"push_rotation_and_leases", expandedRealtimePush},
 				{"presence_aggregation", expandedRealtimePresence},
+				{"event_schema_caps", expandedRealtimeSchemaCaps},
 			}
 			for _, contract := range contracts {
 				t.Run(contract.name, func(t *testing.T) {
@@ -510,4 +512,21 @@ func expandedRealtimePresence(t *testing.T, s expandedRealtimeStore, ctx context
 	if len(rows) != 0 {
 		t.Fatalf("last disconnect left presence: %+v", rows)
 	}
+}
+
+// adr: 1323 (amendment of 2026-10-31) — schema versions are capped per event
+// type, so evolving one event type does not use up the endpoint.
+func expandedRealtimeSchemaCaps(t *testing.T, s expandedRealtimeStore, ctx context.Context, ep string) {
+	put := func(eventType string, version int) error {
+		_, err := s.PutManagedRealtimeEventSchema(ctx, state.ManagedRealtimeEventSchema{EndpointID: ep, Channel: "orders", EventType: eventType, Version: version,
+			Schema: json.RawMessage(fmt.Sprintf(`{"type":"object","title":"v%d"}`, version))})
+		return err
+	}
+	for version := 1; version <= api.RealtimeEventSchemaVersionsPerEventType; version++ {
+		expandedRealtimeCheck(t, put("created", version))
+	}
+	if err := put("created", api.RealtimeEventSchemaVersionsPerEventType+1); !errors.Is(err, state.ErrManagedRealtimeEventSchemaLimit) {
+		t.Fatalf("version past the per-type cap = %v, want the schema limit", err)
+	}
+	expandedRealtimeCheck(t, put("updated", 1))
 }

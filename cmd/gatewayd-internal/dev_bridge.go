@@ -45,7 +45,7 @@ func developmentBridgeAuthorization(store state.Store) func(*http.Request) *api.
 		if problem != nil {
 			return problem
 		}
-		if !bridgeAuthorityPermitted(session, authority, app) {
+		if !bridgeAuthorityPermitted(r.Context(), session, authority, app) {
 			return bridgeDenied("invalid or expired routing credential")
 		}
 		if r.Header.Get(api.ReleaseHeader) != "" || r.Header.Get(api.TargetDeploymentHeader) != "" || r.Header.Get(api.RevisionHeader) != "" {
@@ -100,15 +100,15 @@ func bridgeRoutingSession(ctx context.Context, store state.Store, a bridgeAuthor
 	return session, nil
 }
 
-func bridgeAuthorityPermitted(session devbridge.Session, a bridgeAuthority, app string) bool {
+func bridgeAuthorityPermitted(ctx context.Context, session devbridge.Session, a bridgeAuthority, app string) bool {
 	allowedApp := bridgeScopedApp(session, app)
-	if a.context != "" && session.AuthorizeContextRoute(time.Now(), a.propagated, session.Scope.EnvironmentID, allowedApp) != nil {
+	if a.context != "" && session.AuthorizeContextRoute(ctx, time.Now(), a.propagated, session.Scope.EnvironmentID, allowedApp) != nil {
 		return false
 	}
 	if bridgeIdentityEqual(app, session.Scope.TargetAppID) {
-		return session.AuthorizeRequest(time.Now(), a.token, session.Scope.AccountID, session.Scope.EnvironmentID, allowedApp) == nil
+		return session.AuthorizeRequest(ctx, time.Now(), a.token, session.Scope.AccountID, session.Scope.EnvironmentID, allowedApp) == nil
 	}
-	if session.AuthorizeDependency(time.Now(), a.token, session.Scope.AccountID, session.Scope.EnvironmentID, allowedApp) == nil {
+	if session.AuthorizeDependency(ctx, time.Now(), a.token, session.Scope.AccountID, session.Scope.EnvironmentID, allowedApp) == nil {
 		return true
 	}
 	return a.context != "" && a.token == a.propagated.Token
@@ -188,7 +188,7 @@ func bridgeServiceEnvironment(r *http.Request, store state.Store, caller gateway
 		return env, bridgeDenied("verified development caller is required")
 	}
 	session, err := bridges.DevBridgeByID(r.Context(), c.AccountID, c.SessionID)
-	if err != nil || session.AuthorizeContextRoute(time.Now(), c, session.Scope.EnvironmentID, target.AppID) != nil || bridgeScopedApp(session, caller.AppID) == "" {
+	if err != nil || session.AuthorizeContextRoute(r.Context(), time.Now(), c, session.Scope.EnvironmentID, target.AppID) != nil || bridgeScopedApp(session, caller.AppID) == "" {
 		return env, bridgeDenied("service call is outside the session graph")
 	}
 	env, err = bridgeEnvironment(r.Context(), store, session.Scope.EnvironmentID)
@@ -227,7 +227,7 @@ func developmentBridgeForwarder(store state.DevBridgeStore, target *url.URL) fun
 			devbridge.ClearCredentials(r.Header)
 			return false
 		}
-		if session.AuthorizeRequest(time.Now(), r.Header.Get(devbridge.TokenHeader), app.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID) != nil {
+		if session.AuthorizeRequest(r.Context(), time.Now(), r.Header.Get(devbridge.TokenHeader), app.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID) != nil {
 			api.WriteProblem(w, api.NewProblem(403, "dev_bridge_unauthorized", "Bridge denied", "invalid session"))
 			return true
 		}

@@ -1,0 +1,20 @@
+---
+# ADR-1027: a database node's first internal mTLS bundle, issued by the
+# control-plane issuer the way pki_renew.yml renews it. The CA key never
+# leaves the issuer; the Ansible controller relays the bundle. A node that
+# already has a bundle keeps it (the daily renewal owns it), and an
+# operator-issued database_node_pki_source wins.
+database_node_pki_issuer_host: "{{ groups['control_plane'] | first }}"
+# The issuer's PKI root (with ca.key) and the node's.
+database_node_pki_issuer_root: /etc/faas/tls
+database_node_pki_root: /etc/faas/tls
+database_node_pki_issuer_stage: "/var/lib/faas/pki-join/{{ inventory_hostname }}"
+database_node_pki_target_stage: /var/lib/faas/pki-join
+database_node_pki_controller_stage: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}/faas-pki-join"
+# gregalectl on the issuer and on the node (database_node links it from the
+# release).
+database_node_pki_gregalectl: /usr/local/bin/gregalectl
+# Owner of the staged and installed bundle files (pgproxyd_service narrows
+# its own leaves afterwards).
+database_node_pki_owner: root
+database_node_pki_group: root

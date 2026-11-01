@@ -3689,9 +3689,12 @@ type DeploymentResponse struct {
 	// is the wall-clock anchor for the current step's Duration
 	// gate. omitempty keeps pre-PR rows byte-identical to the
 	// old wire shape (every column defaulted to 'none'/0/NULL
-	// at the schema layer via PG11+ fast-default).
+	// at the schema layer via PG11+ fast-default). CanaryStep is
+	// always sent: step 0 is a real ladder position, and omitting
+	// it left `canary advance --expected-step` guessing
+	// (PulseWatch F17).
 	CanaryPreset        string     `json:"canary_preset,omitempty"`
-	CanaryStep          int        `json:"canary_step,omitempty"`
+	CanaryStep          int        `json:"canary_step"`
 	CanaryTotalSteps    int        `json:"canary_total_steps,omitempty"`
 	CanaryStepStartedAt *time.Time `json:"canary_step_started_at,omitempty"`
 	// Rollout state machine echo (issue #976 / ADR-122 /
@@ -4515,6 +4518,25 @@ type CustomDomainResponse struct {
 	DNSRecords []DNSRecordInstruction `json:"dns_records,omitempty"`
 }
 
+// CustomDomainHostsResponse is a wildcard custom domain's host allowlist
+// (ADR-520 amendment 2), the body of GET and PUT
+// /v1/domains/{domain}/hosts. Names are the parts of hosts before the
+// wildcard's suffix (`eu.shop` for eu.shop.example.com under
+// *.example.com). Restricted is false when no allowlist is set: every name
+// below the wildcard may hold a certificate.
+type CustomDomainHostsResponse struct {
+	Domain     string   `json:"domain"`
+	Names      []string `json:"names"`
+	Restricted bool     `json:"restricted"`
+}
+
+// SetCustomDomainHostsRequest replaces a wildcard custom domain's host
+// allowlist (PUT /v1/domains/{domain}/hosts). A name may also be given as
+// the full host. It must name at least one host; DELETE clears the list.
+type SetCustomDomainHostsRequest struct {
+	Names []string `json:"names"`
+}
+
 // DNS record purposes for DNSRecordInstruction.Purpose.
 const (
 	DNSRecordPurposeVerification = "verification"
@@ -4670,6 +4692,10 @@ type CronResponse struct {
 	SkipIfRunning       bool                       `json:"skip_if_running"`
 	CreatedAt           string                     `json:"created_at"`
 	LastFiredAt         string                     `json:"last_fired_at,omitempty"`
+	// Labels are the cron's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -10359,15 +10385,14 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 //     the budget is further clamped to the plan's ceiling
 //     (Limits.RequestBudgetMaxDuration), so a rule never widens past
 //     what the account's plan allows.
-//   - AllowOverrideHeader: optional HTTP header name (default
-//     `x-faas-budget-ms`) whose numeric value, if present on the
-//     inbound request, overrides BudgetMs for that single request.
-//     A runtime per-customer-tunable knob layered on top of the
-//     static rule. Header name must be 1..128 chars matching
-//     `^[A-Za-z][A-Za-z0-9-]*$` (RFC 7230 token shape) — empty
-//     is allowed (the runtime then uses the default
-//     `x-faas-budget-ms`). An absent or unparseable header falls
-//     through to BudgetMs unchanged.
+//   - AllowOverrideHeader: optional HTTP header name whose numeric
+//     value, if present on the inbound request, overrides BudgetMs
+//     for that single request, within the plan ceiling. Header name
+//     must be 1..128 chars matching `^[A-Za-z][A-Za-z0-9-]*$` (RFC
+//     7230 token shape). Empty is allowed: the runtime then reads the
+//     default `x-faas-budget-ms`, which any caller can send, so it may
+//     only shorten BudgetMs (ADR-093 amendment 2026-11-01). An absent
+//     or unparseable header falls through to BudgetMs unchanged.
 //
 // The runtime is `pkg/reqbudget`. The matched rule's BudgetMs
 // stamps the inbound ctx via `reqbudget.WithRemaining`; every
@@ -12932,6 +12957,10 @@ type JobResponse struct {
 	Status                     string            `json:"status"`
 	CreatedAt                  string            `json:"created_at"`
 	UpdatedAt                  string            `json:"updated_at"`
+	// Labels are the job's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // JobRunResponse is the wire projection of state.JobRun.

@@ -645,6 +645,9 @@ type MemStore struct {
 	// customDomainTLSAdmissions mirrors custom_domain_tls_admissions
 	// (ADR-520 amendment 1), oldest first.
 	customDomainTLSAdmissions []customDomainTLSAdmission
+	// customDomainTLSAllowedHosts mirrors custom_domain_tls_allowed_hosts
+	// (ADR-520 amendment 2): wildcard → sorted names.
+	customDomainTLSAllowedHosts map[string][]string
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole
@@ -1463,6 +1466,10 @@ type MemStore struct {
 	// appLabels holds each app's labels (ADR-20261031100025), created on
 	// first write; an app absent from it has none.
 	appLabels map[string]map[string]string
+
+	// resourceLabels holds the labels of databases, crons and jobs by kind
+	// and ID, created on first write.
+	resourceLabels map[LabelKind]map[string]map[string]string
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -6164,7 +6171,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		helperSiblings[i].ID = s.ID
 		helperSiblings[i].Prior = s.Prior
 	}
-	newWeights := RedistributeTraffic(helperSiblings, 100-newPercent)
+	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool {
+		return abortedCanaryCandidate(m.deployments[siblings[i].ID])
+	}, 100-newPercent)
+	if err != nil {
+		return Deployment{}, err
+	}
 	proposed := map[string]int{id: newPercent}
 	for i, sibling := range siblings {
 		proposed[sibling.ID] = newWeights[i]
@@ -12991,6 +13003,7 @@ func (m *MemStore) CreateCustomDomain(ctx context.Context, domain, appID, token 
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
 		return CustomDomain{}, err
 	}
+	m.dropCustomDomainTLSHostsLocked(domain)
 	m.domains[domain] = d
 	return d, nil
 }
@@ -16837,6 +16850,16 @@ func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, sta
 	for _, s := range states {
 		wanted[s] = true
 	}
+	// A job task keeps its instance (job_tasks.instance_id has no delete
+	// action): PgStore leaves such rows out, so the sweep never fails on them.
+	referenced := map[string]bool{}
+	for _, tasks := range m.jobTasks {
+		for _, task := range tasks {
+			if task.InstanceID != nil {
+				referenced[*task.InstanceID] = true
+			}
+		}
+	}
 	var out []Instance
 	for _, ins := range m.instances {
 		if !wanted[State(ins.State)] {
@@ -16845,7 +16868,7 @@ func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, sta
 		if ins.TerminalAt == nil {
 			continue
 		}
-		if !ins.TerminalAt.Before(threshold) {
+		if !ins.TerminalAt.Before(threshold) || referenced[ins.ID] {
 			continue
 		}
 		out = append(out, ins)
@@ -20721,6 +20744,7 @@ type billingUsageDelivery struct {
 	meter               BillingMeter
 	hour                time.Time
 	quantity            int64
+	deliveredAt         time.Time
 }
 
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
@@ -20808,7 +20832,7 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	defer m.mu.Unlock()
 	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
 	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
-		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity, deliveredAt: m.clock()}
 	}
 	return nil
 }
@@ -28397,7 +28421,7 @@ func (m *MemStore) ListAppsWithRecentTelemetry(_ context.Context, _ pgtype.Inter
 
 // UpdateSpansSummary is intentionally unsupported by MemStore. The writer
 // updates request_telemetry rows and must be covered against PgStore.
-func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte) error {
+func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte, _ int) error {
 	panic("memstore: UpdateSpansSummary unimplemented")
 }
 

@@ -841,6 +841,14 @@ func (c *Client) ListApps(ctx context.Context) ([]AppResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/apps", nil, &out)
 }
 
+// ListAppsSelected lists the apps a label selector picks
+// (ADR-20261031100025). An apid without labels ignores the selector and
+// returns every app, so callers match the returned labels again.
+func (c *Client) ListAppsSelected(ctx context.Context, selector string) ([]AppResponse, error) {
+	var out []AppResponse
+	return out, c.do(ctx, "GET", "/v1/apps?"+url.Values{"selector": {selector}}.Encode(), nil, &out)
+}
+
 // CreateApp creates an app.
 func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppResponse, error) {
 	var out AppResponse
@@ -2954,6 +2962,28 @@ func (c *Client) SetDefaultDomain(ctx context.Context, domain string) (CustomDom
 	return c.PostDomainsDomainDefault(ctx, domain)
 }
 
+// GetDomainHosts returns a wildcard custom domain's host allowlist (ADR-520
+// amendment 2). Backed by GET /v1/domains/{domain}/hosts.
+func (c *Client) GetDomainHosts(ctx context.Context, domain string) (CustomDomainHostsResponse, error) {
+	var out CustomDomainHostsResponse
+	return out, c.do(ctx, "GET", "/v1/domains/"+domain+"/hosts", nil, &out)
+}
+
+// SetDomainHosts replaces a wildcard custom domain's host allowlist: only the
+// listed names below it get certificates. Backed by PUT
+// /v1/domains/{domain}/hosts.
+func (c *Client) SetDomainHosts(ctx context.Context, domain string, names []string) (CustomDomainHostsResponse, error) {
+	var out CustomDomainHostsResponse
+	return out, c.do(ctx, "PUT", "/v1/domains/"+domain+"/hosts", SetCustomDomainHostsRequest{Names: names}, &out)
+}
+
+// ClearDomainHosts removes a wildcard custom domain's host allowlist, so every
+// name below it may get a certificate again. Backed by DELETE
+// /v1/domains/{domain}/hosts.
+func (c *Client) ClearDomainHosts(ctx context.Context, domain string) error {
+	return c.do(ctx, "DELETE", "/v1/domains/"+domain+"/hosts", nil, nil)
+}
+
 // RetryDomainVerification re-arms a pending domain after its bounded polling
 // backoff or retry budget expires. The server returns 202 with no response
 // body; mutating-call idempotency is supplied by Client.do.
@@ -3068,6 +3098,19 @@ func (c *Client) ListCrons(ctx context.Context, slug string) ([]CronResponse, er
 	var out []CronResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
+
+// ListCronsSelected lists the crons a label selector picks, on the app named
+// by slug or, when slug is empty, on every app (ADR-20261031100025). An apid
+// without labels ignores the selector, so callers match the returned labels
+// again.
+func (c *Client) ListCronsSelected(ctx context.Context, slug, selector string) ([]CronResponse, error) {
+	q := url.Values{"selector": {selector}}
+	if slug != "" {
+		q.Set("slug", slug)
+	}
+	var out []CronResponse
+	return out, c.do(ctx, "GET", "/v1/crons?"+q.Encode(), nil, &out)
+}
 func (c *Client) CreateCron(ctx context.Context, slug string, req CreateCronRequest) (CronResponse, error) {
 	var out CronResponse
 	return out, c.do(ctx, "POST", "/v1/crons", req, &out)
@@ -3120,6 +3163,22 @@ func (c *Client) ListJobs(ctx context.Context, pagination ...int) (ListJobsRespo
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListJobsSelected returns one page of the jobs a label selector picks
+// (ADR-20261031100025); limit and offset page the matches, and zero uses the
+// server default. An apid without labels ignores the selector and pages every
+// job, so callers match the returned labels again.
+func (c *Client) ListJobsSelected(ctx context.Context, selector string, limit, offset int) (ListJobsResponse, error) {
+	q := url.Values{"selector": {selector}}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	var out ListJobsResponse
+	return out, c.do(ctx, "GET", "/v1/jobs?"+q.Encode(), nil, &out)
 }
 
 // CreateJob creates a new job under the calling account. Idempotent
@@ -8216,6 +8275,30 @@ func (c *Client) GetAppStatus(ctx context.Context, slug, environment string) (Re
 func (c *Client) UpdateAppLabels(ctx context.Context, slug string, change LabelChange) (LabelsResponse, error) {
 	var out LabelsResponse
 	err := c.do(ctx, "PATCH", "/v1/apps/"+url.PathEscape(slug)+"/labels", change, &out)
+	return out, err
+}
+
+// UpdateDatabaseLabels sets and removes a managed database's labels
+// (ADR-20261031100025, preview).
+func (c *Client) UpdateDatabaseLabels(ctx context.Context, id string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/postgres/databases/"+url.PathEscape(id)+"/labels", change, &out)
+	return out, err
+}
+
+// UpdateCronLabels sets and removes a cron's labels (ADR-20261031100025,
+// preview).
+func (c *Client) UpdateCronLabels(ctx context.Context, id string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/crons/"+url.PathEscape(id)+"/labels", change, &out)
+	return out, err
+}
+
+// UpdateJobLabels sets and removes a job's labels (ADR-20261031100025,
+// preview).
+func (c *Client) UpdateJobLabels(ctx context.Context, name string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/jobs/"+url.PathEscape(name)+"/labels", change, &out)
 	return out, err
 }
 

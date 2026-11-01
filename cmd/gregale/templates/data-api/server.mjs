@@ -7,7 +7,7 @@ import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
-import { runtimeConfig, servingContracts, limits, enginePool } from './config.mjs'
+import { runtimeConfig, servingContracts, limits, enginePool, UnsafeConfiguration } from './config.mjs'
 import { createAdmission } from './admission.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
@@ -374,30 +374,28 @@ export async function main(env = process.env) {
     if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
   }
   if (config.sqlDeadline) await checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh })
-  if (config.publicRead) {
-    try { await checkPublicRelations(config.connection, config.publicRead) } catch (error) {
-      runtimeFailure('data_api_public_read_unsafe')
-      throw Object.assign(new Error('Unsafe public read configuration'), { cause: error, reported: true })
-    }
-  }
+  // Inspection connects first, with the full query budget, so a suspended
+  // database is awake before the configuration checks run.
+  const snapshot = await inspect(config.connection, config.schemas)
+  config.snapshot = snapshot
+  config.functions = snapshot.functions
+  if (config.publicRead) await bootCheck(() => checkPublicRelations(config.connection, config.publicRead), 'data_api_public_read_unsafe', 'Unsafe public read configuration')
   if (config.storage) {
-    // Storage fails closed on its own: REST keeps serving while the owner's
-    // migration adds or repairs storage_objects.
-    try { await checkStorageTable(config.connection, config.storage.schema) } catch {
+    // An unsafe table disables storage on its own: REST keeps serving while
+    // the owner's migration adds or repairs storage_objects. An unreachable
+    // database fails the boot instead, because a disabled storage would be
+    // captured in the snapshot every wake restores.
+    try { await checkStorageTable(config.connection, config.storage.schema) } catch (error) {
+      if (!(error instanceof UnsafeConfiguration)) {
+        runtimeFailure('data_api_database_unavailable')
+        throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
+      }
       runtimeFailure('data_api_storage_unsafe')
       config.storageUnavailable = true
     }
   }
-  const snapshot = await inspect(config.connection, config.schemas)
-  config.snapshot = snapshot
-  config.functions = snapshot.functions
   config.rowSecurity = await loadRowSecurity(config.connection, config.schemas)
-  if (config.publicRpc) {
-    try { await checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions) } catch (error) {
-      runtimeFailure('data_api_public_rpc_unsafe')
-      throw Object.assign(new Error('Unsafe public RPC configuration'), { cause: error, reported: true })
-    }
-  }
+  if (config.publicRpc) await bootCheck(() => checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions), 'data_api_public_rpc_unsafe', 'Unsafe public RPC configuration')
   config.fingerprint = fingerprint(snapshot)
   // Reject stale owner policies before starting an engine process.
   servingContracts(config)
@@ -442,6 +440,16 @@ export async function main(env = process.env) {
     else engine.signal('SIGUSR1')
   })
   server.listen(Number(env.PORT || 8080), '0.0.0.0')
+}
+
+// bootCheck runs a startup check, reporting an unsafe configuration apart
+// from a database the runtime could not reach.
+async function bootCheck(check, unsafeEvent, unsafeMessage) {
+  try { await check() } catch (error) {
+    const unsafe = error instanceof UnsafeConfiguration
+    runtimeFailure(unsafe ? unsafeEvent : 'data_api_database_unavailable')
+    throw Object.assign(new Error(unsafe ? unsafeMessage : 'Database unavailable during startup'), { cause: error, reported: true })
+  }
 }
 
 export function tokenVerifier(auth, keys) {

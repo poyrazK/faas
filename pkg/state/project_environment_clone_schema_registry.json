@@ -3867,6 +3867,7 @@
       "enabled",
       "failure_rules",
       "id",
+      "labels",
       "last_fired_at",
       "org_id",
       "path",
@@ -3893,6 +3894,15 @@
       "host",
       "owner_id",
       "registered_domain"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "custom_domain_tls_allowed_hosts",
+    "columns": [
+      "created_at",
+      "name",
+      "wildcard_domain"
     ],
     "kind": "operational"
   },
@@ -9521,6 +9531,7 @@
       "image_resolved_digest",
       "image_storage_key",
       "kind",
+      "labels",
       "last_scheduled_at",
       "max_parallelism",
       "name",
@@ -9698,6 +9709,19 @@
       "subject_id",
       "threshold",
       "used_unit_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "managed_postgres_overage_deliveries",
+    "columns": [
+      "billed_unit_seconds",
+      "delivered_millicents",
+      "live",
+      "period_start",
+      "provider",
+      "subject_id",
+      "updated_at"
     ],
     "kind": "account_identity"
   },
@@ -9990,6 +10014,7 @@
       "desired_generation",
       "environment_clone_operation_id",
       "id",
+      "labels",
       "last_error_code",
       "lease_token",
       "lease_until",
@@ -10001,6 +10026,7 @@
       "purge_after",
       "region",
       "restore_point_in_time",
+      "restore_slot_until",
       "restore_source_database_id",
       "restore_source_resource_id",
       "restore_window_seconds",
@@ -10081,13 +10107,16 @@
       "created_at",
       "data_resource_id",
       "database_id",
+      "error_code",
       "generation",
       "id",
       "provider_resource_id",
       "source_spec",
       "state",
       "target_class",
-      "target_scale_to_zero"
+      "target_postgres_major",
+      "target_scale_to_zero",
+      "target_storage_limit_bytes"
     ],
     "kind": "operational"
   },
@@ -10123,6 +10152,18 @@
       "provider_resource_id",
       "source_resource_id",
       "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_restore_slot_notices",
+    "columns": [
+      "database_id",
+      "kind",
+      "mail_intent_id",
+      "recorded_at",
+      "restorable_until",
+      "slot_until"
     ],
     "kind": "operational"
   },
@@ -19542,6 +19583,16 @@
     "kind": "operational"
   },
   {
+    "table": "agent_callback_revocations",
+    "columns": [
+      "account_id",
+      "endpoint_id",
+      "revoked_at",
+      "thread_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_run_ai_spend",
     "columns": [
       "account_id",
@@ -19625,5 +19676,96 @@
       "signature"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "database_nodes",
+    "columns": [
+      "admission_ceiling_mb",
+      "boot_slots",
+      "created_at",
+      "id",
+      "lifecycle",
+      "postgres_majors",
+      "target_url",
+      "updated_at",
+      "volume_capacity_bytes"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "database_restore_drills",
+    "columns": [
+      "drill_id",
+      "error_code",
+      "finished_at",
+      "node_id",
+      "recovered_to",
+      "result",
+      "source_id",
+      "started_at",
+      "target_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_role_verifiers",
+    "columns": [
+      "database_id",
+      "role_name",
+      "updated_at",
+      "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_usage",
+    "columns": [
+      "database_id",
+      "ended_at",
+      "meter",
+      "rate",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_vms",
+    "columns": [
+      "always_on",
+      "bootstrapped",
+      "created_at",
+      "database_id",
+      "drop_standby_slot",
+      "last_active_at",
+      "last_backup_at",
+      "last_error",
+      "major_history",
+      "mem_mib",
+      "move_lease_until",
+      "move_node",
+      "node_id",
+      "postgres_major",
+      "promote_pending",
+      "replicated",
+      "resize_pending",
+      "restore_lease_until",
+      "restore_recovered_to",
+      "restore_source",
+      "restore_target",
+      "restore_window_seconds",
+      "standby_node",
+      "standby_running",
+      "standby_synced",
+      "state",
+      "state_changed_at",
+      "upgrade_from",
+      "upgrade_lease_until",
+      "upgrade_major",
+      "upgrade_operation",
+      "upgrade_result",
+      "vcpu_count",
+      "volume_bytes"
+    ],
+    "kind": "operational"
   }
 ]

@@ -66,10 +66,10 @@ func (s *server) observeDevBridgeProxy(proxyTransport http.RoundTripper, r *http
 	if err != nil {
 		return proxyTransport
 	}
-	if r.Pattern == "GET /v1/dev/bridges/{id}/connect" && session.AuthorizeAttachment(time.Now(), r.Header.Get(devbridge.TokenHeader)) == nil {
+	if r.Pattern == "GET /v1/dev/bridges/{id}/connect" && session.AuthorizeAttachment(r.Context(), time.Now(), r.Header.Get(devbridge.TokenHeader)) == nil {
 		return s.devBridgeObserver.ConnectionTransport(session, proxyTransport)
 	}
-	if r.Pattern == "/v1/dev/bridges/{id}/traffic/{path...}" && session.AuthorizeRequest(time.Now(), r.Header.Get(devbridge.TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID) == nil {
+	if r.Pattern == "/v1/dev/bridges/{id}/traffic/{path...}" && session.AuthorizeRequest(r.Context(), time.Now(), r.Header.Get(devbridge.TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID) == nil {
 		return s.devBridgeObserver.RequestTransport(session, proxyTransport)
 	}
 	return proxyTransport

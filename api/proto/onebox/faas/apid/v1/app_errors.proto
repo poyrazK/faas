@@ -116,6 +116,13 @@ message IncrementAppErrorRequest {
   // request_id is the platform request/trace UUID used by the drill-down
   // surface. Empty or malformed values are replaced by apid for compatibility.
   string request_id = 19;
+  // count is how many requests this record stands for. The gateway folds
+  // an app's repeats of one error into a few sampled records per flush
+  // (bug hunt 2026-10-28 H41). 0, from an older gateway, means 1.
+  int64 count = 20;
+  // request_row_omitted marks a record that only counts requests: the
+  // gateway already sent its sample of them, so apid stores no request row.
+  bool request_row_omitted = 21;
 }
 
 // IncrementAppErrorResponse is the per-record outcome the server

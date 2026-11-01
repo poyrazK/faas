@@ -45,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/apid/deploywatchdog"
@@ -834,6 +835,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.operation.RunChildSettlementSignals(ctx)
 		go srv.object.RunObjectStorageRecovery(ctx)
 		go srv.object.RunObjectStorageAccounting(ctx)
+		go srv.object.RunObjectStorageUsageExports(ctx, os.Getenv)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
@@ -1689,6 +1691,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
+	if err := object.ValidateObjectStoragePricing(objectRegistry); err != nil {
+		return err
+	}
 	srv.WithObjectStorage(objectRegistry)
 	if err := srv.configureHosting(deps.getenv); err != nil {
 		return fmt.Errorf("apid internal hosting configuration: %w", err)
@@ -1697,11 +1702,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
-		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap}, ops.Registry())
+		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired,
+			NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot}, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	// ADR-1027 major-upgrade and storage-growth previews: nobody sees them
+	// unless listed.
+	if srv.postgresUpgrades, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS")); err != nil {
+		return fmt.Errorf("apid managed postgres configuration: %w", err)
+	}
+	if srv.postgresStorage, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS")); err != nil {
+		return fmt.Errorf("apid managed postgres configuration: %w", err)
+	}
 	srv.configureManagedPostgresCapMode(deps.getenv)
 	if err := srv.configureManagedPostgresSQLProber(deps.getenv, ops.Registry()); err != nil {
 		return fmt.Errorf("apid managed postgres sql probe: %w", err)
@@ -2626,6 +2640,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// H5-34: one gate across both telemetry listeners bounds their share of
 	// apid's database pool.
 	ingest := receivers.NewIngestGate(api.TelemetryIngestDBConcurrency)
+	// ADR-20261101085552: gateways that keep the request-ID journal on their
+	// node hold a lookup stream on whichever listener carries their request
+	// telemetry; one hub serves both and the debug request lookup.
+	srv.requestIDLookups = receivers.NewRequestIDLookupHub(log)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
 		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
@@ -2633,6 +2651,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
 		}
+		receivers.RegisterRequestIDLookups(rtSrv, srv.requestIDLookups)
 		go func() {
 			log.Info("apid request telemetry server listening")
 			if err := rtSrv.Serve(rtLis); err != nil {
@@ -2653,6 +2672,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
+		}
+		if !isUnixSocketPath(appErrTarget) { // where runAppErrorsServer serves RequestTelemetry
+			receivers.RegisterRequestIDLookups(appErrSrv, srv.requestIDLookups)
 		}
 		go func() {
 			log.Info("apid app errors server listening", "target", appErrTarget)
@@ -2717,6 +2739,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
+		receivers.RegisterRequestIDLookups(appErrSrv, srv.requestIDLookups)
 		go func() {
 			if err := appErrSrv.Serve(appErrLis); err != nil {
 				log.Error("apid consumer usage serve", "err", err)
@@ -3351,8 +3374,11 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest)
-	// Single-box realtimed reaches apid through this DAC-protected socket.
+	// Single-box realtimed reaches apid through this DAC-protected socket,
+	// and asks it to match Data API server keys there (ADR 20261029202403
+	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
+	receivers.RegisterAuthReceiver(srv, store)
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
 	} else {

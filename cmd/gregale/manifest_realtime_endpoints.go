@@ -279,8 +279,9 @@ func (r realtimeEndpointReconcile) disable(ctx context.Context, have api.Managed
 }
 
 // groups creates the declared consumer groups that do not exist yet. Their
-// settings are not reconciled after creation: a group's lease and attempts
-// change through its own API, and a group is never deleted by a deploy.
+// settings are not reconciled after creation: a group's lease, attempts,
+// ordering, deduplication and dead-letter policy change through its own API,
+// and a group is never deleted by a deploy.
 func (r realtimeEndpointReconcile) groups(ctx context.Context, id string, want gregalemanifest.RealtimeEndpoint) error {
 	byChannel := map[string]map[string]bool{}
 	for _, g := range want.ConsumerGroups {
@@ -301,6 +302,7 @@ func (r realtimeEndpointReconcile) groups(ctx context.Context, id string, want g
 		}
 		if _, err := r.client.CreateRealtimeConsumerGroup(ctx, r.app, id, g.Channel, api.RealtimeConsumerGroupCreateRequest{
 			Name: g.Name, AfterSequence: "0", LeaseSeconds: g.LeaseSeconds, MaxAttempts: g.MaxAttempts,
+			OrderingMetadataKey: g.OrderingMetadataKey, DeduplicationMetadataKey: g.DeduplicationMetadataKey, DeadLetterPolicy: g.DeadLetterPolicy,
 		}); err != nil {
 			return fmt.Errorf("create consumer group %s on %s: %w", g.Name, g.Channel, err)
 		}

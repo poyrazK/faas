@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 const (
@@ -86,9 +87,22 @@ func cloneObjectUploadGrant(g ObjectUploadGrant) ObjectUploadGrant {
 	return g
 }
 
+// validObjectUploadTokenHash accepts a grant token's hex SHA-256, or the
+// keyed digest it is stored as under the uploads ring (ADR 20261029202403
+// amendment 1).
 func validObjectUploadTokenHash(hash string) bool {
 	decoded, err := hex.DecodeString(hash)
-	return err == nil && len(decoded) == 32 && strings.ToLower(hash) == hash
+	return err == nil && (len(decoded) == 32 || credhash.Keyed(decoded)) && strings.ToLower(hash) == hash
+}
+
+// objectUploadGrantLookups are the stored values to try for a presented
+// grant token's hex SHA-256.
+func objectUploadGrantLookups(hash string) []string {
+	sum, err := hex.DecodeString(hash)
+	if err != nil {
+		return nil
+	}
+	return credhash.HexAll(familyCredentialLookups(credhash.FamilyUploads, credTagUploadGrant, sum))
 }
 
 func validObjectUploadGrantPart(g ObjectUploadGrant, u ObjectMultipartUpload, now time.Time) bool {

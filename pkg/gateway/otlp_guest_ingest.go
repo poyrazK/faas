@@ -21,7 +21,7 @@ var ErrOTLPExportInvalid = errors.New("invalid OTLP trace export")
 // the accumulator for accountID. It applies the public endpoint's codec and
 // decoded-size bound; traces already claimed by another account are counted
 // as rejected without discarding the rest of the export.
-func (s *SpansAccumulator) AddOTLPTraceExport(accountID uuid.UUID, contentType, contentEncoding string, body []byte, maxDecodedBytes int) (accepted, rejected int, err error) {
+func (s *SpansAccumulator) AddOTLPTraceExport(accountID uuid.UUID, plan, contentType, contentEncoding string, body []byte, maxDecodedBytes int) (accepted, rejected int, err error) {
 	mediaType, _, parseErr := mime.ParseMediaType(contentType)
 	if parseErr != nil || (mediaType != "application/json" && mediaType != "application/x-protobuf") {
 		return 0, 0, fmt.Errorf("%w: unsupported content type", ErrOTLPExportInvalid)
@@ -39,7 +39,7 @@ func (s *SpansAccumulator) AddOTLPTraceExport(accountID uuid.UUID, contentType, 
 		return 0, 0, fmt.Errorf("%w: %w", ErrOTLPExportInvalid, err)
 	}
 	for _, batch := range batches {
-		if _, addErr := s.Add(batch.traceID, accountID, batch.spans); addErr != nil {
+		if _, addErr := s.AddForPlan(batch.traceID, accountID, plan, batch.spans); addErr != nil {
 			rejected += len(batch.spans)
 			continue
 		}

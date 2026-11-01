@@ -42,7 +42,7 @@ func (v *faultRoutingVMM) TerminateRehearsalWorkerOnNode(ctx context.Context, _,
 	return nil
 }
 
-func seedSchedulerWorkerFault(t *testing.T, store *state.MemStore) (rehearsalwork.WorkerFault, *rehearsalrecorder.Session) {
+func seedSchedulerWorkerFault(t *testing.T, store *state.MemStore, lateDetach bool) (rehearsalwork.WorkerFault, *rehearsalrecorder.Session) {
 	t.Helper()
 	ctx := t.Context()
 	account, err := store.CreateAccount(ctx, uuid.NewString()+"@fault.test", api.PlanPro)
@@ -111,7 +111,16 @@ func seedSchedulerWorkerFault(t *testing.T, store *state.MemStore) (rehearsalwor
 	t.Cleanup(cancel)
 	joined := make(chan struct{})
 	var connection *rehearsalrecorder.Connection
-	connection, err = owner.Attach(func() { <-joined; connection.Detach(false) })
+	connection, err = owner.Attach(func() {
+		<-joined
+		if lateDetach {
+			// vmmd's stop is server.Shutdown: the relay's deferred Detach runs
+			// after Serve returns, so it can land after stop has returned.
+			go func() { time.Sleep(50 * time.Millisecond); connection.Detach(false) }()
+			return
+		}
+		connection.Detach(false)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,10 +141,10 @@ func seedSchedulerWorkerFault(t *testing.T, store *state.MemStore) (rehearsalwor
 }
 
 func TestSchedulerWorkerTerminationUsesReceiptWithoutRepeatingKill(t *testing.T) {
-	for _, mode := range []string{"complete", "lost_reply", "receipt_recovery", "missing_owner", "missing_receipt", "unsupported"} {
+	for _, mode := range []string{"complete", "late_detach", "lost_reply", "receipt_recovery", "missing_owner", "missing_receipt", "unsupported"} {
 		t.Run(mode, func(t *testing.T) {
 			store := state.NewMemStore()
-			fault, owner := seedSchedulerWorkerFault(t, store)
+			fault, owner := seedSchedulerWorkerFault(t, store, mode == "late_detach")
 			v := &faultRoutingVMM{fakeVMM: &fakeVMM{}, owner: owner, mode: mode}
 			var routed RoutedVMM = v
 			if mode == "unsupported" {
@@ -152,7 +161,7 @@ func TestSchedulerWorkerTerminationUsesReceiptWithoutRepeatingKill(t *testing.T)
 				v.calls = 0
 			}
 			err := engine.RunScenarioWorkerFault(t.Context(), fault.ID)
-			valid := mode == "complete" || mode == "lost_reply" || mode == "receipt_recovery"
+			valid := mode == "complete" || mode == "late_detach" || mode == "lost_reply" || mode == "receipt_recovery"
 			if (err == nil) != valid {
 				t.Fatalf("%s: %v", mode, err)
 			}
