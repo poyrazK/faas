@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // RequestIDJournalRecord is the minimum data required to resolve a public
@@ -19,6 +20,10 @@ type RequestIDJournalRecord struct {
 	RequestID  string
 	TraceID    string
 	ReceivedAt time.Time
+	// ExpiresAt is when the plan's debugger retention ends; zero when the plan
+	// keeps no debugger data. The node-local journal stores it
+	// (ADR-20261101085552); apid applies its own retention.
+	ExpiresAt time.Time
 }
 
 // RequestIDJournalWriter persists an exact public-ID mapping. Production
@@ -41,13 +46,17 @@ func (h *Handler) recordRequestIDJournal(ctx context.Context, app App, requestID
 	if err != nil {
 		return fmt.Errorf("gateway: invalid request journal app id: %w", err)
 	}
-	err = h.requestIDJournal(ctx, RequestIDJournalRecord{
+	record := RequestIDJournalRecord{
 		ID:         uuid.NewString(),
 		AccountID:  accountID.String(),
 		AppID:      appID.String(),
 		RequestID:  requestID,
 		TraceID:    traceIDForTelemetry(ctx),
 		ReceivedAt: receivedAt.UTC(),
-	})
+	}
+	if limits, ok := api.LimitsFor(app.Plan); ok && limits.DebugTelemetryEnabled && limits.DebugTelemetryRetentionDays > 0 {
+		record.ExpiresAt = record.ReceivedAt.Add(time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour)
+	}
+	err = h.requestIDJournal(ctx, record)
 	return err
 }
