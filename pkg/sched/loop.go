@@ -254,6 +254,14 @@ type Loop struct {
 	// triggerAgents admits the runs of agent-target triggers (ADR-20261027090010 §9).
 	triggerAgents TriggerAgents
 
+	// databaseMover starts database_move operator intents,
+	// databaseRestarter runs database_restart ones and databaseSwitcher
+	// database_switchover ones (nil: the database scheduler is not
+	// enabled).
+	databaseMover     DatabaseMover
+	databaseRestarter DatabaseRestarter
+	databaseSwitcher  DatabaseSwitcher
+
 	// triggerHealthMu guards triggerHealthLast, the last consumer health row
 	// written per trigger (trigger_health_throttle.go).
 	triggerHealthMu   sync.Mutex
@@ -819,6 +827,30 @@ func (l *Loop) WithMigratingWatchdog(w *MigratingWatchdog) *Loop {
 // staleness window this sweeper enforces is 120 s (api.DeadNode-
 // ReconcilerStalenessSeconds), so a 1 s tick would issue ~120
 // no-op queries per node death before any row is even eligible.
+// WithDatabaseMover attaches the native database scheduler's moves
+// (ADR-1027) for database_move operator intents. Without one those intents
+// fail: the database scheduler is not enabled on this schedd.
+func (l *Loop) WithDatabaseMover(m DatabaseMover) *Loop {
+	l.databaseMover = m
+	return l
+}
+
+// WithDatabaseRestarter attaches the native database scheduler's in-place
+// restarts (ADR-1027) for database_restart operator intents. Without one
+// those intents fail.
+func (l *Loop) WithDatabaseRestarter(r DatabaseRestarter) *Loop {
+	l.databaseRestarter = r
+	return l
+}
+
+// WithDatabaseSwitcher attaches the native database scheduler's planned
+// switchovers (ADR-1027) for database_switchover operator intents.
+// Without one those intents fail.
+func (l *Loop) WithDatabaseSwitcher(sw DatabaseSwitcher) *Loop {
+	l.databaseSwitcher = sw
+	return l
+}
+
 func (l *Loop) WithDeadNodeReconciler(r *DeadNodeReconciler) *Loop {
 	l.deadNodeReconciler = r
 	return l
@@ -3928,7 +3960,7 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 		// An ordinary 5xx is retryable under the durable invocation contract.
 		// Runner-caught exceptions are marked InvocationFailed above and take
 		// the permanent branch instead.
-		err = fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)
+		err = appAnsweredError{err: fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)}
 	}
 	return out, err
 }
@@ -4471,6 +4503,11 @@ func (l *Loop) runCronTick(ctx context.Context) {
 			}
 			continue
 		}
+		// Crons switched off for the account do not fire (dispatchCronLocked);
+		// checking before the claim skips its rollback write every minute.
+		if !l.engine.appCapabilityAllowed(ctx, app, "crons") {
+			continue
+		}
 		l.dispatchOneCron(ctx, c, now)
 	}
 }
@@ -4567,18 +4604,15 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		// Already fired in the current window.
 		return
 	}
-	if len(c.Command) > 0 {
-		due := make([]time.Time, 0, 4)
-		for next := scheduledFor; !next.After(now) && len(due) < 10000; next = sched.NextFireAt(next) {
-			due = append(due, next)
+	if len(c.Command) > 0 || c.SchedulePolicy != nil {
+		due, skipped := cronDueOccurrences(sched, scheduledFor, now, api.CronCatchUpRecordedMax)
+		if skipped > 0 {
+			l.log.Info("cron: catch-up records only the newest due occurrences",
+				"cron_id", c.ID, "recorded", len(due), "not_recorded", skipped)
 		}
-		l.dispatchScheduledCommandCron(ctx, c, due, now)
-		return
-	}
-	if c.SchedulePolicy != nil {
-		due := make([]time.Time, 0, 4)
-		for next := scheduledFor; !next.After(now) && len(due) < 10000; next = sched.NextFireAt(next) {
-			due = append(due, next)
+		if len(c.Command) > 0 {
+			l.dispatchScheduledCommandCron(ctx, c, due, now)
+			return
 		}
 		l.dispatchScheduledHTTPCron(ctx, c, due, now)
 		return
@@ -5271,7 +5305,7 @@ func reservationEvictions(ledger *NodeLedger, now time.Time, snapshot []Instance
 // evictForMeasuredMemory evicts on nodes whose measured memory exceeds their
 // ceiling (ADR-909). It runs only under measured admission: otherwise each
 // VM's memory.max keeps a node's memory under its reservations. A node
-// without a fresh vmmd capacity report is skipped.
+// without a fresh vmmd capacity report or published node report is skipped.
 func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceInfo, activity map[string]InstanceActivity, now time.Time) {
 	ledger := l.engine.Ledger()
 	if !ledger.MeasuredAdmissionEnabled() {
@@ -5282,11 +5316,17 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 		if _, seen := used[in.NodeID]; seen || in.NodeID == "" {
 			continue
 		}
-		report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now)
-		if !ok {
+		// A peer node's vmmd reports only to its own scheduler; its
+		// published report carries the same used memory, so this
+		// scheduler's instances there are evicted under its pressure too
+		// (ADR 20261101091815).
+		if report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now); ok {
+			used[in.NodeID] = int(report.UsedMB)
+		} else if peer, ok := l.engine.PeerNodeMemory(in.NodeID, now); ok && peer.UsedMB != nil {
+			used[in.NodeID] = *peer.UsedMB
+		} else {
 			continue
 		}
-		used[in.NodeID] = int(report.UsedMB)
 		ceiling[in.NodeID] = ledger.CeilingForNode(in.NodeID)
 	}
 	resident := make(map[string]int, len(activity))

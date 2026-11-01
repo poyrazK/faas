@@ -128,6 +128,15 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			return err
 		}
 	}
+	slotGate, slotBound := ctx.Value(managedPostgresRestoreSlotSubmissionGateKey{}).(func() bool)
+	if slotBound {
+		if slotGate == nil || !slotGate() {
+			return ErrDisabled
+		}
+		if err := s.shareManagedPostgresRestoreSlotAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	restoredGate, restoredBound := ctx.Value(accountRestoredSubmissionGateKey{}).(func() bool)
 	if restoredBound {
 		if restoredGate == nil || !restoredGate() {

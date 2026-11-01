@@ -31,6 +31,12 @@ Operators: see the [operator guide](managed-postgres.md).
 - A database runs in a single zone. Gregale makes no high-availability
   promise for it; point-in-time restore and the 7-day undo of a delete are the
   recovery paths.
+- A plan downgrade waits until your databases fit the new plan: the refusal
+  lists the databases to delete and the ones to move to a class the plan
+  includes. A database whose delete is scheduled no longer counts.
+- When the platform is near capacity, new databases on the Free plan pause
+  first (`503 managed_postgres_new_databases_paused`); paid plans can still
+  create them.
 
 ## Create a database
 
@@ -163,6 +169,9 @@ every plan:
   ordinary database.
 - Otherwise its delete is scheduled at `restore_slot_until`, with the usual
   7-day undo. Its bindings are removed first. The source is never touched.
+- The account that ran the restore gets an email 48 hours before
+  `restore_slot_until` while there is still no room, and another when the
+  delete is scheduled.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
 - A copy cannot replace its source: the source cannot be deleted while the

@@ -199,7 +199,7 @@ func TestRender_AppDetail_AppsList_PreviewChip(t *testing.T) {
 	page := dashboard.Page{
 		Title: "Apps",
 		Body:  "apps_list",
-		Data: []dashboard.AppListItem{
+		Data: dashboard.AppsListData{Items: []dashboard.AppListItem{
 			{Slug: "demo", Status: "active"},
 			{
 				Slug:      "demo-pr-42",
@@ -208,7 +208,7 @@ func TestRender_AppDetail_AppsList_PreviewChip(t *testing.T) {
 				IsPreview: true,
 				Scope:     "pr-42.demo",
 			},
-		},
+		}},
 	}
 	if err := dashboard.Render(rec, log, "", page); err != nil {
 		t.Fatalf("render: %v", err)

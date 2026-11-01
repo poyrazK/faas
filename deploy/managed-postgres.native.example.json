@@ -1,0 +1,46 @@
+{
+  "default_region": "eu-central",
+  "defaults": {
+    "eu-central": "native-eu"
+  },
+  "max_databases_per_account": 3,
+  "provisioning_enabled": false,
+  "health": {
+    "enabled": true,
+    "interval_seconds": 60,
+    "stale_after_seconds": 300
+  },
+  "usage": {
+    "enabled": false,
+    "collection_interval_seconds": 300,
+    "window_seconds": 3600,
+    "stale_after_seconds": 10800,
+    "max_monthly_cost_millicents": 0,
+    "max_monthly_compute_unit_seconds": 0,
+    "max_monthly_storage_byte_seconds": 0,
+    "max_monthly_history_byte_seconds": 0,
+    "max_monthly_egress_bytes": 0,
+    "compute_unit_hour_millicents": 0,
+    "storage_gib_hour_millicents": 0,
+    "history_gib_hour_millicents": 0,
+    "egress_gib_millicents": 0
+  },
+  "backends": [
+    {
+      "id": "native-eu",
+      "driver": "firecracker",
+      "region": "eu-central",
+      "namespace": "native",
+      "data_api_enabled": false,
+      "settings": {
+        "host_suffix": "db.gregale.dev",
+        "schedd_target": "unix:///run/faas/schedd.sock",
+        "max_storage_bytes": "107374182400",
+        "max_restore_window_seconds": "604800"
+      },
+      "secret_env": {
+        "credential-key": "FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY"
+      }
+    }
+  ]
+}

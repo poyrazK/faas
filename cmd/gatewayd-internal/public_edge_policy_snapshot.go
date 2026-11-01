@@ -79,10 +79,10 @@ func (g *gatewaydEdgeRules) pinPublicRouteGraph(ctx context.Context, host string
 	if err != nil {
 		return nil, err
 	}
-	// The claim names the host's owner, so another account's fence on an
-	// overlapping pattern cannot refuse this host (unclaimed hosts keep the
-	// fleet-wide hold).
-	if generation != g.cache.Generation() || g.Converging(host, claim.AccountID, claim.AppID) {
+	// The graph is one snapshot read, so a pending edge-rule change does not
+	// refuse it (ADR-20261101141123): the read sees the change entirely or
+	// not at all.
+	if generation != g.cache.Generation() {
 		return nil, errors.New("public route graph changed during resolution")
 	}
 	if err := entry.SealPolicy(); err != nil {

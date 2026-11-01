@@ -75,6 +75,10 @@ Provisioning opens while all of the following hold:
 - usage metering (`usage.enabled`) is on;
 - the `fleet` block sets both `max_databases` and
   `max_monthly_cost_millicents`;
+- `max_databases_per_account` allows every plan its databases (at least 10,
+  Scale's limit). apid takes the lower of it and the plan's limit, so a smaller
+  value would sell Scale fewer databases; unset, production uses 10. A smaller
+  value keeps provisioning closed with `database_limit_below_plan`;
 - an operator approval pins the single default backend:
   `FAAS_MANAGED_POSTGRES_PRODUCTION_BACKEND` and
   `FAAS_MANAGED_POSTGRES_PRODUCTION_FINGERPRINT`, approved from
@@ -85,7 +89,12 @@ Provisioning opens while all of the following hold:
 the configured backend's fingerprint without contacting the provider.
 
 The `managed-postgres` capability flag decides which accounts may create
-databases. The staging canary list is not read in production. When the
+databases. The staging canary list is not read in production. Until
+`FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` and
+`FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` are both `on`, only an account
+a flag rule names, or one that opted in, is released: the flag's default, the
+GA tier included, releases nobody while databases would run uncapped. apid
+logs `managed postgres release held to accounts a flag rule names` at start. When the
 approval ends, new databases, bindings, restores and resizes close; existing
 databases and credentials keep working.
 
@@ -93,6 +102,10 @@ The fleet ceilings apply across every account:
 
 - At `max_databases`, new databases, restores and snapshot copies answer
   `503 managed_postgres_new_databases_paused`.
+- The last `paid_reserve_databases` of `max_databases` are for paid plans: a
+  Free account cannot add a database once the fleet holds `max_databases`
+  minus the reserve, and its refusal suggests upgrading. Unset, the reserve is
+  20% of `max_databases`; 0 reserves none.
 - Once this UTC month's provider cost reaches `max_monthly_cost_millicents`,
   cost-raising resizes pause as well, until the next month.
 
@@ -128,7 +141,8 @@ customers out until the owner has tested production
 2. Qualify the backend in an isolated Neon project with
    `managed-postgres-qualify --compute-cap` and `--storage-cap`. The deletion
    hold check runs with every qualification.
-3. Turn on enforcement after each shadow readout:
+3. Turn on enforcement after each shadow readout (until both caps are `on`,
+   step 6's default releases nobody):
    `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`,
    `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
@@ -417,6 +431,53 @@ to the disposable database, closes the connection, waits for Neon to report
 the endpoint as idle, reconnects, records wake latency, and only then allows
 the backend fingerprint to be approved. Configuration inspection alone is not
 sufficient evidence for a scale-to-zero promise.
+
+## Native backend configuration
+
+The native backend (driver `firecracker`, ADR-1027) runs each database in
+its own Firecracker VM on the fleet's database nodes. Deploy those first:
+`database` hosts and `managed_postgres` in the manifest, then
+`database_node.yml` (see `deploy/manifest/README.md`). Then copy
+`deploy/managed-postgres.native.example.json` to the operator-owned
+configuration path. It is the same file as Neon's: to keep Neon databases
+serving, list both backends. apid loads a native backend only while
+`FAAS_MANAGED_POSTGRES_NATIVE_ENABLED=1` is in its environment; without it,
+apid refuses the configuration, so no database lands on database nodes by
+accident. A region's `defaults` entry picks the backend
+new databases get. Existing databases stay on the backend that created
+them.
+
+| Setting | Meaning |
+| --- | --- |
+| `host_suffix` (required) | The `managed_postgres.host_suffix` of the manifest. Clients connect to `<database-id>.<suffix>`. |
+| `schedd_target` | Where apid reaches schedd. Default `unix:///run/faas/schedd.sock`. |
+| `schedd_client_cert_path`, `schedd_client_key_path`, `schedd_client_ca_path` | apid's client certificate for a TCP `schedd_target`. Leave them empty on the unix socket. |
+| `max_storage_bytes` | The largest volume a spec may ask for. Default 100 GiB, minimum 1 GiB. |
+| `max_restore_window_seconds` | Point-in-time restore, on when positive. Set it only where every database node runs dbbackupd. |
+| `postgres_majors` | Comma-separated majors offered. Default `14,15,16,17,18`. |
+| `port`, `tls_mode`, `database_name` | Connection details in issued URLs. Defaults `5432`, `verify-full`, `gregale`. |
+
+`data_api_enabled` issues Data API logins, as on Neon. Service classes have
+fixed shapes:
+
+- `development`: 1 vCPU and 512 MiB.
+- `burstable`: 2 vCPU and 1 GiB.
+- `production`: 2 vCPU and 2 GiB, plus a synchronous standby on a second
+  database node.
+
+`secret_env.credential-key` names the environment variable, sealed in
+apid's env, that holds the credential key: at least 32 random bytes.
+Every password is a keyed HMAC of the database, identity and access, and
+only verifiers are stored. Re-issuing a credential is byte-identical only
+under the same key. Keep it, and seal it like the other provider secrets:
+whoever holds it can derive every password.
+
+Qualify the backend like Neon's (above). `--verify` and the rollout check
+read only the configuration. A live run also needs
+`FAAS_MANAGED_POSTGRES_QUALIFY_NATIVE_DATABASE_URL`, the control-plane
+database where pgproxyd reads role verifiers. The database nodes'
+monitoring and recovery are in the runbook
+`docs/runbooks/FaasDatabaseNodes.md`.
 
 ## Safety boundary
 
@@ -1478,8 +1539,8 @@ GET `/v1/postgres/databases/{id}/resizes/{resize_id}` reports `pending` or
 `succeeded`, target generation and safe diagnostics.
 
 Clients may disconnect during the change; reconnect with existing credentials.
-Region, PostgreSQL major, storage, retention, availability and scale-to-zero
-settings stay fixed. While `updating`, the catalogue retains the last confirmed
+Region, PostgreSQL major, retention, availability and scale-to-zero settings
+stay fixed; the same request can also grow storage (see [Storage](#storage)). While `updating`, the catalogue retains the last confirmed
 class. The reconciler changes the recorded primary's compute configuration and
 commits the new class only after observing provider readiness on the same dataset.
 Timeouts preserve pending intent for recovery. Conflicting deletion, another

@@ -44,6 +44,17 @@ var managedPostgresPlanLimits = map[Plan]ManagedPostgresPlanLimits{
 		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true},
 }
 
+// ManagedPostgresPlanDatabasesMax is the most databases any plan allows. A
+// production registry must allow at least this many per account, or a plan
+// would get fewer than it sells (ADR-20261031091607).
+func ManagedPostgresPlanDatabasesMax() int {
+	most := 0
+	for _, limits := range managedPostgresPlanLimits {
+		most = max(most, limits.DatabasesMax)
+	}
+	return most
+}
+
 // ManagedPostgresLimitsFor returns a copy of the closed-set entitlement for p.
 func ManagedPostgresLimitsFor(p Plan) (ManagedPostgresPlanLimits, bool) {
 	limits, ok := managedPostgresPlanLimits[p]
@@ -79,6 +90,10 @@ type ManagedPostgresDatabase struct {
 	// RestoreRange is the span a point-in-time restore from this database
 	// can target now; absent while it cannot be restored from.
 	RestoreRange *ManagedPostgresRestoreRange `json:"restore_range,omitempty"`
+	// Labels are the database's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ManagedPostgresRestoreRange bounds a restore's point_in_time: from

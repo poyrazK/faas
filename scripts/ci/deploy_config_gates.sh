@@ -43,6 +43,7 @@ rules() {
   promtool check rules \
     deploy/ansible/roles/prometheus/files/faas.rules.yml \
     deploy/ansible/roles/prometheus/files/data_repair.rules.yml \
+    deploy/ansible/roles/prometheus/files/database_nodes.rules.yml \
     pkg/promqlrules/data_placement.yaml \
     examples/event-acknowledgment-monitoring/preparation.rules.yml \
     examples/event-acknowledgment-monitoring/recovery.rules.yml
@@ -80,6 +81,8 @@ syntax() {
   ansible-playbook --syntax-check pki_renew.yml
   # ADR-372: the tenant egress gateway converge entrypoint.
   ansible-playbook --syntax-check tenant_egress_gateway.yml
+  # ADR-1027: the database node converge entrypoint.
+  ansible-playbook --syntax-check database_node.yml
   # Gate-F: the opt-in acceptance playbooks. Neither was parsed by any
   # job, so a syntax error in them would only surface when an operator
   # ran one by hand against a real host.
@@ -152,7 +155,7 @@ templates() {
 
   rules_dir="$RUNNER_TEMP/prometheus-rules"
   mkdir -p "$rules_dir"
-  cp roles/prometheus/files/{faas.rules.yml,bridge.rules.yml,pg_backup.rules.yml,data_repair.rules.yml} "$rules_dir/"
+  cp roles/prometheus/files/{faas.rules.yml,bridge.rules.yml,pg_backup.rules.yml,data_repair.rules.yml,database_nodes.rules.yml} "$rules_dir/"
   cp ../../pkg/promqlrules/data_placement.yaml "$rules_dir/"
   sed "s#/etc/prometheus#$rules_dir#g" \
     "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"

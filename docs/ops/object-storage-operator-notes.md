@@ -889,14 +889,41 @@ destination credential. The API reports `copy_sources_per_credential` with
 Removing a grant frees one slot; narrowing or replacing its prefix uses the
 existing slot. Each literal UTF-8 prefix is limited to 1024 bytes.
 
+Use `gateway_safety_v1` for managed storage. The published rate card prices
+storage only, and Gregale meters stored bytes itself in this mode
+([ADR 20261024132844](../adr/20261024132844-gateway-metered-object-storage-billing.md)).
+It is also the only mode in which s3-gatewayd admits reads from cached
+decisions and batches their counts
+([ADR 20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md)).
+The other mode, provider reports (no `accounting_mode`), has some costs:
+
+- a bucket can be provisioned only on backends with a fresh
+  `usage_reports_path`;
+- every GET takes the locking admission path, with control-plane
+  transactions;
+- the request and egress meters it adds price nothing, because the published
+  rate card makes them free.
+
+Gateway safety needs:
+
+- `public_endpoint`;
+- the `proxied` transfer profile;
+- a `gateway_metering_since` that is not in the future;
+- `max_monthly_cost_millicents: 0`.
+
+Paid plans set no byte, request or authorization ceilings of their own, so
+size these values for the largest plan.
+
 Example safety values **only**, not approved pricing or plan allowances:
 
 ```json
 "accounting": {
+  "accounting_mode": "gateway_safety_v1",
+  "gateway_metering_since": "2026-11-01T00:00:00Z",
   "max_account_bytes": 10737418240,
   "max_bucket_bytes": 5368709120,
   "max_account_keys": 100000,
-  "max_monthly_cost_millicents": 500000,
+  "max_monthly_cost_millicents": 0,
   "max_monthly_requests": 1000000,
   "max_monthly_egress_bytes": 10737418240,
   "max_monthly_authorizations": 100000,
@@ -904,28 +931,30 @@ Example safety values **only**, not approved pricing or plan allowances:
 }
 ```
 
-Costs use EUR millicents: 1000 millicents = 1 cent. These are ceilings on
-reported upstream cost, not customer invoice rates. Every limit must be
-positive; zero is not an unlimited setting. Report freshness must be 60–86400
+In provider-report mode, `max_monthly_cost_millicents` must instead be a
+positive ceiling on reported upstream cost, in EUR millicents (1000 millicents
+= 1 cent), not a customer invoice rate. Every other limit must be positive;
+zero is not an unlimited setting. Report freshness must be 60–86400
 seconds and the key ceiling at most one million. OVH access-log-backed
 reporting requires at least 7200 seconds to allow for the provider's normal
 one-hour delivery lag and the five-minute export interval.
 
-An optional `pricing` object can add a provider-neutral customer rate card
-without changing the safety policy:
+An optional `pricing` object turns on customer charges without changing the
+safety policy. It must be the published rate card, ADR-1430's: storage at
+$0.03 per GiB-month (`api.ObjectStorageMillicentsPerGiBMonth`) beyond each
+plan's included storage, with request and egress prices at zero. apid refuses
+to start with any other `pricing` (`api.PublishedObjectStoragePricing`), so a
+mistyped price or currency cannot reach invoices:
 
 ```json
 "pricing": {
   "currency": "USD",
-  "storage_millicents_per_gib_month": 15000,
-  "requests_millicents_per_million": 500,
-  "egress_millicents_per_gib": 90000
+  "storage_millicents_per_gib_month": 3000,
+  "requests_millicents_per_million": 0,
+  "egress_millicents_per_gib": 0
 }
 ```
 
-The published rate card is ADR-1430's: storage at $0.03 per GiB-month
-(`storage_millicents_per_gib_month: 3000`, `api.ObjectStorageMillicentsPerGiBMonth`)
-beyond each plan's included storage, with request and egress prices at zero.
 [`docs/plans.md`](../plans.md) lists the included storage per plan.
 
 `gateway_safety_v1` has no provider usage reports, so Gregale meters stored
@@ -1072,10 +1101,15 @@ credential environment-variable names, and configure `request_log_bucket` (and
 optionally `request_log_prefix`) for a dedicated same-region bucket receiving
 [OVH Server Access Logging](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-server-access-logging)
 from every managed physical bucket. Keep
-`usage_reports_path` in the operator-owned registry. `s3-gatewayd` runs the
-exporter immediately and every five minutes, atomically replaces that file, and
-exposes `s3_gateway_usage_exports_total` plus the last-success timestamp on its
-control-plane metrics endpoint. OVH access logs are delivered asynchronously
+`usage_reports_path` in the operator-owned registry, in a directory `apid` owns
+(for example `/var/spool/faas/object-storage-usage/<backend>.json`; apid
+creates the directory). `apid` runs the exporter immediately and every five
+minutes with its bucket-admin credential and the OVH application keys from the
+provider environment, atomically replaces that file, imports it each accounting
+sweep, and exposes `faas_object_storage_usage_exports_total` plus
+`faas_object_storage_usage_export_last_success_timestamp_seconds` (0 until the
+first success) on its metrics endpoint. No S3 gateway runs the export
+(ADR-20261031122757). OVH access logs are delivered asynchronously
 (normally about one hour later), so the report's `observed_at` is intentionally
 one hour behind the wall clock. Missing credentials, an unreadable/malformed
 log object, or a failed export does not publish a partial report; `apid`
