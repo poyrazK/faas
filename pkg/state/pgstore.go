@@ -516,6 +516,7 @@ func (s *PgStore) AuthenticateOIDCBearer(ctx context.Context, hash []byte) (Acco
 		Audience:  row.Audience,
 		JTI:       row.Jti,
 		CreatedAt: timeFromPgtype(row.CreatedAt),
+		AppID:     row.AppID,
 	}
 	return acct, token.ToAPIKey(), nil
 }
@@ -696,11 +697,21 @@ func (s *PgStore) InsertOIDCExchangedToken(ctx context.Context, t *OIDCExchanged
 		Subject:   t.Subject,
 		Audience:  t.Audience,
 		Jti:       pgtype.Text{String: t.JTI, Valid: t.JTI != ""},
+		AppID:     oidcBearerAppID(t.AppID),
 	})
 	if err != nil {
 		return "", err
 	}
 	return uuidFromPgtype(row.ID).String(), nil
+}
+
+// oidcBearerAppID is the nullable app binding of an exchanged token.
+func oidcBearerAppID(appID string) pgtype.UUID {
+	id, err := uuid.Parse(appID)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return pgtypeFromUUID(id)
 }
 
 // GetOIDCExchangedTokenByHash returns the row whose TokenHash
@@ -30686,6 +30697,7 @@ func oidcExchangedTokenFromRow(row sqlc.GetOIDCExchangedTokenByHashRow) *OIDCExc
 		Audience:  row.Audience,
 		JTI:       row.Jti,
 		CreatedAt: timeFromPgtype(row.CreatedAt),
+		AppID:     row.AppID,
 	}
 }
 
