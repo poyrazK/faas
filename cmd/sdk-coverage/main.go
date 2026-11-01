@@ -2816,8 +2816,11 @@ func (r *reportT) print() {
 // Convenience aliases share a route with its checked path-shaped method.
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
-	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
-	"ListAppsSelected": "GET /v1/apps",
+	"UpsertDevSession":                     "PUT /v1/dev/sessions/{project}",
+	"ListAppsSelected":                     "GET /v1/apps",
+	"ListManagedPostgresDatabasesSelected": "GET /v1/postgres/databases",
+	"ListCronsSelected":                    "GET /v1/crons",
+	"ListJobsSelected":                     "GET /v1/jobs",
 }
 
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {

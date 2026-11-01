@@ -7489,16 +7489,16 @@ groups:
           summary: "s3-gatewayd spends more than 10% of the week at its port share"
           description: "Transfers through {{ $labels.instance }} waited for the gateway's port share {{ $value | humanizePercentage }} of the last 7 days. Customers see slower transfers, not errors. Plan the cell's move to dedicated gateway machines (ADR-20261031122757 §7)."
       - alert: FaasObjectStorageUsageExportStale
-        expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
+        expr: time() - faas_object_storage_usage_export_last_success_timestamp_seconds > 3600
         for: 15m
         labels:
           severity: warn
-          component: s3-gatewayd
+          component: apid
           family: object_storage
         annotations:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "Object storage provider usage export is stale"
-          description: "s3-gatewayd has not exported provider usage for backend {{ $labels.backend }} for over an hour. With provider-report accounting, admission fails closed once reports exceed max_report_age_seconds."
+          description: "apid has not exported provider usage for backend {{ $labels.backend }} for over an hour, or never has since it started. With provider-report accounting, admission fails closed once reports exceed max_report_age_seconds."
 
   - name: faas-durable-entity-health
     rules:

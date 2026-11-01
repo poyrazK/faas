@@ -9,7 +9,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // checkComputeGateway holds a gateway on a compute node to what
@@ -49,14 +48,4 @@ func checkListeners(r role.Role, listenAddr, controlAddr string) error {
 		return errors.New("s3-gatewayd: the control listener must be a loopback address outside a compute node")
 	}
 	return nil
-}
-
-// usageExportJobsForRole keeps provider usage exports, and the provider
-// account keys they need, on the control plane: a compute node's gateway
-// runs none (ADR-20261031122757 §4).
-func usageExportJobsForRole(r role.Role, registry *objectstorage.Registry, store state.ObjectStorageProviderUsageStore, getenv func(string) string) ([]objectstorage.UsageExportJob, error) {
-	if r == role.RoleComputeOnly {
-		return nil, nil
-	}
-	return usageExportJobs(registry, store, getenv)
 }

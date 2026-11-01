@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "8251005a90f6ce703e647531a02342fdf98f63ca996cc3c4f9bf46d4a21e5938",
+      "revision": "db738f1875ab70f6e6e178de4818cce01279f28ebd3ce87ae054bf3a071bc252",
       "files": [
         "faas.rules.yml"
       ],
@@ -4006,11 +4006,11 @@
           "group_name": "faas_object_storage",
           "rule_name": "FaasObjectStorageUsageExportStale",
           "definition": {
-            "expression_hash": "aa4c99cb3a1acaef72198ea8031ce5154795ec64c9358971be45ecb1a3ce1290",
-            "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
+            "expression_hash": "b6f1384337040c0c0d194e8976499cb7a3f55dd08115f1b94dd0bd8649d1ec71",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "74957a85297b18bdf394fe84dee6824d4059ce6beb8e91e170c9886d8470abff"
+            "fingerprint": "1b5a569e6d06bfcb52b251d004d57508c2911a5c5d3b13e7877ba141fdc67ac4"
           }
         },
         {
@@ -6604,7 +6604,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "98541183b5e6dbe302e9415944fb8e2b9eaacda44697ad956a22856ce9050d99",
+      "revision": "42b4ce80645ace2811d67af82864c934cf7fd1efb53d20026b568f87c7b4f8d0",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10792,11 +10792,11 @@
           "group_name": "faas_object_storage",
           "rule_name": "FaasObjectStorageUsageExportStale",
           "definition": {
-            "expression_hash": "aa4c99cb3a1acaef72198ea8031ce5154795ec64c9358971be45ecb1a3ce1290",
-            "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
+            "expression_hash": "b6f1384337040c0c0d194e8976499cb7a3f55dd08115f1b94dd0bd8649d1ec71",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "74957a85297b18bdf394fe84dee6824d4059ce6beb8e91e170c9886d8470abff"
+            "fingerprint": "1b5a569e6d06bfcb52b251d004d57508c2911a5c5d3b13e7877ba141fdc67ac4"
           }
         },
         {

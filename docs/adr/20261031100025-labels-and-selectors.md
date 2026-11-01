@@ -193,7 +193,10 @@ read once at the start, so a resource labelled during the wait is not added.
      `PATCH /v1/crons/{id}/labels`, `PATCH /v1/jobs/{name}/labels`, `labels`
      in their responses, and `?selector=` on their lists.
   6. Manifest `labels` and the Kubernetes importer.
-  7. Docs, dashboard, MCP tools and a journey; then beta.
+  7. Docs, dashboard, MCP tools and a journey; then beta. The management
+     MCP server reads first: app views carry labels and `gregale_list_apps`
+     takes a `selector`. A label write follows its plan/apply consent and
+     waits for a need.
 
 ## Consequences
 

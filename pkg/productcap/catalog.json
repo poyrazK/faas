@@ -4844,7 +4844,10 @@
         "/v1/jobs/{}/labels"
       ],
       "cli": [
-        "app label"
+        "app label",
+        "postgres label",
+        "cron label",
+        "job label"
       ]
     },
     {
