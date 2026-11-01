@@ -12,13 +12,17 @@
       - faas_seal_domains_managed | default(false) | bool
       - faas_seal_domain_storage_identity_src | default('') | length > 0
       - faas_seal_domain_storage_contracted | default(false) | bool
+      - faas_edge_on_compute_nodes | default(false) | bool
+      - faas_cloudflared_install_dir is defined
     fail_msg: >-
       The S3 gateway on a compute node needs the provider registry
       (faas_object_storage_config_src), the gateway-only credential
       (faas_object_storage_gateway_provider_env_src), this node's port share
-      (faas_object_gateway_max_bytes_per_second, from the host's port_mbps)
-      and the contracted storage seal domain, so the node never holds the
-      fleet identity (ADR-20261031122757 §4).
+      (faas_object_gateway_max_bytes_per_second, from the host's port_mbps),
+      the contracted storage seal domain, so the node never holds the fleet
+      identity (ADR-20261031122757 §4), and the app edge
+      (faas_edge_on_compute_nodes), whose role installs the cloudflared
+      binary the s3 tunnel connector runs.
 
 # The node's registry is the control plane's with this node's port share:
 # stage the control plane's beside it and render from the staged copy.
@@ -144,19 +148,61 @@
       [Unit]
       Wants=faas-s3-gatewayd-compute.service
 
-- name: s3_gateway_compute_service — reload systemd before enabling the gateway  # noqa: no-handler (enable below needs the new unit)
+# The s3 tunnel connector runs the binary gatewayd_public_edge_service
+# installed earlier in this play, as its cloudflared user.
+- name: s3_gateway_compute_service — find the connector binary
+  ansible.builtin.stat:
+    path: "{{ faas_cloudflared_install_dir }}/cloudflared"
+  register: faas_cloudflared_s3_binary
+
+- name: s3_gateway_compute_service — require the connector binary
+  ansible.builtin.assert:
+    that:
+      - faas_cloudflared_s3_binary.stat.exists
+      - faas_cloudflared_s3_binary.stat.executable
+    fail_msg: >-
+      {{ faas_cloudflared_install_dir }}/cloudflared is missing; the
+      gatewayd_public_edge_service role installs it before this role.
+
+- name: s3_gateway_compute_service — create the connector token directory
+  ansible.builtin.file:
+    path: "{{ faas_cloudflared_s3_token_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: s3_gateway_compute_service — install the s3 tunnel connector unit
+  notify: restart faas-cloudflared-s3
+  ansible.builtin.template:
+    src: faas-cloudflared-s3.service.j2
+    dest: /etc/systemd/system/faas-cloudflared-s3.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: s3_gateway_compute_service — reload systemd before enabling the gateway  # noqa: no-handler (enable below needs the new units)
   ansible.builtin.systemd_service:
     daemon_reload: true
 
 # Enable always, so the gateway comes back after a reboot; start only outside
-# a node join that defers service starts to its own activation step.
-- name: s3_gateway_compute_service — enable the gateway
+# a node join that defers service starts to its own activation step. The
+# connector is wanted by the gateway, so it starts whenever the gateway does,
+# and only once its token exists (ConditionPathExists); until then it stays
+# inactive without failing.
+- name: s3_gateway_compute_service — enable the gateway and its connector
   ansible.builtin.systemd_service:
-    name: faas-s3-gatewayd-compute.service
+    name: "{{ item }}"
     enabled: true
+  loop:
+    - faas-s3-gatewayd-compute.service
+    - faas-cloudflared-s3.service
 
-- name: s3_gateway_compute_service — start the gateway
+- name: s3_gateway_compute_service — start the gateway and its connector
   ansible.builtin.systemd_service:
-    name: faas-s3-gatewayd-compute.service
+    name: "{{ item }}"
     state: started
+  loop:
+    - faas-s3-gatewayd-compute.service
+    - faas-cloudflared-s3.service
   when: not (faas_join_defer_service_handlers | default(false) | bool)

@@ -28736,6 +28736,26 @@ CREATE VIEW public.active_environment_git_sources AS
 
 
 --
+-- Name: agent_callback_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_callback_revocations (
+    endpoint_id uuid NOT NULL,
+    thread_id text NOT NULL,
+    account_id uuid NOT NULL,
+    revoked_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_callback_revocations_thread_id_check CHECK (((char_length(thread_id) >= 1) AND (char_length(thread_id) <= 64)))
+);
+
+
+--
+-- Name: TABLE agent_callback_revocations; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_callback_revocations IS 'ADR-20261030125501 agent callback revocations written by apid: a thread''s latest revocation time.';
+
+
+--
 -- Name: agent_deliveries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33790,10 +33810,12 @@ CREATE TABLE public.crons (
     failure_rules jsonb,
     schedule_revision bigint DEFAULT 1 NOT NULL,
     schedule_anchor_at timestamp with time zone,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT crons_command_output_check CHECK (((command_max_output_bytes >= 1024) AND (command_max_output_bytes <= 16777216))),
     CONSTRAINT crons_command_shape_check CHECK ((((cardinality(command) = 0) AND (NOT command_shell)) OR (((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1))))),
     CONSTRAINT crons_command_timeout_check CHECK (((command_timeout_seconds >= 1) AND (command_timeout_seconds <= 3600))),
     CONSTRAINT crons_failure_rules_shape CHECK (((failure_rules IS NULL) OR ((jsonb_typeof(failure_rules) = 'object'::text) AND ((failure_rules ->> 'version'::text) = '1'::text)))),
+    CONSTRAINT crons_labels_object_chk CHECK ((jsonb_typeof(labels) = 'object'::text)),
     CONSTRAINT crons_retry_policy_check CHECK ((((retry_max >= 0) AND (retry_max <= 5)) AND ((retry_backoff_seconds >= 1) AND (retry_backoff_seconds <= 3600)) AND ((retry_max = 0) OR (cardinality(command) > 0)))),
     CONSTRAINT crons_schedule_policy_shape CHECK (((schedule_policy IS NULL) OR ((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text)))),
     CONSTRAINT crons_schedule_revision_check CHECK ((schedule_revision >= 1)),
@@ -42724,6 +42746,7 @@ CREATE TABLE public.jobs (
     schedule_revision bigint DEFAULT 1 NOT NULL,
     image_entrypoint text[],
     image_cmd text[],
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT jobs_command_min_chk CHECK (((array_length(command, 1) IS NULL) OR ((array_length(command, 1) >= 0) AND (array_length(command, 1) <= 64)))),
     CONSTRAINT jobs_failure_rules_shape CHECK (((failure_rules IS NULL) OR ((jsonb_typeof(failure_rules) = 'object'::text) AND ((failure_rules ->> 'version'::text) = '1'::text)))),
     CONSTRAINT jobs_image_cmd_chk CHECK (((image_cmd IS NULL) OR (cardinality(image_cmd) <= 64))),
@@ -42731,6 +42754,7 @@ CREATE TABLE public.jobs (
     CONSTRAINT jobs_image_materialization_attempts_check CHECK ((image_materialization_attempts >= 0)),
     CONSTRAINT jobs_image_materialization_status_check CHECK ((image_materialization_status = ANY (ARRAY['pending'::text, 'verifying_legacy'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['batch'::text, 'recurring'::text, 'image_run'::text]))),
+    CONSTRAINT jobs_labels_object_chk CHECK ((jsonb_typeof(labels) = 'object'::text)),
     CONSTRAINT jobs_max_parallelism_check CHECK (((max_parallelism >= 1) AND (max_parallelism <= 1000))),
     CONSTRAINT jobs_name_check CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT jobs_ram_mb_check CHECK ((ram_mb > 0)),
@@ -43542,6 +43566,7 @@ CREATE TABLE public.managed_postgres_databases (
     org_id uuid NOT NULL,
     purge_after timestamp with time zone,
     restore_slot_until timestamp with time zone,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -43556,6 +43581,7 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_databases_check5 CHECK (((clone_resource_role = 'target'::text) OR (environment_clone_operation_id IS NOT NULL))),
     CONSTRAINT managed_postgres_databases_clone_resource_role_check CHECK ((clone_resource_role = ANY (ARRAY['target'::text, 'checkpoint'::text]))),
     CONSTRAINT managed_postgres_databases_desired_generation_check CHECK ((desired_generation >= 1)),
+    CONSTRAINT managed_postgres_databases_labels_object_chk CHECK ((jsonb_typeof(labels) = 'object'::text)),
     CONSTRAINT managed_postgres_databases_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_postgres_major_check CHECK (((postgres_major >= 12) AND (postgres_major <= 99))),
@@ -56976,6 +57002,14 @@ ALTER TABLE ONLY public.accounts
 
 
 --
+-- Name: agent_callback_revocations agent_callback_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_callback_revocations
+    ADD CONSTRAINT agent_callback_revocations_pkey PRIMARY KEY (endpoint_id, thread_id);
+
+
+--
 -- Name: agent_deliveries agent_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69407,6 +69441,13 @@ CREATE INDEX accounts_mfa_required_pending_idx ON public.accounts USING btree (i
 --
 
 CREATE INDEX accounts_past_due_idx ON public.accounts USING btree (past_due_at) WHERE (status = 'past_due'::text);
+
+
+--
+-- Name: agent_callback_revocations_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_callback_revocations_account_idx ON public.agent_callback_revocations USING btree (account_id);
 
 
 --
@@ -86806,6 +86847,22 @@ ALTER TABLE ONLY public.account_spend_cap_holds
 
 ALTER TABLE ONLY public.account_spend_snapshot
     ADD CONSTRAINT account_spend_snapshot_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_callback_revocations agent_callback_revocations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_callback_revocations
+    ADD CONSTRAINT agent_callback_revocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_callback_revocations agent_callback_revocations_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_callback_revocations
+    ADD CONSTRAINT agent_callback_revocations_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
 
 
 --
