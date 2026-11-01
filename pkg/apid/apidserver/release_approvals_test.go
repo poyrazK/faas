@@ -504,8 +504,9 @@ func TestRollbackToADarkReleaseMeetsItsApprovals(t *testing.T) {
 func TestApprovalPolicyKeepsTheAppInRequestMode(t *testing.T) {
 	ctx := context.Background()
 	f := newApprovalFixture(ctx, t, "approval-mode", time.Now(), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1})
-	service := api.ExecutionModeService
-	rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", api.UpdateAppRequest{ExecutionMode: &service}, nil)
+	service, one := api.ExecutionModeService, 1
+	toService := api.UpdateAppRequest{ExecutionMode: &service, MaxConcurrency: &one}
+	rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", toService, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeConflict)
 	if !strings.Contains(rec.Body.String(), "release approval disable") {
 		t.Fatalf("refusal = %s, want the way to remove the policy", rec.Body)
@@ -516,7 +517,7 @@ func TestApprovalPolicyKeepsTheAppInRequestMode(t *testing.T) {
 	if rec := f.e.Do(t, http.MethodDelete, "/v1/apps/approval-mode/release-approval-policy", nil, nil); rec.Code >= 300 {
 		t.Fatalf("remove policy = %d %s", rec.Code, rec.Body)
 	}
-	if rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", api.UpdateAppRequest{ExecutionMode: &service}, nil); strings.Contains(rec.Body.String(), "requires release approvals") {
+	if rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", toService, nil); strings.Contains(rec.Body.String(), "requires release approvals") {
 		t.Fatalf("mode change without a policy = %d %s, want no approval refusal", rec.Code, rec.Body)
 	}
 }

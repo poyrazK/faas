@@ -275,7 +275,7 @@ func TestDeployKeysCannotSwitchOffReleaseGuards(t *testing.T) {
 	e, org := newCompanyFreezeApp(t, "guard-ci")
 	store := *e.Store()
 	admin, adminCLI := sharedAppMember(t, store, org, state.OrgRoleAdmin, api.ScopesAdminOnly)
-	ci := memberKey(t, store, org, admin, api.ScopesDeployWriteSurface)
+	ci := memberKey(t, store, org, admin, []string{api.ScopeDeployWrite})
 	var frz api.ReleaseFreeze
 	if code, body := orgFreezeDo(t, e, adminCLI, "POST", "/v1/apps/guard-ci/freezes",
 		api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "release train"}, &frz); code != http.StatusCreated {
@@ -309,7 +309,7 @@ func TestCompanyFreezeOverrideNeedsTheRightToLiftIt(t *testing.T) {
 	store := *e.Store()
 	admin, adminCLI := sharedAppMember(t, store, org, state.OrgRoleAdmin, api.ScopesAdminOnly)
 	_, developer := sharedAppMember(t, store, org, state.OrgRoleDeveloper, api.ScopesAdminOnly)
-	ci := memberKey(t, store, org, admin, api.ScopesDeployWriteSurface)
+	ci := memberKey(t, store, org, admin, []string{api.ScopeDeployWrite})
 	if code, body := orgFreezeDo(t, e, adminCLI, "POST", "/v1/orgs/"+org.Slug+"/freezes",
 		api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "release train"}, nil); code != http.StatusCreated {
 		t.Fatalf("admin freezes the company = %d %s", code, body)
