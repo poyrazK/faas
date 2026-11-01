@@ -18231,7 +18231,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where state in ('running','waking','cold_booting','draining','snapshotting','warm','frozen')
+		 where state in ('running','waking','cold_booting','draining','snapshotting','warm','frozen','migrating')
 		 order by started_at desc`)
 	if err != nil {
 		return nil, err
@@ -27921,6 +27921,8 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	for _, step := range []struct{ name, sql string }{
 		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1)`},
 		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1)`},
+		// No FK either: the app purge deletes it, account erasure did not.
+		{"debug_regression_observations", `delete from debug_regression_observations where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 	} {
 		if _, err := tx.Exec(ctx, step.sql, mustPgUUID(id)); err != nil {
 			return fmt.Errorf("state: purge account %s: %w", step.name, err)
@@ -27998,6 +28000,14 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		   where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 		{"instances", `delete from instances
 		   where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
+		// Job-task instances have no app_id, and instances.job_id is ON DELETE
+		// RESTRICT, so the accounts cascade to jobs below failed on them and
+		// an account that ever ran a job could not be erased. Their tasks
+		// point at them (job_tasks.instance_id, NO ACTION), so tasks go first;
+		// the accounts cascade removes the jobs and runs.
+		{"job_tasks", `delete from job_tasks
+		   where run_id in (select id from job_runs where account_id = $1 or job_id in (select id from jobs where account_id = $1))`},
+		{"job_instances", `delete from instances where job_id in (select id from jobs where account_id = $1)`},
 		{"snapshots", `delete from snapshots
 		   where deployment_id in
 		     (select id from deployments where app_id in

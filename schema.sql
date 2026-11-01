@@ -46067,6 +46067,30 @@ CREATE TABLE public.node_lifecycle_completions (
 
 
 --
+-- Name: node_memory_reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.node_memory_reports (
+    node_id uuid NOT NULL,
+    measured_mb integer NOT NULL,
+    used_mb integer,
+    frozen_instances integer NOT NULL,
+    measured_at timestamp with time zone NOT NULL,
+    reported_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT node_memory_reports_frozen_instances_check CHECK ((frozen_instances >= 0)),
+    CONSTRAINT node_memory_reports_measured_mb_check CHECK ((measured_mb >= 0)),
+    CONSTRAINT node_memory_reports_used_mb_check CHECK ((used_mb >= 0))
+);
+
+
+--
+-- Name: TABLE node_memory_reports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.node_memory_reports IS 'ADR 20261101091815 node-wide measured memory, published by each node''s own scheduler for its peers.';
+
+
+--
 -- Name: notification_channels; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64759,6 +64783,14 @@ ALTER TABLE ONLY public.node_leases
 
 ALTER TABLE ONLY public.node_lifecycle_completions
     ADD CONSTRAINT node_lifecycle_completions_pkey PRIMARY KEY (node_id, source_generation);
+
+
+--
+-- Name: node_memory_reports node_memory_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.node_memory_reports
+    ADD CONSTRAINT node_memory_reports_pkey PRIMARY KEY (node_id);
 
 
 --
@@ -96425,6 +96457,14 @@ ALTER TABLE ONLY public.native_issue_ticket_receipts
 
 ALTER TABLE ONLY public.node_leases
     ADD CONSTRAINT node_leases_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: node_memory_reports node_memory_reports_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.node_memory_reports
+    ADD CONSTRAINT node_memory_reports_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
 
 
 --
