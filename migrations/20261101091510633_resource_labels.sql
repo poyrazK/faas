@@ -1,4 +1,4 @@
--- filename: 20261031220612000_resource_labels.sql
+-- filename: 20261101091510633_resource_labels.sql
 
 -- ADR-20261031100025 step 5: managed databases, crons and jobs carry labels,
 -- as apps do (20261031142449136_app_labels). Only apid writes the columns;
