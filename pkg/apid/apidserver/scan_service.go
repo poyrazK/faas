@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
+	"github.com/onebox-faas/faas/pkg/apid/resourcelabels"
 	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
 	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -3101,6 +3102,7 @@ func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
 	return reposcan.ScanOptions{
 		KubernetesManifests:       s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
 		HTTPSTransportUnavailable: !s.privateServiceHTTPS(acct),
+		ResourceLabels:            s.capGate == nil || s.capGate.Enabled(resourcelabels.Capability, subject),
 	}
 }
 

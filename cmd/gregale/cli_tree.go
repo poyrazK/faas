@@ -819,6 +819,10 @@ func rewriteAppPath(args []string) ([]string, error) {
 		}
 		return append([]string{appSlugFallback, app}, rest...), nil
 	}
+	if verb == subWait && hasSelectorFlag(args[2:]) {
+		// `app wait -l SELECTOR` names its apps by label (ADR-20261031100025).
+		return args, nil
+	}
 	command, ok := lookupCliCommand(appSlugFallback)
 	if !ok {
 		return args, nil

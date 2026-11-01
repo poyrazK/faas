@@ -841,6 +841,14 @@ func (c *Client) ListApps(ctx context.Context) ([]AppResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/apps", nil, &out)
 }
 
+// ListAppsSelected lists the apps a label selector picks
+// (ADR-20261031100025). An apid without labels ignores the selector and
+// returns every app, so callers match the returned labels again.
+func (c *Client) ListAppsSelected(ctx context.Context, selector string) ([]AppResponse, error) {
+	var out []AppResponse
+	return out, c.do(ctx, "GET", "/v1/apps?"+url.Values{"selector": {selector}}.Encode(), nil, &out)
+}
+
 // CreateApp creates an app.
 func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppResponse, error) {
 	var out AppResponse

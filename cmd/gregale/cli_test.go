@@ -315,7 +315,7 @@ func TestCmdApps_Empty(t *testing.T) {
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdApps(); code != 0 {
+	if code := cmdApps(nil); code != 0 {
 		t.Errorf("cmdApps empty = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -343,7 +343,7 @@ func TestCmdApps_NonEmpty(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdApps(); code != 0 {
+	if code := cmdApps(nil); code != 0 {
 		t.Errorf("cmdApps non-empty = %d, want 0", code)
 	}
 }
@@ -363,7 +363,7 @@ func TestCmdAppsShowsNoLiveDeploymentSeparatelyFromLifecycle(t *testing.T) {
 	oldOut := osStdout
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
-	if code := cmdApps(); code != 0 {
+	if code := cmdApps(nil); code != 0 {
 		t.Fatalf("cmdApps = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "NO LIVE DEPLOYMENT") {
@@ -379,7 +379,7 @@ func TestCmdApps_Unauthenticated(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	if code := cmdApps(); code == 0 {
+	if code := cmdApps(nil); code == 0 {
 		t.Error("cmdApps without token must fail")
 	}
 }
@@ -952,7 +952,7 @@ func TestCmdApps_JSON_NDJSONShape(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	jsonOutput = true
 	defer func() { resetJSONOutput() }()
-	if code := cmdApps(); code != 0 {
+	if code := cmdApps(nil); code != 0 {
 		t.Fatalf("cmdApps JSON = %d, want 0", code)
 	}
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
