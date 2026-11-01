@@ -205,7 +205,9 @@ The policy fires when verified distinct customer impact moves from below the
 configured threshold to at or above it. It uses the same tenant-first verified
 identity as the inbox; unattributed occurrences do not count. A later request
 telemetry enrichment can trigger the transition when it supplies the identity
-that crosses the threshold. Changing a policy does not backfill alerts for
+that crosses the threshold. Gregale retries that enrichment for one hour after
+it accepts an occurrence; an occurrence with no request, trace or invocation ID
+stays unattributed. Changing a policy does not backfill alerts for
 issues already above the new threshold. The transition appears in issue
 activity and emits `issue.impact_threshold_reached`; subscribe an app webhook
 to that event to receive it. Delivery uses Gregale's durable outbox and retry
