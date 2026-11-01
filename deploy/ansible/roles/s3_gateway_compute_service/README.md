@@ -81,6 +81,17 @@ gateway on compute nodes; `FaasComputeObjectGatewayDown`,
    the gateway's 512 MB and one CPU out of tenant admission (`gregalectl
    compute-nodes sizing --edge --object-gateway`).
 
+## Load test pilot
+
+For the one-node load test (ADR step 5,
+`docs/runbooks/S3GatewayComputeLoadTest.md`), set
+`faas_object_gateway_public_endpoint: https://s3-pilot.<domain>` in the
+compute variables. The role then writes the pilot host as the registry's
+`public_endpoint`, so the compute gateways answer it and not `s3.<domain>`.
+`deploy/scripts/cloudflare-s3-tunnel.sh` creates the s3 tunnel and the pilot
+record and stages the token on the pilot node alone. Set the variable back to
+`''` before the cutover.
+
 ## Checks
 
 - `systemctl status faas-s3-gatewayd-compute faas-cloudflared-s3`
