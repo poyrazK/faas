@@ -17,6 +17,11 @@ import (
 // remove such keys; Gregale may set them.
 const ReservedPrefix = "gregale.dev"
 
+// Capability is the product capability that owns labels, the label routes and
+// selectors (pkg/productcap/catalog.json). Every daemon that decides it uses
+// this id.
+const Capability = "resource-labels"
+
 // Stable error codes. The API returns them as the RFC 7807 code.
 const (
 	CodeInvalidKey      = "invalid_label_key"

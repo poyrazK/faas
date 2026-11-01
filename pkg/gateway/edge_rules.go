@@ -1336,11 +1336,14 @@ func (c *EdgeRuleCache) removeElement(el *list.Element) {
 // Reset drops every cached entry. Called by the gatewayd notify
 // loop on `db.NotifyEdgeRuleChanged`.
 type EdgeRuleMatcher interface {
-	// Converging reports whether the hostname is inside the short fail-closed
-	// window of a two-phase fleet policy mutation by ownerAccountID (the
-	// account owning the app the host resolves to; "" when none claims it).
-	// Another account's mutation never fences an owned host, and an app-wide
-	// (@app) mutation fences only ownerAppID's hosts.
+	// Converging reports whether a two-phase fleet policy mutation by
+	// ownerAccountID (the account owning the app the host resolves to; ""
+	// when none claims it) is pending on the hostname: prepared, not yet
+	// applied here. Another account's mutation never covers an owned host,
+	// and an app-wide (@app) mutation covers only ownerAppID's hosts. The
+	// host keeps serving its current rules meanwhile
+	// (ADR-20261101141123); only a route rule whose target stopped
+	// resolving fails closed instead of falling back to the source app.
 	Converging(host, ownerAccountID, ownerAppID string) bool
 	MatchRoute(ctx context.Context, host, path, method string) *EdgeRuleResolved
 	MatchRewrite(ctx context.Context, host, path, method string) *EdgeRuleRewriteResolved

@@ -19,6 +19,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/genslot"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproxy"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -133,6 +134,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	var usageReporter realtime.UsageReporter
 	var connectionSync realtime.ConnectionSyncer
 	var occupancyClient realtime.ManagedRealtimeOccupancyClient
+	var apidReader *apidgrpc.RealtimeHistoryClientImpl
 	if resumePreview || accessPreview || ticketPreview || usageEnabled || fairUse || occupancyPreview {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
@@ -168,6 +170,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if occupancyPreview && observedRole == role.RoleComputeOnly {
 			occupancyClient = reader
 		}
+		apidReader = reader
+	}
+	// Data API server keys may be keyed under a ring only apid holds (ADR
+	// 20261029202403 amendment 1): realtimed asks apid to match them, over
+	// the connection above or one dialed for that alone. Without one, a keyed
+	// server key is refused, not accepted.
+	if apidReader == nil {
+		if apidReader = dialCredentialReader(ctx, log); apidReader != nil {
+			defer func() { _ = apidReader.Close() }()
+		}
+	}
+	if apidReader != nil {
+		credhash.SetRemote(credhash.FamilyDataAPI, apidReader.CredentialMatcher().Remote())
 	}
 	// Live queries (ADR-20261016151947): apid registers each endpoint with the live
 	// routes of databases bound to its app.

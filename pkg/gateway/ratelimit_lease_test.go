@@ -372,7 +372,8 @@ func TestLeaseOutlastsASlowCommit(t *testing.T) {
 	hold := make(chan struct{})
 	bucket := &sharedBucket{clock: clock, hold: hold}
 	l, _ := leasingGateway(bucket, clock)
-	const rps, burst = 10.0, 10.0
+	// A burst of 20 is the smallest with a local allowance (one request).
+	const rps, burst = 10.0, 20.0
 	// The first request is admitted from the allowance and starts a lease
 	// that stalls in Postgres; the second has no allowance left and waits.
 	if !l.AllowWithCentralParams(t.Context(), "lease-app", rps, burst, leaseTestKey) {
@@ -407,6 +408,28 @@ func TestLeaseDropsIdleStates(t *testing.T) {
 // TestLeaseAdmissionStaysWithinTheADRBounds simulates N gateways with random
 // arrivals against one shared bucket and compares their admissions with an
 // exact token bucket fed the same arrivals.
+// A small burst, such as a sign-in throttle's, gets no local allowance: one
+// unverified request per gateway would be a large share of it, so every
+// admission is debited from the shared counter first.
+func TestLeaseSmallBurstAdmitsOnlyDebitedRequests(t *testing.T) {
+	clock := newFakeClock(time.Unix(1_700_000_000, 0))
+	bucket := &sharedBucket{clock: clock}
+	gateways := make([]*Limiter, 3)
+	for i := range gateways {
+		gateways[i], _ = leasingGateway(bucket, clock)
+	}
+	admitted := 0
+	for i := range 10 {
+		clock.Advance(10 * time.Millisecond)
+		if allow(gateways[i%len(gateways)], 0.1, 2) {
+			admitted++
+		}
+	}
+	if admitted > 2 {
+		t.Fatalf("admitted %d of 10 back-to-back requests at burst 2 across 3 gateways, want at most 2", admitted)
+	}
+}
+
 func TestLeaseAdmissionStaysWithinTheADRBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -444,7 +467,7 @@ func TestLeaseAdmissionStaysWithinTheADRBounds(t *testing.T) {
 			}
 			t.Logf("admitted %d, exact bucket %d, statements %d", admitted, exactAdmitted, bucket.statementCount())
 			n := float64(tc.gateways)
-			allowance := math.Max(1, math.Floor(defaultLeaseAllowanceFraction*tc.burst))
+			allowance := math.Floor(defaultLeaseAllowanceFraction * tc.burst)
 			lease := math.Max(1, math.Floor(defaultLeaseFraction*tc.burst))
 			if over := float64(admitted - exactAdmitted); over > n*allowance+1 {
 				t.Fatalf("admitted %d, exact bucket %d: %v over, want at most N*A = %v", admitted, exactAdmitted, over, n*allowance)

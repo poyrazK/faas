@@ -52,6 +52,9 @@ type applicationStatusError struct {
 func (e applicationStatusError) Error() string { return e.err.Error() }
 func (e applicationStatusError) Unwrap() error { return e.err }
 
+// Is makes an application status failure count as ErrAppAnswered.
+func (e applicationStatusError) Is(target error) bool { return target == ErrAppAnswered }
+
 // ErrDispatchRefused marks a 5xx answer from gatewayd-internal's dispatch
 // endpoint. The endpoint answers 200 with the app's response whenever the
 // app received the request, so a 5xx means the gateway refused or failed
@@ -65,6 +68,19 @@ type dispatchRefusedError struct{ err error }
 func (e dispatchRefusedError) Error() string        { return e.err.Error() }
 func (e dispatchRefusedError) Unwrap() error        { return e.err }
 func (e dispatchRefusedError) Is(target error) bool { return target == ErrDispatchRefused }
+
+// ErrAppAnswered marks a delivery that failed on the app's own answer: an
+// error status or a runner exception inside the gateway's 200 envelope. The
+// cron delivery metric counts it as app_error, not as a platform failure.
+var ErrAppAnswered = errors.New("sched: the app answered with an error")
+
+// appAnsweredError marks an app answer that is not an applicationStatusError
+// (an ordinary 5xx), keeping its message while matching ErrAppAnswered.
+type appAnsweredError struct{ err error }
+
+func (e appAnsweredError) Error() string        { return e.err.Error() }
+func (e appAnsweredError) Unwrap() error        { return e.err }
+func (e appAnsweredError) Is(target error) bool { return target == ErrAppAnswered }
 
 // ErrPermanentWake is the sentinel for wake errors that the drain
 // will never recover from (no such app, app PARKED, account deleted).
@@ -1077,7 +1093,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted())
-		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr, err)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
@@ -1160,7 +1176,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
-		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr, err)
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
@@ -1236,7 +1252,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		d.log.Warn("drain: fail classified cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
-	d.observeScheduledFailure(inv, retryAfter, budget, nil)
+	d.observeScheduledFailure(inv, retryAfter, budget, nil, ErrAppAnswered)
 	if retryAfter == 0 {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1262,7 +1278,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 		d.log.Warn("drain: settle uncertain cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
-	d.observeScheduledFailure(inv, retryAfter, budget, nil)
+	d.observeScheduledFailure(inv, retryAfter, budget, nil, dispatchErr)
 	if decision.Action == "hold" {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1310,13 +1326,19 @@ func (d *Drain) observeScheduledClaim(inv state.Invocation) {
 	d.ops.ObserveDelayedTaskScheduleLag(d.now().Sub(scheduledAt))
 }
 
-func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr error) {
+// observeScheduledFailure counts a failed delivery attempt. cause is the
+// delivery error; a final failure the app answered counts as app_error for
+// crons (delayed tasks keep failed).
+func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr, cause error) {
 	if failErr != nil {
 		return
 	}
 	outcome := wire.DelayedTaskDispatchRetry
 	if retryAfter == 0 {
 		outcome = wire.DelayedTaskDispatchFailed
+		if errors.Is(cause, ErrAppAnswered) {
+			outcome = wire.CronDeliveryAppError
+		}
 	} else if budget > 0 && inv.Attempts >= budget {
 		outcome = wire.DelayedTaskDispatchDeadLetter
 	}
@@ -1328,6 +1350,9 @@ func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Du
 func (d *Drain) observeScheduledDispatch(inv state.Invocation, outcome string) {
 	switch inv.Source {
 	case state.InvocationDelayedTask:
+		if outcome == wire.CronDeliveryAppError {
+			outcome = wire.DelayedTaskDispatchFailed
+		}
 		d.ops.ObserveDelayedTaskDispatch(outcome)
 	case state.InvocationCron:
 		d.ops.ObserveCronDelivery(outcome)

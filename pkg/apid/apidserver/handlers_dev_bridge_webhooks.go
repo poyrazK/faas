@@ -54,7 +54,7 @@ func (s *server) replayDevBridgeWebhook(w http.ResponseWriter, r *http.Request, 
 func (s *server) devBridgeWebhookSource(r *http.Request, account string, bridges state.DevBridgeStore, input api.ReplayDevBridgeWebhookRequest) (devbridge.Session, state.Invocation, *api.Problem) {
 	var original state.Invocation
 	session, err := bridges.DevBridgeByID(r.Context(), account, r.PathValue("id"))
-	if err != nil || session.AuthorizeRequest(time.Now(), input.RequestToken, account, session.Scope.EnvironmentID, session.Scope.TargetAppID) != nil {
+	if err != nil || session.AuthorizeRequest(r.Context(), time.Now(), input.RequestToken, account, session.Scope.EnvironmentID, session.Scope.TargetAppID) != nil {
 		return session, original, api.NewProblem(403, "dev_bridge_unauthorized", "Replay denied", "invalid development session")
 	}
 	original, err = s.store.InvocationByID(r.Context(), input.InvocationID)

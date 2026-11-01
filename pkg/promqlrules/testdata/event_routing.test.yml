@@ -21,7 +21,7 @@ tests:
         public_status: internal
       exp_annotations:
         summary: "Event routing has stopped on every schedd"
-        description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work and routed nothing, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
+        description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work, routed nothing and left events waiting over ten minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
         runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
 - name: one schedd still sweeping keeps routing alive
   interval: 1m
@@ -43,6 +43,8 @@ tests:
     values: '0+12x40'
   - series: 'schedd_event_routing_outcomes_total{outcome="routed",job="schedd",instance="a"}'
     values: '5+0x40'
+  - series: 'schedd_event_routing_oldest_pending_seconds{job="schedd",instance="a"}'
+    values: '0+60x40'
   alert_rule_test:
   - eval_time: 20m
     alertname: FaasEventRoutingStalled
@@ -54,8 +56,23 @@ tests:
         public_status: internal
       exp_annotations:
         summary: "Event routing has stopped on every schedd"
-        description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work and routed nothing, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
+        description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work, routed nothing and left events waiting over ten minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
         runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: one claim error on a quiet fleet does not page
+  interval: 1m
+  input_series:
+  - series: 'schedd_loop_work_duration_seconds_count{kind="event_fanout",job="schedd",instance="a"}'
+    values: '0+12x40'
+  - series: 'schedd_event_routing_outcomes_total{outcome="claim_error",job="schedd",instance="a"}'
+    values: '0x5 1+0x35'
+  - series: 'schedd_event_routing_outcomes_total{outcome="routed",job="schedd",instance="a"}'
+    values: '0+0x40'
+  - series: 'schedd_event_routing_oldest_pending_seconds{job="schedd",instance="a"}'
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: FaasEventRoutingStalled
+    exp_alerts: []
 - name: claim errors on one schedd while another routes
   interval: 1m
   input_series:

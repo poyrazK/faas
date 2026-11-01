@@ -30,7 +30,7 @@ with `gateway_access_key_env` and `gateway_secret_key_env` (and
 credential named by `access_key_env`, the only one that creates and deletes
 buckets (ADR-20261031122757). A backend without the gateway fields keeps one
 credential for all three. The gateway credential needs, on the backend's
-buckets (`gregale-*`) and on the access-log bucket the usage export reads:
+buckets (`gregale-*`):
 
 - objects: get, head, put, copy, delete, versions, tagging, retention and
   legal hold;
@@ -45,6 +45,14 @@ It must not allow `CreateBucket`, `DeleteBucket`, `PutBucketCORS`,
 same project and import a policy with those actions. Add the gateway fields
 only once `apid`, `s3-gatewayd` and `gatewayd-public` all run a release that
 knows them: older releases refuse a registry with unknown fields.
+
+On a compute node (`FAAS_S3_GATEWAY_ROLE=compute-only`, ADR-20261031122757)
+the gateway refuses to start unless the storage seal domain is staged and no
+fleet or host identity is (`FAAS_HOST_AGE_IDENTITY_PATH` unset), every backend
+names a gateway credential, and `transfer.max_bytes_per_second` sets its port
+share. No gateway runs the provider usage export: `apid` does, with the
+bucket-admin credential and the OVH application keys, so a compute node needs
+neither.
 
 Installing or changing the registry/provider environment also restarts
 `faas-gatewayd-public`. That daemon reads the registry at boot; restarting it

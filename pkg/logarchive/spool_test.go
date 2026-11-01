@@ -9,6 +9,7 @@
 package logarchive
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -286,5 +287,41 @@ func TestSpool_InstanceShare(t *testing.T) {
 	}
 	if _, err := s.Write("quiet", 1, "stdout", now, line); err != nil {
 		t.Fatalf("another instance refused while the budget has room: %v", err)
+	}
+}
+
+// A shipped upload gives its bytes back to the instance's share in both
+// upload modes. The whole-day commit used to release only the spool total,
+// so once an instance had spooled its share it failed with ErrSpoolFull for
+// the rest of the process, whatever had been shipped.
+func TestSpool_InstanceShareReleasedAfterShip(t *testing.T) {
+	for _, parts := range []bool{false, true} {
+		t.Run(map[bool]string{false: "whole-day", true: "part objects"}[parts], func(t *testing.T) {
+			sh, _, _ := newTestShipper(t, 7)
+			sh.cfg.PartObjects = parts
+			line := strings.Repeat("x", 512)
+			now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+			fill := func() {
+				t.Helper()
+				for i := 0; ; i++ {
+					if _, err := sh.spool.Write("chatty", int64(i), "stdout", now, line); err != nil {
+						if !errors.Is(err, ErrSpoolFull) {
+							t.Fatalf("write: %v", err)
+						}
+						return
+					}
+				}
+			}
+			fill()
+			if err := sh.spool.CloseAll(); err != nil {
+				t.Fatal(err)
+			}
+			if n, _, err := sh.RunOnce(context.Background()); err != nil || n != 1 {
+				t.Fatalf("RunOnce = %d, %v; want the instance's day shipped", n, err)
+			}
+			if _, err := sh.spool.Write("chatty", 1, "stdout", now, line); err != nil {
+				t.Fatalf("instance still refused after its bytes were shipped: %v", err)
+			}
+		})
 	}
 }

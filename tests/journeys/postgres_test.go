@@ -21,11 +21,16 @@ import (
 // or a recover's release of the provider hold.
 const pgDatabaseWait = 10 * time.Minute
 
+// pgIdleSuspend is the provider's idle suspend timeout for a scale-to-zero
+// database (docs/managed-postgres.md: 300 seconds).
+const pgIdleSuspend = 5 * time.Minute
+
 // postgresJourney is the state TestManagedPostgres's steps share.
 type postgresJourney struct {
 	tg               *target
 	app, base        string
 	region           string
+	classes          []string // service classes the plan offers
 	databaseLimit    int
 	db, restored     string // database names
 	bindings         map[string]string
@@ -68,6 +73,9 @@ func TestManagedPostgres(t *testing.T) {
 		j.firstAt = j.write(t, "DATABASE_URL", "first")
 		j.expectRows(t, "DATABASE_URL", "first")
 	})
+	s.check("credential_rotation", j.rotateCredential)
+	s.check("resize", j.resize)
+	s.check("idle_wake", j.idleWake)
 	s.step("restore_point_in_time", j.restoreBetweenWrites)
 	s.step("purge_restored", func(t *testing.T) {
 		if j.restore == "" {
@@ -92,6 +100,10 @@ func (j *postgresJourney) available(t *testing.T) {
 		t.Fatalf("managed PostgreSQL provisioning is closed for this account: %s", compact(doc))
 	}
 	j.region, j.databaseLimit = str(doc, "region"), int(num(doc, "database_limit"))
+	classes, _ := field(doc, "service_classes").([]any)
+	for _, class := range classes {
+		j.classes = append(j.classes, fmt.Sprint(class))
+	}
 	if j.region == "" || j.databaseLimit < 1 {
 		t.Fatalf("no region or database allowance: %s", compact(doc))
 	}
@@ -193,13 +205,59 @@ func (j *postgresJourney) expectRows(t *testing.T, key string, want ...string) {
 	}
 }
 
+// rotateCredential rotates the app's binding and restarts the app on the new
+// credential; the rows must still be there.
+func (j *postgresJourney) rotateCredential(t *testing.T) {
+	id := j.bindings[j.db]
+	before := object(t, j.tg.ok(t, time.Minute, "postgres", "bindings", "get", id).stdout)
+	rotated := object(t, j.tg.ok(t, 7*time.Minute, "postgres", "bindings", "rotate", id, "--wait").stdout)
+	if num(rotated, "credential_generation") <= num(before, "credential_generation") || str(rotated, "rotation_pending") == "true" {
+		t.Fatalf("rotation did not finish with a new credential: before %s, after %s", compact(before), compact(rotated))
+	}
+	j.tg.ok(t, 12*time.Minute, "app", j.app, "restart", "--fresh", "--wait", "--timeout", "10m")
+	j.expectRows(t, "DATABASE_URL", "first")
+}
+
+// resize moves the database to burstable when the plan offers it (Pro and
+// Scale); the rows must survive the compute change.
+func (j *postgresJourney) resize(t *testing.T) {
+	if !slices.Contains(j.classes, "burstable") {
+		t.Skipf("the plan offers %v, no class to resize to", j.classes)
+	}
+	h := randomHex(t, 32)
+	request := h[0:8] + "-" + h[8:12] + "-4" + h[13:16] + "-a" + h[17:20] + "-" + h[20:32]
+	j.tg.ok(t, 2*time.Minute, "postgres", "resize", j.db, "--class", "burstable", "--request-id", request)
+	eventually(t, "resize succeeded", 10*time.Minute, 10*time.Second, func() (bool, string) {
+		doc := object(t, j.tg.ok(t, time.Minute, "postgres", "resize-status", j.db, request).stdout)
+		if code := str(doc, "last_error_code"); code != "" {
+			t.Fatalf("resize failed with %s: %s", code, compact(doc))
+		}
+		return str(doc, "state") == "succeeded", compact(doc)
+	})
+	if doc := object(t, j.tg.ok(t, time.Minute, "postgres", "get", j.db).stdout); str(doc, "service_class") != "burstable" {
+		t.Errorf("resized database reads as %s", compact(doc))
+	}
+	j.expectRows(t, "DATABASE_URL", "first")
+}
+
+// idleWake leaves the app and the database idle past the database's suspend
+// timeout, then times the first read: both wake for it (#6146 PG-07, the
+// application-plus-database wake latency).
+func (j *postgresJourney) idleWake(t *testing.T) {
+	time.Sleep(pgIdleSuspend + time.Minute)
+	doc := object(t, j.tg.ok(t, time.Minute, "postgres", "get", j.db).stdout)
+	t.Logf("compute state after %s idle: %q", pgIdleSuspend+time.Minute, str(doc, "health.compute_state"))
+	start := time.Now()
+	j.expectRows(t, "DATABASE_URL", "first")
+	t.Logf("metric postgres_idle_wake_read_s=%.1f", time.Since(start).Seconds())
+}
+
 // restoreBetweenWrites writes a second row 20 s after the first, restores
 // the point halfway between them into a new database, and reads it through
-// a second binding: it must hold the first row only.
+// a second binding: it must hold the first row only. On a one-database plan
+// the copy goes past the limit and holds the restore slot
+// (ADR-20261031123259).
 func (j *postgresJourney) restoreBetweenWrites(t *testing.T) {
-	if j.databaseLimit < 2 {
-		t.Skipf("the plan allows %d database; a restore needs room for a second", j.databaseLimit)
-	}
 	first, err := time.Parse(time.RFC3339Nano, j.firstAt)
 	if err != nil {
 		t.Fatalf("first row time %q: %v", j.firstAt, err)
@@ -216,6 +274,9 @@ func (j *postgresJourney) restoreBetweenWrites(t *testing.T) {
 	doc := j.waitReady(t, j.restored)
 	if str(doc, "restore_point_in_time") == "" {
 		t.Errorf("restored database does not record its point in time: %s", compact(doc))
+	}
+	if j.databaseLimit == 1 && str(doc, "restore_slot_until") == "" {
+		t.Errorf("a restore past a one-database limit does not hold the restore slot: %s", compact(doc))
 	}
 	j.attach(t, j.restored, "RESTORED_DATABASE_URL")
 	j.expectRows(t, "RESTORED_DATABASE_URL", "first")

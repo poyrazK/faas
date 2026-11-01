@@ -1846,6 +1846,9 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			workloads[key] = workload
 			available[key] = struct{}{}
 		}
+		if reasons := reconcile.WorkloadPlanAdmissionReasons(account.Plan, previewedWorkloads(workloads, parentApp, dependencies)); len(reasons) > 0 {
+			return reconcile.Result{}, previewSetupFailure("the pull request does not fit the %s plan: %s", account.Plan, strings.Join(reasons, "; "))
+		}
 		headValues = prHeadComposeValues(tree.FS(), scan, s.scanOptions(binding.AccountID), previewLimits)
 	}
 	// Source fetching and scanning can take longer than a PR head update.

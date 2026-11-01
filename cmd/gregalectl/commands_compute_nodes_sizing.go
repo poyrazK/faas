@@ -27,6 +27,7 @@ type nodeSizingReport struct {
 	HostCPUs           int    `json:"host_cpus"`
 	TenantCPUs         int    `json:"tenant_cpus"`
 	Edge               bool   `json:"edge"`
+	ObjectGateway      bool   `json:"object_gateway"`
 	NonTenantReserveMB int    `json:"non_tenant_reserve_mb"`
 	TenantSliceMaxMB   int    `json:"tenant_slice_max_mb"`
 	TenantBudgetMB     int    `json:"tenant_budget_mb"`
@@ -40,10 +41,14 @@ type nodeSizingReport struct {
 // drops the control-plane slice; an unknown or single-box role keeps the
 // spec §13 reserve, because under-reserving an unrecognised host is the
 // dangerous direction. A compute-only host that runs the app edge
-// (ADR-1343) also holds back the edge's CPU and RAM.
-func nodeSizingShape(r role.Role, edge bool) api.NodeRoleShape {
+// (ADR-1343) also holds back the edge's CPU and RAM, and one that also runs
+// the S3 gateway (ADR-20261031122757) holds back the gateway's too.
+func nodeSizingShape(r role.Role, edge, objectGateway bool) api.NodeRoleShape {
 	if r != role.RoleComputeOnly {
 		return api.NodeShapeSingleBox
+	}
+	if edge && objectGateway {
+		return api.NodeShapeComputeEdgeObjectGateway
 	}
 	if edge {
 		return api.NodeShapeComputeEdge
@@ -62,6 +67,7 @@ func cmdComputeNodesSizing(args []string) int {
 	// `*jsonOut || jsonOutput` shape every other gregalectl command uses.
 	jsonOut := fs.Bool("json", false, "emit the machine-readable report")
 	edge := fs.Bool("edge", false, "the host runs the app edge (ADR-1343): hold back its CPU and RAM")
+	objectGateway := fs.Bool("object-gateway", false, "the edge host also runs the S3 gateway (ADR-20261031122757): hold back its CPU and RAM")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -70,14 +76,19 @@ func cmdComputeNodesSizing(args []string) int {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes sizing: --edge applies only to a compute-only host, got role %q\n", resolved)
 		return 2
 	}
+	if *objectGateway && !*edge {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes sizing: --object-gateway applies only with --edge: the gateway's tunnel runs beside the app edge")
+		return 2
+	}
 	memMB, cpus := hostsize.MemTotalMB(), hostsize.CPUs()
-	sizing := api.DeriveNodeSizingForRole(memMB, cpus, nodeSizingShape(resolved, *edge))
+	sizing := api.DeriveNodeSizingForRole(memMB, cpus, nodeSizingShape(resolved, *edge, *objectGateway))
 	report := nodeSizingReport{
 		Role:               string(resolved),
 		HostMemTotalMB:     memMB,
 		HostCPUs:           cpus,
 		TenantCPUs:         sizing.TenantCPUs,
 		Edge:               *edge,
+		ObjectGateway:      *objectGateway,
 		NonTenantReserveMB: sizing.NonTenantReserveMB,
 		TenantSliceMaxMB:   sizing.TenantSliceMaxMB,
 		TenantBudgetMB:     sizing.TenantBudgetMB,

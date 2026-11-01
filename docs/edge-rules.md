@@ -472,10 +472,11 @@ the app woken and capacity found. `total_deadline_ms` (optional) bounds the
 whole request from arrival, including upload, wake and queueing. Both are
 capped by your plan: 30 s on Free, 60 s on Hobby, 5 minutes on Pro and
 15 minutes on Scale. A request past its budget before the response starts
-gets 503 `request_budget_exceeded`. A client may lower or raise the execution
-budget within the plan ceiling with the `x-faas-budget-ms` header, or the
-header named in `allow_override_header`; it never extends
-`total_deadline_ms`.
+gets 503 `request_budget_exceeded`. A client may lower the execution budget
+with the `x-faas-budget-ms` header. To let callers also raise it, within the
+plan ceiling, name a header in `allow_override_header` that only your trusted
+callers send; any caller can send `x-faas-budget-ms`, so on its own it never
+raises the rule's budget. Neither header extends `total_deadline_ms`.
 
 ### cache
 
@@ -566,10 +567,14 @@ apps accept this kind.
 
 Creating, changing or deleting a rule returns once the gateways serving your
 app have the new rules, and from then on no gateway serves the old ones.
-While a change is being applied, requests to the hosts it covers get 503
-`capacity_unavailable` ("Edge policy update in progress") with
-`Retry-After: 1`. If the gateways cannot be reached, the change is refused
-with 503 and nothing changes; retry it. Changes to one account's rules are
+While a change is being applied, your hosts keep serving: each gateway uses
+the rules it has until it takes the new ones, so for a second or two some
+requests run under the old rules and some under the new. Each request runs
+under one set from start to finish. The one exception is a `route` rule
+whose target app is being renamed: until the change lands, its requests get
+503 `traffic_policy_unavailable` with `Retry-After: 1` rather than being
+served by the app the host belongs to. If the gateways cannot be reached,
+the change is refused with 503 and nothing changes; retry it. Changes to one account's rules are
 applied one at a time; other accounts' changes never wait for yours.
 
 Two people editing the same app's rules at once cannot overwrite each other:

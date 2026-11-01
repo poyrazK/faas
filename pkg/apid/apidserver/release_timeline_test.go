@@ -53,7 +53,7 @@ func TestReleaseTimelineFollowsACanaryThroughApprovalAndAdvance(t *testing.T) {
 		t.Fatalf("events = %+v", waiting.Events)
 	}
 
-	if rec := f.e.Do(t, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+	if rec := f.e.DoSession(t, "", http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "looks clean"}, nil); rec.Code != http.StatusOK {
 		t.Fatalf("approve = %d %s", rec.Code, rec.Body)
 	}

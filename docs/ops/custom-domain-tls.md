@@ -58,16 +58,27 @@ abort direct connections.
 
 ## Operate
 
-Alerts `FaasCustomDomainTLSAskErrors` (page), `FaasCustomDomainTLSAskOverload`
-and `FaasCustomDomainCertIssuanceFailing` cover this path; see
+Alerts `FaasCustomDomainTLSAskErrors` (page), `FaasCustomDomainTLSAskOverload`,
+`FaasCustomDomainTLSFleetBudget` and `FaasCustomDomainCertIssuanceFailing`
+cover this path; see
 `docs/runbooks/FaasCustomDomainTLS.md`.
 
 - `gateway_tls_on_demand_ask_total{decision}` on gatewayd-public's control
   listener counts every check. `deny_error` means the store lookup failed
   (Postgres); certificates already in Caddy's memory keep working, but
   reloads, renewals and new issuance are refused until it recovers.
-  `deny_wildcard_budget` means a wildcard reached
-  `OnDemandTLSWildcardNewHostsPerWeek` new hosts in 7 days. A sustained
+  New hosts below wildcards draw on three budgets (ADR-520 amendment 1):
+  `deny_wildcard_budget` means the host's registered domain reached
+  `OnDemandTLSRegisteredDomainNewHostsPerWeek` new hosts in 7 days across
+  all its wildcards, `deny_owner_budget` that the wildcard's organization or
+  account reached `OnDemandTLSOwnerNewHostsPerWeek`, and `deny_fleet_budget`
+  that the deployment reached `OnDemandTLSFleetNewHostsPer3h` in 3 hours.
+  `deny_backoff` means the edge asked for a host again and again right after
+  allowing it, which is what failing ACME orders look like; it is refused for
+  an hour, doubling on repeats up to a day, and a gatewayd-public restart
+  forgets it. `deny_not_allowlisted` means the wildcard's owner set a
+  host allowlist (`gregale domain host get`) that does not name the
+  host; it is the customer's choice, not a fault. A sustained
   `deny_overload` means handshakes with unknown server names are arriving
   faster than `OnDemandTLSAskLookupsPerSecond`, usually a scan; legitimate
   names are retried on the client's next handshake. Hostnames with no
@@ -81,7 +92,10 @@ and `FaasCustomDomainCertIssuanceFailing` cover this path; see
   (`gregale domains doctor`, `cert_status`). A probe that fails within
   15 minutes of verification reports `pending` while the edge issues.
 - Wildcard admissions are in `custom_domain_tls_hosts`. Deleting a row lets
-  that host be admitted again later and count against the budget again.
+  that host be admitted again later and count against the budget again. The
+  budgets count `custom_domain_tls_admissions`, which keeps 7 days of new
+  hosts even after their wildcard is deleted; deleting its rows refills the
+  budgets they counted toward.
 
 ## Disable
 

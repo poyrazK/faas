@@ -10,12 +10,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -88,53 +86,23 @@ func readDataAPIMigrations(dir string) ([]dataAPIArchiveFile, error) {
 	return files, nil
 }
 
-// buildDataAPISingleAppArchive writes the pinned runtime plus the project's
+// buildDataAPISingleAppArchive writes the runtime plus the project's
 // migrations as one source archive. The Procfile release line and the
 // Dockerfile's migration copy are generated; customer files cannot replace
 // runtime files because they live only under migrations/.
-func buildDataAPISingleAppArchive(migrationsDir, releaseCommand, dest string) error {
+func buildDataAPISingleAppArchive(runtime dataAPIRuntimeBundle, migrationsDir, releaseCommand, dest string) error {
 	migrations, err := checkedDataAPIMigrations(migrationsDir, releaseCommand)
 	if err != nil {
 		return err
 	}
-	runtime, err := fs.Sub(templates.FS, "data-api")
-	if err != nil {
-		return err
-	}
-	var files []dataAPIArchiveFile
-	err = fs.WalkDir(runtime, ".", func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if p == "." {
-			return nil
-		}
-		if strings.HasPrefix(path.Base(p), ".") || p == "test" {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if d.IsDir() || p == "Procfile" || p == "Dockerfile" {
-			return nil
-		}
-		content, readErr := fs.ReadFile(runtime, p)
-		if readErr != nil {
-			return readErr
-		}
-		files = append(files, dataAPIArchiveFile{name: p, mode: 0o644, content: content})
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	dockerfile, err := fs.ReadFile(runtime, "Dockerfile")
-	if err != nil {
-		return err
+	dockerfile, ok := runtime.Files["Dockerfile"]
+	if !ok {
+		return errors.New("data-api runtime has no Dockerfile")
 	}
 	if strings.Count(string(dockerfile), dataAPISingleAppDockerfileHook) != 1 {
 		return errors.New("data-api runtime Dockerfile changed; cannot add migrations")
 	}
+	files := dataAPIRuntimeArchiveFiles(runtime, "Dockerfile", "Procfile")
 	// Release tasks run in the runtime image, which already has the pinned pg driver.
 	files = append(files,
 		dataAPIArchiveFile{name: "Dockerfile", mode: 0o644, content: []byte(strings.Replace(string(dockerfile), dataAPISingleAppDockerfileHook, "COPY migrations ./migrations\n"+dataAPISingleAppDockerfileHook, 1))},
@@ -208,17 +176,32 @@ func attachDataAPIMigrationBinding(ctx context.Context, client *api.Client, app 
 
 // deploySingleAppDataAPI uploads the runtime and migrations; the deployment's
 // release task applies migrations before new instances load the schema.
-func deploySingleAppDataAPI(ctx context.Context, slug, scope, migrationsDir, releaseCommand, timeout string) int {
+func deploySingleAppDataAPI(ctx context.Context, client *api.Client, slug, scope, migrationsDir, releaseCommand, timeout string) int {
+	runtime, err := resolveDataAPIRuntime(ctx, client, slug)
+	if err != nil {
+		return printErr("Could not get the Data API runtime", err)
+	}
+	reportDataAPIRuntime(runtime)
+	return deployDataAPIArchive(ctx, slug, scope, timeout, func(dest string) error {
+		return buildDataAPISingleAppArchive(runtime, migrationsDir, releaseCommand, dest)
+	})
+}
+
+// deployDataAPIArchive writes the source archive and deploys it to the app.
+func deployDataAPIArchive(ctx context.Context, slug, scope, timeout string, write func(dest string) error) int {
 	dir, err := os.MkdirTemp("", "gregale-data-api-*")
 	if err != nil {
 		return printErr("Could not prepare the Data API archive", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	archive := filepath.Join(dir, "data-api.tar.gz")
-	if err = buildDataAPISingleAppArchive(migrationsDir, releaseCommand, archive); err != nil {
+	if err = write(archive); err != nil {
 		return printErr("Could not build the Data API archive", err)
 	}
-	deployArgs := []string{"--name", slug, "--tarball", archive, "--dockerfile", "--healthcheck-path", "/healthz", "--no-doctor", "--timeout", timeout}
+	deployArgs := []string{"--name", slug, "--tarball", archive, "--dockerfile", "--healthcheck-path", "/healthz", "--no-doctor"}
+	if timeout != "" {
+		deployArgs = append(deployArgs, "--timeout", timeout)
+	}
 	if scope != api.DefaultEnvScope {
 		deployArgs = append(deployArgs, "--environment", scope)
 	}
@@ -234,8 +217,10 @@ func cmdDataAPIDeploy(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *migrations == "" || api.ValidateScope(*scope) != nil || !validDataAPIReleaseCommand(*releaseCommand) {
-		PrintUsage(os.Stderr, "usage: gregale data-api deploy NAME --migrations DIR [--release-command COMMAND] [--env SCOPE] [--timeout DURATION]", "data-api")
+	releaseCommandSet := false
+	fs.Visit(func(f *flag.Flag) { releaseCommandSet = releaseCommandSet || f.Name == "release-command" })
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || (releaseCommandSet && *migrations == "") || api.ValidateScope(*scope) != nil || !validDataAPIReleaseCommand(*releaseCommand) {
+		PrintUsage(os.Stderr, "usage: gregale data-api deploy NAME [--migrations DIR [--release-command COMMAND]] [--env SCOPE] [--timeout DURATION]", "data-api")
 		return 1
 	}
 	client, err := authedClient()
@@ -250,5 +235,9 @@ func cmdDataAPIDeploy(args []string) int {
 	if _, err = client.UpdateApp(ctx, fs.Arg(0), update); err != nil {
 		return printErr("Could not set the Data API lifecycle hooks", err)
 	}
-	return deploySingleAppDataAPI(ctx, fs.Arg(0), *scope, *migrations, *releaseCommand, *timeout)
+	if *migrations == "" {
+		// The runtime alone: an upgrade, or an API whose schema is managed elsewhere.
+		return deployDataAPIRuntime(ctx, client, fs.Arg(0), *scope, *timeout)
+	}
+	return deploySingleAppDataAPI(ctx, client, fs.Arg(0), *scope, *migrations, *releaseCommand, *timeout)
 }

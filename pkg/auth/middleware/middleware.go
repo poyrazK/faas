@@ -54,6 +54,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -112,6 +114,23 @@ type Authenticator interface {
 // Authenticator lets existing embedders adopt deploy tokens incrementally.
 type DeployTokenAuthenticator interface {
 	AuthenticateDeployToken(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
+}
+
+// DeploymentAppResolver is an optional extension that names the app a
+// deployment belongs to, so a deploy token can follow the deployments of its
+// own app (ADR-20261031162858). Without it a deploy token reads no
+// /v1/deployments route.
+type DeploymentAppResolver interface {
+	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
+}
+
+// deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
+// token may read, for a deployment of its own app: the ones
+// api.ScopesDeploymentReadSurface admits for deploy:write, which every CLI
+// deploy polls after it submits (ADR-20261031162858).
+var deployTokenDeploymentReads = map[string]bool{
+	"GET /v1/deployments/{id}":        true,
+	"GET /v1/deployments/{id}/status": true,
 }
 
 // PlatformTenantAccessTokenAuthenticator resolves a tenant-bound, explicitly
@@ -696,16 +715,22 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					// handlers resolve it (appaccess.Authorize refuses a token
 					// bound to another app) instead of from the path here.
 					uploadRoute := IsUploadSessionPath(r.URL.Path)
-					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute {
+					// A deploy follows the deployment it created; the route
+					// is bound by the deployment's app, not a path slug.
+					deploymentRead := deployTokenDeploymentReads[r.Pattern]
+					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead {
 						api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug} and /v1/uploads"))
+							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments"))
 						return
 					}
 					var bound bool
 					var bindErr error
-					if uploadRoute {
+					switch {
+					case uploadRoute:
 						bound = key.AppID != ""
-					} else {
+					case deploymentRead:
+						bound, bindErr = m.deployTokenBoundToDeployment(r, key)
+					default:
 						bound, bindErr = m.deployTokenBoundTo(r, key)
 					}
 					if bindErr != nil {
@@ -713,10 +738,14 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						return
 					}
 					if !bound {
-						// Same 404 shape LoadApp returns for a cross-app or
-						// cross-account slug probe.
+						// Same 404 shape LoadApp and the deployment reads return
+						// for a cross-app or cross-account probe.
+						detail := "no such app"
+						if deploymentRead {
+							detail = "no such deployment"
+						}
 						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-							"Not found", "no such app"))
+							"Not found", detail))
 						return
 					}
 					if !acct.Active() {
@@ -1623,6 +1652,26 @@ func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool
 		return false, err
 	}
 	return app.ID == key.AppID, nil
+}
+
+// deployTokenBoundToDeployment reports whether the {id} of a deployment read
+// names a deployment of the app the deploy token is bound to.
+func (m *Middleware) deployTokenBoundToDeployment(r *http.Request, key state.APIKey) (bool, error) {
+	resolver, ok := m.Authn.(DeploymentAppResolver)
+	id := r.PathValue("id")
+	// A malformed id names no deployment: 404, never a store error.
+	wellFormed := uuid.Validate(id) == nil
+	if !ok || key.AppID == "" || !wellFormed {
+		return false, nil
+	}
+	appID, err := resolver.DeploymentAppID(r.Context(), id)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return appID == key.AppID, nil
 }
 
 // --- scope helpers -------------------------------------------------------

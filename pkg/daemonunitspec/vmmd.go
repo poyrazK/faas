@@ -175,8 +175,9 @@ func UnitVmmd() daemonunit.Unit {
 		// So: no MemoryHigh (it cannot do its job against unreclaimable
 		// shmem), and MemoryMax deliberately equal to the slice ceiling —
 		// vmmd is bounded BY ITS SLICE, not by a tighter per-unit cap that
-		// would really be a cap on jail residency. imaged sets 4G on the
-		// same reasoning. The CI hardening gate still sees a MemoryMax.
+		// would really be a cap on jail residency. imaged also takes the
+		// slice ceiling, for its scanner's page cache. The CI hardening
+		// gate still sees a MemoryMax.
 		//
 		// The remaining design smell is that jail tmpfs is charged to a
 		// control-plane slice at all; sizing that properly (or moving

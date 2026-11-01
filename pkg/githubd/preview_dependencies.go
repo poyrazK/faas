@@ -239,9 +239,9 @@ func withParentAccessGates(preview, parent state.App) state.App {
 
 // withAccessGates copies the access and egress gates of from onto a PR
 // preview. A preview answers on a guessable pr-<n>-<slug> host and runs the PR
-// head, so the preview of an IP-allowlisted, password-protected, signed-only
-// or egress-restricted app must keep those gates; the developer preview API
-// already copies them.
+// head, so the preview of an IP-allowlisted, password-protected, signed-only,
+// tenant-only or egress-restricted app must keep those gates, and its deploys
+// the production app's security posture policy (ADR-20261031180000).
 func withAccessGates(preview, from state.App) state.App {
 	preview.RequireAuthn = from.RequireAuthn
 	preview.PublicAuthMode = from.PublicAuthMode
@@ -250,7 +250,21 @@ func withAccessGates(preview, from state.App) state.App {
 	preview.ConsumerAuthMode = from.ConsumerAuthMode
 	preview.RequireSigned = from.RequireSigned
 	preview.EgressAllowlist = append([]netip.Prefix(nil), from.EgressAllowlist...)
+	preview.PlatformTenantRequired = from.PlatformTenantRequired
+	preview.SecurityPolicy = from.SecurityPolicy
 	return preview
+}
+
+// previewedWorkloads is the PR head's declaration of every workload the
+// preview builds: the bound app's and its dependencies'.
+func previewedWorkloads(workloads map[string]reposcan.Workload, parent state.App, dependencies []state.App) []reposcan.Workload {
+	out := make([]reposcan.Workload, 0, len(dependencies)+1)
+	for _, app := range append([]state.App{parent}, dependencies...) {
+		if workload, ok := workloads[strings.ToLower(app.WorkloadName)]; ok {
+			out = append(out, workload)
+		}
+	}
+	return out
 }
 
 func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time, policy state.GitHubDeployPolicy) (state.App, error) {

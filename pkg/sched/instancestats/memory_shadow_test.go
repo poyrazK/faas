@@ -85,6 +85,28 @@ func TestReaderMeasuredMB(t *testing.T) {
 	}
 }
 
+// adr: 20261031190030 — a frozen instance is charged its latest sample: a
+// running one keeps the window's p95, but the memory a compression frees from
+// a paused VM reached admission only ten minutes later.
+func TestFrozenInstancesSkipThePeakHold(t *testing.T) {
+	r := NewReader()
+	p := &Poller{Reader: r}
+	t0 := time.Unix(1_800_000_000, 0)
+	tick := func(at time.Time, runningMB, frozenMB float64) {
+		p.publishMemoryShadow([]state.Instance{
+			{ID: "a", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+			{ID: "b", NodeID: "n1", State: string(state.StateFrozen), RAMMB: 1024},
+		}, []InstanceStat{{InstanceID: "a", RSSMB: runningMB}, {InstanceID: "b", RSSMB: frozenMB}}, at)
+	}
+	tick(t0, 400, 400)
+	at := t0.Add(2 * time.Duration(api.MeasuredChargeSampleSeconds) * time.Second)
+	tick(at, 100, 40) // b was compressed
+	// a: the p95 of 400 and 100 is 400, x1.25 = 500. b: 40 x 1.25 = 50.
+	if mb, _, ok := r.MeasuredMB("n1", at); !ok || mb != 500+50 {
+		t.Fatalf("MeasuredMB = %d, %v; want 550", mb, ok)
+	}
+}
+
 // adr: 20261017 connection survival, §2 memory (the ADR-909 amendment):
 // a node's instance bridges add to its measured charge and reserve nothing.
 func TestMemoryShadowChargesInstanceBridges(t *testing.T) {
