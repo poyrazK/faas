@@ -3,8 +3,10 @@ package state_test
 import (
 	"errors"
 	"testing"
+	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -15,31 +17,30 @@ import (
 // forever and none of the account's data was deleted (DPA erasure).
 func TestPg_DeleteAccount_ErasesAnAccountThatRanJobs(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
-	acct, err := s.CreateAccount(ctx, "jobs-erasure@example.com", api.PlanPro)
-	if err != nil {
+	job, run, tasks := pgJobsSeed(t, s, ctx, "erasure")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	instanceID := uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 128, nodeID, instanceID, uuid.NewString(), time.Now().Add(5*time.Minute), nodeID); err != nil {
+		t.Fatalf("claim job task: %v", err)
+	}
+	if err := s.MarkAccountDeletionPending(ctx, job.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	var jobID string
-	if err := pool.QueryRow(ctx, `insert into jobs (account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, command)
-		values ($1, 'batch', 'nightly', 'registry.example/job@sha256:0000000000000000000000000000000000000000000000000000000000000000', 256, 60, 1, 0, '{}')
-		returning id`, acct.ID).Scan(&jobID); err != nil {
-		t.Fatalf("seed job: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `insert into instances (kind, job_id, state, ram_mb, node_id) values ('job_task', $1, 'stopped', 256, $2)`,
-		jobID, resolveDefaultLocal(t, ctx, s)); err != nil {
-		t.Fatalf("seed job-task instance: %v", err)
-	}
-	if err := s.MarkAccountDeletionPending(ctx, acct.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.DeleteAccount(ctx, acct.ID); err != nil {
+	if err := s.DeleteAccount(ctx, job.AccountID); err != nil {
 		t.Fatalf("DeleteAccount: %v", err)
 	}
-	if _, err := s.AccountByID(ctx, acct.ID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := s.AccountByID(ctx, job.AccountID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("account after erasure: %v, want ErrNotFound", err)
 	}
-	var left int
-	if err := pool.QueryRow(ctx, `select count(*) from instances where job_id = $1`, jobID).Scan(&left); err != nil || left != 0 {
-		t.Fatalf("job-task instances left = %d (%v), want 0", left, err)
+	for _, q := range []string{
+		`select count(*) from instances where job_id = $1`,
+		`select count(*) from job_tasks where run_id in (select id from job_runs where job_id = $1)`,
+		`select count(*) from jobs where id = $1`,
+	} {
+		var left int
+		if err := pool.QueryRow(ctx, q, job.ID).Scan(&left); err != nil || left != 0 {
+			t.Fatalf("%s = %d (%v), want 0", q, left, err)
+		}
 	}
 }

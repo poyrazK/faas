@@ -27940,6 +27940,14 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		   where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 		{"instances", `delete from instances
 		   where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
+		// Job-task instances have no app_id, and instances.job_id is ON DELETE
+		// RESTRICT, so the accounts cascade to jobs below failed on them and
+		// an account that ever ran a job could not be erased. Their tasks
+		// point at them (job_tasks.instance_id, NO ACTION), so tasks go first;
+		// the accounts cascade removes the jobs and runs.
+		{"job_tasks", `delete from job_tasks
+		   where run_id in (select id from job_runs where account_id = $1 or job_id in (select id from jobs where account_id = $1))`},
+		{"job_instances", `delete from instances where job_id in (select id from jobs where account_id = $1)`},
 		{"snapshots", `delete from snapshots
 		   where deployment_id in
 		     (select id from deployments where app_id in
