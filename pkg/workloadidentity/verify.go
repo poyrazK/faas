@@ -27,6 +27,10 @@ const DataAPIConnectionsAudience = "gregale:data-api:connections"
 // DataAPIUsageAudience isolates runtime usage reports (ADR-20261019102108).
 const DataAPIUsageAudience = "gregale:data-api:usage"
 
+// AgentsAudience fences a stateless agent's callback URL issuance
+// (ADR-20261030125501) from other token uses.
+const AgentsAudience = "gregale:agents"
+
 type Verifier struct {
 	keys   jose.JSONWebKeySet
 	issuer string
