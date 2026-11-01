@@ -830,3 +830,51 @@ func TestRenderManifestAnsibleFiles_LogArchive(t *testing.T) {
 		}
 	}
 }
+
+// ADR-20261031122757: object_storage.compute_nodes runs the object gateway on
+// each compute node with the gateway-only credential and its port share,
+// rendered from the host's port speed; the control plane gets none of it.
+func TestRenderManifestAnsibleFiles_ComputeObjectGateway(t *testing.T) {
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      port_mbps: 1000\n", 1) +
+		"public_edge:\n  compute_nodes: true\n" +
+		"object_storage:\n  gateway: managed\n  config_src: /operator/object-storage.json\n  provider_env_src: /operator/provider.env\n  compute_nodes: true\n  gateway_provider_env_src: /operator/gateway-provider.env\n"
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var controlVars, computeVars string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			controlVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	// 1,000 Mbit/s is 125,000,000 bytes/s; 30% of it is 37,500,000.
+	for _, want := range []string{
+		"faas_object_gateway_on_compute_nodes: true",
+		`faas_object_storage_config_src: "/operator/object-storage.json"`,
+		`faas_object_storage_gateway_provider_env_src: "/operator/gateway-provider.env"`,
+		"faas_object_gateway_max_bytes_per_second: 37500000",
+	} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute host vars missing %q:\n%s", want, computeVars)
+		}
+	}
+	if strings.Contains(computeVars, "provider_env_src: \"/operator/provider.env\"") {
+		t.Errorf("compute host got the bucket-admin credential:\n%s", computeVars)
+	}
+	if strings.Contains(controlVars, "faas_object_gateway_") || strings.Contains(controlVars, "gateway_provider_env_src") {
+		t.Errorf("control host got compute gateway vars:\n%s", controlVars)
+	}
+}

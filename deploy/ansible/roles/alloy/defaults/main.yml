@@ -49,6 +49,7 @@ alloy_journal_units:
   - faas-livequeryd.service
   - faas-maild.service
   - faas-s3-gatewayd.service
+  - faas-s3-gatewayd-compute.service
   - faas-cloudflared.service
   # Host helpers and timers.
   - faas-serving-probe.service

@@ -1,0 +1,14 @@
+---
+- name: s3_gateway_compute_service — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-s3-gatewayd-compute
+
+# A node join defers service handlers: the node starts drained and the
+# gateway starts later with gatewayd-internal.
+- name: s3_gateway_compute_service — restart faas-s3-gatewayd-compute
+  ansible.builtin.systemd_service:
+    name: faas-s3-gatewayd-compute.service
+    state: restarted
+  listen: restart faas-s3-gatewayd-compute
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
