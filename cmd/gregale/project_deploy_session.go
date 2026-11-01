@@ -43,6 +43,14 @@ type projectDeployReceipt struct {
 	RecoverySaved     bool                    `json:"recovery_saved"`
 	SubmissionOutcome deploySubmissionOutcome `json:"submission_outcome,omitempty"`
 	SubmissionStatus  string                  `json:"submission_status,omitempty"`
+	// TimedOut reports that the wait ended before every workload finished;
+	// WaitTimedOut names the workloads still deploying. Neither is a
+	// failure: the server continues processing.
+	TimedOut     bool                 `json:"timed_out,omitempty"`
+	WaitTimedOut []projectWaitTimeout `json:"wait_timed_out,omitempty"`
+	// Warnings are advisory notices from this run, such as credential-looking
+	// files in a local-files upload.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func newSavedProjectDeploy(c *Client, slug, environment string, apply api.ApplyResponse, pendingAttempt ...string) (*savedDeploySession, *flock.Flock, error) {
@@ -172,13 +180,25 @@ func (s *savedDeploySession) projectApplyReceipt() api.ApplyResponse {
 }
 
 func renderProjectDeployReceipt(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timedOut bool, saveErr error) int {
-	receipt := projectDeployReceipt{ApplyResponse: apply, RecoverySaved: session != nil}
+	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, timedOut, nil, saveErr)
+}
+
+// renderProjectDeployReceiptAfterWait renders a receipt after
+// waitForProjectApplyTimeouts; any timed-out workload makes it exit 3.
+func renderProjectDeployReceiptAfterWait(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timeouts []projectWaitTimeout) int {
+	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, len(timeouts) > 0, timeouts, nil)
+}
+
+func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timedOut bool, timeouts []projectWaitTimeout, saveErr error) int {
+	receipt := projectDeployReceipt{ApplyResponse: apply, RecoverySaved: session != nil, TimedOut: timedOut, WaitTimedOut: timeouts}
 	if session != nil {
 		receipt.SessionID, receipt.ResumeCommand = session.record.ID, session.resumeCommand()
 		receipt.SubmissionOutcome = session.record.Outcome
 		receipt.SubmissionStatus = session.record.Project.SubmissionStatus
+		receipt.Warnings = append([]string(nil), session.warnings...)
 	}
 	status := summarizeProjectApply(apply)
+	status.waitTimedOut = len(timeouts)
 	code := 0
 	if jsonOutput {
 		if code = jsonOut(writeJSON(receipt)); code != 0 {
@@ -187,9 +207,11 @@ func renderProjectDeployReceipt(plan api.PlanResponse, apply api.ApplyResponse, 
 		if status.buildsFailed > 0 {
 			reportProjectApplyFailure(osStderr, status)
 			code = 1
+		} else if status.waitTimedOut > 0 {
+			reportProjectApplyWaitTimeout(osStderr, status, receipt.ResumeCommand)
 		}
 	} else {
-		code = renderProjectApplyResult(osStdout, plan, apply)
+		code = renderProjectApplyResultWithTimeouts(osStdout, plan, apply, timeouts)
 		if session != nil {
 			PrintProgress(osStdout, "Saved project deploy %s; resume with: %s", session.record.ID, session.resumeCommand())
 		}
@@ -234,8 +256,8 @@ func resumeSavedProjectDeploy(ctx context.Context, c *Client, s *savedDeploySess
 	if s.record.Project.SafeRelease != nil {
 		return waitForSafeProjectRelease(waitCtx, c, s, deadline)
 	}
-	apply, timedOut := waitForProjectApply(waitCtx, c, s.projectApplyReceipt(), deadline)
-	return renderProjectDeployReceipt(api.PlanResponse{}, apply, s, timedOut, nil)
+	apply, timeouts := waitForProjectApplyTimeouts(waitCtx, c, s.projectApplyReceipt(), deadline)
+	return renderProjectDeployReceiptAfterWait(api.PlanResponse{}, apply, s, timeouts)
 }
 
 func (s *savedDeploySession) rememberProjectApply(apply api.ApplyResponse) error {

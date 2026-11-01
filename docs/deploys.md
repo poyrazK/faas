@@ -38,6 +38,16 @@ otherwise (`--source=worktree` includes uncommitted changes). Before upload:
 - **`.env` files** are scanned locally and credential-shaped values are
   redacted before upload (`--secret-scan=off` disables this). Use
   `--secrets-file` or `gregale env set` for real secrets.
+- **Credential files in a local-files upload.** When the deploy uploads the
+  files on disk (no Git repository, no `origin` remote, or
+  `--source=worktree`), everything not excluded above is uploaded, including
+  `.env` and `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, `*.pem`, `*.key`,
+  `*.p12`, `id_rsa*` and `id_ed25519*` private keys and similar files. The
+  deploy still uploads them, but warns on stderr and adds the warning to the
+  `--json` receipt's `warnings`, naming each file (`.env.example`,
+  `.env.sample`, `.env.template` and `*.pub` are not named). Add the files
+  to `.gregaleignore` to keep them out, and set their values with
+  `gregale env push` or `gregale env set`.
 
 ### Limits
 

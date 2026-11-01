@@ -415,7 +415,7 @@ gregale deploy --path packages/api --source=worktree
 
 Check local source, an image or project prerequisites before deploying
 
-`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
+`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -424,24 +424,25 @@ Check local source, an image or project prerequisites before deploying
 | `--registry-user <USER>` | without --project: registry username; requires --registry-password-stdin |  |
 | `--registry-password-stdin` | without --project: read the registry password or token from stdin |  |
 | `--strict` | without --project: exit 1 on warnings |  |
-| `--project-slug <SLUG>` | project slug (defaults to linked context or selected directory) |  |
+| `--app <SLUG>` | without --project: app whose env and secret names count as declared (defaults to linked context) |  |
+| `--project-slug <SLUG>` | with --project: project slug (defaults to linked context or selected directory) |  |
 | `--path <DIR>` | selected source directory |  |
-| `--source <MODE>` | local source policy (default auto) | one of `auto` · `head` · `worktree` |
-| `--worktree` | check local working tree changes |  |
-| `--env <ENV>` | destination environment (default production) (also --environment) |  |
-| `--from <ENV>` | source environment for a promotion check |  |
-| `--expected-state <SHA256>` | compare a previous check&#39;s state hash |  |
-| `--atomic` | check atomic source release prerequisites |  |
-| `--add-services` | check HTTP service addition prerequisites |  |
-| `--verify` | check critical health verification prerequisites |  |
-| `--workers` | check push worker release prerequisites |  |
-| `--worker-health` | require worker delivery health during deployment |  |
-| `--migrate` | check one backward-compatible migration |  |
-| `--progressive` | check progressive rollout prerequisites |  |
-| `--stabilize` | check post-success monitoring prerequisites |  |
-| `--sync-config` | check synchronized promotion configuration |  |
-| `--config-file <PATH>` | proposed non-secret paired configuration |  |
-| `--secrets-file <PATH>` | proposed secret input; only key names leave this machine |  |
+| `--source <MODE>` | with --project: local source policy (default auto) | one of `auto` · `head` · `worktree` |
+| `--worktree` | with --project: check local working tree changes |  |
+| `--env <ENV>` | with --project: destination environment (default production) (also --environment) |  |
+| `--from <ENV>` | with --project: source environment for a promotion check |  |
+| `--expected-state <SHA256>` | with --project: compare a previous check&#39;s state hash |  |
+| `--atomic` | with --project: check atomic source release prerequisites |  |
+| `--add-services` | with --project: check HTTP service addition prerequisites |  |
+| `--verify` | with --project: check critical health verification prerequisites |  |
+| `--workers` | with --project: check push worker release prerequisites |  |
+| `--worker-health` | with --project: require worker delivery health during deployment |  |
+| `--migrate` | with --project: check one backward-compatible migration |  |
+| `--progressive` | with --project: check progressive rollout prerequisites |  |
+| `--stabilize` | with --project: check post-success monitoring prerequisites |  |
+| `--sync-config` | with --project: check synchronized promotion configuration |  |
+| `--config-file <PATH>` | with --project: proposed non-secret paired configuration |  |
+| `--secrets-file <PATH>` | with --project: proposed secret input; only key names leave this machine |  |
 
 Examples:
 
@@ -454,6 +455,10 @@ gregale deploy check --project --project-slug shop --from staging --env producti
 ```
 
 Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project&#39;s release prerequisites against current state.
+
+Flags marked &#34;with --project&#34; are refused without --project.
+
+Without --project, a variable the source reads but .env, .gregale/env.json and the app&#39;s env and secrets do not declare is an error; when the app&#39;s env cannot be read (no linked app or --app, or logged out), it is a warning.
 
 ### deploy resolve-contract
 
@@ -1058,10 +1063,11 @@ Usage: open docs [&lt;slug&gt;].
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale rollback [<subcommand>] <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
+`gregale rollback [<subcommand>] <slug> [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional) |  |
 | `--interactive` | choose and review a historical release, confirm, and follow rollback progress |  |
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--expected-current <deployment_id|vN>` | exact completed serving deployment; requires --to |  |
@@ -1080,6 +1086,7 @@ Examples:
 gregale rollback my-api --interactive
 gregale rollback my-api
 gregale rollback my-api --to v41
+gregale rollback --app my-api --to v41
 gregale rollback my-api --to v41 --expected-current v42 --wait
 gregale rollback my-api --to v41 --restore-databases
 ```
@@ -1729,10 +1736,11 @@ gregale release runtime v42 --app my-function --target RELEASE_ID --json
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale release rollback <status|switches> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
+`gregale release rollback <status|switches> [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional) |  |
 | `--interactive` | choose and review a historical release, confirm, and follow rollback progress |  |
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--expected-current <deployment_id|vN>` | exact completed serving deployment; requires --to |  |
@@ -1751,6 +1759,7 @@ Examples:
 gregale release rollback my-api --interactive
 gregale release rollback my-api
 gregale release rollback my-api --to v41
+gregale release rollback --app my-api --to v41
 gregale release rollback my-api --to v41 --expected-current v42 --wait
 gregale release rollback my-api --to v41 --restore-databases
 ```

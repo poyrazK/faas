@@ -87,6 +87,9 @@ type DeployReceipt struct {
 	CronActivation        string                       `json:"cron_activation,omitempty"`
 	ConfigurationComplete *bool                        `json:"configuration_complete,omitempty"`
 	IssueSourceMaps       *api.IssueSourceMapsMetadata `json:"issue_source_maps,omitempty"`
+	// Warnings are advisory notices from this run, such as credential-looking
+	// files in a local-files upload; they never change the exit code.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // newDeployReceipt builds a DeployReceipt from the post-deploy
