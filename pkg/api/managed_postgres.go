@@ -79,6 +79,10 @@ type ManagedPostgresDatabase struct {
 	// RestoreRange is the span a point-in-time restore from this database
 	// can target now; absent while it cannot be restored from.
 	RestoreRange *ManagedPostgresRestoreRange `json:"restore_range,omitempty"`
+	// Labels are the database's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ManagedPostgresRestoreRange bounds a restore's point_in_time: from
