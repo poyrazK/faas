@@ -634,6 +634,14 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // PostgreSQL delete can be undone before the provider resource is deleted
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
+
+// ManagedPostgresRestoreSlots is how many databases a point-in-time restore
+// may hold past the plan's database limit, and ManagedPostgresRestoreSlotWindow
+// how long such a copy lasts before its delete is scheduled when the account
+// still has no room (ADR-20261031123259). Without the slot a one-database plan
+// could not restore at all.
+const ManagedPostgresRestoreSlots = 1
+const ManagedPostgresRestoreSlotWindow = 7 * 24 * time.Hour
 const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 
 // Fleet safety ceilings bound what operators may configure as the platform's
@@ -6956,6 +6964,19 @@ const (
 	FrozenCompressMinAgeSeconds             = 60
 	FrozenCompressPerNodePerTick            = 4
 	FrozenCompressUnavailableBackoffSeconds = 600
+	// Frozen VMs yield their memory to admission (ADR 20261031190030). When
+	// compression has nothing left to try on a node still at the high-water
+	// mark, or the node cannot compress, the reaper parks its longest-frozen
+	// VMs frozen at least FrozenCompressMinAgeSeconds, at most
+	// FrozenYieldPerNodePerTick per tick, until the node is under the
+	// low-water mark. A wake refused for RAM parks at most
+	// FrozenYieldPerRefusedWake frozen VMs on one node, when that frees what
+	// the node lacks, and waits up to FrozenYieldFreshViewMillis for the
+	// node's memory measurement and vmmd capacity report to show it before
+	// its one retry.
+	FrozenYieldPerNodePerTick  = 8
+	FrozenYieldPerRefusedWake  = 8
+	FrozenYieldFreshViewMillis = 1500
 	// FrozenEarlyFreezeMinSeconds and FrozenEarlyFreezeMaxSeconds bound
 	// schedd's frozen_tier_early_freeze_after_s (ADR-20261021215353): at
 	// least the 2 s quiet pause, and well inside the shortest app idle
@@ -9423,6 +9444,9 @@ const (
 	AgentCallbackMessageIDMaxBytes      = 54
 	AgentCallbackPayloadMaxBytes        = 4096
 	AgentCallbackFailuresPerIPPerMinute = 30
+	// AgentCallbacksPerMinutePerThread bounds the callbacks one apid accepts
+	// for one thread in a minute, so a runaway tool cannot flood the thread.
+	AgentCallbacksPerMinutePerThread = 600
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).
@@ -11752,6 +11776,14 @@ func (p Plan) OrgPendingInvitationsMax() int {
 	}
 	return l.OrgPendingInvitationsMax
 }
+
+// FreeOrganizationsOwnedMax caps the shared organizations on the Free plan
+// one account may own (ADR-20261031090658). A Free organization owns its
+// resources, so each one carries its own Free app and allowance; without a
+// cap, creating organizations multiplied the Free tier. Creating another
+// needs one of them upgraded or deleted first. Organizations that fall back
+// to Free when their subscription ends still count.
+const FreeOrganizationsOwnedMax = 1
 
 // RateLimitPerAccountRPM returns the per-account requests/minute cap for
 // the plan (ADR-040 / issue #292). Independent of RateLimitRPS/Burst

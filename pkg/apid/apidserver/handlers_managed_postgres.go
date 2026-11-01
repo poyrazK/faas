@@ -158,7 +158,27 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 	if managedPostgresDeleteScheduled(database) {
 		out.RestorableUntil = database.PurgeAfter.UTC().Format(time.RFC3339Nano)
 	}
+	if !database.RestoreSlotUntil.IsZero() && database.State != managedpostgres.StateDeleted {
+		out.RestoreSlotUntil = database.RestoreSlotUntil.UTC().Format(time.RFC3339Nano)
+	}
+	if earliest, latest, ok := database.RestoreRange(time.Now().UTC()); ok {
+		out.RestoreRange = &api.ManagedPostgresRestoreRange{Earliest: earliest.UTC().Format(time.RFC3339Nano), Latest: latest.UTC().Format(time.RFC3339Nano)}
+	}
 	return out
+}
+
+// recordManagedPostgresRestoreSlotExpired audits a copy whose delete the
+// restore slot sweep scheduled (ADR-20261031123259); the system, not the
+// customer, deleted it.
+func (s *server) recordManagedPostgresRestoreSlotExpired(ctx context.Context, database managedpostgres.Database) {
+	if s.audit == nil {
+		return
+	}
+	accountID := database.AccountID
+	s.audit.Emit(ctx, "managed_postgres.database.restore_slot_expired", &accountID, map[string]any{
+		"database_id": database.ID, "source_database_id": database.RestoreSourceDatabaseID,
+		"restorable_until": database.PurgeAfter.UTC().Format(time.RFC3339Nano),
+	})
 }
 
 // managedPostgresDeleteScheduled reports a customer delete still in its undo
@@ -181,9 +201,22 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 		managedPostgresProblem(w, err)
 		return
 	}
+	ids := make([]string, len(databases))
+	for i, database := range databases {
+		ids[i] = database.ID
+	}
+	filter, problem := s.listLabels(r, acct, state.LabelKindDatabase, ids)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
-		items = append(items, managedPostgresView(database))
+		if filter.keep(database.ID) {
+			view := managedPostgresView(database)
+			view.Labels = filter.labelsOf(database.ID)
+			items = append(items, view)
+		}
 	}
 	writeJSON(w, http.StatusOK, api.ManagedPostgresDatabaseList{Items: items})
 }
@@ -421,7 +454,9 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresView(database))
+	view := managedPostgresView(database)
+	view.Labels = s.resourceLabels(r, acct, state.LabelKindDatabase, database.ID)
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {

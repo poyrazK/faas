@@ -4066,6 +4066,8 @@
       "description": "Restore a database to an earlier point in time.",
       "maturity": "ga",
       "plans": [
+        "free",
+        "hobby",
         "pro",
         "scale"
       ],
@@ -4806,7 +4808,7 @@
       "id": "resource-labels",
       "name": "Resource labels",
       "category": "delivery",
-      "description": "Label apps with key/value pairs and filter app and domain lists with a selector.",
+      "description": "Label apps, managed databases, crons and jobs with key/value pairs and filter their lists with a selector.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -4817,7 +4819,10 @@
       "docs_url": "/docs/apps",
       "acceptance_test": "pkg/apid/apidserver/handlers_resource_labels_test.go::TestAppLabelsAPI",
       "routes": [
-        "/v1/apps/{}/labels"
+        "/v1/apps/{}/labels",
+        "/v1/postgres/databases/{}/labels",
+        "/v1/crons/{}/labels",
+        "/v1/jobs/{}/labels"
       ],
       "cli": [
         "app label"

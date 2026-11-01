@@ -38,13 +38,13 @@ func TestDrainOnceRetriesNoRowAndMergesPendingSpans(t *testing.T) {
 			return outcome, 0, nil
 		},
 	}
-	pending := map[string]*pendingEntry{}
+	pending := map[spanBucketKey]*pendingEntry{}
 
 	if _, err := acc.Add(tid, account, []summarizedSpan{noRowTestSpan("a", 100)}); err != nil {
 		t.Fatal(err)
 	}
 	acc.drainOnce(context.Background(), cfg, pending)
-	if entry := pending[tid]; entry == nil || entry.retries != 1 {
+	if entry := pending[spanBucketKey{accountID: account, traceID: tid}]; entry == nil || entry.retries != 1 {
 		t.Fatalf("no_row entry = %+v, want kept with one retry", entry)
 	}
 
@@ -73,7 +73,7 @@ func TestDrainOnceDropsNoRowAfterMaxRetries(t *testing.T) {
 			return "no_row", 0, nil
 		},
 	}
-	pending := map[string]*pendingEntry{}
+	pending := map[spanBucketKey]*pendingEntry{}
 	if _, err := acc.Add(tid, uuid.New(), []summarizedSpan{noRowTestSpan("a", 100)}); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestDrainOncePendingMergeKeepsPerTraceCap(t *testing.T) {
 			return "no_row", 0, nil
 		},
 	}
-	pending := map[string]*pendingEntry{}
+	pending := map[spanBucketKey]*pendingEntry{}
 	_, _ = acc.Add(tid, account, []summarizedSpan{noRowTestSpan("slow", 900), noRowTestSpan("fast", 10)})
 	acc.drainOnce(context.Background(), cfg, pending)
 	_, _ = acc.Add(tid, account, []summarizedSpan{noRowTestSpan("slower", 1000)})

@@ -3,7 +3,8 @@
 Alerts: `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
 `FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`,
-`FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`.
+`FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`,
+`FaasComputeObjectGatewayDown`, `FaasComputeObjectGatewayConnectorDisconnected`.
 Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 `s3-gatewayd` (`pkg/s3gateway`) and its usage exporter
 (`cmd/s3-gatewayd/main.go`), and public bucket reads in `gatewayd-public`
@@ -23,12 +24,14 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `gatewayd_public_object_read_usage_flushes_total{outcome}`,
 `s3_gateway_transfer_bytes_total{direction}`,
 `s3_gateway_transfer_throttled_seconds_total{direction}`,
-`s3_gateway_transfer_limit_bytes_per_second`.
+`s3_gateway_transfer_limit_bytes_per_second`,
+`up{job="s3-gatewayd-compute"}`, `up{job="cloudflared-s3"}`,
+`cloudflared_tunnel_ha_connections{job="cloudflared-s3"}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
 [ADR 20261030100835](../adr/20261030100835-object-storage-resumable-inventory.md) (resumable inventory),
 [ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),
 [ADR 20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md) (cached read admission),
-[ADR 20261031122757](../adr/20261031122757-s3-gateway-on-compute-nodes.md) (gateway port share).
+[ADR 20261031122757](../adr/20261031122757-s3-gateway-on-compute-nodes.md) (gateway on compute nodes, port share).
 Severity: warn.
 
 ## Symptom
@@ -57,6 +60,14 @@ Severity: warn.
 - **Port share saturated.** A gateway on a compute node paces transfers to
   its share of the node's port (`transfer.max_bytes_per_second`, one budget
   for uploads and downloads). Transfers get slower; none fail.
+- **Compute gateway or s3 connector down.** On a cell that runs the gateway
+  on its compute nodes, one node's `faas-s3-gatewayd-compute` stopped
+  answering its control listener (port 9096), or its s3 tunnel connector
+  `faas-cloudflared-s3` is down or holds no tunnel connections. The connector
+  is bound to the gateway's unit and leaves the tunnel when it stops;
+  Cloudflare sends the node's share to the other connectors. A node whose s3
+  tunnel token is not staged keeps its connector inactive and stays in this
+  alert.
 
 ## Check
 
@@ -88,6 +99,11 @@ Severity: warn.
 6. Port share: `rate(s3_gateway_transfer_bytes_total[5m])` by direction
    against `s3_gateway_transfer_limit_bytes_per_second`, and whether one
    node or every node in the cell is at its share.
+7. Compute gateway: on the node, `systemctl status faas-s3-gatewayd-compute
+   faas-cloudflared-s3`, `curl -fsS http://127.0.0.1:9096/readyz` and
+   `journalctl -u faas-s3-gatewayd-compute -u faas-cloudflared-s3`. A
+   connector reported `inactive (dead)` with an unmet condition has no token
+   at `/etc/faas/secrets/cloudflared/s3-tunnel-token`.
 
 ## Recover
 
@@ -128,3 +144,9 @@ Severity: warn.
    ADR-20261031122757 §7 describes. Do not raise the share above
    `api.ObjectGatewayNodePortSharePercent` to clear the alert; app traffic
    needs the rest of the port.
+7. Compute gateway: fix what its journal names (database reachability, the
+   storage seal domain, the registry) and `systemctl restart
+   faas-s3-gatewayd-compute`; the connector restarts with it. A missing
+   token: stage the s3 tunnel's token (root, mode 0600) and `systemctl start
+   faas-cloudflared-s3`. Never put the app tunnel's token there: that node
+   would answer app hosts on the s3 tunnel.

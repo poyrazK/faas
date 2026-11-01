@@ -38,7 +38,7 @@ func TestAddOTLPTraceExportProtobufAndGzip(t *testing.T) {
 	acct := uuid.New()
 	acc := NewSpansAccumulator()
 	body := guestExportProto(t, traceID(1), traceID(1), traceID(2))
-	accepted, rejected, err := acc.AddOTLPTraceExport(acct, "application/x-protobuf", "", body, 4<<20)
+	accepted, rejected, err := acc.AddOTLPTraceExport(acct, "", "application/x-protobuf", "", body, 4<<20)
 	if err != nil || accepted != 3 || rejected != 0 {
 		t.Fatalf("protobuf: accepted=%d rejected=%d err=%v", accepted, rejected, err)
 	}
@@ -50,7 +50,7 @@ func TestAddOTLPTraceExportProtobufAndGzip(t *testing.T) {
 	w := gzip.NewWriter(&gz)
 	_, _ = w.Write(guestExportProto(t, traceID(3)))
 	_ = w.Close()
-	accepted, _, err = acc.AddOTLPTraceExport(acct, "application/x-protobuf", "gzip", gz.Bytes(), 4<<20)
+	accepted, _, err = acc.AddOTLPTraceExport(acct, "", "application/x-protobuf", "gzip", gz.Bytes(), 4<<20)
 	if err != nil || accepted != 1 {
 		t.Fatalf("gzip: accepted=%d err=%v", accepted, err)
 	}
@@ -58,7 +58,7 @@ func TestAddOTLPTraceExportProtobufAndGzip(t *testing.T) {
 
 func TestAddOTLPTraceExportJSON(t *testing.T) {
 	body := []byte(`{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"0000000000000000000000000000000a","spanId":"0000000000000001","name":"GET","startTimeUnixNano":"1","endTimeUnixNano":"2"}]}]}]}`)
-	accepted, rejected, err := NewSpansAccumulator().AddOTLPTraceExport(uuid.New(), "application/json", "", body, 4<<20)
+	accepted, rejected, err := NewSpansAccumulator().AddOTLPTraceExport(uuid.New(), "", "application/json", "", body, 4<<20)
 	if err != nil || accepted != 1 || rejected != 0 {
 		t.Fatalf("json: accepted=%d rejected=%d err=%v", accepted, rejected, err)
 	}
@@ -72,7 +72,7 @@ func TestAddOTLPTraceExportGoSDKTracingHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted, rejected, err := NewSpansAccumulator().AddOTLPTraceExport(uuid.New(), "application/json", "", body, 4<<20)
+	accepted, rejected, err := NewSpansAccumulator().AddOTLPTraceExport(uuid.New(), "", "application/json", "", body, 4<<20)
 	if err != nil || accepted != 2 || rejected != 0 {
 		t.Fatalf("helper export: accepted=%d rejected=%d err=%v", accepted, rejected, err)
 	}
@@ -96,14 +96,20 @@ func TestAddOTLPTraceExportGoSDKTracingHelper(t *testing.T) {
 	}
 }
 
-func TestAddOTLPTraceExportCrossAccountRejected(t *testing.T) {
+// A trace ID another account already sent is not rejected: each account
+// buffers its own spans for it (the first sender used to own the trace).
+func TestAddOTLPTraceExportAccountsKeepTheirOwnTraces(t *testing.T) {
 	acc := NewSpansAccumulator()
-	if _, _, err := acc.AddOTLPTraceExport(uuid.New(), "application/x-protobuf", "", guestExportProto(t, traceID(1)), 4<<20); err != nil {
+	first, second := uuid.New(), uuid.New()
+	if _, _, err := acc.AddOTLPTraceExport(first, "", "application/x-protobuf", "", guestExportProto(t, traceID(1)), 4<<20); err != nil {
 		t.Fatal(err)
 	}
-	accepted, rejected, err := acc.AddOTLPTraceExport(uuid.New(), "application/x-protobuf", "", guestExportProto(t, traceID(1), traceID(2)), 4<<20)
-	if err != nil || accepted != 1 || rejected != 1 {
-		t.Fatalf("cross-account: accepted=%d rejected=%d err=%v", accepted, rejected, err)
+	accepted, rejected, err := acc.AddOTLPTraceExport(second, "", "application/x-protobuf", "", guestExportProto(t, traceID(1), traceID(2)), 4<<20)
+	if err != nil || accepted != 2 || rejected != 0 {
+		t.Fatalf("second account: accepted=%d rejected=%d err=%v", accepted, rejected, err)
+	}
+	if spans, _ := acc.DrainAndRemove(formatTraceID(traceID(1)), first); len(spans) != 1 {
+		t.Fatalf("first account's spans = %d, want its own one", len(spans))
 	}
 }
 
@@ -123,10 +129,10 @@ func TestAddOTLPTraceExportStripsPlatformAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := acc.AddOTLPTraceExport(acct, "application/x-protobuf", "", body, 4<<20); err != nil {
+	if _, _, err := acc.AddOTLPTraceExport(acct, "", "application/x-protobuf", "", body, 4<<20); err != nil {
 		t.Fatal(err)
 	}
-	spans, _ := acc.DrainAndRemove(formatTraceID(tid))
+	spans, _ := acc.DrainAndRemove(formatTraceID(tid), acct)
 	if len(spans) != 1 {
 		t.Fatalf("spans = %d", len(spans))
 	}
@@ -159,7 +165,7 @@ func TestAddOTLPTraceExportInvalid(t *testing.T) {
 		"zero trace id": {contentType: "application/x-protobuf", body: guestExportProto(t, make([]byte, 16)), limit: 1024},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := acc.AddOTLPTraceExport(uuid.New(), tc.contentType, tc.encoding, tc.body, tc.limit)
+			_, _, err := acc.AddOTLPTraceExport(uuid.New(), "", tc.contentType, tc.encoding, tc.body, tc.limit)
 			if !errors.Is(err, ErrOTLPExportInvalid) {
 				t.Fatalf("err = %v, want ErrOTLPExportInvalid", err)
 			}
