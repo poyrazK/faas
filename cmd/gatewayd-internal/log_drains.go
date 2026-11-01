@@ -106,6 +106,8 @@ type appLogDrainManager struct {
 	metrics   *gateway.Metrics
 	log       *slog.Logger
 	spoolRoot string
+	// spoolBudget bounds the pending bytes of every drain queue on the node.
+	spoolBudget *logdrain.SpoolBudget
 	// httpClient delivers to customer-supplied drain URLs. It must carry
 	// the §11 dial-time egress guard; see newAppLogDrainHTTPClient.
 	httpClient *http.Client
@@ -145,6 +147,9 @@ type appLogDrainWorker struct {
 	standardHealth   *appLogDrainStandardHealthObserver
 	done             chan struct{}
 	stopping         bool
+	// queue is the drain's durable outbox; its bytes leave the node spool
+	// budget once the worker has stopped.
+	queue *logdrain.Queue
 }
 
 func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver, unseal func([]byte) (string, error), metrics *gateway.Metrics, log *slog.Logger) *appLogDrainManager {
@@ -153,11 +158,12 @@ func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver,
 	}
 	return &appLogDrainManager{
 		store: store, resolver: resolver, unseal: unseal, metrics: metrics, log: log,
-		spoolRoot:  envOrGateway("FAAS_LOG_DRAIN_SPOOL_ROOT", logdrain.DefaultSpoolRoot),
-		httpClient: newAppLogDrainHTTPClient(),
-		workers:    make(map[string]*appLogDrainWorker),
-		active:     make(map[string]int),
-		health:     make(map[string]state.AppLogDrainHealth),
+		spoolRoot:   envOrGateway("FAAS_LOG_DRAIN_SPOOL_ROOT", logdrain.DefaultSpoolRoot),
+		spoolBudget: logdrain.NewSpoolBudget(appLogDrainSpoolBudgetBytes(envOrGateway("FAAS_LOG_DRAIN_SPOOL_BUDGET_BYTES", ""))),
+		httpClient:  newAppLogDrainHTTPClient(),
+		workers:     make(map[string]*appLogDrainWorker),
+		active:      make(map[string]int),
+		health:      make(map[string]state.AppLogDrainHealth),
 	}
 }
 
@@ -296,6 +302,17 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 		}
 		m.workers[spec.ID] = worker
 	}
+	keep := make(map[string]struct{}, len(m.workers)+len(desired)+len(undecided))
+	for id := range m.workers {
+		keep[id] = struct{}{}
+	}
+	for id := range desired {
+		keep[id] = struct{}{}
+	}
+	for id := range undecided {
+		keep[id] = struct{}{}
+	}
+	m.pruneSpoolsLocked(ctx, keep, time.Now())
 }
 
 func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec state.AppLogDrain) (*appLogDrainWorker, error) {
@@ -312,7 +329,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 	}
 	m.ensureHealth(parent, spec)
 	durableQueue, err := logdrain.NewQueue(logdrain.QueueConfig{
-		Root: m.spoolRoot, DrainID: spec.ID,
+		Root: m.spoolRoot, DrainID: spec.ID, Budget: m.spoolBudget,
 	})
 	if err != nil {
 		return nil, err
@@ -442,11 +459,12 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		},
 	})
 	if err != nil {
+		durableQueue.Release()
 		return nil, err
 	}
 	m.metrics.InitializeLogDrain(spec.AppID, string(spec.Kind))
 	workerCtx, cancel := context.WithCancel(parent)
-	worker := &appLogDrainWorker{spec: spec, cancel: cancel, standardObserver: standardObserver, standardHealth: standardHealth}
+	worker := &appLogDrainWorker{spec: spec, cancel: cancel, standardObserver: standardObserver, standardHealth: standardHealth, queue: durableQueue}
 	m.setActiveLocked(spec, 1)
 	m.runLogDrainWorker(workerCtx, worker, sender)
 	return worker, nil

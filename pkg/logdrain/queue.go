@@ -36,6 +36,9 @@ type QueueConfig struct {
 	DrainID            string
 	MaxBytes           int64
 	DeadLetterMaxBytes int64
+	// Budget, when set, is shared by every queue of the node: an Enqueue
+	// that would take the node past it is refused with ErrQueueFull.
+	Budget *SpoolBudget
 }
 
 // QueueStats is a point-in-time view of the durable outbox. PendingBytes is
@@ -102,6 +105,10 @@ type Queue struct {
 	deadLetters    int64
 	deadBytes      int64
 	pendingKeys    map[queueKey]struct{}
+	// budget is the node budget; budgeted is what this queue has charged
+	// to it, kept equal to pendingBytes by syncBudgetLocked.
+	budget   *SpoolBudget
+	budgeted int64
 }
 
 type queueKey struct {
@@ -135,6 +142,7 @@ func NewQueue(cfg QueueConfig) (*Queue, error) {
 		deadMax:     cfg.DeadLetterMaxBytes,
 		pendingKeys: make(map[queueKey]struct{}),
 		state:       queueState{LastSequences: make(map[string]uint64)},
+		budget:      cfg.Budget,
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -147,7 +155,29 @@ func NewQueue(cfg QueueConfig) (*Queue, error) {
 	if err := q.rebuildStatsLocked(); err != nil {
 		return nil, err
 	}
+	q.syncBudgetLocked()
 	return q, nil
+}
+
+// syncBudgetLocked charges the node budget with the change in pendingBytes.
+func (q *Queue) syncBudgetLocked() {
+	if q.budget == nil {
+		return
+	}
+	q.budget.add(q.pendingBytes - q.budgeted)
+	q.budgeted = q.pendingBytes
+}
+
+// Release returns this queue's pending bytes to the node budget. The
+// manager calls it when it stops the drain's worker; the queue stops
+// charging the budget afterwards.
+func (q *Queue) Release() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.budget != nil {
+		q.budget.add(-q.budgeted)
+	}
+	q.budget, q.budgeted = nil, 0
 }
 
 func (q *Queue) recoverCompactionLocked() error {
@@ -323,6 +353,9 @@ func (q *Queue) Enqueue(record Record, enqueuedAt time.Time) error {
 	if q.pendingBytes+int64(len(payload)) > q.maxBytes {
 		return ErrQueueFull
 	}
+	if q.budget != nil && !q.budget.fits(int64(len(payload))) {
+		return ErrQueueFull
+	}
 	file, err := os.OpenFile(q.recordsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 	if err != nil {
 		return fmt.Errorf("log drain: open durable queue for append: %w", err)
@@ -345,6 +378,7 @@ func (q *Queue) Enqueue(record Record, enqueuedAt time.Time) error {
 	q.pendingRecords++
 	q.pendingBytes += int64(len(payload))
 	q.addPendingKey(record)
+	q.syncBudgetLocked()
 	return nil
 }
 

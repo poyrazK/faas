@@ -124,6 +124,7 @@ func (q *Queue) advancePastLocked(items []QueueItem, now time.Time) error {
 	} else {
 		q.oldestPending = q.nextEnqueuedAtLocked()
 	}
+	q.syncBudgetLocked()
 	return q.compactIfNeededLocked()
 }
 

@@ -72,6 +72,10 @@ func TestDurableSenderBatchesDatadogAndOTLP(t *testing.T) {
 			if requests.Load() > 2 {
 				t.Fatalf("%d requests for 50 queued lines, want them batched", requests.Load())
 			}
+			// The sender acknowledges after the response; wait for it.
+			for time.Now().Before(deadline) && q.Stats().PendingRecords != 0 {
+				time.Sleep(10 * time.Millisecond)
+			}
 			if stats := q.Stats(); stats.PendingRecords != 0 {
 				t.Fatalf("queue still holds %d records after delivery", stats.PendingRecords)
 			}
