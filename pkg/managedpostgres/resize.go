@@ -211,7 +211,7 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 		}
 	}
 	if computeChangeRaisesCost(database.Spec, target) {
-		if err := s.admitFleet(ctx, false); err != nil {
+		if err := s.admitFleet(ctx, "", false); err != nil {
 			return ResizeOperation{}, err
 		}
 	}

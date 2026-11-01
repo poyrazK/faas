@@ -1317,3 +1317,58 @@ order), solve a routed app's page where the host's app serves the solve
 path (`TestChallengePassCoversTheHostForTheAccount`), refuse another host's
 or account's token (`TestChallengeSolveRefusesForeignTokens`), and load the
 key (`TestEdgeChallengeSecret`).
+
+## Amendment 18 (2026-10-31): planted cookies and cross-origin calls
+
+An edge-security review found three ways the challenge and the WAF failed
+real visitors. Tenant apps share `gregale.dev`, which is not on the Public
+Suffix List (ADR-20261026112500), so any tenant's page can set a cookie with
+`Domain=gregale.dev`, and the visitor's browser then sends it to every app on
+the domain. Browsers also send CORS preflights without cookies or
+`Authorization`.
+
+1. **A planted cookie hid the pass.** `gregale_challenge` was read with the
+   first cookie of that name, and a browser lists an older cookie of the same
+   path first. A tenant page that planted one left its visitors unable to pass
+   any challenge or attack mode on the domain: each solve set a new pass that
+   the planted cookie still shadowed. The pass is now
+   `__Host-gregale_challenge`. A browser accepts a `__Host-` cookie only from
+   the host itself (Secure, `Path=/`, no `Domain`), so no other host can set
+   one. Every cookie of that name is tried, so one the app sets on a longer
+   path cannot hide the pass either. A pass under the old name is no longer
+   honoured; `edge_challenge` is off for every account, so none is in use.
+2. **A planted cookie boxed visitors.** The in-path WAF scores every request
+   header, cookies included, and the CRS SQL injection and XSS signatures
+   inspect cookies at paranoia level 1. A tenant page could plant a cookie
+   that looks like an attack: every `block` rule on the domain then refused
+   the visitor, and a rule with a penalty boxed the visitor's address, which
+   refuses everyone behind it before any other gate, API keys included.
+   Cookie-borne attacks are real, so such a detection still blocks, but a
+   detection whose every scoring match is in a request cookie's name or value
+   (`CookiesOnly`) no longer counts toward a penalty. The planted cookie's
+   blocks themselves end only when apps move to a registrable domain on the
+   Public Suffix List (ADR-20261026100000 amendment 1); until then the docs
+   name the risk and point to custom domains, which are not affected.
+3. **Challenged preflights failed cross-origin calls.** Only a `kind=cors`
+   rule answered preflights at the edge. On a challenged route the preflight
+   of an app that handles CORS in its own code got 403 `challenge_required`
+   with no CORS headers, so every non-simple cross-origin call failed, even
+   from a browser holding a pass or sending a JWT the challenge would have let
+   through; attack mode broke every single-page app served from another
+   site. The challenge gate now answers a well-formed preflight (an `Origin`
+   of http(s) scheme and host only, a token method, at most 32 token header
+   names) with 204, echoing the origin, method and headers, without
+   `Access-Control-Allow-Credentials`: the browser then sends the request
+   itself without cookies, the challenge still decides it (a JWT, API key or
+   consumer key passes; nothing else does), and the app's own response still
+   decides whether the page may read it. The trace simulator predicts the
+   answer (`challenge_preflight`); `gateway_edge_challenge_total` counts it as
+   `outcome="preflight"`. A cross-site request that relies on cookies still
+   cannot pass, because the pass is `SameSite=Lax`, and the challenge page
+   may not be framed, so an app embedded in another site cannot pass either;
+   the docs say so.
+
+Tests: `TestChallengePassSurvivesAShadowingCookie`,
+`TestWAFCookieOnlyDetectionBlocksWithoutBoxing`,
+`TestCheckInlineMarksCookieOnlyDetections`,
+`TestChallengedPreflightIsAnsweredAtTheEdge` and the trace's preflight case.
