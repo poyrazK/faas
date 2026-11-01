@@ -3410,6 +3410,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			FlushInterval:  5 * time.Second,
 			FlushBatchSize: 256,
 			MaxRetries:     3,
+			MinuteCollapse: osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
 			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
 			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
 			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
