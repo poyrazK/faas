@@ -33511,7 +33511,7 @@ paths:
       summary: Read a wildcard domain's host allowlist.
       description: |
         Returns the names below the wildcard that may hold an on-demand
-        certificate (ADR-520 amendment 2). `restricted: false` means no
+        certificate. `restricted: false` means no
         allowlist is set and every name below the wildcard may.
       responses:
         '200':
@@ -103634,7 +103634,7 @@ components:
           items: { $ref: '#/components/schemas/DNSRecordInstruction' }
 
     CustomDomainHostsResponse:
-      description: "A wildcard custom domain's host allowlist (ADR-520 amendment 2). Names are the parts of hosts before the wildcard's suffix."
+      description: "A wildcard custom domain's host allowlist. Names are the parts of hosts before the wildcard's suffix."
       type: object
       required: [domain, names, restricted]
       properties:

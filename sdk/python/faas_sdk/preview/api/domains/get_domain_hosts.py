@@ -72,7 +72,7 @@ def sync_detailed(
     """Read a wildcard domain's host allowlist.
 
      Returns the names below the wildcard that may hold an on-demand
-    certificate (ADR-520 amendment 2). `restricted: false` means no
+    certificate. `restricted: false` means no
     allowlist is set and every name below the wildcard may.
 
     Args:
@@ -105,7 +105,7 @@ def sync(
     """Read a wildcard domain's host allowlist.
 
      Returns the names below the wildcard that may hold an on-demand
-    certificate (ADR-520 amendment 2). `restricted: false` means no
+    certificate. `restricted: false` means no
     allowlist is set and every name below the wildcard may.
 
     Args:
@@ -133,7 +133,7 @@ async def asyncio_detailed(
     """Read a wildcard domain's host allowlist.
 
      Returns the names below the wildcard that may hold an on-demand
-    certificate (ADR-520 amendment 2). `restricted: false` means no
+    certificate. `restricted: false` means no
     allowlist is set and every name below the wildcard may.
 
     Args:
@@ -164,7 +164,7 @@ async def asyncio(
     """Read a wildcard domain's host allowlist.
 
      Returns the names below the wildcard that may hold an on-demand
-    certificate (ADR-520 amendment 2). `restricted: false` means no
+    certificate. `restricted: false` means no
     allowlist is set and every name below the wildcard may.
 
     Args:

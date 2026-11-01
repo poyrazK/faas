@@ -356,7 +356,7 @@ export class DomainsService {
   /**
    * Read a wildcard domain's host allowlist.
    * Returns the names below the wildcard that may hold an on-demand
-   * certificate (ADR-520 amendment 2). `restricted: false` means no
+   * certificate. `restricted: false` means no
    * allowlist is set and every name below the wildcard may.
    *
    * @returns CustomDomainHostsResponse The host allowlist.

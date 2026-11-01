@@ -11,8 +11,7 @@ T = TypeVar("T", bound="CustomDomainHostsResponse")
 
 @_attrs_define
 class CustomDomainHostsResponse:
-    """A wildcard custom domain's host allowlist (ADR-520 amendment 2). Names are the parts of hosts before the wildcard's
-    suffix.
+    """A wildcard custom domain's host allowlist. Names are the parts of hosts before the wildcard's suffix.
 
     """
 
