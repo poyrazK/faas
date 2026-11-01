@@ -3183,6 +3183,10 @@ func (s *server) handler() http.Handler {
 	// message rather than a generic 404 (matches the pre-#911
 	// pattern in api/flags.go).
 	mux.HandleFunc("GET /v1/domains/{domain}/doctor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomainDoctor))))
+	// ADR-520 amendment 2: a wildcard domain's optional host allowlist.
+	mux.HandleFunc("GET /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomainHosts))))
+	mux.HandleFunc("PUT /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.setDomainHosts)))))
+	mux.HandleFunc("DELETE /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearDomainHosts))))
 
 	// Crons.
 	mux.HandleFunc("GET /v1/crons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCrons))))

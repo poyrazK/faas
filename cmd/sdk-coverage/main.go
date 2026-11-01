@@ -2725,6 +2725,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/domains/{domain}/status":                 "GetDomainStatus", // ADR-20261030151810
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
+	"GET /v1/domains/{domain}/hosts":                  "GetDomainHosts",   // ADR-520 amendment 2
+	"PUT /v1/domains/{domain}/hosts":                  "SetDomainHosts",   // ADR-520 amendment 2
+	"DELETE /v1/domains/{domain}/hosts":               "ClearDomainHosts", // ADR-520 amendment 2
 
 	"POST /v1/apps/{slug}/github/activity/retry":                                                    "RetryGitHubActivity",
 	"PATCH /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":          "UpdateAccountWorkflowReadinessNotification",
