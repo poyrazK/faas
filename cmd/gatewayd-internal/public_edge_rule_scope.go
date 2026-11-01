@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -20,7 +21,9 @@ import (
 // edge-rule scope (amendment 2026-10-31, round 6). The serving app's own rules
 // always stay.
 func scopePublicHostRules(ctx context.Context, reader state.PublicHostPolicyReader, appID string, rules []state.EdgeRule) ([]state.EdgeRule, error) {
-	if len(rules) == 0 {
+	// The snapshot read runs under a short budget: a host whose rules are
+	// all the serving app's needs no extra read.
+	if !slices.ContainsFunc(rules, func(rule state.EdgeRule) bool { return appID == "" || rule.AppID != appID }) {
 		return rules, nil
 	}
 	type ruleApp struct {
