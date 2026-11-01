@@ -39,6 +39,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -430,6 +431,11 @@ func envOr(key, fallback string) string {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the attach credential ring, the only one a compute node holds: vmmd
+	// checks interactive attach tokens.
+	if err := credhash.Install(os.Getenv, credhash.FamilyAttach); err != nil {
+		return fmt.Errorf("vmmd: %w", err)
+	}
 	return runWithDeps(ctx, log, defaultDeps())
 }
 
@@ -1414,7 +1420,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// Legacy reapers cannot retire journal-owned resources.
 	if store != nil && !cfg.NativeProcessRecovery {
-		isLiveInstance := vmmdRuntimeSourceLiveness(store)
+		// A guest this vmmd adopted is not an orphan, whatever its row
+		// says: one whose row is no longer live is the live-VM reaper's
+		// (runLiveVMReap), which tears it down through the Manager. Killing
+		// it here left the Manager's teardown failing on the removed jail,
+		// retaining its lease (production-us fsn-2, rc.312 and rc.313).
+		isLiveInstance := layerCloneOwnershipGate(vmmdRuntimeSourceLiveness(store), mgr, resourceJournal)
 		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
 			JailRoot: jailer.JailRoot(),
 			Runner:   wire.ExecRunner{},

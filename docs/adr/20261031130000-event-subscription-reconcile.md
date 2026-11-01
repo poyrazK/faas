@@ -76,6 +76,10 @@ The owner chose (2026-10-31):
    - **When checked:** after the deploy has written and disabled its
      subscriptions. Of two concurrent deploys in one account, the later count
      sees both, so no lock is needed.
+   - **Where checked:** on every path that adds or re-enables a
+     subscription, including the ones in decision 2 that do not reconcile.
+     Otherwise repeated stage deploys or batch creates would pile
+     subscriptions past the caps.
    - **Over a cap:** the deploy fails with `403
      plan_event_subscription_quota` (limit and observed value) and rolls back.
    - **Shrinking is allowed:** the check fails only a deploy that added or

@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "5408d9104cc35a43ba7d433870d3c8986b51037ecf87f8d945d140415947f56c",
+      "revision": "56441e7161860274d807190917e1ccfcf22d62bebb1f3ebddaa77b56eecd1ccd",
       "files": [
         "faas.rules.yml"
       ],
@@ -1362,6 +1362,19 @@
           }
         },
         {
+          "id": "2d4365da69c177562c463e3c9a2da84a5dfaa2b9dc38f2f2b71426bfc6b9ea1f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasLogArchiveNodeDisabled",
+          "definition": {
+            "expression_hash": "470c60e399de6d5eed60da63f08fdb2da92b3b45b556e0fd6de76a1d13d4d8d9",
+            "labels_hash": "66c845e21bdb48e6d8af2b35847090b091862a3416590c64b96c85f1123d4a99",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "62df32a8fdc9138626060affba016d6b81ee329c20bb0c5c179bd1efde2228cf"
+          }
+        },
+        {
           "id": "2e51db547ef677118f8672404a1bcb1c7129ee12574197839637d7ca5f040bf8",
           "file_name": "faas.rules.yml",
           "group_name": "outbound_webhook_delivery",
@@ -1523,11 +1536,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasLogArchiveSpoolNearCap",
           "definition": {
-            "expression_hash": "683eb666c64977d2198dd96fd22ea46a465e5699c7907e56d51caa0efb5ad7b1",
+            "expression_hash": "f90885b2c731a47bdd384c4b8ab17a47b2081697cf521c189681a9a13af2d854",
             "labels_hash": "66c845e21bdb48e6d8af2b35847090b091862a3416590c64b96c85f1123d4a99",
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "086219ecc268e4116faa6fa41f928d623b4ca23d078048b3c8f57343961c7d94"
+            "fingerprint": "a0e79fcd88eb5b276aaa4c4ff3e435681913461626fc7af84412058c4d290faa"
           }
         },
         {
@@ -2243,6 +2256,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f0f77634d6e11d314c3578f851bcf5622f0de2b977067e1d34e26c87714536a0"
+          }
+        },
+        {
+          "id": "4efc1e19c346289afdc64cad061470b4019cb0158e82ba498d58cb9762cb2420",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasS3GatewayPortShareSaturated",
+          "definition": {
+            "expression_hash": "37517b80fb01f1af2bdecf936eb3a4b39d6e8bcafc2d14bc330bc32227260925",
+            "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "60a5224488e86d9d85f753f032b86320c07d8d7f7ad4c89b7b062cb563fd18ac"
           }
         },
         {
@@ -6528,11 +6554,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasLogArchiveShipperDegraded",
           "definition": {
-            "expression_hash": "df295d4cc554fc91e257139cdd6a1d212f5e79951a6502f7e0d56abdbc5d089b",
+            "expression_hash": "5082e105d9ba914f64b0ea5250237d3135badc35b401d95ccc6c19ac96b5c643",
             "labels_hash": "66c845e21bdb48e6d8af2b35847090b091862a3416590c64b96c85f1123d4a99",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "4743c68e47e282375360db6f90d9766ae1b21ee755b4468f46436bb683624b2a"
+            "fingerprint": "71cd96d7bba7a1c5310e9e21de885eb86fa201a46faca0d0fdfaeb2fbe000865"
           }
         },
         {
@@ -6552,7 +6578,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "828d1682cc6f20fb987fe31e70f5805ee076119e5f5cdd8421495454ba4f82d0",
+      "revision": "0ee835b904b8998e69b407b2f57486c23c02d9073fd891fa71d899ef947a1c6c",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7992,6 +8018,19 @@
           }
         },
         {
+          "id": "2d4365da69c177562c463e3c9a2da84a5dfaa2b9dc38f2f2b71426bfc6b9ea1f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasLogArchiveNodeDisabled",
+          "definition": {
+            "expression_hash": "470c60e399de6d5eed60da63f08fdb2da92b3b45b556e0fd6de76a1d13d4d8d9",
+            "labels_hash": "66c845e21bdb48e6d8af2b35847090b091862a3416590c64b96c85f1123d4a99",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "62df32a8fdc9138626060affba016d6b81ee329c20bb0c5c179bd1efde2228cf"
+          }
+        },
+        {
           "id": "2e51db547ef677118f8672404a1bcb1c7129ee12574197839637d7ca5f040bf8",
           "file_name": "faas.rules.yml",
           "group_name": "outbound_webhook_delivery",
@@ -8153,11 +8192,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasLogArchiveSpoolNearCap",
           "definition": {
-            "expression_hash": "683eb666c64977d2198dd96fd22ea46a465e5699c7907e56d51caa0efb5ad7b1",
+            "expression_hash": "f90885b2c731a47bdd384c4b8ab17a47b2081697cf521c189681a9a13af2d854",
             "labels_hash": "66c845e21bdb48e6d8af2b35847090b091862a3416590c64b96c85f1123d4a99",
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "086219ecc268e4116faa6fa41f928d623b4ca23d078048b3c8f57343961c7d94"
+            "fingerprint": "a0e79fcd88eb5b276aaa4c4ff3e435681913461626fc7af84412058c4d290faa"
           }
         },
         {
@@ -8873,6 +8912,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f0f77634d6e11d314c3578f851bcf5622f0de2b977067e1d34e26c87714536a0"
+          }
+        },
+        {
+          "id": "4efc1e19c346289afdc64cad061470b4019cb0158e82ba498d58cb9762cb2420",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasS3GatewayPortShareSaturated",
+          "definition": {
+            "expression_hash": "37517b80fb01f1af2bdecf936eb3a4b39d6e8bcafc2d14bc330bc32227260925",
+            "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "60a5224488e86d9d85f753f032b86320c07d8d7f7ad4c89b7b062cb563fd18ac"
           }
         },
         {
@@ -13379,11 +13431,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasLogArchiveShipperDegraded",
           "definition": {
-            "expression_hash": "df295d4cc554fc91e257139cdd6a1d212f5e79951a6502f7e0d56abdbc5d089b",
+            "expression_hash": "5082e105d9ba914f64b0ea5250237d3135badc35b401d95ccc6c19ac96b5c643",
             "labels_hash": "66c845e21bdb48e6d8af2b35847090b091862a3416590c64b96c85f1123d4a99",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "4743c68e47e282375360db6f90d9766ae1b21ee755b4468f46436bb683624b2a"
+            "fingerprint": "71cd96d7bba7a1c5310e9e21de885eb86fa201a46faca0d0fdfaeb2fbe000865"
           }
         },
         {

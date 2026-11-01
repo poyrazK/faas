@@ -132,12 +132,16 @@ func (e *Engine) ObserveNodeLifecycles(nodes []state.ComputeNode) {
 		return
 	}
 	leaving := make(map[string]struct{})
+	ceilings := make(map[string]int)
 	for _, node := range nodes {
 		if nodeLeaving(node) {
 			leaving[node.ID] = struct{}{}
+		} else if node.Active && node.AdmissionCeilingMB > 0 {
+			ceilings[node.ID] = node.AdmissionCeilingMB
 		}
 	}
 	e.leavingNodes.Store(&leaving)
+	e.admittingCeilings.Store(&ceilings)
 }
 
 // nodeLeavingByID reports whether the last observed node list showed

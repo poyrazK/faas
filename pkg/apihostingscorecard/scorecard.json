@@ -186,7 +186,7 @@
       "name": "Capability acceptance: delivery",
       "category": "delivery",
       "description": "Each released delivery capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["alert-rollbacks", "apps", "builds", "deploy-diff", "deploy-freezes", "deploy-overrides", "deploy-queue-controls", "deploy-scans", "deploy-tokens", "deployment-aliases", "environment-clones", "environment-gitops", "environment-promotions", "environment-release-sets", "environments", "gitlab-deploys", "kubernetes-manifests", "projects", "registry-credentials", "release-approvals", "release-commands", "release-gates", "rollback", "scheduled-releases", "service-migration", "source-ref-deploys", "starter-templates", "stateless-contract", "traffic-mirroring"],
+      "capabilities": ["alert-rollbacks", "apps", "builds", "deploy-diff", "deploy-freezes", "deploy-overrides", "deploy-queue-controls", "deploy-scans", "deploy-tokens", "deployment-aliases", "environment-clones", "environment-gitops", "environment-promotions", "environment-release-sets", "environments", "gitlab-deploys", "kubernetes-manifests", "projects", "registry-credentials", "release-approvals", "release-commands", "release-gates", "resource-labels", "rollback", "scheduled-releases", "service-migration", "source-ref-deploys", "starter-templates", "stateless-contract", "traffic-mirroring"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_scheduled_releases_test.go::TestScheduledReleaseLines"},
@@ -202,6 +202,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_project_environment_promotion_test.go::TestProjectEnvironmentPromotionBlockedWhilePastDue"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_project_release_sets_test.go::TestPublishProjectReleaseSetRequiresCompleteLiveGraph"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_projects_test.go::TestProjectEnvironmentCloneCopiesScopedStateAtomically"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_resource_labels_test.go::TestAppLabelsAPI"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_IDOR"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_templates_test.go::TestListTemplates_ReturnsAllNames"},

@@ -2534,6 +2534,10 @@ SELECT secret_value FROM github_webhook_secrets WHERE installation_id = $1;
 -- on an UPDATE. This lets the handler distinguish
 -- outcomeInserted vs outcomeMerged on the wire — the gateway
 -- uses that signal to update its in-process LRU freshness.
+--
+-- $18 is the number of requests the record stands for: the gateway folds
+-- an app's repeats of one error into a few records per flush (bug hunt
+-- 2026-10-28 H41).
 INSERT INTO app_errors (
     id, account_id, app_id, deployment_id, fingerprint,
     route, http_status, error_class, sample_message,
@@ -2543,12 +2547,12 @@ INSERT INTO app_errors (
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9,
-    1, 1, $10, $10,
+    $18, $18, $10, $10,
     $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (account_id, app_id, fingerprint) DO UPDATE SET
-    count         = app_errors.count + 1,
-    request_count = app_errors.request_count + 1,
+    count         = app_errors.count + EXCLUDED.count,
+    request_count = app_errors.request_count + EXCLUDED.request_count,
     last_seen_at  = greatest(app_errors.last_seen_at, $10),
     last_instance_id = COALESCE(NULLIF(EXCLUDED.last_instance_id, ''), app_errors.last_instance_id),
     last_node_id = COALESCE(NULLIF(EXCLUDED.last_node_id, ''), app_errors.last_node_id),
@@ -2574,6 +2578,13 @@ INSERT INTO app_error_requests (
     $7, $8, $9, $10,
     $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
 );
+
+-- name: CountAppErrorRequestsForFingerprint :one
+-- Request rows kept for one error group, for the plan's
+-- AppErrorsMaxRequestRowsPerFingerprint cap (bug hunt 2026-10-28 H41).
+-- Served by app_error_requests_drill_idx.
+SELECT count(*) FROM app_error_requests
+WHERE account_id = $1 AND app_id = $2 AND fingerprint = $3;
 
 -- name: ListAppErrorGroups :many
 -- ADR-096 §4.3 summary endpoint. Top-N grouped fingerprints for
@@ -4620,14 +4631,15 @@ WHERE received_at > now() - $1::interval;
 -- Multiple trusted producers can contribute to one trace (for example,
 -- gatewayd-internal service bindings and outboundd provider calls), so merge
 -- by span identity instead of allowing a later writer to erase earlier spans.
--- Keep the slowest 1000 unique spans, the Scale-tier maximum, to bound storage.
+-- Keep the slowest unique spans up to the plan's cap ($4, at most the
+-- Scale-tier 1000) to bound storage.
 -- $N::jsonb cast is load-bearing — without it sqlc binds as text and
 -- Postgres raises SQLSTATE 22P02 (invalid_text_representation).
 --
 -- PR-D code-review #1: the WHERE clause now also pins account_id.
 -- Defense in depth against cross-customer overwrite. The
--- gateway-side accumulator already rejects trace_id/account_id
--- mismatches (pkg/gateway/spans_accumulator.go ErrAccountMismatch),
+-- gateway-side accumulator buffers each (account, trace) separately
+-- (pkg/gateway/spans_accumulator_buckets.go),
 -- and the apid gRPC handler forwards the same account_id, but a
 -- bug at any layer could otherwise let account A's flush wipe
 -- account B's row. Adding the account_id = $3::uuid predicate
@@ -4662,7 +4674,7 @@ update request_telemetry as target
                 order by span_id, end_time_unix_nano, duration_nanos desc
              ) deduplicated
             order by duration_nanos desc, span_id
-            limit 1000
+            limit least(greatest($4::int, 1), 1000)
          ) bounded
    )
  where target.trace_id = $1

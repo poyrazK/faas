@@ -162,12 +162,15 @@
     - "'root * /usr/share/caddy' in (faas_public_edge_current_caddyfile.content | b64decode)"
 
 # gatewayd-public accepts exactly one X-Forwarded-For hop from its trusted
-# loopback ingress and rejects anything else as a forged caller IP. On the
-# platform site only Cloudflare is answered (GCP firewall + nftables, and the
-# site itself aborts other peers once customer domains open 443), and
-# Cloudflare overwrites CF-Connecting-IP, so that header is the single client
-# hop. Customer-domain connections arrive directly, so their hop is the peer
-# address; a client-sent CF-Connecting-IP is never trusted there.
+# loopback ingress and rejects anything else as a forged caller IP. It also
+# takes CF-Connecting-IP from any loopback peer, Caddy included. On the
+# platform site only Cloudflare (and loopback, such as a local cloudflared) is
+# answered: the site aborts other peers unless faas_public_edge_cloudflare_only
+# is false, besides the GCP firewall and nftables. Cloudflare overwrites
+# CF-Connecting-IP, so that header is the single client hop. Customer-domain
+# connections arrive directly, so their hop is the peer address, and the
+# client-sent CF-Connecting-IP is removed: forwarded, it let any client choose
+# the IP that ip, geo, allowlist and throttle rules see.
 #
 # The global options block must be the first thing in the Caddyfile, so it
 # lives in this block, which is inserted at the top. Other roles
@@ -208,8 +211,8 @@
       {% else %}
           tls {{ site[1] }} {{ site[2] }}
       {% endif %}
-      {% if faas_custom_domain_tls | default(false) | bool %}
-          @direct not remote_ip {{ faas_public_edge_cloudflare_cidrs | join(' ') }}
+      {% if faas_custom_domain_tls | default(false) | bool or faas_public_edge_cloudflare_only | default(true) | bool %}
+          @direct not remote_ip {{ faas_public_edge_cloudflare_cidrs | join(' ') }} 127.0.0.0/8 ::1
       {% if faas_public_edge_grpc_h2c | default(false) | bool %}
           @grpc header Content-Type application/grpc*
       {% endif %}
@@ -255,14 +258,17 @@
           route {
               reverse_proxy @grpc h2c://{{ faas_public_edge_upstream }} {
                   header_up X-Forwarded-For {remote_host}
+                  header_up -CF-Connecting-IP
               }
               reverse_proxy {{ faas_public_edge_upstream }} {
                   header_up X-Forwarded-For {remote_host}
+                  header_up -CF-Connecting-IP
               }
           }
       {% else %}
           reverse_proxy {{ faas_public_edge_upstream }} {
               header_up X-Forwarded-For {remote_host}
+              header_up -CF-Connecting-IP
           }
       {% endif %}
       }

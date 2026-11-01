@@ -250,6 +250,36 @@
     mode: "0644"
   notify: restart faas-apid
 
+- name: control_plane_service — scheduler credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: scheduler
+    credential_units: [faas-apid, faas-schedd]
+
+- name: control_plane_service — outbound credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: outbound
+    credential_units: [faas-apid, faas-outboundd]
+
+- name: control_plane_service — attach credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: attach
+    credential_units: [faas-apid]
+
+- name: control_plane_service — dev-bridge credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: dev-bridge
+    credential_units: [faas-apid, faas-bridged]
+
+- name: control_plane_service — data-api credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: data-api
+    credential_units: [faas-apid]
+
 - name: control_plane_service — set developer live patch gate (ADR-740)
   ansible.builtin.template:
     src: 99-faas-dev-patch.conf.j2

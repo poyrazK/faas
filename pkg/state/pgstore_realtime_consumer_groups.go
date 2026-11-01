@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	metricsqlc "github.com/onebox-faas/faas/pkg/state/realtimebulk/sqlc"
 )
 
@@ -545,7 +546,8 @@ func leaseRealtimeGroupMessage(ctx context.Context, tx pgx.Tx, g realtimeGroupRo
 	if _, err := rand.Read(token); err != nil {
 		return nil, err
 	}
-	hash := sha256.Sum256(token)
+	sum := sha256.Sum256(token)
+	hash := familyStoredCredential(credhash.FamilyScheduler, credTagConsumerGroupLease, sum[:])
 	var credentialID *string
 	if grant, ok := realtimeWorkerFromContext(ctx); ok {
 		credentialID = &grant.grant.Info.ID
@@ -563,7 +565,7 @@ func leaseRealtimeGroupMessage(ctx context.Context, tx pgx.Tx, g realtimeGroupRo
 	}
 	err = tx.QueryRow(ctx, `update managed_realtime_consumer_group_messages set status='leased',attempts=attempts+1,
  worker=$3,token_hash=$4,credential_id=$6,fencing_token=$7::bigint,lease_until=least(clock_timestamp()+make_interval(secs=>$5::double precision),delivery_deadline)
- where group_id=$1 and sequence=$2 and status='ready' and not deadline_invalid and (delivery_deadline is null or delivery_deadline>clock_timestamp()) returning message,attempts,lease_until,delivery_deadline`, g.id, seq, worker, hash[:], g.leaseSeconds, credentialID, result.FencingToken).Scan(&payload, &result.Attempt, &result.LeaseUntil, &result.DeliveryDeadline)
+ where group_id=$1 and sequence=$2 and status='ready' and not deadline_invalid and (delivery_deadline is null or delivery_deadline>clock_timestamp()) returning message,attempts,lease_until,delivery_deadline`, g.id, seq, worker, hash, g.leaseSeconds, credentialID, result.FencingToken).Scan(&payload, &result.Attempt, &result.LeaseUntil, &result.DeliveryDeadline)
 	if err != nil {
 		return nil, err
 	}
@@ -626,11 +628,11 @@ func (s *PgStore) SettleRealtimeConsumerGroup(ctx context.Context, ep, ch, name 
 	if found {
 		return result, tx.Commit(ctx)
 	}
-	attempts, err := readRealtimeSettlementAttempts(ctx, tx, g.id, seq, hash)
+	attempts, stored, err := readRealtimeSettlementAttempts(ctx, tx, g.id, seq, hash)
 	if err != nil {
 		return result, err
 	}
-	result, err = settleRealtimeGroupMessage(ctx, tx, g, seq, hash, attempts, req)
+	result, err = settleRealtimeGroupMessage(ctx, tx, g, seq, stored, attempts, req)
 	if err != nil {
 		return result, err
 	}
