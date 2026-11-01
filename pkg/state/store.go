@@ -6434,7 +6434,15 @@ type Store interface {
 	UpdateAppLogDrain(ctx context.Context, id string, params UpdateAppLogDrainParams) (AppLogDrain, error)
 	DeleteAppLogDrain(ctx context.Context, id string) error
 	ListAppLogDrainsForApp(ctx context.Context, appID string) ([]AppLogDrain, error)
+	// ListEnabledAppLogDrains is the drains log delivery runs: enabled, not on
+	// a rehearsal-enrolled app, and covered by the plan of the account the
+	// app's resources belong to. A plan covers the oldest enabled drains up
+	// to its per-app and account-wide allowances; drains an organization's
+	// application standard installed are outside those allowances.
 	ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, error)
+	// ListAppLogDrainsPausedByPlan names appID's enabled drains that
+	// ListEnabledAppLogDrains leaves out because the plan does not cover them.
+	ListAppLogDrainsPausedByPlan(ctx context.Context, appID string) ([]string, error)
 	UpsertAppLogDrainHealth(ctx context.Context, health AppLogDrainHealth) error
 	AppLogDrainHealthByDrainID(ctx context.Context, drainID string) (AppLogDrainHealth, error)
 	ListAppLogDrainHealthForApp(ctx context.Context, appID string) ([]AppLogDrainHealth, error)

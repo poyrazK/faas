@@ -24,18 +24,21 @@ func (s *PgStore) LoadApplicationStandardLogConsumerSnapshot(ctx context.Context
 		Drains []struct {
 			Spec    AppLogDrain                         `json:"spec"`
 			Binding *ApplicationStandardLogDrainBinding `json:"binding"`
+			Owner   appLogDrainOwnership                `json:"owner"`
 		} `json:"drains"`
 		Inventories []ApplicationStandardLogInventory `json:"inventories"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return ApplicationStandardLogConsumerSnapshot{}, fmt.Errorf("decode standard log consumer snapshot: %w", err)
 	}
-	r := ApplicationStandardLogConsumerSnapshot{Drains: []AppLogDrain{}, Inventories: wire.Inventories}
+	drains := make([]AppLogDrain, 0, len(wire.Drains))
+	owners := make([]appLogDrainOwnership, 0, len(wire.Drains))
 	for _, d := range wire.Drains {
 		d.Spec.StandardBinding = d.Binding
-		r.Drains = append(r.Drains, d.Spec)
+		drains = append(drains, d.Spec)
+		owners = append(owners, d.Owner)
 	}
-	return r, nil
+	return ApplicationStandardLogConsumerSnapshot{Drains: planCoveredAppLogDrains(drains, owners), Inventories: wire.Inventories}, nil
 }
 
 func (s *PgStore) RegisterApplicationStandardLogConsumer(ctx context.Context, nodeID, sessionID string) (ApplicationStandardLogConsumerSession, error) {

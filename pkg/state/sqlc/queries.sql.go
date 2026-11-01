@@ -42800,6 +42800,57 @@ func (q *Queries) ListAppHealthHistory(ctx context.Context, db DBTX, arg ListApp
 	return items, nil
 }
 
+const listAppLogDrainPlanSubjectDrains = `-- name: ListAppLogDrainPlanSubjectDrains :many
+SELECT d.id::text AS id,d.app_id::text AS app_id,(d.app_id=$1::uuid)::boolean AS addressed,
+ jsonb_build_object('plan',r.plan,'subject',(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)::text,
+  'counted',a.status<>'deleted','standard',EXISTS(SELECT 1 FROM application_standard_control_bindings b
+   WHERE b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text))::jsonb AS owner
+FROM app_log_drains d JOIN apps a ON a.id=d.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ JOIN app_resource_accounts r ON r.app_id=d.app_id
+ JOIN (SELECT CASE WHEN NOT so.personal_org AND so.resource_ownership_enabled THEN so.id ELSE sa.account_id END AS subject
+  FROM apps sa LEFT JOIN orgs so ON so.id=sa.org_id WHERE sa.id=$1::uuid) t
+  ON t.subject=(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)
+WHERE d.enabled
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
+ORDER BY d.created_at,d.id
+`
+
+type ListAppLogDrainPlanSubjectDrainsRow struct {
+	ID        string
+	AppID     string
+	Addressed bool
+	Owner     []byte
+}
+
+// The enabled, deliverable drains of every app that shares app_id's billing
+// subject, in delivery order, with the owner facts the delivery reads check
+// against the plan. PgStore reports which of app_id's own drains the plan
+// leaves out.
+func (q *Queries) ListAppLogDrainPlanSubjectDrains(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListAppLogDrainPlanSubjectDrainsRow, error) {
+	rows, err := db.Query(ctx, listAppLogDrainPlanSubjectDrains, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppLogDrainPlanSubjectDrainsRow{}
+	for rows.Next() {
+		var i ListAppLogDrainPlanSubjectDrainsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Addressed,
+			&i.Owner,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppPendingRestarts = `-- name: ListAppPendingRestarts :many
 WITH latest AS (
  SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
@@ -47327,8 +47378,13 @@ func (q *Queries) ListEgressCircuitCandidates(ctx context.Context, db DBTX, samp
 }
 
 const listEnabledAppLogDrainsWithStandardBinding = `-- name: ListEnabledAppLogDrainsWithStandardBinding :many
-SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at, d.created_by_account_id,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
-FROM app_log_drains d WHERE d.enabled
+SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at, d.created_by_account_id,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding,
+ jsonb_build_object('plan',r.plan,'subject',(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)::text,
+  'counted',a.status<>'deleted','standard',EXISTS(SELECT 1 FROM application_standard_control_bindings b
+   WHERE b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text))::jsonb AS owner
+FROM app_log_drains d JOIN apps a ON a.id=d.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ JOIN app_resource_accounts r ON r.app_id=d.app_id
+WHERE d.enabled
  AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
 ORDER BY d.created_at,d.id
 `
@@ -47345,10 +47401,13 @@ type ListEnabledAppLogDrainsWithStandardBindingRow struct {
 	UpdatedAt          pgtype.Timestamptz
 	CreatedByAccountID pgtype.UUID
 	StandardBinding    []byte
+	Owner              []byte
 }
 
 // A rehearsal-enrolled app's candidate output never leaves for a customer
-// log destination (ADR-20261019180000).
+// log destination (ADR-20261019180000). owner is what PgStore checks against
+// the plan of the account the app's resources belong to, so a drain stops
+// when that plan stops covering it (appLogDrainOwnership).
 func (q *Queries) ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error) {
 	rows, err := db.Query(ctx, listEnabledAppLogDrainsWithStandardBinding)
 	if err != nil {
@@ -47370,6 +47429,7 @@ func (q *Queries) ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context
 			&i.UpdatedAt,
 			&i.CreatedByAccountID,
 			&i.StandardBinding,
+			&i.Owner,
 		); err != nil {
 			return nil, err
 		}
@@ -54737,14 +54797,22 @@ SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object
  jsonb_build_object('ID',d.id::text,'AppID',d.app_id::text,'AccountID',d.account_id::text,
  'Kind',d.kind,'TargetURL',d.target_url,'AuthHeaderSealed',encode(coalesce(d.auth_header_sealed,''::bytea),'base64'),
  'Enabled',d.enabled,'CreatedAt',d.created_at,'UpdatedAt',d.updated_at),
- 'binding',application_standard_log_binding(d.app_id,d.id)) ORDER BY d.created_at,d.id)
- FROM app_log_drains d WHERE d.enabled),'[]'::jsonb),
+ 'binding',application_standard_log_binding(d.app_id,d.id),
+ 'owner',jsonb_build_object('plan',r.plan,'subject',(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)::text,
+  'counted',a.status<>'deleted','standard',EXISTS(SELECT 1 FROM application_standard_control_bindings b
+   WHERE b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text))) ORDER BY d.created_at,d.id)
+ FROM app_log_drains d JOIN apps a ON a.id=d.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ JOIN app_resource_accounts r ON r.app_id=d.app_id
+ WHERE d.enabled AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)),'[]'::jsonb),
  'inventories',coalesce((SELECT jsonb_agg(i.inventory ORDER BY i.app_id) FROM
  (SELECT e.app_id,application_standard_log_inventory(e.app_id) AS inventory FROM app_application_standards e) i
  WHERE i.inventory IS NOT NULL),'[]'::jsonb))::jsonb AS snapshot
 `
 
 // Both collections come from one statement snapshot, including empty drain sets.
+// The drains are ListEnabledAppLogDrainsWithStandardBinding's: a
+// rehearsal-enrolled app's output never leaves for a customer destination
+// (ADR-20261019180000), and owner is checked against the plan.
 func (q *Queries) LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error) {
 	row := db.QueryRow(ctx, loadApplicationStandardLogConsumerSnapshot)
 	var snapshot []byte

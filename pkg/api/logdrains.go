@@ -1,12 +1,32 @@
 package api
 
-import "time"
+import (
+	"net/url"
+	"time"
+)
 
 // AppLogDrainAuthHeaderMaxBytes bounds the single sealed authentication
 // header accepted for a customer log destination.
 const AppLogDrainAuthHeaderMaxBytes = 4096
 
 const AppLogDrainAuthHeaderMasked = "***"
+
+// MaskAppLogDrainTargetURL keeps a drain target's scheme and host and
+// replaces its path and query with "/***": destinations such as Sumo Logic
+// and Loggly carry their ingestion token there, and a caller who cannot
+// change the drain must not learn it. A target with nothing past the host is
+// returned as it is. The result is still an absolute URL.
+func MaskAppLogDrainTargetURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "https://" + AppLogDrainAuthHeaderMasked
+	}
+	origin := u.Scheme + "://" + u.Host
+	if (u.Path == "" || u.Path == "/") && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" {
+		return origin + u.Path
+	}
+	return origin + "/" + AppLogDrainAuthHeaderMasked
+}
 
 const (
 	AppLogDrainHealthStatusUnknown  = "unknown"
