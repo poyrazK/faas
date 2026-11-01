@@ -172,6 +172,13 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			return limit, nil
 		},
+		FreePlan: func(ctx context.Context, subjectID string) (bool, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, subjectID)
+			if err != nil {
+				return false, err
+			}
+			return api.Plan(account.Plan) == api.PlanFree, nil
+		},
 		AdmitResize: func(ctx context.Context, accountID string, target managedpostgres.Spec) error {
 			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
 			if err != nil {

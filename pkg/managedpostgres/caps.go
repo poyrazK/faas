@@ -38,6 +38,22 @@ func ParseCapEnforcementMode(value string) (CapEnforcementMode, error) {
 	}
 }
 
+// CapsEnforced reports whether both the compute and the storage cap are on.
+// A malformed mode counts as not enforced. Until both are on, the production
+// release holds managed PostgreSQL to accounts a flag rule names
+// (ADR-20261031091607).
+func CapsEnforced(getenv func(string) string) bool {
+	if getenv == nil {
+		return false
+	}
+	compute, err := ParseCapEnforcementMode(getenv(CapEnforcementEnv))
+	if err != nil || compute != CapEnforcementOn {
+		return false
+	}
+	storage, err := ParseStorageCapEnforcementMode(getenv(StorageCapEnforcementEnv))
+	return err == nil && storage == CapEnforcementOn
+}
+
 // ComputeCapProvider is an optional Provider capability: a monthly compute
 // quota held on a running database, which the provider enforces itself by
 // suspending the database's computes. Quotas are compute-unit seconds.

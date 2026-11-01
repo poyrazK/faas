@@ -208,6 +208,12 @@ type server struct {
 	totp            *totpGuard
 	objectStorage   *objectstorage.Registry
 	managedPostgres *managedpostgres.Service
+
+	// managedPostgresUncapped holds the production release to accounts a
+	// flag rule names while the compute or storage cap is not on
+	// (ADR-20261031091607).
+	managedPostgresUncapped bool
+
 	// postgresUpgrades is who sees in-place major upgrades
 	// (FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS); nobody until configured.
 	postgresUpgrades managedpg.Rollout
