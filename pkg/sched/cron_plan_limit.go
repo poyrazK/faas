@@ -50,6 +50,12 @@ func (g *cronPlanGate) admit(ctx context.Context, app state.App, cron state.Cron
 	if owner == nil {
 		return true
 	}
+	// A suspended owner's crons do not fire (dispatchCronLocked). Refusing
+	// them here also skips the fire claim and its rollback: two writes per
+	// cron per minute for as long as the account stays suspended.
+	if !owner.Active() {
+		return false
+	}
 	subject := owner.ResourceOwnerID()
 	set, seen := g.eligible[subject]
 	if !seen {

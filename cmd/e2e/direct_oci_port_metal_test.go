@@ -71,9 +71,9 @@ func TestDirectOCIPort3000Metal(t *testing.T) {
 	}
 	depID := parseImageDeployment(t, body)
 
-	deployCtx, deployCancel := context.WithTimeout(context.Background(), 90*time.Second)
+	deployCtx, deployCancel := context.WithTimeout(context.Background(), imageDeployLiveBudget+15*time.Second)
 	defer deployCancel()
-	dep, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 75*time.Second)
+	dep, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, imageDeployLiveBudget)
 	if err != nil {
 		h.DumpLogs(t)
 		t.Fatalf("direct OCI port deployment did not reach live: %v", err)

@@ -196,7 +196,9 @@ read once at the start, so a resource labelled during the wait is not added.
   7. Docs, dashboard, MCP tools and a journey; then beta. The management
      MCP server reads first: app views carry labels and `gregale_list_apps`
      takes a `selector`. A label write follows its plan/apply consent and
-     waits for a need.
+     waits for a need. The dashboard shows labels without editing them: the
+     apps list has a labels column and a selector box, and the app page and
+     the managed PostgreSQL page show app, cron and database labels.
 
 ## Consequences
 

@@ -273,6 +273,14 @@ one app. Minting and rotating one needs an MFA step-up from the last five
 minutes, so run `gregale account mfa verify` first. The token is shown once;
 store it as `FAAS_TOKEN` in the CI secret store.
 
+A deploy token can also manage its app's edge rules, but only for that app's
+own hosts: a rule's `match_host` must be `@app`, the app's
+`<slug>.gregale.dev` host or one of its custom domains. The same goes for
+`routes` and `async_routes` in a `gregale.yaml` it deploys. A rule that covers
+other hosts (`*`, a wildcard, another app's host), or a route that sends
+another app's host to this app, needs an account API key, because edge rules
+apply to every host they cover across your apps.
+
 ```bash
 gregale app deploy-token create --app my-api --label ci   # default expiry: 90 days
 gregale app deploy-token list --app my-api

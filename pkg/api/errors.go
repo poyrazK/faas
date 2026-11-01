@@ -4391,6 +4391,18 @@ func ErrPlanCronQuota(plan Plan, scope string, limit, observed int) *Problem {
 		WithDocs(docsBase + "/plans#crons")
 }
 
+// ErrCronRunOverPlan is the 403 for a manual run of a cron that the owner's
+// current plan does not let fire: after a downgrade only the oldest crons
+// within the new limits keep running.
+func ErrCronRunOverPlan(plan Plan, scope string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanCronQuota,
+		"Cron over plan limit",
+		fmt.Sprintf("%s plan runs at most %d crons for %s; %d of your enabled crons count toward it and this cron is not among the oldest %d, so it does not run. Disable or delete a cron, or upgrade.",
+			plan, limit, PlanQuotaScopeDisplayName(scope), observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#crons")
+}
+
 // ErrPlanEventSubscriptionQuota refuses a deploy whose gregale.yaml would
 // leave more enabled event subscriptions than the plan allows for the app or
 // the account (ADR-20261031130000).

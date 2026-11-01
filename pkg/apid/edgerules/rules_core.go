@@ -156,6 +156,9 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := ValidateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		return m, prob
 	}
+	if prob := s.AppBoundHostProblem(ctx, app, req.MatchHost); prob != nil {
+		return m, prob
+	}
 	if prob := s.createReleaseProblem(acct, req); prob != nil {
 		return m, prob
 	}
@@ -273,6 +276,9 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 	// Validate the optional fields if present.
 	if req.MatchHost != nil {
 		if prob := api.ValidateEdgeRuleMatchHost(*req.MatchHost); prob != nil {
+			return m, prob
+		}
+		if prob := s.appBoundUpdateHostProblem(ctx, row.AppID, *req.MatchHost); prob != nil {
 			return m, prob
 		}
 	}

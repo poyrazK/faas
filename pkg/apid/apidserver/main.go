@@ -82,6 +82,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -1691,12 +1692,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
+	if err := object.ValidateObjectStoragePricing(objectRegistry); err != nil {
+		return err
+	}
 	srv.WithObjectStorage(objectRegistry)
 	if err := srv.configureHosting(deps.getenv); err != nil {
 		return fmt.Errorf("apid internal hosting configuration: %w", err)
 	}
 	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
+	}
+	srv.managedPostgresUncapped = managedpostgres.ProductionEnvironmentActive(deps.getenv) && !managedpostgres.CapsEnforced(deps.getenv)
+	if srv.managedPostgresUncapped {
+		log.Warn("managed postgres release held to accounts a flag rule names: compute and storage caps are not both on")
 	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
 		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired,

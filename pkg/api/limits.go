@@ -652,6 +652,11 @@ const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 // total managed PostgreSQL databases and monthly provider cost (integer
 // millicents). They are COGS breakers across every account, not plan quotas.
 const ManagedPostgresFleetDatabasesCeiling = 100000
+
+// ManagedPostgresFleetPaidReservePercent is the share of the fleet's database
+// cap only paid plans may add when the operator sets no paid reserve
+// (ADR-20261031091607).
+const ManagedPostgresFleetPaidReservePercent = 20
 const ManagedPostgresFleetMonthlyCostCeilingMillicents = 10_000_000_000
 
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
@@ -1467,6 +1472,17 @@ const (
 const (
 	CronPlatformAttempts   = 3
 	CronPlatformRetryDelay = 5 * time.Second
+)
+
+// CronCatchUpRecordedMax bounds the due occurrences a schedule-policy or
+// command cron records in one tick after an outage or suspension: the newest
+// is dispatched and the ones before it are recorded as missed or coalesced.
+// Each is a database write on schedd's main loop, so older due occurrences
+// are passed over. CronCatchUpScanMax bounds how far the in-memory walk goes
+// (about four years of minutes).
+const (
+	CronCatchUpRecordedMax = 20
+	CronCatchUpScanMax     = 1 << 21
 )
 
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
@@ -2868,6 +2884,13 @@ const (
 // gateway's concurrent staged transfers (at least one), so a single tenant's
 // parallel uploads leave room for others (ADR-20261023223000).
 const ObjectUploadAccountSlotSharePercent = 50
+
+// ObjectUploadSlotWait is how long an upload or part waits for a slot before
+// it answers SlowDown. S3 transfer managers send several parts at once (the
+// AWS CLI ten) against a share of two slots, so refusing at once failed most
+// parts of a large upload (ADR-20261023223000 amendment 2026-11-01). It
+// matches ObjectDeletionAdmissionWait.
+const ObjectUploadSlotWait = 15 * time.Second
 
 // A request body holds an upload slot while the gateway reads it. It may go
 // ObjectUploadIdleTimeout without a byte and, after ObjectUploadMinRateGrace,

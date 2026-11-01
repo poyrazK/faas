@@ -9,8 +9,9 @@ Scheduled fires and manual runs (`gregale crons run`) go through the same path.
   (or a manual run's request) and its first delivery claim has been above 60
   seconds for ten minutes.
 - **FaasCronDeliveryFailing**: across the fleet, more than half of at least 20
-  deliveries in 30 minutes have ended `failed` or `dead_letter`, for thirty
-  minutes.
+  deliveries in 30 minutes have failed on the platform side (`failed` or
+  `dead_letter`), for thirty minutes. Runs the app answered with an error
+  count as `app_error` and do not fire it.
 
 Command crons have their own alerts (`faas_command_cron_admission`).
 
@@ -25,9 +26,12 @@ histogram_quantile(0.99,
 sum by (outcome) (rate(schedd_cron_delivery_total[30m]))
 ```
 
-A plain HTTP cron makes one delivery attempt per scheduled time, so a failure
-shows up as `failed`. `retry` and `dead_letter` come only from crons with
-failure rules. Compare with `schedd_delayed_task_dispatch_total` and the
+A plain HTTP cron makes one delivery attempt per scheduled time, so a
+platform failure shows up as `failed` and an error answer from the app as
+`app_error`. `retry` comes from failure rules and from runs Gregale refused
+before delivery; `dead_letter` comes only from crons with failure rules. A
+rising `app_error` rate is customer misconfiguration (most often a 404 for the
+cron's path), not a platform fault. Compare with `schedd_delayed_task_dispatch_total` and the
 invocation backlog: if every async source is late or failing, the problem is
 the drain or the database, not crons.
 

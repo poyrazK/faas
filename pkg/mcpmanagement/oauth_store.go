@@ -157,6 +157,7 @@ func (r *remoteServer) pruneLocked() {
 
 func (r *remoteServer) revokeLocked(g *oauthGrant) {
 	r.audit("mcp.grant.revoked", g)
+	r.retireCredentialLocked(g)
 	g.revoked = true
 	g.management.stopResourceSubscriptions()
 	if g.management != nil && g.management.grantLifecycle != nil {

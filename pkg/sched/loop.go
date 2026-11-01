@@ -3960,7 +3960,7 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 		// An ordinary 5xx is retryable under the durable invocation contract.
 		// Runner-caught exceptions are marked InvocationFailed above and take
 		// the permanent branch instead.
-		err = fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)
+		err = appAnsweredError{err: fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)}
 	}
 	return out, err
 }
@@ -4503,6 +4503,11 @@ func (l *Loop) runCronTick(ctx context.Context) {
 			}
 			continue
 		}
+		// Crons switched off for the account do not fire (dispatchCronLocked);
+		// checking before the claim skips its rollback write every minute.
+		if !l.engine.appCapabilityAllowed(ctx, app, "crons") {
+			continue
+		}
 		l.dispatchOneCron(ctx, c, now)
 	}
 }
@@ -4599,18 +4604,15 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		// Already fired in the current window.
 		return
 	}
-	if len(c.Command) > 0 {
-		due := make([]time.Time, 0, 4)
-		for next := scheduledFor; !next.After(now) && len(due) < 10000; next = sched.NextFireAt(next) {
-			due = append(due, next)
+	if len(c.Command) > 0 || c.SchedulePolicy != nil {
+		due, skipped := cronDueOccurrences(sched, scheduledFor, now, api.CronCatchUpRecordedMax)
+		if skipped > 0 {
+			l.log.Info("cron: catch-up records only the newest due occurrences",
+				"cron_id", c.ID, "recorded", len(due), "not_recorded", skipped)
 		}
-		l.dispatchScheduledCommandCron(ctx, c, due, now)
-		return
-	}
-	if c.SchedulePolicy != nil {
-		due := make([]time.Time, 0, 4)
-		for next := scheduledFor; !next.After(now) && len(due) < 10000; next = sched.NextFireAt(next) {
-			due = append(due, next)
+		if len(c.Command) > 0 {
+			l.dispatchScheduledCommandCron(ctx, c, due, now)
+			return
 		}
 		l.dispatchScheduledHTTPCron(ctx, c, due, now)
 		return
