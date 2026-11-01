@@ -607,6 +607,13 @@ func (s *server) mfaDisableEmail(w http.ResponseWriter, r *http.Request, acct st
 }
 
 func (s *server) issueInlineMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	// A password holder could send the owner any number of these mails,
+	// limited only per client address (bug hunt 2026-10-28 H98).
+	if !s.allowSecurityMail(r.Context(), acct, "mfa_disable") {
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeAuthRateLimited,
+			"Too many MFA disable emails", "an MFA disable email was sent recently; use that link or try again in an hour"))
+		return
+	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		s.log.Error("mfa.disable_email.rand", "err", err.Error())
@@ -700,6 +707,12 @@ func (s *server) confirmInlineMFADisableEmail(w http.ResponseWriter, r *http.Req
 		}
 		api.WriteProblem(w, api.NewProblem(http.StatusTooEarly, api.CodeMFADisableCooldown,
 			"MFA disable cooldown active", "confirm this request after the 24-hour waiting period").WithHeader("Retry-After", strconv.Itoa(retryAfter)))
+		return
+	}
+	// A legacy link expires a day after its cooldown, as a durable one does;
+	// it used to work forever (bug hunt 2026-10-28 H98).
+	if time.Now().UTC().After(readyAt.Add(api.MFADisableEmailConfirmWindow)) {
+		s.writeMFADisableEmailInvalid(w, r, acct, "token_expired")
 		return
 	}
 	if _, err := s.store.ConsumeMFADisableRequest(r.Context(), api.HashToken(sealed)); err != nil {

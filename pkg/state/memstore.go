@@ -2764,6 +2764,7 @@ func (m *MemStore) SetMFASecret(_ context.Context, id string, encrypted []byte, 
 		a.MFARecoveryCodesHash[i] = slices.Clone(h)
 	}
 	m.storeRouteCheckAccountLocked(id, a)
+	m.consumeMFADisableRequestsLocked(id)
 	return nil
 }
 
@@ -2780,6 +2781,7 @@ func (m *MemStore) MarkMFAEnrolled(_ context.Context, id string) error {
 	a.MFAEnrolledAt = &now
 	a.MFARequired = false
 	m.storeRouteCheckAccountLocked(id, a)
+	m.consumeMFADisableRequestsLocked(id)
 	return nil
 }
 
@@ -2798,6 +2800,7 @@ func (m *MemStore) ClearMFA(_ context.Context, id string) error {
 	a.MFARecoveryCodesHash = nil
 	a.MFAEnrolledAt = nil
 	m.storeRouteCheckAccountLocked(id, a)
+	m.consumeMFADisableRequestsLocked(id)
 	return nil
 }
 
@@ -2816,6 +2819,7 @@ func (m *MemStore) SetMFARequired(_ context.Context, id string, required bool) (
 	}
 	a.MFARequired = required
 	m.storeRouteCheckAccountLocked(id, a)
+	m.consumeMFADisableRequestsLocked(id)
 	return true, nil
 }
 
@@ -21775,6 +21779,7 @@ func (m *MemStore) SetAccountPassword(_ context.Context, accountID, phc string) 
 		Hash:      phc,
 		UpdatedAt: time.Now(),
 	}
+	m.consumeMFADisableRequestsLocked(accountID)
 	return nil
 }
 
@@ -26702,6 +26707,7 @@ func (m *MemStore) RevokeAllSessions(_ context.Context, accountID, exceptID stri
 		m.sessions[id] = s
 		n++
 	}
+	m.consumeMFADisableRequestsLocked(accountID)
 	return n, nil
 }
 
@@ -29712,4 +29718,16 @@ func (m *MemStore) billingSubjectPaidLocked(id string) bool {
 		return o.Plan.IsPaid()
 	}
 	return false
+}
+
+// consumeMFADisableRequestsLocked mirrors the legacy CTE the MFA, password
+// and sign-out-everywhere statements run in PgStore (bug hunt 2026-10-28 H98).
+func (m *MemStore) consumeMFADisableRequestsLocked(accountID string) {
+	now := time.Now()
+	for key, req := range m.mfaDisableRequests {
+		if req.AccountID == accountID && req.ConsumedAt == nil {
+			req.ConsumedAt = &now
+			m.mfaDisableRequests[key] = req
+		}
+	}
 }

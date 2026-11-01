@@ -89,3 +89,53 @@ func TestPgStoreMFADisableRequestLifecycle(t *testing.T) {
 		t.Fatalf("replay error = %v, want ErrNotFound", err)
 	}
 }
+
+// A legacy MFA-disable email request dies with the account changes that end
+// a durable link: MFA enrollment, MFA reset, a password change and signing
+// out everywhere. It used to stay usable forever (bug hunt 2026-10-28 H98).
+func TestMemStoreLegacyMFADisableRequestEndsWithAccountChanges(t *testing.T) {
+	assertLegacyMFADisableRequestEndsWithAccountChanges(t, context.Background(), state.NewMemStore())
+}
+
+func TestPgStoreLegacyMFADisableRequestEndsWithAccountChanges(t *testing.T) {
+	store, ctx := pgStore(t)
+	assertLegacyMFADisableRequestEndsWithAccountChanges(t, ctx, store)
+}
+
+func assertLegacyMFADisableRequestEndsWithAccountChanges(t *testing.T, ctx context.Context, store state.Store) {
+	t.Helper()
+	acct, err := store.CreateAccount(ctx, "legacy-mfa-disable@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := []struct {
+		name   string
+		change func() error
+	}{
+		{"password change", func() error {
+			return store.SetAccountPassword(ctx, acct.ID, "$argon2id$v=19$m=65536,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNo")
+		}},
+		{"mfa secret", func() error {
+			return store.SetMFASecret(ctx, acct.ID, []byte("enc"), [][]byte{[]byte("recovery")})
+		}},
+		// Enrollment needs the secret the previous step set.
+		{"mfa enrollment", func() error { return store.MarkMFAEnrolled(ctx, acct.ID) }},
+		{"mfa reset", func() error { return store.ClearMFA(ctx, acct.ID) }},
+		{"sign out everywhere", func() error {
+			_, err := store.RevokeAllSessions(ctx, acct.ID, "00000000-0000-0000-0000-000000000000")
+			return err
+		}},
+	}
+	for _, tc := range changes {
+		hash := []byte("legacy-" + tc.name)
+		if err := store.IssueMFADisableRequest(ctx, hash, acct.ID, time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)); err != nil {
+			t.Fatal(err)
+		}
+		if err := tc.change(); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if _, err := store.GetMFADisableRequest(ctx, hash); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("after %s the legacy request = %v, want ErrNotFound", tc.name, err)
+		}
+	}
+}
