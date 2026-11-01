@@ -4846,8 +4846,8 @@
       "cli": [
         "app label",
         "postgres label",
-        "cron label",
-        "job label"
+        "crons label",
+        "jobs label"
       ]
     },
     {
