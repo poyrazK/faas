@@ -883,7 +883,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "default-off private runtime routing receipt; enable only with a reviewed gateway slot identity (ADR-695)"},
 	{Name: "FAAS_S3_GATEWAY_CONTROL_ADDR", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Default: "127.0.0.1:9096"},
 	{Name: "FAAS_S3_GATEWAY_LISTEN_ADDR", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Default: "127.0.0.1:8084"},
-	{Name: "FAAS_S3_GATEWAY_ROLE", Owners: []string{"s3-gatewayd"}, Source: EnvSourceDropin, Default: "single-box", Note: "production control-plane service must set control-plane explicitly"},
+	{Name: "FAAS_S3_GATEWAY_ROLE", Owners: []string{"s3-gatewayd"}, Source: EnvSourceDropin, Default: "single-box", Note: "production control-plane service must set control-plane explicitly; compute-only on a compute node runs the gateway in compute mode (ADR-20261031122757)"},
 	{Name: "FAAS_S3_GATEWAY_SPOOL_DIR", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Note: "production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd"},
 	{Name: "FAAS_SAFEDEPLOY_STUCK_AFTER", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SAFEDEPLOY_TOKEN", Owners: []string{"apid", "meterd"}, Source: EnvSourceSecretsEnv, Note: "distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN; the control_plane_service role generates the pair when missing (faas_safe_releases_enabled, ADR-1189)"},

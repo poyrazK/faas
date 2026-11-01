@@ -803,7 +803,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private runtime routing receipt; enable only with a reviewed gateway slot identity (ADR-695) |
 | `FAAS_S3_GATEWAY_CONTROL_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:9096 | `` |  |
 | `FAAS_S3_GATEWAY_LISTEN_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:8084 | `` |  |
-| `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `dropin` |  | single-box | `` | production control-plane service must set control-plane explicitly |
+| `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `dropin` |  | single-box | `` | production control-plane service must set control-plane explicitly; compute-only on a compute node runs the gateway in compute mode (ADR-20261031122757) |
 | `FAAS_S3_GATEWAY_SPOOL_DIR` | s3-gatewayd | `unit` |  |  | `` | production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd |
 | `FAAS_SAFEDEPLOY_STUCK_AFTER` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_SAFEDEPLOY_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN; the control_plane_service role generates the pair when missing (faas_safe_releases_enabled, ADR-1189) |

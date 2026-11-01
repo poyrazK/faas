@@ -663,6 +663,9 @@ type Backend struct {
 	Usage            UsageConfig
 	// MaxBuckets is the backend's placement ceiling; 0 is none.
 	MaxBuckets int64
+	// GatewayCredential reports that Provider holds the backend's gateway
+	// credential rather than its bucket-admin one (ADR-20261031122757 §4).
+	GatewayCredential bool
 }
 
 func fingerprint(c BackendConfig) string {

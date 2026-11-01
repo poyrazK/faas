@@ -43,7 +43,10 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	if err := role.Require("s3-gatewayd", role.FromConfig("", "FAAS_S3_GATEWAY_ROLE"), role.RoleSingleBox, role.RoleControlPlane); err != nil {
+	// A compute node runs a gateway too (ADR-20261031122757), held to what
+	// checkComputeGateway allows there.
+	gatewayRole := role.FromConfig("", "FAAS_S3_GATEWAY_ROLE")
+	if err := role.Require("s3-gatewayd", gatewayRole, role.RoleSingleBox, role.RoleControlPlane, role.RoleComputeOnly); err != nil {
 		return err
 	}
 	ops := wire.NewOpsMetrics("s3_gateway")
@@ -75,6 +78,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	storageIdentities, err := loadStorageSealDomain(os.Getenv)
 	if err != nil {
 		return err
+	}
+	if gatewayRole == role.RoleComputeOnly {
+		if err := checkComputeGateway(os.Getenv, storageIdentities, registry); err != nil {
+			return err
+		}
 	}
 	identities, err := loadIdentities(os.Getenv, len(storageIdentities) > 0)
 	if err != nil {
@@ -117,7 +125,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		stopReads()
 		<-readsDone
 	}()
-	usageJobs, err := usageExportJobs(registry, requestMetrics, os.Getenv)
+	usageJobs, err := usageExportJobsForRole(gatewayRole, registry, requestMetrics, os.Getenv)
 	if err != nil {
 		return err
 	}
