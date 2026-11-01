@@ -9563,6 +9563,16 @@ type NodeLifecycleCompletion struct {
 	AuditOutboxID    int64
 }
 
+// ADR 20261101091815 node-wide measured memory, published by each node's own scheduler for its peers.
+type NodeMemoryReport struct {
+	NodeID          pgtype.UUID
+	MeasuredMb      int32
+	UsedMb          pgtype.Int4
+	FrozenInstances int32
+	MeasuredAt      pgtype.Timestamptz
+	ReportedAt      pgtype.Timestamptz
+}
+
 type NotificationChannel struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
