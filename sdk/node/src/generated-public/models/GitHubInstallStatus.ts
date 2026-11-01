@@ -39,5 +39,15 @@ export type GitHubInstallStatus = {
     synced_at?: string;
   };
   activity?: GitHubInstallActivity;
+  /**
+   * The account's connected installations when it has more than
+   * one. An unbound app then reports no `installation_id`; a bind or
+   * repository listing names one of these.
+   *
+   */
+  installations?: Array<{
+    installation_id: number;
+    github_login?: string;
+  }>;
 };
 

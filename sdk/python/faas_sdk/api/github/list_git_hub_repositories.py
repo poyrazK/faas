@@ -7,14 +7,24 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.repo_response import RepoResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
-def _get_kwargs() -> dict[str, Any]:
+def _get_kwargs(
+    *,
+    installation_id: int | Unset = UNSET,
+) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["installation_id"] = installation_id
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/github/repos",
+        "params": params,
     }
 
     return _kwargs
@@ -33,6 +43,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
+
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
 
@@ -47,6 +62,11 @@ def _parse_response(
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
 
     if response.status_code == 502:
         response_502 = Problem.from_dict(response.json())
@@ -78,14 +98,19 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient,
+    installation_id: int | Unset = UNSET,
 ) -> Response[Problem | list[RepoResponse]]:
     """List repositories visible to the account's GitHub App installation.
 
      Bearer API-key surface for customer automation. Requires the
-    dedicated `github:manage` scope. The account's durable GitHub App
-    installation is resolved server-side, so callers do not need to
-    copy or provide an installation id. Installation credentials are
-    never returned.
+    dedicated `github:manage` scope. `installation_id` names one of
+    the account's connected installations; without it the account's
+    only installation is used, and an account with several gets a 409
+    `github_installation_required` naming them. Installation
+    credentials are never returned.
+
+    Args:
+        installation_id (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -95,7 +120,9 @@ def sync_detailed(
         Response[Problem | list[RepoResponse]]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        installation_id=installation_id,
+    )
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -107,14 +134,19 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient,
+    installation_id: int | Unset = UNSET,
 ) -> Problem | list[RepoResponse] | None:
     """List repositories visible to the account's GitHub App installation.
 
      Bearer API-key surface for customer automation. Requires the
-    dedicated `github:manage` scope. The account's durable GitHub App
-    installation is resolved server-side, so callers do not need to
-    copy or provide an installation id. Installation credentials are
-    never returned.
+    dedicated `github:manage` scope. `installation_id` names one of
+    the account's connected installations; without it the account's
+    only installation is used, and an account with several gets a 409
+    `github_installation_required` naming them. Installation
+    credentials are never returned.
+
+    Args:
+        installation_id (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -126,20 +158,26 @@ def sync(
 
     return sync_detailed(
         client=client,
+        installation_id=installation_id,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
+    installation_id: int | Unset = UNSET,
 ) -> Response[Problem | list[RepoResponse]]:
     """List repositories visible to the account's GitHub App installation.
 
      Bearer API-key surface for customer automation. Requires the
-    dedicated `github:manage` scope. The account's durable GitHub App
-    installation is resolved server-side, so callers do not need to
-    copy or provide an installation id. Installation credentials are
-    never returned.
+    dedicated `github:manage` scope. `installation_id` names one of
+    the account's connected installations; without it the account's
+    only installation is used, and an account with several gets a 409
+    `github_installation_required` naming them. Installation
+    credentials are never returned.
+
+    Args:
+        installation_id (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,7 +187,9 @@ async def asyncio_detailed(
         Response[Problem | list[RepoResponse]]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        installation_id=installation_id,
+    )
 
     response = await client.get_async_httpx_client().request(**kwargs)
 
@@ -159,14 +199,19 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient,
+    installation_id: int | Unset = UNSET,
 ) -> Problem | list[RepoResponse] | None:
     """List repositories visible to the account's GitHub App installation.
 
      Bearer API-key surface for customer automation. Requires the
-    dedicated `github:manage` scope. The account's durable GitHub App
-    installation is resolved server-side, so callers do not need to
-    copy or provide an installation id. Installation credentials are
-    never returned.
+    dedicated `github:manage` scope. `installation_id` names one of
+    the account's connected installations; without it the account's
+    only installation is used, and an account with several gets a 409
+    `github_installation_required` naming them. Installation
+    credentials are never returned.
+
+    Args:
+        installation_id (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -179,5 +224,6 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            installation_id=installation_id,
         )
     ).parsed

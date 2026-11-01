@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.git_hub_install_activity import GitHubInstallActivity
     from ..models.git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBranches
+    from ..models.git_hub_install_status_installations_item import GitHubInstallStatusInstallationsItem
     from ..models.git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
 
 
@@ -52,6 +53,11 @@ class GitHubInstallStatus:
     """Bounded, redacted activity for the currently bound app. Webhook
     payloads, GitHub delivery identifiers, retry controls, and worker
     error text are never returned.
+    """
+    installations: list[GitHubInstallStatusInstallationsItem] | Unset = UNSET
+    """The account's connected installations when it has more than
+    one. An unbound app then reports no `installation_id`; a bind or
+    repository listing names one of these.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -110,6 +116,13 @@ class GitHubInstallStatus:
         if not isinstance(self.activity, Unset):
             activity = self.activity.to_dict()
 
+        installations: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.installations, Unset):
+            installations = []
+            for installations_item_data in self.installations:
+                installations_item = installations_item_data.to_dict()
+                installations.append(installations_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -147,6 +160,8 @@ class GitHubInstallStatus:
             field_dict["sync_result"] = sync_result
         if activity is not UNSET:
             field_dict["activity"] = activity
+        if installations is not UNSET:
+            field_dict["installations"] = installations
 
         return field_dict
 
@@ -154,6 +169,7 @@ class GitHubInstallStatus:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.git_hub_install_activity import GitHubInstallActivity
         from ..models.git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBranches
+        from ..models.git_hub_install_status_installations_item import GitHubInstallStatusInstallationsItem
         from ..models.git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
 
         d = dict(src_dict)
@@ -238,6 +254,15 @@ class GitHubInstallStatus:
         else:
             activity = GitHubInstallActivity.from_dict(_activity)
 
+        _installations = d.pop("installations", UNSET)
+        installations: list[GitHubInstallStatusInstallationsItem] | Unset = UNSET
+        if _installations is not UNSET:
+            installations = []
+            for installations_item_data in _installations:
+                installations_item = GitHubInstallStatusInstallationsItem.from_dict(installations_item_data)
+
+                installations.append(installations_item)
+
         git_hub_install_status = cls(
             state=state,
             health=health,
@@ -257,6 +282,7 @@ class GitHubInstallStatus:
             csrf_token=csrf_token,
             sync_result=sync_result,
             activity=activity,
+            installations=installations,
         )
 
         git_hub_install_status.additional_properties = d
