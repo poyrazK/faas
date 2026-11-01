@@ -1213,6 +1213,8 @@ var DeployIdempotencyKey = deployIdempotencyKey
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings
+
+var DeployManifestLabels = deployManifestLabels
 var DeployManifestTriggersWithRollback = deployManifestTriggersWithRollback
 var DeployOperationIdempotencyKey = deployOperationIdempotencyKey
 var DeployOptionsFingerprint = deployOptionsFingerprint

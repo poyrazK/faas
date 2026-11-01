@@ -293,3 +293,47 @@ func ErrAgentLimit(plan Plan, limit string, max, observed int) *Problem {
 		WithLimit(int64(max), int64(observed)).
 		WithDocs(docsBase + "/plans#agents")
 }
+
+// AgentInboxChannel is the realtime channel of a stateless agent app's inbox
+// (ADR-20261030125501 §2). Its consumer group orders messages by thread_id.
+const AgentInboxChannel = "agent-inbox"
+
+// Agent callback message kinds (ADR-20261030125501 §3).
+const (
+	AgentCallbackKindToolResult = "tool_result"
+	AgentCallbackKindEvent      = "event"
+)
+
+// CreateAgentCallbackRequest asks for a callback URL that posts into one
+// thread of an endpoint's agent inbox. Kinds defaults to tool_result and
+// TTLSeconds to AgentCallbackTokenTTLSec.
+type CreateAgentCallbackRequest struct {
+	EndpointID string   `json:"endpoint_id"`
+	ThreadID   string   `json:"thread_id"`
+	Kinds      []string `json:"kinds,omitempty"`
+	TTLSeconds int      `json:"ttl_seconds,omitempty"`
+}
+
+// AgentCallbackResponse is an issued callback URL. The URL is the only
+// credential a tool needs.
+type AgentCallbackResponse struct {
+	URL       string    `json:"url"`
+	ThreadID  string    `json:"thread_id"`
+	Kinds     []string  `json:"kinds"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// AgentCallbackPost is what a tool posts to a callback URL: one message for
+// the thread. MessageID makes a retried post land once.
+type AgentCallbackPost struct {
+	MessageID string          `json:"message_id"`
+	Kind      string          `json:"kind"`
+	Data      json.RawMessage `json:"data"`
+}
+
+// AgentCallbackReceipt answers an accepted post with the inbox message's
+// sequence. A retried post gets the first post's sequence.
+type AgentCallbackReceipt struct {
+	Sequence string `json:"sequence"`
+	ThreadID string `json:"thread_id"`
+}

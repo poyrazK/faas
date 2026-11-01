@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -47,6 +48,17 @@ type Handler struct {
 	Files storage.StorageBackend
 	Audit func(ctx context.Context, action, accountID string, fields map[string]any)
 	Log   *slog.Logger
+	// Agent callbacks (ADR-20261030125501 §3, callbacks.go). Callbacks signs
+	// tokens and Inbox publishes them; without both the callback routes
+	// answer capacity_unavailable. CallbackBaseURL is the public API origin
+	// callback URLs start with. AgentsEnabled reports whether the agents
+	// capability is on for an account: a callback for any other account is
+	// refused like an unknown route. Now is time.Now unless set.
+	Callbacks       *CallbackSigner
+	Inbox           CallbackInbox
+	CallbackBaseURL string
+	AgentsEnabled   func(ctx context.Context, accountID string) bool
+	Now             func() time.Time
 }
 
 // CreateAgent handles POST /v1/agents.

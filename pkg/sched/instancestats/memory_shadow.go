@@ -69,11 +69,24 @@ func (p *Poller) publishMemoryShadowWithBridges(instances []state.Instance, rows
 	if p.rssHistory == nil {
 		p.rssHistory = newRSSHistory()
 	}
+	// A paused VM cannot grow, and a thaw re-admits its full reservation, so
+	// a frozen instance is charged its latest sample, not the window's p95:
+	// the memory a compression frees reaches admission with the next sample,
+	// not ten minutes later (ADR 20261031190030).
+	frozen := make(map[string]struct{})
+	for _, in := range instances {
+		if state.State(in.State) == state.StateFrozen {
+			frozen[in.ID] = struct{}{}
+		}
+	}
 	charged := make([]InstanceStat, len(rows))
 	live := make(map[string]struct{}, len(rows))
 	for i, row := range rows {
 		if row.RSSMB >= 0 { // false for NaN, an unmeasured instance
-			row.RSSMB = p.rssHistory.chargeSample(row.InstanceID, row.RSSMB, asOf)
+			charge := p.rssHistory.chargeSample(row.InstanceID, row.RSSMB, asOf)
+			if _, isFrozen := frozen[row.InstanceID]; !isFrozen {
+				row.RSSMB = charge
+			}
 		}
 		charged[i] = row
 		live[row.InstanceID] = struct{}{}

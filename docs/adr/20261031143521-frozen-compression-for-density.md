@@ -6,6 +6,8 @@
   ADR-909 (the measured charge of a frozen instance)
 - **Related:** ADR-1151 (pause tiers), ADR 20261029151111 and ADR
   20261030100950 (CPU admission by use), #6118 (zswap on the fsn-3 canary)
+- **Amended by:** ADR 20261031190030 (frozen VMs then yield their memory to
+  admission; a frozen instance's measured charge uses its latest sample)
 
 This record has a date-and-time identifier because numbered ADRs collide
 when parallel changes pick the next number.

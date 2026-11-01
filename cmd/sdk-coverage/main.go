@@ -286,6 +286,8 @@ var routeExclude = map[string]bool{
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 	"POST /v1/agents":                                 true,
+	"POST /v1/agent-callbacks":                        true,
+	"POST /v1/agent-callbacks/{token}":                true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -2803,6 +2805,7 @@ func (r *reportT) print() {
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
 	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
+	"ListAppsSelected": "GET /v1/apps",
 }
 
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {
