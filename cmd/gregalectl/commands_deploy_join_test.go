@@ -646,7 +646,7 @@ func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
 			t.Errorf("drain barrier missing %q", token)
 		}
 	}
-	stopBlockEnd := strings.Index(playbook[stop:], "Install the verified release while keeping the row drained")
+	stopBlockEnd := strings.Index(playbook[stop:], "Install the verified release, keeping a drained row drained")
 	if stopBlockEnd < 0 {
 		t.Fatal("node_join is missing the release install after service stop")
 	}
@@ -665,7 +665,7 @@ func TestNodeJoinDefersFreshHostDaemonsUntilCredentialsAndDoctor(t *testing.T) {
 		t.Fatal(err)
 	}
 	playbook := string(body)
-	install := strings.Index(playbook, "Install the verified release while keeping the row drained")
+	install := strings.Index(playbook, "Install the verified release, keeping a drained row drained")
 	secrets := strings.Index(playbook, "Initialize host-local runtime identity and backup stubs")
 	doctor := strings.Index(playbook, "Run the node-scoped doctor before starting services")
 	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
@@ -674,7 +674,8 @@ func TestNodeJoinDefersFreshHostDaemonsUntilCredentialsAndDoctor(t *testing.T) {
 		t.Fatalf("fresh-host activation order invalid: install=%d secrets=%d doctor=%d restart=%d", install, secrets, doctor, restart)
 	}
 	installEnd := strings.Index(playbook[install:], "Verify the requested release is the active on-host release")
-	if installEnd < 0 || !strings.Contains(playbook[install:install+installEnd], "- --defer-activation") {
+	// A fresh host never restarts without a drain, so it always defers.
+	if installEnd < 0 || !strings.Contains(playbook[install:install+installEnd], `- "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"`) {
 		t.Fatal("node_join release install must defer first-boot daemon start and database activation")
 	}
 	credentialBlock := playbook[secrets:restart]

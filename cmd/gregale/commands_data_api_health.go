@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,6 +40,8 @@ type dataAPIHealthProbe struct {
 	Checks    *dataAPIHealthChecks    `json:"checks,omitempty"`
 	Admission *dataAPIHealthAdmission `json:"admission,omitempty"`
 	Pool      *dataAPIHealthPool      `json:"pool,omitempty"`
+	// RuntimeVersion is what readiness reported (ADR-20261031095954).
+	RuntimeVersion string `json:"runtime_version,omitempty"`
 }
 
 type dataAPIHealthReport struct {
@@ -54,6 +57,7 @@ type dataAPIHealthReport struct {
 	Readiness        dataAPIHealthProbe            `json:"readiness"`
 	Diagnostics      *dataAPIDiagnosticsReport     `json:"diagnostics,omitempty"`
 	ConnectionBudget *api.DataAPIConnectionBudgets `json:"connection_budget,omitempty"`
+	Runtime          *dataAPIHealthRuntime         `json:"runtime,omitempty"`
 }
 
 func cmdDataAPIHealth(args []string) int {
@@ -93,6 +97,8 @@ func cmdDataAPIHealth(args []string) int {
 	live := make(chan dataAPIHealthProbe, 1)
 	budget := make(chan api.DataAPIConnectionBudgets, 1)
 	go func() { budget <- readDataAPIConnectionBudget(ctx, client, fs.Arg(0)) }()
+	current := make(chan string, 1)
+	go func() { current <- currentDataAPIRuntimeVersion(ctx, client, fs.Arg(0)) }()
 	go func() {
 		live <- probeDataAPIHealth(ctx, public, strings.TrimSuffix(endpoint, "/healthz")+"/livez", true)
 	}()
@@ -100,6 +106,7 @@ func cmdDataAPIHealth(args []string) int {
 	liveness := <-live
 	report := describeDataAPIHealth(fs.Arg(0), liveness, readiness)
 	attachDataAPIConnectionBudget(&report, <-budget)
+	attachDataAPIRuntime(&report, <-current)
 	collector := newDataAPIDiagnosticsCollector(normalized, "")
 	collector.report.App, collector.report.Source, collector.report.Coverage = fs.Arg(0), "hosted", "retained_sample"
 	input, err := client.StreamAppLogs(ctx, fs.Arg(0), "", false, api.LogFilter{Since: normalized})
@@ -151,6 +158,7 @@ func cmdDataAPIHealth(args []string) int {
 		if checks := report.Readiness.Checks; checks != nil {
 			_, _ = fmt.Fprintf(osStdout, "Engine: %s; SQL: %s; database connectivity: %s; refresh: %s\n", checks.Engine, checks.SQL, checks.Database, checks.Refresh)
 		}
+		writeDataAPIHealthRuntime(report.App, report.Runtime)
 		if err := writeDataAPIPool(report.Readiness.Pool); err != nil {
 			return printErr("Could not write pool observations", err)
 		}
@@ -206,6 +214,7 @@ func probeDataAPIHealth(ctx context.Context, client *http.Client, address string
 		Checks    *dataAPIHealthChecks    `json:"checks"`
 		Admission *dataAPIHealthAdmission `json:"admission"`
 		Pool      json.RawMessage         `json:"pool"`
+		Runtime   string                  `json:"runtime_version"`
 	}
 	if json.Unmarshal(body, &payload) != nil {
 		return result
@@ -222,6 +231,9 @@ func probeDataAPIHealth(ctx context.Context, client *http.Client, address string
 	if !liveness {
 		result.Ready, result.Checks, result.Admission = payload.Ready, payload.Checks, payload.Admission
 		result.Pool = parseDataAPIHealthPool(payload.Pool, *payload.Admission.Capacity)
+		if templates.ValidDataAPIRuntimeVersion(payload.Runtime) {
+			result.RuntimeVersion = payload.Runtime
+		}
 		if !*payload.Ready {
 			result.State = "unready"
 		}

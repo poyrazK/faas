@@ -55,7 +55,7 @@ metrics), found:
 
 1. The runtime input guard leaves `artifact.scan_status` and
    `artifact.scan_result_hash` out of its comparison for every input
-   (migration `20261031190030417`, and MemStore's equivalent). Captures keep
+   (migration `20261101083902561`, and MemStore's equivalent). Captures keep
    their bytes; `artifact.parked_reason`, which a regressed scan sets, and the
    artifact itself stay compared.
 2. A wake for scope `production`, `default` or none takes the fast path: a

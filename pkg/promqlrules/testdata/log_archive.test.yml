@@ -1,0 +1,90 @@
+# Log archive operator signals, judged per scrape target: a sum across apid
+# and every vmmd hid one stuck or full node behind the healthy ones.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: one full vmmd spool alerts while the others are empty
+  interval: 1m
+  input_series:
+  - series: 'vmmd_log_archive_local_bytes{job="vmmd",instance="node-a"}'
+    values: '9000+0x30'
+  - series: 'vmmd_log_archive_local_bytes_max{job="vmmd",instance="node-a"}'
+    values: '10000+0x30'
+  - series: 'vmmd_log_archive_local_bytes{job="vmmd",instance="node-b"}'
+    values: '0+0x30'
+  - series: 'vmmd_log_archive_local_bytes_max{job="vmmd",instance="node-b"}'
+    values: '10000+0x30'
+  - series: 'apid_log_archive_local_bytes{job="apid",instance="cp"}'
+    values: '0+0x30'
+  - series: 'apid_log_archive_local_bytes_max{job="apid",instance="cp"}'
+    values: '10000+0x30'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasLogArchiveSpoolNearCap
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: log_archive
+        job: vmmd
+        instance: node-a
+      exp_annotations:
+        summary: "Log archive local spool is above 80% capacity"
+        description: "The apid or vmmd log archive spool has exceeded 80% of its configured capacity for 15m. Resolve the bucket or credentials outage before new archive lines are dropped."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
+- name: a node without archiving in a fleet that archives
+  interval: 1m
+  input_series:
+  - series: 'vmmd_log_archive_enabled{job="vmmd",instance="node-a"}'
+    values: '1+0x30'
+  - series: 'vmmd_log_archive_enabled{job="vmmd",instance="node-new"}'
+    values: '0+0x30'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasLogArchiveNodeDisabled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: log_archive
+        job: vmmd
+        instance: node-new
+      exp_annotations:
+        summary: "A daemon's log archive is off while the fleet archives"
+        description: "vmmd on node-new reports its log archive disabled while other daemons archive. Its parked instances' logs are not archived and, on apid, account erasure cannot reach the bucket. Check the node's archive credential envelope and the daemon's startup warnings."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
+- name: a fleet that archives nowhere stays quiet
+  interval: 1m
+  input_series:
+  - series: 'vmmd_log_archive_enabled{job="vmmd",instance="dev"}'
+    values: '0+0x30'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasLogArchiveNodeDisabled
+    exp_alerts: []
+- name: one vmmd stops uploading while another still ships
+  interval: 1m
+  input_series:
+  - series: 'vmmd_log_archive_local_bytes{job="vmmd",instance="node-a"}'
+    values: '500+0x60'
+  - series: 'vmmd_log_archive_files_uploaded_total{job="vmmd",instance="node-a",status="ok"}'
+    values: '3+0x60'
+  - series: 'vmmd_log_archive_local_bytes{job="vmmd",instance="node-b"}'
+    values: '500+0x60'
+  - series: 'vmmd_log_archive_files_uploaded_total{job="vmmd",instance="node-b",status="ok"}'
+    values: '0+1x60'
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: FaasLogArchiveShipperDegraded
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: log_archive
+        job: vmmd
+        instance: node-a
+      exp_annotations:
+        summary: "Log archive shipper is not making progress"
+        description: "The apid or vmmd log archive shipper has recorded failures or has pending local spool data without a successful upload for 30m. Check failure reasons, S3 credentials, bucket reachability, and the local spool."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"

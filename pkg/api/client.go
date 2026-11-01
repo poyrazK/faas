@@ -841,6 +841,14 @@ func (c *Client) ListApps(ctx context.Context) ([]AppResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/apps", nil, &out)
 }
 
+// ListAppsSelected lists the apps a label selector picks
+// (ADR-20261031100025). An apid without labels ignores the selector and
+// returns every app, so callers match the returned labels again.
+func (c *Client) ListAppsSelected(ctx context.Context, selector string) ([]AppResponse, error) {
+	var out []AppResponse
+	return out, c.do(ctx, "GET", "/v1/apps?"+url.Values{"selector": {selector}}.Encode(), nil, &out)
+}
+
 // CreateApp creates an app.
 func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppResponse, error) {
 	var out AppResponse
@@ -2952,6 +2960,28 @@ func (c *Client) PostDomainsDomainDefault(ctx context.Context, domain string) (C
 // SetDefaultDomain is the readable alias for PostDomainsDomainDefault.
 func (c *Client) SetDefaultDomain(ctx context.Context, domain string) (CustomDomainResponse, error) {
 	return c.PostDomainsDomainDefault(ctx, domain)
+}
+
+// GetDomainHosts returns a wildcard custom domain's host allowlist (ADR-520
+// amendment 2). Backed by GET /v1/domains/{domain}/hosts.
+func (c *Client) GetDomainHosts(ctx context.Context, domain string) (CustomDomainHostsResponse, error) {
+	var out CustomDomainHostsResponse
+	return out, c.do(ctx, "GET", "/v1/domains/"+domain+"/hosts", nil, &out)
+}
+
+// SetDomainHosts replaces a wildcard custom domain's host allowlist: only the
+// listed names below it get certificates. Backed by PUT
+// /v1/domains/{domain}/hosts.
+func (c *Client) SetDomainHosts(ctx context.Context, domain string, names []string) (CustomDomainHostsResponse, error) {
+	var out CustomDomainHostsResponse
+	return out, c.do(ctx, "PUT", "/v1/domains/"+domain+"/hosts", SetCustomDomainHostsRequest{Names: names}, &out)
+}
+
+// ClearDomainHosts removes a wildcard custom domain's host allowlist, so every
+// name below it may get a certificate again. Backed by DELETE
+// /v1/domains/{domain}/hosts.
+func (c *Client) ClearDomainHosts(ctx context.Context, domain string) error {
+	return c.do(ctx, "DELETE", "/v1/domains/"+domain+"/hosts", nil, nil)
 }
 
 // RetryDomainVerification re-arms a pending domain after its bounded polling
@@ -8208,6 +8238,14 @@ func (c *Client) GetAppStatus(ctx context.Context, slug, environment string) (Re
 	}
 	var out ResourceStatus
 	err := c.do(ctx, "GET", path, nil, &out)
+	return out, err
+}
+
+// UpdateAppLabels sets and removes an app's labels in one write and returns
+// every label it carries after it (ADR-20261031100025).
+func (c *Client) UpdateAppLabels(ctx context.Context, slug string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/apps/"+url.PathEscape(slug)+"/labels", change, &out)
 	return out, err
 }
 

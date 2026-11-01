@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { EventEmitter } from 'node:events'
 import { createServer } from '../server.mjs'
-import { createHealth } from '../health.mjs'
+import { createHealth, readRuntimeVersion } from '../health.mjs'
 import { runtimeConfig, limits } from '../config.mjs'
 
 async function fixture(t, coordinated = false) {
@@ -42,6 +42,7 @@ test('liveness needs no engine, database, JWT or admission and readiness disting
   assert.equal(response.status, 200)
   assert.deepEqual(report.checks, { engine: 'reachable', sql: 'ready', database: 'reachable', refresh: 'disabled' })
   assert.deepEqual(report.admission, { active: 0, queued: 0, capacity: 2, queue_capacity: 8 })
+  assert.equal(report.runtime_version, readRuntimeVersion())
   assert.equal(report.pool.state, 'observed')
   assert.equal(report.pool.capacity, 2)
   assert.equal(report.pool.available, 1)
@@ -141,4 +142,24 @@ test('a retained readiness probe expires at its hard cap and a fresh probe recov
   assert.equal(destroyed, 1)
   assert.equal(await health.sql(), 'ready')
   assert.equal(probes, 2, 'recovery uses a fresh probe after the hard cap')
+})
+
+test('readiness reports the runtime version the image was built from', async t => {
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { readFile } = await import('node:fs/promises')
+  const shipped = JSON.parse(await readFile(new URL('../runtime-version.json', import.meta.url), 'utf8')).version
+  assert.match(shipped, /^[0-9a-f]{16}$/)
+  assert.equal(readRuntimeVersion(), shipped)
+  const dir = await mkdtemp(join(tmpdir(), 'data-api-version-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = join(dir, 'runtime-version.json')
+  assert.equal(readRuntimeVersion(file), 'unknown', 'a local run without the file is unknown, not a crash')
+  for (const content of ['{', '{"version":"0123456789ABCDEF"}', '{"version":42}']) {
+    await writeFile(file, content)
+    assert.equal(readRuntimeVersion(file), 'unknown')
+  }
+  await writeFile(file, '{"version":"0123456789abcdef"}')
+  assert.equal(readRuntimeVersion(file), '0123456789abcdef')
 })

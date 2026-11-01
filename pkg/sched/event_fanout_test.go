@@ -316,15 +316,16 @@ func TestEventFanoutUsesSubscriptionAtAcceptance(t *testing.T) {
 	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.DeleteEventSubscription(ctx, oldSubscription.ID, accountID, app.ID); err != nil {
-		t.Fatal(err)
-	}
+	// The accepted subscription stays enabled: routing filters an accepted
+	// recipient whose subscription is disabled or gone (ADR-20261031130000).
+	// The new subscription also matches the event, so a receipt that recaptured
+	// its recipients would route to both.
 	newSubscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID,
-		"orders.*", "created", json.RawMessage(`{"data":{"amount":{"$gt":200}}}`))
+		"orders.*", "created", json.RawMessage(`{"data":{"amount":{"$gt":120}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Retrying the same event after changing subscriptions must keep the
+	// Retrying the same event after adding a subscription must keep the
 	// original candidate set rather than replacing the existing receipt.
 	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
 		t.Fatal(err)

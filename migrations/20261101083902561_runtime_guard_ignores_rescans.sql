@@ -1,4 +1,4 @@
--- filename: 20261031190030417_runtime_guard_ignores_rescans.sql
+-- filename: 20261101083902561_runtime_guard_ignores_rescans.sql
 -- migration-compat: expand
 
 -- +goose Up
