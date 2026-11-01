@@ -3867,6 +3867,7 @@
       "enabled",
       "failure_rules",
       "id",
+      "labels",
       "last_fired_at",
       "org_id",
       "path",
@@ -9530,6 +9531,7 @@
       "image_resolved_digest",
       "image_storage_key",
       "kind",
+      "labels",
       "last_scheduled_at",
       "max_parallelism",
       "name",
@@ -10012,6 +10014,7 @@
       "desired_generation",
       "environment_clone_operation_id",
       "id",
+      "labels",
       "last_error_code",
       "lease_token",
       "lease_until",
@@ -10023,6 +10026,7 @@
       "purge_after",
       "region",
       "restore_point_in_time",
+      "restore_slot_until",
       "restore_source_database_id",
       "restore_source_resource_id",
       "restore_window_seconds",
@@ -19559,6 +19563,16 @@
       "run_id",
       "samples",
       "unpaused_private_mb_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_callback_revocations",
+    "columns": [
+      "account_id",
+      "endpoint_id",
+      "revoked_at",
+      "thread_id"
     ],
     "kind": "operational"
   },

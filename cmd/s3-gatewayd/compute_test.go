@@ -95,3 +95,33 @@ func TestComputeGatewayRunsNoUsageExports(t *testing.T) {
 		t.Fatalf("control-plane err = %v, want the missing provider account keys refused", err)
 	}
 }
+
+func TestCheckListeners(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		role    role.Role
+		data    string
+		control string
+		wantErr string
+	}{
+		{name: "control plane on loopback", role: role.RoleControlPlane, data: "127.0.0.1:8084", control: "127.0.0.1:9096"},
+		{name: "compute control on every address", role: role.RoleComputeOnly, data: "127.0.0.1:8084", control: "0.0.0.0:9096"},
+		{name: "control plane control off loopback", role: role.RoleControlPlane, data: "127.0.0.1:8084", control: "0.0.0.0:9096", wantErr: "control listener"},
+		{name: "single box control off loopback", role: role.RoleSingleBox, data: "127.0.0.1:8084", control: "10.0.0.1:9096", wantErr: "control listener"},
+		{name: "compute data off loopback", role: role.RoleComputeOnly, data: "0.0.0.0:8084", control: "0.0.0.0:9096", wantErr: "data listener"},
+		{name: "control plane data off loopback", role: role.RoleControlPlane, data: "0.0.0.0:8084", control: "127.0.0.1:9096", wantErr: "data listener"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkListeners(tc.role, tc.data, tc.control)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("checkListeners: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("checkListeners err = %v, want one naming the %s", err, tc.wantErr)
+			}
+		})
+	}
+}

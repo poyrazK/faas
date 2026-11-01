@@ -71,6 +71,31 @@ import (
 // row to read here.
 var ErrNodeCapacity = errors.New("state: compute node at admission ceiling")
 
+// Resources NodeCapacityResource names, the blocker resources of the
+// scheduler's own refusals.
+const (
+	NodeCapacityRAM  = "ram_mb"
+	NodeCapacityVCPU = "vcpu"
+	NodeCapacityCPU  = "cpu_millicores"
+)
+
+// NodeCapacityResource names the resource an ErrNodeCapacity refusal ran out
+// of. admission_reserve_node tags its vCPU and CPU refusals' detail with
+// resource=vcpu or resource=cpu; a RAM refusal carries no tag. It returns ""
+// for any other error (ADR 20261031190030).
+func NodeCapacityResource(err error) string {
+	if !errors.Is(err, ErrNodeCapacity) {
+		return ""
+	}
+	switch text := err.Error(); {
+	case strings.Contains(text, "resource=vcpu"):
+		return NodeCapacityVCPU
+	case strings.Contains(text, "resource=cpu"):
+		return NodeCapacityCPU
+	}
+	return NodeCapacityRAM
+}
+
 // nodeReservationLockClass namespaces this file's advisory locks.
 //
 // PostgreSQL keeps two disjoint advisory-lock spaces: the single-bigint form

@@ -1,0 +1,208 @@
+---
+# s3-gatewayd refuses to start in compute mode without the contracted storage
+# domain, a gateway credential for every backend and a port share; check them
+# here so a converge fails with the reason instead of a crash loop.
+- name: s3_gateway_compute_service — check the gateway configuration
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') == 'compute-only'
+      - faas_object_storage_config_src | length > 0
+      - faas_object_storage_gateway_provider_env_src | length > 0
+      - faas_object_gateway_max_bytes_per_second | int > 0
+      - faas_seal_domains_managed | default(false) | bool
+      - faas_seal_domain_storage_identity_src | default('') | length > 0
+      - faas_seal_domain_storage_contracted | default(false) | bool
+      - faas_edge_on_compute_nodes | default(false) | bool
+      - faas_cloudflared_install_dir is defined
+    fail_msg: >-
+      The S3 gateway on a compute node needs the provider registry
+      (faas_object_storage_config_src), the gateway-only credential
+      (faas_object_storage_gateway_provider_env_src), this node's port share
+      (faas_object_gateway_max_bytes_per_second, from the host's port_mbps),
+      the contracted storage seal domain, so the node never holds the fleet
+      identity (ADR-20261031122757 §4), and the app edge
+      (faas_edge_on_compute_nodes), whose role installs the cloudflared
+      binary the s3 tunnel connector runs.
+
+# The node's registry is the control plane's with this node's port share:
+# stage the control plane's beside it and render from the staged copy.
+- name: s3_gateway_compute_service — stage the control plane's provider registry
+  ansible.builtin.copy:
+    src: "{{ faas_object_storage_config_src }}"
+    dest: /etc/faas/object-storage.control-plane.json
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: s3_gateway_compute_service — read the staged provider registry
+  ansible.builtin.slurp:
+    src: /etc/faas/object-storage.control-plane.json
+  register: faas_object_gateway_registry_raw
+
+- name: s3_gateway_compute_service — parse the staged provider registry
+  ansible.builtin.set_fact:
+    faas_object_gateway_registry: "{{ faas_object_gateway_registry_raw.content | b64decode | from_json }}"
+
+- name: s3_gateway_compute_service — install the provider registry with this node's port share
+  notify: restart faas-s3-gatewayd-compute
+  ansible.builtin.copy:
+    content: >-
+      {{ faas_object_gateway_registry
+         | combine({'transfer': (faas_object_gateway_registry.transfer | default({}))
+                                | combine({'max_bytes_per_second': faas_object_gateway_max_bytes_per_second | int})})
+         | to_nice_json }}
+    dest: /etc/faas/object-storage.json
+    owner: root
+    group: faas
+    mode: "0640"
+
+- name: s3_gateway_compute_service — create the provider secret directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets/object-storage
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: s3_gateway_compute_service — install the gateway-only provider credential
+  notify: restart faas-s3-gatewayd-compute
+  ansible.builtin.copy:
+    src: "{{ faas_object_storage_gateway_provider_env_src }}"
+    dest: /etc/faas/secrets/object-storage/gateway-provider.env
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+
+# A compute node never holds the bucket-admin credential.
+- name: s3_gateway_compute_service — remove any bucket-admin credential
+  ansible.builtin.file:
+    path: /etc/faas/secrets/object-storage/provider.env
+    state: absent
+
+- name: s3_gateway_compute_service — create the bounded upload spool
+  ansible.builtin.file:
+    path: /var/spool/faas/s3-gatewayd
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0700"
+
+- name: s3_gateway_compute_service — install the unit
+  notify: restart faas-s3-gatewayd-compute
+  ansible.builtin.copy:
+    src: faas-s3-gatewayd-compute.service
+    dest: /etc/systemd/system/faas-s3-gatewayd-compute.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: s3_gateway_compute_service — create the drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - faas-s3-gatewayd-compute.service
+    - faas-gatewayd-internal.service
+
+- name: s3_gateway_compute_service — run s3-gatewayd in compute mode
+  notify: restart faas-s3-gatewayd-compute
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-s3-gatewayd-compute.service.d/99-faas-role.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (s3_gateway_compute_service). ADR-20261031122757.
+      [Service]
+      Environment=FAAS_S3_GATEWAY_ROLE=compute-only
+
+# Release activation restarts gatewayd-internal on every compute release. The
+# gateway follows it both ways, as the app edge does: PartOf= carries stop and
+# restart, and Wants= on gatewayd-internal carries start, so the gateway
+# always runs the active release's binary.
+- name: s3_gateway_compute_service — tie the gateway to gatewayd-internal
+  notify: restart faas-s3-gatewayd-compute
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-s3-gatewayd-compute.service.d/10-faas-gateway-partof.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (s3_gateway_compute_service). ADR-20261031122757.
+      [Unit]
+      PartOf=faas-gatewayd-internal.service
+
+- name: s3_gateway_compute_service — start the gateway with gatewayd-internal
+  notify: restart faas-s3-gatewayd-compute
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/50-faas-s3-gateway-wants.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (s3_gateway_compute_service). ADR-20261031122757.
+      [Unit]
+      Wants=faas-s3-gatewayd-compute.service
+
+# The s3 tunnel connector runs the binary gatewayd_public_edge_service
+# installed earlier in this play, as its cloudflared user.
+- name: s3_gateway_compute_service — find the connector binary
+  ansible.builtin.stat:
+    path: "{{ faas_cloudflared_install_dir }}/cloudflared"
+  register: faas_cloudflared_s3_binary
+
+- name: s3_gateway_compute_service — require the connector binary
+  ansible.builtin.assert:
+    that:
+      - faas_cloudflared_s3_binary.stat.exists
+      - faas_cloudflared_s3_binary.stat.executable
+    fail_msg: >-
+      {{ faas_cloudflared_install_dir }}/cloudflared is missing; the
+      gatewayd_public_edge_service role installs it before this role.
+
+- name: s3_gateway_compute_service — create the connector token directory
+  ansible.builtin.file:
+    path: "{{ faas_cloudflared_s3_token_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: s3_gateway_compute_service — install the s3 tunnel connector unit
+  notify: restart faas-cloudflared-s3
+  ansible.builtin.template:
+    src: faas-cloudflared-s3.service.j2
+    dest: /etc/systemd/system/faas-cloudflared-s3.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: s3_gateway_compute_service — reload systemd before enabling the gateway  # noqa: no-handler (enable below needs the new units)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# Enable always, so the gateway comes back after a reboot; start only outside
+# a node join that defers service starts to its own activation step. The
+# connector is wanted by the gateway, so it starts whenever the gateway does,
+# and only once its token exists (ConditionPathExists); until then it stays
+# inactive without failing.
+- name: s3_gateway_compute_service — enable the gateway and its connector
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - faas-s3-gatewayd-compute.service
+    - faas-cloudflared-s3.service
+
+- name: s3_gateway_compute_service — start the gateway and its connector
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - faas-s3-gatewayd-compute.service
+    - faas-cloudflared-s3.service
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
