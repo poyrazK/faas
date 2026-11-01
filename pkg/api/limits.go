@@ -8742,6 +8742,17 @@ const (
 	// GatewayRequestTelemetryMinuteGraceSeconds keeps a minute's buckets open
 	// this long after the minute ends, for requests that finish just after it.
 	GatewayRequestTelemetryMinuteGraceSeconds = 5
+	// GatewayRequestJournalSegmentMinutes is the received-time span of one
+	// node-local request-ID journal segment (ADR-20261101085552). A segment's
+	// index is sorted in memory when it closes, so the span bounds that work:
+	// 10 minutes at 1,000 req/s is about 7 MB.
+	GatewayRequestJournalSegmentMinutes = 10
+	// GatewayRequestJournalSegmentGraceSeconds keeps a segment open this long
+	// after its span ends, for records that reach the store just after it.
+	GatewayRequestJournalSegmentGraceSeconds = 60
+	// GatewayRequestJournalDiskBudgetBytes bounds one node's journal directory.
+	// Past it the oldest closed segments are removed before they expire.
+	GatewayRequestJournalDiskBudgetBytes int64 = 20 << 30
 	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
 	// sending new requests to a compute node whose gatewayd-internal stopped
 	// answering (for example while it restarts behind its durable socket)
