@@ -490,6 +490,10 @@ func cmdApp(args []string) int {
 		if explicit["per-instance-concurrency"] {
 			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
+		if explicit["min"] {
+			// The policy was copied from the app, so it holds the old floor.
+			policy.MinInstances = *min
+		}
 		req.ScalingPolicy = policy
 	}
 	if explicit["idle"] {
@@ -5090,6 +5094,7 @@ func cmdTrafficStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
 		return 0
 	}
+	defer printCanaryProgress(live)
 	if len(byScope) > 1 {
 		printScopedTrafficStatus(live, byScope)
 		return 0
@@ -5108,6 +5113,19 @@ func cmdTrafficStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
+}
+
+// printCanaryProgress names each rolling canary's current step. Traffic
+// changes are refused while a canary runs, and advancing it needs that step;
+// it appeared only in the refusal of a wrong guess (PulseWatch F17).
+func printCanaryProgress(live []api.DeploymentResponse) {
+	for _, d := range live {
+		if d.CanaryTotalSteps <= 0 || d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+			continue
+		}
+		_, _ = fmt.Fprintf(osStdout, "Canary %s is rolling out at canary_step=%d (step %d of %d). Advance it with:\n  %s deployment advance %s --expected-step %d\n",
+			deploymentLabel(d), d.CanaryStep, d.CanaryStep+1, d.CanaryTotalSteps, recoveryCLI(), recoveryArgument(d.ID), d.CanaryStep)
+	}
 }
 
 // trafficScope names a deployment's traffic scope; an unscoped row is the

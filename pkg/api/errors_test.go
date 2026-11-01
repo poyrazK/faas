@@ -403,6 +403,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeOrgRoleForbidden, CodeOrgAlreadyMember,
 		CodeOrgInvitationInvalid, CodeOrgInvitationExpired,
 		CodeOrgLastOwner, CodeOrgPersonalImmutable, CodeOrgAPIKeyRequiresOrg,
+		CodeOrgFreeLimitExceeded,
 	}
 	seen := make(map[string]bool)
 	for _, c := range codes {
@@ -956,6 +957,7 @@ func TestStatusForCode_OrgCodes(t *testing.T) {
 		{CodeOrgSlugTaken, http.StatusConflict},
 		{CodeOrgMemberCapExceeded, http.StatusForbidden},
 		{CodeOrgInvitationCapExceeded, http.StatusForbidden},
+		{CodeOrgFreeLimitExceeded, http.StatusForbidden},
 		{CodeOrgRoleForbidden, http.StatusForbidden},
 		{CodeOrgAlreadyMember, http.StatusConflict},
 		{CodeOrgInvitationInvalid, http.StatusGone},

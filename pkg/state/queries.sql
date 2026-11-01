@@ -10039,19 +10039,21 @@ WHERE created_at < sqlc.arg(before)::timestamptz
   AND id < (SELECT MAX(current.id) FROM response_cache_purge_change_log current WHERE current.app_id = response_cache_purge_change_log.app_id);
 
 -- name: CancelTrafficAppInvocations :exec
+-- Each reservation is released on the counter it was taken from, which is a
+-- company's pooled counter once its reservations are pooled (ADR-202610171908).
 WITH target AS MATERIALIZED (
-    SELECT id, account_id, quota_reserved FROM invocations
+    SELECT id, coalesce(async_quota_subject_id,account_id) AS quota_subject_id, quota_reserved FROM invocations
     WHERE app_id=sqlc.arg(app_id)::uuid AND state IN ('pending','dispatching')
       AND (work_policy_name IS NULL OR state='pending') FOR UPDATE
 ), cancelled AS (
     UPDATE invocations i SET state='cancelled',quota_reserved=false,
         completed_at=coalesce(i.completed_at,now()) FROM target t WHERE i.id=t.id
-    RETURNING t.account_id,t.quota_reserved
+    RETURNING t.quota_subject_id,t.quota_reserved
 ), reservations AS (
-    SELECT account_id,count(*) AS slots FROM cancelled WHERE quota_reserved GROUP BY account_id
+    SELECT quota_subject_id,count(*) AS slots FROM cancelled WHERE quota_reserved GROUP BY quota_subject_id
 )
 UPDATE account_async_quota q SET current_inflight=greatest(q.current_inflight-r.slots,0),updated_at=now()
-FROM reservations r WHERE q.account_id=r.account_id;
+FROM reservations r WHERE q.account_id=r.quota_subject_id;
 
 -- name: LockTrafficAppAccount :one
 SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::uuid FOR UPDATE;
@@ -14718,6 +14720,25 @@ ORDER BY d.restore_slot_until, d.id LIMIT sqlc.arg(batch_size);
 -- name: ClearManagedPostgresRestoreSlot :execrows
 UPDATE managed_postgres_databases SET restore_slot_until=NULL,updated_at=sqlc.arg(at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid AND restore_slot_until IS NOT NULL;
+
+-- name: RecordManagedPostgresRestoreSlotNotice :execrows
+-- ADR-20261031123259: one notice per copy and kind; the first sweep to reach
+-- it records it and later sweeps leave it alone.
+INSERT INTO managed_postgres_restore_slot_notices(database_id,kind,slot_until,restorable_until,recorded_at)
+VALUES(sqlc.arg(database_id)::uuid,sqlc.arg(kind)::text,sqlc.arg(slot_until)::timestamptz,
+ sqlc.narg(restorable_until)::timestamptz,sqlc.arg(recorded_at)::timestamptz)
+ON CONFLICT (database_id,kind) DO NOTHING;
+
+-- name: ListUnmailedManagedPostgresRestoreSlotNotices :many
+-- The notices still to mail: recorded after since, not yet linked to an
+-- intent, and for 'ending' only while the copy still holds a slot that has
+-- not ended.
+SELECT n.database_id,n.kind,n.slot_until,n.restorable_until,n.recorded_at,d.account_id,d.name
+FROM managed_postgres_restore_slot_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.mail_intent_id IS NULL AND n.recorded_at>sqlc.arg(since)::timestamptz
+ AND (n.kind='expired' OR (d.restore_slot_until IS NOT NULL AND d.state NOT IN ('deleting','deleted')
+  AND d.restore_slot_until>sqlc.arg(now)::timestamptz))
+ORDER BY n.recorded_at,n.database_id,n.kind LIMIT sqlc.arg(batch_size);
 
 -- name: ReadManagedPostgresLifecycleRestoreSource :one
 SELECT * FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE;

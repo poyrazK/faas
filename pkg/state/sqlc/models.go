@@ -200,6 +200,14 @@ type Agent struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
+// ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
+type AgentCallbackRevocation struct {
+	EndpointID pgtype.UUID
+	ThreadID   string
+	AccountID  pgtype.UUID
+	RevokedAt  pgtype.Timestamptz
+}
+
 // ADR-20261027090010 §8 deliveries of succeeded agent runs; agentd's delivery worker (ADR-20261027090014) is the only writer.
 type AgentDelivery struct {
 	ID             pgtype.UUID
@@ -3039,6 +3047,7 @@ type Cron struct {
 	FailureRules          []byte
 	ScheduleRevision      int64
 	ScheduleAnchorAt      pgtype.Timestamptz
+	Labels                []byte
 }
 
 type CronFireNowRequest struct {
@@ -7653,6 +7662,7 @@ type Job struct {
 	ScheduleRevision                  int64
 	ImageEntrypoint                   []string
 	ImageCmd                          []string
+	Labels                            []byte
 }
 
 type JobRegistryCredential struct {
@@ -8216,6 +8226,7 @@ type ManagedPostgresDatabase struct {
 	OrgID                       pgtype.UUID
 	PurgeAfter                  pgtype.Timestamptz
 	RestoreSlotUntil            pgtype.Timestamptz
+	Labels                      []byte
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
@@ -8310,6 +8321,16 @@ type ManagedPostgresRestoreProof struct {
 	Generation         int64
 	ObservedAt         pgtype.Timestamptz
 	DataResourceID     pgtype.Text
+}
+
+// Restore slot notices for a managed PostgreSQL copy (ending soon, delete scheduled); written only by apid (ADR-20261031123259).
+type ManagedPostgresRestoreSlotNotice struct {
+	DatabaseID      pgtype.UUID
+	Kind            string
+	SlotUntil       pgtype.Timestamptz
+	RestorableUntil pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+	MailIntentID    pgtype.UUID
 }
 
 type ManagedPostgresRestoreVerification struct {

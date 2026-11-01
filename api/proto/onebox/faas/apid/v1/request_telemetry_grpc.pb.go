@@ -350,3 +350,117 @@ var RequestTelemetry_ServiceDesc = grpc.ServiceDesc{
 	},
 	Metadata: "onebox/faas/apid/v1/request_telemetry.proto",
 }
+
+const (
+	RequestIDLookups_Serve_FullMethodName = "/onebox.faas.apid.v1.RequestIDLookups/Serve"
+)
+
+// RequestIDLookupsClient is the client API for RequestIDLookups service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// RequestIDLookups lets apid resolve request IDs kept on compute nodes
+// (ADR-20261101085552). Served by apid beside RequestTelemetry, on the same
+// listener; an apid that predates it answers Unimplemented.
+type RequestIDLookupsClient interface {
+	// Serve is held open by each gatewayd-internal that keeps the request-ID
+	// journal on its node. The gateway's first message names its node; apid then
+	// sends lookups down the stream and the gateway answers each one on it. The
+	// stream rides the gateway's existing connection to apid, so compute nodes
+	// take no new inbound port.
+	Serve(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RequestIDLookupAnswer, RequestIDLookupQuestion], error)
+}
+
+type requestIDLookupsClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRequestIDLookupsClient(cc grpc.ClientConnInterface) RequestIDLookupsClient {
+	return &requestIDLookupsClient{cc}
+}
+
+func (c *requestIDLookupsClient) Serve(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RequestIDLookupAnswer, RequestIDLookupQuestion], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RequestIDLookups_ServiceDesc.Streams[0], RequestIDLookups_Serve_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RequestIDLookupAnswer, RequestIDLookupQuestion]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RequestIDLookups_ServeClient = grpc.BidiStreamingClient[RequestIDLookupAnswer, RequestIDLookupQuestion]
+
+// RequestIDLookupsServer is the server API for RequestIDLookups service.
+// All implementations must embed UnimplementedRequestIDLookupsServer
+// for forward compatibility.
+//
+// RequestIDLookups lets apid resolve request IDs kept on compute nodes
+// (ADR-20261101085552). Served by apid beside RequestTelemetry, on the same
+// listener; an apid that predates it answers Unimplemented.
+type RequestIDLookupsServer interface {
+	// Serve is held open by each gatewayd-internal that keeps the request-ID
+	// journal on its node. The gateway's first message names its node; apid then
+	// sends lookups down the stream and the gateway answers each one on it. The
+	// stream rides the gateway's existing connection to apid, so compute nodes
+	// take no new inbound port.
+	Serve(grpc.BidiStreamingServer[RequestIDLookupAnswer, RequestIDLookupQuestion]) error
+	mustEmbedUnimplementedRequestIDLookupsServer()
+}
+
+// UnimplementedRequestIDLookupsServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRequestIDLookupsServer struct{}
+
+func (UnimplementedRequestIDLookupsServer) Serve(grpc.BidiStreamingServer[RequestIDLookupAnswer, RequestIDLookupQuestion]) error {
+	return status.Error(codes.Unimplemented, "method Serve not implemented")
+}
+func (UnimplementedRequestIDLookupsServer) mustEmbedUnimplementedRequestIDLookupsServer() {}
+func (UnimplementedRequestIDLookupsServer) testEmbeddedByValue()                          {}
+
+// UnsafeRequestIDLookupsServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RequestIDLookupsServer will
+// result in compilation errors.
+type UnsafeRequestIDLookupsServer interface {
+	mustEmbedUnimplementedRequestIDLookupsServer()
+}
+
+func RegisterRequestIDLookupsServer(s grpc.ServiceRegistrar, srv RequestIDLookupsServer) {
+	// If the following call panics, it indicates UnimplementedRequestIDLookupsServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RequestIDLookups_ServiceDesc, srv)
+}
+
+func _RequestIDLookups_Serve_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RequestIDLookupsServer).Serve(&grpc.GenericServerStream[RequestIDLookupAnswer, RequestIDLookupQuestion]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RequestIDLookups_ServeServer = grpc.BidiStreamingServer[RequestIDLookupAnswer, RequestIDLookupQuestion]
+
+// RequestIDLookups_ServiceDesc is the grpc.ServiceDesc for RequestIDLookups service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RequestIDLookups_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "onebox.faas.apid.v1.RequestIDLookups",
+	HandlerType: (*RequestIDLookupsServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Serve",
+			Handler:       _RequestIDLookups_Serve_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
+	Metadata: "onebox/faas/apid/v1/request_telemetry.proto",
+}

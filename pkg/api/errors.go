@@ -1960,7 +1960,8 @@ const (
 	// immutable-from-PR-1 invariants from the ADR.
 	//
 	// The 12 codes are a complete set: every org-scoped handler
-	// error returns exactly one of these.
+	// error returns exactly one of these. Organization creation adds
+	// org_free_limit_exceeded (ADR-20261031090658).
 	CodeOrgNotFound              = "org_not_found"
 	CodeOrgSlugInvalid           = "org_slug_invalid"
 	CodeOrgSlugTaken             = "org_slug_taken"
@@ -1973,6 +1974,9 @@ const (
 	CodeOrgLastOwner             = "org_last_owner"
 	CodeOrgPersonalImmutable     = "org_personal_immutable"
 	CodeOrgAPIKeyRequiresOrg     = "org_api_key_requires_org"
+	// CodeOrgFreeLimitExceeded: the caller already owns
+	// FreeOrganizationsOwnedMax Free organizations (ADR-20261031090658).
+	CodeOrgFreeLimitExceeded = "org_free_limit_exceeded"
 	// CodeTenantSurfacesNotAllowed marks POST /v1/apps/{slug}/tenant-surfaces
 	// when the account's plan does not enable surfaces (Free today, ADR-100
 	// / issue #879). Distinct from CodeTenantSurfaceQuota (the surface
@@ -2161,7 +2165,7 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy, CodeAgentCallbackRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -2584,7 +2588,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeOrgInvitationInvalid, CodeOrgInvitationExpired:
 		return http.StatusGone
-	case CodeOrgRoleForbidden, CodeOrgMemberCapExceeded, CodeOrgInvitationCapExceeded:
+	case CodeOrgRoleForbidden, CodeOrgMemberCapExceeded, CodeOrgInvitationCapExceeded, CodeOrgFreeLimitExceeded:
 		return http.StatusForbidden
 	case CodeBadRequest:
 		return http.StatusBadRequest
@@ -5830,6 +5834,16 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
+// ErrTrafficResidualUnassigned is the same 409 for a manual traffic change
+// whose remaining percent could only go to an aborted canary candidate, which
+// never receives traffic unless named.
+func ErrTrafficResidualUnassigned(remaining int) *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
+		"No deployment can take the remaining traffic",
+		fmt.Sprintf("the other live deployments in this environment are aborted canaries, which receive traffic only when named; set the remaining %d%% on a deployment explicitly, or keep this one at 100%%.", remaining)).
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
 // ErrTrafficServingChanged makes a stale promotion actionable without
 // disclosing any deployment the caller has not already been authorized to
 // read through the target app.
@@ -5845,7 +5859,7 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
+		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry. `gregale release traffic status` shows the canary's current step.").
 		WithDocs(docsBase + "/deployments#canary")
 }
 
@@ -6880,6 +6894,18 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#member-cap")
+}
+
+// ErrOrgFreeLimitExceeded is the 403 returned when the caller already owns
+// FreeOrganizationsOwnedMax organizations on the Free plan
+// (ADR-20261031090658).
+func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgFreeLimitExceeded,
+		"Free organization limit reached",
+		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade or delete one to create another.",
+			limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/orgs#free-organizations")
 }
 
 // ErrOrgInvitationCapExceeded is the 403 returned when the

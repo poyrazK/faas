@@ -57,6 +57,24 @@ func (f *fakeInbox) AppendManagedRealtimeChannelMetadata(_ context.Context, ep, 
 	return m, nil
 }
 
+// fakeRevocations keeps each thread's latest revocation, at the fixture's
+// clock.
+type fakeRevocations struct {
+	now func() time.Time
+	at  map[string]time.Time
+}
+
+func (f *fakeRevocations) RevokeCallbacks(_ context.Context, _, endpointID, threadID string) (time.Time, error) {
+	t := f.now()
+	f.at[endpointID+"/"+threadID] = t
+	return t, nil
+}
+
+func (f *fakeRevocations) CallbacksRevokedAt(_ context.Context, endpointID, threadID string) (time.Time, bool, error) {
+	t, ok := f.at[endpointID+"/"+threadID]
+	return t, ok, nil
+}
+
 const (
 	callbackAccount = "11111111-1111-1111-1111-111111111111"
 	otherAccount    = "22222222-2222-2222-2222-222222222222"
@@ -77,20 +95,32 @@ func newCallbackFixture(t *testing.T) *callbackFixture {
 		t.Fatal(err)
 	}
 	f := &callbackFixture{inbox: &fakeInbox{endpoints: map[string]state.ManagedRealtimeEndpoint{
-		"ep-1": {ID: "ep-1", AccountID: callbackAccount}, "ep-2": {ID: "ep-2", AccountID: callbackAccount},
-		"ep-other": {ID: "ep-other", AccountID: otherAccount},
+		"ep-1": {ID: "ep-1", AccountID: callbackAccount, AppID: "app-1"}, "ep-2": {ID: "ep-2", AccountID: callbackAccount, AppID: "app-2"},
+		"ep-other": {ID: "ep-other", AccountID: otherAccount, AppID: "app-other"},
 	}}, now: time.Unix(1_800_000_000, 0), enabled: map[string]bool{callbackAccount: true, otherAccount: true}}
+	clock := func() time.Time { return f.now }
 	f.h = &agents.Handler{Callbacks: signer, Inbox: f.inbox, CallbackBaseURL: "https://api.example.test",
-		AgentsEnabled: func(_ context.Context, id string) bool { return f.enabled[id] }, Now: func() time.Time { return f.now }}
+		AgentsEnabled: func(_ context.Context, id string) bool { return f.enabled[id] }, Now: clock,
+		Revocations: &fakeRevocations{now: clock, at: map[string]time.Time{}}}
 	return f
 }
 
-// issue asks for a callback URL and returns its token, or the status.
+// issue asks for a callback URL with the account's API key and returns its
+// token, or the status.
 func (f *callbackFixture) issue(t *testing.T, accountID string, req api.CreateAgentCallbackRequest) (string, int) {
+	t.Helper()
+	return f.issueAs(t, keyCaller(accountID), req)
+}
+
+func keyCaller(accountID string) agents.CallbackCaller {
+	return agents.CallbackCaller{Account: state.Account{ID: accountID, Plan: api.PlanPro}}
+}
+
+func (f *callbackFixture) issueAs(t *testing.T, caller agents.CallbackCaller, req api.CreateAgentCallbackRequest) (string, int) {
 	t.Helper()
 	body, _ := json.Marshal(req)
 	w := httptest.NewRecorder()
-	f.h.CreateCallback(w, httptest.NewRequest(http.MethodPost, "/v1/agent-callbacks", bytes.NewReader(body)), state.Account{ID: accountID, Plan: api.PlanPro})
+	f.h.CreateCallback(w, httptest.NewRequest(http.MethodPost, "/v1/agent-callbacks", bytes.NewReader(body)), caller)
 	if w.Code != http.StatusCreated {
 		return "", w.Code
 	}
@@ -270,6 +300,137 @@ func TestPropertyCallbackStaysInItsThread(t *testing.T) {
 		if m.EndpointID != g.endpoint || m.Channel != api.AgentInboxChannel || m.Metadata["thread_id"] != g.thread ||
 			!strings.HasPrefix(m.IdempotencyKey, "callback:"+g.thread+":") {
 			t.Fatalf("token for %s/%s published %+v", g.endpoint, g.thread, m)
+		}
+	}
+}
+
+// revoke closes a thread with the account's API key and returns the status.
+func (f *callbackFixture) revoke(t *testing.T, accountID, endpointID, threadID string) int {
+	t.Helper()
+	return f.revokeAs(t, keyCaller(accountID), endpointID, threadID)
+}
+
+func (f *callbackFixture) revokeAs(t *testing.T, caller agents.CallbackCaller, endpointID, threadID string) int {
+	t.Helper()
+	body, _ := json.Marshal(api.RevokeAgentCallbacksRequest{EndpointID: endpointID, ThreadID: threadID})
+	w := httptest.NewRecorder()
+	f.h.RevokeCallbacks(w, httptest.NewRequest(http.MethodPost, "/v1/agent-callbacks/revocations", bytes.NewReader(body)), caller)
+	return w.Code
+}
+
+// An app's workload caller issues and revokes callback URLs for its own
+// app's endpoints only; an API key reaches every endpoint of its account.
+func TestCallbackAppCallerOwnsOnlyItsEndpoints(t *testing.T) {
+	f := newCallbackFixture(t)
+	app := agents.CallbackCaller{Account: state.Account{ID: callbackAccount, Plan: api.PlanPro}, AppID: "app-1"}
+	for _, tc := range []struct {
+		endpoint string
+		want     int
+	}{{"ep-1", http.StatusCreated}, {"ep-2", http.StatusNotFound}, {"ep-other", http.StatusNotFound}} {
+		if _, code := f.issueAs(t, app, api.CreateAgentCallbackRequest{EndpointID: tc.endpoint, ThreadID: "t"}); code != tc.want {
+			t.Errorf("issue on %s = %d, want %d", tc.endpoint, code, tc.want)
+		}
+		revokeWant := http.StatusOK
+		if tc.want != http.StatusCreated {
+			revokeWant = http.StatusNotFound
+		}
+		if code := f.revokeAs(t, app, tc.endpoint, "t"); code != revokeWant {
+			t.Errorf("revoke on %s = %d, want %d", tc.endpoint, code, revokeWant)
+		}
+	}
+	if _, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-2", ThreadID: "t"}); code != http.StatusCreated {
+		t.Errorf("API key issue on ep-2 = %d", code)
+	}
+}
+
+// A revocation stops every URL issued for the thread until then, and only
+// for that thread; a URL issued afterwards works.
+func TestCallbackRevocation(t *testing.T) {
+	f := newCallbackFixture(t)
+	before, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+	sibling, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "u"})
+	f.now = f.now.Add(time.Millisecond)
+	if code := f.revoke(t, callbackAccount, "ep-1", "t"); code != http.StatusOK {
+		t.Fatalf("revoke = %d", code)
+	}
+	if code, _ := f.post(t, before, toolResult("m1", `1`)); code != http.StatusNotFound {
+		t.Fatalf("a revoked URL answered %d", code)
+	}
+	if code, _ := f.post(t, sibling, toolResult("m2", `1`)); code != http.StatusAccepted {
+		t.Fatalf("another thread's URL answered %d", code)
+	}
+	f.now = f.now.Add(time.Millisecond)
+	after, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+	if code, _ := f.post(t, after, toolResult("m3", `1`)); code != http.StatusAccepted {
+		t.Fatalf("a URL issued after the revocation answered %d", code)
+	}
+	if code := f.revoke(t, callbackAccount, "ep-other", "t"); code != http.StatusNotFound {
+		t.Fatalf("revoking another account's thread = %d", code)
+	}
+	if code := f.revoke(t, callbackAccount, "ep-1", "a b"); code != http.StatusBadRequest {
+		t.Fatalf("revoking a bad thread = %d", code)
+	}
+}
+
+// A thread takes AgentCallbacksPerMinutePerThread posts a minute; the next
+// is refused with the limit, and the next minute starts over.
+func TestCallbackRateLimit(t *testing.T) {
+	f := newCallbackFixture(t)
+	token, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+	other, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "u"})
+	for i := 0; i < api.AgentCallbacksPerMinutePerThread; i++ {
+		if code, _ := f.post(t, token, toolResult(fmt.Sprintf("m%d", i), `1`)); code != http.StatusAccepted {
+			t.Fatalf("post %d = %d", i, code)
+		}
+	}
+	if code, _ := f.post(t, token, toolResult("over", `1`)); code != http.StatusTooManyRequests {
+		t.Fatalf("the post past the limit = %d", code)
+	}
+	if code, _ := f.post(t, other, toolResult("other", `1`)); code != http.StatusAccepted {
+		t.Fatalf("another thread was limited: %d", code)
+	}
+	f.now = f.now.Add(time.Minute)
+	if code, _ := f.post(t, token, toolResult("next", `1`)); code != http.StatusAccepted {
+		t.Fatalf("the next minute's post = %d", code)
+	}
+}
+
+// Over random issues, revocations and posts, a URL publishes exactly when it
+// was issued after its thread's latest revocation.
+func TestPropertyRevokedCallbackNeverPublishes(t *testing.T) {
+	r := rand.New(rand.NewPCG(20261101, 3))
+	f := newCallbackFixture(t)
+	type grant struct {
+		token, thread string
+		issued        time.Time
+	}
+	var grants []grant
+	revoked := map[string]time.Time{}
+	for i := 0; i < 600; i++ {
+		f.now = f.now.Add(time.Duration(1+r.IntN(5)) * time.Millisecond)
+		thread := fmt.Sprintf("t%d", r.IntN(4))
+		switch op := r.IntN(10); {
+		case op < 3 || len(grants) == 0:
+			token, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: thread})
+			if code != http.StatusCreated {
+				t.Fatalf("issue = %d", code)
+			}
+			grants = append(grants, grant{token, thread, f.now})
+		case op < 5:
+			if code := f.revoke(t, callbackAccount, "ep-1", thread); code != http.StatusOK {
+				t.Fatalf("revoke = %d", code)
+			}
+			revoked[thread] = f.now
+		default:
+			g := grants[r.IntN(len(grants))]
+			at, wasRevoked := revoked[g.thread]
+			want := http.StatusAccepted
+			if wasRevoked && !g.issued.After(at) {
+				want = http.StatusNotFound
+			}
+			if code, _ := f.post(t, g.token, toolResult(fmt.Sprintf("m%d", i), `1`)); code != want {
+				t.Fatalf("step %d: a URL issued %v, thread revoked %v (%v), answered %d; want %d", i, g.issued, at, wasRevoked, code, want)
+			}
 		}
 	}
 }

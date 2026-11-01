@@ -72,6 +72,12 @@ for want in "faas_seal_domain_runtime_identity_src: \"$work/compute/out/runtime.
 done
 ! grep -vE '^#' "$work/compute/vars.yml" | grep -qE 'outbound|source|alerting|storage|account|recipient_src' || fail "compute got control-plane keys: $(cat "$work/compute/vars.yml")"
 
+# Compute with the S3 gateway there (ADR-20261031122757): the storage
+# identity too, never its recipient.
+run compute gateway "${all[@]}" SEAL_DOMAIN_STORAGE_ON_COMPUTE=true || fail "compute gateway staging failed"
+grep -qxF "faas_seal_domain_storage_identity_src: \"$work/gateway/out/storage.age\"" "$work/gateway/vars.yml" || fail "compute gateway is missing the storage identity: $(cat "$work/gateway/vars.yml")"
+! grep -vE '^#' "$work/gateway/vars.yml" | grep -qE 'outbound|source|alerting|account|recipient_src' || fail "compute gateway got control-plane keys: $(cat "$work/gateway/vars.yml")"
+
 # Half a pair, a malformed key, and variables CD owns all refuse.
 if run compute half SEAL_DOMAIN_RUNTIME_AGE_KEY="$(key runtime)" 2>/dev/null; then fail "half a pair was accepted"; fi
 if run compute bad SEAL_DOMAIN_RUNTIME_AGE_KEY="not-a-key" SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT="$(pub runtime)" 2>/dev/null; then

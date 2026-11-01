@@ -111,7 +111,10 @@ credentials".
 - **Usage exports stay on the control plane.** A compute gateway runs no
   provider usage export, so it never holds the provider's account API keys
   (OVH application key, secret and consumer key), which reach more than
-  storage.
+  storage. apid runs the exports (amended 2026-11-01): it already holds those
+  keys and the bucket-admin credential that reads the access-log bucket, and
+  it imports the reports, so the control-plane gateway is no longer needed
+  for accounting.
 - **Blast radius.** Root on a compute node can read and write every object
   in the cell's backends and open every S3 credential. The node already holds
   `compute-db.env`, which gives row DML on the shared schema. Tenant code
@@ -184,11 +187,16 @@ egress ceiling".
    - the gateway holds its share;
    - the node's `gateway_wake_latency_seconds` p95 stays within noise;
    - control-plane Postgres stays under its CPU alert.
+
+   The test reaches the compute gateways on a pilot hostname
+   (`faas_object_gateway_public_endpoint`, the s3 tunnel's only ingress
+   until the cutover) while `s3.<domain>` stays on the control plane.
+   Procedure and readout: `docs/runbooks/S3GatewayComputeLoadTest.md`.
 6. Cutover of `s3.gregale.dev` from the control-plane origin to the s3
    tunnel, one pilot first (as in `docs/runbooks/AppEdgeCutover.md`). The
    control-plane gateway stays as a fallback for one release, then leaves
-   the route. It keeps running the provider usage exports until they move
-   to apid.
+   the route. The provider usage exports run in apid, so the route is all
+   it serves.
 7. The compute edge serves public object routes locally.
 
 ## Consequences

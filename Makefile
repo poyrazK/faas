@@ -780,6 +780,8 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-check-compute-edges_test.sh
 	bash deploy/scripts/faas-app-edge-pilot-check_test.sh
 	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
+	bash deploy/scripts/cloudflare-s3-tunnel_test.sh
+	bash tests/load/s3-gateway/run_test.sh
 	bash deploy/scripts/cloudflare-app-dns_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
@@ -1406,7 +1408,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/mcpmanagement/statepg/queries.sql pkg/mcpmanagement/statepg/schema.sql "$$tmp/pkg/mcpmanagement/statepg/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \

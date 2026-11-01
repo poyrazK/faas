@@ -16114,7 +16114,8 @@ paths:
         `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
         trimmed-non-empty (1..256 chars). Personal orgs cannot be
         created via this endpoint — every account already has a
-        personal org (backfill).
+        personal org (backfill). A new org starts on the Free plan,
+        and an account may own one Free org at a time.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -16130,6 +16131,12 @@ paths:
             application/json: {schema: {$ref: '#/components/schemas/OrgResponse'}}
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: |
+            `403 Forbidden` — the caller already owns as many Free orgs
+            as an account may (`org_free_limit_exceeded`, with the limit
+            and the observed count). Upgrade or delete one first.
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '409':
           description: |
             `409 Conflict` — slug already taken (`org_slug_taken`) or the

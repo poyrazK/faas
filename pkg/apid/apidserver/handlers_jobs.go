@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/resourcelabels"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/financial"
@@ -343,25 +344,36 @@ func (s *server) listJobs(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
-	total, err := s.store.JobCountByAccount(r.Context(), acct.ID)
-	if err != nil {
-		s.log.Error("list jobs: count failed", "account", acct.ID, "err", err)
-		api.WriteProblem(w, api.ErrCapacity("could not list jobs"))
-		return
+	var (
+		total int
+		jobs  []state.Job
+	)
+	if resourcelabels.Requested(r.URL.Query()) {
+		jobs, err = s.allJobs(r.Context(), acct.ID)
+	} else {
+		total, err = s.store.JobCountByAccount(r.Context(), acct.ID)
+		if err == nil {
+			jobs, err = s.store.JobListByAccount(r.Context(), acct.ID, limit, offset)
+		}
 	}
-	jobs, err := s.store.JobListByAccount(r.Context(), acct.ID, limit, offset)
 	if err != nil {
 		s.log.Error("list jobs failed", "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not list jobs"))
 		return
 	}
-	out := make([]api.JobResponse, 0, len(jobs))
-	for _, j := range jobs {
-		out = append(out, jobResponse(j))
+	out, problem := s.jobListResponse(r, acct, jobs)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if resourcelabels.Requested(r.URL.Query()) {
+		// A selected list is filtered whole, then paged.
+		total = len(out)
+		out = out[min(offset, total):min(offset+limit, total)]
 	}
 	nextOffset := -1
-	if offset+len(jobs) < total {
-		nextOffset = offset + len(jobs)
+	if offset+len(out) < total {
+		nextOffset = offset + len(out)
 	}
 	writeJSON(w, http.StatusOK, api.ListJobsResponse{
 		Jobs:       out,
@@ -370,6 +382,45 @@ func (s *server) listJobs(w http.ResponseWriter, r *http.Request, acct state.Acc
 		NextOffset: nextOffset,
 		Total:      total,
 	})
+}
+
+// allJobs reads every job of an account, page by page. A selector filters
+// the whole list (ADR-20261031100025): JobMaxPerAccount bounds it, so a
+// handful of pages at most.
+func (s *server) allJobs(ctx context.Context, accountID string) ([]state.Job, error) {
+	const page = 200
+	var all []state.Job
+	for {
+		jobs, err := s.store.JobListByAccount(ctx, accountID, page, len(all))
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, jobs...)
+		if len(jobs) < page {
+			return all, nil
+		}
+	}
+}
+
+// jobListResponse applies ?selector= and labels to a job list.
+func (s *server) jobListResponse(r *http.Request, acct state.Account, jobs []state.Job) ([]api.JobResponse, *api.Problem) {
+	ids := make([]string, len(jobs))
+	for i, j := range jobs {
+		ids[i] = j.ID
+	}
+	filter, problem := s.listLabels(r, acct, state.LabelKindJob, ids)
+	if problem != nil {
+		return nil, problem
+	}
+	out := make([]api.JobResponse, 0, len(jobs))
+	for _, j := range jobs {
+		if filter.keep(j.ID) {
+			resp := jobResponse(j)
+			resp.Labels = filter.labelsOf(j.ID)
+			out = append(out, resp)
+		}
+	}
+	return out, nil
 }
 
 // getJob handles GET /v1/jobs/{name}. Two-step IDOR-safe lookup:
@@ -387,7 +438,9 @@ func (s *server) getJob(w http.ResponseWriter, r *http.Request, acct state.Accou
 		s.notFound(w, "no such job")
 		return
 	}
-	writeJSON(w, http.StatusOK, jobResponse(j))
+	resp := jobResponse(j)
+	resp.Labels = s.resourceLabels(r, acct, state.LabelKindJob, j.ID)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // listJobRuns handles GET /v1/jobs/{name}/runs. Two-step: resolve

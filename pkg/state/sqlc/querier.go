@@ -287,6 +287,8 @@ type Querier interface {
 	CancelRuntimeUpgradeBuilds(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error)
 	CancelRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg CancelRuntimeUpgradeCandidateParams) error
 	CancelRuntimeUpgradeReleaseTasks(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
+	// Each reservation is released on the counter it was taken from, which is a
+	// company's pooled counter once its reservations are pooled (ADR-202610171908).
 	CancelTrafficAppInvocations(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	// Explicit cancel from DELETE /v1/uploads/{id}. The handler also
 	// removes the .part file via os.Remove AFTER the UPDATE commits —
@@ -3700,6 +3702,7 @@ type Querier interface {
 	// the broker acknowledges it. The current delivery handle can be Acked
 	// without dispatching the application again.
 	ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error)
+	// aborted_canary is the H5-62 candidate: aborted before its rollout completed.
 	ListTrafficSiblingsInScope(ctx context.Context, db DBTX, arg ListTrafficSiblingsInScopeParams) ([]ListTrafficSiblingsInScopeRow, error)
 	ListTriggerDeadLetter(ctx context.Context, db DBTX, arg ListTriggerDeadLetterParams) ([]TriggerDeadLetter, error)
 	// Used by GET /v1/triggers/{id}/records (dashboard + apid handler).
@@ -3715,6 +3718,10 @@ type Querier interface {
 	// An account's unlifted freezes that have not ended: active and upcoming
 	// windows, weekly windows and after-rollback policies.
 	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
+	// The notices still to mail: recorded after since, not yet linked to an
+	// intent, and for 'ending' only while the copy still holds a slot that has
+	// not ended.
+	ListUnmailedManagedPostgresRestoreSlotNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresRestoreSlotNoticesParams) ([]ListUnmailedManagedPostgresRestoreSlotNoticesRow, error)
 	// The account trace view's per-request wakes: one canonical instance per wake
 	// (its first), scoped to the account's apps before reading wake metadata, with
 	// the same boot and completion reads as ListAppWakeHistoryPage.
@@ -5986,6 +5993,9 @@ type Querier interface {
 	// yet), so a replica that lost the race records nothing.
 	RecordManagedPostgresOverageDelivery(ctx context.Context, db DBTX, arg RecordManagedPostgresOverageDeliveryParams) (bool, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
+	// ADR-20261031123259: one notice per copy and kind; the first sweep to reach
+	// it records it and later sweeps leave it alone.
+	RecordManagedPostgresRestoreSlotNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresRestoreSlotNoticeParams) (int64, error)
 	// ADR-1259: append-once; a replay must describe the same verified lineage.
 	RecordManagedPostgresRestoreVerification(ctx context.Context, db DBTX, arg RecordManagedPostgresRestoreVerificationParams) (ManagedPostgresRestoreVerification, error)
 	RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX, arg RecordManagedPostgresSharedUsageParams) (int64, error)

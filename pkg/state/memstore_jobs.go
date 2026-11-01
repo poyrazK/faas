@@ -1338,6 +1338,9 @@ func recomputeJobRun(run JobRun, tasks map[int]JobTask, now time.Time) JobRun {
 	if queuedOrClaimed == 0 && running == 0 && run.FinishedAt == nil {
 		run.FinishedAt = &now
 	}
+	if queuedOrClaimed+running > 0 {
+		run.FinishedAt = nil // A retried task reopens a settled run.
+	}
 	return run
 }
 
@@ -1922,6 +1925,11 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 	t.LastLeaseNode = nil
 	tasks[taskIndex] = t
 	m.jobTasks[runID] = tasks
+	// Reopen the run with the task, as PgStore.JobTaskRetry does.
+	now := time.Now().UTC()
+	run := recomputeJobRun(m.jobRuns[runID], tasks, now)
+	m.jobRuns[runID] = run
+	m.syncJobOccurrenceLocked(run, now)
 	return nil
 }
 

@@ -642,6 +642,10 @@ const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
 // could not restore at all.
 const ManagedPostgresRestoreSlots = 1
 const ManagedPostgresRestoreSlotWindow = 7 * 24 * time.Hour
+
+// ManagedPostgresRestoreSlotNoticeLead is how long before a restore slot ends
+// without room the restoring account is emailed (ADR-20261031123259).
+const ManagedPostgresRestoreSlotNoticeLead = 48 * time.Hour
 const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 
 // Fleet safety ceilings bound what operators may configure as the platform's
@@ -8729,6 +8733,29 @@ const (
 	// flush, including an interrupted RPC and every queued batch. It consumes
 	// the shared cleanup allowance rather than extending it.
 	GatewayRequestTelemetryShutdownTimeoutSeconds = 2
+	// GatewayRequestTelemetryOpenBucketsMax bounds the collapsed request
+	// telemetry rows one gateway holds while their minute is open, and again
+	// the closed rows waiting to ship (ADR-20261101085552). Past it the oldest
+	// open minute ships early, and the oldest waiting rows are dropped and
+	// counted as lost.
+	GatewayRequestTelemetryOpenBucketsMax = 8192
+	// GatewayRequestTelemetryMinuteGraceSeconds keeps a minute's buckets open
+	// this long after the minute ends, for requests that finish just after it.
+	GatewayRequestTelemetryMinuteGraceSeconds = 5
+	// GatewayRequestJournalSegmentMinutes is the received-time span of one
+	// node-local request-ID journal segment (ADR-20261101085552). A segment's
+	// index is sorted in memory when it closes, so the span bounds that work:
+	// 10 minutes at 1,000 req/s is about 7 MB.
+	GatewayRequestJournalSegmentMinutes = 10
+	// GatewayRequestJournalSegmentGraceSeconds keeps a segment open this long
+	// after its span ends, for records that reach the store just after it.
+	GatewayRequestJournalSegmentGraceSeconds = 60
+	// GatewayRequestJournalDiskBudgetBytes bounds one node's journal directory.
+	// Past it the oldest closed segments are removed before they expire.
+	GatewayRequestJournalDiskBudgetBytes int64 = 20 << 30
+	// RequestJournalNodeLookupTimeout bounds how long apid waits for each
+	// gateway's answer when it resolves a request ID kept on compute nodes.
+	RequestJournalNodeLookupTimeout = time.Second
 	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
 	// sending new requests to a compute node whose gatewayd-internal stopped
 	// answering (for example while it restarts behind its durable socket)
@@ -9435,6 +9462,9 @@ const (
 	AgentCallbackMessageIDMaxBytes      = 54
 	AgentCallbackPayloadMaxBytes        = 4096
 	AgentCallbackFailuresPerIPPerMinute = 30
+	// AgentCallbacksPerMinutePerThread bounds the callbacks one apid accepts
+	// for one thread in a minute, so a runaway tool cannot flood the thread.
+	AgentCallbacksPerMinutePerThread = 600
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).
@@ -11764,6 +11794,14 @@ func (p Plan) OrgPendingInvitationsMax() int {
 	}
 	return l.OrgPendingInvitationsMax
 }
+
+// FreeOrganizationsOwnedMax caps the shared organizations on the Free plan
+// one account may own (ADR-20261031090658). A Free organization owns its
+// resources, so each one carries its own Free app and allowance; without a
+// cap, creating organizations multiplied the Free tier. Creating another
+// needs one of them upgraded or deleted first. Organizations that fall back
+// to Free when their subscription ends still count.
+const FreeOrganizationsOwnedMax = 1
 
 // RateLimitPerAccountRPM returns the per-account requests/minute cap for
 // the plan (ADR-040 / issue #292). Independent of RateLimitRPS/Burst
