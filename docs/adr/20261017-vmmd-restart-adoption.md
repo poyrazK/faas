@@ -1242,3 +1242,32 @@ Each slice is one reviewable change on a branch. Slices 2–4 are behind
 - **Building on `native_process_recovery`.** It is off in production. Turning it
   on changes pmem, prepared networks and image staging. This design uses the
   journal that production runs.
+
+### No-drain restarts lost every guest in production (2026-10-31)
+
+rc.312 and rc.313 both restarted fsn-2's vmmd without a drain. The new vmmd
+adopted every live guest (5, then 6), and within the same second its startup
+orphan reaper killed them. Their teardown then failed every minute ("remove
+bind target: … no such file"), and vmmd kept their leases until the next
+restart. The bridge units were stopped correctly, because their guests were
+gone.
+
+Two causes:
+- node_join's release install passed `--defer-activation` on every existing
+  node, so `gregalectl release install` set fsn-2's `compute_nodes` row to
+  `unavailable` even on the no-drain path. The recovery arbiter evacuates an
+  unavailable node: fsn-3's scheduler parked the frozen guests (leaving the
+  VMs to vmmd's reaper), and live migration of the running ones failed, so
+  recreate parked them. All six rows were `parked` at 21:05:36. vmmd restarted
+  at 21:05:57.
+- The startup jail reaper (`ReapOrphanedJails`) asked durable state alone. The
+  adopted guests' rows were `parked`, so it killed them behind the Manager,
+  which still owned them. The metal restart test never saw this: its guest is
+  younger than the reaper's two-minute minimum age, and its row stays
+  `running`.
+
+The fix: a no-drain install keeps the row active (`--defer-activation=false`).
+The jail reaper uses the same ownership gate as the layer-clone sweep: the
+Manager, the resource journal, then durable state. An adopted guest whose row
+is no longer live is the live-VM reaper's, which tears it down through the
+Manager.
