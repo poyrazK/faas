@@ -7,6 +7,7 @@ package dbsched
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -100,8 +101,12 @@ func TestRestoreDrillsRunDailyPerNodeAndCleanUp(t *testing.T) {
 func TestRestoreDrillsTimeOutAndCanBeTurnedOff(t *testing.T) {
 	s, store, vmm, _ := archivedSource(t)
 	ctx := context.Background()
-	clock := time.Now().Add(2 * time.Minute)
-	s.now = func() time.Time { return clock }
+	// The held restore reads the clock while the test advances it.
+	var clock atomic.Pointer[time.Time]
+	start := time.Now().Add(2 * time.Minute)
+	clock.Store(&start)
+	s.now = func() time.Time { return *clock.Load() }
+	advance := func(d time.Duration) { next := clock.Load().Add(d); clock.Store(&next) }
 	hold := make(chan struct{})
 	vmm.mu.Lock()
 	vmm.restoreHold = hold
@@ -112,7 +117,7 @@ func TestRestoreDrillsTimeOutAndCanBeTurnedOff(t *testing.T) {
 	if got, _ := s.RunDrills(ctx); got.Running != 1 {
 		t.Fatalf("a restoring drill = %+v; want running", got)
 	}
-	clock = clock.Add(s.cfg.DrillTimeout + time.Minute)
+	advance(s.cfg.DrillTimeout + time.Minute)
 	got, err := s.RunDrills(ctx)
 	close(hold)
 	s.restoreWG.Wait()
@@ -121,7 +126,7 @@ func TestRestoreDrillsTimeOutAndCanBeTurnedOff(t *testing.T) {
 	}
 
 	s.cfg.DrillEvery = -1
-	clock = clock.Add(48 * time.Hour)
+	advance(48 * time.Hour)
 	if got, err := s.RunDrills(ctx); err != nil || got != (DrillSample{}) {
 		t.Fatalf("drills off = %+v, %v", got, err)
 	}
