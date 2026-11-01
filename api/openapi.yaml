@@ -8332,6 +8332,7 @@ paths:
     post:
       operationId: restoreManagedPostgresDatabase
       summary: Restore a database into a new managed PostgreSQL database
+      description: "The restored database counts toward the plan's database limit. A restore may go one database past the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once the account has room; otherwise its delete is scheduled then. A second restore past the limit while a copy holds the slot answers 403 managed_postgres_restore_slot_in_use."
       tags: [managed_postgres]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -83250,6 +83251,25 @@ components:
           type: string
           format: date-time
           description: "Set while the database's delete is scheduled: it can be undeleted until then, and is purged after."
+        restore_slot_until:
+          type: string
+          format: date-time
+          description: "Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time."
+        restore_range:
+          $ref: '#/components/schemas/ManagedPostgresRestoreRange'
+    ManagedPostgresRestoreRange:
+      description: "The span a point-in-time restore from this database can target now. Absent while the database cannot be restored from."
+      type: object
+      required: [earliest, latest]
+      properties:
+        earliest:
+          type: string
+          format: date-time
+          description: "The later of the database's creation and the start of its restore window."
+        latest:
+          type: string
+          format: date-time
+          description: "When the response was made; a restore point must be before it."
     ManagedPostgresDatabaseList:
       description: Account-scoped managed PostgreSQL database collection.
       type: object

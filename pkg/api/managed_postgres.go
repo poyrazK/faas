@@ -71,6 +71,21 @@ type ManagedPostgresDatabase struct {
 	// RestorableUntil is set while a customer's delete is scheduled: until
 	// then the database can be undeleted, and after it the database is purged.
 	RestorableUntil string `json:"restorable_until,omitempty"`
+	// RestoreSlotUntil is set while a restored database is one past the
+	// plan's database limit (ADR-20261031123259). It becomes an ordinary
+	// database once the account has room; otherwise its delete is scheduled
+	// at this time.
+	RestoreSlotUntil string `json:"restore_slot_until,omitempty"`
+	// RestoreRange is the span a point-in-time restore from this database
+	// can target now; absent while it cannot be restored from.
+	RestoreRange *ManagedPostgresRestoreRange `json:"restore_range,omitempty"`
+}
+
+// ManagedPostgresRestoreRange bounds a restore's point_in_time: from
+// Earliest up to Latest, the time the response was made (exclusive).
+type ManagedPostgresRestoreRange struct {
+	Earliest string `json:"earliest"`
+	Latest   string `json:"latest"`
 }
 
 // ManagedPostgresHealth reports cached provider metadata. Healthy does not

@@ -472,10 +472,11 @@ the app woken and capacity found. `total_deadline_ms` (optional) bounds the
 whole request from arrival, including upload, wake and queueing. Both are
 capped by your plan: 30 s on Free, 60 s on Hobby, 5 minutes on Pro and
 15 minutes on Scale. A request past its budget before the response starts
-gets 503 `request_budget_exceeded`. A client may lower or raise the execution
-budget within the plan ceiling with the `x-faas-budget-ms` header, or the
-header named in `allow_override_header`; it never extends
-`total_deadline_ms`.
+gets 503 `request_budget_exceeded`. A client may lower the execution budget
+with the `x-faas-budget-ms` header. To let callers also raise it, within the
+plan ceiling, name a header in `allow_override_header` that only your trusted
+callers send; any caller can send `x-faas-budget-ms`, so on its own it never
+raises the rule's budget. Neither header extends `total_deadline_ms`.
 
 ### cache
 
