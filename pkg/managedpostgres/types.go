@@ -27,6 +27,19 @@ var (
 	ErrUsageStale    = pgerrors.ErrUsageStale
 )
 
+// ChangeRejectedError is a provider's final refusal of an in-place change:
+// asking again for the same change cannot succeed. Code is a stable
+// snake_case reason, such as upgrade_refused (pg_upgrade's check refused
+// the cluster, which stays on its major) or upgrade_failed (the database
+// needs a point-in-time restore). It is an ErrConflict.
+type ChangeRejectedError struct {
+	Code string
+}
+
+func (e *ChangeRejectedError) Error() string { return "managed postgres: change rejected: " + e.Code }
+
+func (e *ChangeRejectedError) Unwrap() error { return ErrConflict }
+
 // ErrProvisioningClosed reports that the operator rollout gate (canary
 // window, qualification or account allowlist) is closed for this account.
 // It wraps ErrUnavailable so retry semantics and existing errors.Is checks
@@ -319,6 +332,77 @@ type RestoreRequest struct {
 	// Verification, when recorded, is confirmed against the target's current
 	// immutable metadata instead of remapping PointInTime (ADR-1259).
 	Verification *RestoreVerification
+}
+
+// ImportSource is a PostgreSQL database on another backend to copy into a
+// new one (ADR-1027 migration off Neon): reachable at Host:Port over TLS
+// with a certificate for Host, as User, who can read everything in
+// Database. SkipExtensions are extensions the source provider installs for
+// itself. Password is sensitive and never printed.
+type ImportSource struct {
+	Host           string
+	Port           int
+	Database       string
+	User           string
+	Password       string
+	SkipExtensions []string
+}
+
+func (ImportSource) String() string   { return "[REDACTED]" }
+func (ImportSource) GoString() string { return "managedpostgres.ImportSource{[REDACTED]}" }
+
+// ImportRequest copies Source into the provider's empty database
+// ResourceID. OperationID (a lowercase UUID, ADR-1370's
+// copy_operation_id) names the import: importing again under it reports
+// the import unchanged, or restarts a failed one; another ID while one is
+// running or done is ErrConflict.
+type ImportRequest struct {
+	ResourceID  string
+	Source      ImportSource
+	OperationID string
+}
+
+// ImportState is an import's progress.
+type ImportState string
+
+const (
+	ImportNone    ImportState = "none"
+	ImportRunning ImportState = "running"
+	ImportDone    ImportState = "done"
+	ImportFailed  ImportState = "failed"
+)
+
+// ImportStatus reports an import; ErrorCode is a stable code.
+type ImportStatus struct {
+	State       ImportState
+	ErrorCode   string
+	StartedAt   time.Time
+	FinishedAt  time.Time
+	SourceMajor int
+	// OperationID is the import this status describes. A finished copy
+	// keeps it across a restart of the database, so ImportDone with the
+	// expected ID proves the copy's lineage.
+	OperationID string
+	// MissingExtensions names, for extension_unavailable, the source
+	// extensions the target cannot create: plain identifiers only, never
+	// connection data.
+	MissingExtensions []string
+	// RequiredVolumeBytes is, for target_too_small, the storage size the
+	// target needs for the copy (zero when the estimate fell short during
+	// the copy).
+	RequiredVolumeBytes int64
+}
+
+// Importer is a provider that copies a database from another backend into
+// one of its own. Import starts the copy, or reports one already running or
+// done; ImportStatus reports it. An import interrupted before it finished
+// leaves the target empty and can be started again. ImportStatus need not
+// wake the database, so it may report ImportNone for a finished copy whose
+// database stopped since; Import under the same OperationID is the
+// authoritative answer.
+type Importer interface {
+	Import(ctx context.Context, req ImportRequest) (ImportStatus, error)
+	ImportStatus(ctx context.Context, resourceID string) (ImportStatus, error)
 }
 
 // RestoreInspector verifies an existing target against its pinned source and
@@ -716,6 +800,13 @@ type Capabilities struct {
 	PointInTimeRestore bool
 	ClassResize        bool
 	ScaleToZeroUpdate  bool
+	// StorageResize means Update grows StorageLimitBytes in place. Storage
+	// never shrinks.
+	StorageResize bool
+	// MajorUpgrade means Update upgrades PostgresMajor in place to a later
+	// one of PostgresMajors, and may reject it for good with a
+	// *ChangeRejectedError.
+	MajorUpgrade bool
 	// RestoreUsageIsolated means a provider can meter a restored target
 	// independently of its source. It must not also be counted in the source
 	// resource's Usage response.
@@ -744,7 +835,7 @@ func (c Capabilities) Validate() error {
 	if c.ScaleToZeroUpdate && !c.ScaleToZero {
 		return ErrInvalid
 	}
-	if c.ClassResize && len(c.ServiceClasses) < 2 {
+	if c.ClassResize && len(c.ServiceClasses) < 2 || c.MajorUpgrade && len(c.PostgresMajors) < 2 {
 		return ErrInvalid
 	}
 	hasRestoreUsageAccounting := c.RestoreUsageIsolated || c.RestoreUsageIncludedInSource
@@ -878,6 +969,25 @@ type Provider interface {
 	IssueCredentials(context.Context, CredentialRequest) (CredentialMaterial, error)
 	RevokeCredentials(context.Context, CredentialRequest) error
 	Usage(context.Context, string, UsageWindow) (Usage, error)
+}
+
+// SessionObservation reports what revoked identities still hold on one
+// database. Fields are counts, or 1 when a provider can only report presence;
+// callers treat any nonzero field as "some remain" and never rely on totals.
+type SessionObservation struct {
+	Sessions             int64
+	PreparedTransactions int64
+}
+
+// SessionTerminator is an optional capability that ends the sessions of
+// credentials already revoked through RevokeCredentials (ADR-1370). Every
+// request names the same ProviderResourceID. Both methods are idempotent; an
+// absent role holds no sessions and no prepared transactions. A provider may
+// terminate every session on the database, since an activation owns all of
+// its bindings. Without this capability an activation cannot fence its source.
+type SessionTerminator interface {
+	TerminateSessions(context.Context, []CredentialRequest) error
+	ObserveSessions(context.Context, []CredentialRequest) (SessionObservation, error)
 }
 
 // ScaleToZeroProber is an optional qualification-only capability. Providers

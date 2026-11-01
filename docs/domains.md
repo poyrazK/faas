@@ -116,7 +116,8 @@ Routing does not change; an unlisted name just cannot complete an HTTPS
 handshake. A certificate the
 edge already holds for a name you remove keeps serving until its next reload
 or renewal, which is then refused. The domain doctor's probe name is always
-allowed. API: `GET`, `PUT` and `DELETE /v1/domains/{domain}/hosts`.
+allowed. API: `GET`, `PUT` and `DELETE /v1/domains/{domain}/hosts`. A
+wildcard you take over from an unverified claim starts with no list.
 
 Once a wildcard verifies, names below it belong to its account: another
 account cannot add `api.example.com` or `*.shop.example.com` while

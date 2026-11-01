@@ -453,6 +453,8 @@
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengePassCoversTheHostForTheAccount"},
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengeSolveRefusesForeignTokens"},
         {"kind": "test", "locator": "cmd/gatewayd-internal/edge_challenge_key_test.go::TestEdgeChallengeSecret"},
+        {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestChallengePassSurvivesAShadowingCookie"},
+        {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestChallengedPreflightIsAnsweredAtTheEdge"},
         {"kind": "runbook", "locator": "docs/runbooks/FaasEdgeChallenge.md"},
         {"kind": "runbook", "locator": "docs/security.md"}
       ]
@@ -468,6 +470,7 @@
         {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxRefusesBoxedClientAcrossPaths"},
         {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxThresholdWindowAndExpiry"},
         {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxPerAppCap"},
+        {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestWAFCookieOnlyDetectionBlocksWithoutBoxing"},
         {"kind": "test", "locator": "pkg/apid/edgerules/penalty_test.go::TestCreateValidatesAndStoresPenalty"},
         {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgePenaltyBoxFlag"},
         {"kind": "test", "locator": "cmd/gatewayd-internal/penalty_box_share_test.go::TestPenaltyBoxSharedAcrossGateways"},

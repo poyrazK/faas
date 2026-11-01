@@ -140,6 +140,12 @@ func (g *Gate) ReleasedByDefault(capability string) bool {
 	return g.decider.ReleasedByDefault(capability)
 }
 
+// EnabledByRule reports whether a flag rule or opt-in, not the default,
+// enables a capability for subject.
+func (g *Gate) EnabledByRule(capability string, subject platformflags.Subject) bool {
+	return g.decider.EnabledByRule(capability, subject)
+}
+
 // SpecHidden reports an OpenAPI path a published spec leaves out: an
 // operator route, or one whose capability is in hidden. Paths no capability
 // owns stay published.

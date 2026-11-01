@@ -73,6 +73,10 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 		h.observeChallenge(rule, app.ID, "passed")
 		return false
 	}
+	if writeChallengedPreflight(w, r) {
+		h.observeChallenge(rule, app.ID, "preflight")
+		return true
+	}
 	if !isBrowserNavigation(r) {
 		api.WriteProblem(w, api.ErrChallengeRequired(rule.ID))
 		h.observeChallenge(rule, app.ID, "rejected")

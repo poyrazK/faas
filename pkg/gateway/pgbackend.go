@@ -366,6 +366,9 @@ type PGBackend struct {
 	// target eviction. Without this guard, a burst that discovers the same
 	// dead instance could start one replacement per failed request.
 	staleTargetRecovery singleflight.Group
+	// routeResolution coalesces route-cache-miss reads of one host
+	// (resolveHostShared).
+	routeResolution singleflight.Group
 	// staleTargets quarantines VM lifetimes that the forwarding transport has
 	// proved unusable. The database row can remain RUNNING until vmmd's
 	// liveness report reaches schedd; without this short-lived fence,
@@ -1204,7 +1207,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 			b.stale.Delete(host)
 		}
 	}
-	app, ok, err := b.router.ResolveHost(ctx, host)
+	app, ok, err := b.resolveHostShared(ctx, host)
 	if err != nil {
 		return b.lookupStale(ctx, host, err)
 	}
@@ -1333,6 +1336,37 @@ func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host str
 		return false, false // newly linked or moved hostname: resolve afresh
 	}
 	return target.RoutedSurfaceID == "", false // deleted/inactive surface: resolve legacy route afresh
+}
+
+// resolveHostShared resolves a route-cache miss once for every concurrent
+// request to the host. An app change empties the cache, and each request of
+// the burst that followed read the route from Postgres through gatewayd's
+// eight connections: on production-us 93 acquisitions in one minute were
+// canceled and the lookups fell back to stale routes (PulseWatch F13). The
+// shared read keeps the first caller's deadline but not its cancellation;
+// every caller still stops waiting at its own deadline.
+func (b *PGBackend) resolveHostShared(ctx context.Context, host string) (App, bool, error) {
+	type resolved struct {
+		app App
+		ok  bool
+	}
+	ch := b.routeResolution.DoChan(host, func() (any, error) {
+		readCtx := context.WithoutCancel(ctx)
+		if deadline, bounded := ctx.Deadline(); bounded {
+			var cancel context.CancelFunc
+			readCtx, cancel = context.WithDeadline(readCtx, deadline)
+			defer cancel()
+		}
+		app, ok, err := b.router.ResolveHost(readCtx, host)
+		return resolved{app: app, ok: ok}, err
+	})
+	select {
+	case <-ctx.Done():
+		return App{}, false, ctx.Err()
+	case result := <-ch:
+		value, _ := result.Val.(resolved)
+		return value.app, value.ok, result.Err
+	}
 }
 
 // lookupStale is the Router-error branch of Lookup (ADR-190).
@@ -2379,7 +2413,7 @@ func (b *PGBackend) RecoverStaleTarget(ctx context.Context, appID, scope string,
 		// Fresh public policy bypasses picker weights. Recovery must reuse a
 		// healthy sibling in this captured cohort, or restore this same cohort
 		// and scope without consulting a later traffic policy.
-		deploymentID, scope = routing.SelectedDeploymentID, routing.Scope
+		deploymentID, scope = routing.SelectedDeploymentID, routing.admissionScope()
 		healthy = func() int { return b.HealthyCountForDeployments(appID, []string{deploymentID}) }
 	}
 	if healthy() > 0 {

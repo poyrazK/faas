@@ -342,7 +342,12 @@ func idempotentCommand(args []string) bool {
 		return sub == "list" || sub == "set" || sub == "unset" ||
 			sub == "history" || sub == "diff" || sub == "pull" || sub == "push"
 	case "cron":
-		return sub == "delete" || sub == "runs" || sub == "list"
+		// label set and unset write absolute values (ADR-20261031100025).
+		return sub == "delete" || sub == "runs" || sub == "list" || sub == "label"
+	case "job":
+		return sub == "delete" || sub == "info" || sub == "list" || sub == "label"
+	case "domain":
+		return sub == "list"
 	case "key":
 		return sub == "delete" || sub == "list"
 	case "bucket":

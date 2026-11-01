@@ -1,10 +1,10 @@
 package agents
 
 // Who issues and revokes callback URLs (ADR-20261030125501 §3, step 4). An
-// account API key reaches every realtime endpoint of the account. A
-// stateless agent's own instance presents a gregale:agents workload token
-// instead, so the app holds no account key; it reaches only its own app's
-// endpoints.
+// account API key reaches the account's realtime endpoints whose apps the
+// organization check (appaccess) lets it act on. A stateless agent's own
+// instance presents a gregale:agents workload token instead, so the app
+// holds no account key; it reaches only its own app's endpoints.
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -23,11 +24,37 @@ type CallbackCaller struct {
 	// AppID is set for a workload token: only this app's endpoints are the
 	// caller's.
 	AppID string
+	// Authorize, when set, decides whether the caller may act on an endpoint
+	// of its account. An API key gets the organization check its app's
+	// routes get, so a creator removed from, demoted in or suspended with the
+	// app's organization, or a key bound to another organization, issues and
+	// revokes nothing in a company app's inbox.
+	Authorize func(state.ManagedRealtimeEndpoint) *api.Problem
 }
 
 // owns reports whether endpoint is the caller's.
 func (c CallbackCaller) owns(endpoint state.ManagedRealtimeEndpoint) bool {
 	return endpoint.AccountID == c.Account.ID && (c.AppID == "" || endpoint.AppID == c.AppID)
+}
+
+// endpoint loads the realtime endpoint a request names and checks that the
+// caller may act on it. A refusal that hides the app answers like a missing
+// endpoint.
+func (c CallbackCaller) endpoint(ctx context.Context, inbox CallbackInbox, id string) (state.ManagedRealtimeEndpoint, *api.Problem) {
+	endpoint, err := inbox.ManagedRealtimeEndpointByID(ctx, id)
+	if err != nil || !c.owns(endpoint) {
+		return state.ManagedRealtimeEndpoint{}, errRealtimeEndpointNotFound()
+	}
+	if c.Authorize == nil {
+		return endpoint, nil
+	}
+	if problem := c.Authorize(endpoint); problem != nil {
+		if problem.Status == http.StatusNotFound {
+			return state.ManagedRealtimeEndpoint{}, errRealtimeEndpointNotFound()
+		}
+		return state.ManagedRealtimeEndpoint{}, problem
+	}
+	return endpoint, nil
 }
 
 // WorkloadStore is the state WorkloadCaller reads; state.Store implements it.

@@ -1023,12 +1023,15 @@
         group: root
       when: (faas_join_rollout_phase | default('full')) != 'activate'
 
+    # Read-only, so it runs in every phase: an activation that converges roles
+    # runs from the top (ADR-20261025095348), and the adoption decision before
+    # the drain reads this. Skipped, it left a result without stat and failed
+    # the rc.315 activation of fsn-2.
     - name: Inspect the active vmmd binary before runtime pre-stage
       ansible.builtin.stat:
         path: /opt/faas/current/bin/vmmd
         follow: true
       register: faas_join_active_vmmd
-      when: (faas_join_rollout_phase | default('full')) != 'activate'
 
     # ADR-20261024085817: the pre-stage adopts the candidate's runtime base
     # generations into this node's cache, and the serving vmmd refuses every
@@ -1049,7 +1052,11 @@
           - faas-vmmd.service
       register: faas_join_serving_vmmd_pid
       changed_when: false
-      when: faas_join_active_vmmd.stat.exists
+      # Activation already pre-staged during preparation; the drain repeats
+      # this check below for every mode.
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
+        - faas_join_active_vmmd.stat.exists
 
     - name: Compare the serving vmmd's runtime base generations with the candidate's
       ansible.builtin.command:
@@ -1064,6 +1071,7 @@
       changed_when: false
       failed_when: faas_join_base_generations.rc not in [0, 3, 4]
       when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
         - faas_join_active_vmmd.stat.exists
         - (faas_join_serving_vmmd_pid.stdout | default('0') | trim) not in ['', '0']
 

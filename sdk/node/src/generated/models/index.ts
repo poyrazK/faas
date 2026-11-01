@@ -81,6 +81,10 @@ export type { AdoptEnvironmentGitOpsResponse } from './AdoptEnvironmentGitOpsRes
 export type { AdvanceAutomationLiveSuiteRequest } from './AdvanceAutomationLiveSuiteRequest.js';
 export type { AdvanceCanaryRequest } from './AdvanceCanaryRequest.js';
 export type { AfterRestoreHook } from './AfterRestoreHook.js';
+export type { AgentClientRequest } from './AgentClientRequest.js';
+export type { AgentConnectionResponse } from './AgentConnectionResponse.js';
+export type { AgentConnectionsResponse } from './AgentConnectionsResponse.js';
+export type { AgentConnectionsRevokeAllResponse } from './AgentConnectionsRevokeAllResponse.js';
 export type { AlertDeliveryResponse } from './AlertDeliveryResponse.js';
 export type { AlertPresetResponse } from './AlertPresetResponse.js';
 export type { AlertRollback } from './AlertRollback.js';

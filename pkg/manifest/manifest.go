@@ -129,6 +129,10 @@ type Manifest struct {
 	// platform zone. Today that is customer custom domains (ADR-520).
 	PublicEdge PublicEdge `yaml:"public_edge,omitempty"`
 
+	// ManagedPostgres turns on native managed PostgreSQL (ADR-1027) on the
+	// fleet's database hosts (managed_postgres.go).
+	ManagedPostgres *ManagedPostgres `yaml:"managed_postgres,omitempty"`
+
 	// PostgreSQL is the database cluster configuration. The renderer
 	// needs the role names, the database name, and the migration
 	// policy (the manifest validator checks the migration scope is
@@ -517,6 +521,9 @@ type Host struct {
 	// checks (e.g. `--role=compute-only` skips cert checks for the
 	// egress server leaf, which lives on the control-plane box).
 	Tags []string `yaml:"tags,omitempty"`
+	// Database is a database host's place in schedd's database
+	// scheduler (role `database` only; managed_postgres.go).
+	Database *DatabaseHost `yaml:"database,omitempty"`
 	// PortMbps is the speed of the host's network port in Mbit/s. A compute
 	// host that runs the object gateway gets its share of it
 	// (ADR-20261031122757 §3); required there, unused elsewhere.
@@ -1163,6 +1170,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Cgroups.validate()...)
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
+	errs = append(errs, m.validateManagedPostgres()...)
 	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)
@@ -1421,7 +1429,7 @@ func (f *Fleet) validate() Errors {
 			errs = append(errs, Error{path + ".role", "is required"})
 		} else if !roleKnown(h.Role) {
 			errs = append(errs, Error{path + ".role",
-				fmt.Sprintf("unknown role %q (allowed: single-box|control-plane|compute-only)", h.Role)})
+				fmt.Sprintf("unknown role %q (allowed: single-box|control-plane|compute-only|database)", h.Role)})
 		}
 		if h.Address != "" && !looksLikeHostPort(h.Address) {
 			errs = append(errs, Error{path + ".address",
@@ -1835,7 +1843,7 @@ func contains(xs []string, x string) bool {
 }
 
 func roleKnown(r string) bool {
-	for _, v := range []string{"single-box", "control-plane", "compute-only"} {
+	for _, v := range []string{"single-box", "control-plane", "compute-only", RoleDatabase} {
 		if r == v {
 			return true
 		}

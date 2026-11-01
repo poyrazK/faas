@@ -2421,6 +2421,10 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 	h.requireAuthnAudit.Emit(r.Context(), kind, subject, data)
 }
 
+// errRouteTargetChangePending refuses a route whose target did not resolve
+// while an edge-rule change to the source host is pending.
+var errRouteTargetChangePending = errors.New("route target unresolved while an edge-rule change is pending")
+
 // matchAndSubstituteRoute (ADR-089 / issue #561 PR 3) consults
 // the per-host edge-rule matcher BEFORE Backend.Lookup. On a
 // `kind=route` hit, *app is overwritten with the target App
@@ -2448,7 +2452,9 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 //     is advisory; a stale read only widens the hit window.
 //     We do NOT emit audit/metric for a transient miss —
 //     the next request will hit the loader and the rule
-//     is naturally dropped once its app row is gone.
+//     is naturally dropped once its app row is gone. While an
+//     edge-rule change to the source host is pending, the miss
+//     refuses instead (errRouteTargetChangePending).
 //
 // Nil-safe: h.edgeRules == nil OR h.resolveTargetApp == nil
 // returns false and ServeHTTP proceeds with the legacy
@@ -2474,6 +2480,13 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	if !ok {
 		// Authoritative loaders retain a failure in the request context so the
 		// fallback lookup refuses. Legacy fixture loaders preserve a clean miss.
+		// While a change to this host's rules is pending, the cached rule may
+		// name a target the change renamed or removed (an app rename commits
+		// before the retargeted rules apply): refuse rather than serve the
+		// routed path from the source app (ADR-20261101141123).
+		if h.edgeRules.Converging(hostname(r.Host), hostApp.AccountID, hostApp.ID) {
+			*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, errRouteTargetChangePending))
+		}
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "miss")
 		}
@@ -6246,27 +6259,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A two-phase edge-rule mutation fences this hostname before apid commits
-	// the new policy. Fail closed for the bounded convergence window so a
-	// request cannot slip through a gateway that still has the old generation.
-	// The fence is scoped to the host's owner (resolved above, before any
-	// route substitution or edge rule runs): another account's mutation,
-	// even on match_host "*", cannot change this host's policy.
-	var fenceAccount, fenceApp, fenceProductionApp string
-	if ok {
-		fenceAccount, fenceApp, fenceProductionApp = lookedApp.AccountID, lookedApp.ID, lookedApp.ProductionAppID
-	}
-	// A preview applies its production app's "@app" rules, so a mutation of
-	// those fences the preview's hosts too.
-	if h.edgeRules != nil && (h.edgeRules.Converging(host, fenceAccount, fenceApp) ||
-		fenceProductionApp != "" && h.edgeRules.Converging(host, fenceAccount, fenceProductionApp)) {
-		w.Header().Set("Retry-After", "1")
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
-			api.CodeCapacity, "Edge policy update in progress",
-			"The serving fleet is converging on a new edge-rule generation; retry shortly."))
-		h.observe(r, rec.status, "", "", false, Target{})
-		return
-	}
+	// A pending edge-rule change does not hold this host (ADR-20261101141123):
+	// the request runs under the rules this gateway has until its apply, which
+	// apid waits for before the change returns.
+
 	// A source host under preparation cannot escape its readiness gate through
 	// a route rewrite to another workload or through an edge answer.
 	if ok && lookedApp.EnvironmentNotReady {
