@@ -93,10 +93,6 @@ type summarizedSpan struct {
 // within-window dedupe set drops any span seen before (keyed by
 // (span_id, end_time_unix_nano)). Returns the post-dedupe span
 // count (for the metric counter).
-func (a *spansAccumulator) add(spans []summarizedSpan) int {
-	return a.addLocked(spans)
-}
-
 // addSpansForTest is the same as add but wrapped so unit tests
 // can call it without leaking the production method signature.
 // Not exported; only the test file references it.
