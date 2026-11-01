@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 var _ OutboundAIAccessTokenStore = (*PgStore)(nil)
@@ -16,6 +17,9 @@ func (s *PgStore) CreateOutboundAIAccessToken(ctx context.Context, token Outboun
 	if len(token.TokenHash) != 32 || len(token.IntegrationIDs) > api.OutboundAIAccessTokenIntegrationsMax {
 		return OutboundAIAccessToken{}, ErrInvalidArgument
 	}
+	// ADR 20261029202403 amendment 1: keyed under the outbound ring, which
+	// outboundd looks tokens up with.
+	token.TokenHash = familyStoredCredential(credhash.FamilyOutbound, credTagOutboundAIAccessToken, token.TokenHash)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return OutboundAIAccessToken{}, mapErr(err)

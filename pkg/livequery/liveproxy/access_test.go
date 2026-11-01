@@ -75,7 +75,7 @@ func TestAdmitKeylessFollowsTheDataAPIRules(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	admit := func(f liveproto.ClientFrame, route Route) (liveproto.ClientFrame, string) {
 		f.Type = liveproto.TypeSubscribe
-		code, _ := admitKeyless(route, &f, f.Rest, f.Schema, now)
+		code, _ := admitKeyless(context.Background(), route, &f, f.Rest, f.Schema, now)
 		return f, code
 	}
 	got, code := admit(liveproto.ClientFrame{Anonymous: true, Rest: "products?select=id,categories(name)"}, accessRoute())

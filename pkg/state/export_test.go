@@ -1146,3 +1146,11 @@ var LiveServiceProxyIdentities = liveServiceProxyIdentities
 
 // OperatorIntents exposes the MemStore's operator intents to tests.
 func (r *MemStore) OperatorIntents() map[string]OperatorIntent { return r.operatorIntents }
+
+// Keyed credential families (ADR 20261029202403 amendment 1).
+var (
+	AcknowledgmentToken      = acknowledgmentToken
+	AcknowledgmentMatches    = acknowledgmentMatches
+	AcknowledgmentDigest     = acknowledgmentDigest
+	ObjectUploadGrantLookups = objectUploadGrantLookups
+)
