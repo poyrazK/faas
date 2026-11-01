@@ -6614,13 +6614,15 @@ type Store interface {
 	// concurrent UPDATEs is acceptable. summary is the raw JSON
 	// bytes (the caller has already validated json.Valid).
 	//
-	// accountID is REQUIRED — PR-D code-review #1 pins the
+	// target.AccountID is REQUIRED — PR-D code-review #1 pins the
 	// WHERE clause on (trace_id, account_id) so a buggy upstream
 	// caller can't overwrite a different customer's row. The
-	// gateway-side accumulator buffers each (account, trace)
+	// gateway-side accumulator buffers each target and trace
 	// separately and maxSpans bounds the row to the plan; this
-	// is the SQL-side defense in depth.
-	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error
+	// is the SQL-side defense in depth. target's optional app,
+	// organization and customer-credential fields narrow the rows
+	// further (SpansSummaryTarget).
+	UpdateSpansSummary(ctx context.Context, target SpansSummaryTarget, summary []byte, maxSpans int) error
 
 	// ListRequestTelemetryByApp backs GET /v1/apps/{slug}/debug/requests.
 	// Time-windowed (since, until) with hard limit; cursor pagination

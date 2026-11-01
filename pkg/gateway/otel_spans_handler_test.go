@@ -35,6 +35,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -45,14 +46,16 @@ type fakeAuthClient struct {
 	calls     int
 	accountID string
 	plan      string
+	appID     string
+	orgID     string
 	err       error
 }
 
-func (f *fakeAuthClient) AuthenticateKey(_ context.Context, _ string) (string, string, error) {
+func (f *fakeAuthClient) AuthenticateKey(_ context.Context, _ string) (apidgrpc.TraceKeyPrincipal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
-	return f.accountID, f.plan, f.err
+	return apidgrpc.TraceKeyPrincipal{AccountID: f.accountID, Plan: f.plan, AppID: f.appID, OrgID: f.orgID}, f.err
 }
 func (f *fakeAuthClient) Close() error { return nil }
 
@@ -384,7 +387,7 @@ func TestOTelSpansHandler_Truncation_FlushTime(t *testing.T) {
 			Interval:         5 * time.Millisecond,
 			MaxSpansPerTrace: func(_ string) int { return 50 },
 			OnTruncated:      func(_ string) { atomic.AddInt32(&trunc, 1) },
-			WriteFn: func(_ context.Context, _ string, summaryJSON []byte, _ string) (string, int64, error) {
+			WriteTargetFn: func(_ context.Context, _ string, summaryJSON []byte, _ SpanTarget) (string, int64, error) {
 				var spans []summarizedSpan
 				if err := json.Unmarshal(summaryJSON, &spans); err != nil {
 					t.Errorf("unmarshal: %v", err)

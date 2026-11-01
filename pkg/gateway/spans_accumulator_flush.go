@@ -26,10 +26,9 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // FlushLoopConfig bundles the flush loop's dependencies.
@@ -40,6 +39,13 @@ type FlushLoopConfig struct {
 	// outcome ∈ {inserted, rate_limited, db_error}, retry_ms,
 	// and a terminal error for gRPC failures. Required.
 	WriteFn func(ctx context.Context, traceID string, summaryJSON []byte, accountID string) (outcome string, retryAfterMs int64, err error)
+	// WriteTargetFn, when set, replaces WriteFn and also receives the rows
+	// the trace may merge into (SpanTarget.Request builds apid's request).
+	// Producers that name an app, an organization or a customer credential
+	// must set it: WriteFn carries only the account, so a narrowed target
+	// is never written through it (it would widen to every app of the
+	// account).
+	WriteTargetFn func(ctx context.Context, traceID string, summaryJSON []byte, target SpanTarget) (outcome string, retryAfterMs int64, err error)
 	// Log is the structured logger. nil = slog.Default().
 	Log *slog.Logger
 	// MaxRetries caps the per-entry retry budget before the
@@ -61,10 +67,26 @@ type FlushLoopConfig struct {
 // pendingEntry holds an accumulator entry whose write failed
 // and is awaiting the next flush window.
 type pendingEntry struct {
-	traceID   string
-	accountID uuid.UUID
-	spans     []summarizedSpan
-	retries   int
+	traceID string
+	target  SpanTarget
+	spans   []summarizedSpan
+	retries int
+}
+
+// errNarrowedTargetWithoutWriter refuses to write a narrowed target through
+// the account-only WriteFn.
+var errNarrowedTargetWithoutWriter = errors.New("otel spans: target names an app, organization or credential but the flush loop has no WriteTargetFn")
+
+// write ships one entry through WriteTargetFn, or WriteFn for an
+// account-wide target.
+func (cfg FlushLoopConfig) write(ctx context.Context, entry *pendingEntry, summaryJSON []byte) (string, int64, error) {
+	if cfg.WriteTargetFn != nil {
+		return cfg.WriteTargetFn(ctx, entry.traceID, summaryJSON, entry.target)
+	}
+	if entry.target.narrowed() {
+		return "", 0, errNarrowedTargetWithoutWriter
+	}
+	return cfg.WriteFn(ctx, entry.traceID, summaryJSON, entry.target.AccountID.String())
 }
 
 // RunFlushLoop drains the accumulator on every tick until ctx
@@ -138,7 +160,7 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 		// Atomic snapshot-and-clear: returns the prior slice,
 		// leaves the bucket empty. Concurrent Adds land in
 		// the empty bucket and the next tick picks them up.
-		spans, accountID, plan := bucket.swapAndClearWithPlan()
+		spans, _, plan := bucket.swapAndClearWithPlan()
 		if len(spans) == 0 {
 			// Empty since the last tick: remove it, so the map holds
 			// only live traces. An Add racing this retries against the
@@ -176,12 +198,11 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 					existing.spans = existing.spans[:max]
 				}
 			}
-			existing.accountID = accountID
 		} else {
 			pending[key] = &pendingEntry{
-				traceID:   traceID,
-				accountID: accountID,
-				spans:     spans,
+				traceID: traceID,
+				target:  key.target,
+				spans:   spans,
 			}
 		}
 		return true
@@ -210,7 +231,7 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 			entry.retries++
 			continue
 		}
-		outcome, retryAfterMs, err := cfg.WriteFn(ctx, entry.traceID, summaryJSON, entry.accountID.String())
+		outcome, retryAfterMs, err := cfg.write(ctx, entry, summaryJSON)
 		switch {
 		case err != nil:
 			// gRPC-level failure (InvalidArgument, etc).

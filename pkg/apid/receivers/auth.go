@@ -52,11 +52,14 @@ type authStore interface {
 type authReceiver struct {
 	apidpb.UnimplementedAuthServer
 	store authStore
+	// tracing decides the tracing capability for an OTLP key's subject;
+	// nil releases everyone.
+	tracing TracingReleased
 }
 
 // newAuthReceiver wires a production receiver.
-func newAuthReceiver(store authStore) *authReceiver {
-	return &authReceiver{store: store}
+func newAuthReceiver(store authStore, tracing TracingReleased) *authReceiver {
+	return &authReceiver{store: store, tracing: tracing}
 }
 
 // AuthenticateKey resolves the bearer token to (account_id, plan).
@@ -82,7 +85,7 @@ func (r *authReceiver) AuthenticateKey(ctx context.Context, req *apidpb.Authenti
 	if tok == "" {
 		return nil, status.Error(codes.InvalidArgument, "empty token")
 	}
-	acct, _, err := r.store.AuthenticateKey(ctx, api.HashAPIKey(tok))
+	acct, key, err := r.store.AuthenticateKey(ctx, api.HashAPIKey(tok))
 	if err != nil {
 		// Hash miss + IAM-5 expired/revoked keys are all
 		// authenticated-shape errors from the gateway's POV:
@@ -102,10 +105,7 @@ func (r *authReceiver) AuthenticateKey(ctx context.Context, req *apidpb.Authenti
 		// Generic store-side error: same shape — Internal.
 		return nil, status.Errorf(codes.Internal, "apid auth lookup: %v", err)
 	}
-	return &apidpb.AuthenticateKeyResponse{
-		AccountId: acct.ID,
-		Plan:      string(acct.Plan),
-	}, nil
+	return r.traceKeyPrincipal(ctx, acct, key)
 }
 
 // AuthenticateCredential resolves a credential for a gateway that cannot
@@ -165,7 +165,8 @@ func (r *authReceiver) MatchCredential(_ context.Context, req *apidpb.MatchCrede
 
 // RegisterAuthReceiver binds the AuthServer onto a gRPC server.
 // Called from runAuthServer in main.go alongside the other gRPC
-// services.
-func RegisterAuthReceiver(s *grpc.Server, store authStore) {
-	apidpb.RegisterAuthServer(s, newAuthReceiver(store))
+// services. tracing gates OTLP keys on the tracing capability; nil
+// releases everyone.
+func RegisterAuthReceiver(s *grpc.Server, store authStore, tracing TracingReleased) {
+	apidpb.RegisterAuthServer(s, newAuthReceiver(store, tracing))
 }

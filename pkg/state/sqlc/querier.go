@@ -7025,6 +7025,20 @@ type Querier interface {
 	// lookup still hits request_telemetry_trace_idx for the trace_id
 	// selectivity; the residual account_id check is a post-fetch
 	// row-level filter (one row, microseconds).
+	//
+	// Tracing tenancy (2026-10-31 logs/traces audit, T4/T5). account_id is
+	// the app creator's storage namespace, not the tenant, so the pin alone
+	// let one trace id merge spans into every app that creator ever made,
+	// company apps included. Three optional narrowings, all off (null/false)
+	// for an older producer:
+	//   $5 app_id: only the producing app's rows (the in-guest bridge, a
+	//      service binding's or outbound call's caller, an app-bound key).
+	//   $6 org_id: a key bound to a company merges into that company's apps,
+	//      whoever created them, instead of rows carrying $3.
+	//   $7 customer_credential: $3 holds a customer key. A company app's rows
+	//      are merged only while $3 may still deploy there (owner, admin or
+	//      developer, as event publishing requires), so a creator who left
+	//      the company cannot write its evidence.
 	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error)
 	UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateTenantWorkflowScheduleLastAdmittedAtParams) (int64, error)
 	// Keep cancelled terminal while allowing an eligible target to revive an alias.

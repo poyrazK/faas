@@ -4648,6 +4648,20 @@ WHERE received_at > now() - $1::interval;
 -- lookup still hits request_telemetry_trace_idx for the trace_id
 -- selectivity; the residual account_id check is a post-fetch
 -- row-level filter (one row, microseconds).
+--
+-- Tracing tenancy (2026-10-31 logs/traces audit, T4/T5). account_id is
+-- the app creator's storage namespace, not the tenant, so the pin alone
+-- let one trace id merge spans into every app that creator ever made,
+-- company apps included. Three optional narrowings, all off (null/false)
+-- for an older producer:
+--   $5 app_id: only the producing app's rows (the in-guest bridge, a
+--      service binding's or outbound call's caller, an app-bound key).
+--   $6 org_id: a key bound to a company merges into that company's apps,
+--      whoever created them, instead of rows carrying $3.
+--   $7 customer_credential: $3 holds a customer key. A company app's rows
+--      are merged only while $3 may still deploy there (owner, admin or
+--      developer, as event publishing requires), so a creator who left
+--      the company cannot write its evidence.
 update request_telemetry as target
    set spans_summary = (
        select coalesce(jsonb_agg(bounded.span order by bounded.duration_nanos desc, bounded.span_id), '[]'::jsonb)
@@ -4678,8 +4692,22 @@ update request_telemetry as target
          ) bounded
    )
  where target.trace_id = $1
-   and target.account_id = $3::uuid
-   and target.received_at >= now() - interval '24 hours';
+   and target.received_at >= now() - interval '24 hours'
+   and ($5::uuid is null or target.app_id = $5::uuid)
+   and (case when $6::uuid is null then target.account_id = $3::uuid
+             else exists (select 1 from apps a where a.id = target.app_id and a.org_id = $6::uuid)
+        end)
+   and (not $7::boolean or not exists (
+         select 1
+           from apps a
+           join orgs o on o.id = a.org_id and not o.personal_org
+          where a.id = target.app_id
+            and not exists (
+                  select 1 from org_memberships m
+                   where m.org_id = o.id
+                     and m.account_id = $3::uuid
+                     and m.removed_at is null
+                     and m.role in ('owner', 'admin', 'developer'))));
 
 -- ---------------------------------------------------------------------------
 -- Issue #246 acceptance item 7 — hard-bounce + complaint suppression list

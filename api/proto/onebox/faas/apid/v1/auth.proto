@@ -39,6 +39,12 @@ service Auth {
   // gRPC codes:
   //   - InvalidArgument when token is empty
   //   - Unauthenticated when no api_keys row matches the hash
+  //   - PermissionDenied when the key cannot write traces: none of
+  //     admin, deploy:write or metrics:write, or a key bound to a
+  //     company whose holder may no longer deploy there
+  //   - NotFound when the tracing capability is not released to the
+  //     key's account (ADR-20261023115741); the endpoint answers as a
+  //     route that does not exist
   //   - Internal on Postgres errors
   rpc AuthenticateKey(AuthenticateKeyRequest) returns (AuthenticateKeyResponse);
 
@@ -132,6 +138,16 @@ message AuthenticateKeyResponse {
   string account_id = 1;
 
   // plan — api.Plan string ("free"/"hobby"/"pro"/"scale").
-  // Empty when outcome != "ok".
+  // Empty when outcome != "ok". For a key bound to a company
+  // organization that owns its resources, the organization's plan.
   string plan = 2;
+
+  // app_id — set when the credential is bound to one app: its spans
+  // merge only into that app's request rows.
+  string app_id = 3;
+
+  // org_id — set when the key is bound to a company organization: its
+  // spans merge into rows of that organization's apps, whoever created
+  // them, instead of rows of the holder's own apps.
+  string org_id = 4;
 }

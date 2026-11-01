@@ -30781,13 +30781,18 @@ func (s *PgStore) InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertReq
 // sqlc names the third positional arg `Column3` because the
 // predicate is `account_id = $3::uuid` with no `RETURNING`
 // or named-arg convention. Mirror what `make sqlc-generate`
-// produces so the drift gate stays green.
-func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error {
+// produces so the drift gate stays green. Column5..7 are the
+// target's optional app, organization and customer-credential
+// narrowings; the zero UUID binds NULL, which leaves them off.
+func (s *PgStore) UpdateSpansSummary(ctx context.Context, target SpansSummaryTarget, summary []byte, maxSpans int) error {
 	affected, err := s.appErrorsQueries().UpdateSpansSummary(ctx, s.pool, sqlc.UpdateSpansSummaryParams{
-		TraceID: pgtype.Text{String: traceID, Valid: traceID != ""},
+		TraceID: pgtype.Text{String: target.TraceID, Valid: target.TraceID != ""},
 		Column2: summary,
-		Column3: pgtype.UUID{Bytes: accountID, Valid: true},
+		Column3: pgtype.UUID{Bytes: target.AccountID, Valid: true},
 		Column4: int32(min(max(maxSpans, 1), 1000)),
+		Column5: pgtype.UUID{Bytes: target.AppID, Valid: target.AppID != uuid.Nil},
+		Column6: pgtype.UUID{Bytes: target.OrgID, Valid: target.OrgID != uuid.Nil},
+		Column7: target.CustomerCredential,
 	})
 	if err != nil {
 		return err

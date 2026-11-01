@@ -602,6 +602,13 @@ var (
 	// pusher is typically unattended automation that cannot satisfy MFA.
 	ScopesMetricsWriteSurface = []string{ScopeAdmin, ScopeMetricsWrite}
 
+	// ScopesTracesWriteSurface: POST /v1/otel/v1/traces, the customer
+	// OTLP trace ingest (ADR-127 PR-D). Pushed spans are telemetry on
+	// metrics:write's trust model; deploy:write stays accepted for keys
+	// minted before ingest checked scopes, as on the events and queue
+	// producer routes. A read-only key cannot write traces.
+	ScopesTracesWriteSurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeMetricsWrite}
+
 	// Delayed-task routes retain deploy:write/apps:read compatibility while
 	// allowing unattended schedulers to use a purpose-built credential.
 	// Write includes read so a producer can inspect or cancel work it created.

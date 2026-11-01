@@ -38,6 +38,10 @@ type SpansWriterClient interface {
 	// drop the accumulator entry (inserted / rate_limited) or
 	// keep it for the next flush (db_error).
 	WriteSpansSummary(ctx context.Context, traceID string, summaryJSON []byte, accountID string) (outcome string, retryAfterMs int64, err error)
+	// WriteSummary ships a full request, including the app,
+	// organization and customer-credential narrowing a producer
+	// knows (gateway.SpanTarget.Request builds it).
+	WriteSummary(ctx context.Context, req *apidpb.WriteSpansSummaryRequest) (outcome string, retryAfterMs int64, err error)
 	Close() error
 }
 
@@ -81,11 +85,16 @@ func NewSpansWriterClient(conn *grpc.ClientConn) *SpansWriterClientImpl {
 // Internal, Unavailable) the gateway's flush loop drops the
 // entry — the error envelope IS the outcome.
 func (c *SpansWriterClientImpl) WriteSpansSummary(ctx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-	resp, err := c.cli.WriteSpansSummary(ctx, &apidpb.WriteSpansSummaryRequest{
+	return c.WriteSummary(ctx, &apidpb.WriteSpansSummaryRequest{
 		TraceId:     traceID,
 		SummaryJson: summaryJSON,
 		AccountId:   accountID,
 	})
+}
+
+// WriteSummary ships one coalesced summary with its full target.
+func (c *SpansWriterClientImpl) WriteSummary(ctx context.Context, req *apidpb.WriteSpansSummaryRequest) (string, int64, error) {
+	resp, err := c.cli.WriteSpansSummary(ctx, req)
 	if err != nil {
 		return "", 0, fmt.Errorf("apidgrpc: WriteSpansSummary: %w", err)
 	}
