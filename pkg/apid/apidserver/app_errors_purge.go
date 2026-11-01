@@ -167,7 +167,7 @@ func (p *appErrorsPurger) purgeAll(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		if err := p.purgeOnce(ctx, id); err != nil {
+		if err := p.purgeOnceForPlan(ctx, id, acct.Plan); err != nil {
 			failed = true
 		}
 	}
@@ -211,6 +211,22 @@ func (p *appErrorsPurger) purgeOnce(ctx context.Context, accountID uuid.UUID) er
 		// skip the pass rather than risk wiping the table.
 		return errors.New("app_errors: no plan retention ceiling resolved")
 	}
+	return p.purgeOnceBefore(ctx, accountID, horizon)
+}
+
+// purgeOnceForPlan purges an account's rows past its own plan's retention
+// (1/7/30/90 days, ADR-096). The sweep used the oldest horizon across all
+// plans for every account, so a Free account's request samples, headers
+// included, were kept 90 days instead of one.
+func (p *appErrorsPurger) purgeOnceForPlan(ctx context.Context, accountID uuid.UUID, plan api.Plan) error {
+	days := plan.AppErrorsRetentionDays()
+	if days <= 0 {
+		days = 1
+	}
+	return p.purgeOnceBefore(ctx, accountID, p.now().Add(-time.Duration(days)*24*time.Hour))
+}
+
+func (p *appErrorsPurger) purgeOnceBefore(ctx context.Context, accountID uuid.UUID, horizon time.Time) error {
 	now := p.now().UTC()
 
 	// ---- 1. Per-app fingerprint cardinality ceiling ----

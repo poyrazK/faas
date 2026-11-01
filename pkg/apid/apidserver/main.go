@@ -2641,6 +2641,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
+	// The retention purge runs even with app errors switched off: rows
+	// written while it was on (request samples with headers) must still
+	// age out on the plan's schedule.
+	go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
 	if deps.getenv("FAAS_APP_ERRORS_ENABLED") != "false" { //nolint:goconst // kill-switch sentinel; the canonical "true" env literal.
 		appErrTarget := cfg.GetAppErrorsTarget(deps.getenv)
 		appErrTLS, tlsErr := cfg.LoadAppErrorsTLSWithPrefixAndVerifierAndReload(nodeVerifier, appErrRotator.Reload(nil))
@@ -2669,8 +2673,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			go wire.WatchTLSReload(ctx, log, appErrHupCh, appErrRotator, appErrReload)
 		}
-		go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
-
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
 		// by watchLogLevelReload). Install three parallel ones — each
