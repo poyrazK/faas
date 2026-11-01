@@ -1691,6 +1691,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
+	if err := object.ValidateObjectStoragePricing(objectRegistry); err != nil {
+		return err
+	}
 	srv.WithObjectStorage(objectRegistry)
 	if err := srv.configureHosting(deps.getenv); err != nil {
 		return fmt.Errorf("apid internal hosting configuration: %w", err)
