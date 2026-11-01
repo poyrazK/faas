@@ -2357,6 +2357,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
+	if err = v.checkRestoredVCPUs(l, spec.VCPUs); err != nil {
+		return fmt.Errorf("vmm: %w", err)
+	}
 	v.observeInstancePause(l.Instance, spec.KeepPaused)
 	tLoad := time.Now()
 	// A warm-pool restore deliberately remains paused. The guest resume hook

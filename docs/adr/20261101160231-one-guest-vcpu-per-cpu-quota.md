@@ -3,8 +3,8 @@
 - **Status:** proposed
 - **Date:** 2026-11-01
 - **Amends:** ADR-173 (plan RAM/vCPU pairs) and ADR-152 (vCPU count stays
-  plan-derived), and spec §4.4 (`vcpu_count` = 2, Scale 4). Snapshot
-  compatibility follows the pattern of ADR-20261024225612 (CPU templates).
+  plan-derived), and spec §4.4 (`vcpu_count` = 2, Scale 4). The restore
+  guard reuses ADR-005's cold-boot fallback and schedd's stale marking.
 - **Decision:**
   1. **An app instance boots `max(1, ceil(cpu_millicores / 1000))` guest
      vCPUs.** Every shape sold today (250, 500 and 1,000 millicores, ADR-152)
@@ -13,13 +13,16 @@
      schedd now sends the plan's `limits.VCPU` for an app: wakes, cold boots,
      deployment prime boots, app tasks and forks. Builder VMs (ADR-791), jobs
      (already one vCPU), agent runs and managed Postgres keep their own shapes.
-  2. **Snapshots record their vCPU count.** vmmd reports it with each capture,
-     beside `cpu_template` and `mem_bytes`. imaged stores it in a new nullable
-     `snapshots.vcpu_count` (CHECK 1–64). schedd's snapshot check gains the cold
-     reason `vcpu_mismatch`: a row captured at another count is retired like a
-     RAM mismatch, and the wake cold-boots (ADR-005). A legacy row (NULL)
-     counts as the plan's old topology (2, Scale 4). Each app therefore pays
-     one cold boot on its first wake after the change, then snapshots again.
+  2. **vmmd refuses a restore at another vCPU count.** Firecracker restores
+     the count a snapshot was captured with, whatever the wake asks for. Right
+     after `/snapshot/load`, before the resume hook and readiness, vmmd counts
+     the restored process's `fc_vcpu` threads. If that differs from the
+     wake's count it fails the restore with `ErrSnapshotVCPUMismatch`. The
+     wake cold-boots through the existing fallback, and schedd marks the
+     snapshot stale, because the error is not node-local. Each app therefore
+     pays one wasted restore and one cold boot on its first wake after its
+     count changes, then snapshots again. A warm-pool or migration restore
+     fails instead of cold-booting, as for any restore error there.
   3. **Admission books the derived count.** vCPU slots per node are unchanged.
      Under measured CPU admission (ADR-20261029151111, on by default) guest
      vCPUs already stop counting at the gate, but bookings still count toward
@@ -93,18 +96,23 @@
   - **Lower measured CPU per request** leaves measured CPU admission more room
     on the same node. Fewer exits also means less work for the host kernel
     under load.
-  - **Mixed versions:** `snapshots.vcpu_count` is an expand-only, nullable
-    column. An imaged that predates it writes NULL, which reads as legacy and
-    is correct while the switch is empty. vmmd, imaged and schedd must all
-    record and check the count before any app is listed.
+  - **Mixed versions:** nothing new is stored or sent on the wire, so no
+    version rejects another. An older vmmd does not run the check: a listed
+    app it restores keeps the snapshot's count. Apps are listed only once
+    every vmmd runs the check.
+  - **Why the check is at restore, not in the snapshot row:** a recorded
+    count would have to cross the vmmd capture responses and the
+    admitted-capture request. Both are strict about unknown fields, so an
+    older schedd or vmmd would reject them. Counting threads needs no new
+    state and also covers adopted and natively captured VMs.
 - **Rollout:**
   1. Benches: `TestMetalRequestCostBench`, and `FAAS_RESTORE_BENCH_VCPUS` on
      `TestMetalRestoreTimingBench` (this ADR's PR).
-  2. `snapshots.vcpu_count` (migration), vmmd reports it, imaged stores it,
-     schedd rejects a mismatch. This step is inert while no app is listed:
-     every capture records the count it booted with, which equals the plan's.
-  3. schedd's `FAAS_GUEST_VCPU_FROM_CPU_APPS`; admission books the derived
-     count.
+  2. vmmd's restore check (`pkg/fcvm/restore_vcpus.go`). It is inert while
+     no app is listed: every snapshot was captured at the count its wakes ask
+     for.
+  3. schedd's `guest_vcpu_from_cpu_apps` / `FAAS_GUEST_VCPU_FROM_CPU_APPS`:
+     boot specs and admission bookings of listed apps use the derived count.
   4. Production A/B on one node: two identical apps each for Go and Node, one
      of each listed, plus one CPU-bound app. Run the 300 → 600 req/s step
      test. Compare cgroup CPU per request, p50/p99 latency,

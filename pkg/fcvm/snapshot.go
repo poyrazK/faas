@@ -165,9 +165,14 @@ type RestoreSpec struct {
 	// Park→Kill). Names changed from *Path → *Key to match the new
 	// semantics; type stays string so call sites only need a name
 	// update.
-	KernelKey   string
-	BaseKey     string
-	LayerKey    string
+	KernelKey string
+	BaseKey   string
+	LayerKey  string
+	// VCPUs is the guest vCPU count the wake asked for (ADR-20261101160231).
+	// Firecracker restores the count the snapshot was captured with, so a
+	// restore that comes up with another count is refused and the wake
+	// cold-boots. Zero skips the check.
+	VCPUs       int
 	VsockDevice *VsockDevice
 	// Workloads (issue #463 / ADR-069 / PR-B) is the per-workload
 	// drive set, mirroring ColdBootSpec.Workloads. Restore
