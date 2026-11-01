@@ -1032,3 +1032,21 @@ func (r *Engine) NodeCapacityProblem(err error) error { return r.nodeCapacityPro
 func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
+
+// MarkRestartInFlight records appID as restarting, as restartApp does, until
+// the returned func runs.
+func (e *Engine) MarkRestartInFlight(appID string) func() {
+	e.restartMu.Lock()
+	defer e.restartMu.Unlock()
+	if e.restartInFlight == nil {
+		e.restartInFlight = make(map[string]*restartCall)
+	}
+	call := &restartCall{done: make(chan struct{})}
+	e.restartInFlight[appID] = call
+	return func() {
+		e.restartMu.Lock()
+		defer e.restartMu.Unlock()
+		delete(e.restartInFlight, appID)
+		close(call.done)
+	}
+}

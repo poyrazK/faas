@@ -13722,6 +13722,9 @@ func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token s
 		}
 		return CustomDomain{}, mapErr(err)
 	}
+	if err := forgetCustomDomainTLSHostsTx(ctx, tx, domain); err != nil {
+		return CustomDomain{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return CustomDomain{}, err
 	}

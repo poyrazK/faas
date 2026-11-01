@@ -321,6 +321,10 @@ type StatsReader interface {
 type Server struct {
 	scheddpb.UnimplementedScheddServer
 
+	// databases is the database scheduler (ADR-1027); nil keeps the
+	// database RPCs UNIMPLEMENTED.
+	databases DatabaseScheduler
+
 	engine SchedAPI
 	stats  StatsReader
 	// agentRuns serves RunAgent (ADR-20261027090010 §6); nil answers Unimplemented.

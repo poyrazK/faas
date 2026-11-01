@@ -10118,13 +10118,16 @@
       "created_at",
       "data_resource_id",
       "database_id",
+      "error_code",
       "generation",
       "id",
       "provider_resource_id",
       "source_spec",
       "state",
       "target_class",
-      "target_scale_to_zero"
+      "target_postgres_major",
+      "target_scale_to_zero",
+      "target_storage_limit_bytes"
     ],
     "kind": "operational"
   },
@@ -19683,5 +19686,96 @@
       "signature"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "database_nodes",
+    "columns": [
+      "admission_ceiling_mb",
+      "boot_slots",
+      "created_at",
+      "id",
+      "lifecycle",
+      "postgres_majors",
+      "target_url",
+      "updated_at",
+      "volume_capacity_bytes"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "database_restore_drills",
+    "columns": [
+      "drill_id",
+      "error_code",
+      "finished_at",
+      "node_id",
+      "recovered_to",
+      "result",
+      "source_id",
+      "started_at",
+      "target_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_role_verifiers",
+    "columns": [
+      "database_id",
+      "role_name",
+      "updated_at",
+      "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_usage",
+    "columns": [
+      "database_id",
+      "ended_at",
+      "meter",
+      "rate",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_vms",
+    "columns": [
+      "always_on",
+      "bootstrapped",
+      "created_at",
+      "database_id",
+      "drop_standby_slot",
+      "last_active_at",
+      "last_backup_at",
+      "last_error",
+      "major_history",
+      "mem_mib",
+      "move_lease_until",
+      "move_node",
+      "node_id",
+      "postgres_major",
+      "promote_pending",
+      "replicated",
+      "resize_pending",
+      "restore_lease_until",
+      "restore_recovered_to",
+      "restore_source",
+      "restore_target",
+      "restore_window_seconds",
+      "standby_node",
+      "standby_running",
+      "standby_synced",
+      "state",
+      "state_changed_at",
+      "upgrade_from",
+      "upgrade_lease_until",
+      "upgrade_major",
+      "upgrade_operation",
+      "upgrade_result",
+      "vcpu_count",
+      "volume_bytes"
+    ],
+    "kind": "operational"
   }
 ]

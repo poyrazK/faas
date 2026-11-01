@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"time"
 
 	"filippo.io/age"
@@ -13,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -88,7 +90,7 @@ func (h *managedPostgresHooks) notifyCap() func(context.Context, managedpostgres
 }
 
 func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
-	registry, err := managedpostgres.Load(getenv, managedPostgresFactories())
+	registry, err := managedpostgres.Load(getenv, managedPostgresFactories(pool))
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -436,6 +438,35 @@ func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits, overage 
 		ceilings.MaxMonthlyStorageByteSeconds = limits.StorageLimitBytes * secondsPerBillingMonth
 	}
 	return ceilings
+}
+
+// upgrades and storageResizes are read per request: apid tests build the
+// handler first.
+func (s *server) upgrades() managedpg.Rollout       { return s.postgresUpgrades }
+func (s *server) storageResizes() managedpg.Rollout { return s.postgresStorage }
+
+// managedPostgresResize serves a resize route with the service as
+// configured when the request arrives.
+func (s *server) managedPostgresResize(serve func(managedpg.Resizes, http.ResponseWriter, *http.Request, state.Account)) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		rs := managedpg.Resizes{Storage: s.storageResizes, Problem: managedPostgresProblem, NotConfigured: managedPostgresNotConfiguredProblem, Audit: s.audit}
+		if s.managedPostgres != nil {
+			rs.Service = s.managedPostgres
+		}
+		serve(rs, w, r, acct)
+	}
+}
+
+// managedPostgresUpgrade serves a major-upgrade route with the service as
+// configured when the request arrives.
+func (s *server) managedPostgresUpgrade(serve func(managedpg.Upgrades, http.ResponseWriter, *http.Request, state.Account)) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		u := managedpg.Upgrades{Problem: managedPostgresProblem, NotConfigured: managedPostgresNotConfiguredProblem, Audit: s.audit}
+		if s.managedPostgres != nil {
+			u.Service = s.managedPostgres
+		}
+		serve(u, w, r, acct)
+	}
 }
 
 func (s *server) WithManagedPostgres(service *managedpostgres.Service, reconciler *managedpostgres.Reconciler, bindingService *managedpostgres.BindingService, bindingReconciler *managedpostgres.BindingReconciler, usageCollector *managedpostgres.UsageCollector, healthCollector *managedpostgres.HealthCollector) *server {
