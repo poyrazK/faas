@@ -4,11 +4,14 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
+	"github.com/onebox-faas/faas/pkg/apid/queueleases"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
@@ -161,20 +164,55 @@ func (s *server) getAgentRunOutputs(w http.ResponseWriter, r *http.Request, acct
 	}
 }
 
-func (s *server) createAgentCallback(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if s.agentAPI == nil {
-		api.WriteProblem(w, api.ErrCapacity("the agent API is unavailable on this control-plane host"))
-		return
+// agentCallbackCallerRoute authenticates an issue or revoke request
+// (ADR-20261030125501 step 4). A JWT-shaped bearer is a gregale:agents
+// workload token from a live instance of an app, which reaches only that
+// app's endpoints; every other credential takes the API-key chain. No API
+// key, OIDC or hosting token is JWT-shaped, so the split never misroutes a
+// key.
+func (s *server) agentCallbackCallerRoute(next func(http.ResponseWriter, *http.Request, agents.CallbackCaller)) http.HandlerFunc {
+	keyed := s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		next(w, r, agents.CallbackCaller{Account: acct})
+	})))
+	workload := middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			caller, err := agents.WorkloadCaller(r, s.workloadTrust(), s.store, time.Now())
+			if err != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required",
+					"a live workload token for gregale:agents from a production instance of the app is required"))
+				return
+			}
+			// The API-key chain decides the capability for the account; a
+			// workload token gets the same decision (ADR-20261023115741).
+			if !s.capabilityAllowedFor(r, caller.Account) {
+				writeMissingRoute(w, r)
+				return
+			}
+			next(w, r, caller)
+		}))
+	return func(w http.ResponseWriter, r *http.Request) {
+		if queueleases.WorkloadBearer(r) {
+			workload.ServeHTTP(w, r)
+			return
+		}
+		keyed(w, r)
 	}
-	s.agentAPI.CreateCallback(w, r, acct)
 }
 
-func (s *server) revokeAgentCallbacks(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *server) createAgentCallback(w http.ResponseWriter, r *http.Request, caller agents.CallbackCaller) {
 	if s.agentAPI == nil {
 		api.WriteProblem(w, api.ErrCapacity("the agent API is unavailable on this control-plane host"))
 		return
 	}
-	s.agentAPI.RevokeCallbacks(w, r, acct)
+	s.agentAPI.CreateCallback(w, r, caller)
+}
+
+func (s *server) revokeAgentCallbacks(w http.ResponseWriter, r *http.Request, caller agents.CallbackCaller) {
+	if s.agentAPI == nil {
+		api.WriteProblem(w, api.ErrCapacity("the agent API is unavailable on this control-plane host"))
+		return
+	}
+	s.agentAPI.RevokeCallbacks(w, r, caller)
 }
 
 // receiveAgentCallback serves the token-only callback route; it needs the

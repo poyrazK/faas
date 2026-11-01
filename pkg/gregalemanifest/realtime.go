@@ -84,6 +84,34 @@ type RealtimeConsumerGroup struct {
 	Name         string `yaml:"name" toml:"name"`
 	LeaseSeconds *int   `yaml:"lease_seconds,omitempty" toml:"lease_seconds"`
 	MaxAttempts  *int   `yaml:"max_attempts,omitempty" toml:"max_attempts"`
+	// OrderingMetadataKey delivers the messages that share this metadata
+	// key's value one at a time, in order (ADR-1039). An agent inbox orders
+	// by thread_id (ADR-20261030125501 §2).
+	OrderingMetadataKey *string `yaml:"ordering_metadata_key,omitempty" toml:"ordering_metadata_key"`
+	// DeduplicationMetadataKey drops a message whose value of this key the
+	// group already saw within its deduplication window.
+	DeduplicationMetadataKey *string `yaml:"deduplication_metadata_key,omitempty" toml:"deduplication_metadata_key"`
+	// DeadLetterPolicy is block, the default, where a dead-lettered message
+	// holds back the later messages of its ordering key, or skip.
+	DeadLetterPolicy *string `yaml:"dead_letter_policy,omitempty" toml:"dead_letter_policy"`
+}
+
+// validate checks the settings a deploy would otherwise send for the API
+// to refuse.
+func (g RealtimeConsumerGroup) validate() error {
+	for _, key := range []struct {
+		name  string
+		value *string
+	}{{"ordering_metadata_key", g.OrderingMetadataKey}, {"deduplication_metadata_key", g.DeduplicationMetadataKey}} {
+		if key.value != nil && (*key.value == "" || len(*key.value) > api.RealtimeConsumerGroupOrderingFieldMaxBytes ||
+			api.ValidateRealtimeMetadata(map[string]string{*key.value: ""}) != nil) {
+			return fmt.Errorf("%s must be a metadata key of 1-%d bytes", key.name, api.RealtimeConsumerGroupOrderingFieldMaxBytes)
+		}
+	}
+	if g.DeadLetterPolicy != nil && *g.DeadLetterPolicy != "block" && *g.DeadLetterPolicy != "skip" {
+		return fmt.Errorf("dead_letter_policy must be block or skip, not %q", *g.DeadLetterPolicy)
+	}
+	return nil
 }
 
 // RealtimeAuthNone declares an endpoint that accepts any client.
@@ -191,6 +219,9 @@ func (e RealtimeEndpoint) validate() error {
 		key := g.Channel + "\x00" + g.Name
 		if seen[key] {
 			return fmt.Errorf("consumer_groups[%d]: %s/%s is declared twice", i, g.Channel, g.Name)
+		}
+		if err := g.validate(); err != nil {
+			return fmt.Errorf("consumer_groups[%d]: %w", i, err)
 		}
 		seen[key] = true
 	}

@@ -130,6 +130,14 @@ Each step is one PR behind the `agents` capability.
    - **Rate limit.** Each apid counts one thread's posts in fixed one-minute windows. Past `AgentCallbacksPerMinutePerThread` (600) it answers `429 agent_callback_rate_limited` with the limit and the count. Each replica counts alone, so N replicas accept at most N × 600: the limit stops a runaway tool, and a post needs a valid token anyway.
    - **Tests.** `TestPropertyRevokedCallbackNeverPublishes`: over random issues, revocations and posts, a URL publishes exactly when it was issued after its thread's latest revocation. Tests also cover the revoke and rate-limit rules and the store's revocation record.
 4. The Infinity Postgres store adapter and the template app, and a journey in `tests/journeys`: a two-turn stateless agent that sleeps, wakes on its callback and answers.
+
+   **Built, part one (2026-11-01): what the template needs from the platform.**
+   - **The app's own credential.** `POST /v1/agent-callbacks` and `POST /v1/agent-callbacks/revocations` also take a `gregale:agents` workload token (docs/workload-identity.md), so the app holds no account key.
+     - The token must come from a live instance of a production deployment of an active account's app, as for queue leases (ADR-1141 amendment 2026-10-27).
+     - It reaches only that app's realtime endpoints. An API key with `deploy:write` still reaches every endpoint of its account.
+     - A JWT-shaped bearer takes the workload path. No API key, OIDC or hosting token is JWT-shaped, so no key is misrouted.
+   - **The inbox in `gregale.yaml`.** A manifest consumer group takes `ordering_metadata_key`, `deduplication_metadata_key` and `dead_letter_policy`, so the app declares §2's `slices` group itself. A deploy still creates a missing group and never changes an existing one.
+   - **Tests.** `TestWorkloadCaller` covers the audience, environment, account, app, instance and deployment checks. `TestCallbackAppCallerOwnsOnlyItsEndpoints` covers the app scope. The manifest tests cover the new fields' loading, validation and reconcile.
 5. The platform tools: `gregale.sleep`, `gregale.run`, then `gregale.github.subscribe`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 
