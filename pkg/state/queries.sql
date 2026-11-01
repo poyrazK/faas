@@ -3035,14 +3035,41 @@ WITH due AS MATERIALIZED (
 )
 SELECT * FROM claimed ORDER BY next_fire_at, id;
 
--- name: ListTerminalTriggerRecordItems :many
--- A broker may redeliver after Gregale commits a terminal receipt but before
--- the broker acknowledges it. The current delivery handle can be Acked
--- without dispatching the application again.
-SELECT item_identifier FROM trigger_records
-WHERE trigger_id = $1
-  AND item_identifier = ANY(sqlc.arg(item_identifiers)::text[])
-  AND state IN ('succeeded', 'superseded', 'cancelled', 'expired');
+-- name: TriggerRecordStatesByItems :many
+-- The stored state of the records one broker poll handed back. A broker may
+-- redeliver after Gregale commits a terminal receipt (succeeded, ended by a
+-- work policy, or dead-lettered) but before the broker settles it; the
+-- dispatcher settles that delivery without dispatching the application
+-- again. dead_letter_reason lets a Kafka seek-to-offset trigger keep holding
+-- a poison record while an exhausted one commits; next_fire_at and
+-- claim_expires_at tell a broker that redelivers on its own when a cooling
+-- retry, or a record another dispatcher holds, can run; topic maps a record
+-- stored under an earlier release's item identifier (ADR-20261101093512).
+SELECT r.item_identifier, r.state, r.next_fire_at, r.claim_expires_at,
+       coalesce(r.metadata->>'topic', '')::text AS topic,
+       coalesce(d.reason, '')::text AS dead_letter_reason
+FROM trigger_records r
+LEFT JOIN trigger_dead_letter d ON d.record_id = r.id
+WHERE r.trigger_id = sqlc.arg(trigger_id)::uuid
+  AND r.item_identifier = ANY(sqlc.arg(item_identifiers)::text[]);
+
+-- name: RenewTriggerRecordClaims :execrows
+-- Keeps the claims of a batch whose dispatch is still running. A claim lasts
+-- ten minutes, but a long-timeout app's batch may wait 16.5; an expired claim
+-- could be taken and run again, and its outcome could not be recorded. Only
+-- the claim generation the dispatcher holds is renewed, and never one that
+-- has already lapsed.
+WITH claims AS (
+    SELECT unnest(sqlc.arg(ids)::uuid[]) AS id,
+           unnest(sqlc.arg(claim_generations)::bigint[]) AS claim_generation
+)
+UPDATE trigger_records r
+   SET claim_expires_at = greatest(r.claim_expires_at,
+       now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision))
+  FROM claims
+ WHERE r.id = claims.id AND r.claim_generation = claims.claim_generation
+   AND r.trigger_id = sqlc.arg(trigger_id)::uuid
+   AND r.state = 'claimed' AND r.claim_expires_at > now();
 
 -- name: MarkClaimedTriggerRecordSucceeded :execrows
 UPDATE trigger_records

@@ -197,6 +197,12 @@ func (r *redisPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		return PollResult{Error: fmt.Errorf("redis_poller: xreadgroup pel: %w", pelErr)}
 	}
 	out = r.appendOutFromXReadGroup(out, pelRes)
+	if int64(len(out)) >= limit {
+		// The pending list filled the batch. A Count of 0 would make
+		// go-redis drop COUNT and read the whole backlog of new entries
+		// into memory (ADR-20261101093512).
+		return PollResult{Records: out}
+	}
 	newRes, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    r.group,
 		Consumer: r.consumer,

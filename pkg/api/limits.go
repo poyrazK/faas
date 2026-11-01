@@ -12769,6 +12769,27 @@ const (
 	// for an app whose invocations run longer may take one whole record
 	// instead (ADR-1180).
 	TriggerBatchTimeout = 5 * time.Minute
+	// TriggerRecordClaimLease is how long a trigger record claim lasts
+	// without renewal. The claim queries in pkg/state set the same ten
+	// minutes; schedd renews the claims of a batch whose dispatch is still
+	// running, because a long-timeout app's batch may wait 16.5 minutes
+	// (ADR-20261101093512).
+	TriggerRecordClaimLease = 10 * time.Minute
+	// TriggerRecordClaimRenewInterval is how often schedd renews the claims
+	// of a running trigger batch. It is well inside the lease, so one missed
+	// renewal does not let another dispatcher take the records.
+	TriggerRecordClaimRenewInterval = 2 * time.Minute
+	// TriggerClaimSettleAttempts bounds how often schedd writes a claimed
+	// record's outcome (succeeded, retry, dead letter) through transient
+	// store errors before it hands the broker delivery back unsettled.
+	TriggerClaimSettleAttempts = 5
+	// TriggerClaimSettleBackoff is the first wait between those attempts;
+	// each later wait doubles it (3 s in all).
+	TriggerClaimSettleBackoff = 200 * time.Millisecond
+	// TriggerBrokerEarlyRedeliveryDelay is how long NATS waits before
+	// redelivering a record that came back while its retry was still
+	// cooling and schedd does not know when the retry is due.
+	TriggerBrokerEarlyRedeliveryDelay = 2 * time.Second
 )
 
 // AsyncInvocationTimeout is how long one async, queue, cron or replay

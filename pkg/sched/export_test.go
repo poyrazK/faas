@@ -1063,3 +1063,30 @@ func (e *Engine) MarkRestartInFlight(appID string) func() {
 		close(call.done)
 	}
 }
+
+// Broker trigger delivery (ADR-20261101093512).
+func (r *Loop) TriggerClaimRenewInterval() *time.Duration { return &r.triggerClaimRenewInterval }
+
+var WriteTriggerClaimOutcome = writeTriggerClaimOutcome
+var NATSConsumerConfig = natsConsumerConfig
+var NATSRecordID = natsRecordID
+
+type NATSConfig = natsConfig
+type NATSMsg = natsMsg
+
+const TriggerReasonPayloadTooLarge = triggerReasonPayloadTooLarge
+const TriggerReasonRateLimited = triggerReasonRateLimited
+
+// NewNATSPollerWithMessages is a NATS poller holding msgs in flight, keyed
+// by record ID, without a JetStream consumer.
+func NewNATSPollerWithMessages(msgs map[string]NATSMsg) TriggerSource {
+	return &natsPoller{stream: "events", inFlight: msgs}
+}
+
+// RedeliverNATS puts msg back in flight under id, as a Poll would.
+func RedeliverNATS(src TriggerSource, id string, msg NATSMsg) {
+	p := src.(*natsPoller)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inFlight[id] = msg
+}

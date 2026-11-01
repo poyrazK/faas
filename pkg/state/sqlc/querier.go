@@ -3762,10 +3762,6 @@ type Querier interface {
 	// composite cursor prevents large tenants from being starved by the page cap.
 	ListTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListTenantWorkflowScheduleCandidatesParams) ([]ListTenantWorkflowScheduleCandidatesRow, error)
 	ListTenantWorkflowScheduleCursors(ctx context.Context, db DBTX, arg ListTenantWorkflowScheduleCursorsParams) ([]PlatformTenantWorkflowScheduleCursor, error)
-	// A broker may redeliver after Gregale commits a terminal receipt but before
-	// the broker acknowledges it. The current delivery handle can be Acked
-	// without dispatching the application again.
-	ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error)
 	// aborted_canary is the H5-62 candidate: aborted before its rollout completed.
 	ListTrafficSiblingsInScope(ctx context.Context, db DBTX, arg ListTrafficSiblingsInScopeParams) ([]ListTrafficSiblingsInScopeRow, error)
 	ListTriggerDeadLetter(ctx context.Context, db DBTX, arg ListTriggerDeadLetterParams) ([]TriggerDeadLetter, error)
@@ -6225,6 +6221,12 @@ type Querier interface {
 	// evaluated before waiting for a row lock must not resurrect an expired lease.
 	RenewNotificationClaim(ctx context.Context, db DBTX, arg RenewNotificationClaimParams) (int64, error)
 	RenewProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg RenewProjectEnvironmentCloneWorkerLeaseParams) (RenewProjectEnvironmentCloneWorkerLeaseRow, error)
+	// Keeps the claims of a batch whose dispatch is still running. A claim lasts
+	// ten minutes, but a long-timeout app's batch may wait 16.5; an expired claim
+	// could be taken and run again, and its outcome could not be recorded. Only
+	// the claim generation the dispatcher holds is renewed, and never one that
+	// has already lapsed.
+	RenewTriggerRecordClaims(ctx context.Context, db DBTX, arg RenewTriggerRecordClaimsParams) (int64, error)
 	ReopenSkippedWorkflowStepsForRetry(ctx context.Context, db DBTX, arg ReopenSkippedWorkflowStepsForRetryParams) (int64, error)
 	ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg ReplaceDatabaseStandbyParams) (int64, error)
 	ReplaceProductionAppWorkloadSettings(ctx context.Context, db DBTX, arg ReplaceProductionAppWorkloadSettingsParams) error
@@ -7057,6 +7059,16 @@ type Querier interface {
 	// as "skip the dead_letter insert; leave the record in
 	// poller.inFlight for the next tick to retry".
 	TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, arg TriggerRecordIDByItemIdentifierParams) (pgtype.UUID, error)
+	// The stored state of the records one broker poll handed back. A broker may
+	// redeliver after Gregale commits a terminal receipt (succeeded, ended by a
+	// work policy, or dead-lettered) but before the broker settles it; the
+	// dispatcher settles that delivery without dispatching the application
+	// again. dead_letter_reason lets a Kafka seek-to-offset trigger keep holding
+	// a poison record while an exhausted one commits; next_fire_at and
+	// claim_expires_at tell a broker that redelivers on its own when a cooling
+	// retry, or a record another dispatcher holds, can run; topic maps a record
+	// stored under an earlier release's item identifier (ADR-20261101093512).
+	TriggerRecordStatesByItems(ctx context.Context, db DBTX, arg TriggerRecordStatesByItemsParams) ([]TriggerRecordStatesByItemsRow, error)
 	TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	TryLockApplicationStandardApprovalArtifactChildren(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) (bool, error)
