@@ -324,7 +324,7 @@ func (s *server) replayVisibleAccountDeadLetters(r *http.Request, acct state.Acc
 	replayed := 0
 	for _, ev := range events {
 		if _, err := s.store.ReplayDeadLetterEventForAccount(r.Context(), acct.ID, ev.ID); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
+			if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrKeyedReplayExpired) {
 				continue
 			}
 			return replayed, err

@@ -158,7 +158,7 @@ func (s *PgStore) AuthenticateRealtimeWorkerCredential(ctx context.Context, grou
  from managed_realtime_worker_credentials c join managed_realtime_consumer_groups g on g.id=c.group_id
  join managed_realtime_endpoints e on e.id=g.endpoint_id join accounts a on a.id=e.account_id join apps app on app.id=e.app_id
  where c.token_hash=$1 and g.id=$2 and c.revoked_at is null and c.expires_at>clock_timestamp() and e.enabled
- and a.status in ('active','past_due') and app.status<>'deleted'`, value, groupID).Scan(&grant.Info.ID, &grant.Info.GroupID, &grant.Info.Name, &grant.Info.Permissions, &grant.Info.Generation, &grant.Info.IssuedAt, &grant.Info.ExpiresAt, &grant.Info.RevokedAt, &grant.Info.LastUsedAt, &grant.Info.LastOperation, &grant.Info.UseCount, &grant.AccountID, &grant.AppID, &grant.EndpointID, &grant.Channel, &grant.Group)
+ and a.status in ('active','past_due') and a.plan=any($3::text[]) and app.status<>'deleted'`, value, groupID, api.RealtimePlans()).Scan(&grant.Info.ID, &grant.Info.GroupID, &grant.Info.Name, &grant.Info.Permissions, &grant.Info.Generation, &grant.Info.IssuedAt, &grant.Info.ExpiresAt, &grant.Info.RevokedAt, &grant.Info.LastUsedAt, &grant.Info.LastOperation, &grant.Info.UseCount, &grant.AccountID, &grant.AppID, &grant.EndpointID, &grant.Channel, &grant.Group)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return grant, ErrNotFound
 		}
@@ -186,7 +186,7 @@ func authorizeRealtimeWorkerTransaction(ctx context.Context, tx pgx.Tx, groupID 
  join managed_realtime_consumer_groups g on g.id=c.group_id join managed_realtime_endpoints e on e.id=g.endpoint_id
  join accounts a on a.id=e.account_id join apps app on app.id=e.app_id
  where c.id=$1 and c.group_id=$2 and c.token_hash=$3 and c.revoked_at is null and c.expires_at>clock_timestamp()
- and $4=any(c.permissions) and e.enabled and a.status in ('active','past_due') and app.status<>'deleted' for share of c`, worker.grant.Info.ID, groupID, worker.grant.hash, worker.operation).Scan(&id)
+ and $4=any(c.permissions) and e.enabled and a.status in ('active','past_due') and a.plan=any($5::text[]) and app.status<>'deleted' for share of c`, worker.grant.Info.ID, groupID, worker.grant.hash, worker.operation, api.RealtimePlans()).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrRealtimeWorkerCredentialDenied
 	}

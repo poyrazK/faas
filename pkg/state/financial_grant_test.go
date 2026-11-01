@@ -81,12 +81,16 @@ func TestMonthOverageCentsCountsAnUncapturedPlanChangeFromNow(t *testing.T) {
 	half := 15 * 24 * time.Hour
 	hobby := []state.FinancialPriceSnapshot{{Plan: api.PlanHobby, EffectiveFrom: month,
 		Price: financial.Price{Meter: "compute", IncludedQuantity: api.IncludedMBSeconds(api.PlanHobby)}}}
-	// Half the month on Hobby (200), half on Pro (1000): 600 GB-h included.
+	// 300 GB-h on Hobby before the change, 610.5 GB-h in all. Hours before
+	// the change are billed above Hobby's 200: 100. After it, half the month
+	// on Hobby (200) and half on Pro (1000) include 600 GB-h: 10.5 more
+	// (ADR-20261031100000).
 	usage := 610*api.SecondsPerGBHour + api.SecondsPerGBHour/2
-	if got := state.MonthOverageCents(api.PlanPro, hobby, month.Add(half), usage); got != 10 {
-		t.Fatalf("overage = %d cents, want 10 (610.5 GB-h over 600)", got)
+	beforeChange := func(time.Time) (int64, error) { return 300 * api.SecondsPerGBHour, nil }
+	if got, err := state.MonthOverageCents(api.PlanPro, hobby, month.Add(half), usage, beforeChange); err != nil || got != 110 {
+		t.Fatalf("overage = %d cents (%v), want 110 (100 on Hobby + 10.5 over 600)", got, err)
 	}
-	if got := state.MonthOverageCents(api.PlanHobby, hobby, month.Add(half), usage); got != 410 {
-		t.Fatalf("overage = %d cents, want 410 (610.5 GB-h over Hobby's 200)", got)
+	if got, err := state.MonthOverageCents(api.PlanHobby, hobby, month.Add(half), usage, beforeChange); err != nil || got != 410 {
+		t.Fatalf("overage = %d cents (%v), want 410 (610.5 GB-h over Hobby's 200)", got, err)
 	}
 }

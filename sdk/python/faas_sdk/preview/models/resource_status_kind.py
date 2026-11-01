@@ -1,10 +1,14 @@
 from typing import Literal
 
-ResourceStatusKind = Literal["app", "deployment"]
+ResourceStatusKind = Literal["app", "cron", "database", "deployment", "domain", "job_run"]
 
 RESOURCE_STATUS_KIND_VALUES: set[ResourceStatusKind] = {
     "app",
+    "cron",
+    "database",
     "deployment",
+    "domain",
+    "job_run",
 }
 
 

@@ -44,9 +44,9 @@ Columns:
 
 | Tier | Rows | Meaning |
 |---|---|---|
-| `GA` | 46 | Ships in v1.0, billed, held to the "ready to charge" bar. |
+| `GA` | 47 | Ships in v1.0, billed, held to the "ready to charge" bar. |
 | `beta` | 32 | On for every account, labelled beta, may change, no service credits. |
-| `preview` | 47 | Off by default; released per account with a platform flag (design partners). |
+| `preview` | 46 | Off by default; released per account with a platform flag (design partners). |
 | `internal` | 42 | Hidden from customers; development frozen until after v1.0. |
 
 **How the tiers were chosen**
@@ -58,10 +58,13 @@ Columns:
   Multi-service projects (projects, internal services, service bindings and
   service wake-ahead) joined GA on 2026-10-27 (ADR-20261027120000) with
   end-to-end acceptance evidence on every pull request.
+  Managed Postgres joined GA on 2026-10-31 (ADR-20261031091607) with a
+  customer journey against the deployed product; resize and organization
+  databases are beta, cutovers stay preview.
 - **beta** is what customers expect around that core and what already runs on
   production, but should not hold up the charge bar: canaries,
   jobs and workflows, edge rules, caching, alerts, orgs.
-- **preview** is every large standalone product (object storage, Postgres,
+- **preview** is every large standalone product (object storage,
   Data API, realtime, live queries, application Auth, AI gateway, durable
   entities, events and queues, Operations, MCP hosting) and every feature that
   is off or flagged today. Resource-holding products need proven backups and
@@ -229,8 +232,8 @@ internal hosting service and Gregale Agents are already unreachable.
 | # | Capability | Where it lives | Catalog | Gate today | Tier |
 |---|---|---|---|---|---|
 | 108 | Object storage: buckets, signed URLs, upload routes, S3 gateway, versioning, lifecycle rules, object lock, write protection, encryption keys, change notifications, multipart uploads | `buckets`, `upload-routes`, object-storaged, s3-gatewayd | `object-storage` preview | `s3_enabled` | preview |
-| 109 | Managed Postgres (account and org databases): point-in-time restore, scale-to-zero, availability classes, resize, connection pool | `/v1/postgres`, org `postgres` | `managed-postgres` internal | CLI operator audience | preview |
-| 110 | Data API | `data-api` | **MISSING** | — | preview |
+| 109 | Managed Postgres (account and org databases): point-in-time restore, scale-to-zero, availability classes, resize, connection pool | `/v1/postgres`, org `postgres` | `managed-postgres`, `postgres-bindings`, `postgres-restore` ga; `postgres-compute-policy`, `org-postgres` beta; `postgres-cutovers` preview | `pf: managed_postgres`; production approval (ADR-20261028103115) | GA |
+| 110 | Data API | `data-api`, `/v1/apps/{slug}/data-api` | `data-api` preview (child of `managed-postgres`) | platform flag; the parent must be released too | preview |
 | 111 | Durable entities and sessions, incl. browser sessions, backup, export and restore | `entities` | **MISSING** | — | preview |
 | 112 | Realtime channels: resume, tickets, access, occupancy | realtimed, app `realtime` (110 routes) | **MISSING** | `pf: realtime_*` | preview |
 | 113 | Live queries | livequeryd | **MISSING** | `pf: live_queries` | preview |
@@ -308,4 +311,4 @@ internal hosting service and Gregale Agents are already unreachable.
 | 164 | Internal mail service | maild, mailctl | **MISSING** | `env: FAAS_INTERNAL_MAIL_*=0` | internal |
 | 165 | Operator admin, compute nodes, `gregalectl` | `/v1/admin`, `/v1/compute-nodes` | n/a | admin auth | internal |
 | 166 | Platform OCI registry: internal snapshot and image storage backend | `pkg/oci/registry.go` (`/v2/`) | n/a | internal | internal |
-| 167 | Gregale Agents: agent runs, the automation agent step, agent triggers | `/v1/agents`, `/v1/agent-runs`, agentd | `agents` internal | `pf: agents` | internal |
+| 167 | Gregale Agents: agent runs, the automation agent step, agent triggers | `/v1/agents`, `/v1/agent-runs`, `/v1/agent-callbacks`, agentd | `agents` internal | `pf: agents` | internal |

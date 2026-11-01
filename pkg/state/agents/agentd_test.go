@@ -357,3 +357,45 @@ func TestFinishedRunsAreAnnounced(t *testing.T) {
 		t.Fatalf("lease-lost deliveries %+v", got)
 	}
 }
+
+// A run's usage is recorded once, only by the replica holding its lease
+// while it runs, and reads back only to its own account (ADR-20261027090011).
+func TestRecordUsage(t *testing.T) {
+	_, s := agentdFixture(t)
+	ctx := context.Background()
+	run := admit(t, s, agents.Admission{})
+	if _, found, err := s.ClaimRun(ctx, "agentd-1", "tok-1", ttl, maxLive(5)); err != nil || !found {
+		t.Fatalf("claim %v %v", found, err)
+	}
+	usage := agents.Usage{Method: 1, Samples: 9, ExpectedSamples: 10, MeasuredMillis: 10_000, PausedMillis: 4_000,
+		PrivateMBMillis: 3_000_000, UnpausedPrivateMBMillis: 1_800_000, BillableMBMillis: 1_848_000, PeakPrivateMB: 410, ColdBoot: true}
+	if err := s.RecordUsage(ctx, run.ID, "tok-1", usage); !errors.Is(err, agents.ErrLeaseLost) {
+		t.Fatalf("a starting run recorded usage: %v", err)
+	}
+	if err := s.MarkRunning(ctx, run.ID, "tok-1", "agents-1", "agent-"+run.ID, 200_000); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordUsage(ctx, run.ID, "tok-wrong", usage); !errors.Is(err, agents.ErrLeaseLost) {
+		t.Fatalf("a wrong token recorded usage: %v", err)
+	}
+	for _, bad := range []agents.Usage{{Method: 0}, {Method: 1, Samples: 2, ExpectedSamples: 1}, {Method: 1, MeasuredMillis: 5, PausedMillis: 6},
+		{Method: 1, PrivateMBMillis: 5, UnpausedPrivateMBMillis: 6}} {
+		if err := s.RecordUsage(ctx, run.ID, "tok-1", bad); err == nil || errors.Is(err, agents.ErrLeaseLost) {
+			t.Fatalf("inconsistent usage %+v recorded: %v", bad, err)
+		}
+	}
+	if err := s.RecordUsage(ctx, run.ID, "tok-1", usage); err != nil {
+		t.Fatal(err)
+	}
+	again := usage
+	again.Samples = 1
+	if err := s.RecordUsage(ctx, run.ID, "tok-1", again); !errors.Is(err, agents.ErrLeaseLost) {
+		t.Fatalf("a second record was taken: %v", err)
+	}
+	if got, found, err := s.Usage(ctx, account, run.ID); err != nil || !found || got != usage {
+		t.Fatalf("usage %+v %v %v, want %+v", got, found, err, usage)
+	}
+	if _, found, err := s.Usage(ctx, other, run.ID); err != nil || found {
+		t.Fatalf("another account read the usage: %v %v", found, err)
+	}
+}

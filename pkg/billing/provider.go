@@ -301,6 +301,14 @@ type UsageModeProvider interface {
 	UsageMode() UsageMode
 }
 
+// DeliveryTimeStamper is an optional provider contract: a provider that
+// stamps each usage event with the time it is sent, not the hour it
+// measures (Polar, ADR-20261028101500), totals usage by delivery time, so
+// ReconcileUsage over a window counts what was delivered in it.
+type DeliveryTimeStamper interface {
+	StampsUsageAtDelivery() bool
+}
+
 // UsageMode describes the quantity passed to PushUsageRecord and returned by
 // ReconcileUsage.
 type UsageMode string
@@ -756,6 +764,10 @@ const (
 	// live object-storage charge meter and implements ObjectStorageLineItemSink.
 	// Shadow configurations retain local receipts without this capability.
 	CapObjectStorageUsage
+
+	// CapManagedPostgresUsage means the provider has a separately configured,
+	// live managed PostgreSQL overage charge meter (ADR-20261031110037).
+	CapManagedPostgresUsage
 )
 
 // CapabilitySet is the bitmask of capabilities a Provider exposes.
@@ -790,6 +802,7 @@ func (s CapabilitySet) String() string {
 		{CapUsageLineItem, "usage_line_item"},
 		{CapEgressUsage, "egress_usage"},
 		{CapObjectStorageUsage, "object_storage_usage"},
+		{CapManagedPostgresUsage, "managed_postgres_usage"},
 	} {
 		if s.Has(c.cap) {
 			parts = append(parts, c.name)

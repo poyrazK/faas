@@ -224,7 +224,9 @@ no CPU pressure, and no node was held. vmmd's `quiet_pause` has been on by
 default since 2026-10-27.
 
 `measured_cpu_admission` now defaults to on (`cmd/schedd/config.go`);
-`measured_cpu_admission = false` in `schedd.toml` turns it off. The rollout
+`measured_cpu_admission = false` in `schedd.toml` turns it off, and
+`FAAS_MEASURED_CPU_ADMISSION` overrides the file either way (an environment
+drop-in is the opt-out that survives manifest renders). The rollout
 above went fleet-wide at once rather than one node first, at the owner's
 request and at today's low load. Tuning the floor and the cap from
 `schedd_instance_cpu_measured_millicores` continues.

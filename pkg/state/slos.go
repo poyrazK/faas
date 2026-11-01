@@ -213,6 +213,7 @@ func (m *MemStore) DeleteSLO(_ context.Context, appID, id string) error {
 					delete(m.releaseGates, gateID)
 				}
 			}
+			m.deleteAlertRulesLocked(func(r AlertRule) bool { return r.SLOID == id }) // alert_rules.slo_id ON DELETE CASCADE
 			return nil
 		}
 	}

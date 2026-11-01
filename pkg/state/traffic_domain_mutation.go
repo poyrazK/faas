@@ -20,7 +20,7 @@ func (s *PgStore) markTrafficDomainVerified(ctx context.Context, domain, token s
 	if err != nil {
 		return false, mapErr(err)
 	}
-	tx, err := s.beginTrafficDomainBinding(ctx, domain, owner.AccountID, owner.AppID, true)
+	tx, err := s.beginTrafficDomainBinding(ctx, domain, owner.AccountID, owner.AppID, true, "")
 	if errors.Is(err, ErrNotFound) && challengeBound {
 		return false, nil
 	}

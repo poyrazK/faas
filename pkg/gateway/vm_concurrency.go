@@ -156,7 +156,7 @@ func (m *vmConcurrencyManager) setQueueAdmission(admission ConcurrencyQueueAdmis
 		return
 	}
 	m.queueMu.Lock()
-	m.admission = admission
+	m.admission = boundQueueAdmission(admission)
 	m.queueMu.Unlock()
 }
 

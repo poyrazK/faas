@@ -196,7 +196,7 @@ func loadPublicStorageRegistry(getenv func(string) string) (*objectstorage.Regis
 		}
 		return nil, fmt.Errorf("object storage: inspect configuration: %w", err)
 	}
-	return objectstorage.Load(getenv)
+	return objectstorage.LoadGateway(getenv)
 }
 
 func main() {
@@ -404,6 +404,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// A dynamic dialer can pick a different upstream per request, so the
 	// transport must not pool connections under the one logical URL.
 	dynamicUpstream := upstreamMode == internalUpstreamDatabase
+	// ADR-20261031105055: a compute edge may route each host to the node
+	// that last served it. Off by default for a measured rollout.
+	var placement *edgePlacement
 	if edgeMode == edgeModeCompute {
 		// ADR-1343 §2: this node's gatewayd-internal first, the compute pool
 		// only while it is unhealthy.
@@ -418,6 +421,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// withdraws this edge's local path.
 		lfd := newLocalFirstDialer(localDialer, cgp, internalURL, edgeMetricsSet, log).
 			withDrainWatch(strings.TrimSpace(os.Getenv("FAAS_NODE_NAME")), cgp)
+		if envBoolOr(edgePlacementRoutingEnv, false) {
+			placement = newEdgePlacement()
+			lfd.withPlacement(placement, cgp)
+		}
 		go lfd.run(ctx)
 		internalDialer = lfd
 		dynamicUpstream = true
@@ -468,6 +475,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// rollout; safe beside N-1 gatewayd-internal, which never marks. It
 	// needs a node-choosing dialer (the compute pool, or a compute edge's
 	// local-first dialer).
+	if placement != nil {
+		proxy.WithEdgePlacement(placement)
+	}
 	if envBoolOr("FAAS_GATEWAY_WAKE_FAILOVER", false) {
 		proxy.WithWakeFailover(gateway.NewWakeFailover(edgeMetricsSet.observeWakeFailover))
 	}
@@ -668,9 +678,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				// per-POST gate; the flush-time cap is the
 				// memory bound the gateway needs across
 				// chunked POSTs within one window.
-				MaxSpansPerTrace: func(plan string) int {
-					return api.MustLimitsFor(api.Plan(plan)).DebugTelemetrySpansPerTrace
-				},
+				MaxSpansPerTrace: gateway.MaxSpansPerTraceForPlan,
 				// PR-D code-review #5: fires once per bucket
 				// the flush truncated. Drives the §12 metric
 				// gatewayd_public_otel_spans_truncated_total.
@@ -708,7 +716,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		defer func() { _ = uploadAuth.Close() }()
 		credentials := apidgrpc.CredentialLookup{Apid: uploadAuth, Fallback: pgStore, Log: log}
-		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, func() bool { return s3Flag.Load() && fence.Open() },
+		// runDrain returns after the servers stop, so the last read-count
+		// flush runs before the pool closes.
+		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
+		defer stopReads()
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, func() bool { return s3Flag.Load() && fence.Open() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err

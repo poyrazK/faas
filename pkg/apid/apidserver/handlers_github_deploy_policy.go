@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -124,7 +125,26 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 		"preview_service_policy": stored.PreviewServicePolicy,
 		"production_trigger":     stored.ProductionTrigger,
 	})
+	if problem := s.retireProjectPreviewsWhenOff(r.Context(), acct.ID, app.ProjectID, stored); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	writeJSON(w, http.StatusOK, githubDeployPolicyDTO(stored))
+}
+
+// retireProjectPreviewsWhenOff tears down the project's open PR previews once
+// its policy turns previews off: githubd then ignores the PRs' pushes, so the
+// previews would serve their last commit to the end of their lease.
+// Idempotent, so a retried PATCH retires whatever is still open.
+func (s *server) retireProjectPreviewsWhenOff(ctx context.Context, accountID, projectID string, policy state.GitHubDeployPolicy) *api.Problem {
+	retirer, ok := s.store.(state.ProjectPRPreviewRetirer)
+	if policy.PreviewEnabled || !ok {
+		return nil
+	}
+	if _, err := retirer.RetireProjectPRPreviews(ctx, accountID, projectID); err != nil {
+		return api.ErrCapacity("previews were turned off, but the open previews could not be torn down; retry")
+	}
+	return nil
 }
 
 // applyGitHubDeployPolicyPatch merges a partial update into current and

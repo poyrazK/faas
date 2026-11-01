@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"unicode/utf8"
 )
 
 // Request-scoped response headers shared by the gateway and optional edge
@@ -199,6 +200,32 @@ func IsWorkflowStepHeader(name string) bool {
 		strings.EqualFold(name, WorkflowAttemptHeader) || strings.EqualFold(name, WorkflowCodeModeHeader)
 }
 
+// HasLowerPrefix reports strings.HasPrefix(strings.ToLower(name), prefix) for
+// an ASCII-lowercase prefix. strings.ToLower copies any name with capitals,
+// which every canonical header name has, and the gateway classifies each
+// header of each request. An ASCII name is compared in place; any other
+// falls back to strings.ToLower, so the answer is always the same.
+func HasLowerPrefix(name, prefix string) bool {
+	for i := 0; i < len(name); i++ {
+		if name[i] >= utf8.RuneSelf {
+			return strings.HasPrefix(strings.ToLower(name), prefix)
+		}
+	}
+	if len(name) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		c := name[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // IsPlatformStampedHeader reports a header the gateway authors on the hop it
 // forwards: the guest identity set plus the vmmd bridge hints. A sender
 // cannot make one hop-by-hop by naming it in Connection, because the gateway
@@ -218,6 +245,10 @@ func IsPlatformStampedHeader(name string) bool {
 func IsGuestIdentityHeader(name string) bool {
 	if IsReservedOperationHeader(name) {
 		return true
+	}
+	// Every name below starts x-; the gate spares other headers ToLower's copy.
+	if !HasLowerPrefix(name, "x-") {
+		return false
 	}
 	switch strings.ToLower(name) {
 	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",

@@ -290,7 +290,8 @@ func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID 
 }
 
 // SyncAppEndpoints registers an app's endpoints again, so a change to its
-// live routes reaches realtimed without waiting for reconciliation.
+// live routes reaches realtimed without waiting for reconciliation. It
+// withdraws an endpoint whose owner no longer serves, as reconciliation does.
 func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 	store, ok := realtimeEndpointStore(s)
 	if !ok || s.Registrar == nil {
@@ -301,7 +302,16 @@ func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 		return fmt.Errorf("list realtime endpoints for app %s: %w", appID, err)
 	}
 	var errs []error
+	accountServing := make(map[string]bool)
 	for _, row := range rows {
+		serving, err := s.realtimeEndpointOwnerServing(ctx, row, accountServing)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("endpoint %s owner: %w", row.ID, err))
+			continue
+		}
+		if !serving {
+			row.Enabled = false
+		}
 		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
 			errs = append(errs, err)
 		}

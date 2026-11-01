@@ -1,12 +1,18 @@
 from typing import Literal
 
-ConditionType = Literal["Degraded", "Progressing", "Ready", "RolledOut"]
+ConditionType = Literal[
+    "CertificateReady", "Degraded", "LastRunSucceeded", "Progressing", "Ready", "RolledOut", "Succeeded", "Verified"
+]
 
 CONDITION_TYPE_VALUES: set[ConditionType] = {
+    "CertificateReady",
     "Degraded",
+    "LastRunSucceeded",
     "Progressing",
     "Ready",
     "RolledOut",
+    "Succeeded",
+    "Verified",
 }
 
 

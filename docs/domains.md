@@ -90,9 +90,34 @@ gregale edge rule create --app api --kind rewrite --match-host shop.example.com 
 
 Wildcard domains (`*.example.com`, Pro and Scale) prove ownership with the
 TXT record at `_faas-verify.example.com` and route with a wildcard CNAME.
-Each subdomain gets its own certificate on its first HTTPS connection; at
-most 40 new subdomains per wildcard get a certificate in any 7 days.
+Gregale checks the wildcard CNAME through `gregale-wildcard-check.example.com`,
+which only the wildcard record answers, so other explicit records such as `www`
+can point anywhere. Each subdomain gets its own certificate on its first HTTPS
+connection; at most 40 new subdomains per wildcard get a certificate in any 7
+days.
 Subdomains that already have one keep it and renew normally.
+
+## Wildcard host allowlist
+
+Anyone can connect with a random name below your wildcard, and each new
+name uses one of those 40 certificates. If you know which names you serve,
+list them, and the edge refuses a certificate for any other name:
+
+```bash
+gregale domain host set '*.example.com' app api eu.shop
+gregale domain host get '*.example.com'
+gregale domain host clear '*.example.com'
+```
+
+A name is the part before the wildcard's suffix (`eu.shop` for
+`eu.shop.example.com`); the full host works too. `set` replaces the list, up
+to 100 names; `clear` removes it, so every name may get a certificate again.
+Routing does not change; an unlisted name just cannot complete an HTTPS
+handshake. A certificate the
+edge already holds for a name you remove keeps serving until its next reload
+or renewal, which is then refused. The domain doctor's probe name is always
+allowed. API: `GET`, `PUT` and `DELETE /v1/domains/{domain}/hosts`. A
+wildcard you take over from an unverified claim starts with no list.
 
 Once a wildcard verifies, names below it belong to its account: another
 account cannot add `api.example.com` or `*.shop.example.com` while

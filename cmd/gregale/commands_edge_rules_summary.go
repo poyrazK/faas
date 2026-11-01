@@ -68,7 +68,7 @@ func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse
 	} else {
 		parts := make([]string, 0, len(s.ValidationFailures))
 		for _, v := range s.ValidationFailures {
-			parts = append(parts, fmt.Sprintf("%d %s", v.Count, v.Name))
+			parts = append(parts, fmt.Sprintf("%d %s", v.Count, terminalSafe(v.Name)))
 		}
 		_, _ = fmt.Fprintf(w, "  %-28s %s\n", "validation failures:", strings.Join(parts, ", "))
 	}

@@ -300,6 +300,7 @@ touch them. The tables below map each earlier name.
 | `gregale deployment runtime` | `gregale release runtime` |
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
+| `gregale deployment timeline` | `gregale release timeline` |
 | `gregale deployment wait` | `gregale release wait` |
 | `gregale deployments alias` | `gregale release alias` |
 | `gregale deploys cancel` | `gregale release cancel` |
@@ -497,6 +498,11 @@ touch them. The tables below map each earlier name.
 | `gregale platform-tenants trial-end` | `gregale api tenant trial end` |
 | `gregale platform-tenants trial-set` | `gregale api tenant trial set` |
 | `gregale platform-tenants trial` | `gregale api tenant trial get` |
+| `gregale postgres compute-policy-status` | `gregale postgres compute-policy status` |
+| `gregale postgres compute-policy` | `gregale postgres compute-policy set` |
+| `gregale postgres overage` | `gregale postgres overage get` |
+| `gregale postgres overage` | `gregale postgres overage set` |
+| `gregale postgres resize-status` | `gregale postgres resize status` |
 | `gregale previews join` | `gregale feature join` |
 | `gregale previews leave` | `gregale feature leave` |
 | `gregale projects environments abort` | `gregale environment cancel` |

@@ -110,14 +110,16 @@ func (s *Service) ReportUndeliverablePullRequest(ctx context.Context, delivery W
 		return
 	}
 	ev, err := DecodePullRequest(delivery.Payload)
-	if err != nil || ev.Action == PullRequestActionClosed || ev.IsFork() {
+	// A closed or converted-to-draft PR builds nothing, so it has no setup
+	// to report as failed.
+	if err != nil || ev.Action == PullRequestActionClosed || ev.Action == PullRequestActionConvertedToDraft || ev.IsFork() {
 		return
 	}
 	target, err := s.resolvePullRequestTarget(ctx, ev)
 	if err != nil {
 		return
 	}
-	if current, err := s.currentPullRequestDelivery(ctx, target.install.InstallationID, ev); err != nil || !current {
+	if current, err := s.currentPullRequestDelivery(ctx, target.install.InstallationID, &ev); err != nil || !current {
 		return
 	}
 	s.reportPreviewSetupFailure(ctx, ev, target, previewDeliveryExhausted)

@@ -108,6 +108,12 @@ Each step is one PR. VM-lifecycle PRs run `make test-metal` and `make leakcheck`
    - Unit tests cover the pass, the relay, cancel, deadline and cleanup.
    - The metal tests listed above are still owed.
 3. schedd eligibility in the agent run spec.
+
+   **Built (2026-10-31), behind schedd `FAAS_SCHEDD_AGENT_WAIT_PAUSE=1`, default off.**
+   - **Opt-out field.** Agent versions gain `pause_during_model_calls`: a column with default true, the API field, and the claim. agentd sends it in schedd's `AgentRunStart.pause_during_model_calls`.
+   - **The delay.** schedd sets `model_wait_pause_after_ms` to `QuietPauseAfterMillis` when its switch is on and the version has not opted out.
+   - **Skew-safe.** An older agentd sends false, so its runs are never paused.
+   - **Holds by construction.** Agent runs have no private network and no attach or exec session.
 4. `paused_seconds` excluded from billed GB-seconds, with a property test that paused seconds are never billed.
 5. Turn it on with ADR-20261027090011 billing at milestone B of ADR-20261027090010. Before then, the dogfood canary compares resume latency and errors with the pause on and off.
 

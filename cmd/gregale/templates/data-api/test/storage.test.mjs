@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { createServer } from '../server.mjs'
-import { runtimeConfig, storageConfig, storageBindings, limits } from '../config.mjs'
-import { storageRoute, storageContentType, presign, signHeaders, objectURL, unsafeStorageTable, newObjectKey, storedKey } from '../storage.mjs'
+import { runtimeConfig, storageConfig, storageBindings, limits, UnsafeConfiguration } from '../config.mjs'
+import { storageRoute, storageContentType, presign, signHeaders, objectURL, unsafeStorageTable, newObjectKey, storedKey, checkStorageTable } from '../storage.mjs'
+import { checkPublicRelations, checkPublicFunctions } from '../access.mjs'
 
 // File storage (ADR-20261021101510).
 
@@ -76,6 +77,20 @@ test('startup refuses a storage table without RLS, its guard trigger or object k
   assert.match(unsafeStorageTable({ kind: 'r', rls: true, guarded: false, versioned: true }), /guard trigger/)
   assert.match(unsafeStorageTable({ kind: 'r', rls: true, guarded: true, versioned: false }), /storage sql --upgrade/)
   assert.equal(unsafeStorageTable({ kind: 'r', rls: true, guarded: true, versioned: true }), null)
+})
+
+test('a database the boot checks cannot reach is not reported as an unsafe configuration', async () => {
+  // A closed port refuses at once; a database it cannot reach must fail the
+  // boot rather than disable storage in the snapshot (UnsafeConfiguration is
+  // reserved for a table or policy the database itself refused).
+  const unreachable = 'postgres://data_api@127.0.0.1:1/app'
+  for (const check of [
+    () => checkStorageTable(unreachable, 'api'),
+    () => checkPublicRelations(unreachable, [{ schema: 'api', relation: 'notes' }]),
+    () => checkPublicFunctions(unreachable, [{ schema: 'api', name: 'search' }], []),
+  ]) {
+    await assert.rejects(check(), error => !(error instanceof UnsafeConfiguration))
+  }
 })
 
 test('object keys are fresh kernel randomness; rows without one name their bytes', () => {

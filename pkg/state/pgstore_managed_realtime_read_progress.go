@@ -81,7 +81,9 @@ func (s *PgStore) AdvanceManagedRealtimeReadProgress(ctx context.Context, ep, pr
 	}
 	var exists bool
 	var count int
-	err = tx.QueryRow(ctx, `select exists(select 1 from managed_realtime_read_progress where endpoint_id=$1 and principal=$2 and stream=$3 and inbox=$4),(select count(*) from managed_realtime_read_progress where endpoint_id=$1)`, ep, key.principal, key.stream, inbox).Scan(&exists, &count)
+	// Only markers updated within the retention count; the reaper deletes the
+	// rest (ADR-1323, amendment of 2026-10-31).
+	err = tx.QueryRow(ctx, `select exists(select 1 from managed_realtime_read_progress where endpoint_id=$1 and principal=$2 and stream=$3 and inbox=$4 and updated_at >= clock_timestamp() - make_interval(secs => $5::double precision)),(select count(*) from managed_realtime_read_progress where endpoint_id=$1 and updated_at >= clock_timestamp() - make_interval(secs => $5::double precision))`, ep, key.principal, key.stream, inbox, ManagedRealtimeReadMarkerRetention.Seconds()).Scan(&exists, &count)
 	if err != nil {
 		return current, err
 	}
@@ -106,4 +108,25 @@ func (s *PgStore) AdvanceManagedRealtimeReadProgress(ctx context.Context, ep, pr
 	}
 	err = tx.Commit(ctx)
 	return result, err
+}
+
+func (s *PgStore) PruneExpiredManagedRealtimeReadMarkers(ctx context.Context, batch int) (int64, error) {
+	if batch < 1 || batch > 1000 {
+		return 0, ErrManagedRealtimeDurableCursorInvalid
+	}
+	tag, err := s.pool.Exec(ctx, `
+		with expired as (
+			select ctid from managed_realtime_read_progress
+			where updated_at < clock_timestamp() - make_interval(secs => $2::double precision)
+			order by updated_at
+			limit $1
+			for update skip locked
+		)
+		delete from managed_realtime_read_progress p
+		where p.ctid in (select ctid from expired)
+	`, batch, ManagedRealtimeReadMarkerRetention.Seconds())
+	if err != nil {
+		return 0, fmt.Errorf("state: prune expired realtime read markers: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }

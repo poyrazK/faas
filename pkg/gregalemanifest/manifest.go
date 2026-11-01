@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
+	"github.com/onebox-faas/faas/pkg/labels"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -1446,7 +1447,7 @@ func (d BucketDependency) EffectiveLabel() string {
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
 // `triggers`, `event_triggers`, `async_routes`, `routes`, `companions`, `main_depends_on`,
 // `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
-// and the local-only `dev`
+// `labels`, and the local-only `dev`
 // profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
@@ -1500,6 +1501,10 @@ type Manifest struct {
 	// Realtime declares managed realtime endpoints by slug
 	// (ADR-20261019102657).
 	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
+	// Labels are the app's key/value labels (ADR-20261031100025 §7). A deploy
+	// sets these keys and removes none: a key dropped from the manifest stays
+	// until `gregale app label unset` removes it. Labels are not secret.
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate
@@ -2131,6 +2136,7 @@ type tomlManifest struct {
 	Companions          []CompanionSpec            `toml:"companions"`
 	MainDependsOn       []ExtensionDependency      `toml:"main_depends_on"`
 	Extensions          []ExtensionSpec            `toml:"extensions"`
+	Labels              map[string]string          `toml:"labels"`
 }
 
 type tomlTriggers struct {
@@ -2161,6 +2167,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		Companions:          raw.Companions,
 		MainDependsOn:       raw.MainDependsOn,
 		Extensions:          raw.Extensions,
+		Labels:              raw.Labels,
 	}, nil
 }
 
@@ -2227,6 +2234,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if m.SchemaVersion != 0 && m.SchemaVersion != 1 {
 		return fmt.Errorf("schema_version: unsupported version %d; supported versions: 1", m.SchemaVersion)
+	}
+	// A customer's labels: valid keys and values, within the limit, and none
+	// under gregale.dev/.
+	if err := (labels.Change{Set: m.Labels}).Validate(); err != nil {
+		return fmt.Errorf("labels: %w", err)
 	}
 	if m.Hosting != nil {
 		if err := m.Hosting.Validate(); err != nil {

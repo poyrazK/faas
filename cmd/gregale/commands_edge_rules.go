@@ -183,14 +183,14 @@ func cmdEdgeRulesList(args []string) int {
 		}
 		label := ""
 		if it.Name != "" {
-			label = "  " + truncate(it.Name, 40)
+			label = "  " + terminalSafe(truncate(it.Name, 40))
 		}
 		// ADR-20261023113721: the edge does not enforce unreleased features.
 		if len(it.UnreleasedFeatures) > 0 {
 			label += "  (not enforced, not yet available: " + strings.Join(it.UnreleasedFeatures, ", ") + ")"
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]%s\n",
-			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled, label)
+			it.ID, it.Kind, it.Priority, terminalSafe(truncate(it.MatchHost, 32)), terminalSafe(it.MatchPath), enabled, label)
 	}
 	warnTemplatedEdgeRulePaths(osStderr, items)
 	return 0
@@ -636,8 +636,8 @@ func cmdEdgeRulesGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "ID:          %s\n", out.ID)
 	_, _ = fmt.Fprintf(osStdout, "Account:     %s\n", out.AccountID)
 	_, _ = fmt.Fprintf(osStdout, "App:         %s\n", out.AppID)
-	_, _ = fmt.Fprintf(osStdout, "Match host:  %s\n", out.MatchHost)
-	_, _ = fmt.Fprintf(osStdout, "Match path:  %s\n", out.MatchPath)
+	_, _ = fmt.Fprintf(osStdout, "Match host:  %s\n", terminalSafe(out.MatchHost))
+	_, _ = fmt.Fprintf(osStdout, "Match path:  %s\n", terminalSafe(out.MatchPath))
 	if len(out.MatchMethods) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Methods:     %s\n", strings.Join(out.MatchMethods, ", "))
 	}
@@ -649,10 +649,10 @@ func cmdEdgeRulesGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Enabled:     %t\n", out.Enabled)
 	_, _ = fmt.Fprintf(osStdout, "Kind:        %s\n", out.Kind)
 	if out.Name != "" {
-		_, _ = fmt.Fprintf(osStdout, "Name:        %s\n", out.Name)
+		_, _ = fmt.Fprintf(osStdout, "Name:        %s\n", terminalSafe(out.Name))
 	}
 	if out.Description != "" {
-		_, _ = fmt.Fprintf(osStdout, "Description: %s\n", out.Description)
+		_, _ = fmt.Fprintf(osStdout, "Description: %s\n", terminalSafe(out.Description))
 	}
 	if out.ExpiresAt != nil {
 		state := "active until"

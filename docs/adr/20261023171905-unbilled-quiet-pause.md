@@ -194,6 +194,20 @@ The table predates ADR-1430's USD plans. **Before acceptance:**
 2. Reconcile the result with `ex44_faas_financial_model.xlsx`. The code and
    docs must not contradict it.
 
+(Amended 2026-10-31: item 1 is done;
+[report](../ops/evidence/20261031-quiet-pause-economics/REPORT.md). On
+ADR-1430's plans G costs 0.23% of revenue per app-month for function apps
+($3.972 to $3.963) and at most 0.43% if every app opted into
+`between_requests`, with compute COGS unchanged, since a paused VM still holds
+its RAM. Billed GB-h falls 60–72%, and the share of Free function apps that
+reach Free's hard stop falls from 34% to 14%. The table above, and the
+ADR-906 and ADR-1151 ones, counted Free usage past its included GB-h as
+overage revenue, which Free never pays (meterd hard-stops it): about two
+thirds of the €0.11 above is Free overage. Item 2 is open: the spreadsheet is
+not in the repository, so the report reconciles against ADR-1430's COGS
+report figures (67% gross margin becomes 66.9%) and the owner still checks
+the model.)
+
 ## Rollout
 
 1. **Ledger, shadow only.** vmmd reports the pause record; schedd writes the

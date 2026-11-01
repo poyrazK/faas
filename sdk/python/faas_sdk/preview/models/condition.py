@@ -21,9 +21,10 @@ class Condition:
     type_: ConditionType
     status: ConditionStatus
     reason: str
-    """Stable snake_case code, safe to branch on: an app health phase or check code, a deployment status, or one of
+    """Stable snake_case code, safe to branch on: an app health phase or check code; a deployment, database,
+    certificate or job run status; a cron suspension or run outcome; a database health error code; or one of
     not_assessed, deploying, complete, latest_deployment_failed, healthy, verifying, rolling_out, rolled_out,
-    rollout_aborted."""
+    rollout_aborted, suspended, stale, verified, dns_pending, serving, scheduled, disabled, never_run."""
     message: str
     """For people; may change."""
     since: datetime.datetime | Unset = UNSET

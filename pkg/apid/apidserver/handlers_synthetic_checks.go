@@ -109,6 +109,12 @@ func (s *server) updateSyntheticCheck(w http.ResponseWriter, r *http.Request, ac
 	if !ok {
 		return
 	}
+	if !req.Enabled {
+		if p := s.syntheticCheckGateProblem(r.Context(), app, r.PathValue("id"), "pause"); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
 	row, err := store.SetSyntheticCheckEnabled(r.Context(), app.ID, r.PathValue("id"), req.Enabled)
 	if err != nil {
 		s.notFound(w, "no such synthetic check")
@@ -125,6 +131,11 @@ func (s *server) deleteSyntheticCheck(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	id := r.PathValue("id")
+	if p := s.syntheticCheckGateProblem(r.Context(), app, id, "delete"); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	rules := s.rulesRemovedWith(r.Context(), acct, func(rule state.AlertRule) bool { return rule.SyntheticCheckID == id })
 	if err := store.DeleteSyntheticCheck(r.Context(), app.ID, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such synthetic check")
@@ -134,6 +145,7 @@ func (s *server) deleteSyntheticCheck(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	s.audit.Emit(r.Context(), "synthetic_check.deleted", &acct.ID, map[string]any{"check_id": id, "app_id": app.ID})
+	s.auditRulesRemovedWith(r.Context(), acct, rules, "synthetic_check", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -88,6 +88,9 @@ RULES = [
     (r"/v1/apps/\{slug\}/diff|^diff$", "Affected-workload preview"),
     (r"apps/\{slug\}/env/|app-envs?$", "Env vars:"),
     (r"health/history|^apps/status status$|^conditions$", "App health assessment"),
+    # Labels are app metadata first (ADR-20261031100025); the resource-labels
+    # capability gets its own row when its routes ship.
+    (r"^labels$|^apps/labels labels$", "Apps: create, update"),
     (r"policy/status", "Plans, usage, invoices"),
     (r"apps/\{slug\}/product|apps/ /product", "Product control"),
     (r"apps/\{slug\}/security|apps/ /security", "Signed deploys"),
@@ -134,6 +137,8 @@ RULES = [
     # Keyed credential hashes (ADR 20261029202403): storage plumbing under
     # every credential, no capability of its own.
     (r"^credhash$", "INFRA"),
+    # Each family's ring and rollout switches (amendment 1).
+    (r"^credential-(scheduler|outbound|uploads|attach|dev-bridge|data-api)-(keys-file|writes|plain-lookup)$", "INFRA"),
     # vmmd's instance bridge switches (connection-survival ADR): data-path plumbing.
     (r"^(instance-)?bridge-(unprivileged|sessions|unit|drop-to-uid)$", "INFRA"),
     (r"auth-rpc|rekey|standby-warmup|service-capacity-policy|service-recovery|worker-recovery|production-lifecycle-review|app-service-address-cursor|warm-hint|capdecl|renderer|role-templating|safetext|publicdest|cursor|^data$|dispatch|hostsize|authcode|cosign|daemonenv|daemonunit|cpstate|drills|grafana|pki|guestmemproto|resumetimingproto|loglevel|logsanitize|lruutil|jsonschemautil|httpjson|middleware|nodeclaim|nodejoin|nodereport|promql|redact|crashcrypt|crashcapturewire|markers-internal", "INFRA"),
@@ -165,7 +170,7 @@ RULES = [
     (r"internal/hosting|hosting-|internal-frontend|^sites$|^hosting|frontend-hosting|site-", "Internal frontend hosting"),
     (r"internal-?mail|maild|mailctl|mail-feedback|mail-metrics|mail-report|productemail|product-email", "Internal mail service"),
     (r"product-control|productcontrol|product_control|/product/|^product$|product-customers", "Product control"),
-    (r"agent-run|agent-execution|^agent|agents", "Gregale Agents"),
+    (r"agent-run|agent-execution|agent-callback|^agent|agents", "Gregale Agents"),
     (r"oci/registry|^/v2/?$|registry-storage|ociregistry", "Platform OCI registry"),
     (r"^/v1/admin|^admin|gregalectl|compute-nodes|operator|break-glass|abuse|^/admin|deployctl|nodes?-|fleet|cluster-signing", "Operator admin"),
     (r"data-repair|datarepair|repair", "Selective data repair"),
@@ -188,7 +193,7 @@ RULES = [
     (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink", "Signup, login"),
     (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags", "Customer feature flags"),
     # --- developer tools
-    (r"mcp-management|mcpmanagement|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
+    (r"mcp-management|mcpmanagement|agent-connections|agentconnections|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
     (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories", "Docs site and trust pages"),
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
@@ -356,6 +361,8 @@ PRIORITY_RULES = [
     (r"^apislogs$", "Logs, tail"),
     (r"^routestatus$", "Discovered routes"),
     (r"^s3gateway$|^s3-gatewayd$", "Object storage"),
+    # ADR-1027: the native backend's connection proxy and SCRAM verifiers.
+    (r"^pgproxyd?$|^pgscram$", "Managed Postgres"),
     (r"^apihosting(contract|receipt|scorecard)$|^api-hosting-(contract|scorecard)$", "Framework profiles"),
     (r"^mirror-(dispatch|redact)$", "Traffic mirroring"),
     (r"^api-discovery-enabled$", "OpenAPI:"),
@@ -373,6 +380,8 @@ INFRA_RULES = [
     r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$",
     # ADR-20261030115139: the public edge's status for platform problems.
     r"^platform-error-status$",
+    # ADR-20261031105055: the compute edge's host-to-node routing.
+    r"^edge-placement$",
 ]
 
 

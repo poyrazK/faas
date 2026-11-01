@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresHealth } from './ManagedPostgresHealth.js';
+import type { ManagedPostgresRestoreRange } from './ManagedPostgresRestoreRange.js';
 /**
  * Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
  */
@@ -28,5 +29,10 @@ export type ManagedPostgresDatabase = {
    * Set while the database's delete is scheduled: it can be undeleted until then, and is purged after.
    */
   restorable_until?: string;
+  /**
+   * Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time.
+   */
+  restore_slot_until?: string;
+  restore_range?: ManagedPostgresRestoreRange;
 };
 

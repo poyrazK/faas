@@ -34,6 +34,9 @@ type ServiceOptions struct {
 	// It is evaluated immediately before the store's atomic reservation so
 	// plan entitlements remain race-safe while the service stays provider-neutral.
 	MaxDatabasesPerAccount func(context.Context, string) (int, error)
+	// FreePlan reports whether a usage subject is on the Free plan, for the
+	// fleet's paid reserve. Nil reserves nothing.
+	FreePlan func(context.Context, string) (bool, error)
 }
 
 type Service struct {
@@ -50,6 +53,7 @@ type Service struct {
 	admit                  func(context.Context, string) error
 	admitResize            func(context.Context, string, Spec) error
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
+	freePlan               func(context.Context, string) (bool, error)
 }
 
 // DefaultRegion returns the operator-configured placement used when a
@@ -134,6 +138,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		admit:                  options.Admit,
 		admitResize:            options.AdmitResize,
 		maxDatabasesPerAccount: options.MaxDatabasesPerAccount,
+		freePlan:               options.FreePlan,
 	}, nil
 }
 
@@ -215,7 +220,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 			return Database{}, err
 		}
 	}
-	if err := s.admitFleet(ctx, true); err != nil {
+	if err := s.admitFleet(ctx, PolicySubject(ctx, request.AccountID), true); err != nil {
 		return Database{}, err
 	}
 	now := s.now()
@@ -383,7 +388,7 @@ func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string,
 			return 0, err
 		}
 	}
-	if err := s.admitFleet(ctx, true); err != nil {
+	if err := s.admitFleet(ctx, PolicySubject(ctx, accountID), true); err != nil {
 		return 0, err
 	}
 	backend, err := s.registry.Resolve(definition.BackendID, definition.BackendFingerprint)
@@ -815,7 +820,8 @@ func retryDelay(err error, attempt int32) time.Duration {
 // (production-us live test 2026-10-14; CLAUDE.md: limit errors carry the
 // limit and the observed value).
 func quotaDetail(err error, limit int) error {
-	if !errors.Is(err, ErrQuotaExceeded) {
+	// The restore slot refusal names the copy to purge itself.
+	if !errors.Is(err, ErrQuotaExceeded) || errors.Is(err, ErrRestoreSlotInUse) {
 		return err
 	}
 	return fmt.Errorf("%w: the account already has %d of %d databases (provisioning and restoring ones count); delete one or upgrade the plan", err, limit, limit)

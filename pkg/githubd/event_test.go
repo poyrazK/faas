@@ -202,6 +202,8 @@ func TestDecodePullRequest_ActionsAccepted(t *testing.T) {
 		PullRequestActionOpened,
 		PullRequestActionSynchronize,
 		PullRequestActionReopened,
+		PullRequestActionReadyForReview,
+		PullRequestActionConvertedToDraft,
 		PullRequestActionClosed,
 	}
 	for _, a := range cases {
@@ -218,7 +220,7 @@ func TestDecodePullRequest_ActionsAccepted(t *testing.T) {
 
 func TestDecodePullRequest_RejectsUnknownAction(t *testing.T) {
 	t.Parallel()
-	cases := []string{"assigned", "labeled", "review_requested", "edited", "converted_to_draft"}
+	cases := []string{"assigned", "labeled", "review_requested", "edited", "auto_merge_enabled"}
 	for _, a := range cases {
 		a := a
 		t.Run(a, func(t *testing.T) {

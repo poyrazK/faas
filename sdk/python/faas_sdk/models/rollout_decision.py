@@ -53,6 +53,10 @@ class RolloutDecision:
     """The candidate's OOM kills and both sides' liveness-driven restarts over the window."""
     gates: list[ReleaseGateResult] | Unset = UNSET
     """The release gates judged with this decision."""
+    rollback_skipped: str | Unset = UNSET
+    """Post-release watch decisions only: the problem code that kept the release from being rolled back
+    automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until
+    someone rolls back or ships a fix."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -101,6 +105,8 @@ class RolloutDecision:
                 gates_item = gates_item_data.to_dict()
                 gates.append(gates_item)
 
+        rollback_skipped = self.rollback_skipped
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -130,6 +136,8 @@ class RolloutDecision:
             field_dict["signals"] = signals
         if gates is not UNSET:
             field_dict["gates"] = gates
+        if rollback_skipped is not UNSET:
+            field_dict["rollback_skipped"] = rollback_skipped
 
         return field_dict
 
@@ -205,6 +213,8 @@ class RolloutDecision:
 
                 gates.append(gates_item)
 
+        rollback_skipped = d.pop("rollback_skipped", UNSET)
+
         rollout_decision = cls(
             kind=kind,
             rule=rule,
@@ -220,6 +230,7 @@ class RolloutDecision:
             probes_included=probes_included,
             signals=signals,
             gates=gates,
+            rollback_skipped=rollback_skipped,
         )
 
         rollout_decision.additional_properties = d

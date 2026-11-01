@@ -92,6 +92,15 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "health s
 The dashboard's app page lists every check with its uptime, p95 latency and
 last result under **Synthetic checks**.
 
+## Probes are traffic
+
+A probe reaches your app through its public hostname like any other request,
+with the user agent `Gregale-Synthetics/1`. So probes appear in request
+analytics (group by `ua_family` to see them apart), count toward
+`request_count`, error-rate and latency alerts, and count in availability and
+latency SLOs. On an app with little other traffic, probes can be most of an
+SLO's requests; set its objective with that in mind.
+
 ## What checks cost
 
 A probe is an ordinary request and is billed like one. If your app is

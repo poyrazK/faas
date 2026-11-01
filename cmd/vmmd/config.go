@@ -30,6 +30,8 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// DatabaseVMs enables database VMs on a database node (ADR-1027).
+	DatabaseVMs *DatabaseVMConfig `toml:"database_vms"`
 	// NativeProcessRecovery enables journal-backed launch and strict recovery.
 	// Experimental until the dedicated native VM/leak acceptance gates pass.
 	NativeProcessRecovery bool `toml:"native_process_recovery"`
@@ -153,6 +155,15 @@ type Config struct {
 	// shortens its guest dial timeout (ADR-20261026120000). On by default
 	// (amendment 2026-10-27); FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
 	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
+	// StreamBridgeGOMAXPROCS and StreamBridgeGOGC set GOMAXPROCS and GOGC
+	// for the stream bridges vmmd starts from now on, one per instance.
+	// 0 keeps Go's default (one P per host CPU, GOGC=100). A bridge relays a
+	// single VM capped at one core, and Go's scheduler was 26–33% of the
+	// request path's daemon profiles on 2026-10-25, so a node A/B measures
+	// these before they get defaults. FAAS_STREAM_BRIDGE_GOMAXPROCS and
+	// FAAS_STREAM_BRIDGE_GOGC override TOML.
+	StreamBridgeGOMAXPROCS int `toml:"stream_bridge_gomaxprocs"`
+	StreamBridgeGOGC       int `toml:"stream_bridge_gogc"`
 	// LocalDataSocket serves this node's gatewayd-internal on
 	// api.VmmdLocalDataSocket: no TLS, only the gateway's uid by peer
 	// credentials and only its forwarding RPCs (ADR-20261030230157). Off by
@@ -462,6 +473,13 @@ type ComputeNodeConfig struct {
 	// node records compute_nodes.service_address_ready_at so service DNS only
 	// hands addresses to instances whose netns carries the admission.
 	ServiceTCPEnabled bool `toml:"service_tcp_enabled"`
+	// DatabaseRouteEnabled turns on the managed-database route (ADR-1027):
+	// every new netns admits guest TCP to api.DatabaseRouteAddress on the
+	// PostgreSQL port, and the runtime host policy DNATs it onto the
+	// gatewayd-internal forwarder that relays to pgproxyd. Pair with the
+	// nftables role's faas_database_route_enabled and gatewayd-internal's
+	// database_route_listen.
+	DatabaseRouteEnabled bool `toml:"database_route_enabled"`
 	// PrivateNetworkTransportInterface is the underlay NIC used for VXLAN
 	// packets. Empty falls back to OverlayInterface, which keeps the common
 	// Tailscale/WireGuard deployment concise.
@@ -843,6 +861,15 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.ServiceTCPEnabled = parsed
 	}
+	// ADR-1027: Ansible sets it from the manifest's managed_postgres.app_route,
+	// with the nftables role's faas_database_route_enabled.
+	if v := os.Getenv("FAAS_VMMD_DATABASE_ROUTE_ENABLED"); v != "" {
+		parsed, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_DATABASE_ROUTE_ENABLED %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.DatabaseRouteEnabled = parsed
+	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE"); v != "" {
 		c.ComputeNode.PrivateNetworkTransportInterface = v
 	}
@@ -956,6 +983,24 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_BRIDGE_STREAM_HEADROOM must be a boolean (got %q)", v)
 		}
 		c.BridgeStreamHeadroom = enabled
+	}
+	for _, knob := range []struct {
+		env, key string
+		value    *int
+	}{
+		{"FAAS_STREAM_BRIDGE_GOMAXPROCS", "stream_bridge_gomaxprocs", &c.StreamBridgeGOMAXPROCS},
+		{"FAAS_STREAM_BRIDGE_GOGC", "stream_bridge_gogc", &c.StreamBridgeGOGC},
+	} {
+		if v := os.Getenv(knob.env); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil {
+				return nil, fmt.Errorf("vmmd: %s must be an integer (got %q)", knob.env, v)
+			}
+			*knob.value = n
+		}
+		if *knob.value < 0 {
+			return nil, fmt.Errorf("vmmd: %s (%s) must be 0 for Go's default or a positive integer (got %d)", knob.key, knob.env, *knob.value)
+		}
 	}
 	if v := os.Getenv("FAAS_VMMD_LOCAL_DATA_SOCKET"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
@@ -1257,6 +1302,9 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	}
 	if cfg.ServiceTCPEnabled {
 		policy.ServiceTCP = netns.NewServiceTCPHostPolicy(api.ServiceAddressCIDR(), bridge.Masked().Addr().Next(), api.ServiceTCPProxyPort, serviceHTTPS)
+	}
+	if cfg.DatabaseRouteEnabled {
+		policy.DatabaseRoute = netns.NewDatabaseRouteHostPolicy(api.DatabaseRouteAddress(), bridge.Masked().Addr().Next(), api.DatabaseRouteProxyPort)
 	}
 	return policy
 }

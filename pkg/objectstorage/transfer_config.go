@@ -16,6 +16,10 @@ type ObjectTransferConfig struct {
 	MaxConcurrentUploads int    `json:"max_concurrent_uploads,omitempty"`
 	MaxSpoolBytes        int64  `json:"max_spool_bytes,omitempty"`
 	MinSpoolFreeBytes    int64  `json:"min_spool_free_bytes,omitempty"`
+	// MaxBytesPerSecond is the gateway's share of its node's port, one
+	// budget for both directions; zero leaves transfers unpaced
+	// (ADR-20261031122757 §3).
+	MaxBytesPerSecond int64 `json:"max_bytes_per_second,omitempty"`
 }
 
 func NormalizeObjectTransfer(c ObjectTransferConfig, single, part int64) (ObjectTransferConfig, error) {
@@ -56,6 +60,9 @@ func NormalizeObjectTransfer(c ObjectTransferConfig, single, part int64) (Object
 		c.MinSpoolFreeBytes = api.ObjectUploadSpoolMinFreeBytes
 	}
 	if c.MinSpoolFreeBytes < 1 || c.MinSpoolFreeBytes > api.MaxObjectUploadSpoolBytes {
+		return c, bad
+	}
+	if c.MaxBytesPerSecond != 0 && (c.MaxBytesPerSecond < api.MinObjectGatewayTransferBytesPerSecond || c.MaxBytesPerSecond > api.MaxObjectGatewayTransferBytesPerSecond) {
 		return c, bad
 	}
 	return c, nil

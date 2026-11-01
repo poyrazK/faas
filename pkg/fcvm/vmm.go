@@ -1396,6 +1396,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	cfg = v.withCPUTemplate(cfg)
 	cfg = v.withPmemBase(l, cfg)
 	cfg = v.withRestoreReseedMode(l, cfg)
+	cfg = withEventPublishVerdict(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
@@ -3121,7 +3122,11 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
 		Entropy          string `json:"entropy"`     // base64; guest decodes + ioctl(RNDADDENTROPY)
 		Traceparent      string `json:"traceparent"` // W3C; empty is tolerated (guest no-ops)
-	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent})
+		// ADR-20261031102000: this vmmd answers in-guest event publishes. A
+		// restored guest follows the vmmd restoring it, not the one its
+		// snapshot booted under; an older vmmd omits the field.
+		EventPublishVerdict bool `json:"eventPublishVerdict,omitempty"`
+	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}

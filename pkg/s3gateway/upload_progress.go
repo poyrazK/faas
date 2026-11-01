@@ -18,7 +18,9 @@ var errUploadTooSlow = errors.New("s3 gateway: request body too slow")
 // progressBody holds a request body to api.ObjectUploadIdleTimeout between
 // bytes and, after api.ObjectUploadMinRateGrace, to an average of
 // api.ObjectUploadMinBytesPerSecond. Each read moves the connection's read
-// deadline to the sooner of the idle bound and the transfer deadline.
+// deadline to the sooner of the idle bound and the transfer deadline. Time
+// the body spent paced to the gateway's port share is the gateway's, not the
+// client's, and does not count against the average.
 type progressBody struct {
 	body       io.ReadCloser
 	controller *http.ResponseController
@@ -34,7 +36,11 @@ func newProgressBody(w http.ResponseWriter, body io.ReadCloser, deadline time.Ti
 
 func (p *progressBody) Read(b []byte) (int, error) {
 	now := p.now()
-	if elapsed := now.Sub(p.started); elapsed > api.ObjectUploadMinRateGrace &&
+	elapsed := now.Sub(p.started)
+	if paced, ok := p.body.(interface{ Waited() time.Duration }); ok {
+		elapsed -= paced.Waited()
+	}
+	if elapsed > api.ObjectUploadMinRateGrace &&
 		float64(p.read) < elapsed.Seconds()*api.ObjectUploadMinBytesPerSecond {
 		return 0, errUploadTooSlow
 	}

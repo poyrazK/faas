@@ -72,6 +72,40 @@ func (e testEnv) do(t *testing.T, method, path string, body any, hdrs map[string
 	return rec
 }
 
+// doSession dispatches a request as accountID's MFA-completed dashboard
+// session, for routes that refuse API keys, such as approving a release
+// (ADR-20261020085706 amendment 4). An empty accountID is e.acct.
+func (e testEnv) doSession(t *testing.T, accountID, method, path string, body any, hdrs map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	if e.s == nil || e.s.sessions == nil || e.store == nil {
+		t.Fatal("session helper requires a server, session manager, and store")
+	}
+	if accountID == "" {
+		accountID = e.acct.ID
+	}
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, path, r)
+	sid := uuid.NewString()
+	if _, err := e.store.CreateSession(req.Context(), sid, accountID, "192.0.2.11", "session-test-ua"); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	token, err := e.s.sessions.IssueWithSession(sid, accountID, false)
+	if err != nil {
+		t.Fatalf("IssueWithSession: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	return rec
+}
+
 // doAdmin dispatches a request as a verified operator session. Provider
 // mutations deliberately reject bearer/API-key principals; keeping this
 // helper beside testEnv makes that contract explicit in admin tests without

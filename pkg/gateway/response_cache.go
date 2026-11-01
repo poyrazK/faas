@@ -63,6 +63,11 @@ type ResponseCache struct {
 	// on evict / drop. Bounded by maxBytes; Put never grows the
 	// store past the ceiling.
 	bytes int
+	// appBytes is bytes per app. One app may hold at most
+	// appShareBytes(), so a tenant caching large responses evicts its
+	// own entries first instead of every other tenant's (ADR-091
+	// amendment 2026-10-30, round 5).
+	appBytes map[string]int
 }
 
 // SharedResponseCacheStore is the optional distributed backing tier used by
@@ -178,6 +183,10 @@ const (
 	// either tighten the path glob or accept that the route
 	// will not be cache-eligible.
 	ResponseCachePerEntryMaxBytes = 1 * 1024 * 1024
+	// ResponseCacheAppShareDivisor bounds one app's share of the
+	// in-process cache to maxBytes / divisor (16 MiB of the default
+	// 64 MiB, at least 16 maximum-size entries).
+	ResponseCacheAppShareDivisor = 4
 )
 
 // NewResponseCache constructs a cache with the default 64 MiB
@@ -226,7 +235,43 @@ func NewResponseCacheWithClock(maxBytes int, now func() time.Time) *ResponseCach
 		now:      now,
 		data:     make(map[string]*list.Element),
 		list:     list.New(),
+		appBytes: map[string]int{},
 	}
+}
+
+// appShareBytes is the most one app may hold. A cache too small to split
+// keeps the whole ceiling per app.
+func (c *ResponseCache) appShareBytes() int {
+	share := c.maxBytes / ResponseCacheAppShareDivisor
+	if share < ResponseCachePerEntryMaxBytes {
+		return c.maxBytes
+	}
+	return share
+}
+
+// removeLocked drops one element and its byte accounting. Callers hold c.mu.
+func (c *ResponseCache) removeLocked(el *list.Element) {
+	entry := el.Value.(*cacheEntry)
+	c.list.Remove(el)
+	delete(c.data, entry.key.String())
+	c.bytes = max(c.bytes-len(entry.body), 0)
+	if left := c.appBytes[entry.key.AppID] - len(entry.body); left > 0 {
+		c.appBytes[entry.key.AppID] = left
+	} else {
+		delete(c.appBytes, entry.key.AppID)
+	}
+}
+
+// evictAppLocked drops appID's least recently used entry; false when it has
+// none. Callers hold c.mu.
+func (c *ResponseCache) evictAppLocked(appID string) bool {
+	for el := c.list.Back(); el != nil; el = el.Prev() {
+		if el.Value.(*cacheEntry).key.AppID == appID {
+			c.removeLocked(el)
+			return true
+		}
+	}
+	return false
 }
 
 // WithSharedStore attaches an optional distributed L2. It is intended to be
@@ -296,12 +341,7 @@ func (c *ResponseCache) getLocal(k CacheKey) (state string, entry *cacheEntry) {
 	}
 	// Expired. Drop and reclaim headroom immediately so the
 	// next Put doesn't have to wait for the LRU eviction.
-	c.list.Remove(el)
-	delete(c.data, k.String())
-	c.bytes -= len(entry.body)
-	if c.bytes < 0 {
-		c.bytes = 0
-	}
+	c.removeLocked(el)
 	return "", nil
 }
 
@@ -416,14 +456,12 @@ func (c *ResponseCache) InvalidateByAppTag(appID, tag string) error {
 		return nil
 	}
 	c.mu.Lock()
-	for key, el := range c.data {
+	for _, el := range c.data {
 		entry := el.Value.(*cacheEntry)
 		if entry.key.AppID != appID || !hasCacheTag(entry.tags, canonical) {
 			continue
 		}
-		c.bytes -= len(entry.body)
-		c.list.Remove(el)
-		delete(c.data, key)
+		c.removeLocked(el)
 	}
 	c.mu.Unlock()
 	if c.shared != nil {
@@ -452,30 +490,26 @@ func (c *ResponseCache) putLocal(entry *cacheEntry) bool {
 	// the old entry's bytes from the running total before
 	// inserting.
 	if el, ok := c.data[entry.key.String()]; ok {
-		old := el.Value.(*cacheEntry)
-		c.bytes -= len(old.body)
-		c.list.Remove(el)
-		delete(c.data, entry.key.String())
+		c.removeLocked(el)
 	}
-	// Evict LRU until the new entry fits.
-	for c.bytes+len(entry.body) > c.maxBytes && c.list.Len() > 0 {
-		back := c.list.Back()
-		if back == nil {
+	if len(entry.body) > c.appShareBytes() {
+		return false
+	}
+	// The app's own least recently used entries go first while it is over
+	// its share, then the global LRU until the new entry fits.
+	app := entry.key.AppID
+	for c.appBytes[app]+len(entry.body) > c.appShareBytes() {
+		if !c.evictAppLocked(app) {
 			break
 		}
-		victim := back.Value.(*cacheEntry)
-		c.bytes -= len(victim.body)
-		c.list.Remove(back)
-		delete(c.data, victim.key.String())
 	}
-	if len(entry.body) > c.maxBytes {
-		// Even after evicting everything, the entry doesn't
-		// fit. Reject and leave the store empty.
-		return false
+	for c.bytes+len(entry.body) > c.maxBytes && c.list.Len() > 0 {
+		c.removeLocked(c.list.Back())
 	}
 	el := c.list.PushFront(entry)
 	c.data[entry.key.String()] = el
 	c.bytes += len(entry.body)
+	c.appBytes[app] += len(entry.body)
 	return true
 }
 
@@ -507,16 +541,10 @@ func (c *ResponseCache) InvalidateByAppStrict(appID string) error {
 func (c *ResponseCache) invalidateLocalByApp(appID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for k, el := range c.data {
-		entry := el.Value.(*cacheEntry)
-		if entry.key.AppID == appID {
-			c.bytes -= len(entry.body)
-			c.list.Remove(el)
-			delete(c.data, k)
+	for _, el := range c.data {
+		if el.Value.(*cacheEntry).key.AppID == appID {
+			c.removeLocked(el)
 		}
-	}
-	if c.bytes < 0 {
-		c.bytes = 0
 	}
 }
 
@@ -548,7 +576,7 @@ func (c *ResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
 func (c *ResponseCache) invalidateLocalByAppPath(appID, pathGlob string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for k, el := range c.data {
+	for _, el := range c.data {
 		entry := el.Value.(*cacheEntry)
 		if entry.key.AppID != appID {
 			continue
@@ -558,13 +586,8 @@ func (c *ResponseCache) invalidateLocalByAppPath(appID, pathGlob string) error {
 			return fmt.Errorf("invalid cache path glob %q: %w", pathGlob, err)
 		}
 		if matches {
-			c.bytes -= len(entry.body)
-			c.list.Remove(el)
-			delete(c.data, k)
+			c.removeLocked(el)
 		}
-	}
-	if c.bytes < 0 {
-		c.bytes = 0
 	}
 	return nil
 }
@@ -589,6 +612,7 @@ func (c *ResponseCache) InvalidateAllStrict() error {
 	c.data = make(map[string]*list.Element)
 	c.list = list.New()
 	c.bytes = 0
+	c.appBytes = map[string]int{}
 	c.mu.Unlock()
 	if c.shared != nil {
 		return c.shared.InvalidateAll()

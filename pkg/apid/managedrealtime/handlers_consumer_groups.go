@@ -156,7 +156,7 @@ func (s *Service) ClaimRealtimeConsumerGroup(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid worker identity"))
 		return
 	}
-	claim, err := s.claimRealtimeGroupWithWait(r, store, ep.ID, r.PathValue("channel"), r.PathValue("group"), req.Worker, req.WaitSeconds)
+	claim, err := s.claimRealtimeGroupWithWait(r, store, acct.ID, ep.ID, r.PathValue("channel"), r.PathValue("group"), req.Worker, req.WaitSeconds)
 	if err != nil {
 		s.writeRealtimeConsumerGroupError(w, r, err)
 		return

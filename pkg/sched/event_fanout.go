@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -225,6 +226,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 				}
 				work.RecipientProgress[recipient.ID] = wait
 				l.ops.ObserveEventDeliveryCapacityDeferral(wait.CapacityScope)
+				l.ops.ObserveEventRoutingOutcome(wire.EventRoutingWaiting)
 				routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 				continue
 			}
@@ -235,6 +237,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			if err == nil {
 				work.RecipientProgress[recipient.ID] = result.Progress
 				work.Delivered = result.ReceiptSettled
+				l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(result.Progress))
 				if result.Progress.State == state.PublishedEventRecipientPending {
 					routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 				}
@@ -258,6 +261,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, outcome); err != nil {
 			return fmt.Errorf("sched: record event recipient %s progress: %w", recipient.ID, err)
 		}
+		l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(outcome))
 		work.RecipientProgress[recipient.ID] = outcome
 		if outcome.State == state.PublishedEventRecipientFailed && l.log != nil {
 			l.log.Error("sched: event recipient fanout permanently failed", "event_id", envelope.ID,
@@ -579,6 +583,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			}
 		}
 		if err != nil {
+			l.ops.ObserveEventRoutingOutcome(wire.EventRoutingClaimError)
 			if l.log != nil {
 				l.log.Warn("sched: claim event fanout failed", "error_class", dispatchErrorClass(err))
 			}
@@ -733,6 +738,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 			}
 		}
 		if err != nil {
+			l.ops.ObserveEventRoutingOutcome(wire.EventRoutingClaimError)
 			if l.log != nil {
 				l.log.Error("sched: claim event recipient failed", "error_class", dispatchErrorClass(err))
 			}
@@ -851,6 +857,7 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 					if result.CapacityDeferred {
 						l.ops.ObserveEventDeliveryCapacityDeferral(result.Progress.CapacityScope)
 					}
+					l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(result.Progress))
 					return
 				}
 				matched, routeErr = result.Matched, err
@@ -861,6 +868,7 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 				ClaimToken: work.ClaimToken, Generation: work.Generation, BackfillJobID: work.BackfillJobID,
 			})
 			if err == nil {
+				l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(result.Progress))
 				return
 			}
 			matched, routeErr = result.Matched, err
@@ -874,6 +882,7 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 		progress.LastError = progress.LastError[:1024]
 	}
 
+	l.ops.ObserveEventRoutingOutcome(eventRoutingOutcome(progress))
 	if err := store.FinishPublishedEventRecipient(ctx, work, progress, next); err != nil && l.log != nil {
 		l.log.Error("sched: finish event recipient failed", "outbox_id", work.OutboxID,
 			"subscription_id", work.Recipient.ID, "error_class", dispatchErrorClass(err))
@@ -881,6 +890,23 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 		l.log.Error("sched: event recipient routing failed", "outbox_id", work.OutboxID,
 			"subscription_id", work.Recipient.ID, "failure_code", progress.FailureCode,
 			"retryable", progress.Retryable, "error_class", dispatchErrorClass(routeErr))
+	}
+}
+
+// eventRoutingOutcome labels a recipient's routing result for
+// schedd_event_routing_outcomes_total: routed when it settled, waiting when it
+// holds for delivery capacity, retry when it failed and is due again, failed
+// when its routing ended for good.
+func eventRoutingOutcome(progress state.PublishedEventRecipientProgress) string {
+	switch {
+	case progress.State == state.PublishedEventRecipientFailed:
+		return wire.EventRoutingFailed
+	case progress.State != state.PublishedEventRecipientPending:
+		return wire.EventRoutingRouted
+	case progress.CapacityScope != "":
+		return wire.EventRoutingWaiting
+	default:
+		return wire.EventRoutingRetry
 	}
 }
 

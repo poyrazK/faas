@@ -143,7 +143,7 @@ func TestOnDemandTLSPolicyCompanyWildcardFollowsTheOrganizationsPlan(t *testing.
 func TestOnDemandTLSPolicyWildcardBudgetSparesKnownHosts(t *testing.T) {
 	_, p, _ := onDemandTLSFixture(t)
 	ctx := context.Background()
-	limit := api.OnDemandTLSWildcardNewHostsPerWeek
+	limit := api.OnDemandTLSRegisteredDomainNewHostsPerWeek
 	for i := 0; i < limit; i++ {
 		if ok, decision := p.Decide(ctx, fmt.Sprintf("t%d.tenants.example.net", i)); !ok {
 			t.Fatalf("host %d within budget refused: %s", i, decision)

@@ -2,6 +2,7 @@ package githubd
 
 import (
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/labels"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 )
 
@@ -30,6 +31,7 @@ func (s *Service) scanOptions(accountID string) reposcan.ScanOptions {
 	return reposcan.ScanOptions{
 		KubernetesManifests:       s.capabilityAllowed(reposcan.KubernetesManifestsCapability, accountID),
 		HTTPSTransportUnavailable: !s.capabilityAllowed(api.PrivateServiceHTTPSCapability, accountID),
+		ResourceLabels:            s.capabilityAllowed(labels.Capability, accountID),
 	}
 }
 

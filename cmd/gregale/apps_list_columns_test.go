@@ -26,7 +26,7 @@ func TestAppsListAlignsColumnsAndNamesParkedApps(t *testing.T) {
 
 	main.ResetJSONOut(t)
 	buf, restore := main.CaptureStdout(t)
-	code := main.CmdApps()
+	code := main.CmdApps(nil)
 	restore()
 	out := buf.String()
 	if code != 0 {

@@ -534,7 +534,7 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = copyStreaming(w, resp.Body)
+	_, _ = copyStreamingSized(w, resp.Body, resp.ContentLength)
 }
 
 // newGuestRequest carries the inbound H2 stream's framing to the guest leg.

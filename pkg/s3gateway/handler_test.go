@@ -45,6 +45,8 @@ type gatewayTestStore struct {
 	fenced                              bool
 	activityBeginErr, activityFinishErr error
 	cors                                []api.ObjectBucketCORSRule
+	resolves                            int
+	resolveErr                          error
 }
 
 func (s *gatewayTestStore) ObjectBucketCORSRules(context.Context, string) ([]api.ObjectBucketCORSRule, error) {
@@ -111,6 +113,10 @@ func (s *gatewayTestStore) RevokeObjectS3Credential(context.Context, string, str
 	panic("not used")
 }
 func (s *gatewayTestStore) ResolveObjectS3Credential(_ context.Context, access string) (state.ObjectS3Credential, state.ObjectBucket, error) {
+	s.resolves++
+	if s.resolveErr != nil {
+		return state.ObjectS3Credential{}, state.ObjectBucket{}, s.resolveErr
+	}
 	if access != s.credential.AccessKeyID {
 		return state.ObjectS3Credential{}, state.ObjectBucket{}, state.ErrNotFound
 	}
@@ -789,7 +795,11 @@ func TestGatewayBoundsConcurrentPutStaging(t *testing.T) {
 	body := []byte("body")
 	sum := sha256.Sum256(body)
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/key", body, hex.EncodeToString(sum[:])))
+	// The request gives up waiting for a slot when its context ends.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	request := signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/key", body, hex.EncodeToString(sum[:])).WithContext(ctx)
+	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "SlowDown") {
 		t.Fatalf("concurrent PUT limit = %d %s", recorder.Code, recorder.Body.String())
 	}

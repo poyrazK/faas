@@ -49,7 +49,7 @@ func admitOperationDispatch(ctx context.Context, store any, stored, wire Invocat
 	attempt := int(attemptValue)
 	capability := proof[strings.ToLower(api.OperationCapabilityHeader)]
 	authority := OperationExecutionAuthority{AccountID: stored.AccountID, AppID: stored.AppID, InstanceID: stored.InstanceID, InvocationID: stored.ID, Attempt: attempt, Capability: capability}
-	if err := ValidateOperationExecutionAuthority(op, stored, authority, time.Now()); err != nil {
+	if err := ValidateOperationExecutionAuthorityContext(ctx, op, stored, authority, time.Now()); err != nil {
 		return Invocation{}, err
 	}
 	def, err := reader.OperationDefinitionByID(ctx, op.AccountID, op.DefinitionID)

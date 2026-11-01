@@ -50,6 +50,9 @@ type computeGatewayNodeLister interface {
 }
 
 type computeGatewayEndpoint struct {
+	// id is the node's compute_nodes.id, which gatewayd-internal names in a
+	// placement answer (ADR-20261031105055).
+	id      string
 	name    string
 	address string
 }
@@ -253,6 +256,36 @@ func (p *computeGatewayPool) snapshot(ctx context.Context) ([]computeGatewayEndp
 	return nil, err
 }
 
+// peekEndpoint returns the ready endpoint of the node with registry id from
+// the inventory the pool already holds (ADR-20261031105055). It never waits
+// on the registry: an expired inventory starts one background read, and a
+// missing or too old one finds nothing, so placement adds no control-plane
+// read to a request.
+func (p *computeGatewayPool) peekEndpoint(ctx context.Context, id string) (computeGatewayEndpoint, bool) {
+	p.mu.Lock()
+	now := time.Now()
+	if !p.usableLocked(now) {
+		p.mu.Unlock()
+		return computeGatewayEndpoint{}, false
+	}
+	if (p.invalidated || now.Sub(p.refreshed) >= computeGatewayPoolTTL) && !p.refreshing {
+		p.refreshing = true
+		go p.refreshInBackground(ctx)
+	}
+	var found computeGatewayEndpoint
+	for _, endpoint := range p.endpoints {
+		if endpoint.id == id {
+			found = endpoint
+			break
+		}
+	}
+	p.mu.Unlock()
+	if found.id == "" || !p.readiness.ready(found.address) {
+		return computeGatewayEndpoint{}, false
+	}
+	return found, true
+}
+
 // usableLocked reports whether the last successful inventory is recent
 // enough to route on. The caller holds p.mu.
 func (p *computeGatewayPool) usableLocked(now time.Time) bool {
@@ -322,7 +355,7 @@ func (p *computeGatewayPool) refresh(ctx context.Context) ([]computeGatewayEndpo
 			p.log.Warn("ignoring invalid compute gateway target", "node", node.Name, "target", *node.GatewayTargetURL)
 			continue
 		}
-		endpoints = append(endpoints, computeGatewayEndpoint{name: node.Name, address: address})
+		endpoints = append(endpoints, computeGatewayEndpoint{id: node.ID, name: node.Name, address: address})
 	}
 
 	p.mu.Lock()

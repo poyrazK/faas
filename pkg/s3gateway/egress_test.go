@@ -101,3 +101,24 @@ func TestGatewayEgressDisconnectSemantics(t *testing.T) {
 		})
 	}
 }
+
+// adr: 20261031122757 — a read refused at the plan's egress limit names the
+// limit, its value, what was used and where the limits are documented.
+func TestGatewayEgressLimitNamesLimit(t *testing.T) {
+	h, store, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, nil)
+	h.registry.Accounting.AccountingMode = api.ObjectStorageGatewaySafetyV1
+	h.requestMetrics = &readEgressMetrics{reserveError: &state.ObjectStorageLimitError{Kind: "egress_bytes", Limit: 100 << 30, Observed: 100<<30 + 6, Cause: state.ErrObjectBudget}}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "https://s3.gregale.dev/assets/key", nil)
+	response := &http.Response{StatusCode: 200, ContentLength: 6, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("abcdef"))}
+	h.writeGatewayRead(w, r, requestContext{bucket: store.bucket}, "key", response)
+	body := w.Body.String()
+	if w.Code != http.StatusPaymentRequired || !strings.Contains(body, "<Code>AccountProblem</Code>") {
+		t.Fatal(w.Code, body)
+	}
+	for _, want := range []string{"egress_bytes", "limit 107374182400", "observed 107374182406", api.ObjectStorageLimitsDocsURL} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("error %q does not name %q", body, want)
+		}
+	}
+}
