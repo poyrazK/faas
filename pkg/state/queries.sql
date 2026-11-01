@@ -19628,8 +19628,8 @@ WHERE id=sqlc.arg(id)::uuid AND state='ready' AND desired_generation=sqlc.arg(so
 
 -- name: InsertManagedPostgresResize :one
 INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,
-    source_spec,target_class,target_scale_to_zero,generation,state,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12) RETURNING *;
+    source_spec,target_class,target_scale_to_zero,target_storage_limit_bytes,target_postgres_major,generation,state,created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14) RETURNING *;
 
 -- name: ClaimManagedPostgresResize :one
 UPDATE managed_postgres_databases SET lease_token=sqlc.arg(lease_token)::text,lease_until=sqlc.arg(until)::timestamptz,
@@ -19644,7 +19644,25 @@ UPDATE managed_postgres_resizes SET state='succeeded',completed_at=sqlc.arg(at):
 WHERE id=sqlc.arg(id)::uuid AND database_id=sqlc.arg(database)::uuid AND generation=sqlc.arg(generation)::bigint AND state='pending';
 
 -- name: FinishManagedPostgresResizeDatabase :one
-UPDATE managed_postgres_databases SET state='ready',service_class=sqlc.arg(target_class)::text,scale_to_zero=sqlc.arg(target_scale_to_zero)::boolean,observed_generation=desired_generation,
+UPDATE managed_postgres_databases SET state='ready',service_class=sqlc.arg(target_class)::text,scale_to_zero=sqlc.arg(target_scale_to_zero)::boolean,
+    storage_limit_bytes=sqlc.arg(target_storage_limit_bytes)::bigint,postgres_major=sqlc.arg(target_postgres_major)::smallint,
+    observed_generation=desired_generation,
+    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account)::uuid AND state='updating'
+    AND desired_generation=sqlc.arg(generation)::bigint AND observed_generation=desired_generation-1
+    AND lease_token=sqlc.arg(token)::text AND lease_until>sqlc.arg(at)::timestamptz AND lease_until>clock_timestamp() RETURNING *;
+
+-- name: FailManagedPostgresResize :execrows
+-- Ends a pending major upgrade without its change: the provider refused it
+-- or it broke the cluster. Only an upgrade can fail.
+UPDATE managed_postgres_resizes SET state='failed',completed_at=sqlc.arg(at)::timestamptz,error_code=sqlc.arg(error_code)::text
+WHERE id=sqlc.arg(id)::uuid AND database_id=sqlc.arg(database)::uuid AND generation=sqlc.arg(generation)::bigint
+    AND state='pending' AND target_postgres_major IS NOT NULL;
+
+-- name: FailManagedPostgresResizeDatabase :one
+-- Puts the database back to ready on its source spec at the failed
+-- change's generation.
+UPDATE managed_postgres_databases SET state='ready',observed_generation=desired_generation,
     last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account)::uuid AND state='updating'
     AND desired_generation=sqlc.arg(generation)::bigint AND observed_generation=desired_generation-1
@@ -25410,6 +25428,304 @@ SELECT payload FROM customer_workflow_playbook_progress WHERE account_id=$1 AND 
 INSERT INTO customer_workflow_playbook_progress (id,account_id,app_id,tenant_id,case_key,revision,payload) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING;
 -- name: UpdateWorkflowPlaybookProgress :execrows
 UPDATE customer_workflow_playbook_progress SET payload=sqlc.arg(payload),revision=sqlc.arg(next_revision) WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND tenant_id=sqlc.arg(tenant_id) AND case_key=sqlc.arg(case_key) AND revision=sqlc.arg(revision);
+
+-- Database VMs (ADR-1027). database_nodes is inventory; database_vms is
+-- written only by schedd's database scheduler (pkg/dbsched).
+
+-- name: UpsertDatabaseNode :exec
+INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle)
+VALUES (sqlc.arg(id), sqlc.arg(target_url), sqlc.arg(admission_ceiling_mb), sqlc.arg(volume_capacity_bytes), sqlc.arg(boot_slots),
+    sqlc.arg(postgres_majors)::integer[], sqlc.arg(lifecycle))
+ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
+    admission_ceiling_mb = EXCLUDED.admission_ceiling_mb,
+    volume_capacity_bytes = EXCLUDED.volume_capacity_bytes,
+    boot_slots = EXCLUDED.boot_slots,
+    postgres_majors = EXCLUDED.postgres_majors,
+    lifecycle = EXCLUDED.lifecycle, updated_at = now();
+
+-- name: ListDatabaseNodes :many
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle
+FROM database_nodes ORDER BY id;
+
+-- name: LockDatabaseNode :one
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
+FROM database_nodes WHERE id = sqlc.arg(id) FOR UPDATE;
+
+-- name: DatabaseNodeUsage :many
+-- A moving database's volume counts on its node and on the node it is
+-- moving to; its memory only where it can run. A replicated database's
+-- standby volume counts on its standby node, and its memory there while
+-- the standby runs. An upgrading database's VM runs pg_upgrade.
+SELECT n.id AS node_id,
+    COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
+    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+        OR (v.standby_node = n.id AND v.standby_running)), 0)::bigint AS active_mem_mib,
+    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+        OR (v.standby_node = n.id AND v.standby_running))::bigint AS active_vms,
+    count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state = 'waking')::bigint AS waking_vms
+FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id OR v.standby_node = n.id
+GROUP BY n.id ORDER BY n.id;
+
+-- name: GetDatabaseVM :one
+SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
+    bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+FROM database_vms WHERE database_id = sqlc.arg(database_id);
+
+-- name: ListDatabaseVMsByState :many
+SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
+    bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
+
+-- name: InsertDatabaseVM :execrows
+INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on,
+    restore_window_seconds, restore_source, restore_target, replicated, standby_node, state)
+VALUES (sqlc.arg(database_id), sqlc.arg(node_id), sqlc.arg(postgres_major), sqlc.arg(vcpu_count),
+    sqlc.arg(mem_mib), sqlc.arg(volume_bytes), sqlc.arg(always_on), sqlc.arg(restore_window_seconds),
+    sqlc.narg(restore_source), sqlc.narg(restore_target), sqlc.arg(replicated), sqlc.narg(standby_node), 'provisioning')
+ON CONFLICT (database_id) DO NOTHING;
+
+-- name: ClaimDatabaseStandby :execrows
+-- Marks a running replicated database's standby VM running; the caller
+-- checked the standby node's room under its lock.
+UPDATE database_vms SET standby_running = true
+WHERE database_id = sqlc.arg(database_id) AND state = 'running' AND standby_node IS NOT NULL AND NOT standby_running;
+
+-- name: ReleaseDatabaseStandby :execrows
+-- Marks the standby VM stopped; it stays synchronized only if keep_synced
+-- (a clean stop after its primary's).
+UPDATE database_vms SET standby_running = false, standby_synced = standby_synced AND sqlc.arg(keep_synced)::boolean
+WHERE database_id = sqlc.arg(database_id);
+
+-- name: MarkDatabaseStandbySynced :execrows
+-- Synchronized only while the database and its standby run; clearing is
+-- always allowed.
+UPDATE database_vms SET standby_synced = sqlc.arg(synced)::boolean
+WHERE database_id = sqlc.arg(database_id)
+    AND (NOT sqlc.arg(synced)::boolean OR (state = 'running' AND standby_running));
+
+-- name: ReplaceDatabaseStandby :execrows
+UPDATE database_vms SET standby_node = sqlc.arg(standby_node), standby_running = false, standby_synced = false
+WHERE database_id = sqlc.arg(database_id) AND replicated AND NOT standby_running
+    AND state IN ('provisioning', 'parked', 'waking', 'running', 'parking', 'failed');
+
+-- name: FailoverDatabaseVM :execrows
+-- A synchronized standby's node becomes the database's: running if its
+-- standby VM ran (now promoted), else parked with its promotion pending.
+UPDATE database_vms SET node_id = standby_node, standby_node = NULL, standby_running = false, standby_synced = false,
+    promote_pending = NOT standby_running,
+    state = CASE WHEN standby_running THEN 'running' ELSE 'parked' END,
+    last_error = 'failed_over', state_changed_at = now()
+WHERE database_id = sqlc.arg(database_id) AND standby_synced
+    AND state IN ('parked', 'running', 'parking', 'failed');
+
+-- name: FinishDatabasePromotion :execrows
+UPDATE database_vms SET promote_pending = false WHERE database_id = sqlc.arg(database_id);
+
+-- name: OpenDatabaseUsage :exec
+-- Starts a rate interval unless one is open for the meter.
+INSERT INTO database_usage (database_id, meter, started_at, rate)
+VALUES (sqlc.arg(database_id), sqlc.arg(meter), sqlc.arg(at), sqlc.arg(rate))
+ON CONFLICT (database_id, meter) WHERE ended_at IS NULL AND meter <> 'egress' DO NOTHING;
+
+-- name: CloseDatabaseUsage :execrows
+UPDATE database_usage SET ended_at = greatest(sqlc.arg(at)::timestamptz, started_at)
+WHERE database_id = sqlc.arg(database_id) AND meter = sqlc.arg(meter) AND ended_at IS NULL;
+
+-- name: OpenDatabaseUsageRate :one
+SELECT rate FROM database_usage
+WHERE database_id = sqlc.arg(database_id) AND meter = sqlc.arg(meter) AND ended_at IS NULL;
+
+-- name: AddDatabaseEgress :exec
+INSERT INTO database_usage (database_id, meter, started_at, rate)
+VALUES (sqlc.arg(database_id), 'egress', sqlc.arg(hour), sqlc.arg(bytes))
+ON CONFLICT (database_id, started_at) WHERE meter = 'egress'
+DO UPDATE SET rate = database_usage.rate + EXCLUDED.rate;
+
+-- name: DatabaseUsageRows :many
+-- Rows that can overlap [from, to): intervals crossing it and egress hours
+-- starting before its end (the caller drops earlier hours).
+SELECT meter, started_at, ended_at, rate FROM database_usage
+WHERE database_id = sqlc.arg(database_id) AND started_at < sqlc.arg(window_to)
+  AND (ended_at IS NULL OR ended_at > sqlc.arg(window_from));
+
+-- name: DatabaseHasUsage :one
+SELECT EXISTS (SELECT 1 FROM database_usage WHERE database_id = sqlc.arg(database_id));
+
+-- name: PruneDatabaseUsage :execrows
+DELETE FROM database_usage
+WHERE ended_at < sqlc.arg(before) OR (meter = 'egress' AND started_at < sqlc.arg(before));
+
+-- name: ResizeDatabaseVM :execrows
+-- Records a new shape. Turning replication on names the standby node;
+-- turning it off (its standby already retired) owes the primary's slot.
+UPDATE database_vms
+SET vcpu_count = sqlc.arg(vcpu_count), mem_mib = sqlc.arg(mem_mib), volume_bytes = sqlc.arg(volume_bytes),
+    replicated = sqlc.arg(replicated)::boolean, standby_node = sqlc.narg(standby_node),
+    standby_synced = standby_synced AND sqlc.arg(replicated)::boolean,
+    drop_standby_slot = sqlc.arg(drop_standby_slot)::boolean,
+    resize_pending = true
+WHERE database_id = sqlc.arg(database_id) AND state IN ('parked', 'running');
+
+-- name: ClearDatabaseStandbySlotDrop :execrows
+UPDATE database_vms SET drop_standby_slot = false WHERE database_id = sqlc.arg(database_id);
+
+-- name: FinishDatabaseVMResize :execrows
+UPDATE database_vms SET resize_pending = false WHERE database_id = sqlc.arg(database_id);
+
+-- name: RecordDatabaseVMRestore :execrows
+UPDATE database_vms SET restore_recovered_to = sqlc.arg(recovered_to)
+WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NOT NULL;
+
+-- name: ClaimDatabaseVMRestore :one
+-- Takes (held is NULL) or renews (held is the current lease) the lease on
+-- a provisioning restore. The lease is the database clock's, so replicas'
+-- clocks do not matter.
+UPDATE database_vms
+SET restore_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NOT NULL
+  AND (restore_lease_until IS NULL OR restore_lease_until < now()
+       OR restore_lease_until = sqlc.narg(held)::timestamptz)
+RETURNING restore_lease_until;
+
+-- name: RecordDatabaseVMBackup :execrows
+UPDATE database_vms SET last_backup_at = sqlc.arg(at)
+WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
+
+-- name: SetDatabaseVMAlwaysOn :execrows
+UPDATE database_vms SET always_on = sqlc.arg(always_on)
+WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
+
+-- name: TransitionDatabaseVM :execrows
+UPDATE database_vms SET state = sqlc.arg(to_state), state_changed_at = now(),
+    last_error = sqlc.narg(last_error),
+    bootstrapped = bootstrapped OR sqlc.arg(bootstrapped)::boolean,
+    last_active_at = CASE WHEN sqlc.arg(to_state) = 'running' THEN now() ELSE last_active_at END
+WHERE database_id = sqlc.arg(database_id) AND state = ANY(sqlc.arg(from_states)::text[]);
+
+-- name: BeginDatabaseVMMove :execrows
+UPDATE database_vms
+SET state = 'moving', move_node = sqlc.arg(move_node)::text, state_changed_at = now(), last_error = NULL,
+    move_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'parked' AND NOT resize_pending;
+
+-- name: RenewDatabaseVMMove :one
+-- Renews the lease the caller holds on a move. The lease is the database
+-- clock's, so replicas' clocks do not matter.
+UPDATE database_vms
+SET move_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'moving' AND move_lease_until = sqlc.arg(held)::timestamptz
+RETURNING move_lease_until;
+
+-- name: FinishDatabaseVMMove :execrows
+UPDATE database_vms
+SET node_id = move_node, move_node = NULL, move_lease_until = NULL, state = 'parked', state_changed_at = now()
+WHERE database_id = sqlc.arg(database_id) AND state = 'moving' AND move_lease_until = sqlc.arg(held)::timestamptz;
+
+-- name: AbortDatabaseVMMove :execrows
+-- Ends a move with the database parked where it was: by the lease holder,
+-- or by anyone once the lease has lapsed (held NULL).
+UPDATE database_vms
+SET move_node = NULL, move_lease_until = NULL, state = 'parked', state_changed_at = now(), last_error = sqlc.narg(last_error)
+WHERE database_id = sqlc.arg(database_id) AND state = 'moving'
+  AND (move_lease_until = sqlc.narg(held)::timestamptz OR (sqlc.narg(held)::timestamptz IS NULL AND move_lease_until < now()));
+
+-- name: BeginDatabaseVMUpgrade :execrows
+-- Marks a parked database upgrading to upgrade_major as the operation
+-- under the caller's lease; the caller checked its node's room under the
+-- node's lock.
+UPDATE database_vms
+SET state = 'upgrading', upgrade_major = sqlc.arg(upgrade_major)::integer, upgrade_from = postgres_major,
+    upgrade_operation = sqlc.arg(upgrade_operation)::text, upgrade_result = NULL, state_changed_at = now(), last_error = NULL,
+    upgrade_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'parked' AND bootstrapped AND NOT resize_pending AND NOT promote_pending
+  AND postgres_major < sqlc.arg(upgrade_major)::integer;
+
+-- name: ClaimDatabaseVMUpgrade :one
+-- Renews the lease the caller holds on an upgrade, or takes one that
+-- lapsed (held NULL). The lease is the database clock's, so replicas'
+-- clocks do not matter.
+UPDATE database_vms
+SET upgrade_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'upgrading'
+  AND (upgrade_lease_until = sqlc.narg(held)::timestamptz
+       OR (sqlc.narg(held)::timestamptz IS NULL AND upgrade_lease_until < now()))
+RETURNING upgrade_lease_until;
+
+-- name: FinishDatabaseVMUpgrade :execrows
+-- Makes the upgrade's major the database's and records until when it ran
+-- the one it leaves (SET sees the old row). backup_at is its first base
+-- backup on the new major; NULL when none was taken.
+UPDATE database_vms
+SET major_history = major_history || jsonb_build_array(jsonb_build_object('major', postgres_major, 'until', sqlc.arg(until)::timestamptz)),
+    postgres_major = upgrade_major, upgrade_result = 'ok', upgrade_lease_until = NULL,
+    last_backup_at = sqlc.narg(backup_at)::timestamptz,
+    state = sqlc.arg(to_state)::text, state_changed_at = now(), last_error = NULL,
+    last_active_at = CASE WHEN sqlc.arg(to_state)::text = 'running' THEN now() ELSE last_active_at END
+WHERE database_id = sqlc.arg(database_id) AND state = 'upgrading' AND upgrade_lease_until = sqlc.arg(held)::timestamptz;
+
+-- name: AbortDatabaseVMUpgrade :execrows
+-- Ends an upgrade on the major the database had, with its result: by the
+-- lease holder, or by anyone once the lease lapsed (held NULL).
+UPDATE database_vms
+SET upgrade_result = sqlc.arg(upgrade_result)::text, upgrade_lease_until = NULL, state = sqlc.arg(to_state)::text, state_changed_at = now(),
+    last_error = sqlc.narg(last_error)
+WHERE database_id = sqlc.arg(database_id) AND state = 'upgrading'
+  AND (upgrade_lease_until = sqlc.narg(held)::timestamptz
+       OR (sqlc.narg(held)::timestamptz IS NULL AND upgrade_lease_until < now()));
+
+-- name: TouchDatabaseVM :execrows
+UPDATE database_vms SET last_active_at = sqlc.arg(at)
+WHERE database_id = sqlc.arg(database_id) AND state = 'running';
+
+-- name: DeleteDatabaseVM :execrows
+DELETE FROM database_vms WHERE database_id = sqlc.arg(database_id) AND state = 'deleting';
+
+-- name: UpsertDatabaseRoleVerifier :exec
+INSERT INTO database_role_verifiers (database_id, role_name, verifier)
+VALUES (sqlc.arg(database_id), sqlc.arg(role_name), sqlc.arg(verifier))
+ON CONFLICT (database_id, role_name) DO UPDATE SET verifier = EXCLUDED.verifier, updated_at = now();
+
+-- name: GetDatabaseRoleVerifier :one
+SELECT verifier FROM database_role_verifiers
+WHERE database_id = sqlc.arg(database_id) AND role_name = sqlc.arg(role_name);
+
+-- name: DeleteDatabaseRoleVerifier :execrows
+DELETE FROM database_role_verifiers
+WHERE database_id = sqlc.arg(database_id) AND role_name = sqlc.arg(role_name);
+
+-- name: DeleteDatabaseRoleVerifiers :execrows
+DELETE FROM database_role_verifiers WHERE database_id = sqlc.arg(database_id);
+
+-- ADR-1027 restore drills (pkg/dbsched drill.go). schedd is the only writer.
+
+-- name: StartDatabaseRestoreDrill :execrows
+INSERT INTO database_restore_drills (drill_id, node_id, source_id, target_at)
+VALUES (@drill_id, @node_id, @source_id, @target_at)
+ON CONFLICT (drill_id) DO NOTHING;
+
+-- name: RunningDatabaseRestoreDrills :many
+SELECT * FROM database_restore_drills WHERE result = 'running' ORDER BY started_at;
+
+-- name: FinishDatabaseRestoreDrill :execrows
+UPDATE database_restore_drills
+   SET result = @result, finished_at = now(), recovered_to = sqlc.narg(recovered_to), error_code = sqlc.narg(error_code)
+ WHERE drill_id = @drill_id AND result = 'running';
+
+-- name: DatabaseRestoreDrillsByNode :many
+SELECT node_id,
+       max(started_at)::timestamptz AS last_started,
+       coalesce(max(finished_at) FILTER (WHERE result = 'ok'), 'epoch'::timestamptz)::timestamptz AS last_ok
+  FROM database_restore_drills
+ GROUP BY node_id;
+
+-- name: PruneDatabaseRestoreDrills :execrows
+DELETE FROM database_restore_drills WHERE result <> 'running' AND started_at < @before;
 
 -- name: SaveReadinessSubscriptionWatches :execrows
 UPDATE customer_workflow_readiness_subscriptions SET payload=$2, lease_token=NULL, lease_until=NULL, next_evaluation_at=$3 WHERE id=$1;

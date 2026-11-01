@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/logerasure"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
@@ -1044,6 +1045,8 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) PostgresUpgrades() *managedpg.Rollout               { return &r.postgresUpgrades }
+func (r *server) PostgresStorage() *managedpg.Rollout                { return &r.postgresStorage }
 func (r *server) LogArchive() *logerasure.Objects                    { return &r.logArchive }
 func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
 	return r.beforeAccountDelete(ctx, acct)

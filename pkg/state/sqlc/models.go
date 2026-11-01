@@ -3692,6 +3692,82 @@ type DataUpstreamProbesDefault struct {
 	ProbeNode        pgtype.Text
 }
 
+type DatabaseNode struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	BootSlots           int32
+	PostgresMajors      []int32
+	Lifecycle           string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type DatabaseRestoreDrill struct {
+	DrillID     pgtype.UUID
+	NodeID      string
+	SourceID    pgtype.UUID
+	TargetAt    pgtype.Timestamptz
+	StartedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	Result      string
+	RecoveredTo pgtype.Timestamptz
+	ErrorCode   pgtype.Text
+}
+
+type DatabaseRoleVerifier struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+	Verifier   string
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type DatabaseUsage struct {
+	DatabaseID pgtype.UUID
+	Meter      string
+	StartedAt  pgtype.Timestamptz
+	EndedAt    pgtype.Timestamptz
+	Rate       int64
+}
+
+type DatabaseVm struct {
+	DatabaseID           pgtype.UUID
+	NodeID               string
+	PostgresMajor        int32
+	VcpuCount            int32
+	MemMib               int32
+	VolumeBytes          int64
+	State                string
+	Bootstrapped         bool
+	AlwaysOn             bool
+	LastBackupAt         pgtype.Timestamptz
+	RestoreWindowSeconds int64
+	RestoreSource        pgtype.UUID
+	RestoreTarget        pgtype.Timestamptz
+	RestoreRecoveredTo   pgtype.Timestamptz
+	RestoreLeaseUntil    pgtype.Timestamptz
+	ResizePending        bool
+	LastError            pgtype.Text
+	LastActiveAt         pgtype.Timestamptz
+	StateChangedAt       pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	MoveNode             pgtype.Text
+	MoveLeaseUntil       pgtype.Timestamptz
+	Replicated           bool
+	StandbyNode          pgtype.Text
+	StandbyRunning       bool
+	StandbySynced        bool
+	PromotePending       bool
+	DropStandbySlot      bool
+	UpgradeMajor         pgtype.Int4
+	UpgradeFrom          pgtype.Int4
+	UpgradeOperation     pgtype.Text
+	UpgradeResult        pgtype.Text
+	UpgradeLeaseUntil    pgtype.Timestamptz
+	MajorHistory         []byte
+}
+
 type DeadLetterEvent struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -8282,20 +8358,23 @@ type ManagedPostgresOverageDelivery struct {
 }
 
 type ManagedPostgresResize struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	DatabaseID         pgtype.UUID
-	BackendID          string
-	BackendFingerprint string
-	ProviderResourceID string
-	DataResourceID     string
-	SourceSpec         []byte
-	TargetClass        string
-	Generation         int64
-	State              string
-	CreatedAt          pgtype.Timestamptz
-	CompletedAt        pgtype.Timestamptz
-	TargetScaleToZero  pgtype.Bool
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	DatabaseID              pgtype.UUID
+	BackendID               string
+	BackendFingerprint      string
+	ProviderResourceID      string
+	DataResourceID          string
+	SourceSpec              []byte
+	TargetClass             string
+	Generation              int64
+	State                   string
+	CreatedAt               pgtype.Timestamptz
+	CompletedAt             pgtype.Timestamptz
+	TargetScaleToZero       pgtype.Bool
+	TargetStorageLimitBytes pgtype.Int8
+	TargetPostgresMajor     pgtype.Int4
+	ErrorCode               pgtype.Text
 }
 
 type ManagedPostgresRestoreProof struct {

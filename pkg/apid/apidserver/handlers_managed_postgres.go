@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	managedpostgresapi "github.com/onebox-faas/faas/pkg/apid/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -18,6 +19,10 @@ import (
 )
 
 func managedPostgresProblem(w http.ResponseWriter, err error) {
+	if problem := managedpg.LimitProblem(err); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if managedpostgresapi.WriteCapacityProblem(w, err) {
 		return
 	}
@@ -82,16 +87,7 @@ func managedPostgresSpecWithinPlan(limits api.ManagedPostgresPlanLimits, spec ma
 }
 
 func managedPostgresPlanAllows(limits api.ManagedPostgresPlanLimits, spec managedpostgres.Spec) bool {
-	switch spec.Class {
-	case managedpostgres.ClassDevelopment:
-		return limits.DevelopmentAllowed
-	case managedpostgres.ClassBurstable:
-		return limits.BurstableAllowed
-	case managedpostgres.ClassProduction:
-		return limits.ProductionAllowed
-	default:
-		return false
-	}
+	return managedpg.PlanAllowsClass(limits, spec.Class)
 }
 
 func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest, limits api.ManagedPostgresPlanLimits) (managedpostgres.Spec, error) {

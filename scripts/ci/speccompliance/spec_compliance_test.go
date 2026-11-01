@@ -101,6 +101,16 @@ const (
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
 )
 
+// previewFields are DTO fields that apid shows only to accounts in a
+// preview's rollout and omits for everyone else, so they stay out of the
+// public spec and generated SDKs until launch.
+var previewFields = map[string]map[string]bool{
+	// ADR-1027 storage growth (FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS).
+	"ResizeManagedPostgresDatabaseRequest": {"storage_limit_bytes": true},
+	"ManagedPostgresResize":                {"from_storage_limit_bytes": true, "target_storage_limit_bytes": true},
+	"ManagedPostgresCapabilities":          {"storage_resize": true},
+}
+
 // routeExclude lists server.go routes that are deliberately not in the
 // public OpenAPI spec. Keep this in sync with the explanatory comments in
 // server.go's handler() method. Sorted alphabetically for diff stability.
@@ -195,6 +205,14 @@ var routeExclude = map[string]bool{
 	"PUT /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
 	"PUT /v1/internal/hosting/sites/{site}/retention":                              true,
 	"PUT /v1/internal/hosting/sites/{site}/suspension":                             true,
+
+	// ADR-1027 in-place major upgrades: a preview gated by
+	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered
+	// routes outside it, so it stays out of the public OpenAPI spec and
+	// generated SDKs until launch. pkg/api keeps its client for the CLI.
+	// Mirror across this list AND cmd/sdk-coverage/main.go::routeExclude.
+	"POST /v1/postgres/databases/{id}/upgrade":              true,
+	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -938,6 +956,12 @@ var dtoExclude = map[string]bool{
 	"ObsNodeDetailResponse":   true,
 	"ObsNodeDrainStatus":      true,
 	"ObsNodeMutationResponse": true,
+	// ADR-1027 operator moves, restarts and switchovers of native
+	// databases (/v1/admin/ops/databases/*): admin-only, like the node
+	// mutations.
+	"ObsDatabaseMoveResponse":       true,
+	"ObsDatabaseRestartResponse":    true,
+	"ObsDatabaseSwitchoverResponse": true,
 	// ObsTenant360Response / ObsTenantBilling / ObsTenantUsage*:
 	// PR #1099 P4 (post-PR #1111); admin-only tenant 360 + billing
 	// + usage shapes; intentionally undocumented.
@@ -2156,6 +2180,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	// Catches: field added to DTO but not to spec, renamed, etc. Preview
 	// fields of public DTOs stay out of the spec until launch.
 	for name, fields := range dtos {
+		for f := range previewFields[name] {
+			delete(fields, f)
+		}
 		specBody, ok := spec.Schemas[name]
 		if !ok {
 			continue

@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/dbvm"
 	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -289,6 +290,9 @@ type runDeps struct {
 	detectFC    func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	readHostCPU func() (fcvm.HostCPU, error)                                                                          // defaults to fcvm.ReadHostCPU (ADR-20261024225612)
 	listen      func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
+	// databaseLeases overrides the jail uid allocator of a database node;
+	// nil uses the whole range (tests share a host with a compute vmmd).
+	databaseLeases dbvm.Leaser
 	// openDB / openStore: invoked when a DB URL is configured, including
 	// default-local nodes that need durable managed PostgreSQL admission.
 	openDB    func(context.Context, string) (*pgxpool.Pool, error)
@@ -486,8 +490,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// refuses to start under RoleControlPlane. The role is set
 	// from TOML or FAAS_VMMD_ROLE at deploy time; default is
 	// RoleSingleBox so single-box dev boots unmoved.
-	if err := role.Require("vmmd", cfg.Role, role.RoleSingleBox, role.RoleComputeOnly); err != nil {
+	if err := role.Require("vmmd", cfg.Role, role.RoleSingleBox, role.RoleComputeOnly, role.RoleDatabase); err != nil {
 		return err
+	}
+	// ADR-1027: a database node runs database VMs only. Branch before any
+	// compute setup so it never registers as a compute node.
+	if role.Role(cfg.Role) == role.RoleDatabase {
+		return runDatabaseNode(ctx, cfg, ops, log, deps)
 	}
 	if err := checkBridgeUIDRange(os.Getenv, "/etc/passwd", "/etc/group"); err != nil {
 		return err
@@ -542,6 +551,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		netns.SetDefaultServiceAddressCIDR(api.ServiceAddressCIDR())
 	} else {
 		netns.SetDefaultServiceAddressCIDR(netip.Prefix{})
+	}
+	// ADR-1027: the database route is seeded the same way.
+	if cfg.ComputeNode.DatabaseRouteEnabled {
+		netns.SetDefaultDatabaseRouteAddress(api.DatabaseRouteAddress())
+	} else {
+		netns.SetDefaultDatabaseRouteAddress(netip.Addr{})
 	}
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
@@ -1777,12 +1792,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// The compute_nodes registry contains vmmd identities, but local
 		// service clients use role-specific leaves and are intentionally not
 		// rows in that registry. Keep the server-side CN gate strict while
-		// allowing the three services that legitimately call vmmd directly.
+		// allowing the services that legitimately call vmmd directly.
+		// pgproxyd opens DatabaseSession streams on database nodes
+		// (ADR-1027); the RPC itself admits no other caller.
 		serviceVerifier := wire.NewInmemNodeVerifier()
 		serviceVerifier.Set([]string{
 			"builderd.faas",
 			"gatewayd.faas",
 			"imaged.faas",
+			"pgproxyd.faas",
 			"schedd.faas",
 		})
 		serverVerifier = wire.NewAnyNodeVerifier(nodeVerifier, controlPlaneVerifier, serviceVerifier)
@@ -1916,6 +1934,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// whose successor adopts the guests.
 	impl.WithInstanceBridgeHandoff(cfg.AdoptRunningVMs && cfg.AdoptionRecord)
 	impl.ReconcileInstanceBridgeUnits(ctx)
+	if err := enableDatabaseVMs(ctx, impl, cfg.DatabaseVMs, mgr.JailLeases(), log); err != nil {
+		return err
+	}
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the source for the corroborating wake.boot_observed event at the
 	// gRPC server boundary and the canonical emit site for wake.readiness_200

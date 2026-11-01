@@ -634,6 +634,67 @@ service Vmmd {
   // paused VM and returns it to RUNNING; the snapshot stays
   // where it was (the dying vmmd's drive1 + mem are intact).
   rpc CancelLiveMigration(CancelLiveMigrationRequest) returns (CancelLiveMigrationResponse);
+
+  // Database VMs (ADR-1027). One Firecracker VM per managed database on a
+  // database node, with a persistent volume and no network interface. vmmd
+  // returns UNIMPLEMENTED unless the node runs database VMs.
+  //
+  // CreateDatabaseVolume creates and formats the database's volume.
+  rpc CreateDatabaseVolume(CreateDatabaseVolumeRequest) returns (CreateDatabaseVolumeResponse);
+  // DeleteDatabaseVolume removes a stopped database's volume. Deleting a
+  // missing volume succeeds.
+  rpc DeleteDatabaseVolume(DeleteDatabaseVolumeRequest) returns (DeleteDatabaseVolumeResponse);
+  // ListDatabaseVolumes reports the node's database volumes, so schedd can
+  // remove those of databases deleted while the node was lost.
+  rpc ListDatabaseVolumes(ListDatabaseVolumesRequest) returns (ListDatabaseVolumesResponse);
+  // GrowDatabaseVolume enlarges a stopped database's volume and its
+  // filesystem; shrinking is refused.
+  rpc GrowDatabaseVolume(GrowDatabaseVolumeRequest) returns (GrowDatabaseVolumeResponse);
+  // PruneDatabaseArchive prunes a database's archive in the shared bucket
+  // to its restore window, through this node's dbbackupd. schedd sends it
+  // for databases whose own node is lost.
+  rpc PruneDatabaseArchive(PruneDatabaseArchiveRequest) returns (PruneDatabaseArchiveResponse);
+  // DatabaseArchiveBytes reports the size of each database's archive on
+  // this node, for the restore-history usage meter.
+  rpc DatabaseArchiveBytes(DatabaseArchiveBytesRequest) returns (DatabaseArchiveBytesResponse);
+  // DatabaseArchiveHold places, reads or removes a hold in a database's
+  // archive through this node's dbbackupd (ADR-1027 snapshots): pruning
+  // keeps the archive restorable to the hold's point until it is removed.
+  // A read of a missing hold is NotFound; placing a name again with
+  // another point is AlreadyExists.
+  rpc DatabaseArchiveHold(DatabaseArchiveHoldRequest) returns (DatabaseArchiveHoldResponse);
+  // ExportDatabaseVolume streams a stopped database's volume for a move to
+  // another node: a header with its size, its data extents, then the
+  // transfer digest. The database cannot start until the stream ends.
+  rpc ExportDatabaseVolume(ExportDatabaseVolumeRequest) returns (stream DatabaseVolumeChunk);
+  // ImportDatabaseVolume receives an ExportDatabaseVolume stream, as schedd
+  // relays it, and installs the volume only if the digest matches. A
+  // database that already has a volume on this node is refused.
+  rpc ImportDatabaseVolume(stream DatabaseVolumeChunk) returns (ImportDatabaseVolumeResponse);
+  // SyncDatabaseArchive ships the database's archive files this node still
+  // holds to the shared bucket, through dbbackupd, before it moves away.
+  rpc SyncDatabaseArchive(SyncDatabaseArchiveRequest) returns (SyncDatabaseArchiveResponse);
+  // StartDatabase cold-boots the database VM and returns once guest-init
+  // answers. Database VMs are never snapshotted.
+  rpc StartDatabase(StartDatabaseRequest) returns (StartDatabaseResponse);
+  // StopDatabase parks the database: clean PostgreSQL shutdown, VM exit,
+  // jail teardown.
+  rpc StopDatabase(StopDatabaseRequest) returns (StopDatabaseResponse);
+  // DatabaseControl relays one guest control request (status, bootstrap,
+  // admin_sql).
+  rpc DatabaseControl(DatabaseControlRequest) returns (DatabaseControlResponse);
+  // DatabaseSession carries one client session to a running database VM's
+  // PostgreSQL data port, never its control port. The first client frame
+  // names the database; every later frame carries raw protocol bytes. The
+  // lifecycle RPCs above accept only schedd; this one only pgproxyd.
+  rpc DatabaseSession(stream DatabaseSessionFrame) returns (stream DatabaseSessionFrame);
+  // DatabaseReplication carries one replication stream from a standby's
+  // node to its running primary's guest (ADR-1027 production class). The
+  // first client frame names the database; every later frame carries raw
+  // protocol bytes. Only the database node schedd named as the database's
+  // standby (DatabaseControlRequest.standby_node) may call it.
+  rpc DatabaseReplication(stream DatabaseSessionFrame) returns (stream DatabaseSessionFrame);
+
   // Internal, fenced retirement of one PostgreSQL cutover incarnation.
   // Generic Destroy and process inventory cannot acknowledge this contract.
   rpc RetireManagedPostgresDrain(RetireManagedPostgresDrainRequest) returns (RetireManagedPostgresDrainResponse);
@@ -3456,6 +3517,276 @@ message RestoreEnvironmentQualificationRequest {
 message RestoreEnvironmentQualificationResponse {
   EnvironmentQualificationExecution execution = 1;
   WakeResponse wake = 2;
+}
+
+// Database VMs (ADR-1027). database_id is the managed database's UUID.
+message CreateDatabaseVolumeRequest {
+  string database_id = 1;
+  int64 size_bytes = 2;
+}
+
+message CreateDatabaseVolumeResponse {}
+
+message DeleteDatabaseVolumeRequest {
+  string database_id = 1;
+  // archive also deletes the database's archived WAL and base backups
+  // through dbbackupd: the database itself is being deleted.
+  bool archive = 2;
+  // archive_only deletes the archive and leaves volumes alone. schedd sends
+  // it to another node when the database's own node is lost, since every
+  // node reads and writes the shared bucket.
+  bool archive_only = 3;
+  // release_archive deletes the volume of a database that moved to another
+  // node, then ships this node's copy of its archive to the bucket and
+  // drops it there. The bucket keeps the archive.
+  bool release_archive = 4;
+}
+
+message DeleteDatabaseVolumeResponse {}
+
+message PruneDatabaseArchiveRequest {
+  string database_id = 1;
+  int64 restore_window_seconds = 2;
+}
+
+message PruneDatabaseArchiveResponse {
+  int32 backups = 1;
+  int32 wal = 2;
+}
+
+enum DatabaseArchiveHoldAction {
+  DATABASE_ARCHIVE_HOLD_ACTION_UNSPECIFIED = 0;
+  DATABASE_ARCHIVE_HOLD_ACTION_PUT         = 1;
+  DATABASE_ARCHIVE_HOLD_ACTION_GET         = 2;
+  DATABASE_ARCHIVE_HOLD_ACTION_DELETE      = 3;
+}
+
+message DatabaseArchiveHoldRequest {
+  string database_id = 1;
+  // 32 lowercase hex characters.
+  string name = 2;
+  DatabaseArchiveHoldAction action = 3;
+  // The instant a put pins.
+  google.protobuf.Timestamp point_in_time = 4;
+}
+
+message DatabaseArchiveHoldResponse {
+  // The hold; unset after a delete.
+  google.protobuf.Timestamp point_in_time = 1;
+  google.protobuf.Timestamp created_at = 2;
+}
+
+message DatabaseArchiveBytesRequest {
+  repeated string database_ids = 1;
+}
+
+message DatabaseArchiveBytesResponse {
+  // Bytes by database id; a database this node could not size is absent.
+  map<string, int64> bytes = 1;
+}
+
+message ExportDatabaseVolumeRequest {
+  string database_id = 1;
+}
+
+// DatabaseVolumeChunk is one message of a volume transfer. The first
+// carries database_id and size_bytes; each one after it an extent, its
+// bytes zstd-compressed; the last only sha256, the transfer digest.
+message DatabaseVolumeChunk {
+  string database_id = 1;
+  int64 size_bytes = 2;
+  int64 offset = 3;
+  bytes zstd_data = 4;
+  bytes sha256 = 5;
+}
+
+message ImportDatabaseVolumeResponse {}
+
+message SyncDatabaseArchiveRequest {
+  string database_id = 1;
+}
+
+message SyncDatabaseArchiveResponse {
+  // uploaded counts the files shipped by this call.
+  int64 uploaded = 1;
+}
+
+message GrowDatabaseVolumeRequest {
+  string database_id = 1;
+  int64 size_bytes = 2;
+}
+
+message GrowDatabaseVolumeResponse {}
+
+message ListDatabaseVolumesRequest {}
+
+message ListDatabaseVolumesResponse {
+  repeated DatabaseVolume volumes = 1;
+}
+
+message DatabaseVolume {
+  string database_id = 1;
+  // running: the database's VM is up on this node.
+  bool running = 2;
+}
+
+message StartDatabaseRequest {
+  string database_id = 1;
+  int32 postgres_major = 2;
+  int32 vcpu_count = 3;
+  int32 mem_size_mib = 4;
+  // Optional volume ceilings per service class; zero means unlimited.
+  int64 volume_bandwidth_bytes_per_sec = 5;
+  int64 volume_ops_per_sec = 6;
+  // A point-in-time restore boot (ADR-1027): the empty volume becomes
+  // restore_source as of restore_target. Both or neither.
+  string restore_source = 7;
+  google.protobuf.Timestamp restore_target = 8;
+  // The database's restore window; dbbackupd keeps its archive that long.
+  int64 restore_window_seconds = 9;
+  // restore_until_end lets a restore whose archive ends before its target
+  // recover to the end of the archive (the source's node is lost).
+  bool restore_until_end = 10;
+  // A standby boot (ADR-1027 production class): the volume becomes a hot
+  // standby of the database's primary, which runs on database node
+  // primary_node, whose vmmd is at primary_target. Both or neither; never
+  // with a restore.
+  string primary_node = 11;
+  string primary_target = 12;
+  // A failover while parked (ADR-1027 production class): the volume is a
+  // standby that took over from a lost primary; this boot promotes it
+  // onto a new timeline as soon as it replays. Never with a primary or a
+  // restore.
+  bool promote = 13;
+  // An in-place major upgrade (ADR-1027): the volume holds a cluster of
+  // this older major, which the boot upgrades to postgres_major with
+  // pg_upgrade --link. The node needs both majors' bases. Never with a
+  // primary, a promotion or a restore.
+  int32 upgrade_from_major = 14;
+}
+
+message StartDatabaseResponse {
+  // Guest state after boot: needs_bootstrap, starting or ready.
+  string state = 1;
+}
+
+message StopDatabaseRequest {
+  string database_id = 1;
+}
+
+message StopDatabaseResponse {}
+
+message DatabaseControlRequest {
+  string database_id = 1;
+  // One of status, bootstrap, admin_sql, basebackup, flush_wal, replication,
+  // promote, import, import_status, mark_drill, check_drill. Stop goes
+  // through StopDatabase.
+  string op = 2;
+  // admin_sql only: statements run as the superuser, stopping at the first
+  // error; atomic batches wrap themselves in BEGIN/COMMIT.
+  // Sensitive (can carry role passwords): never logged.
+  string sql = 3;
+  // flush_wal only: the instant the archive must cover.
+  google.protobuf.Timestamp after = 4;
+  // replication only: the mode to set (off, async, sync); empty reports.
+  string replication = 5;
+  // replication only: the database node allowed to stream from this
+  // primary. Required with async and sync; off forgets it.
+  string standby_node = 6;
+  // import only: the database to copy into this one (ADR-1027 migration
+  // off Neon).
+  DatabaseImport import = 7;
+  // mark_drill and check_drill only: the restore drill's id, a lowercase
+  // UUID (ADR-1027 restore drills).
+  string drill = 8;
+}
+
+// DatabaseImport names an import's source. vmmd relays the guest's
+// connections to host:port over TLS it verifies for host, and only to a
+// public address; the rest goes to the guest. Sensitive (password): never
+// logged.
+message DatabaseImport {
+  string host = 1;
+  int32 port = 2;
+  string database = 3;
+  string user = 4;
+  string password = 5;
+  // The empty database here that receives the copy, and the role that
+  // owns everything restored.
+  string target_database = 6;
+  string owner = 7;
+  // Source extensions not to copy (the source provider's own).
+  repeated string skip_extensions = 8;
+  // The import's name (a lowercase UUID; ADR-1370's copy_operation_id).
+  // The guest records it with a finished copy; another ID while one is
+  // running or done is refused (import_operation_mismatch).
+  string operation_id = 9;
+}
+
+message DatabaseImportStatus {
+  // none, running, done or failed.
+  string state = 1;
+  // Stable code of a failed import.
+  string error_code = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  int32 source_major = 5;
+  // The import this status describes.
+  string operation_id = 6;
+  // For extension_unavailable: the source extensions the target cannot
+  // create (plain identifiers, at most 16).
+  repeated string missing_extensions = 7;
+  // For target_too_small: the volume size the copy needs, zero when free
+  // space ran out during the copy.
+  int64 required_volume_bytes = 8;
+}
+
+message DatabaseControlResponse {
+  string state = 1;
+  int32 postgres_major = 2;
+  // Stable guest error code; never PostgreSQL output.
+  string error_code = 3;
+  // PostgreSQL SQLSTATE of a failed admin_sql batch.
+  string sqlstate = 4;
+  // Id of the base backup a basebackup op stored (ADR-1027).
+  string backup = 5;
+  // A restored database's last replayed commit.
+  google.protobuf.Timestamp recovered_to = 6;
+  // replication only: the primary's view of its standby.
+  DatabaseReplicationStatus replication = 7;
+  // import and import_status only.
+  DatabaseImportStatus import = 8;
+  // A ready database's volume (ADR-1027 storage guard).
+  DatabaseStorage storage = 9;
+  // The VM runs an outdated base or launch, which a restart replaces;
+  // vmmd sets it, never the guest.
+  bool stale = 10;
+  // mark_drill only: the guest clock once the drill's mark committed.
+  google.protobuf.Timestamp marked_at = 11;
+}
+
+message DatabaseStorage {
+  int64 total_bytes = 1;
+  int64 free_bytes = 2;
+  // The storage guard turned the primary read-only.
+  bool read_only = 3;
+  // Short of the space that would end read-only.
+  bool low = 4;
+}
+
+message DatabaseReplicationStatus {
+  // off, async or sync.
+  string mode = 1;
+  bool streaming = 2;
+  // Commits wait for the standby, which has flushed every one so far.
+  bool synchronous = 3;
+  int64 lag_bytes = 4;
+}
+
+message DatabaseSessionFrame {
+  // First client frame only.
+  string database_id = 1;
+  bytes data = 2;
 }
 
 message ManagedPostgresDrainFrame {

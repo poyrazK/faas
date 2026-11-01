@@ -76,6 +76,9 @@ var DaemonMaxConnections = map[string]int32{
 	"outboundd":   2,
 	"s3-gatewayd": 2,
 	"maild":       2,
+	// pgproxyd on each database node (ADR-1027) reads role verifiers
+	// and holds no LISTEN; postgres_capacity counts it per database node.
+	"pgproxyd": 4,
 	// The hosted management MCP bridge (ADR-20261026195952): lease renewal
 	// and state writes; it subscribes to nothing.
 	"mcp-bridge": 2,
@@ -126,7 +129,10 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 	"outboundd":   2,
 	"s3-gatewayd": 2,
 	"maild":       2,
-	"mcp-bridge":  2,
+	// pgproxyd on each database node (ADR-1027) reads role verifiers
+	// and holds no LISTEN; postgres_capacity counts it per database node.
+	"pgproxyd":   4,
+	"mcp-bridge": 2,
 }
 
 const defaultMaxConnections int32 = 4

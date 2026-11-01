@@ -70,6 +70,10 @@ func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 	if got := daemonMaxConnections("faas-gatewayd-internal"); got != 8 {
 		t.Fatalf("gatewayd-internal pool = %d, want 8 for six subscribers plus request headroom", got)
 	}
+	// ADR-1027: the role counts pgproxyd once per database node.
+	if got, declared := daemonMaxConnections("faas-pgproxyd"), postgresCapacityDefault(t, "faas_postgres_per_database_node_pool_budget"); got != declared {
+		t.Fatalf("pgproxyd pool = %d, role declares %d per database node", got, declared)
+	}
 	if got := daemonMaxConnections("migration-tool"); got != defaultMaxConnections {
 		t.Fatalf("unknown process pool = %d, want default %d", got, defaultMaxConnections)
 	}

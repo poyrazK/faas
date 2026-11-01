@@ -6870,6 +6870,14 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// DatabaseVMWritebackBurstMB is how far a database VM's memory.max sits
+	// above its memory.high, which is BillableRAMMB (ADR-1027). The VM's
+	// volume writes leave host page cache charged to its cgroup; with only
+	// PerVMOverheadMB of room, dirty pages writeback has not cleaned yet got
+	// a write-heavy database OOM-killed. memory.high throttles and reclaims
+	// above BillableRAMMB, so the steady state, admission and metering stay
+	// at BillableRAMMB; only this transient burst may exceed it.
+	DatabaseVMWritebackBurstMB = 56
 	// MeasuredChargeFloorMB and MeasuredChargeHeadroomPercent define the
 	// ADR-909 (proposed) charge: what admission by measured memory would book
 	// for a running instance. schedd only reports it (shadow mode); admission
@@ -13299,6 +13307,38 @@ func ServiceTCPReservedPorts() []int {
 // destination; the OCI puller's egress denylist already refuses it.
 func ServiceAddressCIDR() netip.Prefix {
 	return netip.MustParsePrefix("198.19.0.0/16")
+}
+
+// ADR-1027: the app route to native managed databases. Guests reach every
+// database at one platform address, identical on every node; the host DNATs
+// it to a node-local forwarder that relays bytes to pgproxyd over the
+// overlay. Database traffic is a platform hop, not tenant egress, so it needs
+// no egress port on any plan.
+const (
+	// DatabaseRoutePort is the PostgreSQL port guests dial on the address.
+	DatabaseRoutePort = 5432
+	// DatabaseRouteProxyPort is the forwarder's reserved tenant-bridge port.
+	// No netns rule admits it: guests reach it only through the host DNAT.
+	DatabaseRouteProxyPort = 10083
+	// DatabaseRouteSessionsPerNodeMax caps concurrent database sessions
+	// through one node's forwarder.
+	DatabaseRouteSessionsPerNodeMax = 8192
+	// DatabaseRouteSessionsPerSourceMax caps one instance's concurrent
+	// sessions: well above any connection pool, far below the node cap.
+	DatabaseRouteSessionsPerSourceMax = 256
+	// DatabaseRouteDialTimeout bounds one pgproxyd dial before the forwarder
+	// tries the next upstream.
+	DatabaseRouteDialTimeout = 3 * time.Second
+	// DatabaseRouteDNSTTLSeconds is the TTL of the resolver's answer. The
+	// address never changes, so it can outlive service answers.
+	DatabaseRouteDNSTTLSeconds = 60
+)
+
+// DatabaseRouteAddress is the platform address of the database route
+// (ADR-1027). Like ServiceAddressCIDR it sits in the RFC 2544 benchmarking
+// range, in the half ADR-576 does not use.
+func DatabaseRouteAddress() netip.Addr {
+	return netip.MustParseAddr("198.18.0.1")
 }
 
 // UDPListenerReservationsPerAppMax bounds all durable reservations, including
