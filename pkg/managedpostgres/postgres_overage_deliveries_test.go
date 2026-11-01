@@ -7,6 +7,50 @@ import (
 	"time"
 )
 
+// adr: 20261101143527 — one reserved step per provider, subject and month;
+// completing it records the delivery and clears it in one transaction.
+func TestPostgresStoreOverageReservations(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	pending := OveragePendingStep{Provider: "polar", Live: true, Step: OverageChargeStep{SubjectID: accountID, PeriodStart: month,
+		At: month.Add(2 * time.Hour), UsedUnitSeconds: 93600, AllowanceSeconds: 90000, BilledUnitSeconds: 3600, TargetMillicents: 20_000}}
+	if _, found, err := store.OveragePending(ctx, "polar", accountID, month); err != nil || found {
+		t.Fatalf("pending before any reservation: %v, %v", found, err)
+	}
+	if reserved, err := store.ReserveOverage(ctx, pending); err != nil || !reserved {
+		t.Fatalf("reserve: %v, %v", reserved, err)
+	}
+	other := pending
+	other.Step.TargetMillicents = 40_000
+	if reserved, err := store.ReserveOverage(ctx, other); err != nil || reserved {
+		t.Fatalf("a second reservation for the month: %v, %v", reserved, err)
+	}
+	got, found, err := store.OveragePending(ctx, "polar", accountID, month.Add(time.Hour))
+	if err != nil || !found || got != pending {
+		t.Fatalf("pending = %+v, %v, %v; want %+v", got, found, err, pending)
+	}
+	if recorded, err := store.CompleteOverage(ctx, pending); err != nil || !recorded {
+		t.Fatalf("complete: %v, %v", recorded, err)
+	}
+	if delivered, err := store.OverageDelivered(ctx, "polar", accountID, month); err != nil || delivered.Millicents != 20_000 || !delivered.Live {
+		t.Fatalf("delivered = %+v, %v", delivered, err)
+	}
+	if _, found, err := store.OveragePending(ctx, "polar", accountID, month); err != nil || found {
+		t.Fatalf("pending after completion: %v, %v", found, err)
+	}
+	// A reservation whose base the month's charge has passed is cleared
+	// without recording it.
+	if reserved, err := store.ReserveOverage(ctx, pending); err != nil || !reserved {
+		t.Fatalf("stale reservation: %v, %v", reserved, err)
+	}
+	if recorded, err := store.CompleteOverage(ctx, pending); err != nil || recorded {
+		t.Fatalf("stale completion recorded: %v, %v", recorded, err)
+	}
+	if _, found, err := store.OveragePending(ctx, "polar", accountID, month); err != nil || found {
+		t.Fatalf("stale reservation kept: %v, %v", found, err)
+	}
+}
+
 func TestPostgresStoreOverageDeliveries(t *testing.T) {
 	store, _, ctx, accountID := postgresStoreFixture(t)
 	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
