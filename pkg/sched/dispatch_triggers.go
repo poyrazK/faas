@@ -368,6 +368,9 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 	// closed and a Kafka reader leaves its consumer group.
 	polled := make([]sqlc.Trigger, 0, len(triggers))
 	defer func() { l.evictTriggerPollers(polled) }()
+	// Broker triggers share the node's lanes between accounts, so they are
+	// submitted together once the walk has found them (ADR-20261101093015).
+	var brokerTriggers []sqlc.Trigger
 	for i := range triggers {
 		t := triggers[i]
 		if queuePushLaneEligible(t) {
@@ -385,7 +388,7 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 				continue
 			}
 			polled = append(polled, t)
-			l.scheduleBrokerTriggerLane(ctx, t, store)
+			brokerTriggers = append(brokerTriggers, t)
 			continue
 		}
 		polled = append(polled, t)
@@ -399,6 +402,7 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 				"err", err)
 		}
 	}
+	l.scheduleBrokerTriggerLanes(ctx, brokerTriggers, store)
 }
 
 // triggerPlanResolver caches per-app plan lookups so the per-record
@@ -476,6 +480,15 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		return nil
 	}
 	t = l.longTimeoutTriggerBatch(ctx, t)
+	// 1.5. Per-plan record rate (ADR-20261101093015): poll at most the app's
+	// budget; records over it stay on the broker for a later poll.
+	settleRate := func(int) {}
+	if exclusiveBinding == nil && !agentTarget {
+		var budget bool
+		if t, settleRate, budget = l.reserveTriggerRecordRate(t, planFor); !budget {
+			return nil
+		}
+	}
 
 	// 2. Poll. The broker may carry a W3C context in each record, but
 	// it is not available until Poll returns. Keep the poll span rooted
@@ -484,6 +497,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	pollCtx, pollSpan := startTriggerSpan(ctx, "gregale.trigger.poll", oteltrace.SpanKindConsumer, nil,
 		attribute.String("gregale.trigger.kind", t.Kind))
 	res := poller.Poll(pollCtx, t)
+	settleRate(len(res.Records))
 	l.recordTriggerConsumerHealth(ctx, store, t, res)
 	pollSpan.SetAttributes(attribute.Int("gregale.trigger.records", len(res.Records)))
 	if res.Error != nil {
@@ -790,37 +804,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		return nil
 	}
 
-	// 5. Rate-limit gate. Deny → dead_letter(reason='rate_limited').
-	// review finding #4: the plan argument was hardcoded to api.PlanFree,
-	// which collapsed Hobby/Pro/Scale customers to the Free bucket's
-	// 1-wake-per-minute ceiling. Resolve the actual account plan via
-	// the per-tick plan cache (constructed in runTriggerTick).
-	appPlan := api.PlanFree
-	if planFor != nil {
-		appPlan = planFor(t.AppID.String())
-	}
-	// Agent runs wake no app; their plan limits bound them instead.
-	if exclusiveBinding == nil && !agentTarget && l.rateLimiter != nil && !l.rateLimiter.AllowWakeApp(t.AppID.String(), appPlan) {
-		l.handleRateLimitedBatch(ctx, poller, t, batch, store)
-		return nil
-	}
-	// Review finding #8: also consult the per-account bucket so a
-	// runaway broker fan-out across many apps under one account
-	// is rejected even when each app stays within its per-app
-	// cap. The lookup walks app → account inline because the
-	// per-tick plan cache above only stores AccountPlan, not the
-	// account_id; an extra round-trip per trigger (one per tick)
-	// is acceptable because the deny path is the hot path we
-	// want to keep fast.
-	if exclusiveBinding == nil && !agentTarget && l.rateLimiter != nil {
-		app, appErr := l.engine.Store().AppByID(ctx, t.AppID.String())
-		if appErr == nil {
-			if !l.rateLimiter.AllowWakeAccount(app.AccountID, appPlan) {
-				l.handleRateLimitedBatch(ctx, poller, t, batch, store)
-				return nil
-			}
-		}
-	}
+	// 5. The per-plan record rate was taken before the poll (step 1.5), so
+	// no record here is over it: a rate-limited record is never
+	// dead-lettered or committed past (ADR-20261101093015).
 
 	// 6. Claim trigger_records rows.
 	var claimed []sqlc.TriggerRecord
@@ -1630,70 +1616,7 @@ func readGatewayDispatchResponse(body io.Reader) ([]byte, error) {
 //
 // Claimed broker records pass their item identifiers and claim generations
 // directly; the generation guards the row transition and its DLQ receipt.
-// handleRateLimitedBatch is the CRIT-1 (PR #993 / issue #757
-// closure) seam for the rate-limit-deny branches. Pre-CRIT-1 each
-// deny branch returned immediately after deadLetterAll WITHOUT
-// ack'ing the broker, which pinned the broker offset at the front
-// of the rate-limited batch and re-delivered the same records on
-// every subsequent tick. The new semantic is:
 //
-//  1. deadLetterAll inserts the trigger_dead_letter audit row
-//     (the disposition is preserved).
-//  2. poller.Ack advances only handles with committed terminal receipts.
-//     Handles without receipts are retried, including the whole Kafka batch
-//     when an offset commit could skip unfinished lower offsets.
-//
-// Extracted so the test surface (TestRateLimitDeny_AcksBrokerOffset)
-// can pin the dual-call sequence without driving the full dispatch
-// tick.
-func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource, t sqlc.Trigger, batch []SourceRecord, store storeLike) {
-	items := batchItemIDs(batch)
-	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(batch))
-	for _, record := range batch {
-		if !record.ReceivedAt.IsZero() {
-			l.observeESMRecordProcessing(t.Kind, time.Since(record.ReceivedAt).Seconds())
-		}
-	}
-	if rt, ok := poller.(*realtimePoller); ok {
-		// The handler never ran: return the attempt to the group.
-		if err := rt.Nack(ctx, t, items, triggerReasonRateLimited); err != nil {
-			l.log.Warn("sched trigger tick: return rate-limited realtime batch", "trigger_id", t.ID.String(), "err", err)
-		}
-		return
-	}
-	if queue, ok := poller.(*queuePoller); ok {
-		if err := queue.finishInvocations(ctx, t, items, "dead_letter", "dead_letter", "rate_limited", triggerReasonRateLimited, `{"trigger_dispatch":"rate_limited"}`); err != nil {
-			l.log.Warn("sched trigger tick: finalize rate-limited queue invocations",
-				"trigger_id", t.ID.String(),
-				"err", err)
-			return
-		}
-		l.deadLetterAllWithMark(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store, false)
-		return
-	}
-	finalized := l.deadLetterAllForApp(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store)
-	unfinalized := missingItemIDs(items, finalized)
-	if terminal, ok := poller.(terminalNacker); ok {
-		// Queue rows have not yet produced trigger_records, so Ack would
-		// incorrectly mark the invocation successful. Move them directly
-		// to the queue's terminal state; external brokers keep the legacy
-		// Ack-after-DLQ offset advance.
-		_ = terminal.NackTerminal(ctx, t, finalized, triggerReasonRateLimited)
-		if len(unfinalized) > 0 {
-			_ = poller.Nack(ctx, t, unfinalized, triggerReasonBrokerError)
-		}
-		return
-	}
-	if poller.Kind() == "kafka" && len(unfinalized) > 0 {
-		_ = poller.Nack(ctx, t, items, triggerReasonBrokerError)
-		return
-	}
-	_ = poller.Ack(ctx, t, finalized)
-	if len(unfinalized) > 0 {
-		_ = poller.Nack(ctx, t, unfinalized, triggerReasonBrokerError)
-	}
-}
-
 // deadLetterAll retains the narrow test seam used by the trigger unit tests.
 // Production call sites use deadLetterAllForApp so observability carries the
 // authoritative app/account identity into the audit and metric payload.

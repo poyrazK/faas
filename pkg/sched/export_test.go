@@ -316,6 +316,23 @@ func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep
 // adr: 20261027162741 — broker triggers run on lanes of their own.
 func (l *Loop) XRunTriggerTick(ctx context.Context) { l.runTriggerTick(ctx) }
 
+// XBrokerLanesHeld is how many broker trigger lanes the account holds.
+// adr: 20261101093015 — the lanes are shared between accounts.
+func (l *Loop) XBrokerLanesHeld(accountID string) int {
+	l.brokerLanes.mu.Lock()
+	defer l.brokerLanes.mu.Unlock()
+	return l.brokerLanes.held[accountID]
+}
+
+// XBrokerTriggerLaneSlots is the node's broker trigger lanes.
+const XBrokerTriggerLaneSlots = api.BrokerTriggerDispatchSlotsPerNode
+
+// XNewTriggerRecordRateLimiter returns a record rate limiter on a fake clock.
+// adr: 20261101093015 — the per-plan record rate defers, never drops.
+func XNewTriggerRecordRateLimiter(now func() time.Time) *TriggerRecordRateLimiter {
+	return newTriggerRecordRateLimiter(now)
+}
+
 // XWaitDispatches waits for every dispatch the drain started, including those
 // that outlived their tick.
 // adr: 20261027160930 — a slow dispatch finishes after its tick returns.

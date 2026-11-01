@@ -1532,7 +1532,10 @@ const QueuePushDispatchSlotsPerNode = 32
 
 // BrokerTriggerDispatchSlotsPerNode bounds the external broker triggers
 // (Kafka, NATS, Redis Streams, SQS-compatible) one schedd polls and delivers
-// at once, one batch per trigger (ADR-20261027162741).
+// at once, one batch per trigger (ADR-20261027162741). Each account with
+// broker triggers on the node is owed an even share, at least one and no more
+// than its triggers; idle lanes are lent but never re-lent while an account
+// waits for its share (ADR-20261101093015).
 const BrokerTriggerDispatchSlotsPerNode = 16
 
 // Trigger ledger retention: terminal trigger_records rows without an explicit
@@ -4530,14 +4533,15 @@ type Limits struct {
 	// pkg/state/pgstore.go). The SQL CHECK [1, 25] is the hard
 	// ceiling. 0 with TriggersAllowed=false (Free).
 	TriggerMaxAttemptsMax int
-	// TriggerRecordsPerSecondPerApp caps the per-app steady-state
-	// dispatch rate schedd permits to a single trigger. The cap is
-	// enforced by WakeRateLimiter (pkg/sched/rate_limit.go) — the
-	// same bucket the wake path drains. Hobby 100 / Pro 1000 /
-	// Scale 10000. Above the cap, records transition to dead_letter
-	// with reason='rate_limited' rather than back-pressuring the
-	// broker (back-pressure on Kafka consumer groups breaks the
-	// group-rebalance contract). 0 with TriggersAllowed=false (Free).
+	// TriggerRecordsPerSecondPerApp caps the records per second an
+	// app's external broker triggers (Kafka, NATS, Redis Streams,
+	// SQS-compatible) take from their brokers, enforced by
+	// TriggerRecordRateLimiter (pkg/sched/trigger_record_rate.go): a
+	// bucket per app on each schedd holding one second of the rate.
+	// Hobby 100 / Pro 1000 / Scale 10000. A poll asks the broker for
+	// at most the app's budget, so records over the cap stay on the
+	// broker for a later poll; none is dead-lettered or acknowledged
+	// (ADR-20261101093015). 0 with TriggersAllowed=false (Free).
 	TriggerRecordsPerSecondPerApp int
 	// TriggerPayloadMaxBytes (migration 00274 / audit #7) caps the
 	// per-trigger `payload_max_bytes` the customer may set. SQL
@@ -11649,13 +11653,11 @@ func (p Plan) TriggerMaxAttemptsMax() int {
 	return l.TriggerMaxAttemptsMax
 }
 
-// TriggerRecordsPerSecondPerApp returns the per-app
-// steady-state dispatch rate schedd permits to a single trigger.
-// The cap is enforced by WakeRateLimiter (pkg/sched/rate_limit.go)
-// — the same bucket the wake path drains. Hobby 100 / Pro 1000
-// / Scale 10 000. Above the cap, records transition to
-// dead_letter with reason='rate_limited' rather than
-// back-pressuring the broker. Unknown plans fail closed
+// TriggerRecordsPerSecondPerApp returns the records per second an
+// app's external broker triggers may take from their brokers,
+// enforced by pkg/sched's TriggerRecordRateLimiter. Hobby 100 / Pro
+// 1000 / Scale 10 000. Records over the cap stay on the broker for a
+// later poll (ADR-20261101093015). Unknown plans fail closed
 // (return 0).
 func (p Plan) TriggerRecordsPerSecondPerApp() int {
 	l, ok := LimitsFor(p)
