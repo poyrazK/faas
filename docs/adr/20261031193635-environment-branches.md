@@ -101,9 +101,9 @@ The create request makes no provider call, boots nothing and copies no data.
    is recovered by schedd's prime recovery, which re-primes rows left in `snapshotting`.
 4. If any deployment cannot be created, apid deletes the branch.
 
-Later slices add one database intent per managed PostgreSQL binding and one overlay
-bucket per object-storage binding (sections 4 and 5). Slice 1 refuses a parent with
-managed data bindings (`environment_branch_managed_data_unsupported`).
+Managed PostgreSQL is copied after the transaction by the branch data reconciler
+(section 4). A parent with managed object storage is still refused
+(`environment_branch_managed_data_unsupported`) until overlay buckets land (section 5).
 
 **Target:** apid-side p99 under 100 ms for a project at the plan's app cap. Rows are
 bounded by existing per-project caps.
@@ -152,28 +152,43 @@ booting. Rules:
   without reloading must not be able to reach the parent's data with the parent's
   credentials.
 
-### 4. PostgreSQL: Neon branches now, a branch provider interface for later
+### 4. PostgreSQL: Neon branches now, our own storage later
 
-- **Interface.** `managedpostgres` gains an optional `BranchProvider` capability with
-  three operations: create a branch of a database as of T, inspect it, and delete it.
-  Neon implements it on the existing point-in-time restore (a Neon branch in the source's
-  Neon project, `init_source=parent-data`). Gregale's own copy-on-write storage would
-  implement the same interface in a later ADR.
-- **Creation.** The branch database is created asynchronously by the managed PostgreSQL
-  reconciler, which today sweeps every 15 s. Branch creation starts from the outbox right
-  after commit, so the database is usually ready before the first request.
-- **Waiting on first wake.** A branch deployment that has a pending database **waits in
-  the wake path** until the database is ready, up to the app's cold-wake wait budget. It
-  then answers `503 environment_branch_data_pending` with `Retry-After`. It cannot boot
-  first and connect later, because the binding URL is read at boot. The connection fence
-  (`pkg/managedpostgres/connectionfence`) refuses connections and does not hold them, so
-  it is not used here.
-- **Accounting.**
-  - Branch databases don't count toward the plan's database limit. They have their own
-    allowance, `EnvironmentBranchDatabases`.
-  - They do count toward pooled storage and CU-hours, as ADR-20261031091607 meters them.
-  - The fleet's branch count per Neon project must stay under Neon's per-project branch
-    limit. Verify that limit against the Neon plan before setting caps.
+As built in slice 2:
+
+- **Provider seam.** No new interface is needed. A branch copy is an ordinary managed
+  PostgreSQL point-in-time restore (`managedpostgres.Service.RestoreWithResult`), which
+  calls the backend's `Provider.Restore`. On Neon that is a branch in the source's Neon
+  project (`init_source=parent-data` at `parent_timestamp`). Gregale's own copy-on-write
+  storage would implement the same `Provider.Restore` in a later ADR.
+- **Creation stays instant.** The branch transaction only counts the parent's managed
+  PostgreSQL credentials. If there are any, the branch starts with `data_state = pending`
+  and copies nothing; the parent's managed credentials are never copied into the branch.
+- **Branch data reconciler** (apid, every 5 s, leased per branch so replicas don't
+  collide):
+  1. records each copy in `project_environment_branch_databases` before restoring it,
+     under the deterministic name `br-<slug>-<hash(environment, source)>`;
+  2. restores the source as of the branch point;
+  3. binds the copy into the branch's scope once per parent binding, with fresh
+     credentials and the same environment key and access;
+  4. marks the data `ready` and primes the branch's deployments.
+
+  Every step is idempotent, so a retry resumes. Retries back off exponentially (5 s to
+  10 min, at most 20 attempts). Quota, unsupported-restore and invalid-request errors
+  fail the data at once, with a message that carries no provider text.
+- **Activation waits for the data.** This replaces the wake-path wait. schedd's no-boot
+  activation and imaged's acceptance both require `data_state = ready`, so a workload
+  never boots without its binding URLs; requests before then find no live deployment in
+  the branch. The connection fence (`pkg/managedpostgres/connectionfence`) refuses
+  connections rather than holding them, so it isn't used.
+- **Deletion.** Copy rows have no foreign key to the environment. After a branch is
+  deleted or expires, the reconciler claims each orphaned copy and deletes its bindings,
+  then the copy, then the row. A copy whose restore never recorded its ID is found by
+  name.
+- **Accounting.** For now a copy is an ordinary database: it needs point-in-time restore
+  (Pro and Scale) and a free slot under the plan's database limit, and it counts toward
+  pooled storage and CU-hours. A separate `EnvironmentBranchDatabases` allowance, and a
+  check of Neon's per-project branch limit, are follow-ups.
 - **Isolation.** Writes stay in the branch, and the parent database is never touched.
   Data never merges back.
 
@@ -278,7 +293,7 @@ Overlay data must always pass through the gateway.
 |---|---|---|
 | 0 | Prerequisites: #6034, #6037, #6044 merged; the clone-database cleanup fixes (E1/E2 from the 2026-10-30 stage audit) merged. | Already tracked. |
 | 1 | Branch primitive: schema, create/list/delete, TTL sweeper, config copy, unprimed artifact deployments, cold boot on first request, limits, gate. | Create p99 < 100 ms apid-side. First request cold-boots with no build row. Parent deployments, traffic and snapshots unchanged. Delete leaves nothing. |
-| 2 | PostgreSQL branches: `BranchProvider` on Neon, outbox start, wait in the wake path, accounting, deletion. | Branch data equals the parent at T. Branch writes never reach the parent. The Neon branch is gone after delete. |
+| 2 | PostgreSQL branches: branch data reconciler (restore at T, bind into the branch, data-gated activation), orphaned-copy deletion. A separate database allowance is a follow-up. | The copy is restored at T and bound with new credentials. Workloads stay dark until it exists. The copy and its binding are gone after delete. |
 | 3 | Overlay buckets with `as_of` and `live_parent` consistency. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. |
 | 4 | Network and identity scoping: branch DNS namespace, private networks off, identity claims. | A branch caller never reaches a production service or private network. |
 | 5 | Restore with a new identity (opt-in), after the credential gate in section 3. | Identity digest acknowledged. A wrong or missing digest cold-boots. Parent credentials are refused from the branch. |
