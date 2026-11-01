@@ -1781,6 +1781,13 @@ func NewGithubdBridgeForTest(store githubdBridgeStore, notif githubdBridgeNotifi
 // after ConfigureAgentsForTest.
 func (s *server) SetAgentStoreForTest(store agents.Store) { s.agentAPI.Store = store }
 
+// SetAgentCallbackRevocationsForTest gives the configured agent API the
+// callback revocations it otherwise keeps in Postgres, so the callback
+// routes answer; call it after ConfigureAgentsForTest.
+func (s *server) SetAgentCallbackRevocationsForTest(r agents.CallbackRevocations) {
+	s.agentAPI.Revocations = r
+}
+
 // RealtimePreviewEveryone shows realtime preview features to every account
 // (ADR-20261019102657).
 func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
