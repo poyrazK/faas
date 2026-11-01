@@ -881,7 +881,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_SLOT_ID", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "reviewed public gateway slot identity; required only when public edge confirmation is enabled (ADR-699)"},
 	{Name: "FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "default-off public edge withdrawal barrier; requires reviewed confirmation and activity controls (ADR-701)"},
 	{Name: "FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "default-off private runtime routing receipt; enable only with a reviewed gateway slot identity (ADR-695)"},
-	{Name: "FAAS_S3_GATEWAY_CONTROL_ADDR", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Default: "127.0.0.1:9096"},
+	{Name: "FAAS_S3_GATEWAY_CONTROL_ADDR", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Default: "127.0.0.1:9096", Note: "loopback everywhere except the compute unit, which binds 0.0.0.0:9096 for the control plane's scrape behind nftables (ADR-20261031122757)"},
 	{Name: "FAAS_S3_GATEWAY_LISTEN_ADDR", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Default: "127.0.0.1:8084"},
 	{Name: "FAAS_S3_GATEWAY_ROLE", Owners: []string{"s3-gatewayd"}, Source: EnvSourceDropin, Default: "single-box", Note: "production control-plane service must set control-plane explicitly; compute-only on a compute node runs the gateway in compute mode (ADR-20261031122757)"},
 	{Name: "FAAS_S3_GATEWAY_SPOOL_DIR", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Note: "production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd"},

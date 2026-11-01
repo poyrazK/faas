@@ -212,8 +212,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	listenAddr := envOr("FAAS_S3_GATEWAY_LISTEN_ADDR", defaultListenAddr)
 	controlAddr := envOr("FAAS_S3_GATEWAY_CONTROL_ADDR", defaultControlAddr)
-	if !s3gateway.IsLoopbackAddress(listenAddr) || !s3gateway.IsLoopbackAddress(controlAddr) {
-		return errors.New("s3-gatewayd: data and control listeners must be loopback addresses behind the TLS edge")
+	if err := checkListeners(gatewayRole, listenAddr, controlAddr); err != nil {
+		return err
 	}
 	dataListener, err := net.Listen("tcp", listenAddr)
 	if err != nil {

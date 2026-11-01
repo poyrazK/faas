@@ -801,7 +801,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_SLOT_ID` | gatewayd-public | `default` |  |  | `` | reviewed public gateway slot identity; required only when public edge confirmation is enabled (ADR-699) |
 | `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL` | gatewayd-public | `default` |  |  | `` | default-off public edge withdrawal barrier; requires reviewed confirmation and activity controls (ADR-701) |
 | `FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private runtime routing receipt; enable only with a reviewed gateway slot identity (ADR-695) |
-| `FAAS_S3_GATEWAY_CONTROL_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:9096 | `` |  |
+| `FAAS_S3_GATEWAY_CONTROL_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:9096 | `` | loopback everywhere except the compute unit, which binds 0.0.0.0:9096 for the control plane's scrape behind nftables (ADR-20261031122757) |
 | `FAAS_S3_GATEWAY_LISTEN_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:8084 | `` |  |
 | `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `dropin` |  | single-box | `` | production control-plane service must set control-plane explicitly; compute-only on a compute node runs the gateway in compute mode (ADR-20261031122757) |
 | `FAAS_S3_GATEWAY_SPOOL_DIR` | s3-gatewayd | `unit` |  |  | `` | production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd |
