@@ -87,5 +87,19 @@ export function createAdmission(concurrency, reject) {
       release()
     }
   }
-  return Object.assign(admitted, { snapshot: () => ({ active, queued: queue.length, capacity: concurrency, queue_capacity: limits.queuedRequests }) })
+  // tryAcquire lends a free slot to background work, such as the change
+  // event relay, without queuing ahead of requests. It returns release() or
+  // null when every slot is busy or a request is waiting.
+  function tryAcquire() {
+    if (active >= concurrency || queue.length) return null
+    active++
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      active--
+      pump()
+    }
+  }
+  return Object.assign(admitted, { tryAcquire, snapshot: () => ({ active, queued: queue.length, capacity: concurrency, queue_capacity: limits.queuedRequests }) })
 }

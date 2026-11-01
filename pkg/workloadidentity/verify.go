@@ -31,6 +31,9 @@ const DataAPIUsageAudience = "gregale:data-api:usage"
 // (ADR-20261030125501) from other token uses.
 const AgentsAudience = "gregale:agents"
 
+// DataAPIEventsAudience isolates change hook publications (ADR-20261022121642).
+const DataAPIEventsAudience = "gregale:data-api:events"
+
 type Verifier struct {
 	keys   jose.JSONWebKeySet
 	issuer string
