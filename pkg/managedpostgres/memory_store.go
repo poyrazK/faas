@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
@@ -111,7 +112,20 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 		}
 	}
 	if active >= limit {
-		return Database{}, false, ErrQuotaExceeded
+		// Only a restore may go one database past the limit, while no other
+		// database of the owner holds the slot (ADR-20261031123259).
+		if database.RestoreSourceDatabaseID == "" {
+			return Database{}, false, ErrQuotaExceeded
+		}
+		for _, existing := range s.databases {
+			if s.sameQuotaOwner(ctx, existing, database) && existing.State != StateDeleted && !existing.RestoreSlotUntil.IsZero() {
+				return Database{}, false, ErrRestoreSlotInUse
+			}
+		}
+		if active >= limit+api.ManagedPostgresRestoreSlots {
+			return Database{}, false, ErrQuotaExceeded
+		}
+		database.RestoreSlotUntil = database.CreatedAt.Add(api.ManagedPostgresRestoreSlotWindow)
 	}
 	s.databases[database.ID] = cloneDatabase(database)
 	s.billingSubjects[database.ID] = PolicySubject(ctx, database.AccountID)

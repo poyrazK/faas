@@ -14693,6 +14693,32 @@ SELECT ((SELECT count(*) FROM managed_postgres_databases d
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=sqlc.arg(account_id)::uuid
  AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
 
+-- name: ManagedPostgresRestoreSlotHeld :one
+-- ADR-20261031123259: whether a database of the reservation owner holds the
+-- restore slot. The owner is the organization for an organization owner,
+-- otherwise the account's usage subject, as in the reservation counts. Read
+-- under the owner's reservation lock.
+SELECT EXISTS(SELECT 1 FROM managed_postgres_databases d
+ WHERE d.restore_slot_until IS NOT NULL AND d.state<>'deleted'
+ AND CASE WHEN sqlc.narg(org_id)::uuid IS NOT NULL THEN d.org_id=sqlc.narg(org_id)::uuid
+     ELSE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid END)::boolean AS held;
+
+-- name: TakeManagedPostgresRestoreSlot :one
+UPDATE managed_postgres_databases SET restore_slot_until=sqlc.arg(until)::timestamptz
+WHERE id=sqlc.arg(id)::uuid RETURNING *;
+
+-- name: ListManagedPostgresRestoreSlots :many
+-- ADR-20261031123259: the databases holding a restore slot, soonest end
+-- first, each with the usage subject whose database limit it is over.
+SELECT sqlc.embed(d), COALESCE(managed_postgres_usage_subject(d.org_id,d.account_id),d.account_id)::uuid AS subject_id
+FROM managed_postgres_databases d
+WHERE d.restore_slot_until IS NOT NULL AND d.state<>'deleted'
+ORDER BY d.restore_slot_until, d.id LIMIT sqlc.arg(batch_size);
+
+-- name: ClearManagedPostgresRestoreSlot :execrows
+UPDATE managed_postgres_databases SET restore_slot_until=NULL,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND restore_slot_until IS NOT NULL;
+
 -- name: ReadManagedPostgresLifecycleRestoreSource :one
 SELECT * FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE;
 
@@ -20296,6 +20322,8 @@ SELECT d.id, d.app_id, d.scope, d.created_at, d.first_wake_at, d.first_5xx_windo
  WHERE d.status = 'live'
    AND d.rollback_on_5xx
    AND d.last_auto_rollback_reason IS NULL
+   -- A breach the guard could not roll back is recorded once.
+   AND COALESCE(d.rollout_decision->>'rollback_skipped', '') = ''
    AND d.traffic_percent = 100
    AND d.rollout_state = 'complete'
    AND (d.first_5xx_window_ends_at IS NULL

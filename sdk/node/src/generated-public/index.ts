@@ -479,6 +479,7 @@ export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDataba
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
+export type { ManagedPostgresRestoreRange } from './models/ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';
 export type { ManagedServiceProbeSpec } from './models/ManagedServiceProbeSpec.js';
 export type { MCPPolicyConvergenceSnapshot } from './models/MCPPolicyConvergenceSnapshot.js';

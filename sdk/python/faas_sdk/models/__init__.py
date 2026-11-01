@@ -1039,6 +1039,7 @@ from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
@@ -3566,6 +3567,7 @@ __all__ = (
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",

@@ -142,7 +142,7 @@ export class OrgsService {
   }
   /**
    * Lift a company organization's deploy freeze.
-   * Lifts one of the organization's freezes. A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID.
+   * Lifts one of the organization's freezes. Needs the admin scope (a signed-in session or an admin key). A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID.
    * @returns ReleaseFreeze The organization's lifted freeze.
    * @throws ApiError
    */

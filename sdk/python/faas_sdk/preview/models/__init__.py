@@ -2654,6 +2654,7 @@ from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
 from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
 from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
@@ -8779,6 +8780,7 @@ __all__ = (
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageImportReading",
     "ManagedPostgresUsageImportReadingMeter",
     "ManagedPostgresUsageImportRequest",
