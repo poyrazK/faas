@@ -159,7 +159,7 @@ func dialAttach(ctx context.Context, client *api.Client, attach api.AppTaskAttac
 			target.RawQuery = query.Encode()
 		}
 	}
-	headers := http.Header{api.AppTaskAttachTokenHeader: []string{attach.Token}}
+	headers := http.Header{api.AppTaskAttachTokenHeader: []string{attach.Token}, "User-Agent": []string{cliUserAgent()}}
 	if token := client.Token(); token != "" {
 		headers.Set("Authorization", "Bearer "+token)
 	}

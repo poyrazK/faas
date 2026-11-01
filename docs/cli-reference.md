@@ -6447,7 +6447,7 @@ Examples:
 ```sh
 gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
 gregale edge rule-list create blocked --kind country --items-file countries.txt
-gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'
+gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --throttle-burst 10 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'
 ```
 
 #### edge rule-list update
@@ -18837,30 +18837,41 @@ Plans: free, hobby, pro and scale. Paid upgrades open the billing provider&#39;s
 
 Show this month&#39;s usage, or daily, storage and summary views
 
-`gregale billing usage <daily|storage|summary> [--month <YYYY-MM>] [--day <YYYY-MM-DD>]`
+`gregale billing usage <daily|storage|summary> [--month <YYYY-MM>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--month <YYYY-MM>` | month (YYYY-MM) |  |
-| `--day <YYYY-MM-DD>` | day (YYYY-MM-DD) |  |
+| `--month <YYYY-MM>` | month (YYYY-MM); default: current month |  |
 
 #### billing usage daily
 
 Per-day breakdown
 
-`gregale billing usage daily`
+`gregale billing usage daily [--day <YYYY-MM-DD>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--day <YYYY-MM-DD>` | day (YYYY-MM-DD); default: today UTC |  |
 
 #### billing usage storage
 
 Per-app storage bytes
 
-`gregale billing usage storage`
+`gregale billing usage storage [--day <YYYY-MM-DD>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--day <YYYY-MM-DD>` | day (YYYY-MM-DD); default: today UTC |  |
 
 #### billing usage summary
 
 Account roll-up
 
-`gregale billing usage summary`
+`gregale billing usage summary [--month <YYYY-MM>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | month (YYYY-MM); default: current month |  |
 
 ### billing invoices
 

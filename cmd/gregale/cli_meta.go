@@ -494,6 +494,9 @@ var (
 	platformTenantIDFlag = cliFlag{Name: "id", Short: "platform tenant UUID", Value: "UUID", Req: true}
 	// platformTenantStatementIDFlag addresses one cross-app statement revision.
 	platformTenantStatementIDFlag = cliFlag{Name: "statement-id", Short: "statement revision UUID", Value: "UUID", Req: true}
+	// usageMonthFlag and usageDayFlag select the period billing usage views read.
+	usageMonthFlag = cliFlag{Name: "month", Short: "month (YYYY-MM); default: current month", Value: "YYYY-MM"}
+	usageDayFlag   = cliFlag{Name: "day", Short: "day (YYYY-MM-DD); default: today UTC", Value: "YYYY-MM-DD"}
 )
 
 var templateNames13 = []string{
@@ -3548,7 +3551,7 @@ var cliCommands = []cliCommand{
 			{Name: "rate-cards", Short: "List an app's per-request price versions", Positionals: []string{"<slug>"}},
 			{Name: "rate-card-create", Short: "Add an immutable per-request price version", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE", Req: true},
-				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "price-millicents", Short: "price per request; 100000 = 1.00; required unless --tier", Value: "N"},
 				{Name: "included-units", Short: "free requests per consumer per UTC calendar month", Value: "N"},
 				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
 				{Name: "weight", Short: "count each request on a route as N units; unlisted routes count 1", Value: "METHOD /template=N", Repeatable: true},
@@ -3559,7 +3562,7 @@ var cliCommands = []cliCommand{
 				{Name: "base-fee-millicents", Short: "fixed charge per consumer per UTC month, billed by the month's statement", Value: "N"},
 				{Name: "minimum-millicents", Short: "minimum usage charge per consumer per UTC month; the statement tops up the difference", Value: "N"},
 				{Name: "prorate-monthly-fees", Short: "scale the fee and minimum in a consumer's first month to the share of it left after the consumer was created"},
-			}, Examples: []string{"gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 1 --unit app:output_tokens"}},
+			}, Examples: []string{"gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale api consumer rate-card create my-api --currency EUR --tier 1000:100 --tier inf:60 --tier-mode volume", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 1 --unit app:output_tokens"}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
@@ -3812,7 +3815,7 @@ var cliCommands = []cliCommand{
 			{Name: subCreate, Short: "Create a list", Positionals: []string{"<name>"}, Examples: []string{
 				"gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1",
 				"gregale edge rule-list create blocked --kind country --items-file countries.txt",
-				`gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'`,
+				`gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --throttle-burst 10 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'`,
 			}, Flags: []cliFlag{
 				{Name: "kind", Short: "list kind", Value: "KIND", Req: true, ClosedSet: []string{"ip", "country", "host", "string", "asn"}},
 				{Name: "item", Short: "list item (repeat)", Value: "VALUE"},
@@ -6531,15 +6534,13 @@ var cliCommands = []cliCommand{
 		DocSlug: "usage",
 		Short:   "Show this month's usage, or daily, storage and summary views",
 		Subcommands: []cliSub{
-			{Name: "daily", Short: "Per-day breakdown"},
-			{Name: "storage", Short: "Per-app storage bytes"},
+			{Name: "daily", Short: "Per-day breakdown", Flags: []cliFlag{usageDayFlag}},
+			{Name: "storage", Short: "Per-app storage bytes", Flags: []cliFlag{usageDayFlag}},
 			{Name: "object-storage", Short: "Account object storage observations, safety policy and billing state"},
-			{Name: "summary", Short: "Account roll-up"},
+			{Name: "summary", Short: "Account roll-up", Flags: []cliFlag{usageMonthFlag}},
 		},
-		Flags: []cliFlag{
-			{Name: "month", Short: "month (YYYY-MM)", Value: "YYYY-MM"},
-			{Name: "day", Short: "day (YYYY-MM-DD)", Value: "YYYY-MM-DD"},
-		},
+		// --day belongs to daily and storage; usage itself reads only --month.
+		Flags: []cliFlag{usageMonthFlag},
 	},
 	{
 		Name:    "version",
