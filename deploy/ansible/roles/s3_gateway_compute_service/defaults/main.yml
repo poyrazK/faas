@@ -33,3 +33,11 @@ faas_cloudflared_s3_metrics_addr: 0.0.0.0:20242
 # 3.75 MB/s) it takes about 18 s, inside the grace.
 faas_cloudflared_s3_grace_period: 30s
 faas_cloudflared_s3_stop_timeout: 45s
+
+# The one-node load test (ADR-20261031122757 step 5) reaches the compute
+# gateways on a pilot hostname, while s3.<domain> still goes to the control
+# plane. s3-gatewayd answers only its registry's public_endpoint host, so set
+# this to https://<pilot host> for the test and back to '' before the
+# cutover; '' keeps the control plane's endpoint
+# (docs/runbooks/S3GatewayComputeLoadTest.md).
+faas_object_gateway_public_endpoint: ''
