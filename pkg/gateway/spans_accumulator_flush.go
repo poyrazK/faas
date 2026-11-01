@@ -80,7 +80,7 @@ func (s *SpansAccumulator) RunFlushLoop(ctx context.Context, cfg FlushLoopConfig
 		cfg.Log = slog.Default()
 	}
 
-	pending := make(map[string]*pendingEntry)
+	pending := make(map[spanBucketKey]*pendingEntry)
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
 
@@ -126,23 +126,24 @@ func (s *SpansAccumulator) RunFlushLoop(ctx context.Context, cfg FlushLoopConfig
 // slice, then Deleted the bucket key, racing with concurrent
 // Adds that would either lose their spans (if the bucket was
 // already deleted) or stomp on the same map key.
-func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, pending map[string]*pendingEntry) {
+func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, pending map[spanBucketKey]*pendingEntry) {
 	// Walk every bucket and capture the snapshot first.
-	s.buckets.Range(func(key, value any) bool {
-		traceID, _ := key.(string)
+	s.buckets.Range(func(k, value any) bool {
+		key, _ := k.(spanBucketKey)
 		bucket, _ := value.(*spansAccumulator)
-		if traceID == "" || bucket == nil {
+		if key.traceID == "" || bucket == nil {
 			return true
 		}
+		traceID := key.traceID
 		// Atomic snapshot-and-clear: returns the prior slice,
 		// leaves the bucket empty. Concurrent Adds land in
 		// the empty bucket and the next tick picks them up.
-		spans, accountID := bucket.swapAndClear()
+		spans, accountID, plan := bucket.swapAndClearWithPlan()
 		if len(spans) == 0 {
-			// Nothing to flush this tick. The bucket key
-			// stays in the map (concurrent Adds reuse it);
-			// it'll be removed by the flush loop when the
-			// bucket has been empty for > 1 tick.
+			// Empty since the last tick: remove it, so the map holds
+			// only live traces. An Add racing this retries against the
+			// map (spansAccumulator.retired).
+			s.retireIfEmpty(key, bucket)
 			return true
 		}
 
@@ -152,7 +153,7 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 		// production; the per-POST cap at the handler is the
 		// outer bound).
 		if cfg.MaxSpansPerTrace != nil {
-			max := cfg.MaxSpansPerTrace(planFromAccountID(accountID))
+			max := cfg.MaxSpansPerTrace(plan)
 			if max > 0 && len(spans) > max {
 				sortSpansByDurationDesc(spans)
 				spans = spans[:max]
@@ -167,17 +168,17 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 		// request row) keeps its earlier spans: new spans are
 		// merged, not substituted, then re-bounded below the
 		// same per-trace cap. The writer dedupes by span identity.
-		if existing, ok := pending[traceID]; ok {
+		if existing, ok := pending[key]; ok {
 			existing.spans = append(existing.spans, spans...)
 			if cfg.MaxSpansPerTrace != nil {
-				if max := cfg.MaxSpansPerTrace(planFromAccountID(accountID)); max > 0 && len(existing.spans) > max {
+				if max := cfg.MaxSpansPerTrace(plan); max > 0 && len(existing.spans) > max {
 					sortSpansByDurationDesc(existing.spans)
 					existing.spans = existing.spans[:max]
 				}
 			}
 			existing.accountID = accountID
 		} else {
-			pending[traceID] = &pendingEntry{
+			pending[key] = &pendingEntry{
 				traceID:   traceID,
 				accountID: accountID,
 				spans:     spans,
@@ -189,16 +190,17 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 	// Now iterate the pending map. drainOnce is the single
 	// caller; mutating during iteration is safe because we
 	// collect the keys first.
-	keys := make([]string, 0, len(pending))
+	keys := make([]spanBucketKey, 0, len(pending))
 	for k := range pending {
 		keys = append(keys, k)
 	}
-	for _, traceID := range keys {
-		entry := pending[traceID]
+	for _, key := range keys {
+		traceID := key.traceID
+		entry := pending[key]
 		if entry.retries >= cfg.MaxRetries {
 			cfg.Log.Warn("otel spans entry dropped after max retries",
 				"trace_id", traceID, "retries", entry.retries)
-			delete(pending, traceID)
+			delete(pending, key)
 			continue
 		}
 		summaryJSON, err := json.Marshal(entry.spans)
@@ -217,11 +219,11 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 				"trace_id", traceID, "err", err)
 			entry.retries++
 		case outcome == "inserted":
-			delete(pending, traceID)
+			delete(pending, key)
 		case outcome == "rate_limited":
 			cfg.Log.Debug("otel spans write rate-limited",
 				"trace_id", traceID, "retry_after_ms", retryAfterMs)
-			delete(pending, traceID)
+			delete(pending, key)
 		case outcome == "db_error":
 			entry.retries++
 		case outcome == "no_row":
@@ -235,27 +237,7 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 			// loop on a server-side contract drift.
 			cfg.Log.Warn("otel spans write unknown outcome, dropping",
 				"trace_id", traceID, "outcome", outcome)
-			delete(pending, traceID)
+			delete(pending, key)
 		}
 	}
-}
-
-// planFromAccountID returns the plan string for a given account
-// ID. The flush loop doesn't have direct access to the
-// account's plan (the gateway's OTel handler resolves the
-// plan from the API key at POST time), so the closure is
-// wired to look up the plan from the gateway's limits cache.
-//
-// In v1.0 the closure ignores the account_id and returns
-// "scale" (the most permissive cap) — the per-trace
-// truncation is a memory bound, not a per-customer cap, and
-// the per-account cap is the per-POST 50/200/1000 ceiling the
-// handler already enforces. A future PR-D.1 routes the
-// account → plan lookup through a shared cache so the cap
-// tracks the customer's actual plan.
-//
-// Exported as planFromAccountID to make the v1.0 trade-off
-// explicit in the call site (cmd/gatewayd-public/main.go).
-func planFromAccountID(_ uuid.UUID) string {
-	return "scale"
 }

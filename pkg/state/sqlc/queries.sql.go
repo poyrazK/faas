@@ -102572,7 +102572,7 @@ update request_telemetry as target
                 order by span_id, end_time_unix_nano, duration_nanos desc
              ) deduplicated
             order by duration_nanos desc, span_id
-            limit 1000
+            limit least(greatest($4::int, 1), 1000)
          ) bounded
    )
  where target.trace_id = $1
@@ -102584,6 +102584,7 @@ type UpdateSpansSummaryParams struct {
 	TraceID pgtype.Text
 	Column2 []byte
 	Column3 pgtype.UUID
+	Column4 int32
 }
 
 // ADR-127 PR-D: writer for spans_summary jsonb. The gatewayd-public
@@ -102595,14 +102596,15 @@ type UpdateSpansSummaryParams struct {
 // Multiple trusted producers can contribute to one trace (for example,
 // gatewayd-internal service bindings and outboundd provider calls), so merge
 // by span identity instead of allowing a later writer to erase earlier spans.
-// Keep the slowest 1000 unique spans, the Scale-tier maximum, to bound storage.
+// Keep the slowest unique spans up to the plan's cap ($4, at most the
+// Scale-tier 1000) to bound storage.
 // $N::jsonb cast is load-bearing — without it sqlc binds as text and
 // Postgres raises SQLSTATE 22P02 (invalid_text_representation).
 //
 // PR-D code-review #1: the WHERE clause now also pins account_id.
 // Defense in depth against cross-customer overwrite. The
-// gateway-side accumulator already rejects trace_id/account_id
-// mismatches (pkg/gateway/spans_accumulator.go ErrAccountMismatch),
+// gateway-side accumulator buffers each (account, trace) separately
+// (pkg/gateway/spans_accumulator_buckets.go),
 // and the apid gRPC handler forwards the same account_id, but a
 // bug at any layer could otherwise let account A's flush wipe
 // account B's row. Adding the account_id = $3::uuid predicate
@@ -102612,7 +102614,12 @@ type UpdateSpansSummaryParams struct {
 // selectivity; the residual account_id check is a post-fetch
 // row-level filter (one row, microseconds).
 func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error) {
-	result, err := db.Exec(ctx, updateSpansSummary, arg.TraceID, arg.Column2, arg.Column3)
+	result, err := db.Exec(ctx, updateSpansSummary,
+		arg.TraceID,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+	)
 	if err != nil {
 		return 0, err
 	}

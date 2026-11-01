@@ -110,8 +110,33 @@ func (l *NodeLedger) admitFrozen_locked(r Request) {
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, environmentKey: r.EnvironmentKey, nodeID: r.NodeID,
 		production: r.ProductionEnvironment, deploymentScope: r.DeploymentScope,
-		admissionMB: charge, frozen: true, admittedAt: l.clock(), frozenAt: l.clock(),
+		admissionMB: charge, frozen: true, admittedAt: l.clock(), frozenAt: l.clock(), frozenSeeded: true,
 	}
+}
+
+// SettleSeededFrozenCharge rebooks a frozen reservation that SeedLedger
+// re-booked at a stand-in charge with the instance's first measured charge,
+// up or down, never below FrozenChargeFloorMB. It applies once; after it only
+// compression lowers the charge (ShrinkFrozenCharge). Without it a large VM
+// frozen across a restart booked the stand-in until it thawed or parked
+// (ADR 20261031190030). It reports whether it rebooked.
+func (l *NodeLedger) SettleSeededFrozenCharge(instance string, chargeMB int) bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.entries[instance]
+	if e == nil || !e.frozen || !e.frozenSeeded {
+		return false
+	}
+	chargeMB = max(chargeMB, api.FrozenChargeFloorMB)
+	if node := l.resident[e.nodeID]; node != nil {
+		node.residentRAM += chargeMB - e.admissionMB
+		node.frozenRAM += chargeMB - e.admissionMB
+	}
+	e.admissionMB, e.frozenSeeded = chargeMB, false
+	return true
 }
 
 // FrozenCountForNode is the number of frozen reservations on a node, which
@@ -169,16 +194,33 @@ func (l *NodeLedger) FrozenCompressCandidates(now time.Time, minAge time.Duratio
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.frozenOldestFirst_locked(func(e *reservation) bool {
+		return !e.compressTried && now.Sub(e.frozenAt) >= minAge
+	})
+}
+
+// FrozenOldestFirst lists, per node, the frozen reservations frozen at least
+// minAge before now, longest frozen first: the order frozen VMs yield their
+// memory to admission in (ADR 20261031190030).
+func (l *NodeLedger) FrozenOldestFirst(now time.Time, minAge time.Duration) map[string][]string {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.frozenOldestFirst_locked(func(e *reservation) bool { return now.Sub(e.frozenAt) >= minAge })
+}
+
+func (l *NodeLedger) frozenOldestFirst_locked(keep func(*reservation) bool) map[string][]string {
 	type candidate struct {
 		id string
 		at time.Time
 	}
 	byNode := map[string][]candidate{}
 	for id, e := range l.entries {
-		if !e.frozen || e.compressTried || now.Sub(e.frozenAt) < minAge {
-			continue
+		if e.frozen && keep(e) {
+			byNode[e.nodeID] = append(byNode[e.nodeID], candidate{id: id, at: e.frozenAt})
 		}
-		byNode[e.nodeID] = append(byNode[e.nodeID], candidate{id: id, at: e.frozenAt})
 	}
 	out := make(map[string][]string, len(byNode))
 	for nodeID, cs := range byNode {
@@ -195,6 +237,69 @@ func (l *NodeLedger) FrozenCompressCandidates(now time.Time, minAge time.Duratio
 		out[nodeID] = ids
 	}
 	return out
+}
+
+// HasUntriedFrozen reports whether a node holds a frozen reservation that
+// proactive compression has not asked vmmd about yet, of any age.
+func (l *NodeLedger) HasUntriedFrozen(nodeID string) bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, e := range l.entries {
+		if e.frozen && !e.compressTried && e.nodeID == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
+// FrozenToYield picks frozen reservations whose parking would give a wake
+// refused for RAM the needMB it asks: on the node where parking the fewest
+// VMs, longest frozen first and at most limit of them, frees what the node's
+// admission headroom lacks. A node whose headroom already fits the request is
+// skipped: something other than its RAM refused the wake there. ok is false
+// when no node qualifies; parking would then free memory without admitting
+// the wake.
+func (l *NodeLedger) FrozenToYield(needMB, limit int) (nodeID string, ids []string, ok bool) {
+	if l == nil || needMB <= 0 || limit <= 0 {
+		return "", nil, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for node, frozen := range l.frozenOldestFirst_locked(func(*reservation) bool { return true }) {
+		missing := needMB
+		if r := l.resident[node]; r != nil {
+			ceiling := r.ceilingMB
+			if ceiling <= 0 {
+				ceiling = l.ceilingForNode_locked(node, api.Limits{})
+			}
+			used, basis := l.admissionUsed_locked(node, r.residentRAM, r.frozenRAM, ceiling)
+			if basis != "measured" && basis != "resident" {
+				continue // the reservations' cap binds, and frozen VMs are not in it
+			}
+			missing = needMB - max(ceiling-used, 0)
+		}
+		if missing <= 0 {
+			continue
+		}
+		freed, picked := 0, []string(nil)
+		for _, id := range frozen {
+			if len(picked) == limit || freed >= missing {
+				break
+			}
+			picked = append(picked, id)
+			freed += l.entries[id].admissionMB
+		}
+		if freed < missing {
+			continue
+		}
+		if !ok || len(picked) < len(ids) || len(picked) == len(ids) && node < nodeID {
+			nodeID, ids, ok = node, picked, true
+		}
+	}
+	return nodeID, ids, ok
 }
 
 // MarkFrozenCompressTried records that proactive compression asked vmmd

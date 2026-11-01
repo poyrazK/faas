@@ -61,6 +61,12 @@ const (
 // would accept. Built once at package init via MustCompile.
 var traceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
+// MaxSpansSummaryBytes bounds one flush's summary below the 4 MiB gRPC
+// message limit. Producers bound each span (pkg/gateway span bounds) and
+// each trace (the plan's spans-per-trace cap), so a larger summary is refused
+// before it reaches the shared database rather than merged into a row.
+const MaxSpansSummaryBytes = 3 << 20
+
 // spansWriterStore is the Store subset the receiver needs.
 //
 // PR-D code-review #1: accountID is REQUIRED in the interface
@@ -71,7 +77,7 @@ var traceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // validated it parses as a UUID (step 3), so the value here is
 // trusted.
 type spansWriterStore interface {
-	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte) error
+	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error
 }
 
 // spansWriterReceiver is the in-package server implementation
@@ -144,6 +150,10 @@ func (r *spansWriterReceiver) WriteSpansSummary(ctx context.Context, req *apidpb
 
 	// ---- 2. summary_json parses as JSON ----
 	summary := req.GetSummaryJson()
+	if len(summary) > MaxSpansSummaryBytes {
+		r.observe(swOutcomeValidationError)
+		return nil, status.Errorf(codes.InvalidArgument, "summary_json is %d bytes, over the %d-byte bound", len(summary), MaxSpansSummaryBytes)
+	}
 	if !json.Valid(summary) {
 		r.observe(swOutcomeValidationError)
 		return nil, status.Error(codes.InvalidArgument, "summary_json is not valid JSON")
@@ -184,7 +194,9 @@ func (r *spansWriterReceiver) WriteSpansSummary(ctx context.Context, req *apidpb
 	// accountID so the SQL predicate
 	// `and account_id = $3::uuid` can match. The bucket mutex
 	// was the upstream guard; this is defense in depth.
-	if err := r.store.UpdateSpansSummary(ctx, traceID, accountID, summary); err != nil {
+	// The row keeps at most the plan's spans per trace across every flush
+	// and producer (Hobby 50, Pro 200, Scale 1000).
+	if err := r.store.UpdateSpansSummary(ctx, traceID, accountID, summary, limits.DebugTelemetrySpansPerTrace); err != nil {
 		// PR-D code-review #7: a CHECK violation (trace_id
 		// format drift between client + server) is a
 		// VALIDATION failure, not a DB failure. The §12

@@ -675,6 +675,10 @@ type Engine struct {
 	// (ADR-20261024085817). Thaw, warm-pool resume and freeze consult it
 	// so a draining node does not take resident work back.
 	leavingNodes atomic.Pointer[map[string]struct{}]
+	// admittingCeilings holds each admitting, active node's RAM admission
+	// ceiling from the same node list, so the floor's headroom counts nodes
+	// this ledger holds nothing on (ADR 20261031190030, floor_headroom.go).
+	admittingCeilings atomic.Pointer[map[string]int]
 	// drainRequestBound bounds how long a drain park waits for a withdrawn
 	// instance's in-flight requests; zero is
 	// api.ServiceReplicaDrainTimeoutSeconds.
@@ -819,6 +823,9 @@ type Engine struct {
 	frozenProactiveCompress bool
 	compressBackoff         *frozenCompressBackoff
 	frozenCompressOne       func(ctx context.Context, instanceID string) string
+	// frozenYieldOne replaces parking a frozen VM for admission in tests
+	// (ADR 20261031190030, frozen_yield.go); it reports whether it parked.
+	frozenYieldOne func(ctx context.Context, instanceID, reason string) bool
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller

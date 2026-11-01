@@ -32,6 +32,12 @@ func compareStandardRuntimeInputs(captured, current []byte, allowUnmanagedPlan b
 		if err := projectStandardStableArtifact(inputs[i]); err != nil {
 			return false, err
 		}
+		// The runtime input guard (application_standard_runtime_inputs_match)
+		// ignores an image rescan: it renews the deployment's scan mirrors and
+		// changes nothing the instance runs (ADR 20261031190030).
+		if artifact, ok := inputs[i]["artifact"].(map[string]any); ok && allowUnmanagedPlan {
+			removeStandardApprovalMirrors(artifact)
+		}
 	}
 	if allowUnmanagedPlan && unmanagedStandardRuntimeInputs(inputs[0]) && unmanagedStandardRuntimeInputs(inputs[1]) {
 		delete(inputs[0], "account_plan")
