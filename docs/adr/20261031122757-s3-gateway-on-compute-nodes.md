@@ -166,6 +166,12 @@ egress ceiling".
 - Their count, placement and TLS are decided by a later ADR, written when the
   alert first fires. The traffic that fires it is large enough to pay for
   them.
+- That ADR must also lift a registry rule. `gateway_safety_v1` accounting,
+  which bills storage and admits reads without the database
+  (ADR-20261024132844, ADR-20261030075301), refuses any transfer profile but
+  `proxied` (`pkg/objectstorage/config.go`). Moving to `direct` as it stands
+  means provider-report accounting, which puts every read back on the
+  control-plane database.
 
 ### Steps
 
