@@ -10378,15 +10378,14 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 //     the budget is further clamped to the plan's ceiling
 //     (Limits.RequestBudgetMaxDuration), so a rule never widens past
 //     what the account's plan allows.
-//   - AllowOverrideHeader: optional HTTP header name (default
-//     `x-faas-budget-ms`) whose numeric value, if present on the
-//     inbound request, overrides BudgetMs for that single request.
-//     A runtime per-customer-tunable knob layered on top of the
-//     static rule. Header name must be 1..128 chars matching
-//     `^[A-Za-z][A-Za-z0-9-]*$` (RFC 7230 token shape) — empty
-//     is allowed (the runtime then uses the default
-//     `x-faas-budget-ms`). An absent or unparseable header falls
-//     through to BudgetMs unchanged.
+//   - AllowOverrideHeader: optional HTTP header name whose numeric
+//     value, if present on the inbound request, overrides BudgetMs
+//     for that single request, within the plan ceiling. Header name
+//     must be 1..128 chars matching `^[A-Za-z][A-Za-z0-9-]*$` (RFC
+//     7230 token shape). Empty is allowed: the runtime then reads the
+//     default `x-faas-budget-ms`, which any caller can send, so it may
+//     only shorten BudgetMs (ADR-093 amendment 2026-11-01). An absent
+//     or unparseable header falls through to BudgetMs unchanged.
 //
 // The runtime is `pkg/reqbudget`. The matched rule's BudgetMs
 // stamps the inbound ctx via `reqbudget.WithRemaining`; every

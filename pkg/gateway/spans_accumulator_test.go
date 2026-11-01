@@ -1,15 +1,12 @@
 // spans_accumulator_test.go — ADR-127 PR-D code-review #4.
 //
-// Verifies the SpansAccumulator.Add account_id re-check
-// contract: every Add re-validates that the bucket's
-// account_id matches the caller's account_id. A trace_id
-// contended across accounts returns ErrAccountMismatch so the
-// handler can 401 instead of silently overwriting.
+// Verifies that buckets are scoped by (account, trace): spans
+// of one account never land in another account's bucket, and
+// two accounts sharing a trace ID keep separate buckets.
 
 package gateway
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -39,28 +36,27 @@ func TestSpansAccumulator_Add_SameAccountCoalesces(t *testing.T) {
 	}
 }
 
-// TestSpansAccumulator_Add_AccountMismatch is the regression
-// for PR-D code-review #4. Two POSTs for the same trace_id
-// but different account_ids must NOT silently coalesce — the
-// second Add must return ErrAccountMismatch so the handler
-// 401s. The OLD account's bucket is preserved (its legitimate
-// buffered spans flush on the next tick).
-func TestSpansAccumulator_Add_AccountMismatch(t *testing.T) {
+// Two accounts can carry one W3C trace ID (a caller forwards its traceparent
+// to another account's app). Each keeps its own spans: the first account to
+// send a trace used to own it, and the second account's spans were rejected.
+func TestSpansAccumulator_Add_AccountsShareATraceID(t *testing.T) {
 	s := NewSpansAccumulator()
 	acctA := uuid.New()
 	acctB := uuid.New()
 	tid := "00000000000000000000000000000002"
 
 	if _, err := s.Add(tid, acctA, []summarizedSpan{{TraceID: tid, SpanID: "aa", EndTimeUnixNano: 1}}); err != nil {
-		t.Fatalf("first Add(acctA): %v", err)
+		t.Fatalf("Add(acctA): %v", err)
 	}
-	_, err := s.Add(tid, acctB, []summarizedSpan{{TraceID: tid, SpanID: "bb", EndTimeUnixNano: 1}})
-	if !errors.Is(err, ErrAccountMismatch) {
-		t.Fatalf("second Add(acctB) err = %v, want ErrAccountMismatch", err)
+	if _, err := s.Add(tid, acctB, []summarizedSpan{{TraceID: tid, SpanID: "bb", EndTimeUnixNano: 1}}); err != nil {
+		t.Fatalf("Add(acctB) on the same trace: %v", err)
 	}
-	// The OLD account's bucket is intact — a follow-up Add
-	// from acctA still coalesces normally.
-	if _, err := s.Add(tid, acctA, []summarizedSpan{{TraceID: tid, SpanID: "cc", EndTimeUnixNano: 2}}); err != nil {
-		t.Fatalf("third Add(acctA): %v", err)
+	a, gotA := s.DrainAndRemove(tid, acctA)
+	b, gotB := s.DrainAndRemove(tid, acctB)
+	if gotA != acctA || len(a) != 1 || a[0].SpanID != "aa" {
+		t.Fatalf("account A drained %+v for %s", a, gotA)
+	}
+	if gotB != acctB || len(b) != 1 || b[0].SpanID != "bb" {
+		t.Fatalf("account B drained %+v for %s", b, gotB)
 	}
 }

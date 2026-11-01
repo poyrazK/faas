@@ -153,3 +153,38 @@ func TestBatchEventTriggersCountTowardTheLimit(t *testing.T) {
 		t.Fatalf("after the refused apply enabled = %v, want the %d at the cap", types, limits.EventSubscriptionsPerApp)
 	}
 }
+
+// A stage deploy only adds subscriptions, so repeated stage deploys could
+// pile them up past the plan's caps unless each one is counted. The deploy
+// that crosses the cap is refused and rolls back.
+func TestSourceRefManifestWithoutReconcileEnforcesEventSubscriptionLimit(t *testing.T) {
+	srv, store, acct, app := apidserver.SourceRefAsyncRouteTestFixture(t, api.PlanHobby)
+	ctx := context.Background()
+	limit := api.MustLimitsFor(acct.Plan).EventSubscriptionsPerApp
+	deploy := func(typ string) (*api.Problem, error) {
+		manifest := &gregalemanifest.Manifest{EventTriggers: []gregalemanifest.EventTrigger{{Source: "orders", Type: typ}}}
+		staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "staging", true)
+		if problem != nil {
+			return problem, srv.RollbackSourceRefManifest(ctx, staged)
+		}
+		return nil, nil
+	}
+	for i := range limit {
+		if problem, _ := deploy(fmt.Sprintf("order.kind%d", i)); problem != nil {
+			t.Fatalf("stage deploy %d: %s", i, problem.Detail)
+		}
+	}
+	problem, err := deploy("order.over")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problem == nil || problem.Code != api.CodePlanEventSubscriptionQuota || problem.Status != http.StatusForbidden {
+		t.Fatalf("stage deploy past the cap = %+v, want 403 %s", problem, api.CodePlanEventSubscriptionQuota)
+	}
+	if problem.Limit == nil || *problem.Limit != int64(limit) || problem.Observed == nil || *problem.Observed != int64(limit+1) {
+		t.Fatalf("limit fields = %v/%v, want %d/%d", problem.Limit, problem.Observed, limit, limit+1)
+	}
+	if got := enabledEventSubscriptions(t, store, app.ID); len(got) != limit {
+		t.Fatalf("enabled = %v, want the %d within the cap", got, limit)
+	}
+}

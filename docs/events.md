@@ -265,7 +265,8 @@ trigger create that would go past a cap is refused with `403
 plan_event_subscription_quota`, naming the limit and the count it would have
 reached, and changes nothing. If an `event_triggers` entry names an app that
 doesn't exist (for example after a rename), the deploy only adds
-subscriptions and disables none; update `gregale.yaml` to the new name. Numbers in filters are kept exactly, so a filter
+subscriptions and disables none; update `gregale.yaml` to the new name.
+Numbers in filters are kept exactly, so a filter
 on an integer ID larger than 2^53 matches only that ID.
 
 ### Delivery identity

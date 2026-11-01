@@ -775,6 +775,8 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 		}
 		sort.Strings(staged.eventSubscriptionIntent)
 	}
+	// A stage deploy or a batch trigger create records no intent, but what it
+	// adds counts against the same caps.
 	return s.checkSourceRefEventSubscriptionQuota(ctx, acct, app, len(declared), reconcile, staged)
 }
 
