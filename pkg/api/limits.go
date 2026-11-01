@@ -3969,8 +3969,8 @@ type Limits struct {
 	// and of all apps sharing a billing subject (ADR-20261031130000). Every
 	// publish is matched against each enabled subscription of its account,
 	// so the count bounds the routing work one event can cause. Enforced
-	// under the cron quota subject lock in
-	// pkg/state.PgStore.UpsertEventSubscriptionWithinLimits.
+	// after every manifest apply that adds or re-enables a subscription, by
+	// checkSourceRefEventSubscriptionLimits in pkg/apid/apidserver.
 	EventSubscriptionsPerApp     int
 	EventSubscriptionsPerAccount int
 
