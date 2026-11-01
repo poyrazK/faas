@@ -13,6 +13,8 @@ import type { DataAPIRuntimeConnectionReport } from '../models/DataAPIRuntimeCon
 import type { DataAPIUsage } from '../models/DataAPIUsage.js';
 import type { DataAPIUsageReport } from '../models/DataAPIUsageReport.js';
 import type { DataAPIUsageReportResponse } from '../models/DataAPIUsageReportResponse.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
@@ -125,6 +127,39 @@ export class ManagedPostgresService {
       url: '/v1/postgres/databases',
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Set and remove a database's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the database carries after it, with
+   * the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+   * Requires postgres:manage or admin scope and MFA. While the capability is on,
+   * GET /v1/postgres/databases and GET /v1/postgres/databases/{id} include labels, and GET /v1/postgres/databases
+   * takes ?selector=, a Kubernetes label selector.
+   *
+   * @returns LabelsResponse The database's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, scope or MFA, a database this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateManagedPostgresDatabaseLabels({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/postgres/databases/{id}/labels',
+      path: {
+        'id': id,
       },
       body: requestBody,
       mediaType: 'application/json',
