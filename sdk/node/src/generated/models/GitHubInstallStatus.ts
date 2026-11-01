@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { GitHubInstallActivity } from './GitHubInstallActivity.js';
+import type { GitHubInstallationSummary } from './GitHubInstallationSummary.js';
 /**
  * Account-scoped GitHub installation and app binding health. Sealed
  * installation credentials are never returned. `state` is
@@ -45,9 +46,6 @@ export type GitHubInstallStatus = {
    * repository listing names one of these.
    *
    */
-  installations?: Array<{
-    installation_id: number;
-    github_login?: string;
-  }>;
+  installations?: Array<GitHubInstallationSummary>;
 };
 

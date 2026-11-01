@@ -14,8 +14,8 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.git_hub_install_activity import GitHubInstallActivity
     from ..models.git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBranches
-    from ..models.git_hub_install_status_installations_item import GitHubInstallStatusInstallationsItem
     from ..models.git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+    from ..models.git_hub_installation_summary import GitHubInstallationSummary
 
 
 T = TypeVar("T", bound="GitHubInstallStatus")
@@ -54,7 +54,7 @@ class GitHubInstallStatus:
     payloads, GitHub delivery identifiers, retry controls, and worker
     error text are never returned.
     """
-    installations: list[GitHubInstallStatusInstallationsItem] | Unset = UNSET
+    installations: list[GitHubInstallationSummary] | Unset = UNSET
     """The account's connected installations when it has more than
     one. An unbound app then reports no `installation_id`; a bind or
     repository listing names one of these.
@@ -169,8 +169,8 @@ class GitHubInstallStatus:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.git_hub_install_activity import GitHubInstallActivity
         from ..models.git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBranches
-        from ..models.git_hub_install_status_installations_item import GitHubInstallStatusInstallationsItem
         from ..models.git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+        from ..models.git_hub_installation_summary import GitHubInstallationSummary
 
         d = dict(src_dict)
         state = check_git_hub_install_status_state(d.pop("state"))
@@ -255,11 +255,11 @@ class GitHubInstallStatus:
             activity = GitHubInstallActivity.from_dict(_activity)
 
         _installations = d.pop("installations", UNSET)
-        installations: list[GitHubInstallStatusInstallationsItem] | Unset = UNSET
+        installations: list[GitHubInstallationSummary] | Unset = UNSET
         if _installations is not UNSET:
             installations = []
             for installations_item_data in _installations:
-                installations_item = GitHubInstallStatusInstallationsItem.from_dict(installations_item_data)
+                installations_item = GitHubInstallationSummary.from_dict(installations_item_data)
 
                 installations.append(installations_item)
 

@@ -8,11 +8,13 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="GitHubInstallStatusInstallationsItem")
+T = TypeVar("T", bound="GitHubInstallationSummary")
 
 
 @_attrs_define
-class GitHubInstallStatusInstallationsItem:
+class GitHubInstallationSummary:
+    """One GitHub App installation connected to the account."""
+
     installation_id: int
     github_login: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -41,13 +43,13 @@ class GitHubInstallStatusInstallationsItem:
 
         github_login = d.pop("github_login", UNSET)
 
-        git_hub_install_status_installations_item = cls(
+        git_hub_installation_summary = cls(
             installation_id=installation_id,
             github_login=github_login,
         )
 
-        git_hub_install_status_installations_item.additional_properties = d
-        return git_hub_install_status_installations_item
+        git_hub_installation_summary.additional_properties = d
+        return git_hub_installation_summary
 
     @property
     def additional_keys(self) -> list[str]:

@@ -85498,11 +85498,15 @@ components:
             one. An unbound app then reports no `installation_id`; a bind or
             repository listing names one of these.
           items:
-            type: object
-            required: [installation_id]
-            properties:
-              installation_id: { type: integer, format: int64 }
-              github_login: { type: string }
+            $ref: '#/components/schemas/GitHubInstallationSummary'
+
+    GitHubInstallationSummary:
+      description: One GitHub App installation connected to the account.
+      type: object
+      required: [installation_id]
+      properties:
+        installation_id: { type: integer, format: int64 }
+        github_login: { type: string }
 
     GitHubInstallActivity:
       description: |
