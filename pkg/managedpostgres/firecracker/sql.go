@@ -105,7 +105,7 @@ COMMENT ON ROLE %[1]s IS 'gregale:credential:v1:%[4]s:%[5]s';
 	if access == managedpostgres.CredentialDataAPI {
 		// Its only settings, the Data API's statement and lock deadlines: the
 		// Data API starter refuses a login with others.
-		fmt.Fprintf(&b, "ALTER ROLE %s RESET ALL;\nALTER ROLE %[1]s SET statement_timeout = %d;\nALTER ROLE %[1]s SET lock_timeout = %d;\n",
+		fmt.Fprintf(&b, "ALTER ROLE %[1]s RESET ALL;\nALTER ROLE %[1]s SET statement_timeout = %[2]d;\nALTER ROLE %[1]s SET lock_timeout = %[3]d;\n",
 			role, api.DataAPIQueryTimeoutMS, api.DataAPILockTimeoutMS)
 	}
 	fmt.Fprintf(&b, `COMMIT;

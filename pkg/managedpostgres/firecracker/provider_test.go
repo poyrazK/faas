@@ -24,6 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/pgscram"
 )
@@ -809,6 +810,29 @@ func TestProviderErrorKeepsScheddContext(t *testing.T) {
 	}
 	if err := providerError(errors.New("transport closed")); !errors.Is(err, managedpostgres.ErrUnavailable) {
 		t.Fatalf("non-status err = %v", err)
+	}
+}
+
+// A Data API login carries exactly the Data API's statement and lock
+// deadlines; the lock deadline once took the statement deadline's value.
+func TestDataAPICredentialSQLSetsBothDeadlines(t *testing.T) {
+	role := credentialRoleName(testDatabaseID, "k", managedpostgres.CredentialDataAPI)
+	v, err := pgscram.NewVerifier("pw", pgscram.DefaultIterations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql, err := credentialSQL("gregale", role, credentialScope(testDatabaseID, "gregale"), managedpostgres.CredentialDataAPI, v.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		fmt.Sprintf("ALTER ROLE %s RESET ALL;\n", role),
+		fmt.Sprintf("ALTER ROLE %s SET statement_timeout = %d;\n", role, api.DataAPIQueryTimeoutMS),
+		fmt.Sprintf("ALTER ROLE %s SET lock_timeout = %d;\n", role, api.DataAPILockTimeoutMS),
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("credential SQL lacks %q", want)
+		}
 	}
 }
 
