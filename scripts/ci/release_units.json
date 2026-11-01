@@ -20,10 +20,7 @@
       "lane": "control-plane",
       "services": [{"name": "outboundd", "readyz": "http://127.0.0.1:8095/readyz"}]
     },
-    "s3-gatewayd": {
-      "lane": "control-plane",
-      "services": [{"name": "s3-gatewayd", "optional": true, "readyz": "http://127.0.0.1:9096/readyz"}]
-    },
+    "s3-gatewayd": {"lane": "shared"},
     "livequeryd": {
       "lane": "control-plane",
       "services": [{"name": "livequeryd", "optional": true, "readyz": "http://127.0.0.1:9471/readyz"}]

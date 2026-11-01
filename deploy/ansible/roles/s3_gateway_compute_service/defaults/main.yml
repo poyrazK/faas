@@ -1,0 +1,15 @@
+---
+# ADR-20261031122757: the S3 gateway on a compute node. The manifest's
+# object_storage.compute_nodes sets this per cell; off removes it again.
+faas_object_gateway_on_compute_nodes: false
+
+# The control plane's controller-local provider registry, and the env file
+# holding only the gateway credentials its gateway_*_env fields name. A
+# compute node never receives the bucket-admin credential.
+faas_object_storage_config_src: ''
+faas_object_storage_gateway_provider_env_src: ''
+
+# This node's share of its port in bytes per second, rendered by the manifest
+# from the host's port_mbps (ADR-20261031122757 §3). The role writes it into
+# the node's registry as transfer.max_bytes_per_second.
+faas_object_gateway_max_bytes_per_second: 0

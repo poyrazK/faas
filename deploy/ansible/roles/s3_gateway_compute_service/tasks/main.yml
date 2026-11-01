@@ -1,0 +1,20 @@
+---
+# s3_gateway_compute_service — the S3 gateway on a compute node
+# (ADR-20261031122757).
+#
+# s3-gatewayd in compute mode (faas-s3-gatewayd-compute) listens on loopback
+# for the cell's s3 tunnel. It holds the storage seal-domain identity alone
+# (the seal_domains role stages it), the gateway-only provider credential and
+# its share of the node's port. The manifest's object_storage.compute_nodes
+# turns it on per cell; turning it off removes it.
+- name: s3_gateway_compute_service — install and start the gateway
+  ansible.builtin.include_tasks: enable.yml
+  when: faas_object_gateway_on_compute_nodes | bool
+
+# Only on a compute-only host: elsewhere /etc/faas/object-storage.json is the
+# control-plane gateway's registry.
+- name: s3_gateway_compute_service — remove the gateway
+  ansible.builtin.include_tasks: disable.yml
+  when:
+    - not (faas_object_gateway_on_compute_nodes | bool)
+    - faas_box_role | default('single-box') == 'compute-only'
