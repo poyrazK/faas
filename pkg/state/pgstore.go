@@ -31972,17 +31972,44 @@ func pgUUIDString(id pgtype.UUID) string {
 // exp-backoff): the operator verb has no exp-backoff and no
 // last_error carry-over — the operator is signalling "re-drive this
 // record from clean". Returns state.ErrNotFound when the row does
-// not exist so the handler can emit a 404.
-func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) error {
-	tx, err := s.pool.Begin(ctx)
+// not exist, or belongs to another trigger or app, so the handler
+// can emit a 404.
+func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error {
+	params, err := triggerRecordScopeParams(appID, triggerID, recordID)
 	if err != nil {
 		return err
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: retry trigger record begin: %w", err)
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := retryTriggerReceiptTx(ctx, tx, id, "", ""); err != nil {
+	owned, err := sqlc.New().TriggerRecordInScope(ctx, tx, params)
+	if err != nil {
+		return fmt.Errorf("state: retry trigger record scope: %w", err)
+	}
+	if !owned {
+		return ErrNotFound
+	}
+	if err := retryTriggerReceiptTx(ctx, tx, recordID, "", appID); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: retry trigger record commit: %w", err)
+	}
+	return nil
+}
+
+// triggerRecordScopeParams parses the ids an operator record verb is
+// scoped by. A malformed id names no record of the trigger.
+func triggerRecordScopeParams(appID, triggerID, recordID string) (sqlc.TriggerRecordInScopeParams, error) {
+	app, appErr := parsePgUUID(appID)
+	trigger, triggerErr := parsePgUUID(triggerID)
+	record, recordErr := parsePgUUID(recordID)
+	if appErr != nil || triggerErr != nil || recordErr != nil {
+		return sqlc.TriggerRecordInScopeParams{}, ErrNotFound
+	}
+	return sqlc.TriggerRecordInScopeParams{ID: record, TriggerID: trigger, AppID: app}, nil
 }
 
 // RetryQueueDeadLetter (ADR-134 PR-C) is the queue counterpart to
@@ -32241,14 +32268,19 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 // (which preserves history); this verb preserves no DLQ row. The
 // record's parent trigger is untouched; this is a record-level
 // operation only.
-func (s *PgStore) DropTriggerRecordByOperator(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`delete from trigger_records where id = $1`,
-		id)
+//
+// The record must belong to triggerID, a trigger of appID; any other
+// record answers ErrNotFound.
+func (s *PgStore) DropTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error {
+	scope, err := triggerRecordScopeParams(appID, triggerID, recordID)
 	if err != nil {
-		return fmt.Errorf("state: drop trigger_record %s: %w", id, err)
+		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().DropTriggerRecordByOperator(ctx, s.pool, sqlc.DropTriggerRecordByOperatorParams(scope))
+	if err != nil {
+		return fmt.Errorf("state: drop trigger_record %s: %w", recordID, err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
