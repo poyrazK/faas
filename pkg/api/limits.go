@@ -13233,6 +13233,14 @@ func (p Plan) IssueLimits() IssueLimits {
 
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
+
+// IssueAttributionRetryWindow bounds how long after ingestion the issue
+// maintenance pass retries customer attribution for an occurrence whose
+// request evidence has not arrived (ADR-380). Telemetry evidence only matches
+// within IssueMaxClockSkew of the occurrence, so evidence later than this
+// never attributes it. An occurrence that names no request, trace or
+// invocation has no evidence to wait for and is checked once.
+const IssueAttributionRetryWindow = time.Hour
 const IssueMaxBatchEvents = 32
 
 // DeploymentTrafficPercentTotal is the complete serving traffic weight.
