@@ -45,7 +45,7 @@ const (
 )
 
 // CreateCallback handles POST /v1/agent-callbacks.
-func (h *Handler) CreateCallback(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (h *Handler) CreateCallback(w http.ResponseWriter, r *http.Request, caller CallbackCaller) {
 	if !h.callbacksConfigured() {
 		api.WriteProblem(w, api.ErrCapacity("agent callbacks are unavailable on this control-plane host"))
 		return
@@ -55,23 +55,23 @@ func (h *Handler) CreateCallback(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrValidation("the body must be a JSON callback request"))
 		return
 	}
-	grant, problem := h.callbackGrant(r.Context(), acct, req)
+	grant, problem := h.callbackGrant(r.Context(), caller, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	token, err := h.Callbacks.Sign(grant)
 	if err != nil {
-		api.WriteProblem(w, h.problem(acct, "issue callback", err))
+		api.WriteProblem(w, h.problem(caller.Account, "issue callback", err))
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusCreated, api.AgentCallbackResponse{URL: h.CallbackBaseURL + "/v1/agent-callbacks/" + token,
 		ThreadID: grant.ThreadID, Kinds: grant.Kinds, ExpiresAt: grant.ExpiresAt})
 }
 
-// callbackGrant checks an issue request against the account's endpoints and
+// callbackGrant checks an issue request against the caller's endpoints and
 // returns the token it grants.
-func (h *Handler) callbackGrant(ctx context.Context, acct state.Account, req api.CreateAgentCallbackRequest) (CallbackToken, *api.Problem) {
+func (h *Handler) callbackGrant(ctx context.Context, caller CallbackCaller, req api.CreateAgentCallbackRequest) (CallbackToken, *api.Problem) {
 	kinds, ttl := req.Kinds, req.TTLSeconds
 	if len(kinds) == 0 {
 		kinds = []string{api.AgentCallbackKindToolResult}
@@ -88,12 +88,12 @@ func (h *Handler) callbackGrant(ctx context.Context, acct state.Account, req api
 		return CallbackToken{}, api.ErrValidation(fmt.Sprintf("ttl_seconds must be 1-%d; got %d", api.AgentCallbackTokenTTLSec, ttl))
 	}
 	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(ctx, req.EndpointID)
-	if err != nil || endpoint.AccountID != acct.ID {
+	if err != nil || !caller.owns(endpoint) {
 		return CallbackToken{}, errRealtimeEndpointNotFound()
 	}
 	// Not truncated: a token issued just after a revocation must compare later.
 	now := h.now().UTC()
-	return CallbackToken{AccountID: acct.ID, EndpointID: endpoint.ID, ThreadID: req.ThreadID, Kinds: kinds, IssuedAt: now,
+	return CallbackToken{AccountID: caller.Account.ID, EndpointID: endpoint.ID, ThreadID: req.ThreadID, Kinds: kinds, IssuedAt: now,
 		ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, nil
 }
 
@@ -165,7 +165,7 @@ func (h *Handler) callbackGranted(w http.ResponseWriter, r *http.Request) (Callb
 // RevokeCallbacks handles POST /v1/agent-callbacks/revocations: every
 // callback URL issued for the thread until now stops working. A URL issued
 // later works, so a thread can reopen.
-func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, caller CallbackCaller) {
 	if !h.callbacksConfigured() {
 		api.WriteProblem(w, api.ErrCapacity("agent callbacks are unavailable on this control-plane host"))
 		return
@@ -176,13 +176,13 @@ func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(r.Context(), req.EndpointID)
-	if err != nil || endpoint.AccountID != acct.ID {
+	if err != nil || !caller.owns(endpoint) {
 		api.WriteProblem(w, errRealtimeEndpointNotFound())
 		return
 	}
-	at, err := h.Revocations.RevokeCallbacks(r.Context(), acct.ID, endpoint.ID, req.ThreadID)
+	at, err := h.Revocations.RevokeCallbacks(r.Context(), caller.Account.ID, endpoint.ID, req.ThreadID)
 	if err != nil {
-		api.WriteProblem(w, h.problem(acct, "revoke callbacks", err))
+		api.WriteProblem(w, h.problem(caller.Account, "revoke callbacks", err))
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, api.AgentCallbackRevocation{EndpointID: endpoint.ID, ThreadID: req.ThreadID, RevokedAt: at.UTC()})
