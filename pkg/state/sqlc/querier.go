@@ -3776,6 +3776,10 @@ type Querier interface {
 	// An account's unlifted freezes that have not ended: active and upcoming
 	// windows, weekly windows and after-rollback policies.
 	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
+	// The notices still to mail: recorded after since, not yet linked to an
+	// intent, and for 'ending' only while the copy still holds a slot that has
+	// not ended.
+	ListUnmailedManagedPostgresRestoreSlotNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresRestoreSlotNoticesParams) ([]ListUnmailedManagedPostgresRestoreSlotNoticesRow, error)
 	// The account trace view's per-request wakes: one canonical instance per wake
 	// (its first), scoped to the account's apps before reading wake metadata, with
 	// the same boot and completion reads as ListAppWakeHistoryPage.
@@ -6058,6 +6062,9 @@ type Querier interface {
 	// yet), so a replica that lost the race records nothing.
 	RecordManagedPostgresOverageDelivery(ctx context.Context, db DBTX, arg RecordManagedPostgresOverageDeliveryParams) (bool, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
+	// ADR-20261031123259: one notice per copy and kind; the first sweep to reach
+	// it records it and later sweeps leave it alone.
+	RecordManagedPostgresRestoreSlotNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresRestoreSlotNoticeParams) (int64, error)
 	// ADR-1259: append-once; a replay must describe the same verified lineage.
 	RecordManagedPostgresRestoreVerification(ctx context.Context, db DBTX, arg RecordManagedPostgresRestoreVerificationParams) (ManagedPostgresRestoreVerification, error)
 	RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX, arg RecordManagedPostgresSharedUsageParams) (int64, error)

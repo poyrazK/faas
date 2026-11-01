@@ -3,6 +3,7 @@
 package daemonunitspec
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -212,5 +213,55 @@ print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0"
 				}
 			}
 		})
+	}
+}
+
+// The load test's pilot endpoint replaces the registry's public_endpoint only
+// while it is set; unset, the node keeps the control plane's endpoint, so the
+// cutover needs nothing but the variable cleared.
+func TestComputeObjectGatewayPilotEndpoint(t *testing.T) {
+	roleDir := filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "s3_gateway_compute_service")
+	var defaults struct {
+		Endpoint *string `yaml:"faas_object_gateway_public_endpoint"`
+	}
+	raw, err := os.ReadFile(filepath.Join(roleDir, "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(raw, &defaults); err != nil {
+		t.Fatal(err)
+	}
+	if defaults.Endpoint == nil || *defaults.Endpoint != "" {
+		t.Fatal("faas_object_gateway_public_endpoint must default to '' (the control plane's endpoint)")
+	}
+	var content string
+	for _, task := range flattenRoleTasks("enable.yml", loadYAMLList(t, filepath.Join(roleDir, "tasks", "enable.yml"))) {
+		if args, ok := task.body["ansible.builtin.copy"].(map[string]any); ok && args["dest"] == "/etc/faas/object-storage.json" {
+			content, _ = args["content"].(string)
+		}
+	}
+	if !strings.Contains(content, "faas_object_gateway_public_endpoint") {
+		t.Fatalf("the node's registry ignores the pilot endpoint:\n%s", content)
+	}
+	for _, tc := range []struct {
+		endpoint, want string
+	}{{"", "https://s3.gregale.dev"}, {"https://s3-pilot.gregale.dev", "https://s3-pilot.gregale.dev"}} {
+		rendered := renderPublicEdgeBlock(t, content, map[string]any{
+			"faas_object_gateway_registry":             map[string]any{"public_endpoint": "https://s3.gregale.dev", "transfer": map[string]any{"profile": "proxied"}},
+			"faas_object_gateway_max_bytes_per_second": 37500000,
+			"faas_object_gateway_public_endpoint":      tc.endpoint,
+		})
+		var registry struct {
+			PublicEndpoint string `json:"public_endpoint"`
+			Transfer       struct {
+				MaxBytesPerSecond int64 `json:"max_bytes_per_second"`
+			} `json:"transfer"`
+		}
+		if err := json.Unmarshal([]byte(rendered), &registry); err != nil {
+			t.Fatalf("rendered registry is not JSON: %v\n%s", err, rendered)
+		}
+		if registry.PublicEndpoint != tc.want || registry.Transfer.MaxBytesPerSecond != 37500000 {
+			t.Errorf("pilot endpoint %q rendered public_endpoint %q, max_bytes_per_second %d", tc.endpoint, registry.PublicEndpoint, registry.Transfer.MaxBytesPerSecond)
+		}
 	}
 }

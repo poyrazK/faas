@@ -14,6 +14,7 @@
       - faas_seal_domain_storage_contracted | default(false) | bool
       - faas_edge_on_compute_nodes | default(false) | bool
       - faas_cloudflared_install_dir is defined
+      - faas_object_gateway_public_endpoint | length == 0 or faas_object_gateway_public_endpoint is match('^https://[a-z0-9.-]+$')
     fail_msg: >-
       The S3 gateway on a compute node needs the provider registry
       (faas_object_storage_config_src), the gateway-only credential
@@ -22,10 +23,12 @@
       the contracted storage seal domain, so the node never holds the fleet
       identity (ADR-20261031122757 §4), and the app edge
       (faas_edge_on_compute_nodes), whose role installs the cloudflared
-      binary the s3 tunnel connector runs.
+      binary the s3 tunnel connector runs. A pilot
+      faas_object_gateway_public_endpoint is https://<host>, nothing else.
 
-# The node's registry is the control plane's with this node's port share:
-# stage the control plane's beside it and render from the staged copy.
+# The node's registry is the control plane's with this node's port share,
+# and the load test's pilot endpoint while one is set: stage the control
+# plane's beside it and render from the staged copy.
 - name: s3_gateway_compute_service — stage the control plane's provider registry
   ansible.builtin.copy:
     src: "{{ faas_object_storage_config_src }}"
@@ -50,6 +53,8 @@
       {{ faas_object_gateway_registry
          | combine({'transfer': (faas_object_gateway_registry.transfer | default({}))
                                 | combine({'max_bytes_per_second': faas_object_gateway_max_bytes_per_second | int})})
+         | combine({'public_endpoint': faas_object_gateway_public_endpoint}
+                   if faas_object_gateway_public_endpoint | length > 0 else {})
          | to_nice_json }}
     dest: /etc/faas/object-storage.json
     owner: root

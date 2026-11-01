@@ -44,6 +44,24 @@ func TestValidateRealtimeEndpoints(t *testing.T) {
 		{"duplicate group", func(m *Manifest) {
 			m.Realtime.Endpoints[0].ConsumerGroups = append(m.Realtime.Endpoints[0].ConsumerGroups, RealtimeConsumerGroup{Channel: "orders", Name: "billing"})
 		}, "declared twice"},
+		{"inbox group", func(m *Manifest) {
+			thread, id, block := "thread_id", "message_id", "block"
+			m.Realtime.Endpoints[0].ConsumerGroups[0].OrderingMetadataKey = &thread
+			m.Realtime.Endpoints[0].ConsumerGroups[0].DeduplicationMetadataKey = &id
+			m.Realtime.Endpoints[0].ConsumerGroups[0].DeadLetterPolicy = &block
+		}, ""},
+		{"bad ordering key", func(m *Manifest) {
+			key := strings.Repeat("k", 65)
+			m.Realtime.Endpoints[0].ConsumerGroups[0].OrderingMetadataKey = &key
+		}, "ordering_metadata_key must be"},
+		{"empty deduplication key", func(m *Manifest) {
+			key := ""
+			m.Realtime.Endpoints[0].ConsumerGroups[0].DeduplicationMetadataKey = &key
+		}, "deduplication_metadata_key must be"},
+		{"bad dead-letter policy", func(m *Manifest) {
+			policy := "drop"
+			m.Realtime.Endpoints[0].ConsumerGroups[0].DeadLetterPolicy = &policy
+		}, "dead_letter_policy must be"},
 		{"channel rules", func(m *Manifest) {
 			m.Realtime.Endpoints[0].Channels = []RealtimeChannelRule{{Pattern: "org:{org_id}:room:*", Read: true}}
 		}, ""},
@@ -95,6 +113,9 @@ realtime:
         - channel: orders
           name: billing
           lease_seconds: 120
+          ordering_metadata_key: thread_id
+          deduplication_metadata_key: message_id
+          dead_letter_policy: block
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +127,9 @@ realtime:
 	if !managed || len(endpoints) != 1 || endpoints[0].Auth != "shop-auth" || endpoints[0].MaxConnections != 500 ||
 		len(endpoints[0].ConsumerGroups) != 1 || *endpoints[0].ConsumerGroups[0].LeaseSeconds != 120 {
 		t.Fatalf("endpoints = %+v managed=%v", endpoints, managed)
+	}
+	if g := endpoints[0].ConsumerGroups[0]; *g.OrderingMetadataKey != "thread_id" || *g.DeduplicationMetadataKey != "message_id" || *g.DeadLetterPolicy != "block" {
+		t.Fatalf("group = %+v", g)
 	}
 	if other, _ := m.Realtime.EndpointsFor("other", "shop"); len(other) != 0 {
 		t.Fatalf("endpoints for another app = %+v", other)

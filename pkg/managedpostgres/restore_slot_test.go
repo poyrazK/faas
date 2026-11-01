@@ -35,6 +35,9 @@ type slotFixture struct {
 	clock    *time.Time
 	limit    *int
 	expired  *[]Database
+	// notified records the notices mailed; notifyErr, when set, fails them.
+	notified  *[]RestoreSlotNotice
+	notifyErr *error
 }
 
 func newSlotFixture(t *testing.T) slotFixture {
@@ -42,6 +45,8 @@ func newSlotFixture(t *testing.T) slotFixture {
 	clock := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 	limit := 1
 	var expired []Database
+	var notified []RestoreSlotNotice
+	var notifyErr error
 	provider := newHoldingProvider()
 	registry, store := testRegistry(t, &slotProvider{provider}, nil), NewMemoryStore()
 	sequence := 0
@@ -62,11 +67,20 @@ func newSlotFixture(t *testing.T) slotFixture {
 	}
 	sweeper, err := NewRestoreSlotSweeper(service, bindings, RestoreSlotSweeperOptions{
 		Expired: func(_ context.Context, database Database) { expired = append(expired, database) },
+		Notify: func(_ context.Context, notice RestoreSlotNotice) error {
+			if notifyErr != nil {
+				return notifyErr
+			}
+			notified = append(notified, notice)
+			store.markRestoreSlotNoticeMailed(notice)
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return slotFixture{service: service, store: store, provider: provider, bindings: bindings, sweeper: sweeper, clock: &clock, limit: &limit, expired: &expired}
+	return slotFixture{service: service, store: store, provider: provider, bindings: bindings, sweeper: sweeper, clock: &clock, limit: &limit, expired: &expired,
+		notified: &notified, notifyErr: &notifyErr}
 }
 
 // sourceAndCopy creates a ready source at the one-database limit and restores
@@ -245,5 +259,83 @@ func TestRestoreRangeMatchesWhatRestoreAccepts(t *testing.T) {
 	deleting.State = StateDeleting
 	if _, _, ok := deleting.RestoreRange(*f.clock); ok {
 		t.Fatal("a database being deleted shows a restore range")
+	}
+}
+
+func TestRestoreSlotNoticesAreMailedOnceEach(t *testing.T) {
+	f := newSlotFixture(t)
+	ctx := context.Background()
+	_, restored := f.sourceAndCopy(t)
+	sweep := func() RestoreSlotSummary {
+		t.Helper()
+		summary, err := f.sweeper.Sweep(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return summary
+	}
+
+	*f.clock = restored.RestoreSlotUntil.Add(-api.ManagedPostgresRestoreSlotNoticeLead - time.Minute)
+	if summary := sweep(); summary.Noticed != 0 || len(*f.notified) != 0 {
+		t.Fatalf("a sweep before the lead = %+v, notified %+v", summary, *f.notified)
+	}
+
+	// Inside the lead the notice is recorded once; a failed email is retried.
+	*f.clock = restored.RestoreSlotUntil.Add(-api.ManagedPostgresRestoreSlotNoticeLead + time.Minute)
+	*f.notifyErr = errors.New("outbox unavailable")
+	if summary := sweep(); summary.Noticed != 1 || summary.NotifyFailed != 1 || len(*f.notified) != 0 {
+		t.Fatalf("the first sweep in the lead = %+v", summary)
+	}
+	*f.notifyErr = nil
+	*f.clock = f.clock.Add(time.Hour)
+	if summary := sweep(); summary.Noticed != 0 || summary.NotifyFailed != 0 || len(*f.notified) != 1 {
+		t.Fatalf("the retry = %+v, notified %+v", summary, *f.notified)
+	}
+	ending := (*f.notified)[0]
+	if ending.Kind != RestoreSlotNoticeEnding || ending.DatabaseID != restored.ID || ending.AccountID != "account-a" ||
+		ending.DatabaseName != "orders-copy" || !ending.SlotUntil.Equal(restored.RestoreSlotUntil) || !ending.RestorableUntil.IsZero() {
+		t.Fatalf("ending notice = %+v", ending)
+	}
+	*f.clock = f.clock.Add(time.Hour)
+	if sweep(); len(*f.notified) != 1 {
+		t.Fatalf("a mailed notice was mailed again: %+v", *f.notified)
+	}
+
+	// The slot ends without room: the delete is scheduled and mailed once.
+	*f.clock = restored.RestoreSlotUntil.Add(time.Minute)
+	if summary := sweep(); summary.Expired != 1 || summary.Noticed != 1 || len(*f.notified) != 2 {
+		t.Fatalf("the expiry sweep = %+v, notified %+v", summary, *f.notified)
+	}
+	expired := (*f.notified)[1]
+	if expired.Kind != RestoreSlotNoticeExpired || expired.DatabaseID != restored.ID || len(*f.expired) != 1 ||
+		!expired.RestorableUntil.Equal((*f.expired)[0].PurgeAfter) || expired.RestorableUntil.IsZero() {
+		t.Fatalf("expired notice = %+v, scheduled %+v", expired, *f.expired)
+	}
+	*f.clock = f.clock.Add(time.Hour)
+	if sweep(); len(*f.notified) != 2 {
+		t.Fatalf("the expiry was mailed again: %+v", *f.notified)
+	}
+}
+
+func TestRestoreSlotEndingNoticeIsNotMailedOnceTheSlotIsReleased(t *testing.T) {
+	f := newSlotFixture(t)
+	ctx := context.Background()
+	_, restored := f.sourceAndCopy(t)
+	*f.clock = restored.RestoreSlotUntil.Add(-time.Hour)
+	*f.notifyErr = errors.New("outbox unavailable")
+	if summary, err := f.sweeper.Sweep(ctx); err != nil || summary.Noticed != 1 {
+		t.Fatalf("sweep = %+v, %v", summary, err)
+	}
+	// A plan upgrade makes room: the copy keeps its data and the warning no
+	// longer applies.
+	*f.limit = 2
+	*f.notifyErr = nil
+	if summary, err := f.sweeper.Sweep(ctx); err != nil || summary.Released != 1 || len(*f.notified) != 0 {
+		t.Fatalf("release sweep = %+v, %v, notified %+v", summary, err, *f.notified)
+	}
+	// A notice older than a day is never mailed either.
+	notices, err := f.store.UnmailedRestoreSlotNotices(ctx, f.clock.Add(-api.InternalMailManagedPostgresRestoreSlotTTL), *f.clock, 10)
+	if err != nil || len(notices) != 0 {
+		t.Fatalf("unmailed = %+v, %v", notices, err)
 	}
 }

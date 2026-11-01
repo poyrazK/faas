@@ -53786,6 +53786,62 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 	return items, nil
 }
 
+const listUnmailedManagedPostgresRestoreSlotNotices = `-- name: ListUnmailedManagedPostgresRestoreSlotNotices :many
+SELECT n.database_id,n.kind,n.slot_until,n.restorable_until,n.recorded_at,d.account_id,d.name
+FROM managed_postgres_restore_slot_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.mail_intent_id IS NULL AND n.recorded_at>$1::timestamptz
+ AND (n.kind='expired' OR (d.restore_slot_until IS NOT NULL AND d.state NOT IN ('deleting','deleted')
+  AND d.restore_slot_until>$2::timestamptz))
+ORDER BY n.recorded_at,n.database_id,n.kind LIMIT $3
+`
+
+type ListUnmailedManagedPostgresRestoreSlotNoticesParams struct {
+	Since     pgtype.Timestamptz
+	Now       pgtype.Timestamptz
+	BatchSize int32
+}
+
+type ListUnmailedManagedPostgresRestoreSlotNoticesRow struct {
+	DatabaseID      pgtype.UUID
+	Kind            string
+	SlotUntil       pgtype.Timestamptz
+	RestorableUntil pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+	AccountID       pgtype.UUID
+	Name            string
+}
+
+// The notices still to mail: recorded after since, not yet linked to an
+// intent, and for 'ending' only while the copy still holds a slot that has
+// not ended.
+func (q *Queries) ListUnmailedManagedPostgresRestoreSlotNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresRestoreSlotNoticesParams) ([]ListUnmailedManagedPostgresRestoreSlotNoticesRow, error) {
+	rows, err := db.Query(ctx, listUnmailedManagedPostgresRestoreSlotNotices, arg.Since, arg.Now, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnmailedManagedPostgresRestoreSlotNoticesRow{}
+	for rows.Next() {
+		var i ListUnmailedManagedPostgresRestoreSlotNoticesRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Kind,
+			&i.SlotUntil,
+			&i.RestorableUntil,
+			&i.RecordedAt,
+			&i.AccountID,
+			&i.Name,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWakeHistoryByWakeIDs = `-- name: ListWakeHistoryByWakeIDs :many
 WITH page AS MATERIALIZED (
  SELECT DISTINCT ON (wake_id) id, app_id, wake_id, state, started_at FROM instances
@@ -90332,6 +90388,37 @@ func (q *Queries) RecordManagedPostgresProviderResource(ctx context.Context, db 
 		arg.Now,
 		arg.ID,
 		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordManagedPostgresRestoreSlotNotice = `-- name: RecordManagedPostgresRestoreSlotNotice :execrows
+INSERT INTO managed_postgres_restore_slot_notices(database_id,kind,slot_until,restorable_until,recorded_at)
+VALUES($1::uuid,$2::text,$3::timestamptz,
+ $4::timestamptz,$5::timestamptz)
+ON CONFLICT (database_id,kind) DO NOTHING
+`
+
+type RecordManagedPostgresRestoreSlotNoticeParams struct {
+	DatabaseID      pgtype.UUID
+	Kind            string
+	SlotUntil       pgtype.Timestamptz
+	RestorableUntil pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+}
+
+// ADR-20261031123259: one notice per copy and kind; the first sweep to reach
+// it records it and later sweeps leave it alone.
+func (q *Queries) RecordManagedPostgresRestoreSlotNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresRestoreSlotNoticeParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresRestoreSlotNotice,
+		arg.DatabaseID,
+		arg.Kind,
+		arg.SlotUntil,
+		arg.RestorableUntil,
+		arg.RecordedAt,
 	)
 	if err != nil {
 		return 0, err
