@@ -1429,7 +1429,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// Legacy reapers cannot retire journal-owned resources.
 	if store != nil && !cfg.NativeProcessRecovery {
-		isLiveInstance := vmmdRuntimeSourceLiveness(store)
+		// A guest this vmmd adopted is not an orphan, whatever its row
+		// says: one whose row is no longer live is the live-VM reaper's
+		// (runLiveVMReap), which tears it down through the Manager. Killing
+		// it here left the Manager's teardown failing on the removed jail,
+		// retaining its lease (production-us fsn-2, rc.312 and rc.313).
+		isLiveInstance := layerCloneOwnershipGate(vmmdRuntimeSourceLiveness(store), mgr, resourceJournal)
 		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
 			JailRoot: jailer.JailRoot(),
 			Runner:   wire.ExecRunner{},

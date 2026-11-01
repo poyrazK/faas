@@ -10621,6 +10621,27 @@ func (q *Queries) CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX,
 	return count, err
 }
 
+const countAppErrorRequestsForFingerprint = `-- name: CountAppErrorRequestsForFingerprint :one
+SELECT count(*) FROM app_error_requests
+WHERE account_id = $1 AND app_id = $2 AND fingerprint = $3
+`
+
+type CountAppErrorRequestsForFingerprintParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Fingerprint string
+}
+
+// Request rows kept for one error group, for the plan's
+// AppErrorsMaxRequestRowsPerFingerprint cap (bug hunt 2026-10-28 H41).
+// Served by app_error_requests_drill_idx.
+func (q *Queries) CountAppErrorRequestsForFingerprint(ctx context.Context, db DBTX, arg CountAppErrorRequestsForFingerprintParams) (int64, error) {
+	row := db.QueryRow(ctx, countAppErrorRequestsForFingerprint, arg.AccountID, arg.AppID, arg.Fingerprint)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countCloneCheckpointPostgresCredentials = `-- name: CountCloneCheckpointPostgresCredentials :one
 SELECT count(*) FROM project_environment_clone_checkpoint_postgres_credentials WHERE account_id=$1
 `
@@ -29451,12 +29472,12 @@ INSERT INTO app_errors (
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9,
-    1, 1, $10, $10,
+    $18, $18, $10, $10,
     $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (account_id, app_id, fingerprint) DO UPDATE SET
-    count         = app_errors.count + 1,
-    request_count = app_errors.request_count + 1,
+    count         = app_errors.count + EXCLUDED.count,
+    request_count = app_errors.request_count + EXCLUDED.request_count,
     last_seen_at  = greatest(app_errors.last_seen_at, $10),
     last_instance_id = COALESCE(NULLIF(EXCLUDED.last_instance_id, ''), app_errors.last_instance_id),
     last_node_id = COALESCE(NULLIF(EXCLUDED.last_node_id, ''), app_errors.last_node_id),
@@ -29486,6 +29507,7 @@ type IncrementAppErrorParams struct {
 	LastDeploymentTag       string
 	LastDeploymentCreatedAt string
 	LastImageDigest         string
+	Count                   int64
 }
 
 // ---------------------------------------------------------------------------
@@ -29512,6 +29534,10 @@ type IncrementAppErrorParams struct {
 // on an UPDATE. This lets the handler distinguish
 // outcomeInserted vs outcomeMerged on the wire — the gateway
 // uses that signal to update its in-process LRU freshness.
+//
+// $18 is the number of requests the record stands for: the gateway folds
+// an app's repeats of one error into a few records per flush (bug hunt
+// 2026-10-28 H41).
 func (q *Queries) IncrementAppError(ctx context.Context, db DBTX, arg IncrementAppErrorParams) (bool, error) {
 	row := db.QueryRow(ctx, incrementAppError,
 		arg.ID,
@@ -29531,6 +29557,7 @@ func (q *Queries) IncrementAppError(ctx context.Context, db DBTX, arg IncrementA
 		arg.LastDeploymentTag,
 		arg.LastDeploymentCreatedAt,
 		arg.LastImageDigest,
+		arg.Count,
 	)
 	var inserted bool
 	err := row.Scan(&inserted)

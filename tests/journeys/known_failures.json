@@ -55,6 +55,11 @@
     "since": "2026-10-30"
   },
   {
+    "step": "TestDataAPI/data_api_enabled",
+    "bug": "managed PostgreSQL and the Data API (GA rows 109 and 110) are preview and not released to production accounts: production provisioning waits on the operator approval pin (ADR-20261028103115), and the later steps report blocked; remove once the e2e account is released",
+    "since": "2026-10-31"
+  },
+  {
     "step": "TestTrafficSplitAndRollback/production_wakes_v1_while_staged",
     "bug": "#6121: after deploy --no-traffic, a parked or frozen serving release cannot wake beside the staged release's instance: production answers 429 app_concurrency_reached until that instance idles out (the gateway grants ADR-199's rollout slot only for a positive-weight sibling)",
     "since": "2026-10-31"
