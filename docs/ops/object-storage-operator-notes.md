@@ -591,7 +591,10 @@ Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication,
 ACLs, and bucket create/delete through the S3 protocol remain explicit
-`NotImplemented` gaps. Browser form uploads (presigned POST with a policy
+`NotImplemented` gaps, except that a write's `x-amz-acl: private` or
+`bucket-owner-full-control` is accepted and ignored. Every s3-gatewayd response
+carries `Cloudflare-CDN-Cache-Control: no-store`, so Cloudflare never keeps a
+private response; the cache-bypass rule below is still needed for HEAD requests. Browser form uploads (presigned POST with a policy
 document) are not supported: the gateway treats them as anonymous requests and
 answers 403 `SignatureDoesNotMatch`, so browsers should upload with a presigned
 PUT URL instead. Keys containing `/./` or `/../` path segments cannot be used

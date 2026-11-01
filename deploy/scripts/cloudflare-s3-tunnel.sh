@@ -8,7 +8,9 @@
 #   2. stage the connector token on each node in NODES, piped straight from
 #      the Cloudflare API into a root-only file over SSH, never printed or
 #      written locally, and start faas-cloudflared-s3 where its unit exists;
-#   3. create (or update) the proxied record PILOT_HOST -> <tunnel>.cfargotunnel.com.
+#   3. create (or update) the proxied record PILOT_HOST -> <tunnel>.cfargotunnel.com;
+#   4. add (or update) the zone's cache-bypass and configuration rules for
+#      s3.<domain> and every ingress host.
 #
 # It never touches s3.<domain>'s record: that keeps reaching the control
 # plane until the cutover (ADR step 6). For the one-node load test (step 5)
@@ -16,15 +18,16 @@
 # Safe to re-run.
 #
 # Needs CF_ACCOUNT_ID, CF_ZONE_ID, NODES and a Cloudflare API token with
-# Account > Cloudflare Tunnel: Edit and Zone > DNS: Edit. Without
-# CF_API_TOKEN in the environment the script asks for it without echo.
+# Account > Cloudflare Tunnel: Edit, Zone > DNS: Edit, Zone > Cache Rules: Edit
+# and Zone > Config Rules: Edit. Without CF_API_TOKEN in the environment the
+# script asks for it without echo.
 set -euo pipefail
 
 : "${CF_ACCOUNT_ID:?set CF_ACCOUNT_ID to the Cloudflare account id}"
 : "${CF_ZONE_ID:?set CF_ZONE_ID to the zone id of the platform domain}"
 : "${NODES:?set NODES to the compute nodes whose connector joins the s3 tunnel (the pilot node for the load test)}"
 if [[ -z "${CF_API_TOKEN:-}" ]]; then
-  read -r -s -p "Cloudflare API token (Tunnel: Edit, DNS: Edit): " CF_API_TOKEN
+  read -r -s -p "Cloudflare API token (Tunnel: Edit, DNS: Edit, Cache Rules: Edit, Config Rules: Edit): " CF_API_TOKEN
   echo
 fi
 
@@ -86,4 +89,44 @@ else
   cf -X POST "$api/zones/$CF_ZONE_ID/dns_records" --data "$record" >/dev/null
 fi
 echo "pilot record: $PILOT_HOST -> $tunnel_id.cfargotunnel.com (proxied)"
+
+# 4. The zone rules every S3 hostname needs (docs/ops/object-storage-operator-
+#    notes.md): bypass the cache, so Cloudflare never turns the HEAD of a key
+#    such as logo.png into a GET that fails SigV4, and turn off the features
+#    that challenge or rewrite requests. They cover s3.<domain> and every
+#    ingress host. Only the two rules this script owns (by ref) are added or
+#    updated; every other rule in those phases stays as it is.
+expression=$(printf '%s\n' "s3.$PLATFORM_DOMAIN" "${ingress_hosts[@]}" | LC_ALL=C sort -u |
+  jq -Rrn '[inputs | "\"" + . + "\""] | "(http.host in {" + join(" ") + "})"')
+ensure_zone_rule() { # phase ref action action_parameters
+  local phase=$1 ref=$2 action=$3 params=$4 rule status ruleset_id rule_id
+  rule=$(jq -cn --arg ref "$ref" --arg expression "$expression" --arg action "$action" --argjson params "$params" \
+    '{ref: $ref, description: ("Gregale S3 endpoint (" + $ref + "), managed by cloudflare-s3-tunnel.sh"),
+      expression: $expression, action: $action, action_parameters: $params, enabled: true}')
+  status=$(curl -sS -o "$scratch/entrypoint.json" -w '%{http_code}' -H "Authorization: Bearer $CF_API_TOKEN" \
+    "$api/zones/$CF_ZONE_ID/rulesets/phases/$phase/entrypoint")
+  case "$status" in
+    404)
+      # No rule exists in this phase yet, so the entrypoint holds only ours.
+      cf -X PUT "$api/zones/$CF_ZONE_ID/rulesets/phases/$phase/entrypoint" \
+        --data "$(jq -cn --argjson rule "$rule" '{rules: [$rule]}')" >/dev/null ;;
+    200)
+      ruleset_id=$(jq -r .result.id "$scratch/entrypoint.json")
+      rule_id=$(jq -r --arg ref "$ref" '[.result.rules[]? | select(.ref == $ref)][0].id // empty' "$scratch/entrypoint.json")
+      if [[ -n "$rule_id" ]]; then
+        cf -X PATCH "$api/zones/$CF_ZONE_ID/rulesets/$ruleset_id/rules/$rule_id" --data "$rule" >/dev/null
+      else
+        cf -X POST "$api/zones/$CF_ZONE_ID/rulesets/$ruleset_id/rules" --data "$rule" >/dev/null
+      fi ;;
+    *)
+      echo "reading the $phase rules failed with HTTP $status; the token needs Zone > Cache Rules: Edit and Zone > Config Rules: Edit" >&2
+      exit 1 ;;
+  esac
+  echo "zone rule $ref: $expression"
+}
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+ensure_zone_rule http_request_cache_settings gregale_s3_cache_bypass set_cache_settings '{"cache": false}'
+ensure_zone_rule http_config_settings gregale_s3_config set_config \
+  '{"bic": false, "email_obfuscation": false, "rocket_loader": false, "automatic_https_rewrites": false, "fonts": false, "disable_rum": true, "disable_zaraz": true}'
 echo "next: set faas_object_gateway_public_endpoint=https://$PILOT_HOST on the compute nodes, then the load test runbook"
