@@ -1475,7 +1475,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "outcome"}),
 		edgeChallenge: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_challenge_total",
-			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired).",
+			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired), preflight (CORS preflight answered at the edge, ADR-831 amendment 18).",
 		}, []string{"app", "outcome"}),
 		aiCrawlerRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ai_crawler_requests_total",

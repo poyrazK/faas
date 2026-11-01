@@ -360,6 +360,17 @@ whose paths route to several apps. Open before releasing `edge_challenge` or
 every gateway and see `FaasEdgeChallengeKeyMismatch` quiet
 (`docs/ops/platform-flags.md`).
 
+2026-10-31: a security review fixed three more. A per-app deploy token could
+write rules covering every app of its account; it is now limited to its own
+app's hosts (ADR-091 amendment 2026-10-31, later). A cookie planted by
+another app on the shared apps domain could hide a challenge pass (now a
+`__Host-` cookie) or get a visitor boxed through a WAF `block` rule
+(cookie-only detections no longer count toward penalties), and challenged CORS
+preflights broke cross-origin calls (now answered at the edge; ADR-831
+amendment 18). Open: such a planted cookie still trips `block` rules on
+`gregale.dev` hosts until apps move to a domain on the Public Suffix List
+(ADR-20261026100000 amendment 1, proposed).
+
 ## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the
