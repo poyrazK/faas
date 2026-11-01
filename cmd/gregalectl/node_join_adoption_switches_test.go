@@ -74,6 +74,34 @@ func TestNodeJoinRendersTheAdoptionSwitches(t *testing.T) {
 	}
 }
 
+// A no-drain restart must not take its row out of service: the scheduler
+// evacuates an unavailable node, and on production-us (rc.312, rc.313) the
+// release install parked every guest on fsn-2 just before vmmd restarted.
+func TestNodeJoinNoDrainInstallKeepsTheRowActive(t *testing.T) {
+	const want = "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"
+	for _, name := range []string{
+		"Install the verified release, keeping a drained row drained",
+		"Retry staged release installation after SBoM baseline initialization",
+	} {
+		install, _ := nodeJoinTask(t, name)["ansible.builtin.command"].(map[string]any)
+		argv, _ := install["argv"].([]any)
+		var flags []string
+		for _, a := range argv {
+			if s, _ := a.(string); strings.HasPrefix(s, "--defer-activation") {
+				flags = append(flags, s)
+			}
+		}
+		if len(flags) != 1 || flags[0] != want {
+			t.Errorf("%s: activation flags %q, want only %q", name, flags, want)
+		}
+	}
+	// The install comes after the no-drain decision it reads.
+	playbook := nodeJoinPlaybook(t)
+	if strings.Index(playbook, "faas_join_skip_drain: >-") > strings.Index(playbook, "release\n          - install") {
+		t.Fatal("the release install runs before the no-drain decision")
+	}
+}
+
 func TestVMMDServiceAdoptionSwitchesDefaultOff(t *testing.T) {
 	role := filepath.Join("..", "..", "deploy", "ansible", "roles", "vmmd_service")
 	defaults, err := os.ReadFile(filepath.Join(role, "defaults", "main.yml"))

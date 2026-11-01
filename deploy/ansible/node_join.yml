@@ -1552,7 +1552,13 @@
         - faas-schedd.service
         - faas-vmmd.service
 
-    - name: Install the verified release while keeping the row drained
+    # A drained rollout keeps the row out of service until readiness passes.
+    # A no-drain restart never leaves service, so its row stays active: an
+    # unavailable row makes the scheduler evacuate the node. On production-us
+    # (rc.312 and rc.313, 2026-10-31) it parked every guest on fsn-2 seconds
+    # before vmmd restarted; the restarted vmmd adopted them, and its orphan
+    # reaper then killed them because their rows were parked.
+    - name: Install the verified release, keeping a drained row drained
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -1566,7 +1572,7 @@
           - "{{ faas_join_database_node }}"
           - --role
           - compute-only
-          - --defer-activation
+          - "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"
       register: faas_release_install
       changed_when: faas_release_install.rc == 0
       failed_when: >-
@@ -1615,7 +1621,7 @@
           - "{{ faas_join_database_node }}"
           - --role
           - compute-only
-          - --defer-activation
+          - "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"
       when: >-
         faas_release_install.rc != 0 and
         'SBoM gate requires a prior baseline' in

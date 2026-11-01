@@ -24,6 +24,17 @@ const (
 	// AppTaskAttachTokenHeader carries the one-time attach token.
 	AppTaskAttachTokenHeader = "X-Gregale-Attach-Token"
 
+	// AttachTokenCredentialTag binds the stored digests of interactive
+	// attach tokens, for app tasks and job runs alike, under the attach
+	// credential ring: apid writes them and vmmd checks them (ADR
+	// 20261029202403 amendment 1).
+	AttachTokenCredentialTag = "interactive_attach.token_sha256"
+
+	// DataAPIServerKeyCredentialTag binds the stored hashes of Data API
+	// server keys under the data-api credential ring: apid keys them on
+	// write, and realtimed asks apid to match them.
+	DataAPIServerKeyCredentialTag = "data_api_access_configs.server_key"
+
 	AppTaskAttachStdin      byte = 0x01
 	AppTaskAttachResize     byte = 0x02
 	AppTaskAttachStdinClose byte = 0x03

@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -773,7 +774,9 @@ func runHasPermanentFailure(run JobRun, tasks map[int]JobTask, job Job) bool {
 		retryMax = *run.RetryMax
 	}
 	for _, task := range tasks {
-		if (task.Status == "failed" || task.Status == "timeout" || task.Status == "oom") && (task.WorkDecision != nil && task.WorkDecision.Action == "fail_partition" || (task.WorkDecision == nil || task.WorkDecision.Action == "retry") && task.Attempt > retryMax) {
+		// A dead-lettered attempt will not run again either: a retry past its
+		// budget or one the store refused records dead_letter, not retry.
+		if (task.Status == "failed" || task.Status == "timeout" || task.Status == "oom") && (task.WorkDecision != nil && (task.WorkDecision.Action == "fail_partition" || task.WorkDecision.Action == "dead_letter") || (task.WorkDecision == nil || task.WorkDecision.Action == "retry") && task.Attempt > retryMax) {
 			return true
 		}
 	}
@@ -954,7 +957,7 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 			m.jobRunAttach = make(map[string]JobRunAttach)
 		}
 		record := *attach
-		record.TokenSHA256 = append([]byte(nil), attach.TokenSHA256...)
+		record.TokenSHA256 = familyStoredCredential(credhash.FamilyAttach, credTagInteractiveAttach, attach.TokenSHA256)
 		m.jobRunAttach[run.ID] = record
 	}
 
@@ -2305,4 +2308,28 @@ func (m *MemStore) CompleteJobTaskAttempt(ctx context.Context, p JobTaskCompleti
 	return m.jobTaskMarkTerminal(p.RunID, p.TaskIndex, p.InstanceID, p.LeaseToken, true,
 		p.Status, p.ExitCode, p.ErrorClass, p.ErrorMessage, p.LogContent, p.LogTruncated,
 		true, p.FinishedAt, p.OutputManifest, p)
+}
+
+// SettleRefusedJobTaskRetry implements JobTaskRetryRefusalStore.
+func (m *MemStore) SettleRefusedJobTaskRetry(_ context.Context, runID string, taskIndex, attempt int, decision workpolicy.Decision) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.jobTasks[runID][taskIndex]
+	if !ok || t.Attempt != attempt || (t.Status != "failed" && t.Status != "timeout" && t.Status != "oom") ||
+		t.WorkDecision == nil || t.WorkDecision.Action != "retry" {
+		return false, nil
+	}
+	run, ok := m.jobRuns[runID]
+	if !ok {
+		return false, ErrNotFound
+	}
+	t.WorkDecision = workpolicy.Clone(&decision)
+	m.jobTasks[runID][taskIndex] = t
+	if journal, ok := m.jobTaskAttempts[runID][taskIndex][attempt]; ok {
+		journal.WorkDecision = workpolicy.Clone(&decision)
+		m.jobTaskAttempts[runID][taskIndex][attempt] = journal
+	}
+	run.DeadLetterCount++
+	m.jobRuns[runID] = run
+	return true, nil
 }

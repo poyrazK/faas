@@ -10395,6 +10395,27 @@ func (q *Queries) CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX,
 	return count, err
 }
 
+const countAppErrorRequestsForFingerprint = `-- name: CountAppErrorRequestsForFingerprint :one
+SELECT count(*) FROM app_error_requests
+WHERE account_id = $1 AND app_id = $2 AND fingerprint = $3
+`
+
+type CountAppErrorRequestsForFingerprintParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Fingerprint string
+}
+
+// Request rows kept for one error group, for the plan's
+// AppErrorsMaxRequestRowsPerFingerprint cap (bug hunt 2026-10-28 H41).
+// Served by app_error_requests_drill_idx.
+func (q *Queries) CountAppErrorRequestsForFingerprint(ctx context.Context, db DBTX, arg CountAppErrorRequestsForFingerprintParams) (int64, error) {
+	row := db.QueryRow(ctx, countAppErrorRequestsForFingerprint, arg.AccountID, arg.AppID, arg.Fingerprint)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countCloneCheckpointPostgresCredentials = `-- name: CountCloneCheckpointPostgresCredentials :one
 SELECT count(*) FROM project_environment_clone_checkpoint_postgres_credentials WHERE account_id=$1
 `
@@ -10480,6 +10501,35 @@ type CountDeploymentCronsRow struct {
 func (q *Queries) CountDeploymentCrons(ctx context.Context, db DBTX, arg CountDeploymentCronsParams) (CountDeploymentCronsRow, error) {
 	row := db.QueryRow(ctx, countDeploymentCrons, arg.AppID, arg.SubjectID)
 	var i CountDeploymentCronsRow
+	err := row.Scan(&i.AppCount, &i.AccountCount)
+	return i, err
+}
+
+const countEnabledEventSubscriptionsForQuota = `-- name: CountEnabledEventSubscriptionsForQuota :one
+with target as (
+  select (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) as subject
+  from apps a left join orgs o on o.id = a.org_id
+  where a.id = $1::uuid
+)
+select (count(*) filter (where s.app_id = $1::uuid))::int as app_count,
+       count(*)::int as account_count
+from target t
+join apps a on (a.account_id = t.subject or a.org_id = t.subject) and a.status <> 'deleted'
+left join orgs o on o.id = a.org_id
+join event_subscriptions s on s.app_id = a.id and s.enabled
+where (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) = t.subject
+`
+
+type CountEnabledEventSubscriptionsForQuotaRow struct {
+	AppCount     int32
+	AccountCount int32
+}
+
+// ADR-20261031130000: the enabled subscriptions of one app and of every app
+// sharing its billing subject (the cron quota subject).
+func (q *Queries) CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error) {
+	row := db.QueryRow(ctx, countEnabledEventSubscriptionsForQuota, appID)
+	var i CountEnabledEventSubscriptionsForQuotaRow
 	err := row.Scan(&i.AppCount, &i.AccountCount)
 	return i, err
 }
@@ -17386,7 +17436,7 @@ func (q *Queries) EventAckExpire(ctx context.Context, db DBTX, arg EventAckExpir
 }
 
 const eventAckExpired = `-- name: EventAckExpired :many
-SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,coalesce(i.async_quota_subject_id,i.account_id) AS quota_subject_id,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
 WHERE i.state='dispatching' AND a.phase='awaiting' AND i.lease_expires_at<=clock_timestamp()
 ORDER BY i.lease_expires_at,i.id LIMIT $1::integer FOR UPDATE OF i SKIP LOCKED
 `
@@ -17398,6 +17448,7 @@ type EventAckExpiredRow struct {
 	Attempts         int32
 	ReplayGeneration int64
 	QuotaReserved    bool
+	QuotaSubjectID   pgtype.UUID
 	MaxAttempts      int32
 	RetryDelayMs     int64
 	SubscriptionID   string
@@ -17419,6 +17470,7 @@ func (q *Queries) EventAckExpired(ctx context.Context, db DBTX, batchLimit int32
 			&i.Attempts,
 			&i.ReplayGeneration,
 			&i.QuotaReserved,
+			&i.QuotaSubjectID,
 			&i.MaxAttempts,
 			&i.RetryDelayMs,
 			&i.SubscriptionID,
@@ -17470,7 +17522,7 @@ func (q *Queries) EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.
 }
 
 const eventAckInvocationLock = `-- name: EventAckInvocationLock :one
-SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved,coalesce(i.async_quota_subject_id,i.account_id) AS quota_subject_id FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.id=$1::uuid AND i.account_id=$2::uuid AND i.app_id=$3::uuid AND a.status<>'deleted' FOR UPDATE OF i
 `
 
@@ -17495,6 +17547,7 @@ type EventAckInvocationLockRow struct {
 	LeaseExpiresAt         pgtype.Timestamptz
 	Result                 []byte
 	QuotaReserved          bool
+	QuotaSubjectID         pgtype.UUID
 }
 
 func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg EventAckInvocationLockParams) (EventAckInvocationLockRow, error) {
@@ -17515,6 +17568,7 @@ func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg Event
 		&i.LeaseExpiresAt,
 		&i.Result,
 		&i.QuotaReserved,
+		&i.QuotaSubjectID,
 	)
 	return i, err
 }
@@ -18152,6 +18206,27 @@ func (q *Queries) EventConsumerProcessingHealth(ctx context.Context, db DBTX, ar
 		&i.AcknowledgmentLatencyMaxSeconds,
 	)
 	return i, err
+}
+
+const eventRoutingSubscriptionEnabled = `-- name: EventRoutingSubscriptionEnabled :one
+select enabled from event_subscriptions
+where id = $1::uuid and account_id = $2::uuid
+  and app_id = $3::uuid
+`
+
+type EventRoutingSubscriptionEnabledParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261031130000: routing admits a recipient only while its subscription
+// is still enabled.
+func (q *Queries) EventRoutingSubscriptionEnabled(ctx context.Context, db DBTX, arg EventRoutingSubscriptionEnabledParams) (bool, error) {
+	row := db.QueryRow(ctx, eventRoutingSubscriptionEnabled, arg.ID, arg.AccountID, arg.AppID)
+	var enabled bool
+	err := row.Scan(&enabled)
+	return enabled, err
 }
 
 const exclusiveWorkAppScope = `-- name: ExclusiveWorkAppScope :one
@@ -23671,7 +23746,7 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
 WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  app_scope AS MATERIALIZED (
- SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
  FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
  ), live AS MATERIALIZED (
@@ -28692,12 +28767,12 @@ INSERT INTO app_errors (
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9,
-    1, 1, $10, $10,
+    $18, $18, $10, $10,
     $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (account_id, app_id, fingerprint) DO UPDATE SET
-    count         = app_errors.count + 1,
-    request_count = app_errors.request_count + 1,
+    count         = app_errors.count + EXCLUDED.count,
+    request_count = app_errors.request_count + EXCLUDED.request_count,
     last_seen_at  = greatest(app_errors.last_seen_at, $10),
     last_instance_id = COALESCE(NULLIF(EXCLUDED.last_instance_id, ''), app_errors.last_instance_id),
     last_node_id = COALESCE(NULLIF(EXCLUDED.last_node_id, ''), app_errors.last_node_id),
@@ -28727,6 +28802,7 @@ type IncrementAppErrorParams struct {
 	LastDeploymentTag       string
 	LastDeploymentCreatedAt string
 	LastImageDigest         string
+	Count                   int64
 }
 
 // ---------------------------------------------------------------------------
@@ -28753,6 +28829,10 @@ type IncrementAppErrorParams struct {
 // on an UPDATE. This lets the handler distinguish
 // outcomeInserted vs outcomeMerged on the wire — the gateway
 // uses that signal to update its in-process LRU freshness.
+//
+// $18 is the number of requests the record stands for: the gateway folds
+// an app's repeats of one error into a few records per flush (bug hunt
+// 2026-10-28 H41).
 func (q *Queries) IncrementAppError(ctx context.Context, db DBTX, arg IncrementAppErrorParams) (bool, error) {
 	row := db.QueryRow(ctx, incrementAppError,
 		arg.ID,
@@ -28772,6 +28852,7 @@ func (q *Queries) IncrementAppError(ctx context.Context, db DBTX, arg IncrementA
 		arg.LastDeploymentTag,
 		arg.LastDeploymentCreatedAt,
 		arg.LastImageDigest,
+		arg.Count,
 	)
 	var inserted bool
 	err := row.Scan(&inserted)
@@ -77080,6 +77161,7 @@ SELECT (jsonb_build_object(
     'project_environment_queue_runtime_sets_deployment_id_fkey', (SELECT count(*) FROM project_environment_queue_runtime_sets WHERE deployment_id = $1::uuid),
     'project_environment_workload_deployment_spec_deployment_id_fkey', (SELECT count(*) FROM project_environment_workload_deployment_specs WHERE deployment_id = $1::uuid),
     'project_release_members_deployment_id_fkey', (SELECT count(*) FROM project_release_members WHERE deployment_id = $1::uuid),
+    'release_gate_probe_results_deployment_id_fkey', (SELECT count(*) FROM release_gate_probe_results WHERE deployment_id = $1::uuid),
     'route_check_history_deployment_id_fkey', (SELECT count(*) FROM route_check_history WHERE deployment_id = $1::uuid),
     'route_health_history_deployment_id_fkey', (SELECT count(*) FROM route_health_history WHERE deployment_id = $1::uuid),
     'route_health_notification_state_deployment_id_fkey', (SELECT count(*) FROM route_health_notification_state WHERE deployment_id = $1::uuid),
@@ -98900,6 +98982,34 @@ type SetEnvironmentWorkloadServingTrafficParams struct {
 
 func (q *Queries) SetEnvironmentWorkloadServingTraffic(ctx context.Context, db DBTX, arg SetEnvironmentWorkloadServingTrafficParams) (int64, error) {
 	result, err := db.Exec(ctx, setEnvironmentWorkloadServingTraffic, arg.TrafficPercent, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setEventSubscriptionEnabled = `-- name: SetEventSubscriptionEnabled :execrows
+update event_subscriptions set enabled = $1::boolean, updated_at = now()
+where id = $2::uuid and account_id = $3::uuid
+  and app_id = $4::uuid
+`
+
+type SetEventSubscriptionEnabledParams struct {
+	Enabled   bool
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261031130000: a deploy disables the subscriptions its manifest no
+// longer declares; rolling the deploy back enables them again.
+func (q *Queries) SetEventSubscriptionEnabled(ctx context.Context, db DBTX, arg SetEventSubscriptionEnabledParams) (int64, error) {
+	result, err := db.Exec(ctx, setEventSubscriptionEnabled,
+		arg.Enabled,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+	)
 	if err != nil {
 		return 0, err
 	}

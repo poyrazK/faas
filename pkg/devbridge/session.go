@@ -3,12 +3,14 @@
 package devbridge
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 var ErrUnauthorized = errors.New("dev bridge session unauthorized")
@@ -31,8 +33,21 @@ type Session struct {
 	Scope            Scope      `json:"scope"`
 	ExpiresAt        time.Time  `json:"expires_at"`
 	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
-	AttachmentDigest [32]byte   `json:"-"`
-	RequestDigest    [32]byte   `json:"-"`
+	AttachmentDigest []byte     `json:"-"`
+	RequestDigest    []byte     `json:"-"`
+}
+
+// Dev-bridge credentials belong to the dev-bridge credential family (ADR
+// 20261029202403 amendment 1): their digests are keyed under its ring,
+// which apid and bridged hold; gatewayd-internal asks apid to match them.
+const (
+	AttachmentDigestColumn credhash.Tag = "dev_bridge_sessions.attachment_digest"
+	RequestDigestColumn    credhash.Tag = "dev_bridge_sessions.request_digest"
+)
+
+func storedDigest(column credhash.Tag, credential string) []byte {
+	sum := sha256.Sum256([]byte(credential))
+	return credhash.For(credhash.FamilyDevBridge).Store(column, sum[:])
 }
 
 type Credentials struct {
@@ -67,30 +82,33 @@ func NewSession(scope Scope, now, expiry time.Time) (Session, Credentials, error
 		return Session{}, Credentials{}, err
 	}
 	scope.DependencyAppIDs = append([]string(nil), scope.DependencyAppIDs...)
-	return Session{ID: id, Scope: scope, ExpiresAt: expiry.UTC(), AttachmentDigest: sha256.Sum256([]byte(attach)), RequestDigest: sha256.Sum256([]byte(request))}, Credentials{attach, request}, nil
+	return Session{ID: id, Scope: scope, ExpiresAt: expiry.UTC(), AttachmentDigest: storedDigest(AttachmentDigestColumn, attach), RequestDigest: storedDigest(RequestDigestColumn, request)}, Credentials{attach, request}, nil
 }
 
-func (s Session) valid(now time.Time, credential string, digest [32]byte) bool {
+func (s Session) valid(ctx context.Context, now time.Time, credential string, column credhash.Tag, stored []byte) bool {
+	if credential == "" || s.RevokedAt != nil || !now.Before(s.ExpiresAt) {
+		return false
+	}
 	actual := sha256.Sum256([]byte(credential))
-	return credential != "" && s.RevokedAt == nil && now.Before(s.ExpiresAt) && subtle.ConstantTimeCompare(actual[:], digest[:]) == 1
+	return credhash.Match(ctx, credhash.FamilyDevBridge, column, actual[:], stored)
 }
 
-func (s Session) AuthorizeAttachment(now time.Time, credential string) error {
-	if !s.valid(now, credential, s.AttachmentDigest) {
+func (s Session) AuthorizeAttachment(ctx context.Context, now time.Time, credential string) error {
+	if !s.valid(ctx, now, credential, AttachmentDigestColumn, s.AttachmentDigest) {
 		return ErrUnauthorized
 	}
 	return nil
 }
 
-func (s Session) AuthorizeRequest(now time.Time, credential, accountID, environmentID, appID string) error {
-	if accountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || appID != s.Scope.TargetAppID || !s.valid(now, credential, s.RequestDigest) {
+func (s Session) AuthorizeRequest(ctx context.Context, now time.Time, credential, accountID, environmentID, appID string) error {
+	if accountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || appID != s.Scope.TargetAppID || !s.valid(ctx, now, credential, RequestDigestColumn, s.RequestDigest) {
 		return ErrUnauthorized
 	}
 	return nil
 }
 
-func (s Session) AuthorizeDependency(now time.Time, credential, accountID, environmentID, appID string) error {
-	if accountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || !s.valid(now, credential, s.AttachmentDigest) {
+func (s Session) AuthorizeDependency(ctx context.Context, now time.Time, credential, accountID, environmentID, appID string) error {
+	if accountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || !s.valid(ctx, now, credential, AttachmentDigestColumn, s.AttachmentDigest) {
 		return ErrUnauthorized
 	}
 	for _, allowed := range s.Scope.DependencyAppIDs {
@@ -103,8 +121,8 @@ func (s Session) AuthorizeDependency(now time.Time, credential, accountID, envir
 
 // AuthorizeContextRoute lets a request participate only in its selected
 // application graph. It cannot attach a tunnel or expand the dependency set.
-func (s Session) AuthorizeContextRoute(now time.Time, c RequestContext, environmentID, appID string) error {
-	if c.SessionID != s.ID || c.AccountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || !s.valid(now, c.Token, s.RequestDigest) {
+func (s Session) AuthorizeContextRoute(ctx context.Context, now time.Time, c RequestContext, environmentID, appID string) error {
+	if c.SessionID != s.ID || c.AccountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || !s.valid(ctx, now, c.Token, RequestDigestColumn, s.RequestDigest) {
 		return ErrUnauthorized
 	}
 	if appID == s.Scope.TargetAppID {

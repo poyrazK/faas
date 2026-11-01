@@ -77,12 +77,17 @@ Two things make replicas possible now:
 
 - Each gateway limits its transfer to `api.ObjectGatewayNodePortSharePercent`
   (30) of the node's port speed, per direction.
+- Uploads and downloads draw on one budget. Every byte a gateway moves
+  crosses the port once each way (in from the provider and out to the
+  client for a read, the reverse for a write), so one budget of the share
+  keeps both directions within it.
 - The manifest declares each node's port speed. Ansible renders the share
   into the registry as `transfer.max_bytes_per_second`.
 - Over the share, transfers slow down through TCP backpressure; they do not
-  fail. App traffic keeps the rest of the port.
+  fail. App traffic keeps the rest of the port. Time a request body waits
+  for the share does not count against the client's minimum upload rate.
 - `s3_gateway_transfer_throttled_seconds_total{direction}` counts the
-  seconds spent at the share.
+  wall-clock seconds during which a transfer waited for the share.
 
 ### 4. Compute nodes hold storage credentials, scoped to the gateway
 
@@ -170,7 +175,9 @@ egress ceiling".
    - `s3_gateway_service` in the compute play, with the compute unit variant;
    - the `faas-cloudflared-s3` connector;
    - manifest `object_storage.gateway_on_compute` and per-node port speed;
-   - the two reserves in schedd's admission.
+   - the two reserves: the node join runs `gregalectl compute-nodes sizing
+     --edge --object-gateway`, which registers the node's tenant capacity
+     without them.
 5. Load test on one node, as the acceptance gate. Measure small GETs per
    second, large-GET throughput at the share, and PUTs per second for one
    account. It passes when:

@@ -40,6 +40,10 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	stored, err := storedIntegrationToken(ctx, tx, integrationID, record.Policy.TokenHash)
+	if err != nil {
+		return err
+	}
 	if record.Policy.DailyRequestLimit != nil {
 		var plan string
 		if err := tx.QueryRow(ctx, `SELECT plan FROM accounts WHERE id = $1 FOR SHARE`, record.AccountID).Scan(&plan); err != nil {
@@ -80,7 +84,7 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		WHERE outbound_integrations.account_id = EXCLUDED.account_id
 		  AND outbound_integrations.owner_kind = 'operator'`,
 		integrationID, record.AccountID, record.Name, record.Policy.Origin.String(),
-		record.Policy.TokenHash[:], record.Policy.RatePerSecond, record.Policy.Burst,
+		stored, record.Policy.RatePerSecond, record.Policy.Burst,
 		record.Policy.MaxInFlight, record.Policy.RequestTimeout.Milliseconds(), record.Policy.MaxRetries,
 		record.Policy.ResponseCacheTTLSeconds, record.Policy.CircuitBreakerFailureThreshold,
 		record.Policy.CircuitBreakerOpenSeconds, record.Policy.RetryBudgetPerMinute, record.Policy.Enabled,

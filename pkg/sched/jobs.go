@@ -1011,16 +1011,19 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	// remains, before the VM teardown. Until the re-queue the task reads
 	// failed, and a sibling task's recompute in that window settled the
 	// whole run as failed (PulseWatch F7). JobTaskRetry reopens the run.
-	retried := false
-	if retryRequested && retryMaxKnown && jobTaskHasRetryRemaining(task.Attempt, retryMax) {
-		next := time.Now().Add(jobRetryDelay(task.Attempt))
-		retried = e.store.JobTaskRetry(ctx, runID, taskIndex, next) == nil
+	retryAttempted := retryRequested && retryMaxKnown && jobTaskHasRetryRemaining(task.Attempt, retryMax)
+	var retryErr error
+	if retryAttempted {
+		retryErr = e.store.JobTaskRetry(ctx, runID, taskIndex, time.Now().Add(jobRetryDelay(task.Attempt)))
 	}
 	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
-	if retried {
+	if retryAttempted && retryErr == nil {
 		return nil
 	}
 	if retryRequested {
+		if retryAttempted {
+			e.settleRefusedJobRetry(ctx, runID, task, decision, retryErr)
+		}
 		// Exhausted retries → dead-letter. JobRunRecompute picks
 		// this up via the dead_letter_count column.
 		if retryMaxKnown && !jobTaskHasRetryRemaining(task.Attempt, retryMax) {
@@ -1033,6 +1036,32 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		return fmt.Errorf("sched: HandleJobExit recompute: %w", err)
 	}
 	return nil
+}
+
+// settleRefusedJobRetry handles an attempt classified retry, with budget
+// left, whose retry JobTaskRetry refused: an interactive run, a run owned by
+// an operation or CI, a job image that changed under the run, or a lost
+// exclusive lease. The task will not run again, so the attempt dead-letters
+// as one past its retry budget does: fail-fast stops the run and job replay
+// can re-run its input. Before, the attempt kept "retry", the run ended
+// failed without a dead letter, and nothing said why the retry never ran.
+func (e *Engine) settleRefusedJobRetry(ctx context.Context, runID string, task state.JobTask, decision workpolicy.Decision, cause error) {
+	store, ok := e.store.(state.JobTaskRetryRefusalStore)
+	if !ok {
+		e.log.Warn("sched: job task retry refused", "run", runID, "task", task.TaskIndex, "attempt", task.Attempt, "err", cause)
+		return
+	}
+	decision.Action, decision.Reason = "dead_letter", "retry_refused"
+	settled, err := store.SettleRefusedJobTaskRetry(ctx, runID, task.TaskIndex, task.Attempt, decision)
+	switch {
+	case err != nil:
+		e.log.Warn("sched: job task retry refused; recording its dead letter failed", "run", runID, "task", task.TaskIndex, "attempt", task.Attempt, "refusal", cause, "err", err)
+	case settled:
+		e.log.Warn("sched: job task retry refused; attempt dead-lettered", "run", runID, "task", task.TaskIndex, "attempt", task.Attempt, "refusal", cause)
+	default:
+		// A manual retry or cancellation changed the task first.
+		e.log.Info("sched: job task retry refused; task changed meanwhile", "run", runID, "task", task.TaskIndex, "attempt", task.Attempt, "refusal", cause)
+	}
 }
 
 // effectiveJobRetryMax resolves the immutable policy recorded for a run. A

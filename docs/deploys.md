@@ -218,6 +218,14 @@ gregale app deploy-token rotate <token-id> --app my-api   # the old token stops 
 gregale app deploy-token delete <token-id> --app my-api
 ```
 
+With the token in `FAAS_TOKEN`, `gregale deploy --name my-api … --wait` reads
+the app, deploys it and follows the deployment to the end. The token reaches
+no other app, and it cannot read build logs: the wait reports the
+deployment's status and failure reason instead. Use a key with `apps:read`
+and `gregale logs my-api --deployment <id>` to read the build. A key created
+with only `deploy:write` and the deploy Action's OIDC credential work the
+same way, for any app in the account.
+
 ## Safe changes
 
 Preview a change with `gregale deploy --diff` or `--dry-run`. For a bad live
@@ -283,8 +291,12 @@ At a terminal, `gregale rollback` then asks you to type the app's slug to go
 ahead. Scripts pass `--acknowledge-releases`, and the API takes
 `"acknowledge_releases": true`. A failed release counts too: it may have
 committed part of its changes. Automatic rollbacks (the first-wake 5xx
-rollback and alert-rule rollback actions) never acknowledge, so they leave
-the current release serving instead.
+rollback, the post-release watch and alert-rule rollback actions) never
+acknowledge, so they leave the current release serving instead. When the
+post-release watch finds a regression it cannot roll back, the release's
+decision records it with `rollback_skipped: "rollback_crosses_release"`, its
+timeline shows `watch_regressed` instead of a passed watch, and you decide:
+roll back with `--acknowledge-releases` or ship a fix.
 
 For a managed PostgreSQL database that the app's release commands can migrate
 (attached with `--access migration`), the refusal names the moment before the
@@ -432,8 +444,9 @@ How each gate judges:
   of its probes and more than the stable revision does, so an outage of a
   shared dependency does not abort a good release. Probes that get no answer
   are not counted. Synthetic gates run during canaries only: a release
-  without a canary keeps its scheduled synthetic checks. Disabling the check
-  pauses the gate; deleting it deletes the gate.
+  without a canary keeps its scheduled synthetic checks. A check that a gate
+  probes cannot be paused or deleted (`409`) until the gate is removed, as an
+  SLO a gate judges cannot be deleted.
 - **`ai` gates** compare the release's AI gateway calls with the previous
   release's ([ADR 20261022153155](adr/20261022153155-ai-signals-per-deployment-and-release-gates.md)):
   `error_rate` (provider errors), `flagged_rate` (answers truncated, refused,
@@ -525,7 +538,6 @@ gregale release approval require --approvals 2
 gregale release approval require --approvals 1 --approvers developer --timeout 4h
 
 gregale release approval pending                 # releases waiting right now
-gregale release approve <deployment> --comment "canary looks clean"
 gregale release reject <deployment> --reason "checkout latency is up"
 gregale release approval status <deployment>
 gregale release approval disable
@@ -537,10 +549,17 @@ production traffic, so the policy gates both. Other environments and scopes
 are not gated.
 
 The release starts its canary as usual. At the stage the policy names
-(`--after-stage`, default 1), it waits. `gregale deploy` shows the wait and
-the approve command. The canary still judges the waiting stage, so a
-regression aborts the release even while it waits. Once enough people
-approve, the rollout continues on its next step.
+(`--after-stage`, default 1), it waits. `gregale deploy` shows the wait. The
+canary still judges the waiting stage, so a regression aborts the release
+even while it waits. Once enough people approve, the rollout continues on its
+next step.
+
+A person approves on the release's approval page in the dashboard
+(`/dashboard/releases/<deployment>/approval`, linked from the notification),
+signed in (with MFA when the account uses it). An API key, the CLI's login token or a CI job cannot
+approve: `gregale release approve` answers `403
+release_approval_session_required` with the page's link. Rejecting works
+from anywhere, because stopping a release needs no second person.
 
 Waiting ends in one of three ways:
 - **Enough approvals:** the rollout continues.

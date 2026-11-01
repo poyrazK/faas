@@ -107,6 +107,22 @@ type AgentRunOutput struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type AgentRunUsage struct {
+	RunID               pgtype.UUID
+	AccountID           pgtype.UUID
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+	RecordedAt          pgtype.Timestamptz
+}
+
 type AgentVersion struct {
 	AgentID               pgtype.UUID
 	Version               int32

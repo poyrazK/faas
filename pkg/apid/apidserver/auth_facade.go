@@ -335,6 +335,16 @@ func (s *server) requireAdminRecoveryMutation(next accountHandler) accountHandle
 	return s.requireAdminMutationPolicy(next)
 }
 
+// Hosting site credentials outlive the session that issues them: an
+// automation credential deploys to a site and an OIDC trust lets a GitHub
+// workflow obtain one. Issuing or revoking either needs the same fresh
+// operator step-up as other provider writes. They stay outside generic
+// replay: a minted token is returned once and never stored in an idempotency
+// receipt (ADR-202610170925, ADR-202610171028), so clients send no key.
+func (s *server) requireAdminCredentialMutation(next accountHandler) accountHandler {
+	return s.requireAdminMutationPolicy(next)
+}
+
 func (s *server) requireAdminMutationPolicy(next accountHandler) accountHandler {
 	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(next)))))
 }

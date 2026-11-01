@@ -1446,6 +1446,13 @@ func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }
+
+// WithEventSubscriptionReconcile marks ctx as a production deploy whose
+// manifest replaces the app's event subscriptions (ADR-20261031130000).
+func WithEventSubscriptionReconcile(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sourceManifestReconcileEventsKey{}, true)
+}
+
 func (r *server) RollbackSourceRefManifest(p0 context.Context, p1 sourceRefManifestStaged) error {
 	return r.rollbackSourceRefManifest(p0, p1)
 }
@@ -1584,6 +1591,9 @@ func (r testEnv) Do(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]s
 }
 func (r testEnv) DoAdmin(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doAdmin(p0, p1, p2, p3, p4)
+}
+func (r testEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
+	return r.doSession(p0, p1, p2, p3, p4, p5)
 }
 func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doOperator(p0, p1, p2, p3, p4)

@@ -60,6 +60,17 @@ type sourceRefManifestStaged struct {
 	appliedRetryPolicy    json.RawMessage
 	lifecycleChanged      bool
 	previousLifecycle     state.AppManifest
+
+	// ADR-20261031130000: subscriptions this deploy disabled or re-enabled,
+	// restored if the deploy rolls back.
+	eventSubscriptionsDisabled []sourceRefEventSubscriptionToggle
+	eventSubscriptionsEnabled  []sourceRefEventSubscriptionToggle
+}
+
+// sourceRefEventSubscriptionToggle names a subscription a deploy turned off or
+// back on; its own account id addresses it on rollback.
+type sourceRefEventSubscriptionToggle struct {
+	id, accountID string
 }
 
 type sourceRefEventWorkBindingChange struct {
@@ -81,7 +92,8 @@ func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 	return staged.cronIntent != nil || staged.scalingChanged || staged.retryPolicyChanged || staged.lifecycleChanged || len(staged.edgeRuleChanges) > 0 ||
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
 		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 || len(staged.eventRetryChanges) > 0 || len(staged.eventVersionChanges) > 0 ||
-		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0
+		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0 ||
+		len(staged.eventSubscriptionsDisabled) > 0 || len(staged.eventSubscriptionsEnabled) > 0
 }
 
 // loadSourceRefManifest reads the root manifest from the already validated
@@ -316,6 +328,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	if m == nil {
 		return staged, nil
 	}
+	if problem := s.applyManifestLabels(ctx, acct, app, m.Labels); problem != nil {
+		return staged, problem
+	}
 	if !s.operation.OperationDefinitionsAdmission(acct.ID, app.ID, deploymentScope, sourceOperationSpecs(m)) {
 		return staged, api.ErrCapacity("new operation admission is disabled for this preview cohort")
 	}
@@ -429,6 +444,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		return staged, nil
 	}
 	if len(m.Triggers) == 0 && len(m.EventTriggers) == 0 {
+		if sourceManifestReconcilesEvents(ctx) {
+			if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, &staged); problem != nil {
+				return staged, problem
+			}
+		}
 		if m.AsyncRoutes != nil {
 			if problem := s.applySourceRefManifestAsyncRoutes(ctx, acct, app, m.AsyncRoutes, &staged); problem != nil {
 				return staged, problem
@@ -594,106 +614,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			"enabled": declaration.IsEnabled(), "source": "deploy.source_ref",
 		})
 	}
-	if len(m.EventTriggers) > 0 {
-		eventStore, ok := s.store.(state.EventSubscriptionStore)
-		if !ok {
-			return staged, api.ErrCapacity("event subscriptions are unavailable")
-		}
-		workBindings, ok := s.store.(state.EventWorkBindingStore)
-		if !ok {
-			return staged, api.ErrCapacity("event work bindings are unavailable")
-		}
-		subscriptions, err := eventStore.ListEventSubscriptionsForApp(ctx, app.ID)
-		if err != nil {
-			return staged, api.ErrCapacity("could not list app event subscriptions")
-		}
-		subscriptionKeys := make(map[string]state.EventSubscription, len(subscriptions))
-		ids := make([]string, 0, len(subscriptions))
-		for _, subscription := range subscriptions {
-			key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
-			if keyErr == nil {
-				subscriptionKeys[key] = subscription
-				ids = append(ids, subscription.ID)
-			}
-		}
-		bindingByID, err := workBindings.EventWorkBindingsByIDs(ctx, ids)
-		if err != nil {
-			return staged, api.ErrCapacity("could not list event work bindings")
-		}
-		for _, declaration := range m.EventTriggers {
-			if declaration.App != "" && declaration.App != app.Slug {
-				continue
-			}
-			subscription, convertErr := declaration.AsSubscription(acct.ID)
-			if convertErr != nil {
-				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", convertErr.Error())
-			}
-			key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
-			if keyErr != nil {
-				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", keyErr.Error())
-			}
-			row, exists := subscriptionKeys[key]
-			createdHere := false
-			if !exists {
-				var inserted bool
-				row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
-				if err != nil {
-					return staged, sourceRefEventSubscriptionProblem(err)
-				}
-				if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, &staged); problem != nil {
-					return staged, problem
-				}
-				row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
-				subscriptionKeys[key] = row
-				if inserted {
-					createdHere = true
-					staged.eventSubscriptionIDs = append(staged.eventSubscriptionIDs, row.ID)
-					_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
-						fmt.Sprintf(`{"kind":"created","app_id":"%s","subscription_id":"%s"}`, app.ID, row.ID))
-					s.audit.Emit(ctx, "event.subscription.created", &acct.ID, map[string]any{
-						"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
-						"type": subscription.Type, "source_ref": true,
-					})
-				}
-			}
-			if problem := s.applySourceRefEventRetry(ctx, acct.ID, app.ID, row, declaration, createdHere, &staged); problem != nil {
-				return staged, problem
-			}
-			if policy, _ := declaration.RoutingRetryPolicy(); policy != nil {
-				row.RoutingRetryPolicy = policy
-			} else {
-				row.RoutingRetryPolicy = nil
-			}
-			if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, &staged); problem != nil {
-				return staged, problem
-			}
-			row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
-			subscriptionKeys[key] = row
-			previous := bindingByID[row.ID]
-			previousAction := previous.Action
-			if previousAction == "" {
-				previousAction = state.EventWorkInvoke
-			}
-			if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey &&
-				previous.FairnessSelector == declaration.WorkFairnessKey &&
-				previousAction == declaration.EffectiveWorkAction() && previous.Ordered == declaration.Ordered {
-				continue
-			}
-			old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy,
-				declaration.WorkKey, state.EventWorkBindingOptions{
-					Action: declaration.EffectiveWorkAction(), FairnessSelector: declaration.WorkFairnessKey, Ordered: declaration.Ordered})
-			if bindingErr != nil {
-				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
-					"Invalid manifest", "event work policy must exist on the target app")
-			}
-			if !createdHere {
-				staged.eventWorkChanges = append(staged.eventWorkChanges,
-					sourceRefEventWorkBindingChange{subscriptionID: row.ID, previous: old})
-			}
-			bindingByID[row.ID] = state.EventWorkBinding{SubscriptionID: row.ID,
-				AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey,
-				FairnessSelector: declaration.WorkFairnessKey,
-				Action:           declaration.EffectiveWorkAction(), Ordered: declaration.Ordered}
+	if len(m.EventTriggers) > 0 || sourceManifestReconcilesEvents(ctx) {
+		if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, &staged); problem != nil {
+			return staged, problem
 		}
 	}
 	if m.AsyncRoutes != nil {
@@ -723,6 +646,187 @@ func eventSubscriptionManifestKey(source, typ string, filter json.RawMessage) (s
 		return "", err
 	}
 	return strings.Join([]string{source, typ, string(canonical)}, "\x00"), nil
+}
+
+// applySourceRefEventTriggers installs the manifest's event_triggers for the
+// app and, on a production deploy, makes them the app's whole set
+// (ADR-20261031130000).
+func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, staged *sourceRefManifestStaged) *api.Problem {
+	eventStore, ok := s.store.(state.EventSubscriptionStore)
+	if !ok {
+		if len(m.EventTriggers) == 0 {
+			return nil
+		}
+		return api.ErrCapacity("event subscriptions are unavailable")
+	}
+	workBindings, ok := s.store.(state.EventWorkBindingStore)
+	if !ok {
+		return api.ErrCapacity("event work bindings are unavailable")
+	}
+	subscriptions, err := eventStore.ListEventSubscriptionsForApp(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not list app event subscriptions")
+	}
+	declared := make(map[string]bool, len(m.EventTriggers))
+	subscriptionKeys := make(map[string]state.EventSubscription, len(subscriptions))
+	ids := make([]string, 0, len(subscriptions))
+	for _, subscription := range subscriptions {
+		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
+		if keyErr == nil {
+			subscriptionKeys[key] = subscription
+			ids = append(ids, subscription.ID)
+		}
+	}
+	bindingByID, err := workBindings.EventWorkBindingsByIDs(ctx, ids)
+	if err != nil {
+		return api.ErrCapacity("could not list event work bindings")
+	}
+	for _, declaration := range m.EventTriggers {
+		if declaration.App != "" && declaration.App != app.Slug {
+			continue
+		}
+		subscription, convertErr := declaration.AsSubscription(acct.ID)
+		if convertErr != nil {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", convertErr.Error())
+		}
+		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
+		if keyErr != nil {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", keyErr.Error())
+		}
+		row, exists := subscriptionKeys[key]
+		createdHere := false
+		// A declaration the app declares again re-enables its disabled row
+		// (ADR-20261031130000); the upsert sets enabled.
+		if !exists || !row.Enabled {
+			wasDisabled := exists && !row.Enabled
+			var inserted bool
+			row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
+			if err != nil {
+				return sourceRefEventSubscriptionProblem(err)
+			}
+			if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, staged); problem != nil {
+				return problem
+			}
+			row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
+			subscriptionKeys[key] = row
+			if wasDisabled {
+				staged.eventSubscriptionsEnabled = append(staged.eventSubscriptionsEnabled, sourceRefEventSubscriptionToggle{row.ID, row.AccountID})
+			}
+			if inserted {
+				createdHere = true
+				staged.eventSubscriptionIDs = append(staged.eventSubscriptionIDs, row.ID)
+				_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
+					fmt.Sprintf(`{"kind":"created","app_id":"%s","subscription_id":"%s"}`, app.ID, row.ID))
+				s.audit.Emit(ctx, "event.subscription.created", &acct.ID, map[string]any{
+					"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
+					"type": subscription.Type, "source_ref": true,
+				})
+			}
+		}
+		if problem := s.applySourceRefEventRetry(ctx, acct.ID, app.ID, row, declaration, createdHere, staged); problem != nil {
+			return problem
+		}
+		if policy, _ := declaration.RoutingRetryPolicy(); policy != nil {
+			row.RoutingRetryPolicy = policy
+		} else {
+			row.RoutingRetryPolicy = nil
+		}
+		if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, staged); problem != nil {
+			return problem
+		}
+		row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
+		subscriptionKeys[key] = row
+		declared[row.ID] = true
+		previous := bindingByID[row.ID]
+		previousAction := previous.Action
+		if previousAction == "" {
+			previousAction = state.EventWorkInvoke
+		}
+		if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey &&
+			previous.FairnessSelector == declaration.WorkFairnessKey &&
+			previousAction == declaration.EffectiveWorkAction() && previous.Ordered == declaration.Ordered {
+			continue
+		}
+		old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy,
+			declaration.WorkKey, state.EventWorkBindingOptions{
+				Action: declaration.EffectiveWorkAction(), FairnessSelector: declaration.WorkFairnessKey, Ordered: declaration.Ordered})
+		if bindingErr != nil {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+				"Invalid manifest", "event work policy must exist on the target app")
+		}
+		if !createdHere {
+			staged.eventWorkChanges = append(staged.eventWorkChanges,
+				sourceRefEventWorkBindingChange{subscriptionID: row.ID, previous: old})
+		}
+		bindingByID[row.ID] = state.EventWorkBinding{SubscriptionID: row.ID,
+			AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey,
+			FairnessSelector: declaration.WorkFairnessKey,
+			Action:           declaration.EffectiveWorkAction(), Ordered: declaration.Ordered}
+	}
+	if sourceManifestReconcilesEvents(ctx) {
+		if problem := s.reconcileSourceRefEventSubscriptions(ctx, acct, app, subscriptions, declared, staged); problem != nil {
+			return problem
+		}
+	}
+	// A stage deploy or a batch trigger create does not reconcile, but what
+	// it adds counts against the same caps.
+	return s.checkSourceRefEventSubscriptionLimits(ctx, acct, app, staged)
+}
+
+// reconcileSourceRefEventSubscriptions disables the app's enabled
+// subscriptions the manifest no longer declares (ADR-20261031130000).
+func (s *server) reconcileSourceRefEventSubscriptions(ctx context.Context, acct state.Account, app state.App, existing []state.EventSubscription, declared map[string]bool, staged *sourceRefManifestStaged) *api.Problem {
+	reconcile, ok := s.store.(state.EventSubscriptionReconcileStore)
+	if !ok {
+		return api.ErrCapacity("event subscription reconcile is unavailable")
+	}
+	for _, subscription := range existing {
+		if !subscription.Enabled || declared[subscription.ID] {
+			continue
+		}
+		if err := reconcile.SetEventSubscriptionEnabled(ctx, subscription.ID, subscription.AccountID, app.ID, false); err != nil {
+			return api.ErrCapacity("could not disable an undeclared event subscription")
+		}
+		staged.eventSubscriptionsDisabled = append(staged.eventSubscriptionsDisabled, sourceRefEventSubscriptionToggle{subscription.ID, subscription.AccountID})
+		_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
+			fmt.Sprintf(`{"kind":"disabled","app_id":"%s","subscription_id":"%s"}`, app.ID, subscription.ID))
+		s.audit.Emit(ctx, "event.subscription.disabled", &acct.ID, map[string]any{
+			"subscription_id": subscription.ID, "app_id": app.ID, "source": subscription.Source,
+			"type": subscription.Type, "source_ref": true, "reason": "undeclared",
+		})
+	}
+	return nil
+}
+
+// checkSourceRefEventSubscriptionLimits holds the app's enabled subscriptions
+// to the plan's caps after a manifest apply wrote them (ADR-20261031130000).
+// Counting after writing makes concurrent deploys of one account safe without
+// a lock: the later of two counts sees both. A count already over the cap
+// fails only an apply that added or re-enabled a subscription, so an older app
+// over the cap can still shrink.
+func (s *server) checkSourceRefEventSubscriptionLimits(ctx context.Context, acct state.Account, app state.App, staged *sourceRefManifestStaged) *api.Problem {
+	if len(staged.eventSubscriptionIDs) == 0 && len(staged.eventSubscriptionsEnabled) == 0 {
+		return nil
+	}
+	reconcile, ok := s.store.(state.EventSubscriptionReconcileStore)
+	if !ok {
+		return api.ErrCapacity("event subscription limits are unavailable")
+	}
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		return nil
+	}
+	perApp, perAccount, err := reconcile.EventSubscriptionQuotaCounts(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not count event subscriptions")
+	}
+	if perApp > limits.EventSubscriptionsPerApp {
+		return api.ErrPlanEventSubscriptionQuota(acct.Plan, api.PlanQuotaScopeApp, limits.EventSubscriptionsPerApp, perApp)
+	}
+	if perAccount > limits.EventSubscriptionsPerAccount {
+		return api.ErrPlanEventSubscriptionQuota(acct.Plan, api.PlanQuotaScopeAccount, limits.EventSubscriptionsPerAccount, perAccount)
+	}
+	return nil
 }
 
 func sourceRefEventSubscriptionProblem(err error) *api.Problem {
@@ -1003,6 +1107,22 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			}
 		} else {
 			errs = append(errs, errors.New("event work bindings unavailable during rollback"))
+		}
+	}
+	if len(staged.eventSubscriptionsDisabled) > 0 || len(staged.eventSubscriptionsEnabled) > 0 {
+		if reconcile, ok := s.store.(state.EventSubscriptionReconcileStore); ok {
+			for _, toggled := range staged.eventSubscriptionsDisabled {
+				if err := reconcile.SetEventSubscriptionEnabled(ctx, toggled.id, toggled.accountID, staged.appID, true); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			for _, toggled := range staged.eventSubscriptionsEnabled {
+				if err := reconcile.SetEventSubscriptionEnabled(ctx, toggled.id, toggled.accountID, staged.appID, false); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		} else {
+			errs = append(errs, errors.New("event subscription reconcile unavailable during rollback"))
 		}
 	}
 	if len(staged.eventSubscriptionIDs) > 0 {

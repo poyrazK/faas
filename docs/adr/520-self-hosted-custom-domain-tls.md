@@ -64,9 +64,9 @@ The platform must not depend on Cloudflare for customer domains.
   cannot be an in-memory rate limit: each gatewayd-public restart would
   refuse certificates that already exist. `custom_domain_tls_hosts` records
   each admitted host below a wildcard. A known host is admitted for free; a
-  new host is admitted only while fewer than
-  `api.OnDemandTLSWildcardNewHostsPerWeek` (40) hosts were newly admitted for
-  that wildcard in the last 7 days. 40 stays under Let's Encrypt's
+  new host is admitted only while fewer than 40 hosts were newly admitted for
+  that wildcard in the last 7 days (amendment 1 replaces this with shared
+  budgets). 40 stays under Let's Encrypt's
   50 certificates per registered domain per week and caps how many orders one
   wildcard can draw from the shared ACME account. gatewayd-public is the only
   writer. The rows are edge runtime state, not customer intent, and cascade
@@ -111,7 +111,7 @@ The platform must not depend on Cloudflare for customer domains.
   More than one edge needs shared Caddy storage before it can serve customer
   domains; until then a second edge would race the first for ACME orders.
 - Wildcard custom domains get one certificate per subdomain, at most 40 new
-  subdomains per wildcard per week. SaaS-scale wildcards need a delegated
+  subdomains per registered domain per week (amendment 1). SaaS-scale wildcards need a delegated
   DNS-01 path (`_acme-challenge` CNAME to a platform zone) and a real
   wildcard certificate; that is a follow-up.
 - gatewayd-internal's DNS-01 engine is unchanged and still used when on-demand
@@ -132,3 +132,68 @@ The platform must not depend on Cloudflare for customer domains.
   restart would deny existing certificates. Caddy deprecated the latter for
   that reason.
 - **DNS-01 with the operator's DNS token.** Cannot write to a customer zone.
+
+## Amendment 1: shared new-host budgets and a retry backoff (2026-10-31)
+
+Bug hunt 32 (M7) found the per-wildcard budget open to griefing and to
+evasion. Anyone can send 40 random server names below a customer's wildcard
+in a week and spend its budget, because wildcard DNS resolves every name to
+the edge, so a DNS check proves nothing. Sibling wildcards under one
+registered domain each had 40, while Let's Encrypt allows that domain 50 in
+total. Nothing bounded one tenant across its domains, or the fleet against the
+shared ACME account's 300 new orders per 3 hours. And because the ledger
+cascaded away with its wildcard, deleting and re-creating a wildcard reset the
+budget.
+
+Changes:
+
+- **Admission ledger.** `custom_domain_tls_admissions` records each new host
+  with its registered domain (public suffix + 1), owner (the wildcard app's
+  organization, else its account) and time. It has no foreign key, so it
+  outlives the wildcard; gatewayd-public prunes rows older than 7 days.
+  `custom_domain_tls_hosts` still decides which hosts are known (free) and
+  still cascades.
+- **Three caps on new hosts**, checked under one transaction advisory lock:
+  `api.OnDemandTLSRegisteredDomainNewHostsPerWeek` (40) per registered domain
+  across sibling wildcards, replacing the per-wildcard budget;
+  `api.OnDemandTLSOwnerNewHostsPerWeek` (200) per owner; and
+  `api.OnDemandTLSFleetNewHostsPer3h` (150) across the deployment, half of
+  Let's Encrypt's per-account order limit, leaving the rest for exact
+  domains. Refusals are `deny_wildcard_budget` (label kept),
+  `deny_owner_budget` and `deny_fleet_budget`. `FaasCustomDomainTLSFleetBudget`
+  warns when the fleet cap refuses hosts.
+- **Retry backoff.** Caddy asks once per load, obtain or renewal and then
+  holds the certificate, so a host allowed in
+  `api.OnDemandTLSHostRetryAllows` (3) separate 30-second slices within
+  10 minutes is one whose orders keep failing. A known host costs no budget,
+  so without a backoff it drew an order, and a failed authorization, on every
+  handshake. The ask endpoint now refuses that host with `deny_backoff` for
+  1 hour, doubling on each repeat up to 24 hours. The state is in memory: a
+  restart forgets it, which only errs toward allowing.
+
+This bounds the damage griefing can do: a registered domain's budget, never
+other tenants' or the fleet's. It does not stop a third party spending the
+targeted customer's budget. The opt-in per-wildcard label allowlist (next
+change) does.
+
+## Amendment 2: an opt-in host allowlist per wildcard (2026-10-31)
+
+Bug hunt 32 (M7, second half). The shared budgets bound what random server
+names below a wildcard can cost the platform, but anyone can still spend the
+targeted customer's own budget for the week. A wildcard's owner can now list
+the names below it that may hold certificates.
+
+- `custom_domain_tls_allowed_hosts` (wildcard, name) holds the list; a name
+  is the part of the host before the wildcard's suffix. apid is the only
+  writer (customer intent, `GET`/`PUT`/`DELETE /v1/domains/{domain}/hosts`,
+  `gregale domain host set|get|clear`, at most
+  `api.CustomDomainTLSAllowedHostsMax` (100) names). Rows cascade with the
+  wildcard. The organization actions match the domain's other routes: members
+  read, members who deploy configure.
+- The ask endpoint checks the list after the wildcard's plan and before
+  admission, for known hosts too, so removing a name stops its next reload
+  and renewal. An unlisted host is refused with `deny_not_allowlisted` and
+  never reaches the budgets. No list admits every name, as before. The
+  domain doctor's probe host (`state.WildcardProbeHost`) is always allowed,
+  so verification and drift checks keep working.
+- Routing is unchanged: the list governs certificates only.

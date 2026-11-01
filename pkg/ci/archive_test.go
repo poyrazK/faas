@@ -249,6 +249,7 @@ func TestCIArchiveRefusesLiveNativeReceiptAndTransfer(t *testing.T) {
 			case "instance":
 				_, err = h.pool.Exec(t.Context(), "UPDATE instances SET state='running' WHERE id=$1", proof.InstanceID)
 			case "task":
+				forgetJobAttempt(t, h, proof.RunID)
 				_, err = h.pool.Exec(t.Context(), "UPDATE job_tasks SET status='claimed',finished_at=NULL,exit_code=NULL,lease_token=$2,lease_expires_at=clock_timestamp()+interval '1 minute',last_lease_node=$3 WHERE run_id=$1", proof.RunID, uuid.NewString(), h.node)
 			case "transfer":
 				_, err = h.pool.Exec(t.Context(), "UPDATE ci_job_runtime SET transfer_token=$2,transfer_until=clock_timestamp()+interval '1 minute' WHERE attempt_id=$1", proof.RunID, uuid.NewString())

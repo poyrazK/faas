@@ -71,17 +71,18 @@ func TestNodeJoinDerivesCapacityFromTheCLI(t *testing.T) {
 // spec: §13
 func TestComputeNodesSizingReportMatchesTheLibrary(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		role  role.Role
-		edge  bool
-		shape api.NodeRoleShape
+		name                string
+		role                role.Role
+		edge, objectGateway bool
+		shape               api.NodeRoleShape
 	}{
-		{"compute-only", role.RoleComputeOnly, false, api.NodeShapeComputeOnly},
-		{"compute-only edge", role.RoleComputeOnly, true, api.NodeShapeComputeEdge},
-		{"control-plane", role.RoleControlPlane, false, api.NodeShapeSingleBox},
-		{"single-box", role.RoleSingleBox, false, api.NodeShapeSingleBox},
+		{"compute-only", role.RoleComputeOnly, false, false, api.NodeShapeComputeOnly},
+		{"compute-only edge", role.RoleComputeOnly, true, false, api.NodeShapeComputeEdge},
+		{"compute-only edge and object gateway", role.RoleComputeOnly, true, true, api.NodeShapeComputeEdgeObjectGateway},
+		{"control-plane", role.RoleControlPlane, false, false, api.NodeShapeSingleBox},
+		{"single-box", role.RoleSingleBox, false, false, api.NodeShapeSingleBox},
 	} {
-		if got := nodeSizingShape(tc.role, tc.edge); got != tc.shape {
+		if got := nodeSizingShape(tc.role, tc.edge, tc.objectGateway); got != tc.shape {
 			t.Errorf("%s: shape = %v, want %v", tc.name, got, tc.shape)
 		}
 	}
