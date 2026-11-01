@@ -161,3 +161,23 @@ deployment links. Removing an alias needs a data migration for those.
   redirects for API calls; serve mode gives customers time to move.
 - **Rewriting stored hosts in place.** Customers registered some of them
   outside Gregale (OAuth issuers, webhooks, CNAMEs); an alias keeps them valid.
+
+## Amendment 1 (2026-10-31, proposed; owner's call): the apps domain goes on the Public Suffix List
+
+Moving apps to gregale.app separates tenant code from the dashboard and API,
+but not tenants from one another: two apps under one registrable domain can
+still set cookies for each other. An edge-security review found what that
+does today (ADR-831 amendment 18): a tenant's page can plant a cookie that
+every other app on the domain receives, which hid challenge passes (fixed
+with a `__Host-` pass cookie) and still makes `block` WAF rules refuse a
+visitor whose browser carries an attack-shaped planted cookie. It equally
+lets one tenant shadow another tenant app's own session cookies.
+
+Only a Public Suffix List entry makes each app host its own site. Proposed:
+when gregale.app is bought, add it (and the deployment-preview domain, if it
+differs) to the list's private section, with the `_psl` TXT record the list
+requires, before step 2 above. Browsers pick up a new entry only in a later
+release, so this takes weeks to months and should start as soon as the
+domain exists. gregale.dev is not proposed for the list: it is also the
+platform domain (site, dashboard and API), and it stays an alias for tenant
+code only until the redirect of step 3.

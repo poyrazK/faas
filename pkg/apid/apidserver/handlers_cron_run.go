@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -87,6 +88,10 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrPlanCronsNotAllowed(acct.Plan))
 		return
 	}
+	if prob := s.cronRunOverPlan(ctx, app, c); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 
 	// Insert the durable record. Status starts at 'pending'. The
 	// id is returned to the customer so they can correlate the
@@ -123,6 +128,16 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		CronID:    c.ID,
 		Status:    "pending",
 	})
+}
+
+// cronRunOverPlan refuses a manual run of a cron that the owner's current plan
+// does not let fire (cronrun.OverPlan). A store that cannot rank crons admits.
+func (s *server) cronRunOverPlan(ctx context.Context, app state.App, c state.Cron) *api.Problem {
+	store, ok := s.store.(cronrun.Store)
+	if !ok {
+		return nil
+	}
+	return cronrun.OverPlan(ctx, store, app, c)
 }
 
 // insertCronFireNowRequest records one manual run. A cron holds at most

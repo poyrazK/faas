@@ -82,6 +82,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -1701,6 +1702,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
+	srv.managedPostgresUncapped = managedpostgres.ProductionEnvironmentActive(deps.getenv) && !managedpostgres.CapsEnforced(deps.getenv)
+	if srv.managedPostgresUncapped {
+		log.Warn("managed postgres release held to accounts a flag rule names: compute and storage caps are not both on")
+	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
 		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired,
 			NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot}, ops.Registry())
@@ -2660,6 +2665,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
+	// The retention purge runs even with app errors switched off: rows
+	// written while it was on (request samples with headers) must still
+	// age out on the plan's schedule.
+	go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
 	if deps.getenv("FAAS_APP_ERRORS_ENABLED") != "false" { //nolint:goconst // kill-switch sentinel; the canonical "true" env literal.
 		appErrTarget := cfg.GetAppErrorsTarget(deps.getenv)
 		appErrTLS, tlsErr := cfg.LoadAppErrorsTLSWithPrefixAndVerifierAndReload(nodeVerifier, appErrRotator.Reload(nil))
@@ -2691,8 +2700,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			go wire.WatchTLSReload(ctx, log, appErrHupCh, appErrRotator, appErrReload)
 		}
-		go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
-
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
 		// by watchLogLevelReload). Install three parallel ones — each

@@ -785,6 +785,15 @@ type ApiKey struct {
 	DisplayPrefix   pgtype.Text
 }
 
+// ADR-20261030133644 agent client names for hosted MCP keys; apid is the only writer.
+type ApiKeyAgentClient struct {
+	KeyID      pgtype.UUID
+	AccountID  pgtype.UUID
+	ClientName string
+	ClientSite string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type App struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -9552,6 +9561,16 @@ type NodeLifecycleCompletion struct {
 	MigratedCount    int64
 	RecreatedCount   int64
 	AuditOutboxID    int64
+}
+
+// ADR 20261101091815 node-wide measured memory, published by each node's own scheduler for its peers.
+type NodeMemoryReport struct {
+	NodeID          pgtype.UUID
+	MeasuredMb      int32
+	UsedMb          pgtype.Int4
+	FrozenInstances int32
+	MeasuredAt      pgtype.Timestamptz
+	ReportedAt      pgtype.Timestamptz
 }
 
 type NotificationChannel struct {

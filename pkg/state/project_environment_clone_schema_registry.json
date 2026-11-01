@@ -909,6 +909,17 @@
     }
   },
   {
+    "table": "api_key_agent_clients",
+    "columns": [
+      "account_id",
+      "client_name",
+      "client_site",
+      "created_at",
+      "key_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "api_keys",
     "columns": [
       "account_id",
@@ -11934,6 +11945,18 @@
       "result_lifecycle",
       "source_generation",
       "source_lifecycle"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "node_memory_reports",
+    "columns": [
+      "frozen_instances",
+      "measured_at",
+      "measured_mb",
+      "node_id",
+      "reported_at",
+      "used_mb"
     ],
     "kind": "operational"
   },

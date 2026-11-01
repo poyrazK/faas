@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,9 +47,9 @@ func TestEdgeRuleConvergenceAcrossPublicGatewaysE2E(t *testing.T) {
 	}
 
 	// A registered but unavailable replica must keep the mutation from being
-	// committed. While apid waits for its ACK, the live gateway must fence this
-	// host and fail customer requests closed.
-	fenceSeen := make(chan struct{}, 1)
+	// committed. While apid waits for its ACK, the live gateway keeps serving
+	// this host under its current rules (ADR-20261101141123).
+	var barrierStarted, servedDuringBarrier, refusedDuringBarrier atomic.Bool
 	stopProbes := make(chan struct{})
 	probeDone := make(chan struct{})
 	var stopProbeOnce sync.Once
@@ -69,10 +70,11 @@ func TestEdgeRuleConvergenceAcrossPublicGatewaysE2E(t *testing.T) {
 			default:
 			}
 			status, body, err := edgeRuleProbe(client, f.h.EdgeURL(), f.host)
-			if err == nil && status == http.StatusServiceUnavailable && strings.Contains(string(body), "Edge policy update in progress") {
-				select {
-				case fenceSeen <- struct{}{}:
-				default:
+			if err == nil && barrierStarted.Load() {
+				if strings.Contains(string(body), "Edge policy update in progress") {
+					refusedDuringBarrier.Store(true)
+				} else if isEdgeRuleFallthrough(status, body) {
+					servedDuringBarrier.Store(true)
 				}
 			}
 			select {
@@ -83,16 +85,18 @@ func TestEdgeRuleConvergenceAcrossPublicGatewaysE2E(t *testing.T) {
 		}
 	}()
 	time.Sleep(40 * time.Millisecond)
+	barrierStarted.Store(true)
 	_, failedStatus, failedBody := edgeRuleAPIRequest(t, f, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", create)
 	stopProbeLoop()
 	<-probeDone
 	if failedStatus != http.StatusServiceUnavailable {
 		t.Fatalf("create with an unavailable registered gateway: status=%d body=%s, want 503", failedStatus, failedBody)
 	}
-	select {
-	case <-fenceSeen:
-	default:
-		t.Fatalf("primary gateway never returned the fail-closed policy-update response during the missing-replica barrier")
+	if refusedDuringBarrier.Load() {
+		t.Fatalf("primary gateway refused the host with the policy-update response during the missing-replica barrier")
+	}
+	if !servedDuringBarrier.Load() {
+		t.Fatalf("primary gateway never served the host during the missing-replica barrier")
 	}
 	var rulesBeforeStartup int
 	if err := f.h.Pool.QueryRow(f.ctx, `select count(*) from edge_rules where app_id = $1 and match_host = $2`, f.app.ID, f.host).Scan(&rulesBeforeStartup); err != nil {
