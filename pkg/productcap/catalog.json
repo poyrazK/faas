@@ -4085,6 +4085,8 @@
       "description": "Restore a database to an earlier point in time.",
       "maturity": "ga",
       "plans": [
+        "free",
+        "hobby",
         "pro",
         "scale"
       ],

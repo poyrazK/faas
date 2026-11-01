@@ -3617,6 +3617,12 @@ type ManagedPostgresDatabaseItem struct {
 	// RestorableUntil is when a scheduled delete becomes final
 	// (ADR-20261029174950); empty when no delete is scheduled.
 	RestorableUntil string
+	// RestoreFrom is the earliest point a restore can target now; empty
+	// while the database cannot be restored from.
+	RestoreFrom string
+	// RestoreSlotUntil is set while a restored copy is past the plan's
+	// database limit (ADR-20261031123259).
+	RestoreSlotUntil string
 }
 
 // ManagedPostgresBindingItem is the safe metadata shown for an app binding.
