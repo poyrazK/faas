@@ -9480,6 +9480,11 @@ const (
 	// AgentCallbacksPerMinutePerThread bounds the callbacks one apid accepts
 	// for one thread in a minute, so a runaway tool cannot flood the thread.
 	AgentCallbacksPerMinutePerThread = 600
+	// AgentSleepMaxSeconds bounds a gregale_sleep (ADR-20261030125501 §4):
+	// the wake-up is a realtime schedule on the inbox, and a schedule is due
+	// at most 30 days ahead. A sleep also counts against the endpoint's
+	// realtime schedules (state.ManagedRealtimeScheduleLimit).
+	AgentSleepMaxSeconds = 2_592_000
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).

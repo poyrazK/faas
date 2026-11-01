@@ -170,7 +170,7 @@ RULES = [
     (r"internal/hosting|hosting-|internal-frontend|^sites$|^hosting|frontend-hosting|site-", "Internal frontend hosting"),
     (r"internal-?mail|maild|mailctl|mail-feedback|mail-metrics|mail-report|productemail|product-email", "Internal mail service"),
     (r"product-control|productcontrol|product_control|/product/|^product$|product-customers", "Product control"),
-    (r"agent-run|agent-execution|agent-callback|^agent|agents", "Gregale Agents"),
+    (r"agent-run|agent-execution|agent-callback|agent-tool|^agent|agents", "Gregale Agents"),
     (r"oci/registry|^/v2/?$|registry-storage|ociregistry", "Platform OCI registry"),
     (r"^/v1/admin|^admin|gregalectl|compute-nodes|operator|break-glass|abuse|^/admin|deployctl|nodes?-|fleet|cluster-signing", "Operator admin"),
     (r"data-repair|datarepair|repair", "Selective data repair"),

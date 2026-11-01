@@ -106,7 +106,7 @@ func (h *Handler) ReceiveCallback(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("agent callbacks are unavailable on this control-plane host"))
 		return
 	}
-	grant, ok := h.callbackGranted(w, r)
+	grant, ok := h.grantFor(w, r, r.PathValue("token"))
 	if !ok {
 		return
 	}
@@ -118,38 +118,61 @@ func (h *Handler) ReceiveCallback(w http.ResponseWriter, r *http.Request) {
 	if problem == nil {
 		problem = checkCallbackPost(grant, post)
 	}
+	if problem == nil {
+		problem = h.admit(r.Context(), grant)
+	}
+	var message state.ManagedRealtimeChannelMessage
+	if problem == nil {
+		message, problem = h.publish(r.Context(), grant, post)
+	}
 	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(r.Context(), grant.EndpointID)
-	if err != nil || endpoint.AccountID != grant.AccountID {
-		http.NotFound(w, r)
-		return
-	}
-	if count, ok := h.callbackLimits.allow(grant.EndpointID+"\x00"+grant.ThreadID, h.now()); !ok {
-		api.WriteProblem(w, api.ErrAgentCallbackRateLimited(api.AgentCallbacksPerMinutePerThread, count))
-		return
-	}
-	message, err := h.Inbox.AppendManagedRealtimeChannelMetadata(r.Context(), grant.EndpointID, api.AgentInboxChannel, post.Data, false,
-		callbackIdempotencyKey(grant.ThreadID, post.MessageID), callbackMetadata(grant.ThreadID, post))
-	if err != nil {
-		api.WriteProblem(w, h.callbackPublishProblem(grant, err))
+		writeCallbackProblem(w, r, problem)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusAccepted, api.AgentCallbackReceipt{Sequence: strconv.FormatInt(message.Sequence, 10), ThreadID: grant.ThreadID})
+}
+
+// admit checks that the token's endpoint still belongs to its account and
+// that the thread is under its rate limit.
+func (h *Handler) admit(ctx context.Context, grant CallbackToken) *api.Problem {
+	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(ctx, grant.EndpointID)
+	if err != nil || endpoint.AccountID != grant.AccountID {
+		return errCallbackGone
+	}
+	if count, ok := h.callbackLimits.allow(grant.EndpointID+"\x00"+grant.ThreadID, h.now()); !ok {
+		return api.ErrAgentCallbackRateLimited(api.AgentCallbacksPerMinutePerThread, count)
+	}
+	return nil
+}
+
+// publish puts one message into the thread's lane of the inbox.
+func (h *Handler) publish(ctx context.Context, grant CallbackToken, post api.AgentCallbackPost) (state.ManagedRealtimeChannelMessage, *api.Problem) {
+	message, err := h.Inbox.AppendManagedRealtimeChannelMetadata(ctx, grant.EndpointID, api.AgentInboxChannel, post.Data, false,
+		callbackIdempotencyKey(grant.ThreadID, post.MessageID), callbackMetadata(grant.ThreadID, post))
+	if err != nil {
+		return message, h.callbackPublishProblem(grant, err)
+	}
+	return message, nil
+}
+
+func writeCallbackProblem(w http.ResponseWriter, r *http.Request, problem *api.Problem) {
+	if problem == errCallbackGone {
+		http.NotFound(w, r)
+		return
+	}
+	api.WriteProblem(w, problem)
 }
 
 func (h *Handler) callbacksConfigured() bool {
 	return h.Callbacks != nil && h.Inbox != nil && h.Revocations != nil
 }
 
-// callbackGranted verifies the post's token at the moment the tool posts:
-// its signature and expiry, the account's agents capability, and that its
+// grantFor verifies a callback token at the moment it is used: its
+// signature and expiry, the account's agents capability, and that its
 // thread was not revoked after the token was issued. Each failure answers
 // like an unknown route.
-func (h *Handler) callbackGranted(w http.ResponseWriter, r *http.Request) (CallbackToken, bool) {
-	grant, err := h.Callbacks.Verify(r.PathValue("token"), h.now())
+func (h *Handler) grantFor(w http.ResponseWriter, r *http.Request, token string) (CallbackToken, bool) {
+	grant, err := h.Callbacks.Verify(token, h.now())
 	if err != nil || h.AgentsEnabled == nil || !h.AgentsEnabled(r.Context(), grant.AccountID) {
 		http.NotFound(w, r)
 		return CallbackToken{}, false
@@ -167,8 +190,9 @@ func (h *Handler) callbackGranted(w http.ResponseWriter, r *http.Request) (Callb
 }
 
 // RevokeCallbacks handles POST /v1/agent-callbacks/revocations: every
-// callback URL issued for the thread until now stops working. A URL issued
-// later works, so a thread can reopen.
+// callback URL issued for the thread until now stops working, and the
+// thread's pending sleeps are cancelled (tools.go). A URL issued later
+// works, so a thread can reopen.
 func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, caller CallbackCaller) {
 	if !h.callbacksConfigured() {
 		api.WriteProblem(w, api.ErrCapacity("agent callbacks are unavailable on this control-plane host"))
@@ -185,6 +209,9 @@ func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, caller
 		return
 	}
 	at, err := h.Revocations.RevokeCallbacks(r.Context(), caller.Account.ID, endpoint.ID, req.ThreadID)
+	if err == nil {
+		err = h.cancelSleeps(r.Context(), endpoint.ID, req.ThreadID)
+	}
 	if err != nil {
 		api.WriteProblem(w, h.problem(caller.Account, "revoke callbacks", err))
 		return
