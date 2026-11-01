@@ -16,19 +16,24 @@ type TracingConfig struct {
 
 // Guest tracing transport bounds (ADR-958). The frame bound applies to the
 // encoded export as sent by the SDK (possibly gzip); apid separately bounds
-// the decoded body with the public ingest limit.
+// the decoded body with the public ingest limit. TraceMaxConcurrentUploads
+// bounds one VM's frames in flight, in the guest bridge and again in vmmd;
+// TraceMaxConcurrentForwards bounds a node's frames vmmd is forwarding to
+// apid. vmmd takes the forward slot only after a frame was read in full, so
+// a guest that opens streams and sends nothing holds only its own slots.
 const (
-	TraceVsockPort            = 1041
-	TraceLocalListen          = "127.0.0.1:4318"
-	TraceLocalEndpoint        = "http://" + TraceLocalListen
-	TraceLocalTracesPath      = "/v1/traces"
-	TraceLocalLogsPath        = "/v1/logs"
-	TraceMaxFrameBytes        = 512 << 10
-	TraceMaxDecodedBytes      = 4 << 20
-	TraceMaxConcurrentUploads = 4
-	TraceTransportTimeout     = 2 * time.Second
-	TraceNodeBootstrapPath    = "/opt/gregale/tracing/node.cjs"
-	TracePythonBootstrapDir   = "/opt/gregale/tracing/python"
+	TraceVsockPort             = 1041
+	TraceLocalListen           = "127.0.0.1:4318"
+	TraceLocalEndpoint         = "http://" + TraceLocalListen
+	TraceLocalTracesPath       = "/v1/traces"
+	TraceLocalLogsPath         = "/v1/logs"
+	TraceMaxFrameBytes         = 512 << 10
+	TraceMaxDecodedBytes       = 4 << 20
+	TraceMaxConcurrentUploads  = 4
+	TraceMaxConcurrentForwards = 16
+	TraceTransportTimeout      = 2 * time.Second
+	TraceNodeBootstrapPath     = "/opt/gregale/tracing/node.cjs"
+	TracePythonBootstrapDir    = "/opt/gregale/tracing/python"
 )
 
 // Guest tracing frame codecs. The guest bridge prefixes each forwarded body
