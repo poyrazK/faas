@@ -104,6 +104,12 @@ faas_edge_connector_metrics_port: 20241
 # plane probes and scrapes. Not 9092: gatewayd-internal's egress listener
 # holds that on a compute node (daemonunitspec.ComputeEdgeControlPort).
 faas_edge_control_port: 9109
+# ADR-20261031122757 §2: with the S3 gateway on compute nodes, the control
+# plane scrapes the gateway's control listener and its s3 tunnel connector
+# (daemonunitspec.ComputeObjectGatewayControlPort and
+# ComputeObjectGatewayConnectorMetricsPort).
+faas_object_gateway_control_port: 9096
+faas_object_gateway_connector_metrics_port: 20242
 
 # Raw TCP app listeners are opt-in and fail closed. When enabled, only the
 # explicitly listed client CIDRs can reach the reserved public range.

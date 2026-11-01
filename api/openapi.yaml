@@ -8364,6 +8364,7 @@ paths:
     post:
       operationId: restoreManagedPostgresDatabase
       summary: Restore a database into a new managed PostgreSQL database
+      description: "The restored database counts toward the plan's database limit. A restore may go one database past the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once the account has room; otherwise its delete is scheduled then. A second restore past the limit while a copy holds the slot answers 403 managed_postgres_restore_slot_in_use."
       tags: [managed_postgres]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -31256,7 +31257,7 @@ paths:
       tags: [deployments]
       operationId: liftReleaseFreeze
       summary: Lift a deploy freeze.
-      description: "Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID."
+      description: "Stops the freeze from withholding releases. Needs the admin scope (a signed-in session or an admin key); a deploy:write key gets 403. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID."
       responses:
         '200':
           description: The lifted freeze.
@@ -31339,7 +31340,7 @@ paths:
       tags: [deployments]
       operationId: liftAppReleaseFreeze
       summary: Lift a deploy freeze on an app.
-      description: "Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID."
+      description: "Lifts a freeze on this app. Needs the admin scope (a signed-in session or an admin key). Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID."
       responses:
         '200':
           description: The lifted freeze on the app.
@@ -31406,7 +31407,7 @@ paths:
       tags: [orgs]
       operationId: liftOrgReleaseFreeze
       summary: Lift a company organization's deploy freeze.
-      description: "Lifts one of the organization's freezes. A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID."
+      description: "Lifts one of the organization's freezes. Needs the admin scope (a signed-in session or an admin key). A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID."
       responses:
         '200':
           description: The organization's lifted freeze.
@@ -31471,7 +31472,7 @@ paths:
       tags: [deployments]
       operationId: deleteReleaseGate
       summary: Remove a release gate.
-      description: "404 `release_gate_not_found` when the app has no gate with this name."
+      description: "Needs the admin scope (a signed-in session or an admin key); a deploy:write key cannot remove the gates it deploys past. 404 `release_gate_not_found` when the app has no gate with this name."
       responses:
         '200':
           description: The removed release gate.
@@ -31503,7 +31504,7 @@ paths:
       tags: [deployments]
       operationId: setReleaseApprovalPolicy
       summary: Require approvals for an app's production releases.
-      description: "Creates or replaces the policy. Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval."
+      description: "Creates or replaces the policy. Needs the admin scope (a signed-in session or an admin key). Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval."
       requestBody:
         required: true
         content:
@@ -31526,7 +31527,7 @@ paths:
       tags: [deployments]
       operationId: deleteReleaseApprovalPolicy
       summary: Stop requiring release approvals.
-      description: "Releases waiting for approval continue on the canary's next step."
+      description: "Needs the admin scope (a signed-in session or an admin key). Releases waiting for approval continue on the canary's next step."
       responses:
         '204':
           description: The policy was removed.
@@ -56336,7 +56337,8 @@ paths:
         `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
         trimmed-non-empty (1..256 chars). Personal orgs cannot be
         created via this endpoint — every account already has a
-        personal org (backfill).
+        personal org (backfill). A new org starts on the Free plan,
+        and an account may own one Free org at a time.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -56352,6 +56354,12 @@ paths:
             application/json: { schema: { $ref: '#/components/schemas/OrgResponse' } }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: |
+            `403 Forbidden` — the caller already owns as many Free orgs
+            as an account may (`org_free_limit_exceeded`, with the limit
+            and the observed count). Upgrade or delete one first.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
           description: |
             `409 Conflict` — slug already taken (`org_slug_taken`) or the
@@ -83350,6 +83358,25 @@ components:
           type: string
           format: date-time
           description: "Set while the database's delete is scheduled: it can be undeleted until then, and is purged after."
+        restore_slot_until:
+          type: string
+          format: date-time
+          description: "Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time."
+        restore_range:
+          $ref: '#/components/schemas/ManagedPostgresRestoreRange'
+    ManagedPostgresRestoreRange:
+      description: "The span a point-in-time restore from this database can target now. Absent while the database cannot be restored from."
+      type: object
+      required: [earliest, latest]
+      properties:
+        earliest:
+          type: string
+          format: date-time
+          description: "The later of the database's creation and the start of its restore window."
+        latest:
+          type: string
+          format: date-time
+          description: "When the response was made; a restore point must be before it."
     ManagedPostgresDatabaseList:
       description: Account-scoped managed PostgreSQL database collection.
       type: object

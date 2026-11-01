@@ -6171,7 +6171,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		helperSiblings[i].ID = s.ID
 		helperSiblings[i].Prior = s.Prior
 	}
-	newWeights := RedistributeTraffic(helperSiblings, 100-newPercent)
+	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool {
+		return abortedCanaryCandidate(m.deployments[siblings[i].ID])
+	}, 100-newPercent)
+	if err != nil {
+		return Deployment{}, err
+	}
 	proposed := map[string]int{id: newPercent}
 	for i, sibling := range siblings {
 		proposed[sibling.ID] = newWeights[i]
@@ -28415,7 +28420,7 @@ func (m *MemStore) ListAppsWithRecentTelemetry(_ context.Context, _ pgtype.Inter
 
 // UpdateSpansSummary is intentionally unsupported by MemStore. The writer
 // updates request_telemetry rows and must be covered against PgStore.
-func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte) error {
+func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte, _ int) error {
 	panic("memstore: UpdateSpansSummary unimplemented")
 }
 

@@ -1,4 +1,4 @@
-// adr: 20261019193600
+// adr: 20261019193600, 20261031161842
 //
 // Ledger dual run: the ledger's net compute against the pusher's receipts.
 package meter_test
@@ -86,6 +86,45 @@ func TestLedgerReconcilerClassifiesAccounts(t *testing.T) {
 		accounts[name] = acct
 	}
 	mem.SetOverageCapCentsForTest(accounts["capped"].ID, 0)
+	// Every paid plan starts with a spend cap, so a cap far above the month's
+	// charges must not excuse a receipt short of the ledger: 50 of 200
+	// MB-seconds delivered is lost usage, not the cap at work.
+	lost := makeStripeAccount(t, ctx, mem, "lost@ledger.example")
+	putSmallComputeGrant(t, ctx, mem, lost, month)
+	if err := mem.AppendUsage(ctx, lost.ID, "app-lost", "instance-lost", hour.Add(5*time.Minute), 300, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	mem.SetOverageCapCentsForTest(lost.ID, 1_000_000)
+	if err := mem.RecordBillingUsageDelivery(ctx, "stripe", lost.ID, hour, 50); err != nil {
+		t.Fatal(err)
+	}
+	// A company organization is a billing subject of its own (#6029); its
+	// delivered hour is reconciled like an account's.
+	// MemStore turns resource ownership on for a Free organization; the
+	// organization then subscribes.
+	org, err := mem.CreateOrg(ctx, state.Org{Slug: "ledger-co", Name: "Ledger Co", Plan: api.PlanFree, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !org.ResourceOwnershipEnabled {
+		t.Fatal("fixture organization must be its own billing subject")
+	}
+	if err := mem.UpdateOrgPlan(ctx, org.ID, api.PlanHobby); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.UpsertBillingIdentity(ctx, state.BillingIdentity{
+		AccountID: org.ID, Provider: "stripe", CustomerID: "cus-" + org.ID, SubscriptionID: "sub-" + org.ID,
+		BillingFrom: time.Unix(0, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	putSmallComputeGrant(t, ctx, mem, state.Account{ID: org.ID, Plan: api.PlanHobby}, month)
+	if err := mem.AppendUsage(ctx, org.ID, "app-org", "instance-org", hour.Add(5*time.Minute), 300, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.RecordBillingUsageDelivery(ctx, "stripe", org.ID, hour, 200); err != nil {
+		t.Fatal(err)
+	}
 	completeUsageThrough(t, ctx, mem, now)
 
 	// Polar and Paddle deliver overage above the allowance.
@@ -112,22 +151,22 @@ func TestLedgerReconcilerClassifiesAccounts(t *testing.T) {
 		t.Fatalf("passes = %+v, want previous then current", passes)
 	}
 	current := passes[1]
-	want := map[string]int{meter.LedgerMatch: 1, meter.LedgerDrift: 1, meter.LedgerPending: 1, meter.LedgerCapped: 1}
+	want := map[string]int{meter.LedgerMatch: 2, meter.LedgerDrift: 2, meter.LedgerPending: 1, meter.LedgerCapped: 1}
 	for result, n := range want {
 		if current.Results[result] != n {
 			t.Fatalf("current month results = %v, want %v", current.Results, want)
 		}
 	}
-	if current.DriftMBSeconds != 50 {
-		t.Fatalf("drift = %d MB-seconds, want 50", current.DriftMBSeconds)
+	if current.DriftMBSeconds != 50+150 {
+		t.Fatalf("drift = %d MB-seconds, want 200", current.DriftMBSeconds)
 	}
 	// August has no price contract or sampling coverage: the ledger cannot
 	// vouch for it, so nothing is claimed to match.
-	if previous := passes[0]; previous.Results[meter.LedgerIncomplete] != 4 || len(previous.Results) != 1 {
-		t.Fatalf("previous month results = %v, want 4 incomplete", previous.Results)
+	if previous := passes[0]; previous.Results[meter.LedgerIncomplete] != 6 || len(previous.Results) != 1 {
+		t.Fatalf("previous month results = %v, want 6 incomplete", previous.Results)
 	}
-	if got := testutil.ToFloat64(reconciler.AccountsGauge().WithLabelValues("current", meter.LedgerDrift)); got != 1 {
-		t.Fatalf("drift gauge = %v, want 1", got)
+	if got := testutil.ToFloat64(reconciler.AccountsGauge().WithLabelValues("current", meter.LedgerDrift)); got != 2 {
+		t.Fatalf("drift gauge = %v, want 2", got)
 	}
 }
 

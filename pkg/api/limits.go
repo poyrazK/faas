@@ -634,6 +634,14 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // PostgreSQL delete can be undone before the provider resource is deleted
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
+
+// ManagedPostgresRestoreSlots is how many databases a point-in-time restore
+// may hold past the plan's database limit, and ManagedPostgresRestoreSlotWindow
+// how long such a copy lasts before its delete is scheduled when the account
+// still has no room (ADR-20261031123259). Without the slot a one-database plan
+// could not restore at all.
+const ManagedPostgresRestoreSlots = 1
+const ManagedPostgresRestoreSlotWindow = 7 * 24 * time.Hour
 const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 
 // Fleet safety ceilings bound what operators may configure as the platform's
@@ -9427,6 +9435,9 @@ const (
 	AgentCallbackMessageIDMaxBytes      = 54
 	AgentCallbackPayloadMaxBytes        = 4096
 	AgentCallbackFailuresPerIPPerMinute = 30
+	// AgentCallbacksPerMinutePerThread bounds the callbacks one apid accepts
+	// for one thread in a minute, so a runaway tool cannot flood the thread.
+	AgentCallbacksPerMinutePerThread = 600
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).
@@ -11756,6 +11767,14 @@ func (p Plan) OrgPendingInvitationsMax() int {
 	}
 	return l.OrgPendingInvitationsMax
 }
+
+// FreeOrganizationsOwnedMax caps the shared organizations on the Free plan
+// one account may own (ADR-20261031090658). A Free organization owns its
+// resources, so each one carries its own Free app and allowance; without a
+// cap, creating organizations multiplied the Free tier. Creating another
+// needs one of them upgraded or deleted first. Organizations that fall back
+// to Free when their subscription ends still count.
+const FreeOrganizationsOwnedMax = 1
 
 // RateLimitPerAccountRPM returns the per-account requests/minute cap for
 // the plan (ADR-040 / issue #292). Independent of RateLimitRPS/Burst
