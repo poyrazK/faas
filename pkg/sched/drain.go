@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -169,6 +168,9 @@ type Drain struct {
 	slotsOnce sync.Once
 	slots     *drainSlots
 	inline    sync.WaitGroup
+	// round is where the walk of the due backlog resumes on the next tick
+	// (ADR-20261101091437).
+	round dueRound
 	// accts caches Active(account_id) lookups for the suspended-skip
 	// check (Move 2). One entry per account; the 5s TTL collapses the
 	// 64-row batch's per-row AccountByID into ≤0.2 RPS at Meta's
@@ -369,95 +371,24 @@ func (d *Drain) Tick(ctx context.Context) {
 			d.log.Warn("drain: reclaimed expired invocations", "count", reclaimed)
 		}
 	}
-	// Page through the due backlog with a (due_at, id) cursor. Rows this
-	// scheduler cannot claim — another node's app, an account at its async
-	// cap — stay pending with an unchanged due_at. Re-listing from the head
-	// returned the same full page forever: the tick spun on the database
-	// and every row behind that page, for every other tenant, starved.
-	// The walk is bounded (maxDuePagesPerTick), so it also lists only apps
-	// this node may claim: otherwise more than a walk's worth of other
-	// nodes' rows at the head hid this node's own work for good.
-	pager, paged := d.store.(dueInvocationPager)
-	now := d.now()
-	after := state.InvocationDueCursor{OwnerNodeID: d.engine.claimNodeID()}
-	var prevPage string
+	// Walk the due backlog (ADR-20261101091437). Rows this scheduler cannot
+	// dispatch now (an account at its async cap, an app past its share or
+	// behind a busy queue lane) stay pending with an unchanged due_at, so a
+	// walk that always restarted at the head listed them again every tick
+	// and never reached the rows behind them. Each tick lists the head of the
+	// backlog and resumes the rest of its walk where the previous tick
+	// stopped.
+	//
 	// Tenant fairness (ADR-20261027160930): rows go round-robin across their
 	// apps onto the shared pool, and the walk lists the next page without
 	// waiting for this one. A row whose app is past its share waits for the
 	// end of the walk, so it cannot hold the pages behind it.
 	var tick sync.WaitGroup
 	var extra []state.Invocation
-walk:
-	for page := 0; ; page++ {
-		var (
-			rows []state.Invocation
-			err  error
-		)
-		if paged {
-			rows, err = pager.ListDueInvocationsAfter(ctx, now, after, d.batchSize)
-		} else {
-			rows, err = d.store.ListDueInvocations(ctx, d.now(), d.batchSize)
-		}
-		if err != nil {
-			d.log.Warn("drain: list-due", "err", err)
-			break
-		}
-		if len(rows) == 0 {
-			break
-		}
-		if !paged {
-			// A store without a cursor can only re-list from the head;
-			// an identical page means nothing in it could be claimed.
-			key := invocationPageKey(rows)
-			if key == prevPage {
-				break
-			}
-			prevPage = key
-		}
-		byApp := map[string][]state.Invocation{}
-		order := []string{}
-		for _, r := range rows {
-			if _, seen := byApp[r.AppID]; !seen {
-				order = append(order, r.AppID)
-			}
-			byApp[r.AppID] = append(byApp[r.AppID], r)
-		}
-		queueRowsByApp := make(map[string][]state.Invocation)
-		queueTriggers := make(map[string][]sqlc.Trigger)
-		queueTriggerSkipped := false
-		for _, inv := range interleaveByApp(order, byApp) {
-			if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
-				if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, inv, queueTriggers) {
-					queueTriggerSkipped = true
-					continue
-				}
-				// Each app's FIFO queue messages run in order on its lane.
-				if inv.Source == state.InvocationQueue && inv.WorkPolicyName == "" {
-					queueRowsByApp[inv.AppID] = append(queueRowsByApp[inv.AppID], inv)
-					continue
-				}
-			}
-			if !d.handOff(ctx, inv, false, time.Time{}, &tick) {
-				extra = append(extra, inv)
-			}
-		}
-		for _, appID := range order {
-			d.handOffLane(ctx, appID, queueRowsByApp[appID], &tick)
-		}
-		// A bound queue trigger owns its source rows; the trigger poller
-		// will claim them on its event-driven tick. Stopping here prevents
-		// the generic drain from repeatedly selecting the same pending rows
-		// while the push consumer is processing them.
-		if queueTriggerSkipped || len(rows) < d.batchSize {
-			break
-		}
-		if paged {
-			if page+1 >= maxDuePagesPerTick {
-				break walk
-			}
-			last := rows[len(rows)-1]
-			after = state.InvocationDueCursor{DueAt: last.DueAt, ID: last.ID, OwnerNodeID: after.OwnerNodeID}
-		}
+	if pager, paged := d.store.(dueInvocationPager); paged {
+		extra = d.walkDue(ctx, pager, &tick)
+	} else {
+		extra = d.walkDueFromHead(ctx, &tick)
 	}
 	// Rows past their app's share take the slots left free beyond the others'
 	// share, until the tick's wait ends; the rest stay pending for a later
@@ -698,25 +629,6 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 	} else {
 		dispatchOutcome = "completed"
 	}
-}
-
-// maxDuePagesPerTick bounds one tick's walk of the due backlog; the next
-// tick starts again from the head.
-const maxDuePagesPerTick = 32
-
-// dueInvocationPager is implemented by stores that can resume the due walk
-// after a keyset cursor (PgStore, MemStore).
-type dueInvocationPager interface {
-	ListDueInvocationsAfter(ctx context.Context, now time.Time, after state.InvocationDueCursor, limit int) ([]state.Invocation, error)
-}
-
-func invocationPageKey(rows []state.Invocation) string {
-	var b strings.Builder
-	for _, r := range rows {
-		b.WriteString(r.ID)
-		b.WriteByte(',')
-	}
-	return b.String()
 }
 
 func (d *Drain) queueSourceBound(ctx context.Context, inv state.Invocation, cache map[string][]sqlc.Trigger) bool {

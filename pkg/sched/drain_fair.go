@@ -142,18 +142,18 @@ func (d *Drain) handOff(ctx context.Context, inv state.Invocation, extra bool, u
 
 // handOffLane delivers an app's FIFO queue messages one at a time, in order,
 // on one slot. While the app's lane from an earlier tick still runs, its
-// messages wait for a later tick.
-func (d *Drain) handOffLane(ctx context.Context, appID string, rows []state.Invocation, wg *sync.WaitGroup) {
+// messages wait for a later tick. It reports whether the lane started.
+func (d *Drain) handOffLane(ctx context.Context, appID string, rows []state.Invocation, wg *sync.WaitGroup) bool {
 	slots := d.inlineSlots()
 	if len(rows) == 0 || !slots.lane(appID) {
-		return
+		return false
 	}
 	laneID := "lane:" + appID
 	// Within its share the lane waits for a slot like any row; beyond it,
 	// it starts only if a slot is free beyond the others' share now.
 	if !slots.acquire(ctx, appID, laneID, false, time.Time{}) && !slots.acquire(ctx, appID, laneID, true, time.Now()) {
 		slots.releaseLane(appID)
-		return
+		return false
 	}
 	wg.Add(1)
 	d.inline.Add(1)
@@ -169,6 +169,7 @@ func (d *Drain) handOffLane(ctx context.Context, appID string, rows []state.Invo
 			d.dispatchOne(ctx, inv)
 		}
 	}()
+	return true
 }
 
 // waitTick waits for a tick's dispatches until until, then leaves the rest

@@ -2,7 +2,7 @@
 
 Operational owner: the scheduler owner (schedd: event routing
 `pkg/sched/event_fanout.go`, the invocation drain `pkg/sched/drain.go` and
-`pkg/sched/drain_fair.go`, broker trigger lanes
+`pkg/sched/drain_fair.go` and `pkg/sched/drain_walk.go`, broker trigger lanes
 `pkg/sched/broker_trigger_lanes.go`), with apid for the publish, subscription
 and dead-letter API (`pkg/apid/appevents`) and vmmd for in-app publishing
 (`cmd/vmmd/guest_event_flags.go`). Pages go to `faas-platform-oncall`
@@ -14,6 +14,7 @@ and dead-letter API (`pkg/apid/appevents`) and vmmd for in-app publishing
 [routing failures in the dead-letter queue](../adr/20261026163443-event-routing-failures-in-the-dead-letter-queue.md),
 [events kill switch](../adr/20261027125625-events-kill-switch.md),
 [fair drain](../adr/20261027160930-continuous-fair-drain.md),
+[resumed drain walk](../adr/20261101091437-drain-walk-resumes.md),
 [broker trigger lanes](../adr/20261027162741-broker-trigger-lanes.md) and
 [the paging set](../adr/1236-paging-set.md).
 
@@ -32,7 +33,11 @@ Covers `FaasEventRoutingStalled` (page), `FaasEventRoutingSweepSlow`,
    captures one recipient per matching subscription and routes each recipient
    into an invocation (or a workflow run).
 3. The invocation drain delivers those invocations: a shared pool per node,
-   at most a share per app, so one slow consumer delays only itself.
+   at most a share per app, so one slow consumer delays only itself. Each
+   tick lists the head of the due backlog and resumes the rest of its walk
+   where the last tick stopped, so a backlog the drain cannot dispatch (an
+   account at its async cap, a slow app past its share) delays other apps'
+   rows by at most one round of ticks instead of hiding them.
 4. Broker triggers (Kafka, NATS, Redis Streams, SQS-compatible) are polled by
    the schedd that owns their app, one batch in flight per trigger.
 5. Settled receipts are pruned after the plan's window; their routing
