@@ -29,6 +29,23 @@ func (q *Queries) AccountAgentLoad(ctx context.Context, db DBTX, accountID strin
 	return i, err
 }
 
+const agentCallbacksRevokedAt = `-- name: AgentCallbacksRevokedAt :one
+SELECT revoked_at FROM agent_callback_revocations
+ WHERE endpoint_id = $1::text::uuid AND thread_id = $2::text
+`
+
+type AgentCallbacksRevokedAtParams struct {
+	EndpointID string
+	ThreadID   string
+}
+
+func (q *Queries) AgentCallbacksRevokedAt(ctx context.Context, db DBTX, arg AgentCallbacksRevokedAtParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, agentCallbacksRevokedAt, arg.EndpointID, arg.ThreadID)
+	var revoked_at pgtype.Timestamptz
+	err := row.Scan(&revoked_at)
+	return revoked_at, err
+}
+
 const agentRunQueueStats = `-- name: AgentRunQueueStats :one
 SELECT count(*)::integer AS queued,
   coalesce(extract(epoch FROM now()-min(queued_at)), 0)::float8 AS oldest_seconds
@@ -1734,6 +1751,27 @@ func (q *Queries) ResolveGitHubInstallation(ctx context.Context, db DBTX, arg Re
 	var installation_id int64
 	err := row.Scan(&installation_id)
 	return installation_id, err
+}
+
+const revokeAgentCallbacks = `-- name: RevokeAgentCallbacks :one
+INSERT INTO agent_callback_revocations (endpoint_id, thread_id, account_id, revoked_at)
+VALUES ($1::text::uuid, $2::text, $3::text::uuid, clock_timestamp())
+ON CONFLICT (endpoint_id, thread_id) DO UPDATE SET revoked_at = clock_timestamp(), account_id = excluded.account_id
+RETURNING revoked_at
+`
+
+type RevokeAgentCallbacksParams struct {
+	EndpointID string
+	ThreadID   string
+	AccountID  string
+}
+
+// ADR-20261030125501 §3: revoke every callback URL of a thread issued until now.
+func (q *Queries) RevokeAgentCallbacks(ctx context.Context, db DBTX, arg RevokeAgentCallbacksParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, revokeAgentCallbacks, arg.EndpointID, arg.ThreadID, arg.AccountID)
+	var revoked_at pgtype.Timestamptz
+	err := row.Scan(&revoked_at)
+	return revoked_at, err
 }
 
 const settleCapturedEmailDeliveries = `-- name: SettleCapturedEmailDeliveries :many
