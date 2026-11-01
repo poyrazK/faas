@@ -71,3 +71,8 @@ func (m *MemStore) DeleteAppErrorRequestsByIDs(_ context.Context, _ []uuid.UUID)
 func (m *MemStore) DeleteAppErrorRequestsOlderThan(_ context.Context, _ uuid.UUID, _ time.Time) error {
 	return errMemStoreAppErrors
 }
+
+// CountAppErrorRequestsForFingerprint (ADR-096) — MemStore stub. Postgres-only.
+func (m *MemStore) CountAppErrorRequestsForFingerprint(_ context.Context, _ sqlc.CountAppErrorRequestsForFingerprintParams) (int64, error) {
+	return 0, errMemStoreAppErrors
+}

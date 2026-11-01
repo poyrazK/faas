@@ -566,6 +566,7 @@ export type { DashboardWidgetValue } from './DashboardWidgetValue.js';
 export type { DashboardsResponse } from './DashboardsResponse.js';
 export type { DataAPIAccessConfig } from './DataAPIAccessConfig.js';
 export type { DataAPIConnectionBudgets } from './DataAPIConnectionBudgets.js';
+export type { DataAPIRuntime } from './DataAPIRuntime.js';
 export type { DataAPIRuntimeConnectionReport } from './DataAPIRuntimeConnectionReport.js';
 export type { DataAPIServerKey } from './DataAPIServerKey.js';
 export type { DataAPIServerKeyPermissionSet } from './DataAPIServerKeyPermissionSet.js';
