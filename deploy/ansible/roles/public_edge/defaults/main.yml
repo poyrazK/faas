@@ -61,9 +61,15 @@ faas_public_edge_extra_tls_files: "{{ faas_public_edge_extra_domains | product([
 faas_custom_domain_tls: false
 faas_custom_domain_acme_email: ""
 faas_public_edge_ask_url: "http://127.0.0.1:9092/v1/internal/tls/ask"
-# Platform hosts stay Cloudflare-only once 443 is open to everyone: the
-# platform site aborts any connection that did not come from these ranges.
-# Shared with the nftables role so both layers use one pinned list.
+# The platform site answers only Cloudflare and loopback (a local cloudflared,
+# local probes). It serves a Cloudflare origin certificate, and a direct client
+# could otherwise send its own CF-Connecting-IP and choose the IP that ip, geo,
+# allowlist and throttle rules see. Set false only for an edge with no
+# Cloudflare in front.
+faas_public_edge_cloudflare_only: true
+# The platform site aborts any connection that did not come from these ranges
+# (or loopback). Shared with the nftables role so both layers use one pinned
+# list.
 faas_public_edge_cloudflare_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v4.txt').splitlines() + lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v6.txt').splitlines() }}"
 
 # ADR-1431: the AI gateway's public host for callers outside Gregale that
