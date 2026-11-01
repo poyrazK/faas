@@ -104,9 +104,12 @@ func mcpCodeScopes(raw string) []string {
 	return scopes
 }
 
+// cliLoginKeyLabel marks the key `gregale login` mints.
+const cliLoginKeyLabel = "cli-login"
+
 func browserAuthCredential(raw string) (string, []string, time.Duration) {
 	if !isMCPAuthCode(raw) {
-		return "cli-login", api.ScopesAdminOnly, cliAuthKeyTTL
+		return cliLoginKeyLabel, api.ScopesAdminOnly, cliAuthKeyTTL
 	}
 	// The key slides while used (ADR-20261028205920; TouchKeyLastUsed).
 	return api.MCPLoginKeyLabel, mcpCodeScopes(raw), api.MCPLoginKeyIdle

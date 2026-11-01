@@ -1152,19 +1152,37 @@ func liveSignInKeys(keys []state.APIKey, now time.Time) []state.APIKey {
 	return live
 }
 
-// revokeSignInKeysAfterPasswordChange revokes every key a password sign-in
-// minted: they were bought with the old password, which may be the one that
-// leaked. Keys the customer created on purpose stay. Best-effort, like the
+// revokeSignInKeysAfterPasswordChange revokes every key an interactive
+// sign-in minted: they were bought with the old password, which may be the one
+// that leaked. Keys the customer created on purpose stay. Best-effort, like the
 // session revocation beside it.
 func (s *server) revokeSignInKeysAfterPasswordChange(r *http.Request, acct state.Account) {
+	s.revokeInteractiveSignInKeys(r, acct, "password_change")
+}
+
+// interactiveSignInKeyLabels name the keys an interactive sign-in mints: a
+// password sign-in, `gregale login` and an MCP client's consent. A rotation
+// keeps the label. They act as sessions, so the steps that end sessions end
+// them too; only "signup" keys used to be revoked, so a 30-day cli-login or
+// mcp-login key minted with a stolen session survived the owner's password
+// reset and "sign out other devices" (bug hunt 2026-10-28 H71).
+var interactiveSignInKeyLabels = map[string]bool{signInKeyLabel: true, cliLoginKeyLabel: true, api.MCPLoginKeyLabel: true}
+
+// revokeInteractiveSignInKeys revokes the account's live interactive sign-in
+// keys. Best-effort: a failure is logged.
+func (s *server) revokeInteractiveSignInKeys(r *http.Request, acct state.Account, reason string) {
 	keys, err := s.store.ListAPIKeys(r.Context(), acct.ID)
 	if err != nil {
-		s.log.Warn("password change: list keys failed", "account", acct.ID, "err", err)
+		s.log.Warn("revoke sign-in keys: list keys failed", "account", acct.ID, "reason", reason, "err", err)
 		return
 	}
-	for _, k := range liveSignInKeys(keys, time.Now()) {
-		if _, err := s.revokeAPIKeyWithReason(r, acct, k.ID, "password_change"); err != nil {
-			s.log.Warn("password change: revoke key failed", "account", acct.ID, "key", k.ID, "err", err)
+	now := time.Now()
+	for _, k := range keys {
+		if !interactiveSignInKeyLabels[k.Label] || k.Status == "revoked" || (k.ExpiresAt != nil && !k.ExpiresAt.After(now)) {
+			continue
+		}
+		if _, err := s.revokeAPIKeyWithReason(r, acct, k.ID, reason); err != nil {
+			s.log.Warn("revoke sign-in keys: revoke key failed", "account", acct.ID, "key", k.ID, "reason", reason, "err", err)
 		}
 	}
 }
