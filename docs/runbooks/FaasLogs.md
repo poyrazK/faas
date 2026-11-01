@@ -36,6 +36,12 @@ covers how logs flow, the kill switches, rollback and recovery.
    date is inside the plan's retention (1/7/30/90 days).
 5. Log drains: the gatewayd-internal on the app's owner node follows the same
    stream for each enabled drain and delivers batches to the customer's URL.
+   Each drain spools up to 64 MiB under `/var/lib/faas/log-drains/{drain}`,
+   and all drains on a node together up to
+   `FAAS_LOG_DRAIN_SPOOL_BUDGET_BYTES` (default 2 GiB); past either, new
+   lines are dropped and the drain's health turns degraded. A spool nothing
+   on the node has used for 24 hours (deleted drain, app or account, or an
+   app that moved to another node) is removed with its dead letters.
 6. The bucket's lifecycle rule deletes objects 90 days after they are
    written; account erasure deletes an account's instances' prefixes before
    the account row goes.
@@ -58,9 +64,11 @@ drain failure loses or delays log lines, never requests.
   `gregalectl flags disable --key log_drains --reason <incident> --yes`. apid
   hides the drain API and pages, and each gatewayd-internal stops its drain
   workers at the next reconcile (30 s). Drain rows and their health stay.
-  On re-enable each drain forwards new lines only: lines written while
-  drains were off are not forwarded (they are still in the instance rings
-  and the archive). The Datadog integration stops with it.
+  On re-enable each drain resumes from its per-instance cursor and replays
+  what is still in the running instances' rings. Lines that left the rings
+  while drains were off (stopped instances, overwritten by newer lines) are
+  not forwarded; they are in the archive, and the drain counts the jump as
+  a gap. The Datadog integration stops with it.
 - **Stop one account's drains:**
   `gregalectl flags deny --key log_drains --account-id <uuid> --reason <why>`.
   To stop one drain, pause it as the customer would
