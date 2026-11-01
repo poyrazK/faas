@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"path"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -63,12 +64,15 @@ type sourceRefManifestStaged struct {
 
 	// ADR-20261031130000: subscriptions this deploy disabled or re-enabled,
 	// restored if the deploy rolls back.
-	eventSubscriptionsDisabled []sourceRefEventSubscriptionToggle
-	eventSubscriptionsEnabled  []sourceRefEventSubscriptionToggle
+	eventSubscriptionsEnabled []sourceRefEventSubscriptionToggle
+	// eventSubscriptionIntent is the production deploy's declared set, applied
+	// when its deployment serves all production traffic (ADR-20261101030512).
+	// nil records no intent.
+	eventSubscriptionIntent []string
 }
 
-// sourceRefEventSubscriptionToggle names a subscription a deploy turned off or
-// back on; its own account id addresses it on rollback.
+// sourceRefEventSubscriptionToggle names a subscription a deploy turned back
+// on; its own account id addresses it on rollback.
 type sourceRefEventSubscriptionToggle struct {
 	id, accountID string
 }
@@ -93,7 +97,7 @@ func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
 		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 || len(staged.eventRetryChanges) > 0 || len(staged.eventVersionChanges) > 0 ||
 		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0 ||
-		len(staged.eventSubscriptionsDisabled) > 0 || len(staged.eventSubscriptionsEnabled) > 0
+		len(staged.eventSubscriptionsEnabled) > 0
 }
 
 // loadSourceRefManifest reads the root manifest from the already validated
@@ -763,62 +767,65 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 			FairnessSelector: declaration.WorkFairnessKey,
 			Action:           declaration.EffectiveWorkAction(), Ordered: declaration.Ordered}
 	}
-	if sourceManifestReconcilesEvents(ctx) {
-		if problem := s.reconcileSourceRefEventSubscriptions(ctx, acct, app, subscriptions, declared, staged); problem != nil {
-			return problem
+	reconcile := sourceManifestReconcilesEvents(ctx) && s.manifestEventTriggersNameKnownApps(ctx, app, m)
+	if reconcile {
+		staged.eventSubscriptionIntent = make([]string, 0, len(declared))
+		for id := range declared {
+			staged.eventSubscriptionIntent = append(staged.eventSubscriptionIntent, id)
 		}
+		sort.Strings(staged.eventSubscriptionIntent)
 	}
-	// A stage deploy or a batch trigger create does not reconcile, but what
-	// it adds counts against the same caps.
-	return s.checkSourceRefEventSubscriptionLimits(ctx, acct, app, staged)
+	// A stage deploy or a batch trigger create records no intent, but what it
+	// adds counts against the same caps.
+	return s.checkSourceRefEventSubscriptionQuota(ctx, acct, app, len(declared), reconcile, staged)
 }
 
-// reconcileSourceRefEventSubscriptions disables the app's enabled
-// subscriptions the manifest no longer declares (ADR-20261031130000).
-func (s *server) reconcileSourceRefEventSubscriptions(ctx context.Context, acct state.Account, app state.App, existing []state.EventSubscription, declared map[string]bool, staged *sourceRefManifestStaged) *api.Problem {
-	reconcile, ok := s.store.(state.EventSubscriptionReconcileStore)
-	if !ok {
-		return api.ErrCapacity("event subscription reconcile is unavailable")
-	}
-	for _, subscription := range existing {
-		if !subscription.Enabled || declared[subscription.ID] {
+// manifestEventTriggersNameKnownApps reports whether every event_triggers
+// entry that names another app names one that exists in the app's account.
+// A manifest still naming an app by a slug it was renamed from would declare
+// nothing for it; recording that as the app's whole set would disable every
+// subscription it has once the release is live, so such a deploy only adds.
+func (s *server) manifestEventTriggersNameKnownApps(ctx context.Context, app state.App, m *gregalemanifest.Manifest) bool {
+	for _, declaration := range m.EventTriggers {
+		if declaration.App == "" || declaration.App == app.Slug {
 			continue
 		}
-		if err := reconcile.SetEventSubscriptionEnabled(ctx, subscription.ID, subscription.AccountID, app.ID, false); err != nil {
-			return api.ErrCapacity("could not disable an undeclared event subscription")
+		other, err := s.store.AppBySlug(ctx, declaration.App)
+		if err != nil || other.AccountID != app.AccountID || other.Status == state.AppDeleted {
+			s.log.Warn("manifest event_triggers name an unknown app; event subscriptions are only added",
+				"app_id", app.ID, "named_app", declaration.App)
+			return false
 		}
-		staged.eventSubscriptionsDisabled = append(staged.eventSubscriptionsDisabled, sourceRefEventSubscriptionToggle{subscription.ID, subscription.AccountID})
-		_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
-			fmt.Sprintf(`{"kind":"disabled","app_id":"%s","subscription_id":"%s"}`, app.ID, subscription.ID))
-		s.audit.Emit(ctx, "event.subscription.disabled", &acct.ID, map[string]any{
-			"subscription_id": subscription.ID, "app_id": app.ID, "source": subscription.Source,
-			"type": subscription.Type, "source_ref": true, "reason": "undeclared",
-		})
 	}
-	return nil
+	return true
 }
 
-// checkSourceRefEventSubscriptionLimits holds the app's enabled subscriptions
-// to the plan's caps after a manifest apply wrote them (ADR-20261031130000).
-// Counting after writing makes concurrent deploys of one account safe without
-// a lock: the later of two counts sees both. A count already over the cap
-// fails only an apply that added or re-enabled a subscription, so an older app
-// over the cap can still shrink.
-func (s *server) checkSourceRefEventSubscriptionLimits(ctx context.Context, acct state.Account, app state.App, staged *sourceRefManifestStaged) *api.Problem {
+// checkSourceRefEventSubscriptionQuota holds the app's enabled event
+// subscriptions to the plan's caps (ADR-20261031130000). A production deploy
+// is counted as its declared set will stand once it is live (the app's
+// undeclared subscriptions are disabled then); every other apply counts what
+// is enabled now. Counting after the writes makes concurrent applies of one
+// account safe without a lock: the later of two counts sees both. Only an
+// apply that added or re-enabled a subscription is refused, so an app already
+// over a cap can still shrink.
+func (s *server) checkSourceRefEventSubscriptionQuota(ctx context.Context, acct state.Account, app state.App, declared int, projected bool, staged *sourceRefManifestStaged) *api.Problem {
 	if len(staged.eventSubscriptionIDs) == 0 && len(staged.eventSubscriptionsEnabled) == 0 {
 		return nil
-	}
-	reconcile, ok := s.store.(state.EventSubscriptionReconcileStore)
-	if !ok {
-		return api.ErrCapacity("event subscription limits are unavailable")
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {
 		return nil
 	}
-	perApp, perAccount, err := reconcile.EventSubscriptionQuotaCounts(ctx, app.ID)
+	counter, ok := s.store.(state.EventSubscriptionReconcileStore)
+	if !ok {
+		return api.ErrCapacity("event subscription counts are unavailable")
+	}
+	perApp, perAccount, err := counter.EventSubscriptionQuotaCounts(ctx, app.ID)
 	if err != nil {
 		return api.ErrCapacity("could not count event subscriptions")
+	}
+	if projected {
+		perAccount, perApp = perAccount-perApp+declared, declared
 	}
 	if perApp > limits.EventSubscriptionsPerApp {
 		return api.ErrPlanEventSubscriptionQuota(acct.Plan, api.PlanQuotaScopeApp, limits.EventSubscriptionsPerApp, perApp)
@@ -1109,13 +1116,8 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			errs = append(errs, errors.New("event work bindings unavailable during rollback"))
 		}
 	}
-	if len(staged.eventSubscriptionsDisabled) > 0 || len(staged.eventSubscriptionsEnabled) > 0 {
+	if len(staged.eventSubscriptionsEnabled) > 0 {
 		if reconcile, ok := s.store.(state.EventSubscriptionReconcileStore); ok {
-			for _, toggled := range staged.eventSubscriptionsDisabled {
-				if err := reconcile.SetEventSubscriptionEnabled(ctx, toggled.id, toggled.accountID, staged.appID, true); err != nil {
-					errs = append(errs, err)
-				}
-			}
 			for _, toggled := range staged.eventSubscriptionsEnabled {
 				if err := reconcile.SetEventSubscriptionEnabled(ctx, toggled.id, toggled.accountID, staged.appID, false); err != nil {
 					errs = append(errs, err)

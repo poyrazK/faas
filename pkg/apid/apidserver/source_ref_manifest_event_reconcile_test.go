@@ -1,11 +1,12 @@
 package apidserver_test
 
-// adr: 20261031130000
+// adr: 20261031130000, 20261101030512
 
 import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -31,23 +32,24 @@ func enabledEventSubscriptions(t *testing.T, store interface {
 	return enabled
 }
 
-// A production deploy's gregale.yaml is the app's whole set of event
-// subscriptions: a trigger it drops is disabled, a changed filter replaces the
-// old subscription instead of adding a second one, a manifest without
-// event_triggers disables them all, and declaring a trigger again re-enables
-// the same subscription. A failed deploy restores what it changed.
-func TestSourceRefManifestReconcilesEventSubscriptions(t *testing.T) {
+// A production deploy disables nothing when it is uploaded: it adds what it
+// declares and records its whole declared set, applied when the release
+// serves all production traffic. A trigger it drops keeps delivering until
+// then, so a deploy that never goes live loses no events.
+func TestSourceRefManifestRecordsEventSubscriptionIntent(t *testing.T) {
 	srv, store, acct, app := apidserver.SourceRefAsyncRouteTestFixture(t)
 	ctx := apidserver.WithEventSubscriptionReconcile(context.Background())
-	apply := func(triggers ...gregalemanifest.EventTrigger) {
+	apply := func(triggers ...gregalemanifest.EventTrigger) []string {
 		t.Helper()
 		manifest := &gregalemanifest.Manifest{EventTriggers: triggers}
 		if err := manifest.Validate(); err != nil {
 			t.Fatal(err)
 		}
-		if _, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "", true); problem != nil {
+		staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "", true)
+		if problem != nil {
 			t.Fatalf("apply manifest: %s", problem.Detail)
 		}
+		return apidserver.SourceRefManifestEventIntent(staged)
 	}
 	created := gregalemanifest.EventTrigger{Source: "orders", Type: "order.created"}
 	paid := gregalemanifest.EventTrigger{Source: "orders", Type: "order.paid"}
@@ -58,64 +60,63 @@ func TestSourceRefManifestReconcilesEventSubscriptions(t *testing.T) {
 		t.Fatalf("enabled subscriptions = %v, want order.created and order.paid", first)
 	}
 
-	apply(paid)
-	if got := enabledEventSubscriptions(t, store, app.ID); len(got) != 1 || got["order.paid"] != first["order.paid"] {
-		t.Fatalf("after dropping order.created: enabled = %v, want only the same order.paid", got)
-	}
-
-	apply()
-	if got := enabledEventSubscriptions(t, store, app.ID); len(got) != 0 {
-		t.Fatalf("after a manifest without event_triggers: enabled = %v, want none", got)
-	}
-
-	apply(created)
-	if got := enabledEventSubscriptions(t, store, app.ID); len(got) != 1 || got["order.created"] != first["order.created"] {
-		t.Fatalf("re-declared order.created: enabled = %v, want the original subscription %s", got, first["order.created"])
-	}
-
-	// A deploy that fails after reconciling restores the previous set.
-	staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, &gregalemanifest.Manifest{EventTriggers: []gregalemanifest.EventTrigger{paid}}, "", true)
-	if problem != nil || !apidserver.SourceRefManifestNeedsRollback(staged) {
-		t.Fatalf("swap apply = %+v, %v", staged, problem)
-	}
-	if err := srv.RollbackSourceRefManifest(ctx, staged); err != nil {
-		t.Fatal(err)
-	}
-	if got := enabledEventSubscriptions(t, store, app.ID); len(got) != 1 || got["order.created"] != first["order.created"] {
-		t.Fatalf("after rollback: enabled = %v, want order.created restored alone", got)
-	}
-}
-
-// A stage deploy, or a batch trigger create, only adds subscriptions.
-func TestSourceRefManifestWithoutReconcileKeepsSubscriptions(t *testing.T) {
-	srv, store, acct, app := apidserver.SourceRefAsyncRouteTestFixture(t)
-	ctx := context.Background()
-	for _, typ := range []string{"order.created", "order.paid"} {
-		manifest := &gregalemanifest.Manifest{EventTriggers: []gregalemanifest.EventTrigger{{Source: "orders", Type: typ}}}
-		if _, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "", true); problem != nil {
-			t.Fatalf("apply manifest: %s", problem.Detail)
-		}
-	}
+	intent := apply(paid)
 	if got := enabledEventSubscriptions(t, store, app.ID); len(got) != 2 {
-		t.Fatalf("enabled = %v, want both kept", got)
+		t.Fatalf("after dropping order.created at upload: enabled = %v, want both still delivering", got)
+	}
+	if len(intent) != 1 || intent[0] != first["order.paid"] {
+		t.Fatalf("recorded intent = %v, want only order.paid %s", intent, first["order.paid"])
+	}
+
+	if intent := apply(); intent == nil || len(intent) != 0 {
+		t.Fatalf("a manifest without event_triggers records %v, want an empty declared set", intent)
+	}
+
+	// Without the production marker (stage deploys, batch create) nothing
+	// is recorded.
+	staged, problem := srv.ApplySourceRefManifest(context.Background(), acct, app, &gregalemanifest.Manifest{EventTriggers: []gregalemanifest.EventTrigger{paid}}, "", true)
+	if problem != nil || apidserver.SourceRefManifestEventIntent(staged) != nil {
+		t.Fatalf("non-production apply recorded %v, %v; want none", apidserver.SourceRefManifestEventIntent(staged), problem)
 	}
 }
 
-// A deploy that would leave more enabled subscriptions than the plan allows
-// for the app is refused with the limit and the observed count.
+// A manifest whose event_triggers name an app that does not exist (an app
+// renamed since) would declare nothing for this app; it only adds.
+func TestSourceRefManifestUnknownAppRecordsNoIntent(t *testing.T) {
+	srv, _, acct, app := apidserver.SourceRefAsyncRouteTestFixture(t)
+	ctx := apidserver.WithEventSubscriptionReconcile(context.Background())
+	manifest := &gregalemanifest.Manifest{EventTriggers: []gregalemanifest.EventTrigger{{App: "renamed-away", Source: "orders", Type: "order.created"}}}
+	staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "", true)
+	if problem != nil {
+		t.Fatalf("apply manifest: %s", problem.Detail)
+	}
+	if intent := apidserver.SourceRefManifestEventIntent(staged); intent != nil {
+		t.Fatalf("intent = %v, want none when the manifest names an unknown app", intent)
+	}
+}
+
+func eventTriggers(n int, prefix string) []gregalemanifest.EventTrigger {
+	triggers := make([]gregalemanifest.EventTrigger, 0, n)
+	for i := 0; i < n; i++ {
+		triggers = append(triggers, gregalemanifest.EventTrigger{Source: "orders", Type: fmt.Sprintf("%s.kind%02d", prefix, i)})
+	}
+	return triggers
+}
+
+// A production deploy is counted as its declared set will stand once live:
+// replacing every trigger of an app at its cap is allowed, declaring one more
+// than the cap is refused with the limit and the observed count.
 func TestSourceRefManifestEnforcesEventSubscriptionLimit(t *testing.T) {
 	srv, _, acct, app := apidserver.SourceRefAsyncRouteTestFixture(t)
 	ctx := apidserver.WithEventSubscriptionReconcile(context.Background())
 	limits := api.MustLimitsFor(acct.Plan)
-	triggers := make([]gregalemanifest.EventTrigger, 0, limits.EventSubscriptionsPerApp+1)
-	for i := 0; i <= limits.EventSubscriptionsPerApp; i++ {
-		triggers = append(triggers, gregalemanifest.EventTrigger{Source: "orders", Type: "order.kind" + string(rune('a'+i%26)) + string(rune('a'+i/26))})
+	if _, problem := srv.ApplySourceRefManifest(ctx, acct, app, &gregalemanifest.Manifest{EventTriggers: eventTriggers(limits.EventSubscriptionsPerApp, "old")}, "", true); problem != nil {
+		t.Fatalf("deploy at the cap: %s", problem.Detail)
 	}
-	manifest := &gregalemanifest.Manifest{EventTriggers: triggers}
-	if err := manifest.Validate(); err != nil {
-		t.Fatal(err)
+	if _, problem := srv.ApplySourceRefManifest(ctx, acct, app, &gregalemanifest.Manifest{EventTriggers: eventTriggers(limits.EventSubscriptionsPerApp, "new")}, "", true); problem != nil {
+		t.Fatalf("replacing every trigger at the cap: %s", problem.Detail)
 	}
-	staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "", true)
+	staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, &gregalemanifest.Manifest{EventTriggers: eventTriggers(limits.EventSubscriptionsPerApp+1, "more")}, "", true)
 	if problem == nil || problem.Code != api.CodePlanEventSubscriptionQuota || problem.Status != http.StatusForbidden {
 		t.Fatalf("over-limit deploy = %+v, want 403 %s", problem, api.CodePlanEventSubscriptionQuota)
 	}
@@ -124,6 +125,32 @@ func TestSourceRefManifestEnforcesEventSubscriptionLimit(t *testing.T) {
 	}
 	if err := srv.RollbackSourceRefManifest(ctx, staged); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Applies outside a production deploy (batch create, stage deploys) count
+// what is enabled, so they cannot grow an app past its cap.
+func TestBatchEventTriggersCountTowardTheLimit(t *testing.T) {
+	srv, store, acct, app := apidserver.SourceRefAsyncRouteTestFixture(t)
+	limits := api.MustLimitsFor(acct.Plan)
+	if _, problem := srv.ApplySourceRefManifest(context.Background(), acct, app, &gregalemanifest.Manifest{EventTriggers: eventTriggers(limits.EventSubscriptionsPerApp, "first")}, "", true); problem != nil {
+		t.Fatalf("apply at the cap: %s", problem.Detail)
+	}
+	staged, problem := srv.ApplySourceRefManifest(context.Background(), acct, app, &gregalemanifest.Manifest{EventTriggers: eventTriggers(1, "extra")}, "", true)
+	if problem == nil || problem.Code != api.CodePlanEventSubscriptionQuota {
+		t.Fatalf("apply past the cap = %+v, want %s", problem, api.CodePlanEventSubscriptionQuota)
+	}
+	if err := srv.RollbackSourceRefManifest(context.Background(), staged); err != nil {
+		t.Fatal(err)
+	}
+	got := enabledEventSubscriptions(t, store, app.ID)
+	types := make([]string, 0, len(got))
+	for typ := range got {
+		types = append(types, typ)
+	}
+	sort.Strings(types)
+	if len(types) != limits.EventSubscriptionsPerApp {
+		t.Fatalf("after the refused apply enabled = %v, want the %d at the cap", types, limits.EventSubscriptionsPerApp)
 	}
 }
 

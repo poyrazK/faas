@@ -1447,6 +1447,12 @@ func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }
 
+// SourceRefManifestEventIntent is the declared subscription set a
+// production deploy records for go-live (ADR-20261101030512); nil records none.
+func SourceRefManifestEventIntent(staged sourceRefManifestStaged) []string {
+	return staged.eventSubscriptionIntent
+}
+
 // WithEventSubscriptionReconcile marks ctx as a production deploy whose
 // manifest replaces the app's event subscriptions (ADR-20261031130000).
 func WithEventSubscriptionReconcile(ctx context.Context) context.Context {

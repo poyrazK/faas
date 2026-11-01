@@ -1995,6 +1995,43 @@ func (q *Queries) ApplyDeploymentRuntimeUpgradeCutover(ctx context.Context, db D
 	return result.RowsAffected(), nil
 }
 
+const applyEventSubscriptionIntent = `-- name: ApplyEventSubscriptionIntent :many
+UPDATE event_subscriptions SET enabled = (id = ANY($1::uuid[])), updated_at = now()
+WHERE app_id = $2::uuid AND enabled IS DISTINCT FROM (id = ANY($1::uuid[]))
+RETURNING id::text AS id, enabled
+`
+
+type ApplyEventSubscriptionIntentParams struct {
+	Declared []pgtype.UUID
+	AppID    pgtype.UUID
+}
+
+type ApplyEventSubscriptionIntentRow struct {
+	ID      string
+	Enabled bool
+}
+
+// Enable exactly the declared subscriptions of the app.
+func (q *Queries) ApplyEventSubscriptionIntent(ctx context.Context, db DBTX, arg ApplyEventSubscriptionIntentParams) ([]ApplyEventSubscriptionIntentRow, error) {
+	rows, err := db.Query(ctx, applyEventSubscriptionIntent, arg.Declared, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplyEventSubscriptionIntentRow{}
+	for rows.Next() {
+		var i ApplyEventSubscriptionIntentRow
+		if err := rows.Scan(&i.ID, &i.Enabled); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
 select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
@@ -32060,6 +32097,25 @@ func (q *Queries) InsertDeploymentArtifactScan(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const insertDeploymentEventSubscriptionIntent = `-- name: InsertDeploymentEventSubscriptionIntent :exec
+INSERT INTO deployment_event_subscription_intents (deployment_id, app_id, declared_subscription_ids)
+VALUES ($1::uuid, $2::uuid, $3::uuid[])
+ON CONFLICT (deployment_id) DO NOTHING
+`
+
+type InsertDeploymentEventSubscriptionIntentParams struct {
+	DeploymentID            pgtype.UUID
+	AppID                   pgtype.UUID
+	DeclaredSubscriptionIds []pgtype.UUID
+}
+
+// ADR-20261101030512: the event subscriptions a production manifest deploy
+// declares, applied once the deployment serves all production traffic.
+func (q *Queries) InsertDeploymentEventSubscriptionIntent(ctx context.Context, db DBTX, arg InsertDeploymentEventSubscriptionIntentParams) error {
+	_, err := db.Exec(ctx, insertDeploymentEventSubscriptionIntent, arg.DeploymentID, arg.AppID, arg.DeclaredSubscriptionIds)
+	return err
+}
+
 const insertDeploymentRegistryRootfs = `-- name: InsertDeploymentRegistryRootfs :one
 WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
 INSERT INTO deployment_registry_rootfs(id,registry_verification_id,deployment_id,workload_name,input_snapshot,input_hash,published_at,expires_at)
@@ -50308,6 +50364,31 @@ func (q *Queries) ListPlatformTenantCustomerOperationsBySubject(ctx context.Cont
 	return items, nil
 }
 
+const listPreparedEventSubscriptionIntents = `-- name: ListPreparedEventSubscriptionIntents :many
+SELECT deployment_id::text AS deployment_id FROM deployment_event_subscription_intents
+WHERE status = 'prepared' ORDER BY updated_at, deployment_id LIMIT 64
+`
+
+func (q *Queries) ListPreparedEventSubscriptionIntents(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, listPreparedEventSubscriptionIntents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var deployment_id string
+		if err := rows.Scan(&deployment_id); err != nil {
+			return nil, err
+		}
+		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductionDeadLetterEvents = `-- name: ListProductionDeadLetterEvents :many
 WITH anchor AS (SELECT last_failed_at,id FROM production_dead_letter_events
     WHERE id=$3::uuid AND ($1::uuid IS NULL OR account_id=$1::uuid)
@@ -56035,6 +56116,56 @@ func (q *Queries) LockEnvironmentQueueProducer(ctx context.Context, db DBTX, arg
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockEventSubscriptionIntentDeployment = `-- name: LockEventSubscriptionIntentDeployment :one
+SELECT i.app_id::text AS app_id, i.declared_subscription_ids::text[] AS declared,
+ d.id::text AS deployment_id, d.status, d.scope, d.traffic_percent, d.traffic_percent_explicit,
+ d.canary_total_steps, d.rollout_state,
+ coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id
+ AND coalesce(nullif(n.scope,''),'default')='default'
+ AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
+ ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
+ EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
+ AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+FROM deployment_event_subscription_intents i JOIN deployments d ON d.id = i.deployment_id
+WHERE i.deployment_id = $1::uuid AND i.status = 'prepared'
+FOR UPDATE OF i
+`
+
+type LockEventSubscriptionIntentDeploymentRow struct {
+	AppID                  string
+	Declared               []string
+	DeploymentID           string
+	Status                 string
+	Scope                  string
+	TrafficPercent         int32
+	TrafficPercentExplicit bool
+	CanaryTotalSteps       int32
+	RolloutState           string
+	LatestID               string
+	CompetingTraffic       bool
+}
+
+// The same disposition inputs as ReadCronActivationDeployment, so event
+// subscriptions and staged crons go live under one rule.
+func (q *Queries) LockEventSubscriptionIntentDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockEventSubscriptionIntentDeploymentRow, error) {
+	row := db.QueryRow(ctx, lockEventSubscriptionIntentDeployment, deploymentID)
+	var i LockEventSubscriptionIntentDeploymentRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Declared,
+		&i.DeploymentID,
+		&i.Status,
+		&i.Scope,
+		&i.TrafficPercent,
+		&i.TrafficPercentExplicit,
+		&i.CanaryTotalSteps,
+		&i.RolloutState,
+		&i.LatestID,
+		&i.CompetingTraffic,
+	)
+	return i, err
 }
 
 const lockEventWorkflowRecipient = `-- name: LockEventWorkflowRecipient :one
@@ -99382,6 +99513,23 @@ func (q *Queries) SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const settleEventSubscriptionIntent = `-- name: SettleEventSubscriptionIntent :exec
+UPDATE deployment_event_subscription_intents
+SET status = $1::text, reason = $2::text, updated_at = now()
+WHERE deployment_id = $3::uuid AND status = 'prepared'
+`
+
+type SettleEventSubscriptionIntentParams struct {
+	Status       string
+	Reason       string
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error {
+	_, err := db.Exec(ctx, settleEventSubscriptionIntent, arg.Status, arg.Reason, arg.DeploymentID)
+	return err
 }
 
 const shareRuntimeUpgradeExternalFenceAuthority = `-- name: ShareRuntimeUpgradeExternalFenceAuthority :one

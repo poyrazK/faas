@@ -814,6 +814,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
 		go srv.runCronActivationWorker(ctx)
+		go srv.runEventSubscriptionActivationWorker(ctx)
 		go srv.runSafeProjectReleaseWorker(ctx)
 		go srv.runPromotionHealthWorker(ctx)
 		go srv.runMailOutbox(ctx)

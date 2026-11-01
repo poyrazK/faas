@@ -3970,7 +3970,7 @@ type Limits struct {
 	// publish is matched against each enabled subscription of its account,
 	// so the count bounds the routing work one event can cause. Enforced
 	// after every manifest apply that adds or re-enables a subscription, by
-	// checkSourceRefEventSubscriptionLimits in pkg/apid/apidserver.
+	// checkSourceRefEventSubscriptionQuota in pkg/apid/apidserver.
 	EventSubscriptionsPerApp     int
 	EventSubscriptionsPerAccount int
 

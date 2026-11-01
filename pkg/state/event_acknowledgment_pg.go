@@ -218,8 +218,14 @@ func (s *PgStore) ExpireEventAcknowledgments(ctx context.Context, limit int) (in
 		return 0, err
 	}
 	// Preserve selection by lease expiry, but acquire shared metric/quota rows in scope order.
+	// The lock below is taken on the quota subject (an org pool or the
+	// account), so order by it first: ordering by account_id let two batches
+	// take an org's and an account's locks in opposite orders.
 	sort.Slice(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
+		if a.QuotaSubjectID != b.QuotaSubjectID {
+			return uuidString(a.QuotaSubjectID) < uuidString(b.QuotaSubjectID)
+		}
 		if a.AccountID != b.AccountID {
 			return uuidString(a.AccountID) < uuidString(b.AccountID)
 		}
