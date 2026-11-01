@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	settlementsqlc "github.com/onebox-faas/faas/pkg/state/realtimebulk/sqlc"
 )
 
@@ -71,16 +72,28 @@ func authorizeRealtimeBatchSettlements(ctx context.Context, tx pgx.Tx, g realtim
 	}
 	return nil
 }
-func readRealtimeSettlementAttempts(ctx context.Context, tx pgx.Tx, id string, seq int64, hash []byte) (int, error) {
+
+// credTagConsumerGroupLease binds consumer-group lease token hashes, a
+// scheduler-family credential: apid and schedd lease and settle messages.
+const credTagConsumerGroupLease credhash.Tag = "managed_realtime_consumer_group_messages.token_hash"
+
+// readRealtimeSettlementAttempts finds the leased message a claim token
+// whose SHA-256 is sum settles, and returns its attempts and the token hash
+// it is stored under, plain or keyed (ADR 20261029202403 amendment 1), for
+// the settlement to match on.
+func readRealtimeSettlementAttempts(ctx context.Context, tx pgx.Tx, id string, seq int64, sum []byte) (int, []byte, error) {
 	credential := pgtype.Text{}
 	if worker, ok := realtimeWorkerFromContext(ctx); ok {
 		credential = pgtype.Text{String: worker.grant.Info.ID, Valid: true}
 	}
-	attempts, err := settlementsqlc.New().ReadSettlementLeaseAttempts(ctx, tx, settlementsqlc.ReadSettlementLeaseAttemptsParams{GroupID: id, Sequence: seq, TokenHash: hash, CredentialID: credential})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, ErrRealtimeConsumerGroupLease
+	for _, stored := range familyCredentialLookups(credhash.FamilyScheduler, credTagConsumerGroupLease, sum) {
+		attempts, err := settlementsqlc.New().ReadSettlementLeaseAttempts(ctx, tx, settlementsqlc.ReadSettlementLeaseAttemptsParams{GroupID: id, Sequence: seq, TokenHash: stored, CredentialID: credential})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		return int(attempts), stored, err
 	}
-	return int(attempts), err
+	return 0, nil, ErrRealtimeConsumerGroupLease
 }
 func (s *PgStore) SettleRealtimeConsumerGroupBatch(ctx context.Context, ep, ch, name string, req RealtimeConsumerGroupBatchSettlementRequest) (RealtimeConsumerGroupBatchSettlementResult, error) {
 	result := RealtimeConsumerGroupBatchSettlementResult{Results: []RealtimeConsumerGroupBatchSettlementItem{}}
@@ -108,9 +121,9 @@ func (s *PgStore) SettleRealtimeConsumerGroupBatch(ctx context.Context, ep, ch, 
 	}
 	for _, input := range inputs {
 		item := RealtimeConsumerGroupBatchSettlementItem{Sequence: input.request.Sequence, Action: input.request.Action}
-		attempts, err := readRealtimeSettlementAttempts(ctx, tx, g.id, input.sequence, input.hash)
+		attempts, stored, err := readRealtimeSettlementAttempts(ctx, tx, g.id, input.sequence, input.hash)
 		if err == nil {
-			item.RealtimeConsumerGroupSettlementResult, err = settleRealtimeGroupMessage(ctx, tx, g, input.sequence, input.hash, attempts, input.request)
+			item.RealtimeConsumerGroupSettlementResult, err = settleRealtimeGroupMessage(ctx, tx, g, input.sequence, stored, attempts, input.request)
 		}
 		if errors.Is(err, ErrRealtimeConsumerGroupLease) {
 			item.RealtimeConsumerGroupSettlementResult = RealtimeConsumerGroupSettlementResult{Status: "lease_lost"}

@@ -156,6 +156,7 @@ func TestCIJobsRuntime(t *testing.T) {
 				t.Fatalf("invalid proof accepted: %v", err)
 			}
 		}
+		forgetJobAttempt(t, h, proof.RunID)
 		if _, err := h.pool.Exec(t.Context(), "UPDATE job_tasks SET lease_token=$2 WHERE run_id=$1", proof.RunID, uuid.NewString()); err != nil {
 			t.Fatal(err)
 		}
