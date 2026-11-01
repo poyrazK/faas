@@ -8,9 +8,11 @@
 // followed by `y` no longer deletes the account; the user has to
 // actually type the destructive verb.
 //
-// The `-q` / `--quiet` flag bypasses this helper entirely — CI and
-// scripted use are legitimate paths and the user has accepted that
-// trade-off by passing the flag.
+// The `--yes` flag (with older spellings such as `-q` / `--quiet` kept
+// as aliases) bypasses this helper entirely — CI and scripted use are
+// legitimate paths and the user has accepted that trade-off by passing
+// the flag. JSON and --non-interactive callers never see a prompt: they
+// get a "Confirmation required" Problem naming the flag.
 
 package main
 
@@ -48,15 +50,20 @@ import (
 // Returns true → caller proceeds with the destructive action.
 // Returns false → caller MUST abort (typically `return 1`).
 func requireTyped(expected string) bool {
-	return requireTypedOr(expected, "--quiet")
+	return requireTypedOr(expected, "--yes")
 }
 
-// requireTypedOr is requireTyped for a command whose confirmation bypass
-// is not --quiet: `env rollback` takes only --yes, and the hint sent
-// scripts to a flag it rejects (Hunt 12 H12-56).
+// requireTypedOr is requireTyped naming a bypass other than --yes, which
+// every confirming command accepts (CLI audit 2026-10-31).
 func requireTypedOr(expected, bypassFlag string) bool {
 	if nonInteractive {
 		printErr("Confirmation required", errors.New("use an explicit confirmation flag in non-interactive mode"))
+		return false
+	}
+	if jsonOutput {
+		// A JSON caller is a script: the prompt would wait on its stdin and
+		// the cancellation would be prose, not a Problem.
+		printErr("Confirmation required", fmt.Errorf("JSON mode does not prompt; pass %s to confirm", bypassFlag))
 		return false
 	}
 	// production-us hunt #4: a script without --quiet sat on this prompt
@@ -76,6 +83,46 @@ func requireTypedOr(expected, bypassFlag string) bool {
 		return false
 	}
 	return true
+}
+
+// requireConfirmationFlag refuses, before any prompt or request, a
+// confirming command that cannot ask: --non-interactive and JSON output
+// both need the bypass flag. A JSON caller once got `billing cancel`
+// carried out with no prompt at all (CLI audit 2026-10-31). action names
+// what is being confirmed, such as "billing cancel". A non-zero result is
+// the exit code.
+func requireConfirmationFlag(approved bool, flag, action string) int {
+	if approved {
+		return 0
+	}
+	if code := requireAutomationConfirmation(false, flag); code != 0 {
+		return code
+	}
+	if jsonOutput {
+		return printErr("Confirmation required", fmt.Errorf("%s requires %s in JSON mode", action, flag))
+	}
+	return 0
+}
+
+// confirmYesNo asks question with a y/N prompt on stderr and returns 0 on
+// y or yes. It refuses up front where nobody can answer: --non-interactive,
+// JSON output, and stdin that is not a terminal each need flag. A declined
+// or unanswered prompt is a Problem on stderr, never "aborted" on stdout.
+// A non-zero result is the exit code.
+func confirmYesNo(question, flag, action string) int {
+	if code := requireConfirmationFlag(false, flag, action); code != 0 {
+		return code
+	}
+	if !stdinIsTTY() {
+		return printErr("Confirmation required", fmt.Errorf("stdin is not a terminal; pass %s to confirm %s", flag, action))
+	}
+	_, _ = fmt.Fprintf(osStderr, "%s [y/N] ", question)
+	line, err := readConfirmationLine(osStdin)
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if err != nil || (answer != "y" && answer != "yes") {
+		return printErr("Aborted", fmt.Errorf("%s was not confirmed", action))
+	}
+	return 0
 }
 
 // readConfirmationLine reads one line from r, trimming a single

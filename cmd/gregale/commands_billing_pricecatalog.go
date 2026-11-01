@@ -49,8 +49,10 @@ func cmdBillingPriceCatalog(args []string) int {
 		printPriceCatalogUsage(os.Stdout)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "gregale billing price-catalog: unknown subcommand %q\n\n", args[0])
-		printPriceCatalogUsage(os.Stderr)
+		printCommandValidation(os.Stderr, "gregale billing price-catalog: unknown subcommand %q\n\n", args[0])
+		if !jsonOutput {
+			printPriceCatalogUsage(os.Stderr)
+		}
 		return 1
 	}
 }

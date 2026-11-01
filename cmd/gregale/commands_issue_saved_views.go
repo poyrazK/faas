@@ -13,11 +13,11 @@ import (
 func cmdIssueSavedViews(args []string) int {
 	usage := "usage: gregale debug issue views <list|get|save|delete|apply> --app SLUG [--key KEY --name NAME --state open --assignee me --sort impact --min-customers N --tag component=payments --cursor CURSOR]"
 	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 0
 	}
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	action := args[0]
@@ -53,11 +53,11 @@ func cmdIssueSavedViews(args []string) int {
 		return printErr("Flag is not valid for this view action", fmt.Errorf("--%s is not supported by %s", invalidFlag, action))
 	}
 	if *app == "" || len(positionals) != 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	if action != "list" && action != "get" && action != "save" && action != "delete" && action != "apply" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	if action != "list" {

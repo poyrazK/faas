@@ -1,5 +1,5 @@
 // `gregale deploys clear-obsolete [--app <slug>] [--older-than 168h]
-// [--dry-run] [--force]` — ADR-124 bulk soft-delete for terminal
+// [--dry-run] [--yes]` — ADR-124 bulk soft-delete for terminal
 // rows (status ∈ {superseded, failed, cancelled}). Plan-gated
 // (Free returns 402). Retention cap enforced inside the store so
 // INV 3 (always a current deployment) stays satisfied.
@@ -16,14 +16,15 @@ import (
 	"time"
 )
 
-const deploysClearObsoleteUsage = "usage: gregale release prune --app <slug> [--older-than 168h] [--dry-run] [--force] [--json]"
+const deploysClearObsoleteUsage = "usage: gregale release prune --app <slug> [--older-than 168h] [--dry-run] [--yes] [--json]"
 
 func cmdDeploysClearObsolete(args []string) int {
 	fs := newFlagSet("deploys clear-obsolete", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug (required)")
 	olderThan := fs.Duration("older-than", 168*time.Hour, "cutoff duration; rows older than this are eligible")
 	dryRun := fs.Bool("dry-run", false, "report the count without modifying rows")
-	force := fs.Bool("force", false, "skip the confirmation prompt")
+	force := fs.Bool("yes", false, "skip the confirmation prompt")
+	fs.BoolVar(force, "force", false, "alias of --yes")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -37,7 +38,7 @@ func cmdDeploysClearObsolete(args []string) int {
 	if *olderThan < 0 {
 		return printErr("Invalid --older-than", fmt.Errorf("--older-than must be >= 0; got %s", olderThan.String()))
 	}
-	if code := requireAutomationConfirmation(*force || *dryRun, "--force (or --dry-run)"); code != 0 {
+	if code := requireAutomationConfirmation(*force || *dryRun, "--yes (or --dry-run)"); code != 0 {
 		return code
 	}
 	client, err := authedClient()
@@ -53,7 +54,7 @@ func cmdDeploysClearObsolete(args []string) int {
 			return writeDestructivePreview(preview)
 		}
 		if jsonOutput {
-			return printErr("Confirmation required", fmt.Errorf("obsolete cleanup requires --force in JSON mode; inspect --dry-run first"))
+			return printErr("Confirmation required", fmt.Errorf("obsolete cleanup requires --yes in JSON mode; inspect --dry-run first"))
 		}
 		renderDestructivePreview(osStderr, preview)
 		if _, err := fmt.Fprint(osStderr, "Clear eligible obsolete deployments? [y/N] "); err != nil {

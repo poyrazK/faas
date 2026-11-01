@@ -34,13 +34,13 @@ func cmdLogsView(args []string) int {
 		case subList, "save", "delete":
 			return cmdLogsSaved(append([]string{verb}, rest...))
 		}
-		_, _ = fmt.Fprintf(osStderr, "--shared views support list, save and delete; %q works on local views\n", verb)
+		printCommandValidation(osStderr, "--shared views support list, save and delete; %q works on local views\n", verb)
 		return 1
 	}
 	if verb == "use" {
 		i := slices.Index(rest, "--default")
 		if i < 0 {
-			_, _ = fmt.Fprintln(osStderr, "use a view for one query with: gregale logs <app> --view NAME; make it the default with: gregale logs view use NAME --default")
+			printCommandValidation(osStderr, "use a view for one query with: gregale logs <app> --view NAME; make it the default with: gregale logs view use NAME --default\n")
 			return 1
 		}
 		return cmdLogsDefaults(append([]string{"set"}, slices.Delete(slices.Clone(rest), i, i+1)...))

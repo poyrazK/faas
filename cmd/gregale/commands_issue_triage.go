@@ -17,7 +17,7 @@ import (
 func cmdIssueTriage(args []string) int {
 	usage := "usage: gregale debug issue releases compare --app SLUG --baseline UUID --candidate UUID [--environment application]\n       gregale debug issue bulk --app SLUG --issues UUID,UUID --action assign|resolve|ignore|reopen [--assignee UUID --deployment UUID --until RFC3339]"
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	fs := newFlagSet("issues "+args[0], flag.ContinueOnError)
@@ -39,7 +39,7 @@ func cmdIssueTriage(args []string) int {
 		return 1
 	}
 	if *app == "" || len(positional) != 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	var in api.BulkIssueActionRequest
@@ -68,7 +68,7 @@ func cmdIssueTriage(args []string) int {
 			return printErr("Invalid release comparison", fmt.Errorf("choose two distinct deployment UUIDs"))
 		}
 	default:
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	c, err := authedClient()

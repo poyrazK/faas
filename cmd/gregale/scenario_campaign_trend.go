@@ -134,7 +134,7 @@ func cmdTestTrend(args []string, recovery bool) int {
 	configPath := fs.String("config", "", "ordered trend inputs and tolerances YAML")
 	htmlPath := fs.String("html", "", "standalone HTML report output")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return 1
 	}
 	if fs.NArg() != 0 || *scenario == "" || *configPath == "" || *htmlPath == "" {
 		return printErr("Invalid trend options", fmt.Errorf("--scenario, --config and --html are required"))

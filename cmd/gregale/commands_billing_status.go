@@ -49,7 +49,7 @@ const billingStatusTickInterval = 5 * time.Second
 func cmdBillingStatus(args []string) int {
 	watch, watchDur, asJSON, noClear, err := parseBillingStatusFlags(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "gregale billing status: %v\n", err)
+		printCommandValidation(os.Stderr, "gregale billing status: %v\n", err)
 		return 1
 	}
 	// run() strips the global --json before dispatch. Preserve the

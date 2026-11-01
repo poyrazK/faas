@@ -58,7 +58,7 @@ func cmdMfa(args []string) int {
 		return cmdMfaDisable(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale account mfa: unknown subcommand %q (known: enroll, confirm, verify, recover, disable)\n", args[0])
+		printCommandValidation(os.Stderr, "gregale account mfa: unknown subcommand %q (known: enroll, confirm, verify, recover, disable)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}

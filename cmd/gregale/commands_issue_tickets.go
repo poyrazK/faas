@@ -16,7 +16,7 @@ import (
 
 func cmdIssueTickets(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "usage: gregale debug issue tickets <create|sync|auto-sync|linear-connection> [flags]")
+		PrintUsage(os.Stderr, "usage: gregale debug issue tickets <create|sync|auto-sync|linear-connection> [flags]", "issues")
 		if len(args) == 0 {
 			return 1
 		}
@@ -37,11 +37,11 @@ func cmdIssueTickets(args []string) int {
 func runIssueTickets(args []string, external issuetracker.Provider) int {
 	usage := "usage: gregale debug issue tickets create --app SLUG --issue UUID --provider github|linear --target OWNER/REPO|TEAM_UUID --title TEXT --request-id UUID [--description TEXT --token-env NAME --journal-dir PATH --recover-url URL --native]"
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 0
 	}
 	if len(args) == 0 || args[0] != "create" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	fs := newFlagSet("issues tickets create", flag.ContinueOnError)
@@ -65,7 +65,7 @@ func runIssueTickets(args []string, external issuetracker.Provider) int {
 		return 1
 	}
 	if *app == "" || len(pos) != 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	if *native {

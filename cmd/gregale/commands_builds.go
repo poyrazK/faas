@@ -51,7 +51,7 @@ func cmdBuild(args []string) int {
 		return cmdBuildList(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale build: unknown subcommand %q (known: status, provenance, sbom, list)\n", args[0])
+		printCommandValidation(os.Stderr, "gregale build: unknown subcommand %q (known: status, provenance, sbom, list)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}

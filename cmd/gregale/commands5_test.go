@@ -1567,13 +1567,17 @@ func TestCmdPlan_DispatchesKnownPlans(t *testing.T) {
 }
 
 func TestCmdPlan_DowngradeConfirmation(t *testing.T) {
-	// Pipe "n" to stdin so the y/N prompt refuses the downgrade.
+	// Pipe "n" to a terminal stdin so the y/N prompt refuses the downgrade.
 	old := osStdin
 	defer func() { osStdin = old }()
 	pr, pw, _ := os.Pipe()
 	osStdin = pr
 	_, _ = pw.WriteString("n\n")
 	_ = pw.Close()
+	tty := true
+	oldTTY := testOnlyTTY
+	testOnlyTTY = &tty
+	defer func() { testOnlyTTY = oldTTY }()
 
 	sink := &multiSink{
 		onAccount: func(string) (int, any) {
@@ -1589,8 +1593,10 @@ func TestCmdPlan_DowngradeConfirmation(t *testing.T) {
 	if code := cmdPlan([]string{"free"}); code != 1 {
 		t.Errorf("cmdPlan downgrade with 'n' = %d, want 1", code)
 	}
-	if !strings.Contains(stdout.String(), "aborted") {
-		t.Errorf("refusal should print 'aborted': %q", stdout.String())
+	// The refusal is a Problem on stderr, never prose on stdout (CLI audit
+	// 2026-10-31).
+	if stdout.String() != "" {
+		t.Errorf("refusal wrote to stdout: %q", stdout.String())
 	}
 }
 

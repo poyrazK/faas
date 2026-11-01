@@ -248,6 +248,11 @@ func cmdLogViews(args []string) int {
 		args = append([]string{"list"}, args...)
 	}
 	if args[0] == "save" && len(args) >= 2 {
+		// `save --zz-bogus` saved a view named "--zz-bogus" (CLI audit
+		// 2026-10-31): a flag is never the view name.
+		if strings.HasPrefix(args[1], "-") {
+			return printErr("Invalid log views usage", fmt.Errorf("save takes the view name before its filters: gregale logs view save NAME [filters]; got %q", args[1]))
+		}
 		view, replace, dryRun, err := parseLogViewSaveFlags(args[2:])
 		if err != nil {
 			return printErr("Invalid log view", err)

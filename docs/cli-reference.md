@@ -1681,26 +1681,26 @@ gregale release timeline v42 --app my-api --json
 
 Hide one deployment from the list
 
-`gregale release hide [--app <SLUG>] [--dry-run] [--force] <id|vN>`
+`gregale release hide [--app <SLUG>] [--dry-run] [--yes] <id|vN>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug for revision resolution |  |
 | `--dry-run` | preview cleanup without changing resources |  |
-| `--force` | confirm cleanup without prompting |  |
+| `--yes` | confirm cleanup without prompting (alias: --force) |  |
 
 ### release prune
 
 Hide obsolete deployments older than a cutoff
 
-`gregale release prune --app <slug> [--older-than <D>] [--dry-run] [--force]`
+`gregale release prune --app <slug> [--older-than <D>] [--dry-run] [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--older-than <D>` | cutoff age (default 168h) |  |
 | `--dry-run` | preview age/status candidates without changing resources |  |
-| `--force` | skip the confirmation |  |
+| `--yes` | confirm cleanup without prompting (alias: --force) |  |
 
 ### release reorder
 
@@ -6397,13 +6397,13 @@ Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days.
 
 Restore an app&#39;s edge rules to a recorded version
 
-`gregale edge rule rollback --app <slug> --to <N> [--quiet]`
+`gregale edge rule rollback --app <slug> --to <N> [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--to <N>` | version to restore | required |
-| `--quiet` | skip the typed confirmation (for scripts) |  |
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
 
 Examples:
 
@@ -18144,12 +18144,13 @@ Placeholders are filled when the agreement is signed.
 
 Export account data (GDPR)
 
-`gregale account export [-o <PATH>] [--no-secrets]`
+`gregale account export [-o <PATH>] [--no-secrets] [--force]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `-o <PATH>` | output file |  |
 | `--no-secrets` | exclude the sealed-secret ciphertext slice |  |
+| `--force` | replace the output file if it exists |  |
 
 ### account delete
 
@@ -18655,11 +18656,11 @@ Show the global infrastructure timeline
 
 Delete one org
 
-`gregale org delete [-q] <slug>`
+`gregale org delete [--yes] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `-q` | skip the confirmation prompt |  |
+| `--yes` | skip the confirmation prompt (aliases: -q, --quiet) |  |
 
 ### org keys
 
@@ -18927,6 +18928,12 @@ Retry failed payment when supported; Polar uses the portal
 ### billing cancel
 
 Cancel the subscription at period end
+
+`gregale billing cancel [--yes]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | confirm the cancellation without prompting; required with --json or without a terminal |  |
 
 ### billing status
 

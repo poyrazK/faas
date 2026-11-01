@@ -87,7 +87,7 @@ func cmdBucketDelete(args []string) int {
 		PrintUsage(osStderr, bucketDeleteUsage, "bucket")
 		return 1
 	}
-	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+	if code := requireConfirmationFlag(*quiet, "--yes", "bucket deletion"); code != 0 {
 		return code
 	}
 	if !*quiet {
