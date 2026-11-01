@@ -261,6 +261,10 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 	if matchHost == "" {
 		matchHost = strings.ToLower(appHostForDomain(app.Slug, s.domain))
 	}
+	if prob := s.edgeRules.AppBoundHostProblem(r.Context(), app, matchHost); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	previewSHA256, err := openapidiff.PolicySuggestionsSHA256(matchHost, dryRun.Suggestions)
 	if err != nil {
 		logCustomerFailure(s.log, "failed to fingerprint OpenAPI policy plan", err)

@@ -52968,6 +52968,104 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/agent-connections:
+    get:
+      tags: [keys]
+      operationId: listAgentConnections
+      summary: List the agents connected to the account.
+      description: |
+        The account's connected agents, newest first:
+        hosted MCP sign-ins, whose `mcp-login` keys the hosted MCP server
+        holds, and API keys with the `agent` scope. Only keys that still work
+        are listed. A hosted sign-in shows the client name its consent page
+        showed and the site the client was verified at, when known.
+      responses:
+        '200':
+          description: The connected agents.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConnectionsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/revoke_all:
+    post:
+      tags: [keys]
+      operationId: revokeAllAgentConnections
+      summary: Revoke every agent connected to the account.
+      description: |
+        Revokes the API key of every connected agent; each must sign in
+        again. Needs an admin credential. Audits `key.revoked` with reason
+        `agent_disconnected` for each key and `agent_connections.revoke_all`
+        with the count.
+      responses:
+        '200':
+          description: How many connections were revoked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConnectionsRevokeAllResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/self:
+    put:
+      tags: [keys]
+      operationId: nameAgentClient
+      summary: Name the client of the calling hosted MCP key.
+      description: |
+        Called by the hosted MCP server after a browser sign-in, with the
+        connection's own `mcp-login` key. Any other credential is refused.
+        The first name wins.
+      x-internal: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentClientRequest' }
+      responses:
+        '204': { description: No body. The client is named. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [keys]
+      operationId: disconnectAgent
+      summary: Revoke the calling hosted MCP key.
+      description: |
+        Called by the hosted MCP server when a connection ends (consent
+        denied, or the connection revoked or expired), with that connection's
+        own `mcp-login` key. Any other credential is refused.
+      x-internal: true
+      responses:
+        '204': { description: No body. The key is revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The connected agent's API key id.
+        schema: { type: string }
+    delete:
+      tags: [keys]
+      operationId: revokeAgentConnection
+      summary: Revoke one connected agent.
+      description: |
+        Revokes the agent's API key; the agent must sign in again. Needs an
+        admin credential. Revoking it again succeeds; an id that is not one of
+        the account's connected agents is 404.
+      responses:
+        '204': { description: No body. The agent's key is revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/keys/{id}/rotate:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -110818,6 +110916,48 @@ components:
         status: { type: string, enum: [queued] }
 
     # ─── API keys ─────────────────────────────────────────────────────────
+
+    AgentConnectionResponse:
+      description: "One agent connected to the account. `id` is the API key the agent uses; revoking the connection revokes that key."
+      type: object
+      required: [id, kind, prefix, scopes, created_at]
+      properties:
+        id: { type: string, description: The agent's API key id. }
+        kind: { type: string, enum: [hosted_mcp, agent_key], description: "`hosted_mcp` for a browser sign-in through the hosted MCP server; `agent_key` for an API key with the `agent` scope." }
+        client_name: { type: string, description: "The client name a hosted sign-in's consent page showed." }
+        client_site: { type: string, description: "The host the client was verified at: the site serving its metadata document, or its HTTPS redirect host. Empty for a local client." }
+        label: { type: string, description: The key label. }
+        prefix: { type: string, description: The key's display prefix. }
+        scopes: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+      example: {id: "3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19", kind: hosted_mcp, client_name: Claude, client_site: claude.ai, label: mcp-login, prefix: "fp_live_ab12cd34", scopes: ["apps:read"], created_at: "2026-10-30T11:25:00Z", last_used_at: "2026-10-30T12:05:00Z", expires_at: "2026-11-06T12:05:00Z"}
+
+    AgentConnectionsResponse:
+      description: The agents connected to the account, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AgentConnectionResponse' }
+
+    AgentConnectionsRevokeAllResponse:
+      description: The result of revoking every connected agent.
+      type: object
+      required: [revoked]
+      properties:
+        revoked: { type: integer, minimum: 0, description: The number of agent keys revoked. }
+
+    AgentClientRequest:
+      description: The client a hosted MCP connection's key belongs to, named once by the hosted MCP server.
+      type: object
+      required: [client_name]
+      additionalProperties: false
+      properties:
+        client_name: { type: string, minLength: 1, maxLength: 80, description: "Printable client name, without control characters or surrounding spaces." }
+        client_site: { type: string, maxLength: 253, description: Lower-case host name the client was verified at. }
 
     APIKeyResponse:
       description: "API key metadata: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, request count. **Plaintext is returned only on POST**. `org_id` is the org the key was minted against; legacy account-scoped responses stamp `org_id = caller's personal org`. See `org.create_api_key` / `org.revoke_api_key` for the new org-scoped verbs."
