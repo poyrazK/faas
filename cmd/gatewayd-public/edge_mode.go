@@ -213,7 +213,10 @@ func (d *localFirstDialer) placementRoute(ctx context.Context, rec *gateway.Dial
 	}
 	pref, ok := gateway.PreferredNodeFrom(ctx)
 	if !ok {
-		d.metrics.placement.WithLabelValues(placementMiss).Inc()
+		// Health probes dial too; only a proxied request is a miss.
+		if gateway.PlacementAsked(ctx) {
+			d.metrics.placement.WithLabelValues(placementMiss).Inc()
+		}
 		return computeGatewayEndpoint{}, pref, false
 	}
 	endpoint, ok := d.placementPool.peekEndpoint(ctx, pref.NodeID)

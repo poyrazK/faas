@@ -158,6 +158,9 @@ egress:
 # tunnel: docs/runbooks/AppEdgeCutover.md.
 public_edge:
   compute_nodes: true
+  # ADR-20261031105055: Cloudflare sends almost every request to one
+  # connector; each edge hands a host to the node that last served it.
+  placement_routing: true
 
 # Customer log archive (pkg/logarchive). Keyless: every node's attached
 # service account holds roles/storage.objectUser on the bucket, whose

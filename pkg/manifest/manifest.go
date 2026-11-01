@@ -744,12 +744,19 @@ type PublicEdge struct {
 	// there, while the platform hosts and custom domains stay on the control
 	// plane. Off by default.
 	ComputeNodes bool `yaml:"compute_nodes,omitempty"`
+	// PlacementRouting makes each compute edge send an app host to the
+	// gatewayd-internal of the node that last served it, instead of its own
+	// (ADR-20261031105055). Needs compute_nodes. Off by default.
+	PlacementRouting bool `yaml:"placement_routing,omitempty"`
 }
 
 // validate checks the compute-node edge against the fleet: it needs a control
 // plane to forward credential-bound routes to and compute nodes to run on.
 func (e PublicEdge) validate(hosts []Host) Errors {
 	if !e.ComputeNodes {
+		if e.PlacementRouting {
+			return Errors{{"public_edge.placement_routing", "needs public_edge.compute_nodes: it routes the compute edges' requests"}}
+		}
 		return nil
 	}
 	var controlPlanes, computeNodes int
