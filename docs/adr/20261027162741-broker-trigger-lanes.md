@@ -4,6 +4,7 @@ Date: 2026-10-27
 Status: Accepted
 Amends: [ADR-972](972-parallel-queue-push-dispatch.md) (external brokers kept serial), [ADR-100](100-triggers-event-source-mappings.md) (every schedd walks every trigger)
 Related: [ADR-1180](1180-long-async-invocations.md), [ADR 20261027160930](20261027160930-continuous-fair-drain.md)
+Amended by: [ADR 20261101093512](20261101093512-broker-trigger-record-settlement.md) (every polled record is settled; claims renew during long batches)
 
 ## Context
 

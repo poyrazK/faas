@@ -16,8 +16,13 @@
 // A consumer-group Reader cannot SetOffset, so rewinding did nothing and
 // the next commit skipped the failed record. The record stays open, so
 // nothing past it commits and a restart redelivers it from the broker.
-// Record IDs are partition-offset, the same on every redelivery, so
-// attempts carry over.
+// NackUntil keeps a cooling retry back until it is due, and Defer hands a
+// record the batch left out back first in the next Poll.
+//
+// Record IDs are topic/partition/offset@timestamp, the same on every
+// redelivery, so attempts carry over; the topic and the record timestamp
+// keep a new topic or a recreated one from reusing an old record's ID
+// (ADR-20261101093512). Records stored before that used partition-offset.
 //
 // Connection sharing: one Reader per trigger (NOT one Reader
 // per partition — segmentio/kafka-go handles partition assignment
@@ -68,9 +73,10 @@ type kafkaBrokerOp interface {
 // kind=kafka trigger.
 //
 // inFlight holds the records handed to the dispatcher, by record ID.
-// retry holds records a retryable Nack keeps for the next Poll. open
-// holds, per partition, every offset fetched and not yet settled;
-// settled holds settled records waiting for the offsets below them.
+// retry holds records a retryable Nack or Defer keeps for a later Poll;
+// heldUntil holds back the ones NackUntil scheduled. open holds, per
+// partition, every offset fetched and not yet settled; settled holds
+// settled records waiting for the offsets below them.
 type kafkaPoller struct {
 	reader   kafkaBrokerOp
 	brokers  []string
@@ -78,15 +84,33 @@ type kafkaPoller struct {
 	groupID  string
 	batchMax int
 
-	mu       sync.Mutex
-	inFlight map[string]kafka.Message
-	retry    []kafka.Message
-	open     map[int]map[int64]bool
-	settled  map[int][]kafka.Message
+	mu        sync.Mutex
+	inFlight  map[string]kafka.Message
+	retry     []kafka.Message
+	heldUntil map[string]time.Time
+	open      map[int]map[int64]bool
+	settled   map[int][]kafka.Message
 }
 
+// kafkaRecordID identifies a record across redeliveries: its topic,
+// partition and offset, plus the record timestamp as the topic's
+// generation, so a recreated topic whose offsets restart does not reuse an
+// earlier record's ID (ADR-20261101093512). A record without a timestamp
+// has none.
 func kafkaRecordID(msg kafka.Message) string {
-	return fmt.Sprintf("%d-%d", msg.Partition, msg.Offset)
+	id := fmt.Sprintf("%s/%d/%d", msg.Topic, msg.Partition, msg.Offset)
+	if !msg.Time.IsZero() {
+		id += fmt.Sprintf("@%d", msg.Time.UnixMilli())
+	}
+	return id
+}
+
+// kafkaLegacyRecordIDs are the IDs earlier releases stored msg under: the
+// record ID (partition-offset) and, for work-bound triggers, the stable ID
+// (topic/partition/offset).
+func kafkaLegacyRecordIDs(msg kafka.Message) []string {
+	return []string{fmt.Sprintf("%d-%d", msg.Partition, msg.Offset),
+		fmt.Sprintf("%s/%d/%d", msg.Topic, msg.Partition, msg.Offset)}
 }
 
 // kafkaTLSConfig mirrors pkg/gregalemanifest.TLSConfig for the
@@ -347,14 +371,21 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		limit = int(t.BatchSizeMax)
 	}
 	out := make([]SourceRecord, 0, limit)
-	// Records a retryable Nack kept come back first.
+	// Records a retryable Nack or Defer kept come back first, once due.
 	k.mu.Lock()
-	for len(k.retry) > 0 && len(out) < limit {
-		msg := k.retry[0]
-		k.retry = k.retry[1:]
+	now := time.Now()
+	held := k.retry[:0]
+	for _, msg := range k.retry {
+		id := kafkaRecordID(msg)
+		if len(out) >= limit || now.Before(k.heldUntil[id]) {
+			held = append(held, msg)
+			continue
+		}
+		delete(k.heldUntil, id)
 		out = append(out, kafkaSourceRecord(msg))
-		k.inFlight[kafkaRecordID(msg)] = msg
+		k.inFlight[id] = msg
 	}
+	k.retry = held
 	k.mu.Unlock()
 	for len(out) < limit {
 		// Per-fetch context: short enough that an idle trigger
@@ -406,11 +437,13 @@ func kafkaSourceRecord(msg kafka.Message) SourceRecord {
 	for _, h := range msg.Headers {
 		hdrs[h.Key] = string(h.Value)
 	}
+	id := kafkaRecordID(msg)
 	return SourceRecord{
-		ItemIdentifier:   kafkaRecordID(msg),
-		StableIdentifier: fmt.Sprintf("%s/%d/%d", msg.Topic, msg.Partition, msg.Offset),
-		Payload:          msg.Value,
-		Headers:          hdrs,
+		ItemIdentifier:    id,
+		StableIdentifier:  id,
+		LegacyIdentifiers: kafkaLegacyRecordIDs(msg),
+		Payload:           msg.Value,
+		Headers:           hdrs,
 		Metadata: map[string]any{
 			"topic":           msg.Topic,
 			"partition":       msg.Partition,
@@ -466,8 +499,46 @@ func (k *kafkaPoller) Nack(commitCtx context.Context, t sqlc.Trigger, ids []stri
 	return k.commitSettledLocked(commitCtx)
 }
 
+// Defer hands records the batch left out back first in the next Poll,
+// in their order; they stay open, so nothing past them commits.
+func (k *kafkaPoller) Defer(_ context.Context, _ sqlc.Trigger, ids []string) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	back := make([]kafka.Message, 0, len(ids)+len(k.retry))
+	for _, id := range ids {
+		if msg, ok := k.inFlight[id]; ok {
+			delete(k.inFlight, id)
+			back = append(back, msg)
+		}
+	}
+	k.retry = append(back, k.retry...)
+	return nil
+}
+
+// NackUntil keeps retried records back until their retry is due
+// (until[i] for ids[i]) instead of handing them back on every Poll while
+// they cool. They stay open, so nothing past them commits.
+func (k *kafkaPoller) NackUntil(_ context.Context, _ sqlc.Trigger, ids []string, until []time.Time) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.heldUntil == nil {
+		k.heldUntil = map[string]time.Time{}
+	}
+	for i, id := range ids {
+		msg, ok := k.inFlight[id]
+		if !ok {
+			continue
+		}
+		delete(k.inFlight, id)
+		k.heldUntil[id] = until[i]
+		k.retry = append(k.retry, msg)
+	}
+	return nil
+}
+
 // settleLocked marks msg done. Caller holds k.mu.
 func (k *kafkaPoller) settleLocked(msg kafka.Message) {
+	delete(k.heldUntil, kafkaRecordID(msg))
 	if open := k.open[msg.Partition]; open != nil {
 		delete(open, msg.Offset)
 	}

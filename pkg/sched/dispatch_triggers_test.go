@@ -600,8 +600,12 @@ type terminalReceiptStore struct {
 	terminal []string
 }
 
-func (s *terminalReceiptStore) ListTerminalTriggerRecordItems(_ context.Context, _ string, _ []string) ([]string, error) {
-	return s.terminal, nil
+func (s *terminalReceiptStore) TriggerRecordStatesByItems(_ context.Context, _ string, _ []string) ([]state.TriggerRecordItemState, error) {
+	out := make([]state.TriggerRecordItemState, 0, len(s.terminal))
+	for _, item := range s.terminal {
+		out = append(out, state.TriggerRecordItemState{Item: item, State: "succeeded"})
+	}
+	return out, nil
 }
 
 func TestTerminalBrokerRedeliveryAcknowledgedBeforeDispatch(t *testing.T) {
@@ -615,7 +619,7 @@ func TestTerminalBrokerRedeliveryAcknowledgedBeforeDispatch(t *testing.T) {
 		{ItemIdentifier: "new"},
 		{ItemIdentifier: "superseded"},
 	}
-	remaining, err := ackTerminalTriggerRedeliveries(context.Background(), store, poller,
+	remaining, _, err := ackTerminalTriggerRedeliveries(context.Background(), store, poller,
 		sqlc.Trigger{}, batch)
 	if err != nil {
 		t.Fatal(err)
@@ -626,13 +630,18 @@ func TestTerminalBrokerRedeliveryAcknowledgedBeforeDispatch(t *testing.T) {
 	}
 }
 
-func TestTerminalKafkaRedeliveryDoesNotCommitPastLiveWork(t *testing.T) {
+// A Kafka terminal redelivery is acknowledged at once: the poller commits
+// only below the lowest offset still open, so acknowledging offset 42 cannot
+// commit past live offset 41 (TestKafkaTerminalAckDoesNotCommitPastOpenOffset
+// pins the poller side). Deferring it instead looped it forever while new
+// records kept the batch full (ADR-20261101093512).
+func TestTerminalKafkaRedeliveryIsAcknowledged(t *testing.T) {
 	store := &terminalReceiptStore{
 		fakeDeadLetterStore: &fakeDeadLetterStore{},
 		terminal:            []string{"partition-0-offset-42"},
 	}
 	poller := &ackRecordingPoller{}
-	remaining, err := ackTerminalTriggerRedeliveries(context.Background(), store, poller,
+	remaining, _, err := ackTerminalTriggerRedeliveries(context.Background(), store, poller,
 		sqlc.Trigger{}, []SourceRecord{
 			{ItemIdentifier: "partition-0-offset-41"},
 			{ItemIdentifier: "partition-0-offset-42"},
@@ -640,10 +649,9 @@ func TestTerminalKafkaRedeliveryDoesNotCommitPastLiveWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(poller.ackCalls) != 0 || !equalSlices(poller.nackCalls, []string{"partition-0-offset-42"}) ||
+	if !equalSlices(poller.ackCalls, []string{"partition-0-offset-42"}) || len(poller.nackCalls) != 0 ||
 		len(remaining) != 1 || remaining[0].ItemIdentifier != "partition-0-offset-41" {
-		t.Fatalf("Kafka commit crossed live offset: ack=%v nack=%v remaining=%v",
-			poller.ackCalls, poller.nackCalls, batchItemIDs(remaining))
+		t.Fatalf("ack=%v nack=%v remaining=%v", poller.ackCalls, poller.nackCalls, batchItemIDs(remaining))
 	}
 }
 
