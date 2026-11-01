@@ -217,3 +217,7 @@ A second release review found two ways around a policy.
 
 - **Leaving request mode.** Approvals wait in a canary stage, so the policy only gates request-mode apps, and setting one on a service, worker or job is refused. But a member who may configure the app (developers included) could switch it to `service`, which still serves HTTP, through `PATCH /v1/apps/{slug}` or a `gregale.yaml` lifecycle block. The policy stayed set and stopped gating. Leaving request mode now answers `409` while the app has a policy; an owner or admin removes the policy first.
 - **Deploy keys.** Changing or removing the policy, deleting a release gate and lifting a freeze accepted any key with `deploy:write`, the scope CI and agents hold. An admin's CI key could remove the policy, deploy and put it back, around amendment 4. These routes now need the `admin` scope: a signed-in session, the CLI's login or an admin key. Creating a gate or a freeze still takes `deploy:write`, since it only adds a guard.
+
+## Amendment 6 (2026-11-01): a policy names who hears a release waits
+
+A policy could name no notification channel. A release then waited at its stage, seen only by `gregale release approval pending`, until the timeout (24 hours by default) aborted it. Setting a policy now needs at least one Slack or email channel in `notify_channels` (`--notify`): `400 validation_failed` otherwise. Existing policies keep working; the next change to one must name a channel.

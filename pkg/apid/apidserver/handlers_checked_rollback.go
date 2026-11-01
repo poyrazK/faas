@@ -21,7 +21,7 @@ import (
 
 // plainRollbacks is the verified plain-rollback ledger (ADR-1446).
 func (s *server) plainRollbacks() release.Rollbacks {
-	return release.Rollbacks{Store: s.store, Log: s.log, Audit: s.audit, Metrics: s.ops}
+	return release.Rollbacks{Store: s.store, Log: s.log, Audit: s.audit, Metrics: s.ops, AutomaticFailed: s.automaticRollbackFailed}
 }
 
 func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) {

@@ -37,6 +37,10 @@ type Rollbacks struct {
 	Log     *slog.Logger
 	Audit   Auditor
 	Metrics OutcomeMetrics
+	// AutomaticFailed, when set, runs after an automatic rollback (any
+	// trigger but manual) failed: the release it meant to replace still
+	// serves (ADR-1445 amendment 4).
+	AutomaticFailed func(ctx context.Context, r state.RollbackRecord)
 }
 
 // Record opens the ledger row for a plain rollback. A failed write is logged
@@ -231,6 +235,9 @@ func (s Rollbacks) resolve(ctx context.Context, store state.RollbackOutcomeStore
 	// auto-rollback failure means a known-bad release is still live.
 	s.Log.Error("rollback outcome: previous release NOT restored", "app", r.AppID, "rollback", r.ID,
 		"target", r.TargetDeploymentID, "trigger", r.Trigger, "error_code", record.ErrorCode, "error", record.Error)
+	if r.Trigger != state.RollbackTriggerManual && s.AutomaticFailed != nil {
+		s.AutomaticFailed(ctx, record)
+	}
 	return nil
 }
 

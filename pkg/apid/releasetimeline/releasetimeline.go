@@ -122,6 +122,11 @@ func phase(in Inputs, approval *api.ReleaseApprovalStatus, watchUntil time.Time,
 	case "cancelled":
 		return api.ReleasePhaseCancelled, "Cancelled before release"
 	}
+	// A regression kept serving, including after an automatic rollback that
+	// failed, is not a rollback (ADR-1445 amendment 4).
+	if kept := regressionKept(d); kept != nil {
+		return api.ReleasePhaseReleased, "Released, but " + regressionKeptText(kept)
+	}
 	if d.RolloutAbortedAt != nil || d.RolloutState == "aborted" || in.AutoRollbackReason != "" {
 		return api.ReleasePhaseRolledBack, "Rolled back: " + rolledBackWhy(in)
 	}
@@ -143,9 +148,6 @@ func phase(in Inputs, approval *api.ReleaseApprovalStatus, watchUntil time.Time,
 			return api.ReleasePhaseHeld, fmt.Sprintf("Held at %s: %s", where, decisionText(d.RolloutHold))
 		}
 		return api.ReleasePhaseRollingOut, "Rolling out: " + where
-	}
-	if kept := regressionKept(d); kept != nil {
-		return api.ReleasePhaseReleased, "Released, but " + regressionKeptText(kept)
 	}
 	if watched && in.Now.Before(watchUntil) {
 		return api.ReleasePhaseWatching, "Released; watched until " + watchUntil.Format("15:04 UTC")
@@ -171,11 +173,15 @@ func regressionKept(d api.DeploymentResponse) *api.RolloutDecision {
 }
 
 func regressionKeptText(dec *api.RolloutDecision) string {
-	why := "Gregale could not roll it back"
-	if dec.RollbackSkipped == api.CodeRollbackCrossesRelease {
-		why = "rolling back would cross a release command, so a person decides"
+	switch dec.RollbackSkipped {
+	case api.RollbackSkippedFailed:
+		return "a regression was found after the rollout (" + decisionText(dec) +
+			") and Gregale's automatic rollback did not restore the previous release, so this release still serves"
+	case api.CodeRollbackCrossesRelease:
+		return "a regression was found after the rollout (" + decisionText(dec) +
+			") and Gregale did not roll back: rolling back would cross a release command, so a person decides"
 	}
-	return "a regression was found after the rollout (" + decisionText(dec) + ") and Gregale did not roll back: " + why
+	return "a regression was found after the rollout (" + decisionText(dec) + ") and Gregale did not roll back: Gregale could not roll it back"
 }
 
 // rolledBackWhy prefers the abort decision's summary, then the recorded

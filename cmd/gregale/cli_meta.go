@@ -1917,7 +1917,7 @@ var cliCommands = []cliCommand{
 		Short:   "Make production releases wait in their canary for approval",
 		Examples: []string{
 			"gregale release approval require --app my-api --approvals 2 --notify releases",
-			"gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h",
+			"gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h --notify releases",
 			"gregale release approval pending --app my-api",
 			"gregale release approval status v42 --app my-api",
 			"gregale release reject v42 --app my-api --reason \"checkout latency is up\"",
@@ -1930,7 +1930,7 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "abort a release that waits longer (default 24h)", Value: "DURATION"},
 				{Name: "approvers", Short: "who may approve (default admin: owners and admins)", Value: "ROLE", ClosedSet: []string{"admin", "developer"}},
 				{Name: "allow-self-approval", Short: "count the deployer's own approval", Bool: true},
-				{Name: "notify", Short: "Slack or email channels told when a release waits, is decided or times out", Value: "CHANNEL,..."},
+				{Name: "notify", Short: "Slack or email channels told when a release waits, is decided or times out", Value: "CHANNEL,...", Req: true},
 			}},
 			{Name: "policy", Short: "Show an app's approval policy", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},

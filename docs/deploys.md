@@ -294,7 +294,8 @@ committed part of its changes. Automatic rollbacks (the first-wake 5xx
 rollback, the post-release watch and alert-rule rollback actions) never
 acknowledge, so they leave the current release serving instead. When the
 post-release watch or the first-wake 5xx guard finds a regression it cannot
-roll back, the release's decision records it with `rollback_skipped: "rollback_crosses_release"`, its
+roll back, or its automatic rollback does not restore the previous release
+(`rollback_skipped: "rollback_failed"`), the release's decision records it with `rollback_skipped: "rollback_crosses_release"`, its
 timeline shows `watch_regressed` instead of a passed watch, and you decide:
 roll back with `--acknowledge-releases` or ship a fix.
 
@@ -533,9 +534,9 @@ its first canary stage
 
 ```bash
 # Two owners or admins, other than the deployer, approve every release.
-gregale release approval require --approvals 2
+gregale release approval require --approvals 2 --notify releases
 # One person, developers included, within four hours.
-gregale release approval require --approvals 1 --approvers developer --timeout 4h
+gregale release approval require --approvals 1 --approvers developer --timeout 4h --notify releases
 
 gregale release approval pending                 # releases waiting right now
 gregale release reject <deployment> --reason "checkout latency is up"
@@ -600,8 +601,9 @@ echo "https://hooks.slack.com/services/…" | gregale alert channel create --nam
 gregale release approval require --approvals 2 --notify releases
 ```
 
-`--notify` takes up to five Slack or email channels; PagerDuty channels are
-refused, because a release waiting for approval is not an incident. Each
+`--notify` takes one to five Slack or email channels and is required, so the
+approvers learn a release is waiting; PagerDuty channels are refused, because a
+release waiting for approval is not an incident. Each
 event is sent once per release.
 
 The Slack message for a waiting release has **Approve**, **Reject** and
@@ -714,6 +716,8 @@ An `--after-rollback` freeze is a policy. Each time the rollout circuit
 breaker, the post-release watch, the first-wake 5xx guard or an alert rule
 rolls an app back, Gregale freezes that app for the given time. The freeze
 names the release that was rolled back, and you can lift it like any other.
+If that rollback does not restore the previous release, Gregale lifts the
+freeze again: the release still serves, and its fix has to ship.
 
 ### Platform release pause
 
