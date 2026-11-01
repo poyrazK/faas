@@ -23,6 +23,17 @@ func (s *server) newCapabilityGate() (*capgate.Gate, error) {
 	return capgate.New(catalog, func() *platformflags.Snapshot { return s.platformFlags().Snapshot() }), nil
 }
 
+// tracingCapability owns customer OTLP trace ingest and in-guest tracing.
+const tracingCapability = "tracing"
+
+// tracingReleased decides tracing where spans are ingested: gatewayd-public's
+// OTLP keys (through apid's Auth RPC) and in-guest exports. It is the same
+// decision the gate makes for GET /v1/account/traces, so ingest stops when
+// reads are hidden. Without a gate (unit tests) every subject is released.
+func (s *server) tracingReleased(subject platformflags.Subject) bool {
+	return s.capGate == nil || s.capGate.Enabled(tracingCapability, subject)
+}
+
 // WithCapabilityGate installs the capability route gate. Production apid
 // always installs one; a nil gate releases every route.
 func (s *server) WithCapabilityGate(gate *capgate.Gate) *server {

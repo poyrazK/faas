@@ -77,7 +77,7 @@ const MaxSpansSummaryBytes = 3 << 20
 // validated it parses as a UUID (step 3), so the value here is
 // trusted.
 type spansWriterStore interface {
-	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error
+	UpdateSpansSummary(ctx context.Context, target state.SpansSummaryTarget, summary []byte, maxSpans int) error
 }
 
 // spansWriterReceiver is the in-package server implementation
@@ -86,9 +86,11 @@ type spansWriterStore interface {
 //
 // ops is the apid daemon's *wire.OpsMetrics; nil-safe.
 //
-// limiter is the per-account token bucket pool shared with the
-// PR-B IncrementRequestTelemetry receiver; nil disables rate
-// limiting (testing seam).
+// limiter is the per-account token bucket pool for span writes.
+// apid gives spans their own pool, apart from the
+// IncrementRequestTelemetry receiver's, so enabling tracing never
+// crowds out request evidence (tracing tenancy T8); nil gets a
+// private pool (testing seam).
 //
 // enabled is the kill-switch (FAAS_OTEL_SPANS_WRITER_ENABLED).
 // When false, WriteSpansSummary returns codes.Unavailable so
@@ -98,6 +100,10 @@ type spansWriterReceiver struct {
 	store   spansWriterStore
 	ops     spansWriterMonitor
 	limiter *peraccount.Limiter
+	// plans resolves the plan that bounds a write from the app's
+	// resource owner; nil when the store cannot read accounts (older
+	// test adapters), which keeps the cached-or-Scale fallback.
+	plans   *telemetryPlans
 	enabled bool
 	// guest is the ADR-958 in-guest export ingester; nil disables it.
 	guest *GuestSpansIngester
@@ -115,7 +121,11 @@ func NewSpansWriterReceiver(store spansWriterStore, ops spansWriterMonitor, limi
 	if limiter == nil {
 		limiter = peraccount.NewLimiter()
 	}
-	return &spansWriterReceiver{store: store, ops: ops, limiter: limiter, enabled: enabled}
+	r := &spansWriterReceiver{store: store, ops: ops, limiter: limiter, enabled: enabled}
+	if accounts, ok := store.(telemetryAccounts); ok {
+		r.plans = newTelemetryPlans(accounts, limiter)
+	}
+	return r
 }
 
 // WriteSpansSummary updates the matching request_telemetry
@@ -124,14 +134,16 @@ func NewSpansWriterReceiver(store spansWriterStore, ops spansWriterMonitor, limi
 //     DB CHECK constraint).
 //  2. Validate summary_json parses as JSON.
 //  3. Resolve account_id UUID — defensive check (the gateway
-//     already validated when accepting the OTLP POST).
+//     already validated when accepting the OTLP POST) — and the
+//     optional app, organization and customer credential that
+//     narrow the rows (state.SpansSummaryTarget).
 //  4. Per-account token bucket (1 token per flush — the
 //     gateway's coalesce window is 30s, so this caps a
 //     chatty customer at 2 flushes/min, well below the
 //     DebugTelemetryRequestsPerMinute OTLP-ingest cap).
 //  5. UPDATE request_telemetry SET spans_summary = $2::jsonb
 //     WHERE trace_id = $1 AND received_at >= now() - interval
-//     '24 hours'.
+//     '24 hours' AND the target's predicates.
 //
 // Outcome ∈ {inserted, rate_limited, db_error}. Per-record
 // outcomes ride on the response — gRPC codes map to terminal
@@ -159,28 +171,35 @@ func (r *spansWriterReceiver) WriteSpansSummary(ctx context.Context, req *apidpb
 		return nil, status.Error(codes.InvalidArgument, "summary_json is not valid JSON")
 	}
 
-	// ---- 3. account_id UUID ----
-	accountID, err := uuid.Parse(req.GetAccountId())
+	// ---- 3. account_id UUID, and the rows the producer names ----
+	target, err := spansSummaryTarget(req)
 	if err != nil {
 		r.observe(swOutcomeValidationError)
-		return nil, status.Errorf(codes.Unauthenticated, "account_id malformed: %v", err)
+		return nil, err
 	}
 
-	// ---- 4. per-account token bucket ----
-	// We don't have per-plan caps cached here; the limiter
-	// still rate-limits the write path so a runaway customer
-	// can't DOS the DB. Cap = DebugTelemetryRequestsPerMinute
-	// (same pool the OTLP ingest uses). PR-B's caps cache is
-	// queryable via the limiter so a sustained-overflow
-	// customer's plan cap is honored without an extra DB hit.
-	limits, ok := r.limiter.CachedLimits(accountID)
-	if !ok {
-		// No cached limits — let the write through with a
-		// permissive cap. The cache will populate on the next
-		// IncrementRequestTelemetry call for this account.
-		limits = api.MustLimitsFor(api.PlanScale) // most permissive
+	// ---- 4. plan and token bucket ----
+	// The plan is the app's resource owner's when the producer names
+	// the app, the company's for a company-bound key, else the
+	// account's (tracing tenancy T6). Spans draw from their own
+	// bucket pool (T8), and an app's flushes take its fair share.
+	plan, err := r.planFor(ctx, target)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			r.observe(swOutcomeValidationError)
+			return nil, status.Error(codes.InvalidArgument, "unknown account, app or organization")
+		}
+		r.observe(swOutcomeDBError)
+		return nil, status.Errorf(codes.Internal, "resolve plan: %v", err)
 	}
-	taken, retryMs := r.limiter.Take(accountID, limits.DebugTelemetryRequestsPerMinute)
+	limits := plan.Limits
+	if plan.Resolved && !limits.DebugTelemetryEnabled {
+		// The plan keeps no request rows to merge into: drop, as
+		// IncrementRequestTelemetry drops a row on such a plan.
+		r.observe(swOutcomeRateLimited)
+		return &apidpb.WriteSpansSummaryResponse{Outcome: swOutcomeRateLimited, RetryAfterMs: 60_000}, nil
+	}
+	taken, retryMs := r.limiter.TakeForApp(plan.Subject, target.AppID, limits.DebugTelemetryRequestsPerMinute)
 	if !taken {
 		r.observe(swOutcomeRateLimited)
 		return &apidpb.WriteSpansSummaryResponse{
@@ -196,7 +215,7 @@ func (r *spansWriterReceiver) WriteSpansSummary(ctx context.Context, req *apidpb
 	// was the upstream guard; this is defense in depth.
 	// The row keeps at most the plan's spans per trace across every flush
 	// and producer (Hobby 50, Pro 200, Scale 1000).
-	if err := r.store.UpdateSpansSummary(ctx, traceID, accountID, summary, limits.DebugTelemetrySpansPerTrace); err != nil {
+	if err := r.store.UpdateSpansSummary(ctx, target, summary, limits.DebugTelemetrySpansPerTrace); err != nil {
 		// PR-D code-review #7: a CHECK violation (trace_id
 		// format drift between client + server) is a
 		// VALIDATION failure, not a DB failure. The §12
@@ -221,6 +240,48 @@ func (r *spansWriterReceiver) WriteSpansSummary(ctx context.Context, req *apidpb
 
 	r.observe(swOutcomeInserted)
 	return &apidpb.WriteSpansSummaryResponse{Outcome: swOutcomeInserted}, nil
+}
+
+// spansSummaryTarget validates the request's account and the optional app
+// and organization a producer names (tracing tenancy T4/T5). An older
+// producer sends neither, which keeps the account-wide merge.
+func spansSummaryTarget(req *apidpb.WriteSpansSummaryRequest) (state.SpansSummaryTarget, error) {
+	accountID, err := uuid.Parse(req.GetAccountId())
+	if err != nil {
+		return state.SpansSummaryTarget{}, status.Errorf(codes.Unauthenticated, "account_id malformed: %v", err)
+	}
+	target := state.SpansSummaryTarget{TraceID: req.GetTraceId(), AccountID: accountID, CustomerCredential: req.GetCustomerCredential()}
+	if raw := req.GetAppId(); raw != "" {
+		if target.AppID, err = uuid.Parse(raw); err != nil {
+			return state.SpansSummaryTarget{}, status.Errorf(codes.InvalidArgument, "app_id malformed: %v", err)
+		}
+	}
+	if raw := req.GetOrgId(); raw != "" {
+		if target.OrgID, err = uuid.Parse(raw); err != nil {
+			return state.SpansSummaryTarget{}, status.Errorf(codes.InvalidArgument, "org_id malformed: %v", err)
+		}
+	}
+	return target, nil
+}
+
+// planFor resolves the plan that bounds a write to target. A store that
+// cannot read accounts keeps the earlier behavior: the limiter's cached
+// limits, else the most permissive plan's.
+func (r *spansWriterReceiver) planFor(ctx context.Context, target state.SpansSummaryTarget) (telemetryPlan, error) {
+	switch {
+	case r.plans == nil:
+		limits, ok := r.limiter.CachedLimits(target.AccountID)
+		if !ok {
+			limits = api.MustLimitsFor(api.PlanScale)
+		}
+		return telemetryPlan{Subject: target.AccountID, Limits: limits}, nil
+	case target.AppID != uuid.Nil:
+		return r.plans.forApp(ctx, target.AccountID, target.AppID)
+	case target.OrgID != uuid.Nil:
+		return r.plans.forOrg(ctx, target.OrgID, target.AccountID)
+	default:
+		return r.plans.forAccount(ctx, target.AccountID)
+	}
 }
 
 // observe is the nil-safe wrapper around the spans-write

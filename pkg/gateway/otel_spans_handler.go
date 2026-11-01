@@ -19,6 +19,11 @@
 //   - 400 on shape-invalid OTLP body (malformed body, invalid IDs).
 //   - 401 on bearer auth failure (apid Unauthenticated).
 //   - 402 on plan-disabled (DebugTelemetryEnabled=false).
+//   - 403 on a key that cannot write traces (apid PermissionDenied:
+//     no admin, deploy:write or metrics:write scope, or a company
+//     key whose holder may no longer deploy there).
+//   - 404 when the tracing capability is not released to the
+//     account (apid NotFound), as apid answers a hidden route.
 //   - 429 on per-account rate cap exhaustion.
 //   - 200 on accepted (the truncated summary is staged in the
 //     accumulator; the customer's app doesn't wait on the DB
@@ -143,7 +148,7 @@ func (h *OTelSpansHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accountID, plan, authorized := h.authorizeOTLP(w, r, codec)
+	target, plan, authorized := h.authorizeOTLP(w, r, codec)
 	if !authorized {
 		return
 	}
@@ -163,39 +168,36 @@ func (h *OTelSpansHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		codec.problem(w, http.StatusBadRequest, "invalid OTLP body")
 		return
 	}
-	h.acceptTraceBatches(w, codec, accountID, plan, batches)
+	h.acceptTraceBatches(w, codec, target, plan, batches)
 }
 
 // authorizeOTLP completes authentication and quota checks without reading
-// customer-controlled payloads or initializing a decompressor.
-func (h *OTelSpansHandler) authorizeOTLP(w http.ResponseWriter, r *http.Request, codec otlpTraceCodec) (uuid.UUID, string, bool) {
+// customer-controlled payloads or initializing a decompressor. The target it
+// returns names the rows the key may write: apid decides the key's scope,
+// app and organization binding, and the tracing capability (tracing tenancy
+// T5).
+func (h *OTelSpansHandler) authorizeOTLP(w http.ResponseWriter, r *http.Request, codec otlpTraceCodec) (SpanTarget, string, bool) {
 	// ---- Step 2: Bearer parse (no body read) ----
 	tok := bearerToken(r)
 	if tok == "" {
 		h.observeAuthFailure("unauthenticated")
 		codec.problem(w, http.StatusUnauthorized, "missing bearer token")
-		return uuid.Nil, "", false
+		return SpanTarget{}, "", false
 	}
 
 	// ---- Step 3: apid Auth RPC (no body read) ----
-	accountIDStr, plan, err := h.cfg.AuthClient.AuthenticateKey(r.Context(), tok)
+	principal, err := h.cfg.AuthClient.AuthenticateKey(r.Context(), tok)
 	if err != nil {
-		if status.Code(err) == codes.Unauthenticated {
-			h.observeAuthFailure("unauthenticated")
-			codec.problem(w, http.StatusUnauthorized, "unauthenticated")
-			return uuid.Nil, "", false
-		}
-		h.observeAuthFailure("internal")
-		h.cfg.Log.Warn("apid auth RPC failed", "err", err)
-		codec.problem(w, http.StatusInternalServerError, "auth unavailable")
-		return uuid.Nil, "", false
+		h.writeAuthError(w, codec, err)
+		return SpanTarget{}, "", false
 	}
-	accountID, err := uuid.Parse(accountIDStr)
+	target, err := traceKeyTarget(principal)
 	if err != nil {
 		h.observeAuthFailure("unauthenticated")
-		codec.problem(w, http.StatusUnauthorized, "malformed account_id")
-		return uuid.Nil, "", false
+		codec.problem(w, http.StatusUnauthorized, err.Error())
+		return SpanTarget{}, "", false
 	}
+	plan := principal.Plan
 
 	// ---- Step 4: Plan gate ----
 	limits := h.cfg.LimitsFor(api.Plan(plan))
@@ -203,19 +205,66 @@ func (h *OTelSpansHandler) authorizeOTLP(w http.ResponseWriter, r *http.Request,
 		h.observeAuthFailure("plan_disabled")
 		w.Header().Set("Retry-After", "0")
 		codec.problem(w, http.StatusPaymentRequired, "plan does not include telemetry")
-		return uuid.Nil, "", false
+		return SpanTarget{}, "", false
 	}
 
 	// ---- Step 5: Per-account token bucket ----
-	taken, retryMs := h.cfg.Limiter.Take(accountID, limits.DebugTelemetryRequestsPerMinute)
+	taken, retryMs := h.cfg.Limiter.Take(target.AccountID, limits.DebugTelemetryRequestsPerMinute)
 	if !taken {
 		h.observeIngest("rate_limited")
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryMs/1000))
 		codec.problem(w, http.StatusTooManyRequests, "rate limited")
-		return uuid.Nil, "", false
+		return SpanTarget{}, "", false
 	}
 
-	return accountID, plan, true
+	return target, plan, true
+}
+
+// writeAuthError answers a failed apid key lookup by its gRPC code.
+func (h *OTelSpansHandler) writeAuthError(w http.ResponseWriter, codec otlpTraceCodec, err error) {
+	switch status.Code(err) {
+	case codes.Unauthenticated:
+		h.observeAuthFailure("unauthenticated")
+		codec.problem(w, http.StatusUnauthorized, "unauthenticated")
+	case codes.PermissionDenied:
+		// A read-only key, or a company key whose holder may no longer
+		// deploy there, cannot write traces.
+		h.observeAuthFailure("forbidden")
+		codec.problem(w, http.StatusForbidden, "this API key cannot write traces: use a key with the admin, deploy:write or metrics:write scope")
+	case codes.NotFound:
+		// Tracing is not released to the account: answer as apid answers a
+		// hidden capability's route (ADR-20261023115741).
+		h.observeAuthFailure("not_released")
+		codec.problem(w, http.StatusNotFound, "no such API route")
+	default:
+		h.observeAuthFailure("internal")
+		h.cfg.Log.Warn("apid auth RPC failed", "err", err)
+		codec.problem(w, http.StatusInternalServerError, "auth unavailable")
+	}
+}
+
+// traceKeyTarget is the target a customer key's spans merge into: the
+// holder's own apps, the one app an app-bound key names, or every app of the
+// company a key is bound to. Every customer key's target carries
+// CustomerCredential, so apid merges a company app's rows only while the
+// holder may still deploy there.
+func traceKeyTarget(principal apidgrpc.TraceKeyPrincipal) (SpanTarget, error) {
+	accountID, err := uuid.Parse(principal.AccountID)
+	if err != nil {
+		return SpanTarget{}, errors.New("malformed account_id")
+	}
+	target := SpanTarget{AccountID: accountID, CustomerCredential: true}
+	if principal.AppID != "" {
+		if target.AppID, err = uuid.Parse(principal.AppID); err != nil {
+			return SpanTarget{}, errors.New("malformed app_id")
+		}
+	}
+	if principal.OrgID != "" {
+		if target.OrgID, err = uuid.Parse(principal.OrgID); err != nil {
+			return SpanTarget{}, errors.New("malformed org_id")
+		}
+	}
+	return target, nil
 }
 
 func readTraceBatches(w http.ResponseWriter, r *http.Request, codec otlpTraceCodec) ([]traceSpanBatch, error) {
@@ -233,11 +282,11 @@ func readTraceBatches(w http.ResponseWriter, r *http.Request, codec otlpTraceCod
 // acceptTraceBatches keeps per-trace account isolation while allowing standard
 // exporter batches. Contested traces are rejected without discarding the other
 // traces in the request or inviting retries of data already accepted.
-func (h *OTelSpansHandler) acceptTraceBatches(w http.ResponseWriter, codec otlpTraceCodec, accountID uuid.UUID, plan string, batches []traceSpanBatch) {
+func (h *OTelSpansHandler) acceptTraceBatches(w http.ResponseWriter, codec otlpTraceCodec, target SpanTarget, plan string, batches []traceSpanBatch) {
 	var rejected int64
 	accepted := 0
 	for _, batch := range batches {
-		if _, err := h.cfg.Acc.AddForPlan(batch.traceID, accountID, plan, batch.spans); err != nil {
+		if _, err := h.cfg.Acc.AddForTarget(batch.traceID, target, plan, batch.spans); err != nil {
 			// The trace buffer is full for this account or this process;
 			// the spans are rejected in the partial success, not retried.
 			rejected += int64(len(batch.spans))

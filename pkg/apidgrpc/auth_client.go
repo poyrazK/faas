@@ -30,20 +30,33 @@ import (
 // handler holds. The interface is the union of every gRPC call
 // gatewayd-public makes against apid's Auth service.
 type AuthClient interface {
-	// AuthenticateKey resolves a bearer token to the matching
-	// (account_id, plan) tuple. The token is the raw value
-	// from the customer's OTLP POST Authorization header (i.e.
-	// the value AFTER `Bearer ` is stripped by the caller).
+	// AuthenticateKey resolves a bearer token to the principal its
+	// spans are written for. The token is the raw value from the
+	// customer's OTLP POST Authorization header (i.e. the value
+	// AFTER `Bearer ` is stripped by the caller).
 	// Errors:
-	//   - nil error + (account_id="", plan="") means the token
-	//     resolved to a known account (no error) but the
-	//     response fields were empty — should not happen in
-	//     practice; the handler treats it as a 401.
-	//   - non-nil error maps to either Unauthenticated (hash
-	//     miss / expired / revoked) or Internal (Postgres trip).
-	//     The handler translates to 401 / 500 respectively.
-	AuthenticateKey(ctx context.Context, token string) (accountID string, plan string, err error)
+	//   - nil error + an empty AccountID means the token resolved
+	//     but the response fields were empty — should not happen
+	//     in practice; the handler treats it as a 401.
+	//   - non-nil error carries the gRPC code: Unauthenticated
+	//     (hash miss / expired / revoked), PermissionDenied (the
+	//     key cannot write traces), NotFound (tracing is not
+	//     released to the account) or Internal (Postgres trip).
+	AuthenticateKey(ctx context.Context, token string) (TraceKeyPrincipal, error)
 	Close() error
+}
+
+// TraceKeyPrincipal is what apid resolved an OTLP bearer key to.
+type TraceKeyPrincipal struct {
+	// AccountID holds the key.
+	AccountID string
+	// Plan admits and bounds the key's spans.
+	Plan string
+	// AppID, when set, is the one app the key may write spans for.
+	AppID string
+	// OrgID, when set, is the company organization the key is bound to:
+	// its spans merge into that company's apps.
+	OrgID string
 }
 
 // AuthClientImpl is the production implementation of AuthClient.
@@ -79,15 +92,14 @@ func NewAuthClient(conn *grpc.ClientConn) *AuthClientImpl {
 	return &AuthClientImpl{conn: conn, cli: apidpb.NewAuthClient(conn)}
 }
 
-// AuthenticateKey resolves the bearer token to (account_id, plan).
-// On a Unauthenticated RPC error the gateway treats the result as
-// 401; on an Internal RPC error it logs + drops.
-func (c *AuthClientImpl) AuthenticateKey(ctx context.Context, token string) (string, string, error) {
+// AuthenticateKey resolves the bearer token to its trace principal.
+// The gRPC status survives the wrap, so the handler maps its code.
+func (c *AuthClientImpl) AuthenticateKey(ctx context.Context, token string) (TraceKeyPrincipal, error) {
 	resp, err := c.cli.AuthenticateKey(ctx, &apidpb.AuthenticateKeyRequest{Token: token})
 	if err != nil {
-		return "", "", fmt.Errorf("apidgrpc: AuthenticateKey: %w", err)
+		return TraceKeyPrincipal{}, fmt.Errorf("apidgrpc: AuthenticateKey: %w", err)
 	}
-	return resp.GetAccountId(), resp.GetPlan(), nil
+	return TraceKeyPrincipal{AccountID: resp.GetAccountId(), Plan: resp.GetPlan(), AppID: resp.GetAppId(), OrgID: resp.GetOrgId()}, nil
 }
 
 // Close shuts down the underlying gRPC connection. Safe to call

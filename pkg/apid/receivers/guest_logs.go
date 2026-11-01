@@ -78,18 +78,19 @@ func (g *GuestSpansIngester) ingestLogs(ctx context.Context, req *apidpb.IngestG
 	if !ok || len(req.GetPayload()) == 0 || len(req.GetPayload()) > api.TraceMaxFrameBytes {
 		return outcome(guestSpansInvalid)
 	}
-	limits, err := g.limitsFor(ctx, accountID)
+	plan, err := g.planFor(ctx, accountID, req.GetAppId())
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return outcome(guestSpansDisabled)
 		}
-		g.log.Warn("guest logs: account lookup failed", "err", err)
+		g.log.Warn("guest logs: plan lookup failed", "err", err)
 		return outcome(guestSpansUnavailable)
 	}
+	limits := plan.Limits
 	if !limits.DebugTelemetryEnabled || limits.DebugGuestLogExportsPerMinute <= 0 {
 		return outcome(guestSpansDisabled)
 	}
-	if taken, retryMs := g.logs.limiter.Take(accountID, limits.DebugGuestLogExportsPerMinute); !taken {
+	if taken, retryMs := g.logs.limiter.Take(plan.Subject, limits.DebugGuestLogExportsPerMinute); !taken {
 		return &apidpb.IngestGuestLogsResponse{Outcome: guestSpansRateLimited, RetryAfterMs: retryMs}
 	}
 	export, err := decodeGuestLogsExport(contentType, contentEncoding, req.GetPayload())

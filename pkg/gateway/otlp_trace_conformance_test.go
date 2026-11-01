@@ -80,7 +80,7 @@ func TestOTLPHTTPConformance(t *testing.T) {
 				if h.cfg.Acc.Len() != 2 {
 					t.Fatalf("trace buckets = %d, want 2", h.cfg.Acc.Len())
 				}
-				bucket, ok := h.cfg.Acc.buckets.Load(spanBucketKey{accountID: accountID, traceID: "0123456789abcdef0123456789abcdef"})
+				bucket, ok := h.cfg.Acc.buckets.Load(spanBucketKey{target: SpanTarget{AccountID: accountID, CustomerCredential: true}, traceID: "0123456789abcdef0123456789abcdef"})
 				if !ok {
 					t.Fatal("hexadecimal trace ID changed at ingestion")
 				}
@@ -120,7 +120,7 @@ func TestOTLPHTTPConformancePartialSuccess(t *testing.T) {
 	if rr.Code != http.StatusOK || response.PartialSuccess().RejectedSpans() != 1 || h.cfg.Acc.Len() != 2 {
 		t.Fatalf("partial response = %d %s, buckets = %d", rr.Code, rr.Body.String(), h.cfg.Acc.Len())
 	}
-	bucket, _ := h.cfg.Acc.buckets.Load(spanBucketKey{accountID: other, traceID: contested})
+	bucket, _ := h.cfg.Acc.buckets.Load(spanBucketKey{target: SpanTarget{AccountID: other}, traceID: contested})
 	spans, _ := bucket.(*spansAccumulator).snapshot()
 	if len(spans) != 1 || spans[0].SpanID != "original" {
 		t.Fatalf("another account's trace modified: %+v", spans)

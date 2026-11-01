@@ -61,6 +61,12 @@ type AuthClient interface {
 	// gRPC codes:
 	//   - InvalidArgument when token is empty
 	//   - Unauthenticated when no api_keys row matches the hash
+	//   - PermissionDenied when the key cannot write traces: none of
+	//     admin, deploy:write or metrics:write, or a key bound to a
+	//     company whose holder may no longer deploy there
+	//   - NotFound when the tracing capability is not released to the
+	//     key's account (ADR-20261023115741); the endpoint answers as a
+	//     route that does not exist
 	//   - Internal on Postgres errors
 	AuthenticateKey(ctx context.Context, in *AuthenticateKeyRequest, opts ...grpc.CallOption) (*AuthenticateKeyResponse, error)
 	// AuthenticateCredential resolves a bearer credential for a gateway
@@ -138,6 +144,12 @@ type AuthServer interface {
 	// gRPC codes:
 	//   - InvalidArgument when token is empty
 	//   - Unauthenticated when no api_keys row matches the hash
+	//   - PermissionDenied when the key cannot write traces: none of
+	//     admin, deploy:write or metrics:write, or a key bound to a
+	//     company whose holder may no longer deploy there
+	//   - NotFound when the tracing capability is not released to the
+	//     key's account (ADR-20261023115741); the endpoint answers as a
+	//     route that does not exist
 	//   - Internal on Postgres errors
 	AuthenticateKey(context.Context, *AuthenticateKeyRequest) (*AuthenticateKeyResponse, error)
 	// AuthenticateCredential resolves a bearer credential for a gateway

@@ -94,6 +94,8 @@ type requestTelemetryReceiver struct {
 	store   RequestTelemetryStore
 	ops     *wire.OpsMetrics
 	limiter *telemetryRateLimiter
+	// plans resolves the plan of a row's app from its resource owner.
+	plans   *telemetryPlans
 	enabled bool
 	gate    IngestGate
 }
@@ -103,7 +105,7 @@ func NewRequestTelemetryReceiver(store RequestTelemetryStore, ops *wire.OpsMetri
 	if limiter == nil {
 		limiter = peraccount.NewLimiter()
 	}
-	return &requestTelemetryReceiver{store: store, ops: ops, limiter: limiter, enabled: enabled}
+	return &requestTelemetryReceiver{store: store, ops: ops, limiter: limiter, plans: newTelemetryPlans(store, limiter), enabled: enabled}
 }
 
 // RecordConsumerUsage acknowledges only after the idempotent event and both
@@ -399,20 +401,20 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		}
 	}
 
-	// ---- 2. Resolve per-account rate cap ----
-	limits, ok := r.limiter.CachedLimits(accountID)
-	if !ok {
-		acct, accErr := r.store.AccountByID(ctx, accountID.String())
-		if accErr != nil {
-			// Account gone — treat as db_error so the gateway
-			// doesn't retry forever.
-			r.observe(rtOutcomeDBError)
-			out.Outcome = rtOutcomeDBError
-			return out
-		}
-		limits = api.MustLimitsFor(acct.Plan)
-		r.limiter.CacheLimits(accountID, limits)
+	// ---- 2. Resolve the app's plan and rate cap ----
+	// The plan is the app's resource owner's (tracing tenancy T6): the
+	// owner retention keeps the row for (app_resource_accounts), not the
+	// creator whose namespace account_id is. Cached, so steady state does
+	// no extra read.
+	plan, planErr := r.plans.forApp(ctx, accountID, appID)
+	if planErr != nil {
+		// Account or app gone — treat as db_error so the gateway
+		// doesn't retry forever.
+		r.observe(rtOutcomeDBError)
+		out.Outcome = rtOutcomeDBError
+		return out
 	}
+	limits := plan.Limits
 	if !limits.DebugTelemetryEnabled {
 		// Plan doesn't include telemetry — same as rate-limit
 		// overflow: drop the row, count as rate_limited (the
@@ -425,7 +427,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 	// ---- 3. Per-account token bucket check ----
 	// Each row is charged to its app as well, so one busy app cannot use
 	// up its siblings' rows (ADR-20261026143210 amendment 1).
-	taken, retryAfter := r.limiter.TakeForApp(accountID, appID, limits.DebugTelemetryRequestsPerMinute)
+	taken, retryAfter := r.limiter.TakeForApp(plan.Subject, appID, limits.DebugTelemetryRequestsPerMinute)
 	if !taken {
 		out.Outcome = rtOutcomeRateLimited
 		out.RetryAfterMs = retryAfter

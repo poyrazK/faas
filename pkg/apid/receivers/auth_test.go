@@ -60,10 +60,16 @@ func (f *fakeAuthStore) AuthenticateOIDCBearer(_ context.Context, hash []byte) (
 // is cleaned up by t.Cleanup.
 func dialAuthBufconn(t *testing.T, store authStore) apidpb.AuthClient {
 	t.Helper()
+	return dialAuthBufconnWith(t, store, nil)
+}
+
+// dialAuthBufconnWith is dialAuthBufconn with a tracing release gate.
+func dialAuthBufconnWith(t *testing.T, store authStore, tracing TracingReleased) apidpb.AuthClient {
+	t.Helper()
 	const bufSize = 1 << 20
 	lis := bufconn.Listen(bufSize)
 	srv := grpc.NewServer()
-	RegisterAuthReceiver(srv, store)
+	RegisterAuthReceiver(srv, store, tracing)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
 
@@ -85,7 +91,7 @@ func TestAuthReceiver_HappyPath(t *testing.T) {
 	acctID := uuid.New().String()
 	store := &fakeAuthStore{
 		lookup: func(hash []byte) (state.Account, state.APIKey, error) {
-			return state.Account{ID: acctID, Plan: api.PlanHobby}, state.APIKey{}, nil
+			return state.Account{ID: acctID, Plan: api.PlanHobby}, state.APIKey{Scopes: []string{api.ScopeAdmin}}, nil
 		},
 	}
 	cli := dialAuthBufconn(t, store)

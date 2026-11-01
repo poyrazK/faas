@@ -259,3 +259,37 @@ PR-C synthesizes from `spans_summary`.
 - **PR-D.1 schema migration** — if `otel_ingest_keys`
   becomes necessary, real migration at slot 488 +
   `reserve_slot.sql` at 489 (standard fence pattern).
+
+## Amendment (2026-11-01): tracing tenancy
+
+The 2026-10-31 logs/traces audit (T4–T6, T8) found that the writer merged
+spans by `(trace_id, account_id)` alone, where `account_id` is the app
+creator's storage namespace, not the tenant. One trace id reached every app
+that creator made, company apps included; the OTLP endpoint accepted any key;
+and plans were the creator's, not the app's owner's.
+
+- **Rows a flush may touch.** `WriteSpansSummaryRequest` gains optional
+  `app_id`, `org_id` and `customer_credential` (fields 4–6; empty keeps the
+  account-wide merge, so producers and apid release independently). The
+  in-guest bridge, service bindings and outbound integrations name the
+  calling app; the UPDATE then touches only that app's rows. A key bound to a
+  company merges into the company's apps, whoever created them. A customer
+  key's spans reach a company app only while its holder is an owner, admin
+  or developer there, so a creator who left cannot write its evidence.
+- **OTLP keys.** `AuthenticateKey` refuses a key without `admin`,
+  `deploy:write` or `metrics:write` (`PermissionDenied` → 403), refuses a
+  company key whose holder may no longer deploy there, and answers
+  `NotFound` (→ 404) while the `tracing` capability is not released to the
+  key's subject — the same decision apid's capability gate makes for
+  `GET /v1/account/traces`. The response names the key's app or company.
+- **Plans.** Admission, the spans-per-trace bound and the rate bucket come
+  from the app's resource owner (`state.AppResourceAccount`), the owner
+  request-telemetry retention already keys on through
+  `app_resource_accounts`. A company that owns its resources draws from its
+  own bucket. Resolutions are cached for a minute.
+- **Separate span bucket.** Decision 3's shared bucket let enabling tracing
+  crowd out request evidence. Span writes and in-guest exports now draw from
+  their own per-tenant pool at the same `DebugTelemetryRequestsPerMinute`
+  rate; request rows keep theirs.
+- **Ingest gate.** In-guest exports are refused (`disabled`) while the
+  `tracing` capability is off for the app's resource owner.

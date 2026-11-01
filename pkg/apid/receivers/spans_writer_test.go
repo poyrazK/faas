@@ -29,6 +29,7 @@ import (
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // fakeSpansWriterStore substitutes for spansWriterStore in tests.
@@ -43,19 +44,21 @@ type fakeSpansWriterStore struct {
 	updateFn   func(traceID string, accountID uuid.UUID, summary []byte) error
 	calls      int
 	lastAcctID uuid.UUID
+	lastTarget state.SpansSummaryTarget
 	lastMax    int
 }
 
-func (f *fakeSpansWriterStore) UpdateSpansSummary(_ context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error {
+func (f *fakeSpansWriterStore) UpdateSpansSummary(_ context.Context, target state.SpansSummaryTarget, summary []byte, maxSpans int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
-	f.lastAcctID = accountID
+	f.lastAcctID = target.AccountID
+	f.lastTarget = target
 	f.lastMax = maxSpans
 	if f.updateFn == nil {
 		return nil
 	}
-	return f.updateFn(traceID, accountID, summary)
+	return f.updateFn(target.TraceID, target.AccountID, summary)
 }
 
 // fakeSpansWriterMonitor is a hand-rolled mock for the

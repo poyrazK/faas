@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,13 +40,47 @@ func MaxSpansPerTraceForPlan(plan string) int {
 // answers them as rejected in a partial success).
 var ErrAccumulatorFull = errors.New("spans accumulator: trace buffer full")
 
-// spanBucketKey scopes a buffered trace to the account that sent it. Two
+// SpanTarget names the request rows a buffered trace merges into: apid's
+// state.SpansSummaryTarget (tracing tenancy, 2026-10-31 logs/traces audit).
+// AccountID is the storage namespace the rows carry; the other fields narrow
+// it, and their zero values keep the account-wide merge.
+type SpanTarget struct {
+	AccountID uuid.UUID
+	// AppID limits the merge to the producing app's rows.
+	AppID uuid.UUID
+	// OrgID merges a company-bound key's spans into that company's apps.
+	OrgID uuid.UUID
+	// CustomerCredential marks spans a customer key held by AccountID sent.
+	CustomerCredential bool
+}
+
+// narrowed reports whether the target says more than the account.
+func (t SpanTarget) narrowed() bool {
+	return t.AppID != uuid.Nil || t.OrgID != uuid.Nil || t.CustomerCredential
+}
+
+// Request is apid's WriteSpansSummary request for one flush to this target.
+func (t SpanTarget) Request(traceID string, summaryJSON []byte) *apidpb.WriteSpansSummaryRequest {
+	req := &apidpb.WriteSpansSummaryRequest{
+		TraceId: traceID, SummaryJson: summaryJSON, AccountId: t.AccountID.String(),
+		CustomerCredential: t.CustomerCredential,
+	}
+	if t.AppID != uuid.Nil {
+		req.AppId = t.AppID.String()
+	}
+	if t.OrgID != uuid.Nil {
+		req.OrgId = t.OrgID.String()
+	}
+	return req
+}
+
+// spanBucketKey scopes a buffered trace to the target that sent it. Two
 // accounts can legitimately carry one W3C trace ID (a caller forwards its
-// traceparent to another account's app); each keeps its own spans, and the
-// writer merges each into its own account's request row.
+// traceparent to another account's app), and so can two apps of one account;
+// each keeps its own spans, and the writer merges each into its own rows.
 type spanBucketKey struct {
-	accountID uuid.UUID
-	traceID   string
+	target  SpanTarget
+	traceID string
 }
 
 // SpansAccumulator buffers spans per (account, trace) between flushes.
@@ -78,13 +113,19 @@ func NewSpansAccumulatorWithBounds(maxTraces, maxTracesPerAccount int) *SpansAcc
 // Add merges a batch into the (account, trace) bucket and returns the
 // post-dedupe span count. The plan is unknown; see AddForPlan.
 func (s *SpansAccumulator) Add(traceID string, accountID uuid.UUID, spans []summarizedSpan) (int, error) {
-	return s.AddForPlan(traceID, accountID, "", spans)
+	return s.AddForTarget(traceID, SpanTarget{AccountID: accountID}, "", spans)
 }
 
 // AddForPlan is Add with the account's plan, which the flush uses to bound
 // the trace to that plan's spans-per-trace cap.
 func (s *SpansAccumulator) AddForPlan(traceID string, accountID uuid.UUID, plan string, spans []summarizedSpan) (int, error) {
-	key := spanBucketKey{accountID: accountID, traceID: traceID}
+	return s.AddForTarget(traceID, SpanTarget{AccountID: accountID}, plan, spans)
+}
+
+// AddForTarget is AddForPlan for spans whose producer names the rows they
+// belong to (SpanTarget). Each target of a trace buffers and flushes apart.
+func (s *SpansAccumulator) AddForTarget(traceID string, target SpanTarget, plan string, spans []summarizedSpan) (int, error) {
+	key := spanBucketKey{target: target, traceID: traceID}
 	for {
 		bucket, err := s.bucketFor(key)
 		if err != nil {
@@ -111,12 +152,12 @@ func (s *SpansAccumulator) bucketFor(key spanBucketKey) (*spansAccumulator, erro
 	if v, ok := s.buckets.Load(key); ok {
 		return v.(*spansAccumulator), nil
 	}
-	if !s.reserve(key.accountID) {
+	if !s.reserve(key.target.AccountID) {
 		return nil, ErrAccumulatorFull
 	}
-	v, loaded := s.buckets.LoadOrStore(key, &spansAccumulator{traceID: key.traceID, accountID: key.accountID})
+	v, loaded := s.buckets.LoadOrStore(key, &spansAccumulator{traceID: key.traceID, accountID: key.target.AccountID})
 	if loaded {
-		s.release(key.accountID)
+		s.release(key.target.AccountID)
 	}
 	return v.(*spansAccumulator), nil
 }
@@ -157,14 +198,20 @@ func (s *SpansAccumulator) retireIfEmpty(key spanBucketKey, bucket *spansAccumul
 	bucket.retired = true
 	bucket.mu.Unlock()
 	if s.buckets.CompareAndDelete(key, bucket) {
-		s.release(key.accountID)
+		s.release(key.target.AccountID)
 	}
 }
 
-// DrainAndRemove extracts one trace's spans for an account and removes its
-// bucket. Returns nil and the zero UUID when there is no bucket.
+// DrainAndRemove extracts one trace's account-wide spans for an account and
+// removes its bucket. Returns nil and the zero UUID when there is no bucket.
 func (s *SpansAccumulator) DrainAndRemove(traceID string, accountID uuid.UUID) ([]summarizedSpan, uuid.UUID) {
-	key := spanBucketKey{accountID: accountID, traceID: traceID}
+	return s.DrainAndRemoveTarget(traceID, SpanTarget{AccountID: accountID})
+}
+
+// DrainAndRemoveTarget is DrainAndRemove for one target's bucket.
+func (s *SpansAccumulator) DrainAndRemoveTarget(traceID string, target SpanTarget) ([]summarizedSpan, uuid.UUID) {
+	key := spanBucketKey{target: target, traceID: traceID}
+	accountID := target.AccountID
 	v, ok := s.buckets.Load(key)
 	if !ok {
 		return nil, uuid.Nil
@@ -177,7 +224,7 @@ func (s *SpansAccumulator) DrainAndRemove(traceID string, accountID uuid.UUID) (
 	bucket.retired = true
 	bucket.mu.Unlock()
 	if s.buckets.CompareAndDelete(key, bucket) {
-		s.release(key.accountID)
+		s.release(key.target.AccountID)
 	}
 	return out, accountID
 }
