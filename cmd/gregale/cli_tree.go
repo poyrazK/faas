@@ -476,6 +476,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"data-api serve", "data-api dev"},
 	{"data-api fixture export", "data-api fixture build"},
 	{"data-api storage export", "data-api storage sql"},
+	{"data-api hooks export", "data-api hooks sql"},
 	{"data-api release verify", "data-api verify release"},
 
 	// Proposed 2026-10-29 for review (round 9: one-off verbs).

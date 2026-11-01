@@ -234,6 +234,7 @@ var routeExclude = map[string]bool{
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
+	"POST /v1/runtime/data-api/events":                  true,
 
 	// ADR-1027 in-place major upgrades: a preview gated by
 	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered

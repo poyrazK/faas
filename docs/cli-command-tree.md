@@ -277,6 +277,7 @@ touch them. The tables below map each earlier name.
 | `gregale customer-operations retry-delivery` | `gregale operation delivery retry` |
 | `gregale data-api dev` | `gregale data-api serve` |
 | `gregale data-api fixture build` | `gregale data-api fixture export` |
+| `gregale data-api hooks sql` | `gregale data-api hooks export` |
 | `gregale data-api migration guide` | `gregale data-api migration explain` |
 | `gregale data-api migration preview` | `gregale data-api migration check` |
 | `gregale data-api rotation preflight` | `gregale data-api rotation check` |

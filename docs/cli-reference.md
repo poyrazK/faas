@@ -9391,6 +9391,66 @@ gregale data-api usage shop-data --since 30d
 
 Per hour or per day.
 
+### data-api hooks
+
+Change hooks: publish committed row changes as events
+
+#### data-api hooks export
+
+Print the change hooks migration
+
+`gregale data-api hooks export [--schema <SCHEMA>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <SCHEMA>` | the Data API&#39;s first exposed schema (default api) |  |
+
+Examples:
+
+```sh
+gregale data-api hooks export > migrations/0006_change_hooks.sql
+```
+
+Creates the change event table, its trigger and the enable and disable helpers.
+
+#### data-api hooks enable
+
+Publish recorded changes as events from the Data API app&#39;s source
+
+`gregale data-api hooks enable [--env <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+Examples:
+
+```sh
+gregale data-api hooks enable shop-data
+```
+
+#### data-api hooks status
+
+Show whether change hooks are on and their event source
+
+`gregale data-api hooks status [--env <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+
+#### data-api hooks disable
+
+Stop publishing; recorded changes stay in the table
+
+`gregale data-api hooks disable [--env <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
 ### data-api live
 
 Live reads: results that stay current over a realtime connection
