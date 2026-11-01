@@ -71,6 +71,11 @@ func copyProjectEnvironmentWorkloadSpecs(ctx context.Context, tx pgx.Tx, clone P
 		if err != nil {
 			return err
 		}
+		if clone.branch != nil {
+			// A branch keeps no warm floor: it boots only what is called
+			// (ADR-20261031193635).
+			settings.MinInstances = 0
+		}
 		hash, err := WorkloadSettingsHash(settings)
 		if err != nil {
 			return err

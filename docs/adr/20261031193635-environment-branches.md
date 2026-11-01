@@ -44,8 +44,15 @@ Decisions the owner took on 2026-10-31:
 ### 1. A branch is a project environment with a parent and a branch point
 
 ```
-gregale environment branch <name> [--from <environment>] [--at <time>] [--ttl <duration>] [--egress live|contained|simulated] [--project <slug>]
+gregale environment branch <project> <name> [--from <environment>] [--ttl <duration>]
+gregale environment branch <project> --list [--from <environment>]
 ```
+
+`environment` is the command tree's name for `projects environments`
+([ADR-20261026145832](20261026145832-cli-command-tree.md)), so the verb is
+`projects environments branch` in the manifest. A branch is deleted with the ordinary
+`environment delete`, which retires the branch's deployments first. `--at` and `--egress`
+arrive with the slices that use them.
 
 - `--from` defaults to `production`.
 - `--at` defaults to now. It is the **branch point** T: every data layer reads the parent
@@ -70,23 +77,36 @@ A new table `project_environment_branches` is keyed by `environment_id` and hold
 A branch can be branched again, up to a depth of 2. While a branch has live children it
 cannot be deleted; it expires only after its children do. Branches are never `protected`.
 
-### 2. Creating a branch is one metadata transaction
+### 2. Creating a branch is metadata only
 
-The create request makes no provider call, boots nothing and copies no data. One PostgreSQL
-transaction:
-- inserts the environment and branch rows;
-- copies the same config rows `CloneProjectEnvironment` copies today;
-- for each app with a live deployment in the parent, inserts a branch deployment that
-  reuses the parent deployment's artifact. That is ADR-590's `projectCloneArtifact` path:
-  same rootfs key and digest, no build. The deployment is **published live, unprimed**;
-- writes a release-set pin for those deployments;
-- writes one database intent per managed PostgreSQL binding and one overlay bucket per
-  object-storage binding (sections 4 and 5), plus fresh binding credentials for each;
-- enqueues the database work through an outbox, so provider calls start right after
-  commit.
+The create request makes no provider call, boots nothing and copies no data.
 
-**Target:** apid-side p99 under 100 ms for a project at the plan's app cap. The slice-1
-acceptance test measures it on PostgreSQL. Rows are bounded by existing per-project caps.
+1. **One PostgreSQL transaction** (the plain clone transaction, `cloneProjectEnvironmentOnce`)
+   inserts the environment, copies the same config rows `CloneProjectEnvironment` copies
+   today, and inserts the branch row. Depth and the account's branch cap are checked
+   inside it. The branch's copied workload specs get `min_instances = 0`: a branch keeps
+   no warm floor of its own.
+2. **One short transaction per parent workload** then creates the branch deployment
+   through the ordinary `createDeployment` path. It reuses the parent's selected live
+   artifact (ADR-590's `projectCloneArtifact` selection: same rootfs key, digest and
+   sidecar layers, no build) and locks the parent's layer keys so layer GC either sees
+   the new reference or the branch refuses the app. The row is created in
+   `snapshotting` at 100% of the branch and recorded in
+   `project_environment_branch_deployments`, with its parent deployment as lineage.
+3. apid sends each deployment to schedd's `snapshot_prime`. For a request or service
+   workload created by a branch, `Prime` verifies the layer signature and sends
+   `deployment_ready` with `no_snapshot_reason = environment_branch` without booting.
+   imaged admits that reason only for a deployment in the lineage table, and the row goes
+   live. Workers keep the normal prime, since they run continuously. A lost notification
+   is recovered by schedd's prime recovery, which re-primes rows left in `snapshotting`.
+4. If any deployment cannot be created, apid deletes the branch.
+
+Later slices add one database intent per managed PostgreSQL binding and one overlay
+bucket per object-storage binding (sections 4 and 5). Slice 1 refuses a parent with
+managed data bindings (`environment_branch_managed_data_unsupported`).
+
+**Target:** apid-side p99 under 100 ms for a project at the plan's app cap. Rows are
+bounded by existing per-project caps.
 
 ### 3. Compute: cold boot by default, restore the parent's capture by opt-in
 
@@ -233,12 +253,16 @@ Overlay data must always pass through the gateway.
     release-set pins. It ends with a registry probe that finds nothing left.
   - Project delete stays refused while non-production environments exist (#6037).
 - **Limits** (`pkg/api/limits.go`):
-  - `EnvironmentBranches` (live branches per account);
-  - `EnvironmentBranchDepth`;
-  - `EnvironmentBranchTTL` (default and maximum);
-  - `EnvironmentBranchDatabases`.
-
-  Plan values come from the COGS model in the slice-1 PR.
+  - `EnvironmentBranches` (live branches per account): Free 1, Hobby 2, Pro 5, Scale 20,
+    the same as preview environments. A branch boots nothing until called, so the cap
+    bounds rows and parked deployments, not running compute;
+  - `EnvironmentBranchMaxDepth` = 2;
+  - `EnvironmentBranchDefaultTTL` 7 days, `EnvironmentBranchMinTTL` 1 hour,
+    `EnvironmentBranchMaxTTL` 30 days;
+  - `EnvironmentBranchDatabases` arrives with slice 2.
+- **Organizations.** The branch routes are not yet in the reviewed project-access table
+  (`pkg/apid/projectaccess/routes.go`), so shared organization projects cannot branch, the
+  same as full clones today. Adding them is a follow-up once the routes are reviewed.
 - **Billing.** Instance-seconds bill as usual. Branch databases are metered by managed
   PostgreSQL and overlay bytes by the S3 gateway. Data inherited from the parent is never
   billed twice.

@@ -29,7 +29,7 @@ func projectEnvironmentBranchLifecycle(t *testing.T, s contractTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	served, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "web", WorkloadName: "web", Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1})
+	served, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "web", WorkloadName: "web", Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 2, MinInstances: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +66,10 @@ func projectEnvironmentBranchLifecycle(t *testing.T, s contractTestStore) {
 	}
 	if result.VariablesCopied != 1 {
 		t.Fatalf("variables copied = %d, want 1", result.VariablesCopied)
+	}
+	// The parent keeps one warm instance; a branch boots only what is called.
+	if spec, err := s.ProjectEnvironmentWorkloadSpec(ctx, acct.ID, project.ID, "pr-1", served.ID); err != nil || spec.Settings.MinInstances != 0 {
+		t.Fatalf("branch workload spec = %+v, %v; want no warm floor", spec.Settings, err)
 	}
 	if got, err := s.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-1"); err != nil || got.EnvironmentID != env.ID || got.ParentSlug != "production" {
 		t.Fatalf("branch by slug = %+v, %v", got, err)

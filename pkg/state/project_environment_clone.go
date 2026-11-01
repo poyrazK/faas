@@ -325,6 +325,9 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 	}
 	m.copyCloneFeatureFlagsLocked(created, flagSnapshot)
 	for appID, captured := range settings {
+		if clone.branch != nil {
+			captured.MinInstances = 0 // a branch keeps no warm floor (ADR-20261031193635)
+		}
 		hash, _ := WorkloadSettingsHash(captured) // validated before any target writes
 		spec := ProjectEnvironmentWorkloadSpec{
 			ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
