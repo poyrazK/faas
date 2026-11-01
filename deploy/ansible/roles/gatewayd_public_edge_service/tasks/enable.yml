@@ -96,6 +96,16 @@
     group: root
     mode: "0644"
 
+# ADR-20261031105055: placement routing was first turned on by hand on
+# 2026-11-02. 99-faas-edge.conf now carries the switch, so the hand-made
+# drop-in goes; left behind it would keep routing on after the manifest
+# turned it off.
+- name: gatewayd_public_edge_service — remove the hand-made placement drop-in
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-public-edge.service.d/60-faas-edge-placement.conf
+    state: absent
+
 - name: gatewayd_public_edge_service — install domain layout drop-in (ADR-20261026100000)
   notify: restart faas-gatewayd-public-edge
   ansible.builtin.template:

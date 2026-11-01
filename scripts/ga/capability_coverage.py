@@ -380,8 +380,8 @@ INFRA_RULES = [
     r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$",
     # ADR-20261030115139: the public edge's status for platform problems.
     r"^platform-error-status$",
-    # ADR-20261031105055: the compute edge's host-to-node routing.
-    r"^edge-placement$",
+    # ADR-20261031105055: the compute edge's host-to-node routing and its switch.
+    r"^edge-placement(-routing)?$",
 ]
 
 

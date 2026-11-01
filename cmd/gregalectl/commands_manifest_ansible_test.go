@@ -556,12 +556,14 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 		"    - name: fsn-1\n      role: control-plane\n",
 		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
 	for _, tc := range []struct {
-		name    string
-		yaml    string
-		enabled bool
+		name      string
+		yaml      string
+		enabled   bool
+		placement bool
 	}{
 		{name: "off", yaml: base},
 		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
+		{name: "placement routing", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n", enabled: true, placement: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := manifest.Parse([]byte(tc.yaml))
@@ -602,6 +604,13 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			}
 			if strings.Contains(controlVars, "faas_edge_control_plane_target") || strings.Contains(computeVars, "faas_edge_private_listen_addr") {
 				t.Errorf("edge switches rendered on the wrong role:\n%s\n%s", controlVars, computeVars)
+			}
+			// ADR-20261031105055: placement routing is a compute edge switch.
+			if got := strings.Contains(computeVars, "faas_edge_placement_routing: true\n"); got != tc.placement {
+				t.Errorf("compute host placement routing = %v, want %v:\n%s", got, tc.placement, computeVars)
+			}
+			if strings.Contains(controlVars, "faas_edge_placement_routing") {
+				t.Errorf("placement routing rendered on the control plane:\n%s", controlVars)
 			}
 		})
 	}
