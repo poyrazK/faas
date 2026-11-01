@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -956,7 +957,7 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 			m.jobRunAttach = make(map[string]JobRunAttach)
 		}
 		record := *attach
-		record.TokenSHA256 = append([]byte(nil), attach.TokenSHA256...)
+		record.TokenSHA256 = familyStoredCredential(credhash.FamilyAttach, credTagInteractiveAttach, attach.TokenSHA256)
 		m.jobRunAttach[run.ID] = record
 	}
 

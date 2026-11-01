@@ -96,7 +96,7 @@ func TestDevBridgeCommandToLocalProcessToRemoteDependency(t *testing.T) {
 		mu.Lock()
 		session := created.Session
 		mu.Unlock()
-		if err := session.AuthorizeDependency(time.Now(), r.Header.Get(devbridge.TokenHeader), r.Header.Get(devbridge.AccountHeader), session.Scope.EnvironmentID, "inventory"); err != nil {
+		if err := session.AuthorizeDependency(r.Context(), time.Now(), r.Header.Get(devbridge.TokenHeader), r.Header.Get(devbridge.AccountHeader), session.Scope.EnvironmentID, "inventory"); err != nil {
 			http.Error(w, "dependency denied", 403)
 			return
 		}

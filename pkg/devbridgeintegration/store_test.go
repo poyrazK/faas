@@ -1,6 +1,7 @@
 package devbridgeintegration
 
 import (
+	"context"
 	"errors"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -78,7 +79,7 @@ func TestDevBridgeStoreParity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := stored.AuthorizeAttachment(now, credentials.AttachmentToken); err != nil {
+			if err := stored.AuthorizeAttachment(context.Background(), now, credentials.AttachmentToken); err != nil {
 				t.Fatal(err)
 			}
 			// adr: 379 — inventory must recover the same durable session in
@@ -117,7 +118,7 @@ func TestDevBridgeStoreParity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if stored.AuthorizeAttachment(now, credentials.AttachmentToken) == nil {
+			if stored.AuthorizeAttachment(context.Background(), now, credentials.AttachmentToken) == nil {
 				t.Fatal("stored revocation lost")
 			}
 			if _, err := bridges.DevBridgeByID(ctx, project.ID, session.ID); !errors.Is(err, state.ErrNotFound) {

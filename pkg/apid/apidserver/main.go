@@ -3360,8 +3360,11 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest)
-	// Single-box realtimed reaches apid through this DAC-protected socket.
+	// Single-box realtimed reaches apid through this DAC-protected socket,
+	// and asks it to match Data API server keys there (ADR 20261029202403
+	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
+	receivers.RegisterAuthReceiver(srv, store)
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
 	} else {

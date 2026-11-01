@@ -24,7 +24,7 @@ const (
 	rekeyInterval = 5 * time.Minute
 )
 
-// RunRekey backfills the long-lived account credentials while keyed writes
+// RunRekey backfills the long-lived credentials while a family's keyed writes
 // are on (decision 4.2): it runs passes back to back while they rewrite
 // anything, then checks again every rekeyInterval for rows written plain
 // meanwhile. A store that cannot rekey, or keyed writes off, makes it
@@ -32,7 +32,7 @@ const (
 // value it replaces.
 func RunRekey(ctx context.Context, store any, log *slog.Logger) {
 	r, ok := store.(Rekeyer)
-	if p := credhash.Account(); !ok || p == nil || !p.KeyedWrites {
+	if !ok || !credhash.AnyKeyedWrites() {
 		return
 	}
 	ticker := time.NewTicker(rekeyInterval)
