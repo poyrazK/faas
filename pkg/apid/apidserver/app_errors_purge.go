@@ -35,7 +35,6 @@ package apidserver
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -138,7 +137,7 @@ type appErrorsAccountLister interface {
 	ListAllAccounts(ctx context.Context) ([]state.Account, error)
 }
 
-// purgeAll runs purgeOnce for every account. The loop used to observe
+// purgeAll runs purgeOnceForPlan for every account. The loop used to observe
 // `no_accounts` and return without deleting anything, so app_errors and
 // app_error_requests (one row per 4xx/5xx the gateway served, headers
 // sample included) were kept forever despite the documented retention.
@@ -198,22 +197,6 @@ func (p *appErrorsPurger) interval() time.Duration {
 	return AppErrorsPurgeInterval
 }
 
-// purgeOnce runs one full pass of the retention cron for a
-// single account. Returns the first non-nil error; subsequent
-// errors are logged and swallowed so a single bad row doesn't
-// abort the sweep. The caller (Run) is responsible for
-// iterating across accounts — the cron is per-account today;
-// PR-B will introduce a platform-wide walk.
-func (p *appErrorsPurger) purgeOnce(ctx context.Context, accountID uuid.UUID) error {
-	horizon := p.computeHorizon()
-	if horizon.IsZero() {
-		// No plan-tier ceilings resolved (misconfiguration);
-		// skip the pass rather than risk wiping the table.
-		return errors.New("app_errors: no plan retention ceiling resolved")
-	}
-	return p.purgeOnceBefore(ctx, accountID, horizon)
-}
-
 // purgeOnceForPlan purges an account's rows past its own plan's retention
 // (1/7/30/90 days, ADR-096). The sweep used the oldest horizon across all
 // plans for every account, so a Free account's request samples, headers
@@ -246,28 +229,6 @@ func (p *appErrorsPurger) purgeOnceBefore(ctx context.Context, accountID uuid.UU
 		return err
 	}
 	return nil
-}
-
-// computeHorizon returns the OLDEST retention floor across all
-// plans — the age under which a row is guaranteed to be
-// within at least one plan's cap. Rows older than this are
-// safe to drop.
-//
-// Returns the zero time when no plan values are loaded (caller
-// treats this as a misconfiguration).
-func (p *appErrorsPurger) computeHorizon() time.Time {
-	var floor time.Time
-	for _, plan := range api.Plans {
-		days := plan.AppErrorsRetentionDays()
-		if days <= 0 {
-			continue
-		}
-		h := p.now().Add(-time.Duration(days) * 24 * time.Hour)
-		if floor.IsZero() || h.Before(floor) {
-			floor = h
-		}
-	}
-	return floor
 }
 
 // purgeRequestsOlderThan drops app_error_requests rows older
