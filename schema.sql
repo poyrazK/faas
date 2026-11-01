@@ -35262,19 +35262,6 @@ CREATE VIEW public.deployment_code_pin_deadlines AS
 -- Name: deployment_cron_activations; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.deployment_event_subscription_intents (
-    deployment_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    declared_subscription_ids uuid[] NOT NULL,
-    status text DEFAULT 'prepared'::text NOT NULL,
-    reason text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT deployment_event_subscription_intents_reason_check CHECK ((char_length(reason) <= 64)),
-    CONSTRAINT deployment_event_subscription_intents_status_check CHECK ((status = ANY (ARRAY['prepared'::text, 'activated'::text, 'discarded'::text])))
-);
-
-
 CREATE TABLE public.deployment_cron_activations (
     app_id uuid NOT NULL,
     upload_id text,
@@ -35326,6 +35313,30 @@ CREATE TABLE public.deployment_dependency_gates (
     CONSTRAINT deployment_dependency_gates_pins_check CHECK (((jsonb_typeof(pins) = 'array'::text) AND ((jsonb_array_length(pins) >= 1) AND (jsonb_array_length(pins) <= 100)))),
     CONSTRAINT deployment_dependency_gates_status_check CHECK ((status = ANY (ARRAY['waiting'::text, 'ready'::text, 'failed'::text])))
 );
+
+
+--
+-- Name: deployment_event_subscription_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_event_subscription_intents (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    declared_subscription_ids uuid[] NOT NULL,
+    status text DEFAULT 'prepared'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_event_subscription_intents_reason_check CHECK ((char_length(reason) <= 64)),
+    CONSTRAINT deployment_event_subscription_intents_status_check CHECK ((status = ANY (ARRAY['prepared'::text, 'activated'::text, 'discarded'::text])))
+);
+
+
+--
+-- Name: TABLE deployment_event_subscription_intents; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deployment_event_subscription_intents IS 'Event subscriptions a production manifest deploy declares, applied when the deployment serves all production traffic; written only by apid (ADR-20261101030512).';
 
 
 --
@@ -60003,6 +60014,14 @@ ALTER TABLE ONLY public.deployment_dependency_gates
 
 
 --
+-- Name: deployment_event_subscription_intents deployment_event_subscription_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_event_subscription_intents
+    ADD CONSTRAINT deployment_event_subscription_intents_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_image_preparations deployment_image_preparations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72137,6 +72156,20 @@ CREATE UNIQUE INDEX deployment_audit_mcp_admission_id_idx ON public.deployment_a
 --
 
 CREATE INDEX deployment_audit_worker_drain_idx ON public.deployment_audit USING btree (deployment_id, id DESC) WHERE (kind = ANY (ARRAY['deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text]));
+
+
+--
+-- Name: deployment_event_subscription_intents_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_event_subscription_intents_app_idx ON public.deployment_event_subscription_intents USING btree (app_id);
+
+
+--
+-- Name: deployment_event_subscription_intents_prepared_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_event_subscription_intents_prepared_idx ON public.deployment_event_subscription_intents USING btree (updated_at, deployment_id) WHERE (status = 'prepared'::text);
 
 
 --
@@ -90849,6 +90882,22 @@ ALTER TABLE ONLY public.deployment_cron_outcomes
 
 ALTER TABLE ONLY public.deployment_dependency_gates
     ADD CONSTRAINT deployment_dependency_gates_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_event_subscription_intents deployment_event_subscription_intents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_event_subscription_intents
+    ADD CONSTRAINT deployment_event_subscription_intents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_event_subscription_intents deployment_event_subscription_intents_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_event_subscription_intents
+    ADD CONSTRAINT deployment_event_subscription_intents_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

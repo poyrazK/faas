@@ -3931,6 +3931,7 @@ type DeploymentDependencyGate struct {
 	Blocker      string
 }
 
+// Event subscriptions a production manifest deploy declares, applied when the deployment serves all production traffic; written only by apid (ADR-20261101030512).
 type DeploymentEventSubscriptionIntent struct {
 	DeploymentID            pgtype.UUID
 	AppID                   pgtype.UUID
