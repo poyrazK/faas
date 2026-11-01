@@ -72,6 +72,63 @@ func (m *Manager) upsertFleetPresence(ctx context.Context, c *connection, channe
 	return updated, members, nil
 }
 
+// fleetPresenceWriteInterval spaces one member's fleet presence writes. Each
+// write is a control-plane Postgres transaction, and a client may change its
+// state 10 times a second; updates in between still reach local subscribers
+// and other nodes at once (relayed with their timestamp, which reconciliation
+// prefers over an older stored row), and one trailing write stores the latest.
+const fleetPresenceWriteInterval = time.Second
+
+// claimFleetPresenceWrite reports whether this update writes the fleet
+// presence row now, or else how long until the trailing write may run.
+func (m *Manager) claimFleetPresenceWrite(key channelKey, connectionID string, now time.Time) (bool, time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	member := m.presenceMembers[key][connectionID]
+	if member == nil {
+		return true, 0
+	}
+	if since := now.Sub(member.fleetWrittenAt); since < fleetPresenceWriteInterval {
+		return false, fleetPresenceWriteInterval - since
+	}
+	member.fleetWrittenAt = now
+	return true, 0
+}
+
+// knownPresenceConnections is the member's fleet connection count as last
+// stored, for an update that skips the write that would return it.
+func (m *Manager) knownPresenceConnections(key channelKey, memberID string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if member, ok := m.fleetPresence[key][memberID]; ok && member.ConnectionCount > 0 {
+		return member.ConnectionCount
+	}
+	return 1
+}
+
+// flushFleetPresence stores a member's latest state after coalesced updates.
+// A failed write is repaired by the member's next renewal.
+func (m *Manager) flushFleetPresence(c *connection, channel, memberID string) {
+	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
+	m.mu.Lock()
+	member := m.presenceMembers[key][c.info.ID]
+	if member != nil {
+		member.fleetFlushPending = false
+	}
+	if m.conns[c.info.ID] != c || member == nil || !member.announced || member.memberID != memberID {
+		m.mu.Unlock()
+		return
+	}
+	member.fleetWrittenAt = time.Now()
+	state := append(json.RawMessage(nil), member.state...)
+	principal := ""
+	if member.presenceScope == "principal" {
+		principal = c.info.Principal
+	}
+	m.mu.Unlock()
+	_, _, _ = m.upsertFleetPresence(m.ctx, c, channel, memberID, principal, state)
+}
+
 func (m *Manager) renewFleetPresence(ctx context.Context, c *connection, channel string) {
 	if m.cfg.FleetClient == nil {
 		return
