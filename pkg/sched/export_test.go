@@ -1076,3 +1076,16 @@ func (e *Engine) MarkRestartInFlight(appID string) func() {
 		close(call.done)
 	}
 }
+
+// CoalesceInvocationDue exposes the drain's notification burst collapse.
+var CoalesceInvocationDue = coalesceInvocationDue
+
+// DrainLeaseRecoveryDue replays nows through one drain lease recovery clock.
+func DrainLeaseRecoveryDue(every time.Duration, nows ...time.Time) []bool {
+	r := drainLeaseRecovery{every: every}
+	due := make([]bool, len(nows))
+	for i, now := range nows {
+		due[i] = r.due(now)
+	}
+	return due
+}
