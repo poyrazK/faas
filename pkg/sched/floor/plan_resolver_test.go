@@ -15,11 +15,11 @@ type appPlanResolver struct {
 	orgs map[string]api.Plan
 }
 
-func (p *appPlanResolver) ResolveAppPlan(_ context.Context, app state.App) (api.Plan, bool) {
+func (p *appPlanResolver) ResolveAppPlan(ctx context.Context, app state.App) (api.Plan, bool) {
 	if plan, ok := p.orgs[app.OrgID]; ok {
 		return plan, true
 	}
-	return p.ResolvePlan(context.Background(), app.AccountID)
+	return p.ResolvePlan(ctx, app.AccountID)
 }
 
 // A resolver that knows the app decides a company app's floor by its
