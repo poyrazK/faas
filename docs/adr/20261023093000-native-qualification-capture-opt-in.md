@@ -357,6 +357,29 @@ ADR-568 requires.
     boot, missed the 250 ms public host read (`TrafficPublicHostReadTimeout`,
     ADR-570). The gateway refused them with 503 `traffic_policy_unavailable`
     as designed.
+- 2026-11-02, n2, rerun with e5f2b0050d:
+  - gitlab passed `baseline_serving` again.
+  - github's qualification HTTP probe missed vmmd's 2 s stream bridge
+    readiness wait while two VMs booted. The failed attempt cleaned up its
+    VMs, but its claim had been renewed to the 8-minute job qualification
+    lease, so no retry could start before the 12-minute activation wait
+    ended. The lease semantics are unchanged.
+  - gitlab's first resilience requests were refused at wake with a generic
+    503. The public-routing wake path dropped the scheduler's cause.
+    7994d1b98d logs it as on the ordinary wake path.
+- 2026-11-02, n2, rerun with 7994d1b98d and rebuilt `schedd` and
+  `gatewayd-internal`:
+  - Both graphs passed `baseline_serving`.
+  - Every ordinary wake of an activated candidate failed with `deployment
+    runtime value owner or grants changed`. The value snapshot hashes the
+    app with the candidate's frozen runtime overlay
+    (`AppForDeploymentRuntime`), but `ResolveAppForDeployment` never applied
+    it. Only the qualification paths did, so a live candidate could not be
+    woken once its qualification instance was gone.
+  - The fix applies the overlay in `ResolveAppForDeployment` after the
+    workload spec, matching the PgStore snapshot. The in-memory snapshot
+    now also applies it when a workload spec exists. A deployment without
+    a frozen runtime is unchanged.
 - Pending: the n2 native GitOps journey through the resilience phases.
 
 ## Rejected alternatives
