@@ -886,8 +886,12 @@ The first window opens when Gregale first sees traffic for the completed
 release and lasts 5 minutes. If at least 5 of the release's responses are 5xx,
 and those are at least half its requests, Gregale rolls back to the release it
 replaced. The check runs every 15 seconds, and the release keeps serving until
-the previous one is ready again. If a rollout wedges,
-`gregale rollouts recover my-api` is the manual escape hatch.
+the previous one is ready again. While a rollout runs, a plain
+`gregale rollback my-api` is refused because traffic is split; to stop the
+rollout and return its traffic to the release it replaced, run
+`gregale rollouts recover my-api --action abort`. If a rollout wedges,
+`gregale rollouts recover my-api --action advance|promote|abort` is the manual
+escape hatch.
 
 A new release that goes live while an earlier canary is still rolling out
 replaces it ([ADR-20261030102813](adr/20261030102813-a-newer-canary-supersedes-an-in-flight-one.md)).
@@ -1070,7 +1074,8 @@ manual stage advances remain immediate.
 
 While a canary is pending or rolling out, the generic traffic-split endpoint
 returns `409 traffic_change_during_canary`. Advance or recover the rollout
-before applying a separate traffic split.
+before applying a separate traffic split; `gregale rollouts recover <app>
+--action abort` stops it and returns its traffic to the release it replaced.
 
 A saved `gregale deploy` attempt can recover a lost acceptance reply with
 `gregale release resume SESSION_ID`. Image, multipart and source-ref submissions
