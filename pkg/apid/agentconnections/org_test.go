@@ -104,6 +104,8 @@ func (o *orgFixture) callAs(h func(http.ResponseWriter, *http.Request, state.Acc
 	req, w := newRequest(method, path, body)
 	mem := &state.OrgMembership{OrgID: o.org.ID, AccountID: acct.ID, Role: role}
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), acct, nil, mem))
+	// LoadOrg stamps the request so the role check finds the principal.
+	req = req.WithContext(authz.WithRequestOnContext(req.Context(), req))
 	if i := strings.LastIndex(path, "/"); i >= 0 {
 		req.SetPathValue("id", path[i+1:])
 	}
