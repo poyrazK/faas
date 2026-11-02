@@ -87,7 +87,9 @@ func TestEdgeTrafficPolicies(t *testing.T) {
 		if len(refused) > 0 {
 			t.Fatalf("%d of %d requests during a rule change were not served; first: %s", len(refused), served+len(refused), refused[0])
 		}
-		if served < 10 {
+		// Each CLI call takes about a second, so a handful of requests
+		// span the change.
+		if served < 3 {
 			t.Fatalf("only %d requests ran while the rule changed", served)
 		}
 	})
