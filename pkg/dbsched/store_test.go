@@ -332,6 +332,57 @@ func TestStoreRestorePlacementAndLease(t *testing.T) {
 	}
 }
 
+// TestStoreBootstrapLease lets one holder at a time bootstrap a new
+// database, and none once it left provisioning; a restore's lease is
+// ClaimRestore's.
+func TestStoreBootstrapLease(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30, Lifecycle: NodeActive})
+			vm, err := s.Place(ctx, newVM(1<<30, 384))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lease, err := s.ClaimProvision(ctx, vm.DatabaseID, time.Time{}, time.Minute)
+			if err != nil || lease.IsZero() {
+				t.Fatalf("claim = %v, %v", lease, err)
+			}
+			if _, err := s.ClaimProvision(ctx, vm.DatabaseID, time.Time{}, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("second claim = %v, want ErrConflict", err)
+			}
+			short, err := s.ClaimProvision(ctx, vm.DatabaseID, lease, time.Millisecond)
+			if err != nil {
+				t.Fatalf("renew = %v", err)
+			}
+			time.Sleep(20 * time.Millisecond)
+			if _, err := s.ClaimProvision(ctx, vm.DatabaseID, time.Time{}, time.Minute); err != nil {
+				t.Fatalf("claim after the lease %v lapsed = %v", short, err)
+			}
+			if _, err := s.ClaimRestore(ctx, vm.DatabaseID, time.Time{}, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("restore claim on a new database = %v, want ErrConflict", err)
+			}
+			restored := newVM(1<<30, 384)
+			restored.RestoreSource, restored.RestoreTarget = vm.DatabaseID, time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+			if restored, err = s.Place(ctx, restored); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ClaimProvision(ctx, restored.DatabaseID, time.Time{}, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("bootstrap claim on a restore = %v, want ErrConflict", err)
+			}
+			if err := s.Transition(ctx, vm.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ClaimProvision(ctx, vm.DatabaseID, time.Time{}, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("claim on a parked database = %v, want ErrConflict", err)
+			}
+			if _, err := s.ClaimProvision(ctx, uuid.NewString(), time.Time{}, time.Minute); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("claim on a missing database = %v", err)
+			}
+		})
+	}
+}
+
 // TestStoreUsageLedger: storage from placement to deletion, compute while
 // the VM is active, sampled history and hourly egress, all answerable after
 // the record is gone.

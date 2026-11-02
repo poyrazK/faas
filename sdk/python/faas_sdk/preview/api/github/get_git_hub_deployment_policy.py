@@ -82,6 +82,9 @@ def sync_detailed(
     calls. A missing policy row resolves to the safe defaults for a new
     project. Legacy allow_marked compatibility rows are migrated to deny;
     customers can explicitly opt back in when production calls are safe.
+    An app without a project reports the defaults with an empty
+    `project_id` and its own `production_trigger` and
+    `preview_enabled`.
 
     Args:
         slug (str):
@@ -117,6 +120,9 @@ def sync(
     calls. A missing policy row resolves to the safe defaults for a new
     project. Legacy allow_marked compatibility rows are migrated to deny;
     customers can explicitly opt back in when production calls are safe.
+    An app without a project reports the defaults with an empty
+    `project_id` and its own `production_trigger` and
+    `preview_enabled`.
 
     Args:
         slug (str):
@@ -147,6 +153,9 @@ async def asyncio_detailed(
     calls. A missing policy row resolves to the safe defaults for a new
     project. Legacy allow_marked compatibility rows are migrated to deny;
     customers can explicitly opt back in when production calls are safe.
+    An app without a project reports the defaults with an empty
+    `project_id` and its own `production_trigger` and
+    `preview_enabled`.
 
     Args:
         slug (str):
@@ -180,6 +189,9 @@ async def asyncio(
     calls. A missing policy row resolves to the safe defaults for a new
     project. Legacy allow_marked compatibility rows are migrated to deny;
     customers can explicitly opt back in when production calls are safe.
+    An app without a project reports the defaults with an empty
+    `project_id` and its own `production_trigger` and
+    `preview_enabled`.
 
     Args:
         slug (str):

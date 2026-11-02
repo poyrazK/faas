@@ -94,7 +94,9 @@ func TestAppHealth_EvidenceMatrix(t *testing.T) {
 			d.TrafficPercent = 10
 			e.Live = append(e.Live, d)
 		}, Degraded, "serving"},
-		{"worker not assessed", func(e *Evidence) { e.App.Manifest.ExecutionMode = "worker" }, Unknown, "unsupported"},
+		{"worker not released", func(e *Evidence) { e.App.Manifest.ExecutionMode = "worker" }, Unknown, "unsupported"},
+		{"worker queue unread", func(e *Evidence) { e.App.Manifest.ExecutionMode = "worker"; e.AssessWorkers = true }, Unknown, "serving"},
+		{"job not assessed", func(e *Evidence) { e.App.Manifest.ExecutionMode = "job"; e.AssessWorkers = true }, Unknown, "unsupported"},
 		{"maintenance", func(e *Evidence) { e.App.MaintenanceMode = true }, Degraded, "maintenance"},
 	}
 	for _, tt := range tests {

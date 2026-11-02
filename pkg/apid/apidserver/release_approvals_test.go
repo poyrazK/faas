@@ -43,7 +43,7 @@ func newApprovalFixture(ctx context.Context, t *testing.T, slug string, stepStar
 	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.Do(t, http.MethodPut, "/v1/apps/"+slug+"/release-approval-policy", policy, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, http.MethodPut, "/v1/apps/"+slug+"/release-approval-policy", withApprovers(ctx, t, e, policy), nil); rec.Code != http.StatusOK {
 		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
 	}
 	canary, err := store.CreateDeployment(ctx, state.Deployment{
@@ -124,8 +124,11 @@ func TestReleaseApprovalPolicyRoundTripAndValidation(t *testing.T) {
 	} {
 		apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, bad, nil), http.StatusBadRequest, api.CodeValidation)
 	}
+	// adr: 20261020085706 amendment 6 — a policy names who hears a release waits.
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2}, nil),
+		http.StatusBadRequest, api.CodeValidation)
 	var policy api.ReleaseApprovalPolicy
-	if rec := guardDo(t, e, http.MethodPut, path, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2}, &policy); rec.Code != http.StatusOK {
+	if rec := guardDo(t, e, http.MethodPut, path, withApprovers(ctx, t, e, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2}), &policy); rec.Code != http.StatusOK {
 		t.Fatalf("set = %d %s", rec.Code, rec.Body)
 	}
 	// An app outside an organization has one person, whose approval counts.
@@ -137,7 +140,7 @@ func TestReleaseApprovalPolicyRoundTripAndValidation(t *testing.T) {
 	if rec := guardDo(t, e, http.MethodGet, path, nil, &got); rec.Code != http.StatusOK || !reflect.DeepEqual(got, policy) {
 		t.Fatalf("get = %d %+v, want %+v", rec.Code, got, policy)
 	}
-	rec = e.Do(t, http.MethodPut, "/v1/apps/instant-app/release-approval-policy", api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}, nil)
+	rec = e.Do(t, http.MethodPut, "/v1/apps/instant-app/release-approval-policy", withApprovers(ctx, t, e, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}), nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeConflict)
 	if rec := e.Do(t, http.MethodDelete, path, nil, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete = %d %s", rec.Code, rec.Body)
@@ -277,7 +280,7 @@ func TestReleaseApprovalsRequireACanaryAtReleaseTime(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.Do(t, http.MethodPut, "/v1/apps/approval-canary/release-approval-policy", api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, http.MethodPut, "/v1/apps/approval-canary/release-approval-policy", withApprovers(ctx, t, e, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}), nil); rec.Code != http.StatusOK {
 		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
 	}
 	path := "/v1/apps/approval-canary/deployments"
@@ -313,6 +316,21 @@ func approvalChannel(ctx context.Context, t *testing.T, e apidserver.TestEnv, na
 		t.Fatal(err)
 	}
 	return c
+}
+
+// withApprovers names an "approvers" email channel on a policy that names
+// none: a policy must notify someone (ADR-20261020085706 amendment 6).
+func withApprovers(ctx context.Context, t *testing.T, e apidserver.TestEnv, req api.SetReleaseApprovalPolicyRequest) api.SetReleaseApprovalPolicyRequest {
+	t.Helper()
+	if len(req.NotifyChannels) > 0 {
+		return req
+	}
+	in := state.NotificationChannel{AccountID: (*e.Acct()).ID, Name: "approvers", Kind: "email", Email: "approvers@example.com"}
+	if _, err := (*e.Store()).CreateNotificationChannel(ctx, in, api.MaxNotificationChannelsPerAccount); err != nil && !errors.Is(err, state.ErrConflict) {
+		t.Fatal(err)
+	}
+	req.NotifyChannels = []string{"approvers"}
+	return req
 }
 
 // approvalEvents lists the release's recorded notifications by event.
@@ -470,7 +488,7 @@ func TestRollbackToADarkReleaseMeetsItsApprovals(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.Do(t, http.MethodPut, "/v1/apps/approval-dark/release-approval-policy", api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, http.MethodPut, "/v1/apps/approval-dark/release-approval-policy", withApprovers(ctx, t, e, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}), nil); rec.Code != http.StatusOK {
 		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
 	}
 	dark, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:dark", Kind: state.DeploymentKindImage,

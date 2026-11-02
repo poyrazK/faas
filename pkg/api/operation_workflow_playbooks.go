@@ -3,14 +3,15 @@ package api
 import (
 	"fmt"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var workflowPlaybookMatchCode = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+var workflowPlaybookMatchCode = lazyregexp.New(`^[a-z][a-z0-9_-]{0,63}$`)
 
 func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]OperationWorkflowPlaybook, error) {
 	if len(input) > OperationWorkflowPlaybooksMax {

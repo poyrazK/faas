@@ -930,6 +930,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			fanout.WithInterval(interval)
 		}
+		// FAAS_SNAPSHOT_FANOUT_LISTEN=off keeps the fixed interval, the
+		// behaviour before snapshot_fanout existed.
+		if pool != nil && os.Getenv("FAAS_SNAPSHOT_FANOUT_LISTEN") != "off" {
+			wake, listenErr := snapshotFanoutWake(ctx, pool, log)
+			if listenErr != nil {
+				log.Warn("vmmd: snapshot fan-out LISTEN failed; keeping the fixed interval", "err", listenErr)
+			} else {
+				fanout.WithWake(wake)
+			}
+		}
 		go func() {
 			if runErr := fanout.Run(ctx); runErr != nil && ctx.Err() == nil {
 				log.Error("vmmd: snapshot fan-out stopped", "err", runErr)

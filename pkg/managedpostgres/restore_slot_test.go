@@ -131,6 +131,31 @@ func TestRestoreInsideTheLimitDoesNotTakeTheSlot(t *testing.T) {
 	}
 }
 
+// A database switch's copy must fit inside the limit: at the limit its
+// restore is refused with the plain quota error and nothing is reserved;
+// with room it is an ordinary database.
+func TestRestoreWithinTheLimitNeverTakesTheSlot(t *testing.T) {
+	f := newSlotFixture(t)
+	ctx := context.Background()
+	source, err := f.service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	*f.clock = f.clock.Add(time.Minute)
+	request := RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: "orders-before-v2", PointInTime: source.CreatedAt, WithinLimit: true}
+	if _, err := f.service.Restore(ctx, request); !errors.Is(err, ErrQuotaExceeded) || errors.Is(err, ErrRestoreSlotInUse) {
+		t.Fatalf("restore within a full limit = %v, want the plain quota refusal", err)
+	}
+	if used, limit, err := f.service.DatabaseRoom(ctx, "account-a"); err != nil || used != 1 || limit != 1 {
+		t.Fatalf("DatabaseRoom = %d of %d, %v, want 1 of 1", used, limit, err)
+	}
+	*f.limit = 2
+	restored, err := f.service.Restore(ctx, request)
+	if err != nil || restored.State != StateReady || !restored.RestoreSlotUntil.IsZero() {
+		t.Fatalf("restore with room = %+v, %v, want an ordinary ready database", restored, err)
+	}
+}
+
 func TestRestoreSlotIsReleasedWhenTheOwnerHasRoom(t *testing.T) {
 	f := newSlotFixture(t)
 	ctx := context.Background()

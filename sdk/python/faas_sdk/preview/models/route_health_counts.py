@@ -21,6 +21,9 @@ class RouteHealthCounts:
     p95_latency_ms: float | Unset = UNSET
     """Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not
     selected or evidence is unavailable; zero is a valid observation."""
+    latency_requests: int | Unset = UNSET
+    """Requests the p95 ranked. The canary guard ranks only requests that did not cold boot, and the latency
+    minimum applies to this count. Omitted when every request was ranked."""
     unauthenticated: int | Unset = UNSET
     """Synthetic probe responses rejected by customer auth gates (401/403). Only present in synthetic_windows; a
     window where at least half of either side was rejected is unknown (probe_unauthenticated)."""
@@ -35,6 +38,8 @@ class RouteHealthCounts:
 
         p95_latency_ms = self.p95_latency_ms
 
+        latency_requests = self.latency_requests
+
         unauthenticated = self.unauthenticated
 
         field_dict: dict[str, Any] = {}
@@ -48,6 +53,8 @@ class RouteHealthCounts:
         )
         if p95_latency_ms is not UNSET:
             field_dict["p95_latency_ms"] = p95_latency_ms
+        if latency_requests is not UNSET:
+            field_dict["latency_requests"] = latency_requests
         if unauthenticated is not UNSET:
             field_dict["unauthenticated"] = unauthenticated
 
@@ -64,6 +71,8 @@ class RouteHealthCounts:
 
         p95_latency_ms = d.pop("p95_latency_ms", UNSET)
 
+        latency_requests = d.pop("latency_requests", UNSET)
+
         unauthenticated = d.pop("unauthenticated", UNSET)
 
         route_health_counts = cls(
@@ -71,6 +80,7 @@ class RouteHealthCounts:
             server_errors=server_errors,
             error_rate=error_rate,
             p95_latency_ms=p95_latency_ms,
+            latency_requests=latency_requests,
             unauthenticated=unauthenticated,
         )
 

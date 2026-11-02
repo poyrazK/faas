@@ -30,6 +30,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // GitHubAPI is the base URL for api.github.com. Tests override via
@@ -255,7 +257,7 @@ func (a *AppAuth) AuthorizeInstallationBinder(ctx context.Context, userToken str
 	owner := installation.Account.Login
 	if !strings.EqualFold(installation.Account.Type, "Organization") {
 		if owner == "" || !strings.EqualFold(user.Login, owner) {
-			return fmt.Errorf("githubd: only %s can connect their personal GitHub App installation", owner)
+			return api.ErrGitHubInstallationOwnerRequired(owner)
 		}
 		return nil
 	}
@@ -271,10 +273,10 @@ func (a *AppAuth) AuthorizeInstallationBinder(ctx context.Context, userToken str
 		return fmt.Errorf("githubd: read %s membership: %w", owner, err)
 	}
 	if status == http.StatusForbidden {
-		return fmt.Errorf("githubd: GitHub did not let Gregale read your %s membership; an organization owner must accept the Gregale GitHub App's Members (read) permission", owner)
+		return api.ErrGitHubPermissionPending(owner, "Members (read)")
 	}
 	if status != http.StatusOK || membership.State != "active" || membership.Role != "admin" {
-		return fmt.Errorf("githubd: connecting the %s installation requires an organization admin", owner)
+		return api.ErrGitHubOrgAdminRequired(owner)
 	}
 	return nil
 }
@@ -316,10 +318,29 @@ func (a *AppAuth) ListInstallationsForUser(ctx context.Context, userToken string
 	if userToken == "" {
 		return nil, fmt.Errorf("githubd: user token required")
 	}
-	endpoint := GitHubAPI + "/user/installations?per_page=100"
+	var installations []UserInstallation
+	nextURL := GitHubAPI + "/user/installations?per_page=100"
+	for page := 0; page < userInstallationsPageCap && nextURL != ""; page++ {
+		pageInstallations, next, err := a.listUserInstallationsPage(ctx, userToken, nextURL)
+		if err != nil {
+			return nil, err
+		}
+		installations = append(installations, pageInstallations...)
+		nextURL = next
+	}
+	if nextURL != "" {
+		return nil, fmt.Errorf("githubd: list user installations: page cap %d reached before pagination completed", userInstallationsPageCap)
+	}
+	return installations, nil
+}
+
+// userInstallationsPageCap bounds /user/installations to 1,000 entries.
+const userInstallationsPageCap = 10
+
+func (a *AppAuth) listUserInstallationsPage(ctx context.Context, userToken, endpoint string) ([]UserInstallation, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+userToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -328,20 +349,20 @@ func (a *AppAuth) ListInstallationsForUser(ctx context.Context, userToken string
 
 	resp, err := a.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("githubd: list user installations: %w", err)
+		return nil, "", fmt.Errorf("githubd: list user installations: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return nil, fmt.Errorf("githubd: list user installations: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, "", fmt.Errorf("githubd: list user installations: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var payload struct {
 		Installations []UserInstallation `json:"installations"`
 	}
 	if err := decodeGitHubJSON(resp.Body, &payload); err != nil {
-		return nil, fmt.Errorf("githubd: decode user installations: %w", err)
+		return nil, "", fmt.Errorf("githubd: decode user installations: %w", err)
 	}
-	return payload.Installations, nil
+	return payload.Installations, nextLink(strings.Join(resp.Header.Values("Link"), ", ")), nil
 }
 
 // InstallableRepo is one entry in the list returned by

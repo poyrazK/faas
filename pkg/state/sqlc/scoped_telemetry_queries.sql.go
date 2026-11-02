@@ -346,7 +346,7 @@ func (q *Queries) ScopedOpenMonitorIncident(ctx context.Context, db DBTX, arg Sc
 }
 
 const scopedRouteMonitorServingDeployments = `-- name: ScopedRouteMonitorServingDeployments :many
-SELECT d.id::text AS id,d.commit_sha,d.source_url,d.source_root,d.created_at,d.canary_step_started_at,d.rollout_completed_at,d.traffic_percent,d.canary_step,d.canary_total_steps
+SELECT d.id::text AS id,d.commit_sha,d.source_url,d.source_root,d.created_at,d.canary_step_started_at,d.rollout_completed_at,d.traffic_percent,d.canary_step,d.canary_total_steps,d.promoted_at
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE a.id=$1::text::uuid AND a.account_id=$2::text::uuid AND a.status<>'deleted'
 AND d.status='live' AND d.deleted_at IS NULL AND d.traffic_percent>0
@@ -377,6 +377,7 @@ type ScopedRouteMonitorServingDeploymentsRow struct {
 	TrafficPercent      int32
 	CanaryStep          int32
 	CanaryTotalSteps    int32
+	PromotedAt          pgtype.Timestamptz
 }
 
 func (q *Queries) ScopedRouteMonitorServingDeployments(ctx context.Context, db DBTX, arg ScopedRouteMonitorServingDeploymentsParams) ([]ScopedRouteMonitorServingDeploymentsRow, error) {
@@ -399,6 +400,7 @@ func (q *Queries) ScopedRouteMonitorServingDeployments(ctx context.Context, db D
 			&i.TrafficPercent,
 			&i.CanaryStep,
 			&i.CanaryTotalSteps,
+			&i.PromotedAt,
 		); err != nil {
 			return nil, err
 		}

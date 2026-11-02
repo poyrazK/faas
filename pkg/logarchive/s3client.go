@@ -270,6 +270,41 @@ func (c *S3Client) OpenObject(ctx context.Context, key string) (io.ReadCloser, e
 	return resp.Body, nil
 }
 
+// OpenObjectIfChanged is OpenObject that skips the body while the object's
+// ETag is still etag (unquoted): a 304 Not Modified returns a nil body and a
+// nil error. An empty etag fetches unconditionally. With a body it also
+// returns the object's current ETag, unquoted, or "" when the store sent
+// none. A store that ignores If-None-Match answers with the body.
+func (c *S3Client) OpenObjectIfChanged(ctx context.Context, key, etag string) (body io.ReadCloser, current string, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.objectURL(key), nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("logarchive: build request: %w", err)
+	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", `"`+etag+`"`)
+	}
+	if err := c.authorize(req, hexSHA256(nil)); err != nil {
+		return nil, "", err
+	}
+	client := c.StreamHTTP
+	if client == nil {
+		client = c.HTTP
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("logarchive: get: %w", err)
+	}
+	if resp.StatusCode == http.StatusNotModified {
+		_ = resp.Body.Close()
+		return nil, etag, nil
+	}
+	if err := checkS3Status(resp, "GET"); err != nil {
+		_ = resp.Body.Close()
+		return nil, "", err
+	}
+	return resp.Body, strings.Trim(resp.Header.Get("ETag"), `"`), nil
+}
+
 func (c *S3Client) authorize(req *http.Request, payloadHash string) error {
 	if c.TokenSource == nil {
 		return c.sign(req, payloadHash)
