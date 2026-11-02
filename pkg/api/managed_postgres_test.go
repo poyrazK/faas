@@ -31,3 +31,14 @@ func TestManagedPostgresLimitsFor(t *testing.T) {
 		t.Fatal("unknown plan unexpectedly received managed postgres limits")
 	}
 }
+
+// Overage is the provider's price plus the markup, never below what Gregale
+// pays (ADR-20261102072425).
+func TestManagedPostgresOverageIsTheProviderPricePlusTheMarkup(t *testing.T) {
+	if ManagedPostgresOverageMillicentsPerComputeUnitHour != 23_310 {
+		t.Fatalf("compute overage = %d millicents per CU-h, want 23310 ($0.222 + 5%%)", ManagedPostgresOverageMillicentsPerComputeUnitHour)
+	}
+	if ManagedPostgresOverageMillicentsPerComputeUnitHour*100 != ManagedPostgresNeonScaleMillicentsPerComputeUnitHour*(100+ManagedPostgresOverageMarkupPercent) {
+		t.Fatal("the compute overage price loses a fraction of a millicent to rounding")
+	}
+}

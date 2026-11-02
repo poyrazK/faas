@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -61,14 +63,19 @@ func TestValidPublicReadPath(t *testing.T) {
 
 func TestPublicReadHandlerServesWithoutNext(t *testing.T) {
 	for _, mode := range []string{"", api.ObjectStorageGatewaySafetyV1} {
-		t.Run(mode, func(t *testing.T) { publicReadServesWithoutNext(t, mode, false) })
+		t.Run(mode, func(t *testing.T) { publicReadServesWithoutNext(t, mode, false, nil) })
 	}
 	// ADR-20261030075301 step 2: the same read, admitted from a cached
 	// decision with its counts batched.
-	t.Run("cached admission", func(t *testing.T) { publicReadServesWithoutNext(t, api.ObjectStorageGatewaySafetyV1, true) })
+	t.Run("cached admission", func(t *testing.T) { publicReadServesWithoutNext(t, api.ObjectStorageGatewaySafetyV1, true, nil) })
+	// ADR-20261031122757 step 7: on a compute node the body draws on the
+	// edge's part of the node's port share.
+	t.Run("paced to the port share", func(t *testing.T) {
+		publicReadServesWithoutNext(t, api.ObjectStorageGatewaySafetyV1, true, NewTransferLimiter(api.MinObjectGatewayTransferBytesPerSecond, "test"))
+	})
 }
 
-func publicReadServesWithoutNext(t *testing.T, mode string, cached bool) {
+func publicReadServesWithoutNext(t *testing.T, mode string, cached bool, transfers *TransferLimiter) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/" || len(r.URL.Query()) != 0 {
 			t.Errorf("upstream request = %s %s", r.Method, r.URL.Path)
@@ -143,7 +150,7 @@ func publicReadServesWithoutNext(t *testing.T, mode string, cached bool) {
 	}
 	nextCalled := false
 	h, err := NewPublicReadHandler(PublicReadConfig{
-		Store: store, Registry: registry, RequestMetrics: store, Accounting: locking, ReadAdmitter: reads, AppsDomain: "apps.example",
+		Store: store, Registry: registry, RequestMetrics: store, Accounting: locking, ReadAdmitter: reads, Transfers: transfers, AppsDomain: "apps.example",
 		Next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { nextCalled = true }),
 	})
 	if err != nil {
@@ -160,6 +167,11 @@ func publicReadServesWithoutNext(t *testing.T, mode string, cached bool) {
 	}
 	if got := res.Header().Get("Cache-Control"); got != publicCacheControl {
 		t.Fatalf("Cache-Control = %q", got)
+	}
+	if transfers != nil {
+		if got := testutil.ToFloat64(transfers.bytes.WithLabelValues("download")); got != 3 {
+			t.Fatalf("paced download bytes = %v, want the 3-byte body", got)
+		}
 	}
 	if cached {
 		if metrics, _ := store.ListObjectStorageProviderRequestMetrics(context.Background(), backend.ID, backend.Fingerprint, time.Now().UTC()); len(metrics) != 0 && metrics[0].RequestCount != 0 {

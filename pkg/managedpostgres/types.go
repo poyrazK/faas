@@ -413,6 +413,14 @@ type RestoreInspector interface {
 	InspectRestore(context.Context, string, RestoreRequest) (ObservedDatabase, error)
 }
 
+// ProvisionInspector is Inspect for a database still being provisioned,
+// for a provider that finishes a provisioned database's setup only once its
+// resource is up. The service and the qualification inspect a provisioning
+// database that is not a restore through it; it must not create a resource.
+type ProvisionInspector interface {
+	InspectProvision(ctx context.Context, providerResourceID string) (ObservedDatabase, error)
+}
+
 type DeleteResult struct {
 	Done bool
 }

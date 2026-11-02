@@ -2603,22 +2603,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// telemetry to be durable.
 	//
 	// ADR-127 PR-D code-review #3: sharedLimiter is the per-account
-	// token-bucket pool shared with runSpansWriterServer below. One limiter
-	// instance covers both IncrementRequestTelemetry and WriteSpansSummary
-	// paths so a customer's plan cap is enforced against one bucket pool.
+	// token-bucket pool for request rows (IncrementRequestTelemetry).
+	// Tracing tenancy T8 (2026-10-31 logs/traces audit, ADR-127 PR-D
+	// amendment): spans get their own pool, spansLimiter, shared by the
+	// in-guest exports and every WriteSpansSummary listener, so enabling
+	// tracing never crowds out request evidence.
 	sharedLimiter := peraccount.NewLimiter()
+	spansLimiter := peraccount.NewLimiter()
+	// The tracing capability gates span ingest as it gates trace reads.
+	tracing := receivers.TracingReleased(srv.tracingReleased)
+	spans := spansIngest{limiter: spansLimiter, tracing: tracing}
 	// ADR-958: one in-guest span ingester shared by both SpansWriter listeners.
 	// Its flush loop writes back through WriteSpansSummary so guest spans share
 	// that path's validation, rate cap and outcome metrics.
 	var guestSpans *receivers.GuestSpansIngester
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-		guestSpans = receivers.NewGuestSpansIngester(srv.store, sharedLimiter, log).WithLogs(srv.store)
+		guestSpans = receivers.NewGuestSpansIngester(srv.store, spansLimiter, log).WithLogs(srv.store).WithTracingRelease(tracing)
 		// Multi-box: a node's vmmd/apid-client leaf names the node, so its
 		// spans and logs must come from instances on that node.
 		if nodes, ok := nodeVerifier.(wire.NodeIdentityResolver); ok {
 			guestSpans.WithPeerNodes(nodes, srv.store)
 		}
-		guestSpansWriter := receivers.NewSpansWriterReceiver(srv.store, srv.ops, sharedLimiter, true)
+		guestSpansWriter := receivers.NewSpansWriterReceiver(srv.store, srv.ops, spansLimiter, true)
 		go func() {
 			if err := guestSpans.Run(ctx, receivers.OtelFlushInterval(deps.getenv), guestSpansWriter.WriteSpansSummary); err != nil && ctx.Err() == nil {
 				log.Error("apid guest spans flush loop exited", "err", err)
@@ -2651,7 +2657,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.requestIDLookups = receivers.NewRequestIDLookupHub(log)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, spans, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -2677,7 +2683,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, spans, log, true, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2742,7 +2748,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
 		}
 		var listenErr error
-		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, spans, log, false, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
@@ -2763,7 +2769,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// key authentication and the OTel handler.
 	if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
 		authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
-		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log)
+		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log, spans.tracing)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: auth server: %w", err)
@@ -2785,7 +2791,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if isUnixSocketPath(swTarget) {
 			var swLis net.Listener
 			var listenErr error
-			spansWriterSrv, swLis, listenErr = runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter, guestSpans, runtimeLogs)
+			spansWriterSrv, swLis, listenErr = runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, spans.limiter, guestSpans, runtimeLogs)
 			if listenErr != nil {
 				_ = l.Close()
 				return fmt.Errorf("apid: otel spans writer server: %w", listenErr)
@@ -3311,7 +3317,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -3337,7 +3343,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// credential hash itself (ADR 20261029202403); single-box gateways ask
 	// over /run/faas/auth.sock.
 	if !isUnixSocketPath(target) {
-		receivers.RegisterAuthReceiver(srv, store)
+		receivers.RegisterAuthReceiver(srv, store, spans.tracing)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
 			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
@@ -3356,7 +3362,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// listener in split-box deployments. The dedicated Unix socket remains the
 	// single-box path and is registered by runSpansWriterServer.
 	if !isUnixSocketPath(target) && os.Getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-		receivers.RegisterSpansWriterReceiver(srv, store, ops, limiter, true, guestSpans)
+		receivers.RegisterSpansWriterReceiver(srv, store, ops, spans.limiter, true, guestSpans)
 		receivers.RegisterRuntimeLogEventsReceiver(srv, runtimeLogs)
 	}
 	return srv, lis, nil
@@ -3374,7 +3380,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
@@ -3385,7 +3391,7 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	// and asks it to match Data API server keys there (ADR 20261029202403
 	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
-	receivers.RegisterAuthReceiver(srv, store)
+	receivers.RegisterAuthReceiver(srv, store, spans.tracing)
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
 	} else {
@@ -3426,12 +3432,20 @@ func runSpansWriterServer(ctx context.Context, target string, store state.Store,
 // serves; the gateway's OTel handler refuses to start without
 // auth, so a missing auth server == a missing OTel surface,
 // which is the desired fail-closed posture).
-func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger) (*grpc.Server, net.Listener, error) {
+func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger, tracing receivers.TracingReleased) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	receivers.RegisterAuthReceiver(srv, store)
+	receivers.RegisterAuthReceiver(srv, store, tracing)
 	return srv, lis, nil
+}
+
+// spansIngest is the span-ingest wiring every telemetry listener shares:
+// span writes' own bucket pool, apart from request rows' (tracing tenancy
+// T8), and the tracing capability gate for OTLP keys.
+type spansIngest struct {
+	limiter *peraccount.Limiter
+	tracing receivers.TracingReleased
 }

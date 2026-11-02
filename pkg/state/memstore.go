@@ -1611,6 +1611,10 @@ type usageMinute struct {
 	// cpu_usec / tx_bytes shape. Pinned by
 	// pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds.
 	TailSeconds int64
+	// PausedMBSeconds is the minute's quiet-paused MB-seconds meterd did
+	// not bill (ADR-20261023171905 rollout step 3). Informational; first
+	// positive value wins. See RecordQuietPausedUsage.
+	PausedMBSeconds int64
 }
 
 // builderUsageRow is the per-build grain (ADR-048 §4) backing
@@ -6176,9 +6180,18 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		helperSiblings[i].Prior = s.Prior
 	}
 	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool {
-		return abortedCanaryCandidate(m.deployments[siblings[i].ID])
+		sibling := m.deployments[siblings[i].ID]
+		neverServed := sibling.TrafficPercent == 0 && !m.deploymentServedLocked(sibling.ID)
+		return abortedCanaryCandidate(sibling) || neverServed
 	}, 100-newPercent)
 	if err != nil {
+		return Deployment{}, err
+	}
+	priorWeights := make([]int, len(siblings))
+	for i, sibling := range siblings {
+		priorWeights[i] = sibling.Prior
+	}
+	if err := checkTrafficSplitReleaseLimit(ctx, priorPercent, newPercent, priorWeights, newWeights); err != nil {
 		return Deployment{}, err
 	}
 	proposed := map[string]int{id: newPercent}
@@ -7866,7 +7879,43 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
+	// Mirrors PgStore: rebinding to another repository retires its previews.
+	if previous, bound := m.githubBindings[b.AppID]; bound && githubBindingRepoChanged(previous, b) {
+		m.markAppPRPreviewsStaleLocked(app)
+	}
+	// Mirrors PgStore: a re-bind keeps the app's GitHub policy.
+	b.ProductionTrigger = m.githubBindings[b.AppID].ProductionTrigger
+	b.PreviewsOff = m.githubBindings[b.AppID].PreviewsOff
 	m.githubBindings[b.AppID] = b
+	return nil
+}
+
+// SetGitHubAppProductionTrigger mirrors PgStore.
+func (m *MemStore) SetGitHubAppProductionTrigger(ctx context.Context, appID, accountID string, trigger ProductionTrigger) error {
+	return m.UpdateGitHubAppPolicy(ctx, appID, accountID, GitHubAppPolicyPatch{ProductionTrigger: &trigger})
+}
+
+// UpdateGitHubAppPolicy mirrors PgStore.
+func (m *MemStore) UpdateGitHubAppPolicy(_ context.Context, appID, accountID string, patch GitHubAppPolicyPatch) error {
+	if appID == "" || accountID == "" {
+		return ErrNotFound
+	}
+	if err := patch.Validate(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.githubBindings[appID]
+	if !ok || b.InstallID == 0 || b.AccountID != accountID {
+		return ErrNotFound
+	}
+	if patch.ProductionTrigger != nil {
+		b.ProductionTrigger = *patch.ProductionTrigger
+	}
+	if patch.PreviewEnabled != nil {
+		b.PreviewsOff = !*patch.PreviewEnabled
+	}
+	m.githubBindings[appID] = b
 	return nil
 }
 
@@ -7884,7 +7933,14 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 	if !ok {
 		return ErrNotFound
 	}
-	// Mirrors PgStore: the app's PR preview environments go stale.
+	m.markAppPRPreviewsStaleLocked(parent)
+	delete(m.githubBindings, appID)
+	return nil
+}
+
+// markAppPRPreviewsStaleLocked mirrors PgStore's markAppPRPreviewsStaleTx.
+// Callers hold m.mu.
+func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 	anchors := make(map[string]string)
 	for _, set := range m.previewSets {
 		if root, ok := m.apps[set.RootAppID]; ok {
@@ -7909,8 +7965,6 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 			m.apps[id] = preview
 		}
 	}
-	delete(m.githubBindings, appID)
-	return nil
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
@@ -28436,7 +28490,7 @@ func (m *MemStore) ListAppsWithRecentTelemetry(_ context.Context, _ pgtype.Inter
 
 // UpdateSpansSummary is intentionally unsupported by MemStore. The writer
 // updates request_telemetry rows and must be covered against PgStore.
-func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte, _ int) error {
+func (m *MemStore) UpdateSpansSummary(_ context.Context, _ SpansSummaryTarget, _ []byte, _ int) error {
 	panic("memstore: UpdateSpansSummary unimplemented")
 }
 

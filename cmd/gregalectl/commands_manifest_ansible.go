@@ -225,7 +225,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 		}
 		body += databases.hostVars(host, hostScheddTarget)
-		body += renderComputeEdgeVars(m.PublicEdge.ComputeNodes, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		body += renderComputeEdgeVars(m.PublicEdge, host.Role, postgresListenAddress, computeAllowedCIDRs)
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
 		body += renderLogArchiveVars(m.LogArchive)
 		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
@@ -310,9 +310,11 @@ func renderObjectStorageGatewayVars(o manifest.ObjectStorage) string {
 // renderComputeObjectGatewayVars runs the object gateway on a compute host
 // (ADR-20261031122757): the provider registry, the gateway-only credential,
 // and the host's share of its port in bytes per second, from its declared
-// port speed and api.ObjectGatewayNodePortSharePercent. The control plane
-// gets only the switch, which turns on its scrape of the compute gateways
-// and their s3 tunnel connectors.
+// port speed and api.ObjectGatewayNodePortSharePercent. With
+// compute_public_reads the app edge's public reads take
+// api.ObjectGatewayPublicReadSharePercent of the share and s3-gatewayd the
+// rest. The control plane gets only the switch, which turns on its scrape of
+// the compute gateways and their s3 tunnel connectors.
 func renderComputeObjectGatewayVars(o manifest.ObjectStorage, host manifest.Host) string {
 	if !o.ComputeNodes {
 		return ""
@@ -325,11 +327,19 @@ func renderComputeObjectGatewayVars(o manifest.ObjectStorage, host manifest.Host
 		return ""
 	}
 	share := int64(host.PortMbps) * 1_000_000 / 8 * api.ObjectGatewayNodePortSharePercent / 100
+	var publicReads int64
+	if o.ComputePublicReads {
+		publicReads = share * api.ObjectGatewayPublicReadSharePercent / 100
+	}
 	var b strings.Builder
 	b.WriteString("faas_object_gateway_on_compute_nodes: true\n")
 	fmt.Fprintf(&b, "faas_object_storage_config_src: %q\n", o.ConfigSrc)
 	fmt.Fprintf(&b, "faas_object_storage_gateway_provider_env_src: %q\n", o.GatewayProviderEnvSrc)
-	fmt.Fprintf(&b, "faas_object_gateway_max_bytes_per_second: %d\n", share)
+	fmt.Fprintf(&b, "faas_object_gateway_max_bytes_per_second: %d\n", share-publicReads)
+	if o.ComputePublicReads {
+		b.WriteString("faas_object_public_reads_on_compute_nodes: true\n")
+		fmt.Fprintf(&b, "faas_object_public_read_max_bytes_per_second: %d\n", publicReads)
+	}
 	return b.String()
 }
 
@@ -743,8 +753,8 @@ func renderWorkloadIdentityVars(w manifest.WorkloadIdentity) string {
 	return fmt.Sprintf("faas_workload_identity_source_dir: %q\n", w.SourceDir)
 }
 
-func renderComputeEdgeVars(enabled bool, role, controlPlaneAddress string, computeCIDRs []string) string {
-	if !enabled || controlPlaneAddress == "" {
+func renderComputeEdgeVars(edge manifest.PublicEdge, role, controlPlaneAddress string, computeCIDRs []string) string {
+	if !edge.ComputeNodes || controlPlaneAddress == "" {
 		return ""
 	}
 	listen := net.JoinHostPort(controlPlaneAddress, computeEdgePrivatePort)
@@ -757,6 +767,16 @@ func renderComputeEdgeVars(enabled bool, role, controlPlaneAddress string, compu
 		fmt.Fprintf(&b, "faas_edge_control_plane_target: %q\n", "http://"+listen)
 		if len(computeCIDRs) > 0 {
 			fmt.Fprintf(&b, "faas_edge_peer_cidrs: [%s]\n", quotedYAMLList(computeCIDRs))
+		}
+		// ADR-20261031105055: route each host to the node that last served it.
+		if edge.PlacementRouting {
+			b.WriteString("faas_edge_placement_routing: true\n")
+		}
+		// ADR-20261102081618: Cloudflare also connects to the edge directly on
+		// 443, so the node's firewall admits 80/443 from Cloudflare only.
+		if edge.DirectEntry() {
+			fmt.Fprintf(&b, "faas_edge_entry: %q\n", edge.Entry)
+			b.WriteString("faas_cloudflare_origin_only: true\n")
 		}
 	}
 	return b.String()

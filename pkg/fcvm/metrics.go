@@ -78,6 +78,12 @@ type DashboardMetrics struct {
 	// across instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING}.
 	// schedd's ledger already maintains this number; pass it through.
 	ResidentBytes func(ctx context.Context) (int64, error)
+	// CeilingMB, when set and positive, is the RAM admission ceiling
+	// fcvm_resident_ram_pct divides ResidentBytes by: a scheduler on a
+	// multi-node fleet reports its own node over that node's ceiling (ADR
+	// 20261102072403). Unset, zero or an error keeps the box-wide
+	// api.RAMAdmissionCeilingMB.
+	CeilingMB func(ctx context.Context) (int, error)
 	// LvFcUsedPct returns the percentage of the spec §8 lv-fc volume
 	// (the filesystem mounted at /srv/fc) currently in use (0..100).
 	// DefaultFcVolumeUsedPct reads it with statfs. An error leaves the
@@ -725,7 +731,13 @@ func (g *DashboardGauges) refresh(ctx context.Context) {
 	if src.ResidentBytes != nil {
 		bytes, err := src.ResidentBytes(ctx)
 		if err == nil {
-			pct := 100.0 * float64(bytes) / float64(api.RAMAdmissionCeilingMB*1024*1024)
+			ceilingMB := api.RAMAdmissionCeilingMB
+			if src.CeilingMB != nil {
+				if mb, cerr := src.CeilingMB(ctx); cerr == nil && mb > 0 {
+					ceilingMB = mb
+				}
+			}
+			pct := 100.0 * float64(bytes) / float64(int64(ceilingMB)*1024*1024)
 			g.mu.Lock()
 			g.cachedRAM = pct
 			g.mu.Unlock()

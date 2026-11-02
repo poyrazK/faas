@@ -3308,8 +3308,8 @@ where a.account_id = sqlc.arg(account_id)::uuid
 -- Returns the full row (with created_at server-stamped).
 insert into oidc_exchanged_tokens
     (id, account_id, token_hash, expires_at, issuer_url, subject,
-     audience, jti, scopes)
-values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
+     audience, jti, scopes, app_id)
+values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, sqlc.narg(app_id)::uuid)
 returning id, account_id, token_hash, expires_at, issuer_url,
           subject, audience, coalesce(jti, '') as jti, scopes,
           created_at;
@@ -3319,7 +3319,8 @@ returning id, account_id, token_hash, expires_at, issuer_url,
 -- layer so the pg contract is "WHERE expires_at > NOW()". The
 -- MemStore mirror in pkg/state/memstore.go lazy-deletes instead.
 select id, account_id, token_hash, expires_at, issuer_url, subject,
-       audience, coalesce(jti, '') as jti, scopes, created_at
+       audience, coalesce(jti, '') as jti, scopes, created_at,
+       coalesce(app_id::text, '')::text as app_id
 from oidc_exchanged_tokens
 where token_hash = $1
   and expires_at > now();
@@ -3375,7 +3376,7 @@ INSERT INTO request_telemetry (
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
     guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
-    content_outcome, trace_inferred
+    content_outcome, trace_inferred, platform_refusal
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -3396,7 +3397,8 @@ INSERT INTO request_telemetry (
     sqlc.arg('guest_resource_usage_available')::bool,
     COALESCE(NULLIF(sqlc.arg('flag_evidence_json')::text, '')::jsonb, '[]'::jsonb),
     sqlc.arg('content_outcome')::text,
-    sqlc.arg('trace_inferred')::bool
+    sqlc.arg('trace_inferred')::bool,
+    sqlc.arg('platform_refusal')::bool
 );
 
 -- name: ListRequestTelemetryByPlatformTenant :many
@@ -4648,6 +4650,20 @@ WHERE received_at > now() - $1::interval;
 -- lookup still hits request_telemetry_trace_idx for the trace_id
 -- selectivity; the residual account_id check is a post-fetch
 -- row-level filter (one row, microseconds).
+--
+-- Tracing tenancy (2026-10-31 logs/traces audit, T4/T5). account_id is
+-- the app creator's storage namespace, not the tenant, so the pin alone
+-- let one trace id merge spans into every app that creator ever made,
+-- company apps included. Three optional narrowings, all off (null/false)
+-- for an older producer:
+--   $5 app_id: only the producing app's rows (the in-guest bridge, a
+--      service binding's or outbound call's caller, an app-bound key).
+--   $6 org_id: a key bound to a company merges into that company's apps,
+--      whoever created them, instead of rows carrying $3.
+--   $7 customer_credential: $3 holds a customer key. A company app's rows
+--      are merged only while $3 may still deploy there (owner, admin or
+--      developer, as event publishing requires), so a creator who left
+--      the company cannot write its evidence.
 update request_telemetry as target
    set spans_summary = (
        select coalesce(jsonb_agg(bounded.span order by bounded.duration_nanos desc, bounded.span_id), '[]'::jsonb)
@@ -4678,8 +4694,22 @@ update request_telemetry as target
          ) bounded
    )
  where target.trace_id = $1
-   and target.account_id = $3::uuid
-   and target.received_at >= now() - interval '24 hours';
+   and target.received_at >= now() - interval '24 hours'
+   and ($5::uuid is null or target.app_id = $5::uuid)
+   and (case when $6::uuid is null then target.account_id = $3::uuid
+             else exists (select 1 from apps a where a.id = target.app_id and a.org_id = $6::uuid)
+        end)
+   and (not $7::boolean or not exists (
+         select 1
+           from apps a
+           join orgs o on o.id = a.org_id and not o.personal_org
+          where a.id = target.app_id
+            and not exists (
+                  select 1 from org_memberships m
+                   where m.org_id = o.id
+                     and m.account_id = $3::uuid
+                     and m.removed_at is null
+                     and m.role in ('owner', 'admin', 'developer'))));
 
 -- ---------------------------------------------------------------------------
 -- Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
@@ -5377,6 +5407,13 @@ SELECT id FROM resource_namespaces WHERE id = $1 FOR UPDATE;
 
 -- name: ObjectUsageAccountPlan :one
 SELECT a.plan FROM accounts a WHERE a.id=$1 UNION ALL SELECT o.plan FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
+
+-- name: ObjectUsageAccountPlanCap :one
+-- The plan and spend cap that set an account's object-storage ceilings
+-- (ADR-1320, ADR-20261101214152). A null cap is no cap.
+SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+UNION ALL
+SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
 
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
@@ -8985,6 +9022,9 @@ ORDER BY app_id, environment_slug, created_at DESC, id;
 SELECT (jsonb_build_object(
     'ID', a.id,
     'AccountID', a.account_id,
+    -- OrgID names a company organization only: a personal one reads as none, so
+    -- a personal app's policy costs no organization read in the snapshot.
+    'OrgID', (SELECT o.id FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org),
     'Slug', a.slug,
     'Type', a.type,
     'Status', a.status,
@@ -9214,7 +9254,10 @@ WHERE app_id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uui
 -- through the row's JSON so historical-schema upgrade fixtures can still run
 -- the traffic analysis; on the current schema the projection is identical.
 -- A non-null app_id adds that app's app-wide rules (match_host "@app",
--- ADR-1191) in the same ordered, bounded projection.
+-- ADR-1191) in the same ordered, bounded projection. As on the cached path
+-- (ADR-091 amendments 2026-10-28 and 2026-10-31), rules of deleted apps are
+-- left out and, with an app_id, so are rules of apps outside its edge-rule
+-- scope: the owning company organization, or none for a personal app.
 WITH matching AS (
     SELECT id, priority, created_at,
         jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
@@ -9231,6 +9274,11 @@ WITH matching AS (
       AND (match_host = sqlc.arg(host)::text OR match_host = '*'
            OR sqlc.arg(host)::text LIKE replace(replace(match_host, '*', '%'), '?', '_')
            OR (app_id = sqlc.narg(app_id)::uuid AND lower(match_host) = '@app'))
+      AND NOT EXISTS (SELECT 1 FROM apps deleted WHERE deleted.id = edge_rules.app_id AND deleted.status = 'deleted')
+      AND (sqlc.narg(app_id)::uuid IS NULL OR edge_rules.app_id = sqlc.narg(app_id)::uuid
+           OR (SELECT ro.id FROM apps ra JOIN orgs ro ON ro.id = ra.org_id AND NOT ro.personal_org WHERE ra.id = edge_rules.app_id)
+              IS NOT DISTINCT FROM
+              (SELECT so.id FROM apps sa JOIN orgs so ON so.id = sa.org_id AND NOT so.personal_org WHERE sa.id = sqlc.narg(app_id)::uuid))
     ORDER BY priority, created_at, id LIMIT (sqlc.arg(max_rows)::integer + 1)
 ), bounds AS (
     SELECT count(*) > sqlc.arg(max_rows)::integer
@@ -16472,6 +16520,9 @@ ORDER BY d.id LIMIT 2;
 -- Exact selected labels and shared windows. Aggregate publisher weights without
 -- expanding requests. Percentile ranks interpolate bucket representatives, like
 -- RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
+-- Platform refusals never count. warm_latency (the canary guard) ranks only
+-- requests that did not cold boot and reports how many it ranked
+-- (ADR-20261028110044 amendment 3); the production monitor stays end to end.
 WITH selected AS (
  SELECT (value->>'method')::text AS method, (value->>'path')::text AS path,
   (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled
@@ -16479,26 +16530,30 @@ WITH selected AS (
 ), windows AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
 ), observed AS MATERIALIZED (
- SELECT s.method, s.path, s.latency_enabled, w.start, w."end", t.deployment_id, t.latency_ms, t.status, t.count
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", t.deployment_id, t.latency_ms, t.status, t.count,
+  (sqlc.arg(warm_latency)::boolean AND t.cold_boot) AS latency_excluded
  FROM selected s CROSS JOIN windows w LEFT JOIN request_telemetry t
  ON t.app_id = sqlc.arg(app_id)::text::uuid AND t.account_id = sqlc.arg(account_id)::text::uuid
  AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
  AND t.method = s.method AND t.route = s.method || ' ' || s.path
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND t.received_at >= sqlc.arg(since)::timestamptz AND t.received_at < sqlc.arg(until)::timestamptz
+ AND NOT t.platform_refusal
  AND (sqlc.arg(customer_id)::text = ''
   OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
   OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
 ), counts AS (
- SELECT method, path, start, "end",
+ SELECT method, path, latency_enabled, start, "end",
  coalesce(sum(count::bigint) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid), 0)::bigint AS candidate_requests,
  coalesce(sum(count::bigint) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid AND NOT latency_excluded), 0)::bigint AS candidate_latency_requests,
  coalesce(sum(count::bigint) FILTER (WHERE deployment_id = sqlc.arg(stable_id)::text::uuid), 0)::bigint AS stable_requests,
- coalesce(sum(count::bigint) FILTER (WHERE deployment_id = sqlc.arg(stable_id)::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS stable_errors
- FROM observed GROUP BY method, path, start, "end"
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = sqlc.arg(stable_id)::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS stable_errors,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = sqlc.arg(stable_id)::text::uuid AND NOT latency_excluded), 0)::bigint AS stable_latency_requests
+ FROM observed GROUP BY method, path, latency_enabled, start, "end"
 ), weighted AS (
  SELECT method, path, start, deployment_id, latency_ms, sum(count::bigint) AS weight
- FROM observed WHERE latency_enabled AND deployment_id IS NOT NULL
+ FROM observed WHERE latency_enabled AND deployment_id IS NOT NULL AND NOT latency_excluded
  GROUP BY method, path, start, deployment_id, latency_ms
 ), ranked AS (
  SELECT method, path, start, deployment_id, latency_ms,
@@ -16520,8 +16575,10 @@ WITH selected AS (
  FROM values_at_rank
 )
 SELECT coalesce(jsonb_agg(jsonb_build_object('method', c.method, 'path', c.path, 'start', c.start, 'end', c."end",
- 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', candidate.p95_ms),
- 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', stable.p95_ms)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
+ 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', candidate.p95_ms,
+  'latency_requests', CASE WHEN sqlc.arg(warm_latency)::boolean AND c.latency_enabled THEN c.candidate_latency_requests END),
+ 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', stable.p95_ms,
+  'latency_requests', CASE WHEN sqlc.arg(warm_latency)::boolean AND c.latency_enabled THEN c.stable_latency_requests END)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
 FROM counts c
 LEFT JOIN percentiles candidate ON candidate.method = c.method AND candidate.path = c.path AND candidate.start = c.start AND candidate.deployment_id = sqlc.arg(candidate_id)::text::uuid
 LEFT JOIN percentiles stable ON stable.method = c.method AND stable.path = c.path AND stable.start = c.start AND stable.deployment_id = sqlc.arg(stable_id)::text::uuid;
@@ -16691,6 +16748,7 @@ LIMIT 1 FOR SHARE;
 -- Advisory identity cohorts use the same exact routes, deployment pair and
 -- closed windows as aggregate health. Rank before bounding output and sorting
 -- weighted latency. Request-time attribution never follows today's tenant link.
+-- Like the guard, skip platform refusals and rank only warm latency.
 WITH selected AS (
  SELECT value->>'method' AS method, value->>'path' AS path,
   (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled,
@@ -16702,7 +16760,7 @@ WITH selected AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
  FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
 ), observed AS MATERIALIZED (
- SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status,
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status, rt.cold_boot,
   CASE WHEN sqlc.arg(group_by)::text = 'tenant' THEN pt.id ELSE c.id END AS customer_id,
   CASE WHEN sqlc.arg(group_by)::text = 'tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed
  FROM selected s CROSS JOIN windows w JOIN request_telemetry rt
@@ -16711,6 +16769,7 @@ WITH selected AS (
  AND rt.method = s.method AND rt.route = s.method || ' ' || s.path
  AND rt.received_at >= w.start AND rt.received_at < w."end"
  AND rt.received_at >= sqlc.arg(since)::timestamptz AND rt.received_at < sqlc.arg(until)::timestamptz
+ AND NOT rt.platform_refusal
  LEFT JOIN api_consumers c ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id = rt.platform_tenant_id AND pt.account_id = rt.account_id
 ), totals AS (
@@ -16744,8 +16803,10 @@ WITH selected AS (
  SELECT b.method, b.path, b.customer_id, b.position, w.start, w."end",
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(candidate_id)::text::uuid), 0)::bigint AS candidate_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(candidate_id)::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(candidate_id)::text::uuid AND NOT o.cold_boot), 0)::bigint AS candidate_latency_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid), 0)::bigint AS stable_requests,
- coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS stable_errors
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS stable_errors,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid AND NOT o.cold_boot), 0)::bigint AS stable_latency_requests
  FROM bounded b CROSS JOIN windows w LEFT JOIN observed o
  ON o.method = b.method AND o.path = b.path AND o.customer_id = b.customer_id AND o.start = w.start
  GROUP BY b.method, b.path, b.customer_id, b.position, w.start, w."end"
@@ -16768,7 +16829,7 @@ WITH selected AS (
  FROM status_windows GROUP BY method,path,customer_id
 ), weighted AS (
  SELECT o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms, sum(o.requests) AS weight
- FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled
+ FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled AND NOT o.cold_boot
  GROUP BY o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms
 ), ranked AS (
  SELECT *, sum(weight) OVER (PARTITION BY method, path, customer_id, start, deployment_id ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
@@ -16786,9 +16847,11 @@ WITH selected AS (
 ), cohort_windows AS (
  SELECT c.method, c.path, c.customer_id, c.position,
  jsonb_agg(jsonb_build_object('start', c.start, 'end', c."end",
- 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', cp.p95_ms),
- 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', sp.p95_ms)) ORDER BY c.start) AS windows
- FROM counts c
+ 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', cp.p95_ms,
+  'latency_requests', CASE WHEN sel.latency_enabled THEN c.candidate_latency_requests END),
+ 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', sp.p95_ms,
+  'latency_requests', CASE WHEN sel.latency_enabled THEN c.stable_latency_requests END)) ORDER BY c.start) AS windows
+ FROM counts c JOIN selected sel ON sel.method = c.method AND sel.path = c.path
  LEFT JOIN percentiles cp ON cp.method = c.method AND cp.path = c.path AND cp.customer_id = c.customer_id AND cp.start = c.start AND cp.deployment_id = sqlc.arg(candidate_id)::text::uuid
  LEFT JOIN percentiles sp ON sp.method = c.method AND sp.path = c.path AND sp.customer_id = c.customer_id AND sp.start = c.start AND sp.deployment_id = sqlc.arg(stable_id)::text::uuid
  GROUP BY c.method, c.path, c.customer_id, c.position
@@ -16827,6 +16890,7 @@ WITH selected AS (
  AND t.method=s.method AND t.route=s.method || ' ' || s.path
  AND t.received_at>=w.start AND t.received_at<w."end"
  AND t.received_at>=sqlc.arg(since)::timestamptz AND t.received_at<sqlc.arg(until)::timestamptz
+ AND NOT t.platform_refusal
  AND (sqlc.arg(customer_id)::text = ''
   OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
   OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
@@ -16852,6 +16916,8 @@ SELECT CASE WHEN sqlc.arg(customer_group_by)::text = 'tenant' THEN
 -- Metadata only. Count all matching rows/weights before independently bounding
 -- each deployment/window. Error rows prefer trace links; latency rows prefer
 -- slowest latency buckets. Both then use newest timestamps and UUID ties.
+-- Same population as the evidence it explains: no platform refusals, and
+-- warm latency only for the canary guard (warm_latency).
 WITH windows AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
  FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
@@ -16863,6 +16929,7 @@ WITH windows AS (
  AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid,sqlc.arg(stable_id)::text::uuid)
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND (sqlc.arg(latency)::boolean OR t.status BETWEEN sqlc.arg(status_min)::integer AND sqlc.arg(status_max)::integer)
+ AND NOT t.platform_refusal AND NOT (sqlc.arg(latency)::boolean AND sqlc.arg(warm_latency)::boolean AND t.cold_boot)
  AND (sqlc.arg(customer_id)::text = ''
   OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
   OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
@@ -16891,6 +16958,7 @@ SELECT coalesce(jsonb_agg(jsonb_build_object('start',start,'end',"end",'candidat
 -- name: RouteHealthLatencyEvidence :many
 -- Independently bound the newest rows in each exact deployment/window. Read
 -- rows without spans too, so missing coverage is not hidden by selection.
+-- warm_latency reads the warm population the canary guard ranked.
 WITH windows AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
  FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
@@ -16903,6 +16971,7 @@ WITH windows AS (
  AND t.method=sqlc.arg(method)::text AND t.route=sqlc.arg(method)::text || ' ' || sqlc.arg(path)::text
  AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid,sqlc.arg(stable_id)::text::uuid)
  AND t.received_at>=w.start AND t.received_at<w."end"
+ AND NOT t.platform_refusal AND NOT (sqlc.arg(warm_latency)::boolean AND t.cold_boot)
  AND (sqlc.arg(customer_id)::text=''
   OR (sqlc.arg(customer_group_by)::text='tenant' AND t.platform_tenant_id=NULLIF(sqlc.arg(customer_id)::text,'')::uuid)
   OR (sqlc.arg(customer_group_by)::text='consumer' AND t.consumer_id=NULLIF(sqlc.arg(customer_id)::text,'')::uuid))
@@ -17028,7 +17097,7 @@ WITH selected AS (
  FROM selected s CROSS JOIN windows w
  JOIN request_telemetry rt ON rt.account_id=sqlc.arg(account_id)::text::uuid AND rt.app_id=sqlc.arg(app_id)::text::uuid
   AND rt.deployment_id=sqlc.arg(deployment_id)::text::uuid AND rt.method=s.method AND rt.route=s.method||' '||s.path
-  AND rt.received_at>=w.start AND rt.received_at<w."end"
+  AND rt.received_at>=w.start AND rt.received_at<w."end" AND NOT rt.platform_refusal
  LEFT JOIN api_consumers c ON c.id=rt.consumer_id AND c.account_id=rt.account_id AND c.app_id=rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id=rt.platform_tenant_id AND pt.account_id=rt.account_id
 ), required AS (
@@ -17196,9 +17265,34 @@ WITH expired AS (
 
 -- name: ListEnabledAppLogDrainsWithStandardBinding :many
 -- A rehearsal-enrolled app's candidate output never leaves for a customer
--- log destination (ADR-20261019180000).
-SELECT d.*,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
-FROM app_log_drains d WHERE d.enabled
+-- log destination (ADR-20261019180000). owner is what PgStore checks against
+-- the plan of the account the app's resources belong to, so a drain stops
+-- when that plan stops covering it (appLogDrainOwnership).
+SELECT d.*,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding,
+ jsonb_build_object('plan',r.plan,'subject',(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)::text,
+  'counted',a.status<>'deleted','standard',EXISTS(SELECT 1 FROM application_standard_control_bindings b
+   WHERE b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text))::jsonb AS owner
+FROM app_log_drains d JOIN apps a ON a.id=d.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ JOIN app_resource_accounts r ON r.app_id=d.app_id
+WHERE d.enabled
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
+ORDER BY d.created_at,d.id;
+
+-- name: ListAppLogDrainPlanSubjectDrains :many
+-- The enabled, deliverable drains of every app that shares app_id's billing
+-- subject, in delivery order, with the owner facts the delivery reads check
+-- against the plan. PgStore reports which of app_id's own drains the plan
+-- leaves out.
+SELECT d.id::text AS id,d.app_id::text AS app_id,(d.app_id=sqlc.arg(app_id)::uuid)::boolean AS addressed,
+ jsonb_build_object('plan',r.plan,'subject',(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)::text,
+  'counted',a.status<>'deleted','standard',EXISTS(SELECT 1 FROM application_standard_control_bindings b
+   WHERE b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text))::jsonb AS owner
+FROM app_log_drains d JOIN apps a ON a.id=d.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ JOIN app_resource_accounts r ON r.app_id=d.app_id
+ JOIN (SELECT CASE WHEN NOT so.personal_org AND so.resource_ownership_enabled THEN so.id ELSE sa.account_id END AS subject
+  FROM apps sa LEFT JOIN orgs so ON so.id=sa.org_id WHERE sa.id=sqlc.arg(app_id)::uuid) t
+  ON t.subject=(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)
+WHERE d.enabled
  AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
 ORDER BY d.created_at,d.id;
 
@@ -17251,14 +17345,27 @@ AND org_id=sqlc.arg(org_id)::uuid AND status<>'deleted';
 
 -- Both collections come from one statement snapshot, including empty drain sets.
 -- name: LoadApplicationStandardLogConsumerSnapshot :one
+-- The drains are ListEnabledAppLogDrainsWithStandardBinding's: a
+-- rehearsal-enrolled app's output never leaves for a customer destination
+-- (ADR-20261019180000), and owner is checked against the plan.
 SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object('spec',
  jsonb_build_object('ID',d.id::text,'AppID',d.app_id::text,'AccountID',d.account_id::text,
  'Kind',d.kind,'TargetURL',d.target_url,'AuthHeaderSealed',encode(coalesce(d.auth_header_sealed,''::bytea),'base64'),
  'Enabled',d.enabled,'CreatedAt',d.created_at,'UpdatedAt',d.updated_at),
- 'binding',application_standard_log_binding(d.app_id,d.id)) ORDER BY d.created_at,d.id)
- FROM app_log_drains d WHERE d.enabled),'[]'::jsonb),
+ 'binding',application_standard_log_binding(d.app_id,d.id),
+ 'owner',jsonb_build_object('plan',r.plan,'subject',(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)::text,
+  'counted',a.status<>'deleted','standard',EXISTS(SELECT 1 FROM application_standard_control_bindings b
+   WHERE b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text))) ORDER BY d.created_at,d.id)
+ FROM app_log_drains d JOIN apps a ON a.id=d.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ JOIN app_resource_accounts r ON r.app_id=d.app_id
+ WHERE d.enabled AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)),'[]'::jsonb),
  'inventories',coalesce((SELECT jsonb_agg(i.inventory ORDER BY i.app_id) FROM
- (SELECT e.app_id,application_standard_log_inventory(e.app_id) AS inventory FROM app_application_standards e) i
+ -- The join and predicates repeat conditions application_standard_log_inventory
+ -- requires, so rows that can only yield NULL (deleted apps above all) skip the
+ -- per-row function call and its plan.
+ (SELECT e.app_id,application_standard_log_inventory(e.app_id) AS inventory FROM app_application_standards e
+  JOIN apps a ON a.id=e.app_id
+  WHERE a.status='active' AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision) i
  WHERE i.inventory IS NOT NULL),'[]'::jsonb))::jsonb AS snapshot;
 
 -- name: TryLockApplicationStandardLogConsumer :one
@@ -25589,6 +25696,17 @@ WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore
 UPDATE database_vms
 SET restore_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
 WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NOT NULL
+  AND (restore_lease_until IS NULL OR restore_lease_until < now()
+       OR restore_lease_until = sqlc.narg(held)::timestamptz)
+RETURNING restore_lease_until;
+
+-- name: ClaimDatabaseVMProvision :one
+-- ClaimDatabaseVMRestore for a provisioning database that is not a restore:
+-- the lease on its bootstrap, in the restore lease's column, since a
+-- database is never both.
+UPDATE database_vms
+SET restore_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NULL
   AND (restore_lease_until IS NULL OR restore_lease_until < now()
        OR restore_lease_until = sqlc.narg(held)::timestamptz)
 RETURNING restore_lease_until;

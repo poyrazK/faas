@@ -32,9 +32,7 @@ func TestMetalDataAPIThroughThePooler(t *testing.T) {
 	defer cancel()
 	id := uuid.NewString()
 	t.Cleanup(func() { _ = st.sched.Delete(context.Background(), id) })
-	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: id, Spec: devSpec()}); err != nil {
-		t.Fatal(err)
-	}
+	provisionReady(ctx, t, p, managedpostgres.ProvisionRequest{ResourceID: id, Spec: devSpec()})
 	issue := func(key string, access managedpostgres.CredentialAccess) managedpostgres.CredentialMaterial {
 		t.Helper()
 		m, err := p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: id, IdentityKey: key, Access: access})

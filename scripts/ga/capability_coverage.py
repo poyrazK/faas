@@ -72,7 +72,7 @@ RULES = [
     (r"retained-service-spans|spans-", "Tracing:"),
     (r"response-status-hooks", "Throttle suggestions"),
     (r"^warmup$", "Warm pool"),
-    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|private-ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|health-path|host|iface|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
+    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|private-ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|health-path|host|iface|ingress-cidrs|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
     (r"^(control|dns-handoff|edge-health-outcome|handler|inflight|pgbackend|rule-label-set|stale-target|workload-retirement)$", "INFRA"),
     (r"^/v1/apps/\\$|^/v1\?api.key", "TEST"),
     (r"^app-layer-max", "Builds in builder"),
@@ -170,7 +170,7 @@ RULES = [
     (r"internal/hosting|hosting-|internal-frontend|^sites$|^hosting|frontend-hosting|site-", "Internal frontend hosting"),
     (r"internal-?mail|maild|mailctl|mail-feedback|mail-metrics|mail-report|productemail|product-email", "Internal mail service"),
     (r"product-control|productcontrol|product_control|/product/|^product$|product-customers", "Product control"),
-    (r"agent-run|agent-execution|agent-callback|^agent|agents", "Gregale Agents"),
+    (r"agent-run|agent-execution|agent-callback|agent-tool|^agent|agents", "Gregale Agents"),
     (r"oci/registry|^/v2/?$|registry-storage|ociregistry", "Platform OCI registry"),
     (r"^/v1/admin|^admin|gregalectl|compute-nodes|operator|break-glass|abuse|^/admin|deployctl|nodes?-|fleet|cluster-signing", "Operator admin"),
     (r"data-repair|datarepair|repair", "Selective data repair"),
@@ -380,8 +380,8 @@ INFRA_RULES = [
     r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$",
     # ADR-20261030115139: the public edge's status for platform problems.
     r"^platform-error-status$",
-    # ADR-20261031105055: the compute edge's host-to-node routing.
-    r"^edge-placement$",
+    # ADR-20261031105055: the compute edge's host-to-node routing and its switch.
+    r"^edge-placement(-routing)?$",
 ]
 
 
