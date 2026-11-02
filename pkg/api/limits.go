@@ -3496,6 +3496,13 @@ const (
 	MaxObjectGatewayTransferBytesPerSecond int64 = 100_000_000_000 / 8
 )
 
+// ObjectGatewayPublicReadSharePercent of a compute node's gateway port share
+// goes to its app edge's public bucket reads once the edge serves them itself
+// (manifest object_storage.compute_public_reads, ADR-20261031122757 amendment
+// 2026-11-02); s3-gatewayd keeps the rest. The two are separate processes, so
+// each paces to its own part and together they stay within the share.
+const ObjectGatewayPublicReadSharePercent = 33
+
 // ObjectStorageLimitsDocsURL documents the object-storage limits an error
 // names.
 const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/docs/object-storage.md#limits"
