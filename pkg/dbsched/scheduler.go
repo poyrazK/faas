@@ -142,6 +142,10 @@ type Config struct {
 	IdleTimeout time.Duration
 	// ReadyTimeout bounds a boot until PostgreSQL accepts connections.
 	ReadyTimeout time.Duration
+	// ProvisionTimeout bounds one attempt at a new database's bootstrap,
+	// first base backup included (default 15 min); past it the database
+	// fails.
+	ProvisionTimeout time.Duration
 	// WakeWait bounds how long a wake waits for another replica's wake.
 	WakeWait time.Duration
 	// WakeQueueWait bounds how long a wake waits for its node to admit
@@ -162,8 +166,8 @@ type Config struct {
 	BackupTimeout time.Duration
 	// RestoreTimeout bounds one point-in-time restore attempt.
 	RestoreTimeout time.Duration
-	// RestoreLease is how long a restore's lease lasts unrenewed; another
-	// replica resumes the restore once it lapses.
+	// RestoreLease is how long a restore's or a bootstrap's lease lasts
+	// unrenewed; another replica resumes it once it lapses.
 	RestoreLease time.Duration
 	// SharedArchive says every database node's dbbackupd uploads to the
 	// same bucket and prefix, so any node can read any database's archive:
@@ -247,6 +251,9 @@ type Scheduler struct {
 	// restores are the restores this process runs, by database id.
 	restores  sync.Map // database id -> *restoreRun
 	restoreWG sync.WaitGroup
+	// provisions are the bootstraps this process runs, by database id.
+	provisions  sync.Map // database id -> *provisionRun
+	provisionWG sync.WaitGroup
 	// lostPruned is when each lost node's database was last pruned.
 	lostPruned sync.Map // database id -> time.Time
 	// freed wakes this process's queued wakes when a node frees a boot
@@ -305,6 +312,9 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.ReadyTimeout <= 0 {
 		cfg.ReadyTimeout = time.Minute
+	}
+	if cfg.ProvisionTimeout <= 0 {
+		cfg.ProvisionTimeout = 15 * time.Minute
 	}
 	if cfg.WakeWait <= 0 {
 		cfg.WakeWait = time.Minute
@@ -414,10 +424,46 @@ func (s *Scheduler) node(ctx context.Context, id string) (Node, error) {
 	return Node{}, ErrNodeUnavailable
 }
 
-// Provision places a database, creates and bootstraps its volume, and parks
-// it. Retrying a provisioning database resumes it; any other existing
-// database is returned unchanged.
+// StartProvision places a database and bootstraps it in the background
+// (ADR-1027 amendment 2026-11-02): creating its volume, initdb and its
+// first base backup outlast an RPC, and a bootstrap its caller's deadline
+// cut off would fail a database that was going to work. The database stays
+// provisioning until it is parked; a failed bootstrap leaves it failed.
+// The bootstrap runs under a lease in database_vms that the running
+// replica renews, and any replica resumes one whose lease lapsed
+// (ResumeProvisions). Retrying a provisioning database resumes it; any
+// other existing database is returned unchanged.
+func (s *Scheduler) StartProvision(ctx context.Context, req ProvisionRequest) (VM, error) {
+	vm, err := s.place(ctx, req)
+	if err != nil || vm.State != StateProvisioning {
+		return vm, err
+	}
+	s.resumeProvision(ctx, vm)
+	return vm, nil
+}
+
+// Provision is StartProvision that waits for this process's bootstrap and
+// returns the database it left, with the bootstrap's error. A bootstrap
+// another replica holds is not waited for.
 func (s *Scheduler) Provision(ctx context.Context, req ProvisionRequest) (VM, error) {
+	vm, err := s.place(ctx, req)
+	if err != nil || vm.State != StateProvisioning {
+		return vm, err
+	}
+	run := s.resumeProvision(ctx, vm)
+	select {
+	case <-run.done:
+	case <-ctx.Done():
+		return vm, ctx.Err()
+	}
+	if run.err != nil {
+		return vm, run.err
+	}
+	return s.store.Get(ctx, vm.DatabaseID)
+}
+
+// place records a new database on a node with room for it.
+func (s *Scheduler) place(ctx context.Context, req ProvisionRequest) (VM, error) {
 	if err := req.Validate(); err != nil {
 		return VM{}, err
 	}
@@ -425,27 +471,113 @@ func (s *Scheduler) Provision(ctx context.Context, req ProvisionRequest) (VM, er
 	defer unlock()
 	vm, err := s.store.Place(ctx, VM{DatabaseID: req.DatabaseID, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB,
 		VolumeBytes: req.VolumeBytes, AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds, Replicated: req.Replicated})
-	if err != nil || vm.State != StateProvisioning {
-		return vm, err
-	}
-	if vm.RestoreSource != "" {
+	if err == nil && vm.State == StateProvisioning && vm.RestoreSource != "" {
 		// A restore provisions itself; bootstrapping it would init a new
 		// cluster over the recovery.
 		return vm, ErrConflict
 	}
+	return vm, err
+}
+
+// provisionRun is one bootstrap this process is running; err is the
+// bootstrap's, set before done closes.
+type provisionRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	err    error
+}
+
+// ResumeProvisions starts every provisioning bootstrap not already running
+// here; the lease keeps two replicas from running the same one.
+func (s *Scheduler) ResumeProvisions(ctx context.Context) error {
+	vms, err := s.store.List(ctx, StateProvisioning)
+	if err != nil {
+		return err
+	}
+	for _, vm := range vms {
+		if vm.RestoreSource == "" {
+			s.resumeProvision(ctx, vm)
+		}
+	}
+	return nil
+}
+
+// resumeProvision runs vm's bootstrap in the background unless this
+// process already is, and returns the run. The bootstrap outlives the call
+// that started it.
+func (s *Scheduler) resumeProvision(ctx context.Context, vm VM) *provisionRun {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.ProvisionTimeout)
+	run := &provisionRun{cancel: cancel, done: make(chan struct{})}
+	if running, ok := s.provisions.LoadOrStore(vm.DatabaseID, run); ok {
+		cancel()
+		return running.(*provisionRun)
+	}
+	s.provisionWG.Add(1)
+	go func() {
+		defer s.provisionWG.Done()
+		defer close(run.done)
+		defer s.provisions.Delete(vm.DatabaseID)
+		defer cancel()
+		run.err = s.runProvision(ctx, vm.DatabaseID)
+	}()
+	return run
+}
+
+// stopProvision cancels this process's bootstrap of id, if any, and waits
+// for it to wind down.
+func (s *Scheduler) stopProvision(id string) {
+	if v, ok := s.provisions.Load(id); ok {
+		run := v.(*provisionRun)
+		run.cancel()
+		<-run.done
+	}
+}
+
+// runProvision bootstraps a provisioning database under its lease and
+// parks it. A run that cannot take the lease leaves the database to the
+// replica holding it; one canceled (deleted, or its lease lost) leaves it
+// provisioning for whoever holds it next, which boots it again. Only a
+// bootstrap that failed or ran out of time fails the database.
+func (s *Scheduler) runProvision(ctx context.Context, id string) error {
+	lease, err := s.store.ClaimProvision(ctx, id, time.Time{}, s.cfg.RestoreLease)
+	if errors.Is(err, ErrConflict) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	renewed := make(chan struct{})
+	go func() {
+		defer close(renewed)
+		s.renewLease(ctx, lease, func(ctx context.Context, held time.Time) (time.Time, error) {
+			return s.store.ClaimProvision(ctx, id, held, s.cfg.RestoreLease)
+		}, cancel)
+	}()
+	defer func() { cancel(); <-renewed }()
+	unlock := s.lock(id)
+	defer unlock()
+	vm, err := s.store.Get(ctx, id)
+	if err != nil || vm.State != StateProvisioning || vm.RestoreSource != "" {
+		return err
+	}
 	node, err := s.node(ctx, vm.NodeID)
 	if err != nil {
-		return vm, err
+		return err
 	}
-	if code, err := s.bootstrap(ctx, node, vm); err != nil {
-		_ = s.vmm.Stop(context.WithoutCancel(ctx), node, vm.DatabaseID)
-		_ = s.store.Transition(context.WithoutCancel(ctx), vm.DatabaseID, []State{StateProvisioning}, StateFailed, TransitionOptions{LastError: code})
-		return vm, fmt.Errorf("dbsched: provision %s: %w", vm.DatabaseID, err)
+	code, err := s.bootstrap(ctx, node, vm)
+	if err == nil {
+		return s.store.Transition(ctx, id, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true})
 	}
-	if err := s.store.Transition(ctx, vm.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
-		return vm, err
+	if errors.Is(ctx.Err(), context.Canceled) {
+		s.log.Warn("dbsched: provisioning interrupted", "database_id", id, "err", err)
+		return fmt.Errorf("dbsched: provision %s interrupted: %w", id, err)
 	}
-	return s.store.Get(ctx, vm.DatabaseID)
+	s.log.Warn("dbsched: provisioning failed", "database_id", id, "code", code, "err", err)
+	cleanup := context.WithoutCancel(ctx)
+	_ = s.vmm.Stop(cleanup, node, id)
+	_ = s.store.Transition(cleanup, id, []State{StateProvisioning}, StateFailed, TransitionOptions{LastError: code})
+	return fmt.Errorf("dbsched: provision %s: %w", id, err)
 }
 
 func (s *Scheduler) bootstrap(ctx context.Context, node Node, vm VM) (string, error) {
@@ -765,6 +897,7 @@ func (s *Scheduler) Admin(ctx context.Context, id, sql string) (dbguest.Response
 // if the node ever comes back.
 func (s *Scheduler) Delete(ctx context.Context, id string) error {
 	s.stopRestore(id)
+	s.stopProvision(id)
 	unlock := s.lock(id)
 	defer unlock()
 	vm, err := s.store.Get(ctx, id)
@@ -1089,9 +1222,12 @@ func (s *Scheduler) vmLost(ctx context.Context, vm VM) bool {
 // Recover settles transitions a previous schedd process left in flight:
 // a waking or parking database is stopped and parked. Its next wake boots
 // it again; PostgreSQL recovers from its WAL if the stop was unclean.
-// Restores and upgrades whose lease lapsed resume in the background; moves
-// whose lease lapsed are aborted.
+// Bootstraps, restores and upgrades whose lease lapsed resume in the
+// background; moves whose lease lapsed are aborted.
 func (s *Scheduler) Recover(ctx context.Context) error {
+	if err := s.ResumeProvisions(ctx); err != nil {
+		return err
+	}
 	if err := s.ResumeRestores(ctx); err != nil {
 		return err
 	}
@@ -1157,6 +1293,9 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 				s.log.Warn("dbsched: keep-warm sweep failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("dbsched: woke always-on databases", "count", n)
+			}
+			if err := s.ResumeProvisions(ctx); err != nil {
+				s.log.Warn("dbsched: provisioning sweep failed", "err", err)
 			}
 			if err := s.ResumeRestores(ctx); err != nil {
 				s.log.Warn("dbsched: restore sweep failed", "err", err)

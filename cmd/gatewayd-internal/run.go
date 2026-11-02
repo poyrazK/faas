@@ -3497,6 +3497,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					Country:                              row.Country,
 					WakeId:                               row.WakeID,
 					TraceInferred:                        row.TraceInferred,
+					PlatformRefusal:                      row.PlatformRefusal,
 					InstanceId:                           row.InstanceID,
 					GuestDurationMs:                      int32(row.GuestDurationMS),
 					GuestRuntime:                         row.GuestRuntime,

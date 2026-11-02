@@ -223,6 +223,9 @@ type Store interface {
 	// or renews the lease held, returning the new lease. A lease another
 	// replica holds, or a database no longer restoring, is ErrConflict.
 	ClaimRestore(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
+	// ClaimProvision is ClaimRestore for a provisioning database that is
+	// not a restore: the lease on its bootstrap.
+	ClaimProvision(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
 	// RecordRestore stamps a provisioning restore's last replayed commit.
 	RecordRestore(ctx context.Context, id string, recoveredTo time.Time) error
 	// Place opens the storage interval, compute opens on entering an

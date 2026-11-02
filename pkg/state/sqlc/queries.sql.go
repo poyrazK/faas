@@ -5385,6 +5385,31 @@ func (q *Queries) ClaimDatabaseStandby(ctx context.Context, db DBTX, databaseID 
 	return result.RowsAffected(), nil
 }
 
+const claimDatabaseVMProvision = `-- name: ClaimDatabaseVMProvision :one
+UPDATE database_vms
+SET restore_lease_until = now() + make_interval(secs => $1::double precision)
+WHERE database_id = $2 AND state = 'provisioning' AND restore_source IS NULL
+  AND (restore_lease_until IS NULL OR restore_lease_until < now()
+       OR restore_lease_until = $3::timestamptz)
+RETURNING restore_lease_until
+`
+
+type ClaimDatabaseVMProvisionParams struct {
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+	Held         pgtype.Timestamptz
+}
+
+// ClaimDatabaseVMRestore for a provisioning database that is not a restore:
+// the lease on its bootstrap, in the restore lease's column, since a
+// database is never both.
+func (q *Queries) ClaimDatabaseVMProvision(ctx context.Context, db DBTX, arg ClaimDatabaseVMProvisionParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, claimDatabaseVMProvision, arg.LeaseSeconds, arg.DatabaseID, arg.Held)
+	var restore_lease_until pgtype.Timestamptz
+	err := row.Scan(&restore_lease_until)
+	return restore_lease_until, err
+}
+
 const claimDatabaseVMRestore = `-- name: ClaimDatabaseVMRestore :one
 UPDATE database_vms
 SET restore_lease_until = now() + make_interval(secs => $1::double precision)
@@ -36540,7 +36565,7 @@ INSERT INTO request_telemetry (
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
     guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
-    content_outcome, trace_inferred
+    content_outcome, trace_inferred, platform_refusal
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -36561,7 +36586,8 @@ INSERT INTO request_telemetry (
     $31::bool,
     COALESCE(NULLIF($32::text, '')::jsonb, '[]'::jsonb),
     $33::text,
-    $34::bool
+    $34::bool,
+    $35::bool
 )
 `
 
@@ -36600,6 +36626,7 @@ type InsertRequestTelemetryParams struct {
 	FlagEvidenceJson            string
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 // ---------------------------------------------------------------------------
@@ -36672,6 +36699,7 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.FlagEvidenceJson,
 		arg.ContentOutcome,
 		arg.TraceInferred,
+		arg.PlatformRefusal,
 	)
 	return err
 }
@@ -70578,6 +70606,26 @@ func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype
 	return plan, err
 }
 
+const objectUsageAccountPlanCap = `-- name: ObjectUsageAccountPlanCap :one
+SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+UNION ALL
+SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
+`
+
+type ObjectUsageAccountPlanCapRow struct {
+	Plan            string
+	OverageCapCents pgtype.Int8
+}
+
+// The plan and spend cap that set an account's object-storage ceilings
+// (ADR-1320, ADR-20261101214152). A null cap is no cap.
+func (q *Queries) ObjectUsageAccountPlanCap(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectUsageAccountPlanCapRow, error) {
+	row := db.QueryRow(ctx, objectUsageAccountPlanCap, id)
+	var i ObjectUsageAccountPlanCapRow
+	err := row.Scan(&i.Plan, &i.OverageCapCents)
+	return i, err
+}
+
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
 SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
 `
@@ -97456,7 +97504,7 @@ WITH selected AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
  FROM jsonb_array_elements($3::jsonb)
 ), observed AS MATERIALIZED (
- SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status,
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status, rt.cold_boot,
   CASE WHEN $4::text = 'tenant' THEN pt.id ELSE c.id END AS customer_id,
   CASE WHEN $4::text = 'tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed
  FROM selected s CROSS JOIN windows w JOIN request_telemetry rt
@@ -97465,6 +97513,7 @@ WITH selected AS (
  AND rt.method = s.method AND rt.route = s.method || ' ' || s.path
  AND rt.received_at >= w.start AND rt.received_at < w."end"
  AND rt.received_at >= $9::timestamptz AND rt.received_at < $10::timestamptz
+ AND NOT rt.platform_refusal
  LEFT JOIN api_consumers c ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id = rt.platform_tenant_id AND pt.account_id = rt.account_id
 ), totals AS (
@@ -97498,8 +97547,10 @@ WITH selected AS (
  SELECT b.method, b.path, b.customer_id, b.position, w.start, w."end",
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid), 0)::bigint AS candidate_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid AND NOT o.cold_boot), 0)::bigint AS candidate_latency_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid), 0)::bigint AS stable_requests,
- coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS stable_errors
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS stable_errors,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid AND NOT o.cold_boot), 0)::bigint AS stable_latency_requests
  FROM bounded b CROSS JOIN windows w LEFT JOIN observed o
  ON o.method = b.method AND o.path = b.path AND o.customer_id = b.customer_id AND o.start = w.start
  GROUP BY b.method, b.path, b.customer_id, b.position, w.start, w."end"
@@ -97522,7 +97573,7 @@ WITH selected AS (
  FROM status_windows GROUP BY method,path,customer_id
 ), weighted AS (
  SELECT o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms, sum(o.requests) AS weight
- FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled
+ FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled AND NOT o.cold_boot
  GROUP BY o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms
 ), ranked AS (
  SELECT method, path, customer_id, start, deployment_id, latency_ms, weight, sum(weight) OVER (PARTITION BY method, path, customer_id, start, deployment_id ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
@@ -97540,9 +97591,11 @@ WITH selected AS (
 ), cohort_windows AS (
  SELECT c.method, c.path, c.customer_id, c.position,
  jsonb_agg(jsonb_build_object('start', c.start, 'end', c."end",
- 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', cp.p95_ms),
- 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', sp.p95_ms)) ORDER BY c.start) AS windows
- FROM counts c
+ 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', cp.p95_ms,
+  'latency_requests', CASE WHEN sel.latency_enabled THEN c.candidate_latency_requests END),
+ 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', sp.p95_ms,
+  'latency_requests', CASE WHEN sel.latency_enabled THEN c.stable_latency_requests END)) ORDER BY c.start) AS windows
+ FROM counts c JOIN selected sel ON sel.method = c.method AND sel.path = c.path
  LEFT JOIN percentiles cp ON cp.method = c.method AND cp.path = c.path AND cp.customer_id = c.customer_id AND cp.start = c.start AND cp.deployment_id = $7::text::uuid
  LEFT JOIN percentiles sp ON sp.method = c.method AND sp.path = c.path AND sp.customer_id = c.customer_id AND sp.start = c.start AND sp.deployment_id = $8::text::uuid
  GROUP BY c.method, c.path, c.customer_id, c.position
@@ -97576,6 +97629,7 @@ type RouteCustomerHealthObservationParams struct {
 // Advisory identity cohorts use the same exact routes, deployment pair and
 // closed windows as aggregate health. Rank before bounding output and sorting
 // weighted latency. Request-time attribution never follows today's tenant link.
+// Like the guard, skip platform refusals and rank only warm latency.
 func (q *Queries) RouteCustomerHealthObservation(ctx context.Context, db DBTX, arg RouteCustomerHealthObservationParams) ([]byte, error) {
 	row := db.QueryRow(ctx, routeCustomerHealthObservation,
 		arg.CustomerLimit,
@@ -97616,6 +97670,7 @@ WITH selected AS (
  AND t.method=s.method AND t.route=s.method || ' ' || s.path
  AND t.received_at>=w.start AND t.received_at<w."end"
  AND t.received_at>=$7::timestamptz AND t.received_at<$8::timestamptz
+ AND NOT t.platform_refusal
  AND ($9::text = ''
   OR ($10::text = 'tenant' AND t.platform_tenant_id = NULLIF($9::text, '')::uuid)
   OR ($10::text = 'consumer' AND t.consumer_id = NULLIF($9::text, '')::uuid))
@@ -97714,9 +97769,10 @@ WITH windows AS (
  AND t.deployment_id IN ($6::text::uuid,$7::text::uuid)
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND ($8::boolean OR t.status BETWEEN $9::integer AND $10::integer)
- AND ($11::text = ''
-  OR ($12::text = 'tenant' AND t.platform_tenant_id = NULLIF($11::text, '')::uuid)
-  OR ($12::text = 'consumer' AND t.consumer_id = NULLIF($11::text, '')::uuid))
+ AND NOT t.platform_refusal AND NOT ($8::boolean AND $11::boolean AND t.cold_boot)
+ AND ($12::text = ''
+  OR ($13::text = 'tenant' AND t.platform_tenant_id = NULLIF($12::text, '')::uuid)
+  OR ($13::text = 'consumer' AND t.consumer_id = NULLIF($12::text, '')::uuid))
 ), ranked AS (
  SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id,row_number() OVER (PARTITION BY start,deployment_id ORDER BY CASE WHEN $8::boolean THEN latency_ms END DESC NULLS LAST,(nullif(trace_id,'') IS NOT NULL) DESC,received_at DESC,id DESC) AS position
  FROM observed
@@ -97725,14 +97781,14 @@ WITH windows AS (
  FROM observed GROUP BY start,deployment_id
 ), examples AS (
  SELECT start,deployment_id,jsonb_agg(jsonb_build_object('telemetry_id',id,'received_at',received_at,'status',status,'latency_ms',latency_ms,'represented_requests',count,'trace_id',trace_id) ORDER BY position) AS examples
- FROM ranked WHERE position <= $13::integer GROUP BY start,deployment_id
+ FROM ranked WHERE position <= $14::integer GROUP BY start,deployment_id
 ), sides AS (
  SELECT $6::text::uuid AS deployment_id,'candidate'::text AS side
  UNION ALL SELECT $7::text::uuid,'stable'::text
 ), summaries AS (
  SELECT w.start,w."end",jsonb_object_agg(s.side,jsonb_build_object(
  'matching_requests',coalesce(t.matching_requests,0),'observed_rows',coalesce(t.observed_rows,0),
- 'examples_truncated',coalesce(t.observed_rows,0) > $13::integer,'examples',coalesce(e.examples,'[]'::jsonb))) AS sides
+ 'examples_truncated',coalesce(t.observed_rows,0) > $14::integer,'examples',coalesce(e.examples,'[]'::jsonb))) AS sides
  FROM windows w CROSS JOIN sides s LEFT JOIN totals t ON t.start=w.start AND t.deployment_id=s.deployment_id
  LEFT JOIN examples e ON e.start=w.start AND e.deployment_id=s.deployment_id GROUP BY w.start,w."end"
 )
@@ -97750,6 +97806,7 @@ type RouteHealthInvestigationExamplesParams struct {
 	Latency         bool
 	StatusMin       int32
 	StatusMax       int32
+	WarmLatency     bool
 	CustomerID      string
 	CustomerGroupBy string
 	ExampleLimit    int32
@@ -97758,6 +97815,8 @@ type RouteHealthInvestigationExamplesParams struct {
 // Metadata only. Count all matching rows/weights before independently bounding
 // each deployment/window. Error rows prefer trace links; latency rows prefer
 // slowest latency buckets. Both then use newest timestamps and UUID ties.
+// Same population as the evidence it explains: no platform refusals, and
+// warm latency only for the canary guard (warm_latency).
 func (q *Queries) RouteHealthInvestigationExamples(ctx context.Context, db DBTX, arg RouteHealthInvestigationExamplesParams) ([]byte, error) {
 	row := db.QueryRow(ctx, routeHealthInvestigationExamples,
 		arg.Windows,
@@ -97770,6 +97829,7 @@ func (q *Queries) RouteHealthInvestigationExamples(ctx context.Context, db DBTX,
 		arg.Latency,
 		arg.StatusMin,
 		arg.StatusMax,
+		arg.WarmLatency,
 		arg.CustomerID,
 		arg.CustomerGroupBy,
 		arg.ExampleLimit,
@@ -97792,11 +97852,12 @@ WITH windows AS (
  AND t.method=$4::text AND t.route=$4::text || ' ' || $5::text
  AND t.deployment_id IN ($6::text::uuid,$7::text::uuid)
  AND t.received_at>=w.start AND t.received_at<w."end"
- AND ($8::text=''
-  OR ($9::text='tenant' AND t.platform_tenant_id=NULLIF($8::text,'')::uuid)
-  OR ($9::text='consumer' AND t.consumer_id=NULLIF($8::text,'')::uuid))
+ AND NOT t.platform_refusal AND NOT ($8::boolean AND t.cold_boot)
+ AND ($9::text=''
+  OR ($10::text='tenant' AND t.platform_tenant_id=NULLIF($9::text,'')::uuid)
+  OR ($10::text='consumer' AND t.consumer_id=NULLIF($9::text,'')::uuid))
 ), sampled AS MATERIALIZED (
- SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id, spans_summary, cold_boot, guest_duration_ms, guest_outcome, wake_id, instance_id, position FROM ranked WHERE position<=$10::integer
+ SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id, spans_summary, cold_boot, guest_duration_ms, guest_outcome, wake_id, instance_id, position FROM ranked WHERE position<=$11::integer
 )
 SELECT s.start,s.deployment_id::text AS deployment_id,s.id::text AS telemetry_id,s.received_at,s.status,s.latency_ms,s.count,s.trace_id,
  s.spans_summary,s.cold_boot,s.guest_duration_ms,s.guest_outcome,s.wake_id,
@@ -97823,6 +97884,7 @@ type RouteHealthLatencyEvidenceParams struct {
 	Path            string
 	CandidateID     string
 	StableID        string
+	WarmLatency     bool
 	CustomerID      string
 	CustomerGroupBy string
 	RowsLimit       int32
@@ -97847,6 +97909,7 @@ type RouteHealthLatencyEvidenceRow struct {
 
 // Independently bound the newest rows in each exact deployment/window. Read
 // rows without spans too, so missing coverage is not hidden by selection.
+// warm_latency reads the warm population the canary guard ranked.
 func (q *Queries) RouteHealthLatencyEvidence(ctx context.Context, db DBTX, arg RouteHealthLatencyEvidenceParams) ([]RouteHealthLatencyEvidenceRow, error) {
 	rows, err := db.Query(ctx, routeHealthLatencyEvidence,
 		arg.AppID,
@@ -97856,6 +97919,7 @@ func (q *Queries) RouteHealthLatencyEvidence(ctx context.Context, db DBTX, arg R
 		arg.Path,
 		arg.CandidateID,
 		arg.StableID,
+		arg.WarmLatency,
 		arg.CustomerID,
 		arg.CustomerGroupBy,
 		arg.RowsLimit,
@@ -97897,30 +97961,34 @@ const routeHealthObservation = `-- name: RouteHealthObservation :one
 WITH selected AS (
  SELECT (value->>'method')::text AS method, (value->>'path')::text AS path,
   (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled
- FROM jsonb_array_elements($3::jsonb)
+ FROM jsonb_array_elements($4::jsonb)
 ), windows AS (
- SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements($4::jsonb)
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements($5::jsonb)
 ), observed AS MATERIALIZED (
- SELECT s.method, s.path, s.latency_enabled, w.start, w."end", t.deployment_id, t.latency_ms, t.status, t.count
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", t.deployment_id, t.latency_ms, t.status, t.count,
+  ($1::boolean AND t.cold_boot) AS latency_excluded
  FROM selected s CROSS JOIN windows w LEFT JOIN request_telemetry t
- ON t.app_id = $5::text::uuid AND t.account_id = $6::text::uuid
- AND t.deployment_id IN ($1::text::uuid, $2::text::uuid)
+ ON t.app_id = $6::text::uuid AND t.account_id = $7::text::uuid
+ AND t.deployment_id IN ($2::text::uuid, $3::text::uuid)
  AND t.method = s.method AND t.route = s.method || ' ' || s.path
  AND t.received_at >= w.start AND t.received_at < w."end"
- AND t.received_at >= $7::timestamptz AND t.received_at < $8::timestamptz
- AND ($9::text = ''
-  OR ($10::text = 'tenant' AND t.platform_tenant_id = NULLIF($9::text, '')::uuid)
-  OR ($10::text = 'consumer' AND t.consumer_id = NULLIF($9::text, '')::uuid))
+ AND t.received_at >= $8::timestamptz AND t.received_at < $9::timestamptz
+ AND NOT t.platform_refusal
+ AND ($10::text = ''
+  OR ($11::text = 'tenant' AND t.platform_tenant_id = NULLIF($10::text, '')::uuid)
+  OR ($11::text = 'consumer' AND t.consumer_id = NULLIF($10::text, '')::uuid))
 ), counts AS (
- SELECT method, path, start, "end",
- coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $1::text::uuid), 0)::bigint AS candidate_requests,
- coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $1::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
- coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid), 0)::bigint AS stable_requests,
- coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS stable_errors
- FROM observed GROUP BY method, path, start, "end"
+ SELECT method, path, latency_enabled, start, "end",
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid), 0)::bigint AS candidate_requests,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid AND NOT latency_excluded), 0)::bigint AS candidate_latency_requests,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $3::text::uuid), 0)::bigint AS stable_requests,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $3::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS stable_errors,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $3::text::uuid AND NOT latency_excluded), 0)::bigint AS stable_latency_requests
+ FROM observed GROUP BY method, path, latency_enabled, start, "end"
 ), weighted AS (
  SELECT method, path, start, deployment_id, latency_ms, sum(count::bigint) AS weight
- FROM observed WHERE latency_enabled AND deployment_id IS NOT NULL
+ FROM observed WHERE latency_enabled AND deployment_id IS NOT NULL AND NOT latency_excluded
  GROUP BY method, path, start, deployment_id, latency_ms
 ), ranked AS (
  SELECT method, path, start, deployment_id, latency_ms,
@@ -97929,7 +97997,7 @@ WITH selected AS (
  FROM weighted
 ), targets AS (
  SELECT method, path, start, deployment_id, latency_ms, cumulative,
- (total - 1)::numeric * $11::double precision::numeric AS rank
+ (total - 1)::numeric * $12::double precision::numeric AS rank
  FROM ranked
 ), values_at_rank AS (
  SELECT method, path, start, deployment_id, rank,
@@ -97942,14 +98010,17 @@ WITH selected AS (
  FROM values_at_rank
 )
 SELECT coalesce(jsonb_agg(jsonb_build_object('method', c.method, 'path', c.path, 'start', c.start, 'end', c."end",
- 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', candidate.p95_ms),
- 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', stable.p95_ms)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
+ 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', candidate.p95_ms,
+  'latency_requests', CASE WHEN $1::boolean AND c.latency_enabled THEN c.candidate_latency_requests END),
+ 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', stable.p95_ms,
+  'latency_requests', CASE WHEN $1::boolean AND c.latency_enabled THEN c.stable_latency_requests END)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
 FROM counts c
-LEFT JOIN percentiles candidate ON candidate.method = c.method AND candidate.path = c.path AND candidate.start = c.start AND candidate.deployment_id = $1::text::uuid
-LEFT JOIN percentiles stable ON stable.method = c.method AND stable.path = c.path AND stable.start = c.start AND stable.deployment_id = $2::text::uuid
+LEFT JOIN percentiles candidate ON candidate.method = c.method AND candidate.path = c.path AND candidate.start = c.start AND candidate.deployment_id = $2::text::uuid
+LEFT JOIN percentiles stable ON stable.method = c.method AND stable.path = c.path AND stable.start = c.start AND stable.deployment_id = $3::text::uuid
 `
 
 type RouteHealthObservationParams struct {
+	WarmLatency     bool
 	CandidateID     string
 	StableID        string
 	Routes          []byte
@@ -97966,8 +98037,12 @@ type RouteHealthObservationParams struct {
 // Exact selected labels and shared windows. Aggregate publisher weights without
 // expanding requests. Percentile ranks interpolate bucket representatives, like
 // RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
+// Platform refusals never count. warm_latency (the canary guard) ranks only
+// requests that did not cold boot and reports how many it ranked
+// (ADR-20261028110044 amendment 3); the production monitor stays end to end.
 func (q *Queries) RouteHealthObservation(ctx context.Context, db DBTX, arg RouteHealthObservationParams) ([]byte, error) {
 	row := db.QueryRow(ctx, routeHealthObservation,
+		arg.WarmLatency,
 		arg.CandidateID,
 		arg.StableID,
 		arg.Routes,
@@ -98035,7 +98110,7 @@ WITH selected AS (
  FROM selected s CROSS JOIN windows w
  JOIN request_telemetry rt ON rt.account_id=$5::text::uuid AND rt.app_id=$6::text::uuid
   AND rt.deployment_id=$7::text::uuid AND rt.method=s.method AND rt.route=s.method||' '||s.path
-  AND rt.received_at>=w.start AND rt.received_at<w."end"
+  AND rt.received_at>=w.start AND rt.received_at<w."end" AND NOT rt.platform_refusal
  LEFT JOIN api_consumers c ON c.id=rt.consumer_id AND c.account_id=rt.account_id AND c.app_id=rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id=rt.platform_tenant_id AND pt.account_id=rt.account_id
 ), required AS (

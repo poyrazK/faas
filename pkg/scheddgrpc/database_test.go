@@ -64,7 +64,7 @@ func (f *fakeDatabases) ImportStatus(context.Context, string) (dbguest.ImportSta
 	return f.importState, f.err
 }
 
-func (f *fakeDatabases) Provision(_ context.Context, req dbsched.ProvisionRequest) (dbsched.VM, error) {
+func (f *fakeDatabases) StartProvision(_ context.Context, req dbsched.ProvisionRequest) (dbsched.VM, error) {
 	f.provision = req
 	return f.vm, f.err
 }

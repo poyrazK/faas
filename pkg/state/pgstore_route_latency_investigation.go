@@ -11,12 +11,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func pgInvestigationLatency(ctx context.Context, db sqlc.DBTX, accountID, slug string, out *api.RouteHealthInvestigation) error {
+func pgInvestigationLatency(ctx context.Context, db sqlc.DBTX, accountID, slug string, out *api.RouteHealthInvestigation, warm bool) error {
 	windows, err := json.Marshal(out.Windows)
 	if err != nil {
 		return fmt.Errorf("encode latency windows: %w", err)
 	}
-	rows, err := (&sqlc.Queries{}).RouteHealthLatencyEvidence(ctx, db, sqlc.RouteHealthLatencyEvidenceParams{AccountID: accountID, AppID: out.Report.AppID, CandidateID: out.Report.DeploymentID, StableID: out.Report.StableDeploymentID, Method: out.Selection.Method, Path: out.Selection.Path, CustomerID: out.Selection.CustomerID, CustomerGroupBy: out.Selection.CustomerGroupBy, Windows: windows, RowsLimit: api.RouteHealthLatencyEvidenceRowsLimit})
+	rows, err := (&sqlc.Queries{}).RouteHealthLatencyEvidence(ctx, db, sqlc.RouteHealthLatencyEvidenceParams{AccountID: accountID, AppID: out.Report.AppID, CandidateID: out.Report.DeploymentID, StableID: out.Report.StableDeploymentID, Method: out.Selection.Method, Path: out.Selection.Path, CustomerID: out.Selection.CustomerID, CustomerGroupBy: out.Selection.CustomerGroupBy, Windows: windows, RowsLimit: api.RouteHealthLatencyEvidenceRowsLimit, WarmLatency: warm})
 	if err != nil {
 		return fmt.Errorf("read route latency evidence: %w", err)
 	}

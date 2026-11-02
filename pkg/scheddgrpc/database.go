@@ -26,7 +26,7 @@ const (
 // DatabaseScheduler is schedd's database scheduler (ADR-1027);
 // *dbsched.Scheduler satisfies it.
 type DatabaseScheduler interface {
-	Provision(ctx context.Context, req dbsched.ProvisionRequest) (dbsched.VM, error)
+	StartProvision(ctx context.Context, req dbsched.ProvisionRequest) (dbsched.VM, error)
 	Wake(ctx context.Context, id string) (dbsched.VM, error)
 	Park(ctx context.Context, id string) error
 	Touch(ctx context.Context, id string) error
@@ -116,6 +116,8 @@ func provisionRequest(req *scheddpb.ProvisionDatabaseRequest) dbsched.ProvisionR
 	}
 }
 
+// ProvisionDatabase places a database; schedd bootstraps it in the
+// background and GetDatabase reports it provisioning until it is parked.
 func (s *Server) ProvisionDatabase(ctx context.Context, req *scheddpb.ProvisionDatabaseRequest) (*scheddpb.DatabaseRuntime, error) {
 	d, err := s.databaseScheduler(ctx, callerAPID)
 	if err != nil {
@@ -125,7 +127,7 @@ func (s *Server) ProvisionDatabase(ctx context.Context, req *scheddpb.ProvisionD
 	if err := pr.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	vm, err := d.Provision(ctx, pr)
+	vm, err := d.StartProvision(ctx, pr)
 	if err != nil {
 		return nil, s.databaseStatus("provision", err)
 	}

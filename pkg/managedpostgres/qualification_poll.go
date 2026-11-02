@@ -29,6 +29,8 @@ func qualifyProviderReadyWithRestore(ctx context.Context, provider Provider, res
 		var err error
 		if inspector, ok := provider.(RestoreInspector); ok && restore != nil {
 			observed, err = inspector.InspectRestore(ctx, resourceID, *restore)
+		} else if inspector, ok := provider.(ProvisionInspector); ok && restore == nil {
+			observed, err = inspector.InspectProvision(ctx, resourceID)
 		} else {
 			observed, err = provider.Inspect(ctx, resourceID)
 		}

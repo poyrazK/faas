@@ -102,15 +102,17 @@ func (s *Service) GetObjectStorageUsage(w http.ResponseWriter, r *http.Request, 
 		BucketProblem(w, err)
 		return
 	}
-	httpkit.WriteJSON(w, 200, s.ObjectStorageUsageResponse(usage, charges, acct.Plan))
+	httpkit.WriteJSON(w, 200, s.ObjectStorageUsageResponse(usage, charges, snapshot.PlanLimits))
 }
 
 // ObjectStorageUsageResponse reports the account's effective policy: the
-// operator safety policy tightened by its plan's ceilings (ADR-1320).
-func (s *Service) ObjectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge, plan api.Plan) api.ObjectStorageUsageResponse {
+// operator safety policy tightened by its plan's ceilings (ADR-1320),
+// including the storage ceiling its spend cap pays for (ADR-20261101214152).
+// limits are the plan limits the usage snapshot was read with.
+func (s *Service) ObjectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge, limits api.ObjectStoragePlanLimits) api.ObjectStorageUsageResponse {
 	out := api.ObjectStorageUsageResponse{
 		Usage:       usage,
-		Policy:      api.MustLimitsFor(plan).ObjectStorage.Policy(s.Host.ObjectStorage().Accounting),
+		Policy:      limits.Policy(s.Host.ObjectStorage().Accounting),
 		Charges:     charges,
 		BillingMode: "off",
 	}
