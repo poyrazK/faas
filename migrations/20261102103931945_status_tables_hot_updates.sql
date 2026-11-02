@@ -1,5 +1,10 @@
 -- filename: 20261102103931945_status_tables_hot_updates.sql
 -- migration-compat: expand
+-- Dropped concurrently (NO TRANSACTION), so the tables keep taking writes.
+-- Re-runnable. Down rebuilds them concurrently.
+-- +goose NO TRANSACTION
+
+-- +goose Up
 -- Three status tables are rewritten every few seconds, and each carries an
 -- index on the timestamp every write changes. Postgres can only update a row
 -- in place (HOT) when no indexed column changes, so every write also inserted
@@ -16,12 +21,6 @@
 -- Each table is a few hundred rows, so a sequential scan answers the prune
 -- and any other read on these columns in well under a millisecond. Dropping
 -- the indexes changes no result; the previous release runs unchanged.
---
--- Dropped concurrently (NO TRANSACTION), so the tables keep taking writes.
--- Re-runnable. Down rebuilds them concurrently.
--- +goose NO TRANSACTION
-
--- +goose Up
 SET lock_timeout = '5s';
 
 DROP INDEX CONCURRENTLY IF EXISTS operator_alert_rule_observations_retention_idx;
