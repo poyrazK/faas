@@ -69,6 +69,7 @@ first byte:
   connection is retried at once. A node that does not answer the TCP SYN is
   retried only after 19 s. Cloudflare's blog says this retry is the default
   on Pro, Business and Enterprise zones; the docs do not cover Free zones.
+  `gregale.dev` is on the Free plan, so the pilot finds out (step 0).
 - **No health checks.** Cloudflare does not health-check the addresses
   behind a record. §3 removes a bad node's record instead.
 
@@ -78,7 +79,10 @@ gatewayd-public stays the only public listener on a node (ADR-070). Its
 compute edge gains a TLS listener on port 443:
 
 - **Certificate.** A Cloudflare Origin CA certificate for the apps domains,
-  sealed like other node secrets. The zone runs SSL "Full (strict)".
+  sealed like other node secrets. Cloudflare checks it: a configuration rule
+  sets SSL "Full (strict)" for the app hostnames. The zone itself stays on
+  Cloudflare's automatic mode, which chose "Full" (no certificate check) as
+  of 2026-11-02, so the platform hosts are not affected.
 - **Client certificate.** The listener requires the zone's Authenticated
   Origin Pulls certificate. This is a zone-level client certificate that we
   upload, not Cloudflare's shared one, so another Cloudflare zone cannot reach
@@ -281,7 +285,9 @@ demand.
 
 ## Open questions
 
-- The zone's plan and SSL mode, read from the dashboard before step 2.
+- Answered 2026-11-02: `gregale.dev` is on the Free plan, with SSL on
+  automatic mode at "Full". Whether a Free zone gets the retry is the
+  pilot's first question.
 - Whether Cloudflare's per-hostname client certificates are needed, or the
   zone-level certificate is enough while the apps zones hold only app
   hosts.
