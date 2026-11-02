@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -4345,8 +4346,17 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// ?slug= (an app slug or id, sent by `gregale crons list --app`) scopes
 	// the list to one app; without it, every cron on the account's apps.
 	// The filter used to be ignored, so `--app X` listed other apps' crons.
+	ref := r.URL.Query().Get("slug")
+	// deploy:write reads one app's crons, which a function-set deploy
+	// reconciles and may already update; the account's whole list keeps
+	// apps:read (ADR-20261031162858 amendment 1).
+	if ref == "" && !middleware.HasScope(r, api.ScopesReadSurface...) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Insufficient scope", "listing every app's crons requires one of: admin,apps:read; deploy:write lists one app's with ?slug="))
+		return
+	}
 	var apps []state.App
-	if ref := r.URL.Query().Get("slug"); ref != "" {
+	if ref != "" {
 		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
 		if !ok {
 			s.notFound(w, "no such app")
