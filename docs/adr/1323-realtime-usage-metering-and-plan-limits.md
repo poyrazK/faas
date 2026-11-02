@@ -220,3 +220,43 @@ across all its channels and event types, with no way to delete one.
   (`api.RealtimeEventSchemasPerEndpoint`). At 16 KiB a schema that bounds an
   endpoint's schemas to 16 MiB. Versions stay immutable and undeletable.
 - The constants moved from `pkg/state` to `pkg/api/limits.go`.
+
+## Amendment (2026-11-02): an account's realtime write rate
+
+Retained writes reach control-plane Postgres through apid on paths the account
+API budget (600–6,000 requests a minute by plan) does not cover: a publisher
+credential publishes up to 600 times a minute and an endpoint holds 64 of
+them, and an endpoint keeps up to 256 recurring schedules firing every
+5 seconds with no end. One account could write without bound, and its
+schedules could fill the schedule runner's due list ahead of every other
+account's.
+
+- Every apid path that writes realtime rows takes from one per-account token
+  bucket (`RealtimeLimits.RetainedWritesPerSecond`, `RetainedWriteBurst`):
+  Hobby 10/s burst 32, Pro 50/s burst 100, Scale 200/s burst 400. It counts
+  retained publishes and each message of a batch, publisher-credential
+  publishes, inbox messages, message edits and deletes, snapshot writes and
+  scheduled publishes. Live publishes write no rows and are not counted.
+- A request past the rate gets `429 realtime_write_rate_limited` with the
+  limit, the writes it needed and `Retry-After`; it writes nothing. The burst
+  is at least `ManagedRealtimeBatchMaxMessages` (32), so a full batch fits.
+- A due schedule of an account past the rate is postponed, without counting
+  an attempt, until the bucket has room for it and for that account's
+  schedules postponed before it in the same pass
+  (`DeferManagedRealtimeSchedule` sets `next_attempt_at`). Recurrence is
+  fixed-delay, so the next occurrence follows the publish.
+- The bucket is per apid, like the account API budget. A publisher credential
+  or schedule reads the account's plan at most once a minute.
+
+## Amendment (2026-11-02): endpoint changes close sockets they no longer admit
+
+An endpoint update used to apply only to new connections. A socket admitted
+with a finalized or expired static token, under a changed auth mode or OIDC
+policy, or from an origin removed from `allowed_origins` stayed open until its
+maximum age, up to 7 days, although finalizing a rotation is how a customer
+revokes an exposed token. realtimed now records what admitted each connection
+and, on every endpoint registration, closes with 1008 the connections the new
+configuration would refuse. apid re-registers endpoints every 30 seconds,
+which also closes previous-token sockets once their grace deadline passes.
+Channel-rule changes, including the claims rules extract, keep connections;
+ticket connections keep their own per-second recheck.

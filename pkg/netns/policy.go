@@ -89,6 +89,14 @@ type HostPolicy struct {
 	// VM cache mutation will cut new schedd/gateway connections off from vmmd.
 	PrivateInputAllowRules []PrivateInputAllowRule
 
+	// PublicInputSourceCIDRs, when set, admits 80 and 443 only from these
+	// sources (Cloudflare's published ranges) instead of from anywhere, and
+	// leaves 22 to the provider firewall. It mirrors the nftables role's
+	// faas_cloudflare_origin_only branch, so a runtime rebuild keeps a
+	// compute edge that Cloudflare reaches directly Cloudflare-only
+	// (ADR-20261102081618 §2).
+	PublicInputSourceCIDRs []netip.Prefix
+
 	// MasqueradeCIDR is the source-address set the postrouting nat chain
 	// MASQUERADEs to the host's public IP on its way out PublicIface. Must be
 	// the NETWORK form of HostBridgeCIDR (e.g. "10.100.0.0/16", not the host
@@ -614,6 +622,11 @@ func (h HostPolicy) Render() string {
 			}
 		}
 	}
+	for _, p := range h.PublicInputSourceCIDRs {
+		if !p.IsValid() {
+			panic("netns: HostPolicy.Render: PublicInputSourceCIDRs has invalid source prefix")
+		}
+	}
 	for _, r := range h.PrivateInputAllowRules {
 		if !r.Source.IsValid() {
 			panic("netns: HostPolicy.Render: PrivateInputAllowRules has invalid source prefix")
@@ -673,7 +686,18 @@ func (h HostPolicy) Render() string {
 	fmt.Fprintf(&b, "    iifname %q tcp dport { %s } accept\n", h.BridgeName, joinInts(tenantHairpinTCPPorts, ","))
 	fmt.Fprintf(&b, "    iifname %q meta l4proto { icmp, ipv6-icmp } accept\n", h.BridgeName)
 	fmt.Fprintf(&b, "    iifname %q drop\n", h.BridgeName)
-	fmt.Fprintf(&b, "    tcp dport { %s } accept     # sshd + gatewayd-public public listener\n", allowPorts)
+	if len(h.PublicInputSourceCIDRs) > 0 {
+		b.WriteString("    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary\n")
+		for _, p := range h.PublicInputSourceCIDRs {
+			family := "ip"
+			if p.Addr().Is6() {
+				family = "ip6"
+			}
+			fmt.Fprintf(&b, "    %s saddr %s tcp dport { 80,443 } accept comment %q\n", family, p, "gateway via Cloudflare")
+		}
+	} else {
+		fmt.Fprintf(&b, "    tcp dport { %s } accept     # sshd + gatewayd-public public listener\n", allowPorts)
+	}
 	for _, r := range h.PrivateInputAllowRules {
 		family := "ip"
 		if r.Source.Addr().Is6() {

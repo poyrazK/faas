@@ -2179,6 +2179,11 @@ type Querier interface {
 	// Replay reads and locks one retained occurrence inside the app admission lock.
 	// The replay run identity is separate from the original skipped outcome.
 	GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg GetWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
+	// Projects bound to a repository name through an installation their account
+	// connected. A project records no immutable repository ID, so the OIDC
+	// exchange confirms each binding's repository with GitHub before trusting it
+	// (ADR-20261101160300, amendment 1).
+	GitHubProjectBindingsForRepository(ctx context.Context, db DBTX, repoFullName string) ([]GitHubProjectBindingsForRepositoryRow, error)
 	// The immutable owner and repository IDs an account's app binding recorded
 	// for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
 	// requires a token's repository_owner_id and repository_id claims to match
@@ -6094,10 +6099,8 @@ type Querier interface {
 	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, db DBTX, arg RecordManagedPostgresDatabaseEndpointParams) error
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
-	// Advances the cumulative charge only from the row as read (previous_millicents
-	// and previous_live; zero: no row yet), so a replica that lost the race records
-	// nothing. A live delivery may replace a shadow row, which charged nothing; a
-	// shadow delivery never replaces a live one (bug hunt 33).
+	// Advances the cumulative charge only from previous_millicents (zero: no row
+	// yet), so a replica that lost the race records nothing.
 	RecordManagedPostgresOverageDelivery(ctx context.Context, db DBTX, arg RecordManagedPostgresOverageDeliveryParams) (bool, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
 	// ADR-20261031123259: one notice per copy and kind; the first sweep to reach

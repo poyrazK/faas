@@ -253,7 +253,8 @@ type Config struct {
 	// FrozenTierEarlyFreezeAfterS (ADR-20261021215353) freezes a quiet
 	// between_requests instance this many seconds after its last request
 	// instead of at its idle timeout, so it stops accruing usage soon after
-	// it last served. 0 (the default) is off; otherwise 2-300. Ignored unless
+	// it last served. 0 is off; otherwise 2-300, by default
+	// api.FrozenEarlyFreezeDefaultSeconds (ADR 20261102072403). Ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S overrides it.
 	FrozenTierEarlyFreezeAfterS int `toml:"frozen_tier_early_freeze_after_s"`
 
@@ -538,6 +539,9 @@ func LoadConfig(path string) (*Config, error) {
 		FrozenProactiveCompress: true,
 		MeasuredCPUAdmission:    true,
 		CPUPressureBackstop:     true,
+		// ADR 20261102072403: early freeze on by default for density; 0 in
+		// schedd.toml or FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S turns it off.
+		FrozenTierEarlyFreezeAfterS: api.FrozenEarlyFreezeDefaultSeconds,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go

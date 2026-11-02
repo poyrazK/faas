@@ -1485,6 +1485,18 @@ const (
 	CronPlatformRetryDelay = 5 * time.Second
 )
 
+// WorkflowStepPlatformRetries is how many attempts beyond its max_attempts a
+// workflow step may make when Gregale refused an attempt before the app
+// received it (a 5xx from the gateway's dispatch endpoint: a failed wake, an
+// unavailable traffic-security check). Such an attempt never ends the step
+// within that bound; an attempt the app answered keeps the step's own policy.
+// A refused attempt retries no sooner than WorkflowStepPlatformRetryDelay
+// (ADR-081 amendment 2026-11-02).
+const (
+	WorkflowStepPlatformRetries    = 2
+	WorkflowStepPlatformRetryDelay = 5 * time.Second
+)
+
 // CronCatchUpRecordedMax bounds the due occurrences a schedule-policy or
 // command cron records in one tick after an outage or suspension: the newest
 // is dispatched and the ones before it are recorded as missed or coalesced.
@@ -3238,13 +3250,25 @@ type RealtimeLimits struct {
 	// setting a user's preferences back to the defaults frees its slot
 	// (ADR-1323, amendment of 2026-10-31).
 	NotificationPreferencesPerAccount int
+	// RetainedWritesPerSecond and RetainedWriteBurst bound the writes an
+	// account's endpoints make to control-plane Postgres through apid:
+	// retained publishes and batches (each message counts), publisher
+	// credential publishes, inbox messages, message edits and deletes,
+	// snapshots and scheduled publishes. Publisher credentials and schedules
+	// do not pass the account's API request budget, so without this an
+	// account's endpoints could write without bound. A refused request gets a
+	// 429 with Retry-After; a scheduled publish waits for the bucket instead.
+	// The burst is at least ManagedRealtimeBatchMaxMessages (32), so a full
+	// batch always fits (ADR-1323, amendment of 2026-11-02).
+	RetainedWritesPerSecond int
+	RetainedWriteBurst      int
 }
 
 var realtimeLimits = map[Plan]RealtimeLimits{
 	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32, NotificationPreferencesPerAccount: 1_000},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256, NotificationPreferencesPerAccount: 10_000},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024, NotificationPreferencesPerAccount: 50_000},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32, NotificationPreferencesPerAccount: 1_000, RetainedWritesPerSecond: 10, RetainedWriteBurst: 32},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256, NotificationPreferencesPerAccount: 10_000, RetainedWritesPerSecond: 50, RetainedWriteBurst: 100},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024, NotificationPreferencesPerAccount: 50_000, RetainedWritesPerSecond: 200, RetainedWriteBurst: 400},
 }
 
 // Managed realtime per-user state and schemas (ADR-1323, amendment of
@@ -7100,6 +7124,11 @@ const (
 	// timeout's order of magnitude.
 	FrozenEarlyFreezeMinSeconds = 2
 	FrozenEarlyFreezeMaxSeconds = 300
+	// FrozenEarlyFreezeDefaultSeconds is schedd's frozen_tier_early_freeze_after_s
+	// when unset (ADR 20261102072403): a quiet between_requests instance
+	// freezes 15 s after its last request, releasing its vCPU, CPU and
+	// concurrency bookings half way through a function's 30 s idle timeout.
+	FrozenEarlyFreezeDefaultSeconds = 15
 	// FrozenMaxPerNode caps a node's frozen instances: each holds a
 	// Firecracker process, a jail uid and a network namespace.
 	FrozenMaxPerNode = 1000
@@ -13421,6 +13450,10 @@ const (
 	// the local vmmd to name the trace of the one request a calling instance
 	// is serving (ADR-1138); past it the call starts its own trace.
 	ServiceTraceInferenceTimeout = 25 * time.Millisecond
+	// ServiceCallDeadlineHopOverhead is kept back from the calling request's
+	// remaining budget when a service call inherits it, so the caller still
+	// has time to read the answer (ADR-20261102082606).
+	ServiceCallDeadlineHopOverhead = 10 * time.Millisecond
 	// Private guest DNS reads the scenario DNS chaos policy for every
 	// *.svc.gregale question, rehearsing or not (ADR-20261024230731). A read
 	// gets ServiceDNSChaosLookupTimeout; after a failed read the node answers
@@ -14273,6 +14306,13 @@ const (
 	AppHealthWarningErrorRatePct    = 5.0
 	AppHealthUnhealthyErrorRatePct  = 25.0
 	AppHealthCollectorInterval      = 30 * time.Second
+	// A worker's queue evidence is the newest AppHealthWorkerRecordScan
+	// records of each attached trigger (ADR-20261102091500). A message that
+	// has waited AppHealthWorkerBacklogAgeWarn degrades the worker; a dead
+	// letter written within AppHealthWorkerDeadLetterWindow does too.
+	AppHealthWorkerRecordScan       = 1000
+	AppHealthWorkerBacklogAgeWarn   = 10 * time.Minute
+	AppHealthWorkerDeadLetterWindow = time.Hour
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost

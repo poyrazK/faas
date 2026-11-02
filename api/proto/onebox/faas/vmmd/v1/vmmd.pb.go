@@ -19283,12 +19283,16 @@ func (x *InflightRequestTraceRequest) GetSourceIp() string {
 }
 
 // InflightRequestTraceResponse carries the lone in-flight request's
-// traceparent, or nothing.
+// traceparent and deadline, or nothing.
 type InflightRequestTraceResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Traceparent   string                 `protobuf:"bytes,1,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Traceparent string                 `protobuf:"bytes,1,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
+	// deadline_unix_ms is when the request's X-Faas-Deadline-Ms budget runs
+	// out, in Unix milliseconds; 0 when the forward carried none
+	// (ADR-20261102082606).
+	DeadlineUnixMs int64 `protobuf:"varint,2,opt,name=deadline_unix_ms,json=deadlineUnixMs,proto3" json:"deadline_unix_ms,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *InflightRequestTraceResponse) Reset() {
@@ -19326,6 +19330,13 @@ func (x *InflightRequestTraceResponse) GetTraceparent() string {
 		return x.Traceparent
 	}
 	return ""
+}
+
+func (x *InflightRequestTraceResponse) GetDeadlineUnixMs() int64 {
+	if x != nil {
+		return x.DeadlineUnixMs
+	}
+	return 0
 }
 
 // BaseGenerationReadiness is one configured runtime base and whether this
@@ -20926,9 +20937,10 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"receipt_id\x18\x02 \x01(\tR\treceiptId\":\n" +
 	"\x1bInflightRequestTraceRequest\x12\x1b\n" +
-	"\tsource_ip\x18\x01 \x01(\tR\bsourceIp\"@\n" +
+	"\tsource_ip\x18\x01 \x01(\tR\bsourceIp\"j\n" +
 	"\x1cInflightRequestTraceResponse\x12 \n" +
-	"\vtraceparent\x18\x01 \x01(\tR\vtraceparent\"\x8a\x01\n" +
+	"\vtraceparent\x18\x01 \x01(\tR\vtraceparent\x12(\n" +
+	"\x10deadline_unix_ms\x18\x02 \x01(\x03R\x0edeadlineUnixMs\"\x8a\x01\n" +
 	"\x17BaseGenerationReadiness\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1e\n" +
 	"\n" +

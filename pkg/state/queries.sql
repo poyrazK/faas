@@ -3303,6 +3303,20 @@ where a.account_id = sqlc.arg(account_id)::uuid
   and lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
   and a.deleted_at is null;
 
+-- name: GitHubProjectBindingsForRepository :many
+-- Projects bound to a repository name through an installation their account
+-- connected. A project records no immutable repository ID, so the OIDC
+-- exchange confirms each binding's repository with GitHub before trusting it
+-- (ADR-20261101160300, amendment 1).
+select p.account_id::text as account_id,
+       p.install_id::bigint as installation_id
+from projects p
+join github_installations gi
+  on gi.account_id = p.account_id
+ and gi.installation_id = p.install_id
+where lower(p.repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
+order by p.account_id, p.install_id;
+
 -- name: InsertOIDCExchangedToken :one
 -- Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 -- Returns the full row (with created_at server-stamped).

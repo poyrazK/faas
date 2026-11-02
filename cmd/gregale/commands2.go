@@ -2474,10 +2474,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *safeDeploy {
 		if explicit["canary-preset"] || explicit["canary-stages"] || explicit["traffic-percent"] {
-			return printErr("Invalid rollout policy", fmt.Errorf("--safe cannot be combined with --canary-preset, --canary-stages, or --traffic-percent"))
+			return printErr("Invalid rollout policy", fmt.Errorf("%s cannot be combined with --canary-preset, --canary-stages, or --traffic-percent", safeFlagName(explicit)))
 		}
 		if (explicit["wait"] && !*waitDeploy) || (explicit["no-wait"] && *noWaitDeploy) {
-			return printErr("Invalid flags", fmt.Errorf("--safe cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete"))
+			return printErr("Invalid flags", fmt.Errorf("%s cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete (a deploy without --rollout follows the app's release policy and returns at 1%% with --no-wait)", safeFlagName(explicit)))
 		}
 		*canaryPreset = api.DefaultReleaseCanaryPreset
 		if !explicit["timeout"] {
@@ -2485,7 +2485,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 	if *safeDeploy && projectRequested {
-		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
+		return printErr("Invalid flags", fmt.Errorf("%s currently supports single-app deploys only; use --canary-preset with a project deploy", safeFlagName(explicit)))
 	}
 	releaseAt, releaseNotify, releaseAtErr := resolveDeployReleaseAt(*releaseAtFlag, *releaseNotifyFlag, explicit, *noTraffic,
 		projectRequested || *githubSnippet || *simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil)
@@ -3950,6 +3950,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		return renderProjectDeployReceipt(plan, apply, projectSession, projectWaitTimedOut, nil)
+	}
+
+	// A template or gregale.yaml that turns on a capability the account does
+	// not have stops here, before the app or an upload exists (#5756).
+	if err := refuseHiddenManifestCapabilities(ctx, *templateName, sourceDir); err != nil {
+		return printErr("Capability not enabled", err)
 	}
 
 	var workflowDefs []api.WorkflowSpec

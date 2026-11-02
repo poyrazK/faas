@@ -2133,7 +2133,7 @@ var cliCommands = []cliCommand{
 				{Name: "branch", Short: "production branch (defaults to the repository's default branch)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
 			}},
-			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72", "gregale github setup my-api --repo acme/my-api --wait-for CI"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
 				{Name: "production-branch", Short: "production branch (default: current binding or the repository's default branch)", Value: "BRANCH"},
 				{Name: "installation-id", Short: "GitHub App installation id (the app's, or the account's only one, when omitted)", Value: "ID"},
@@ -2153,6 +2153,7 @@ var cliCommands = []cliCommand{
 				{Name: "root-dir", Short: "repository-relative source root for the root workload", Value: "DIR"},
 				{Name: "ignore", Short: "comma-separated ignored change paths", Value: "PATHS"},
 				{Name: "rollout", Short: "production rollout mode: standard|safe", Value: "MODE", ClosedSet: []string{"standard", "safe"}},
+				{Name: "wait-for", Short: "deploy a branch push only after this GitHub Actions workflow (its name: field) succeeds for the commit", Value: "WORKFLOW"},
 				{Name: "dry-run", Short: "show generated files without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},

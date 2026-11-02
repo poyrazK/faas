@@ -39,7 +39,7 @@ func TestEdgePlacementRemembersEachHost(t *testing.T) {
 		t.Fatal("an entry outlived its TTL")
 	}
 	e.Learn(req("shop.gregale.dev"), "node-2")
-	e.Forget("shop.gregale.dev")
+	e.Forget("shop.gregale.dev", "node-2")
 	if _, ok := e.Prefer(req("shop.gregale.dev")); ok {
 		t.Fatal("Forget kept the entry")
 	}
@@ -234,5 +234,60 @@ func TestLocalFirstDialerWithoutPlacementIgnoresPreferences(t *testing.T) {
 		if got := f.result(result); got != 0 {
 			t.Fatalf("%s = %v with placement off", result, got)
 		}
+	}
+}
+
+// adr: 20261102081618 — with the node set an edge spreads a host's requests
+// over every node the app runs on, by ready instances, and a refused dial
+// drops only that node.
+func TestEdgePlacementSpreadsByNodeSet(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "shop.gregale.dev"
+
+	off := newEdgePlacement()
+	off.Learn(req, "node-1")
+	off.LearnSet(req, "node-a=2,node-b=1")
+	if pref, _ := off.Prefer(req); pref.NodeID != "node-1" {
+		t.Fatalf("without the node set the edge picked %q, want the single node", pref.NodeID)
+	}
+
+	e := newEdgePlacement().withNodeSet()
+	var draws []int
+	e.pick = func(n int) int {
+		if n != 3 {
+			t.Fatalf("drew from %d, want the 3 ready instances", n)
+		}
+		d := draws[0]
+		draws = draws[1:]
+		return d
+	}
+	e.LearnSet(req, "node-a=2, bad, node-c=0, node-d=x, node-b=1")
+	draws = []int{0, 1, 2}
+	for _, want := range []string{"node-a", "node-a", "node-b"} {
+		if pref, ok := e.Prefer(req); !ok || pref.NodeID != want {
+			t.Fatalf("Prefer = %q %v, want %q", pref.NodeID, ok, want)
+		}
+	}
+
+	e.Forget("shop.gregale.dev", "node-a")
+	e.pick = func(n int) int {
+		if n != 1 {
+			t.Fatalf("drew from %d after node-a was forgotten, want 1", n)
+		}
+		return 0
+	}
+	if pref, _ := e.Prefer(req); pref.NodeID != "node-b" {
+		t.Fatalf("after forgetting node-a the edge picked %q", pref.NodeID)
+	}
+	e.Forget("shop.gregale.dev", "node-b")
+	if _, ok := e.Prefer(req); ok {
+		t.Fatal("a host whose every node refused still has an entry")
+	}
+
+	// A response that names one node (local first turned off) replaces the set.
+	e.LearnSet(req, "node-a=2,node-b=1")
+	e.Learn(req, "node-1")
+	if pref, _ := e.Prefer(req); pref.NodeID != "node-1" {
+		t.Fatalf("a single-node answer left %q", pref.NodeID)
 	}
 }

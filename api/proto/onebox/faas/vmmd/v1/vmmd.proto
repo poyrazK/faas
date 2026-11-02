@@ -285,8 +285,11 @@ service Vmmd {
   // request (ADR-1138). The caller is resolved from the same host-owned live
   // identity as ResolveServiceCaller. It answers only when exactly one
   // forward of any kind is in flight and it is an HTTP request that carried a
-  // valid traceparent; otherwise traceparent is empty. Older vmmds answer
-  // Unimplemented, which callers treat as empty.
+  // valid traceparent; otherwise traceparent is empty. Under the same
+  // one-forward rule it also answers that request's deadline
+  // (ADR-20261102082606), whether or not it carried trace context. Older
+  // vmmds answer Unimplemented or leave the deadline 0, which callers treat
+  // as unknown.
   rpc InflightRequestTrace(InflightRequestTraceRequest) returns (InflightRequestTraceResponse);
 
 // Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
@@ -3862,9 +3865,13 @@ message InflightRequestTraceRequest {
 }
 
 // InflightRequestTraceResponse carries the lone in-flight request's
-// traceparent, or nothing.
+// traceparent and deadline, or nothing.
 message InflightRequestTraceResponse {
   string traceparent = 1;
+  // deadline_unix_ms is when the request's X-Faas-Deadline-Ms budget runs
+  // out, in Unix milliseconds; 0 when the forward carried none
+  // (ADR-20261102082606).
+  int64 deadline_unix_ms = 2;
 }
 
 // BaseGenerationReadiness is one configured runtime base and whether this

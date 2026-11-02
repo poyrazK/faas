@@ -560,10 +560,15 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 		yaml      string
 		enabled   bool
 		placement bool
+		direct    bool
+		edgedns   bool
 	}{
 		{name: "off", yaml: base},
 		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
 		{name: "placement routing", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n", enabled: true, placement: true},
+		{name: "direct entry", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: both\n", enabled: true, direct: true},
+		{name: "direct entry with edgednsd", yaml: strings.Replace(base, "address: 10.42.0.2:50051\n", "address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n", 1) +
+			"public_edge:\n  compute_nodes: true\n  entry: both\n  dns:\n    zone_id: zone-1\n    names: [pilot.example.dev]\n", enabled: true, direct: true, edgedns: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := manifest.Parse([]byte(tc.yaml))
@@ -611,6 +616,28 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			}
 			if strings.Contains(controlVars, "faas_edge_placement_routing") {
 				t.Errorf("placement routing rendered on the control plane:\n%s", controlVars)
+			}
+			// ADR-20261102081618: direct entry opens the compute edges' TLS
+			// listener and keeps their 80/443 Cloudflare-only.
+			for _, line := range []string{"faas_edge_entry: \"both\"\n", "faas_cloudflare_origin_only: true\n"} {
+				if got := strings.Contains(computeVars, line); got != tc.direct {
+					t.Errorf("compute host has %q = %v, want %v:\n%s", line, got, tc.direct, computeVars)
+				}
+			}
+			if strings.Contains(controlVars, "faas_edge_entry") {
+				t.Errorf("direct entry rendered on the control plane:\n%s", controlVars)
+			}
+			// ADR-20261102081618 §3: edgednsd runs on the control plane, with
+			// each compute host's address under its registry name.
+			wantDNS := "faas_edgednsd_managed: true\n" +
+				"faas_edgednsd_names: [\"zone-1:pilot.example.dev\"]\n" +
+				"faas_edgednsd_node_addresses: [\"fsn-2.faas=203.0.113.2\"]\n" +
+				"faas_edgednsd_dry_run: true\n"
+			if got := strings.Contains(controlVars, wantDNS); got != tc.edgedns {
+				t.Errorf("control plane edgednsd vars = %v, want %v:\n%s", got, tc.edgedns, controlVars)
+			}
+			if strings.Contains(computeVars, "faas_edgednsd") {
+				t.Errorf("edgednsd rendered on a compute host:\n%s", computeVars)
 			}
 		})
 	}
