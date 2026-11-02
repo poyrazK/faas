@@ -3,7 +3,7 @@
   "defaults": {
     "eu-central-1": "neon-eu"
   },
-  "max_databases_per_account": 3,
+  "max_databases_per_account": 10,
   "provisioning_enabled": false,
   "health": {
     "enabled": true,

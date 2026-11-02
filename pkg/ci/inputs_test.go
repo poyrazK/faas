@@ -271,6 +271,7 @@ func TestCIArtifactInputsRejectChangedProducerAndStaleLease(t *testing.T) {
 	if _, err := h.pool.Exec(t.Context(), "UPDATE ci_job_runtime SET sealed_at=clock_timestamp(),result=$2 WHERE attempt_id=$1", input.AttemptID, seal); err != nil {
 		t.Fatal(err)
 	}
+	forgetJobAttempt(t, h, proof.RunID)
 	if _, err := h.pool.Exec(t.Context(), "UPDATE job_tasks SET lease_token='22222222-2222-4222-8222-222222222222' WHERE run_id=$1", proof.RunID); err != nil {
 		t.Fatal(err)
 	}

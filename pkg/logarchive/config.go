@@ -14,7 +14,10 @@ package logarchive
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -277,8 +280,10 @@ func parseIntEnv(s string, fallback int, envName string, log *slog.Logger) int {
 	if s == "" {
 		return fallback
 	}
-	var v int
-	if _, err := fmt.Sscanf(s, "%d", &v); err != nil || v < 0 {
+	// strconv, not fmt.Sscanf: Sscanf("%d") stops at the first non-digit,
+	// so "20G" read as 20.
+	v, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || v < 0 {
 		log.Warn("logarchive.config.parse_int_failed",
 			"env", envName, "value", s, "fallback", fallback, "err", err)
 		return fallback
@@ -290,11 +295,46 @@ func parseInt64Env(s string, fallback int64, envName string, log *slog.Logger) i
 	if s == "" {
 		return fallback
 	}
-	var v int64
-	if _, err := fmt.Sscanf(s, "%d", &v); err != nil || v < 0 {
+	v, err := parseByteSize(s)
+	if err != nil || v < 0 {
 		log.Warn("logarchive.config.parse_int64_failed",
 			"env", envName, "value", s, "fallback", fallback, "err", err)
 		return fallback
 	}
 	return v
+}
+
+// byteUnits are the binary size suffixes parseByteSize accepts; "G", "GB"
+// and "GiB" all mean 2^30.
+var byteUnits = []struct {
+	suffixes []string
+	shift    uint
+}{
+	{[]string{"TiB", "TB", "T"}, 40},
+	{[]string{"GiB", "GB", "G"}, 30},
+	{[]string{"MiB", "MB", "M"}, 20},
+	{[]string{"KiB", "KB", "K"}, 10},
+	{[]string{"B"}, 0},
+}
+
+// parseByteSize reads a byte count, either plain ("10737418240") or with a
+// binary unit ("20G", "20GiB"). Anything else is an error, never a prefix
+// of the number.
+func parseByteSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	for _, unit := range byteUnits {
+		for _, suffix := range unit.suffixes {
+			if num, ok := strings.CutSuffix(s, suffix); ok {
+				v, err := strconv.ParseInt(strings.TrimSpace(num), 10, 64)
+				if err != nil {
+					return 0, err
+				}
+				if v > math.MaxInt64>>unit.shift {
+					return 0, fmt.Errorf("%q overflows int64", s)
+				}
+				return v << unit.shift, nil
+			}
+		}
+	}
+	return strconv.ParseInt(s, 10, 64)
 }

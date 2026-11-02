@@ -134,6 +134,25 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 	done := make(chan readerDone, len(rows)+1)
 	seen := make(map[string]bool)
 	pending := 0
+	// Per-instance resume state, touched only on this goroutine (attach and
+	// the sink loops). Instances have independent seq spaces, and a vmmd
+	// restart or a migration restarts an instance's seq at 1, so a re-attach
+	// resumes by time, just after the last line delivered; one request-wide
+	// since_seq used to lose a wake's first lines (0 = only new lines) or
+	// duplicate a whole replay (>0) on every re-attach.
+	nodeOf := make(map[string]string)
+	lastAt := make(map[string]time.Time)
+	firstAttachAt := make(map[string]time.Time)
+	initial := make(map[string]bool, len(rows))
+	for _, ins := range rows {
+		initial[ins.ID] = true
+	}
+	deliver := func(f LogFrame) error {
+		if !f.IsGap && f.InstanceID != "" && f.WrittenAt.After(lastAt[f.InstanceID]) {
+			lastAt[f.InstanceID] = f.WrittenAt
+		}
+		return sink(f)
+	}
 
 	matches := func(ins state.Instance) bool {
 		if !state.IsLive(ins.State) || ins.NodeID == "" {
@@ -142,15 +161,38 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 		return deploymentID == "" || ins.DeploymentID == "" || ins.DeploymentID == deploymentID
 	}
 	attach := func(ins state.Instance) {
-		if seen[ins.ID] || !matches(ins) {
+		if !matches(ins) {
 			return
 		}
+		if seen[ins.ID] && nodeOf[ins.ID] == ins.NodeID {
+			return
+		}
+		// A migrated instance keeps its ID on a new node: the source ring
+		// ended cleanly, so without the node check it never re-attached.
+		resumed := seen[ins.ID] || nodeOf[ins.ID] != ""
 		seen[ins.ID] = true
+		nodeOf[ins.ID] = ins.NodeID
 		if !follow {
 			pending++
 		}
+		since, sinceAt := sinceSeq, sinceWrittenAt
+		switch {
+		case resumed:
+			// A retry or a node change: everything after the last line
+			// delivered, or after the first attach if none was.
+			since, sinceAt = 1, firstAttachAt[ins.ID]
+			if at, ok := lastAt[ins.ID]; ok {
+				since, sinceAt = 1, at.Add(time.Nanosecond)
+			}
+		case !initial[ins.ID]:
+			// Woke after the stream started: its whole ring is new.
+			since = 1
+		}
+		if _, ok := firstAttachAt[ins.ID]; !ok {
+			firstAttachAt[ins.ID] = time.Now()
+		}
 		go func() {
-			stream, err := e.vmm.Logs(streamCtx, ins.NodeID, ins.ID, sinceSeq, sinceWrittenAt, follow)
+			stream, err := e.vmm.Logs(streamCtx, ins.NodeID, ins.ID, since, sinceAt, follow)
 			if err != nil {
 				select {
 				case done <- readerDone{instanceID: ins.ID, retry: follow, err: err}:
@@ -203,20 +245,31 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 		if pending == 0 {
 			return state.ErrNotFound
 		}
+		attached := pending
+		var failed []error
 		for pending > 0 {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case f := <-frames:
-				if err := sink(f); err != nil {
+				if err := deliver(f); err != nil {
 					return err
 				}
 			case ended := <-done:
 				pending--
 				if ended.err != nil {
-					return ended.err
+					// One instance that cannot be read (still waking, or on
+					// an unreachable node) is a gap in this response, not a
+					// failure of the others' lines.
+					failed = append(failed, ended.err)
+					if err := deliver(LogFrame{InstanceID: ended.instanceID, IsGap: true, GapToWrittenAt: time.Now(), GapReason: "instance_unavailable"}); err != nil {
+						return err
+					}
 				}
 			}
+		}
+		if len(failed) == attached {
+			return failed[0]
 		}
 		// Every reader queues its final done notification only after
 		// queuing all preceding frames. Drain those buffered frames
@@ -224,7 +277,7 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 		for {
 			select {
 			case f := <-frames:
-				if err := sink(f); err != nil {
+				if err := deliver(f); err != nil {
 					return err
 				}
 			default:
@@ -243,13 +296,14 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 		case <-ctx.Done():
 			return ctx.Err()
 		case f := <-frames:
-			if err := sink(f); err != nil {
+			if err := deliver(f); err != nil {
 				return err
 			}
 		case ended := <-done:
 			if ended.retry {
 				// A dial can race vmmd's ring registration. Let the next poll
-				// retry while the store still reports this instance as live.
+				// retry while the store still reports this instance as live;
+				// attach resumes it after its last delivered line.
 				delete(seen, ended.instanceID)
 			}
 		case <-ticker.C:

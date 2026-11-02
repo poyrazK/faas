@@ -50,6 +50,18 @@ func TestResourceStatusAPI(t *testing.T) {
 	if ready.Status != api.ConditionFalse || ready.Reason != "failed" || !ready.Terminal || ready.Message != "The deployment failed: build exited 1" {
 		t.Errorf("failed deployment Ready = %+v", ready)
 	}
+	// deploy --no-traffic leaves a live release at 0% until it is promoted:
+	// release wait --for RolledOut must not return for it.
+	staged, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Status: state.DeployLive, TrafficPercent: 0, TrafficPercentExplicit: true, RolloutState: "complete", RootfsPath: "/artifact", StageState: readiness})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rolled := condition(t, readStatus(t, e, "/v1/deployments/"+live.ID+"/status"), api.ConditionRolledOut); rolled.Status != api.ConditionTrue {
+		t.Errorf("serving deployment RolledOut = %+v, want True", rolled)
+	}
+	if rolled := condition(t, readStatus(t, e, "/v1/deployments/"+staged.ID+"/status"), api.ConditionRolledOut); rolled.Status != api.ConditionFalse || rolled.Reason != api.ConditionReasonStaged || rolled.Terminal {
+		t.Errorf("staged deployment RolledOut = %+v, want False/staged, not terminal", rolled)
+	}
 
 	other, err := (*e.Store()).CreateAccount(t.Context(), "other-status@example.test", api.PlanPro)
 	if err != nil {

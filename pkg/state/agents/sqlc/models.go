@@ -25,6 +25,13 @@ type Agent struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
+type AgentCallbackRevocation struct {
+	EndpointID pgtype.UUID
+	ThreadID   string
+	AccountID  pgtype.UUID
+	RevokedAt  pgtype.Timestamptz
+}
+
 type AgentDelivery struct {
 	ID             pgtype.UUID
 	AccountID      pgtype.UUID
@@ -95,6 +102,18 @@ type AgentRun struct {
 	WorkflowRunID          pgtype.UUID
 	WorkflowStep           pgtype.Text
 	WorkflowEvent          pgtype.Text
+}
+
+type AgentRunCallback struct {
+	RunID          pgtype.UUID
+	AccountID      pgtype.UUID
+	EndpointID     pgtype.UUID
+	ThreadID       string
+	ToolCallID     string
+	ProviderCallID pgtype.Text
+	IssuedAt       pgtype.Timestamptz
+	DeliveredAt    pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
 }
 
 type AgentRunOutput struct {

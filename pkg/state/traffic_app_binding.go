@@ -98,7 +98,7 @@ func (m *MemStore) cancelAppInvocationsLocked(appID string, now time.Time) {
 		}
 		m.invocations[id] = inv
 		if reserved {
-			m.decrementAccountAsyncInflightLocked(inv.AccountID)
+			m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 		}
 	}
 }

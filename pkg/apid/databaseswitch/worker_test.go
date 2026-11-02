@@ -20,6 +20,9 @@ type fakeDatabases struct {
 	named      map[string]bool
 	restores   int
 	restoreOrg string // the ownership scope the last restore ran under
+
+	// withinLimit is whether the last restore had to fit inside the limit.
+	withinLimit bool
 }
 
 func (f *fakeDatabases) Get(_ context.Context, _, id string) (managedpostgres.Database, error) {
@@ -39,6 +42,7 @@ func (f *fakeDatabases) FindByName(_ context.Context, _, name string) (managedpo
 func (f *fakeDatabases) Restore(ctx context.Context, r managedpostgres.RestoreDatabaseRequest) (managedpostgres.Database, error) {
 	f.restores++
 	f.restoreOrg = managedpostgres.Organization(ctx)
+	f.withinLimit = r.WithinLimit
 	if f.restoreErr != nil {
 		return managedpostgres.Database{}, f.restoreErr
 	}
@@ -297,6 +301,11 @@ func TestDatabaseSwitchRestoresFencesDrainsSwitchesAndResumes(t *testing.T) {
 	if h.databases.restores != 1 || slices.Contains(h.cutovers.calls, "cancel") || !slices.Contains(h.cutovers.calls, "revoke") {
 		t.Fatalf("calls %v restores %d", h.cutovers.calls, h.databases.restores)
 	}
+	// The copy becomes the app's database: it must not hold the restore
+	// slot, whose end would revoke its bindings (ADR-20261031123259).
+	if !h.databases.withinLimit {
+		t.Fatal("the switch's restore may take the restore slot")
+	}
 }
 
 func TestDatabaseSwitchRestoreRefusalsFailBeforeAnythingChanges(t *testing.T) {
@@ -307,6 +316,7 @@ func TestDatabaseSwitchRestoreRefusalsFailBeforeAnythingChanges(t *testing.T) {
 	}{
 		{"restore point outside the window", func(h *harness) { h.databases.restoreErr = managedpostgres.ErrInvalid }, "restore_unavailable"},
 		{"provisioning closed", func(h *harness) { h.databases.restoreErr = managedpostgres.ErrProvisioningClosed }, "provisioning_closed"},
+		{"no room for the copy", func(h *harness) { h.databases.restoreErr = managedpostgres.ErrQuotaExceeded }, "database_limit"},
 		{"name taken by another database", func(h *harness) {
 			h.databases.restoreErr = managedpostgres.ErrConflict
 			h.databases.named["orders-before-v42"] = true

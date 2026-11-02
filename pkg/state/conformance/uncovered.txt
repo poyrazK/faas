@@ -31,7 +31,6 @@ AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
 AppendDeploymentLog
 AppendDeploymentStage
-AppendEventWithTrace
 AppendSnapshotStorage
 AppendUploadBytes
 ApplyProjectPlan
@@ -563,7 +562,6 @@ UpdateAccountProviderCustomerID
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus
 UpdateAlertRule
-UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
 UpdateCorsPreset

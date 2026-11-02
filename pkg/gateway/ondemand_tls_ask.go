@@ -21,6 +21,8 @@
 // certificates after each gatewayd-public restart. A host the edge keeps
 // asking for right after an allow, which is what a failing ACME order looks
 // like, is backed off in memory instead.
+// A wildcard's owner can also list the names below it that may hold
+// certificates (ADR-520 amendment 2); then no other name reaches the budgets.
 package gateway
 
 import (
@@ -78,6 +80,9 @@ const (
 	OnDemandTLSDenyInvalid     = "deny_invalid"
 	OnDemandTLSDenyOverload    = "deny_overload"
 	OnDemandTLSDenyError       = "deny_error"
+	// OnDemandTLSDenyNotAllowlisted: the wildcard has a host allowlist
+	// that does not name the host.
+	OnDemandTLSDenyNotAllowlisted = "deny_not_allowlisted"
 )
 
 // OnDemandTLSStore is the state the policy reads, plus the wildcard
@@ -91,6 +96,7 @@ type OnDemandTLSStore interface {
 	// (bug hunt 32 M1).
 	AppByID(ctx context.Context, id string) (state.App, error)
 	state.AppOwnerReader
+	state.CustomDomainTLSAllowedHostReader
 }
 
 // OnDemandTLSPolicy decides whether the edge may hold a certificate for a
@@ -231,6 +237,15 @@ func (p *OnDemandTLSPolicy) decideWildcard(ctx context.Context, host string) (bo
 		return false, OnDemandTLSDenyError
 	} else if !allowed {
 		return false, OnDemandTLSDenyPlan
+	}
+	// The allowlist applies to known hosts too, so removing a name stops
+	// its next reload and renewal.
+	if listed, err := p.store.CustomDomainTLSHostAllowed(lookupCtx, wildcard.Domain, host); err != nil {
+		// codeql[go/log-injection] false-positive: host passed state.ValidateCustomDomainName (letters, digits, hyphens, dots only) before any lookup, and CodeQL does not recognise logsanitize.Field as a sanitizer.
+		p.log.Warn("gateway: on-demand tls wildcard allowlist lookup failed; denying", "host", logsanitize.Field(host), "err", err)
+		return false, OnDemandTLSDenyError
+	} else if !listed {
+		return false, OnDemandTLSDenyNotAllowlisted
 	}
 	verdict, err := p.store.AdmitCustomDomainTLSHost(lookupCtx, state.CustomDomainTLSAdmission{
 		Wildcard:            wildcard.Domain,

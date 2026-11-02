@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/outbound"
@@ -27,6 +28,11 @@ import (
 func main() { wire.Daemon("outboundd", run) }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the outbound credential ring: outboundd checks integration and AI
+	// access tokens.
+	if err := credhash.Install(os.Getenv, credhash.FamilyOutbound); err != nil {
+		return fmt.Errorf("outboundd: %w", err)
+	}
 	ops := wire.NewOpsMetrics("outboundd")
 	var retainedSpansAcc *gateway.SpansAccumulator
 	var retainedSpansWriter *apidgrpc.SpansWriterClientImpl
@@ -74,8 +80,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 			defer close(retainedFlushDone)
 			if err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
 				Interval: flushInterval,
-				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				// The target names the calling app, so an outbound call's
+				// span lands in its caller's rows only (tracing tenancy T4).
+				WriteTargetFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+					return retainedSpansWriter.WriteSummary(writeCtx, target.Request(traceID, summaryJSON))
 				},
 				Log: log,
 				MaxSpansPerTrace: func(string) int {

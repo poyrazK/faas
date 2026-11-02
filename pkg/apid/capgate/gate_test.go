@@ -127,7 +127,7 @@ func TestEmbeddedCatalogBuildsAGate(t *testing.T) {
 		"GET /v1/account/export":                     true,
 		"PATCH /v1/deployments/{id}/traffic":         true,
 		"GET /v1/apps/{slug}/realtime/endpoints":     false,
-		"GET /v1/postgres/databases":                 false,
+		"GET /v1/postgres/databases":                 true,
 		"GET /v1/apps/{slug}/route-requirements":     false,
 		"GET /v1/account/platform-tenants":           false,
 		"GET /dashboard/apps/{slug}/secrets":         true,

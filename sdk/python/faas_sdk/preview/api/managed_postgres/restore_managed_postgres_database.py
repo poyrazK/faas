@@ -69,6 +69,11 @@ def sync_detailed(
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Restore a database into a new managed PostgreSQL database
 
+     The restored database counts toward the plan's database limit. A restore may go one database past
+    the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled then. A second restore past the limit while
+    a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
@@ -105,6 +110,11 @@ def sync(
 ) -> ManagedPostgresDatabase | Problem | None:
     """Restore a database into a new managed PostgreSQL database
 
+     The restored database counts toward the plan's database limit. A restore may go one database past
+    the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled then. A second restore past the limit while
+    a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
@@ -135,6 +145,11 @@ async def asyncio_detailed(
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Restore a database into a new managed PostgreSQL database
+
+     The restored database counts toward the plan's database limit. A restore may go one database past
+    the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled then. A second restore past the limit while
+    a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
 
     Args:
         id (str):
@@ -169,6 +184,11 @@ async def asyncio(
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedPostgresDatabase | Problem | None:
     """Restore a database into a new managed PostgreSQL database
+
+     The restored database counts toward the plan's database limit. A restore may go one database past
+    the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled then. A second restore past the limit while
+    a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
 
     Args:
         id (str):

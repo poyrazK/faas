@@ -2,9 +2,10 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // OperationSubjectSpec explicitly selects business correlation metadata from input.
@@ -20,7 +21,7 @@ type OperationSubject struct {
 	ID   string `json:"id"`
 }
 
-var operationSubjectType = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+var operationSubjectType = lazyregexp.New(`^[a-z][a-z0-9-]*$`)
 
 func ValidateOperationSubjectType(value string) error {
 	if len(value) == 0 || len(value) > OperationNameMaxBytes || !operationSubjectType.MatchString(value) {

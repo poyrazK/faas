@@ -52,6 +52,22 @@ func TestApplyRolloutFlag(t *testing.T) {
 	}
 }
 
+// TestSafeFlagNameNamesTheFlagTyped: a refusal of `--rollout safe` must not
+// blame --safe, which the person never typed (Hunt 31 H31-1).
+func TestSafeFlagNameNamesTheFlagTyped(t *testing.T) {
+	for _, tc := range []struct {
+		explicit map[string]bool
+		want     string
+	}{
+		{explicit: map[string]bool{"safe": true}, want: "--safe"},
+		{explicit: map[string]bool{"rollout": true, "safe": true}, want: "--rollout safe"},
+	} {
+		if got := main.SafeFlagName(tc.explicit); got != tc.want {
+			t.Errorf("SafeFlagName(%v) = %q, want %q", tc.explicit, got, tc.want)
+		}
+	}
+}
+
 // TestFollowRolloutOnlyForAPersonAtATerminal: JSON and non-interactive runs
 // never follow (ADR-1450).
 func TestFollowRolloutOnlyForAPersonAtATerminal(t *testing.T) {

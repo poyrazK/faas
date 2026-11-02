@@ -29,6 +29,36 @@ func (q *Queries) AccountAgentLoad(ctx context.Context, db DBTX, accountID strin
 	return i, err
 }
 
+const agentCallbackClock = `-- name: AgentCallbackClock :one
+SELECT clock_timestamp()::timestamptz AS now
+`
+
+// ADR-20261030125501 §3: the clock RevokeAgentCallbacks records, read when a
+// callback URL is issued so issue and revocation compare on one clock.
+func (q *Queries) AgentCallbackClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, agentCallbackClock)
+	var now pgtype.Timestamptz
+	err := row.Scan(&now)
+	return now, err
+}
+
+const agentCallbacksRevokedAt = `-- name: AgentCallbacksRevokedAt :one
+SELECT revoked_at FROM agent_callback_revocations
+ WHERE endpoint_id = $1::text::uuid AND thread_id = $2::text
+`
+
+type AgentCallbacksRevokedAtParams struct {
+	EndpointID string
+	ThreadID   string
+}
+
+func (q *Queries) AgentCallbacksRevokedAt(ctx context.Context, db DBTX, arg AgentCallbacksRevokedAtParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, agentCallbacksRevokedAt, arg.EndpointID, arg.ThreadID)
+	var revoked_at pgtype.Timestamptz
+	err := row.Scan(&revoked_at)
+	return revoked_at, err
+}
+
 const agentRunQueueStats = `-- name: AgentRunQueueStats :one
 SELECT count(*)::integer AS queued,
   coalesce(extract(epoch FROM now()-min(queued_at)), 0)::float8 AS oldest_seconds
@@ -979,6 +1009,38 @@ func (q *Queries) InsertAgentRun(ctx context.Context, db DBTX, arg InsertAgentRu
 	return id, err
 }
 
+const insertAgentRunCallback = `-- name: InsertAgentRunCallback :exec
+INSERT INTO agent_run_callbacks (run_id, account_id, endpoint_id, thread_id, tool_call_id, provider_call_id, issued_at)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid,
+  $4::text, $5::text, $6::text, $7::timestamptz)
+ON CONFLICT (run_id) DO NOTHING
+`
+
+type InsertAgentRunCallbackParams struct {
+	RunID          string
+	AccountID      string
+	EndpointID     string
+	ThreadID       string
+	ToolCallID     string
+	ProviderCallID pgtype.Text
+	IssuedAt       pgtype.Timestamptz
+}
+
+// ADR-20261030125501 §4: the thread and tool call a gregale_run run answers.
+// A retried invocation that found its run keeps the first link.
+func (q *Queries) InsertAgentRunCallback(ctx context.Context, db DBTX, arg InsertAgentRunCallbackParams) error {
+	_, err := db.Exec(ctx, insertAgentRunCallback,
+		arg.RunID,
+		arg.AccountID,
+		arg.EndpointID,
+		arg.ThreadID,
+		arg.ToolCallID,
+		arg.ProviderCallID,
+		arg.IssuedAt,
+	)
+	return err
+}
+
 const insertAgentRunFinishedDeliveries = `-- name: InsertAgentRunFinishedDeliveries :execrows
 INSERT INTO app_webhook_deliveries (webhook_id, app_id, account_id, event, payload, source_event_id)
 SELECT w.id, NULL, w.account_id, 'agent_run.finished', $1::jsonb, $2::text::uuid
@@ -1426,6 +1488,63 @@ func (q *Queries) ListSettleableAgentRuns(ctx context.Context, db DBTX, maxRows 
 	return items, nil
 }
 
+const listUndeliveredAgentRunCallbacks = `-- name: ListUndeliveredAgentRunCallbacks :many
+SELECT c.run_id::text AS run_id, c.account_id::text AS account_id, c.endpoint_id::text AS endpoint_id, c.thread_id,
+  c.tool_call_id, c.provider_call_id, c.issued_at, r.state, r.outcome_code, r.outcome_message, o.result
+ FROM agent_run_callbacks c JOIN agent_runs r ON r.id=c.run_id LEFT JOIN agent_run_outputs o ON o.run_id=c.run_id
+ WHERE c.delivered_at IS NULL AND r.finished_at IS NOT NULL
+ ORDER BY r.finished_at, c.run_id LIMIT $1::integer
+`
+
+type ListUndeliveredAgentRunCallbacksRow struct {
+	RunID          string
+	AccountID      string
+	EndpointID     string
+	ThreadID       string
+	ToolCallID     string
+	ProviderCallID pgtype.Text
+	IssuedAt       pgtype.Timestamptz
+	State          string
+	OutcomeCode    pgtype.Text
+	OutcomeMessage pgtype.Text
+	Result         []byte
+}
+
+// Finished gregale_run runs whose end apid has not yet published into their
+// thread. The mark is written after the publish, which is idempotent, so an
+// interrupted delivery is retried and lands once.
+func (q *Queries) ListUndeliveredAgentRunCallbacks(ctx context.Context, db DBTX, maxRows int32) ([]ListUndeliveredAgentRunCallbacksRow, error) {
+	rows, err := db.Query(ctx, listUndeliveredAgentRunCallbacks, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUndeliveredAgentRunCallbacksRow{}
+	for rows.Next() {
+		var i ListUndeliveredAgentRunCallbacksRow
+		if err := rows.Scan(
+			&i.RunID,
+			&i.AccountID,
+			&i.EndpointID,
+			&i.ThreadID,
+			&i.ToolCallID,
+			&i.ProviderCallID,
+			&i.IssuedAt,
+			&i.State,
+			&i.OutcomeCode,
+			&i.OutcomeMessage,
+			&i.Result,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUndeliveredWorkflowAgentRuns = `-- name: ListUndeliveredWorkflowAgentRuns :many
 SELECT r.id::text AS id,r.account_id::text AS account_id,r.workflow_run_id::text AS workflow_run_id,
   r.workflow_step::text AS workflow_step,r.workflow_event::text AS workflow_event,r.state,r.outcome_code,r.outcome_message,o.result
@@ -1526,6 +1645,15 @@ func (q *Queries) MarkAgentDeleted(ctx context.Context, db DBTX, arg MarkAgentDe
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const markAgentRunCallbackDelivered = `-- name: MarkAgentRunCallbackDelivered :exec
+UPDATE agent_run_callbacks SET delivered_at = now() WHERE run_id = $1::text::uuid AND delivered_at IS NULL
+`
+
+func (q *Queries) MarkAgentRunCallbackDelivered(ctx context.Context, db DBTX, runID string) error {
+	_, err := db.Exec(ctx, markAgentRunCallbackDelivered, runID)
+	return err
 }
 
 const markAgentRunRunning = `-- name: MarkAgentRunRunning :execrows
@@ -1734,6 +1862,27 @@ func (q *Queries) ResolveGitHubInstallation(ctx context.Context, db DBTX, arg Re
 	var installation_id int64
 	err := row.Scan(&installation_id)
 	return installation_id, err
+}
+
+const revokeAgentCallbacks = `-- name: RevokeAgentCallbacks :one
+INSERT INTO agent_callback_revocations (endpoint_id, thread_id, account_id, revoked_at)
+VALUES ($1::text::uuid, $2::text, $3::text::uuid, clock_timestamp())
+ON CONFLICT (endpoint_id, thread_id) DO UPDATE SET revoked_at = clock_timestamp(), account_id = excluded.account_id
+RETURNING revoked_at
+`
+
+type RevokeAgentCallbacksParams struct {
+	EndpointID string
+	ThreadID   string
+	AccountID  string
+}
+
+// ADR-20261030125501 §3: revoke every callback URL of a thread issued until now.
+func (q *Queries) RevokeAgentCallbacks(ctx context.Context, db DBTX, arg RevokeAgentCallbacksParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, revokeAgentCallbacks, arg.EndpointID, arg.ThreadID, arg.AccountID)
+	var revoked_at pgtype.Timestamptz
+	err := row.Scan(&revoked_at)
+	return revoked_at, err
 }
 
 const settleCapturedEmailDeliveries = `-- name: SettleCapturedEmailDeliveries :many

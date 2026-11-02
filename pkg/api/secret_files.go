@@ -2,8 +2,9 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // SecretFilesDir is where guest-init writes a workload's secret files, the
@@ -33,7 +34,7 @@ func (f SecretFile) EffectiveMode() uint32 {
 
 // A file name under SecretFilesDir. Starting with a letter or digit rules out
 // "." and "..", and there is no '/' to leave the directory.
-var secretFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+var secretFileName = lazyregexp.New(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 // ValidateSecretFiles checks names, modes and the count against
 // pkg/api/limits.go.

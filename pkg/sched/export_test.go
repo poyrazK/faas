@@ -274,6 +274,12 @@ func (o *WorkflowOrchestrator) ChildDBPhaseForTest(ctx context.Context) (context
 }
 func OutsideDBPhaseForTest(ctx context.Context, wait func()) { outsideDBPhase(ctx, wait) }
 
+// SetPlatformRetryDelayForTest shortens the wait before retrying a step
+// attempt Gregale refused before delivery (ADR-081 amendment 2026-11-02).
+func (o *WorkflowOrchestrator) SetPlatformRetryDelayForTest(d time.Duration) {
+	o.platformRetryDelay = d
+}
+
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot
@@ -385,6 +391,12 @@ func (r *Engine) DeadNodeSettle() *storeSettle                 { return &r.deadN
 func (r *Engine) DefaultLocalNodeID() *string                  { return &r.defaultLocalNodeID }
 func (r *Engine) FrozenCompressOne() *func(context.Context, string) string {
 	return &r.frozenCompressOne
+}
+func (r *Engine) FrozenYieldOne() *func(context.Context, string, string) bool {
+	return &r.frozenYieldOne
+}
+func (r *Engine) ParkFrozenToYield(ctx context.Context, id, reason string) bool {
+	return r.parkFrozenToYield(ctx, id, reason)
 }
 func (r *Engine) FrozenFastPath() *atomic.Bool        { return &r.frozenFastPath }
 func (r *Engine) Log() **slog.Logger                  { return &r.log }
@@ -633,6 +645,13 @@ func XHTTPGatewaySynth(client *http.Client, base string) interface {
 	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)
 } {
 	return &httpGatewaySynth{client: client, basePrefix: base}
+}
+
+// XWorkflowGatewaySynth is the gateway transport workflow steps use, with a
+// test token minter: workflow dispatches always carry an internal token.
+func XWorkflowGatewaySynth(client *http.Client, base string) WorkflowStepExecutor {
+	return &httpGatewaySynth{client: client, basePrefix: base,
+		mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
 }
 
 // Members of fakeNotifier
@@ -1009,6 +1028,9 @@ func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocati
 	return d.invocationAttemptBudget(ctx, inv)
 }
 
+// XCronDueOccurrences is the catch-up walk for schedule-policy and command crons.
+var XCronDueOccurrences = cronDueOccurrences
+
 // XHoldFinancialAdmission makes the drain's budget admission refuse every
 // app with err, as a held strict compute budget does.
 func (d *Drain) XHoldFinancialAdmission(err error) {
@@ -1019,4 +1041,52 @@ func (d *Drain) XHoldFinancialAdmission(err error) {
 // refusal, built from a refusal carrying the given blockers.
 func CustomerCapacityProblem(detail string, blockers ...api.WorkerAdmissionBlocker) *api.Problem {
 	return customerCapacityProblem(explainAdmission(api.ErrCapacity(detail), blockers...))
+}
+
+// NodeCapacityProblem and AdmissionBlockers reach the durable guard's refusal
+// mapping (ADR 20261031190030).
+func (r *Engine) NodeCapacityProblem(err error) error { return r.nodeCapacityProblem(err) }
+func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
+	return admissionBlockers(err)
+}
+
+// ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
+// memory report (ADR 20261101091815).
+func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
+	r.reportNodeMemory(ctx, r.store.(state.NodeMemoryReportStore), now)
+}
+func (r *Engine) NodeFrozenCount(nodeID string) int { return r.nodeFrozenCount(nodeID) }
+func (r *Engine) UnreportedNodeUsedMB(node state.ComputeNode, bookedMB int64) int64 {
+	return r.unreportedNodeUsedMB(node, bookedMB)
+}
+
+// MarkRestartInFlight records appID as restarting, as restartApp does, until
+// the returned func runs.
+func (e *Engine) MarkRestartInFlight(appID string) func() {
+	e.restartMu.Lock()
+	defer e.restartMu.Unlock()
+	if e.restartInFlight == nil {
+		e.restartInFlight = make(map[string]*restartCall)
+	}
+	call := &restartCall{done: make(chan struct{})}
+	e.restartInFlight[appID] = call
+	return func() {
+		e.restartMu.Lock()
+		defer e.restartMu.Unlock()
+		delete(e.restartInFlight, appID)
+		close(call.done)
+	}
+}
+
+// CoalesceInvocationDue exposes the drain's notification burst collapse.
+var CoalesceInvocationDue = coalesceInvocationDue
+
+// DrainLeaseRecoveryDue replays nows through one drain lease recovery clock.
+func DrainLeaseRecoveryDue(every time.Duration, nows ...time.Time) []bool {
+	r := drainLeaseRecovery{every: every}
+	due := make([]bool, len(nows))
+	for i, now := range nows {
+		due[i] = r.due(now)
+	}
+	return due
 }

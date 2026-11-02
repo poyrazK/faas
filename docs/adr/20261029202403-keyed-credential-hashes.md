@@ -74,6 +74,8 @@ cannot mint one.
    - dev-bridge sessions;
    - Data API server keys.
 
+   Amendment 1 sets out who holds each of those rings.
+
 3. **Gateways ask apid.** Today the gateways read the credential tables
    themselves:
    - gatewayd-internal checks API keys (the auth middleware and per-app
@@ -153,3 +155,64 @@ cannot mint one.
   any account credential.
 - Writer signatures (ADR 20261028161502) protect what they claim once account
   credentials can no longer be minted.
+
+## Amendment 1 (2026-10-31): the other families
+
+Owner decisions, 2026-10-31, after an inventory showed that several families
+are checked by daemons other than the one that issues them.
+
+1. **Who holds each ring.** Each family's ring is read from
+   `FAAS_CREDENTIAL_<FAMILY>_KEYS_FILE`, `_WRITES` and `_PLAIN_LOOKUP`, with
+   the same meaning as the account family's variables.
+
+   | Family | Credentials | Holders |
+   |---|---|---|
+   | `scheduler` | event acknowledgements, consumer-group leases, CI runtime and operation capabilities | schedd, apid |
+   | `outbound` | integration tokens, AI access tokens | outboundd, apid |
+   | `uploads` | object upload grants | agentd, s3-gatewayd |
+   | `attach` | interactive attach tokens | apid, vmmd |
+   | `dev-bridge` | dev-bridge attach and request tokens | apid, bridged |
+   | `data-api` | Data API server keys | apid |
+
+2. **Checkers on compute nodes ask apid.** gatewayd-internal checks
+   operation capabilities and dev-bridge tokens, and realtimed checks Data
+   API server keys. They ask apid's `MatchCredential`, as for consumer keys.
+   Two rings reach compute nodes:
+   - `attach`, held by vmmd (below);
+   - `uploads`, held by an s3-gatewayd that runs on a compute node
+     (ADR-20261031122757). That gateway already holds the object-storage
+     credentials, which write any object an upload grant could, so the ring
+     adds nothing a compromised node does not already have.
+
+   realtimed asks over the connection it already holds to apid. When no
+   preview opened that connection, it dials one for matches alone. If that
+   dial fails, it logs the failure and refuses keyed server keys.
+
+   vmmd holds the `attach` ring instead. Attach tokens are one-shot and live
+   at most five minutes, and vmmd must not depend on apid. schedd forwards the
+   stored digest to vmmd without needing the key.
+
+3. **Derived capabilities.** The CI runtime capability and the job operation
+   capability were computed from the task's lease token, which is stored in
+   plaintext. Anyone who could read the database could compute them, and
+   each is accepted on its own. They are now HMACs under the `scheduler` key.
+   Checkers accept the old derivation only while plain lookup is on.
+
+   The workflow operation capability stays the outbound attempt token. apid
+   accepts it only alongside a workload identity assertion for the same
+   instance, signed by a key the database never holds, so the database alone
+   cannot use it. Deriving it would need a key, or a call to apid, wherever
+   gatewayd-internal renders it.
+
+4. **Database-only credentials are keyed too.** Event acknowledgements and
+   consumer-group leases authorize only row changes a database writer could
+   make directly. They are keyed anyway, so every bearer credential follows
+   one rule.
+
+5. **Outbound integration revisions.** `outbound_integrations.token_hash` is
+   one of the facts that bump the promotion revision of every bound app.
+   Rewriting a hash for the same token (plain to keyed, or a key rotation)
+   sets `faas.credential_rekey` for its transaction. The trigger then ignores
+   the `token_hash` change. A new token still bumps the revision.
+
+The account family's rollout steps (decision 4) apply to each family.

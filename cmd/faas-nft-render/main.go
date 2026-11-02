@@ -70,10 +70,24 @@ func main() {
 		"ADR-576: tenant-bridge address of the service listeners (e.g. 10.100.0.1). When set, the renderer emits the private TCP service-address NAT. Env: FAAS_SERVICE_TCP_BRIDGE_IP.")
 	serviceTCPHTTPS := flag.Bool("service-tcp-https", false,
 		"ADR-576: keep service-address :443 on the private HTTPS service listener. Set only where that listener is staged. Env: FAAS_SERVICE_TCP_HTTPS=1.")
+	databaseRouteBridgeIP := flag.String("database-route-bridge-ip", "",
+		"ADR-1027: tenant-bridge address of the managed-database route forwarder (e.g. 10.100.0.1). When set, the renderer emits the database route NAT. Env: FAAS_DATABASE_ROUTE_BRIDGE_IP.")
+	publicIngressCIDRs := flag.String("public-ingress-cidrs", "",
+		"ADR-20261102081618: comma-separated sources (Cloudflare's ranges) that alone may reach 80 and 443, as the nftables role's faas_cloudflare_origin_only renders. Env: FAAS_PUBLIC_INGRESS_CIDRS.")
 	flag.Parse()
 
 	policy := netns.DefaultHostPolicy
 	policy.PublicForwarding = *publicForwarding
+	if raw := pickValue(*publicIngressCIDRs, "FAAS_PUBLIC_INGRESS_CIDRS"); raw != "" {
+		for _, entry := range strings.Split(raw, ",") {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(entry))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "faas-nft-render: --public-ingress-cidrs %q: %v\n", entry, err)
+				os.Exit(1)
+			}
+			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())
+		}
+	}
 	if iface := pickValue(*publicIface, "FAAS_PUBLIC_IFACE"); iface != "" {
 		policy.PublicIface = iface
 	}
@@ -137,6 +151,14 @@ func main() {
 		}
 		https := *serviceTCPHTTPS || os.Getenv("FAAS_SERVICE_TCP_HTTPS") == "1"
 		policy.ServiceTCP = netns.NewServiceTCPHostPolicy(api.ServiceAddressCIDR(), bridgeIP, api.ServiceTCPProxyPort, https)
+	}
+	if raw := pickValue(*databaseRouteBridgeIP, "FAAS_DATABASE_ROUTE_BRIDGE_IP"); raw != "" {
+		bridgeIP, err := netip.ParseAddr(strings.TrimSpace(raw))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "faas-nft-render: --database-route-bridge-ip %q: %v\n", raw, err)
+			os.Exit(1)
+		}
+		policy.DatabaseRoute = netns.NewDatabaseRouteHostPolicy(api.DatabaseRouteAddress(), bridgeIP, api.DatabaseRouteProxyPort)
 	}
 
 	if _, err := os.Stdout.WriteString(policy.Render()); err != nil {

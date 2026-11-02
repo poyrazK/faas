@@ -36,6 +36,12 @@ func UnitGatewaydPublicEdge() daemonunit.Unit {
 	u.Requires = []string{"faas-gatewayd-public-edge.socket"}
 	u.EnvironmentFile = "-/etc/faas/compute-db.env -/etc/faas/otel.env"
 	u.Environment = []daemonunit.KV{
+		// Every app request on the node crosses this edge. At Go's default
+		// GOGC=100, garbage collection was 10% of its CPU at 300 req/s
+		// (fsn-3 profile, 2026-10-31); gatewayd-internal's A/B measured
+		// GOGC=200 at ~16% less CPU per request for ~20 MB more RSS. The
+		// soft limit still keeps 128 MiB of MemoryMax outside Go's heap.
+		{Key: "GOGC", Value: "200"},
 		{Key: "GOMEMLIMIT", Value: "384MiB"},
 		{Key: "FAAS_PUBLIC_EDGE_MODE", Value: "compute"},
 		{Key: "FAAS_GATEWAYD_PUBLIC_ROLE", Value: "compute-only"},

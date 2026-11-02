@@ -76,6 +76,9 @@ type BackendConfig struct {
 	GatewayAccessKeyEnv    string `json:"gateway_access_key_env,omitempty"`
 	GatewaySecretKeyEnv    string `json:"gateway_secret_key_env,omitempty"`
 	GatewaySessionTokenEnv string `json:"gateway_session_token_env,omitempty"`
+	// useGatewayCredential is set by LoadGateway: the backend's provider is
+	// built with the gateway credential when it names one.
+	useGatewayCredential bool
 }
 
 // UsageConfig selects the provider-specific authoritative usage adapter. It
@@ -260,6 +263,13 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if (b.GatewayAccessKeyEnv == "") != (b.GatewaySecretKeyEnv == "") || (b.GatewaySessionTokenEnv != "" && b.GatewayAccessKeyEnv == "") {
 			return nil, fmt.Errorf("object storage: backend %s must name both gateway credential variables", b.ID)
 		}
+		if b.GatewayAccessKeyEnv != "" && (b.GatewayAccessKeyEnv == b.AccessKeyEnv || b.GatewaySecretKeyEnv == b.SecretKeyEnv) {
+			return nil, fmt.Errorf("object storage: backend %s must name a gateway credential apart from its admin credential", b.ID)
+		}
+		gatewayCredential := b.useGatewayCredential && b.GatewayAccessKeyEnv != ""
+		if gatewayCredential {
+			b.AccessKeyEnv, b.SecretKeyEnv, b.SessionTokenEnv = b.GatewayAccessKeyEnv, b.GatewaySecretKeyEnv, b.GatewaySessionTokenEnv
+		}
 		factory, ok := factories[b.Driver]
 		if !ok {
 			return nil, fmt.Errorf("object storage: unknown driver %s", b.Driver)
@@ -290,7 +300,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if b.ObjectLock.Enabled && !SupportsNativeObjectLock(p) {
 			return nil, fmt.Errorf("object storage: backend %s lacks its declared Object Lock contract", b.ID)
 		}
-		r.backends[b.ID] = Backend{ObjectLock: b.ObjectLock, Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage, MaxBuckets: b.MaxBuckets}
+		r.backends[b.ID] = Backend{ObjectLock: b.ObjectLock, Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage, MaxBuckets: b.MaxBuckets, GatewayCredential: gatewayCredential}
 		configs[b.ID] = b
 	}
 	for region, id := range c.Defaults {
@@ -390,10 +400,8 @@ func load(getenv func(string) string, gateway bool) (*Registry, error) {
 	if err := validateLoadedOwnedNodes(c, getenv); err != nil {
 		return nil, err
 	}
-	for i, b := range c.Backends {
-		if gateway && b.GatewayAccessKeyEnv != "" {
-			c.Backends[i].AccessKeyEnv, c.Backends[i].SecretKeyEnv, c.Backends[i].SessionTokenEnv = b.GatewayAccessKeyEnv, b.GatewaySecretKeyEnv, b.GatewaySessionTokenEnv
-		}
+	for i := range c.Backends {
+		c.Backends[i].useGatewayCredential = gateway
 	}
 	return NewRegistry(c, getenv, map[string]Factory{"gcs": NewGCS, "s3": NewS3})
 }

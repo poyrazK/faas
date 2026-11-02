@@ -250,6 +250,20 @@ type ManagedPostgresCapEvent struct {
 	MailIntentID         pgtype.UUID
 }
 
+type ManagedPostgresDatabase struct {
+	ID pgtype.UUID
+}
+
+// Restore slot notices for a managed PostgreSQL copy (ending soon, delete scheduled); written only by apid (ADR-20261031123259).
+type ManagedPostgresRestoreSlotNotice struct {
+	DatabaseID      pgtype.UUID
+	Kind            string
+	SlotUntil       pgtype.Timestamptz
+	RestorableUntil pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+	MailIntentID    pgtype.UUID
+}
+
 type MfaDisableRequest struct {
 	TokenHash   []byte
 	AccountID   pgtype.UUID

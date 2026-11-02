@@ -186,7 +186,7 @@ func TestKeptRegressionIsNotAPassedWatch(t *testing.T) {
 		}),
 	}
 	got := releasetimeline.Build(in)
-	if got.Phase != api.ReleasePhaseReleased || !strings.Contains(got.Summary, "found a regression (p95 700 ms vs 40 ms) and did not roll back") {
+	if got.Phase != api.ReleasePhaseReleased || !strings.Contains(got.Summary, "a regression was found after the rollout (p95 700 ms vs 40 ms) and Gregale did not roll back") {
 		t.Fatalf("phase = %s %q", got.Phase, got.Summary)
 	}
 	var regressed bool
@@ -198,6 +198,23 @@ func TestKeptRegressionIsNotAPassedWatch(t *testing.T) {
 	}
 	if !regressed {
 		t.Fatalf("events = %+v, want the regression at its decision time", got.Events)
+	}
+}
+
+// adr: 1445 amendment 4 — a release whose automatic rollback failed still
+// serves; the recorded rollback reason does not make it "Rolled back".
+func TestFailedAutomaticRollbackIsNotARollback(t *testing.T) {
+	failed := decision(api.RolloutDecisionAbort, api.RolloutRuleAbortPostRelease5xx, "first-wake 5xx", 100, at(30))
+	failed.RollbackSkipped = api.RollbackSkippedFailed
+	in := releasetimeline.Inputs{Watched: true, WatchWindow: 30 * time.Minute, Now: at(120), AutoRollbackReason: "threshold_exceeded",
+		Stable: &releasetimeline.Release{ID: "d1", Revision: 41},
+		Deployment: live(func(d *api.DeploymentResponse) {
+			d.RolloutState, d.RolloutCompletedAt, d.RolloutDecision = "complete", ptr(at(10)), failed
+		}),
+	}
+	got := releasetimeline.Build(in)
+	if got.Phase != api.ReleasePhaseReleased || !strings.Contains(got.Summary, "did not restore the previous release") {
+		t.Fatalf("phase = %s %q, want released and still serving", got.Phase, got.Summary)
 	}
 }
 

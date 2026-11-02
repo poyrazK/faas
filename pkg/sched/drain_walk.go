@@ -68,14 +68,14 @@ const (
 	dueWalkFailed
 )
 
-// walkDue lists up to maxDuePagesPerTick pages of the due backlog and hands
+// walkDueBacklog lists up to maxDuePagesPerTick pages of the due backlog and hands
 // their rows off, returning the rows past their app's share. The first
 // dueWalkHeadPages pages start at the head, so the oldest due rows and each
 // app's earliest queue messages get a chance every tick. The rest resume
 // after the last row the previous tick listed, so rows the drain cannot
 // dispatch now cannot hide the rows behind them: every due row is listed
 // within one round, ⌈backlog / rows the resumed part lists⌉ + 1 ticks.
-func (d *Drain) walkDue(ctx context.Context, pager dueInvocationPager, tick *sync.WaitGroup) []state.Invocation {
+func (d *Drain) walkDueBacklog(ctx context.Context, pager dueInvocationPager, tick *sync.WaitGroup) []state.Invocation {
 	r := &d.round
 	r.mu.Lock()
 	defer r.mu.Unlock()

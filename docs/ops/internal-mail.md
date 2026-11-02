@@ -3134,6 +3134,28 @@ failed save is retried on the next sweep. An organization subject has no account
 row and gets no email yet. Maild re-checks the account at submission and
 cancels the email if the account is no longer active or is being deleted.
 
+## Managed PostgreSQL restore slot notices
+
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=0`
+independently gates the restore slot emails of
+[ADR-20261031123259](../adr/20261031123259-managed-postgres-restore-slot.md) in
+apid, maild and private reconciliation. Units and examples keep it off. Apply
+[`20261101085949320_managed_postgres_restore_slot_notices.sql`](../../migrations/20261101085949320_managed_postgres_restore_slot_notices.sql)
+before opting in. It has the same gate, transport and reader requirements as
+the compute cap notices above.
+
+The restore slot sweep records two notices for a copy that holds the slot,
+each once: `ending` when the slot ends within 48 hours
+(`api.ManagedPostgresRestoreSlotNoticeLead`) and the account still has no room,
+and `expired` when the sweep scheduled the copy's delete. Each sweep, apid
+mails every notice that is unmailed and under 24 hours old to the account that
+restored the copy. It encrypts a frozen snapshot (database name, slot end,
+recovery deadline) and links the intent to the notice in one transaction, so a
+notice is mailed at most once. An `ending` notice is dropped once the copy
+leaves the slot, and its email expires at the slot's end. Maild re-checks the
+account at submission and cancels the email if the account is no longer active
+or is being deleted.
+
 ## Durable overdue-account suspension notices
 
 `FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED=0` independently gates
