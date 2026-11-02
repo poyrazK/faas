@@ -51,6 +51,9 @@ type overageFixture struct {
 	limits    CapLimits
 	published []OverageChargeStep
 	fail      error
+	// lostResponse makes the next publish reach the provider and then fail,
+	// as a timeout or an apid restart after the provider accepted it does.
+	lostResponse bool
 }
 
 func newOverageFixture(t *testing.T, now time.Time) *overageFixture {
@@ -74,6 +77,10 @@ func (f *overageFixture) biller(t *testing.T, live bool, from time.Time) *Overag
 				return f.fail
 			}
 			f.published = append(f.published, step)
+			if f.lostResponse {
+				f.lostResponse = false
+				return errors.New("provider response lost")
+			}
 			return nil
 		}
 	}
@@ -170,6 +177,61 @@ func TestOverageBillerRetriesAFailedStepAndShadowsWithoutSending(t *testing.T) {
 	}
 }
 
+// Bug hunt 33: after a publish the provider accepted but whose response was
+// lost, the next sweep saw more usage, so its step had a new target and a new
+// external ID and charged from the same starting point again. The step now
+// keeps its starting point, which the provider de-duplicates on.
+func TestOverageBillerRetryAfterALostResponseKeepsItsStartingPoint(t *testing.T) {
+	ctx := context.Background()
+	november := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	f := newOverageFixture(t, november.Add(10*24*time.Hour))
+	f.reachAllowance(t, "acct", november, true)
+	f.store.used["acct2026-11"] = testAllowance + 3600
+	f.lostResponse = true
+	if _, err := f.biller(t, true, november).Deliver(ctx); err == nil {
+		t.Fatal("a lost response was reported as delivered")
+	}
+	f.store.used["acct2026-11"] = testAllowance + 2*3600
+	if _, err := f.biller(t, true, november).Deliver(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.published) != 2 || f.published[0].DeliveredMillicents != 0 || f.published[1].DeliveredMillicents != 0 ||
+		f.published[1].TargetMillicents != 40_000 {
+		t.Fatalf("published %+v; want both steps to start from 0, so the provider keeps one", f.published)
+	}
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 40_000 {
+		t.Fatalf("recorded %+v", delivery)
+	}
+}
+
+// Bug hunt 33: shadow and live share the month's row. Going live counted
+// what shadow recorded as already charged; shadow after live would hide the
+// live charge.
+func TestOverageBillerKeepsShadowAndLiveApart(t *testing.T) {
+	ctx := context.Background()
+	november := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	f := newOverageFixture(t, november.Add(10*24*time.Hour))
+	f.reachAllowance(t, "acct", november, true)
+	f.store.used["acct2026-11"] = testAllowance + 2*3600
+	if summary, err := f.biller(t, false, november).Deliver(ctx); err != nil || summary.Shadowed != 1 {
+		t.Fatalf("shadow = %+v, %v", summary, err)
+	}
+	f.store.used["acct2026-11"] = testAllowance + 3*3600
+	if summary, err := f.biller(t, true, november).Deliver(ctx); err != nil || summary.Delivered != 1 || summary.Millicents != 60_000 {
+		t.Fatalf("live after shadow = %+v, %v; want the whole month charged", summary, err)
+	}
+	if len(f.published) != 1 || f.published[0].DeliveredMillicents != 0 || f.published[0].TargetMillicents != 60_000 {
+		t.Fatalf("published %+v; want a step from 0, not from the shadow amount", f.published)
+	}
+	f.store.used["acct2026-11"] = testAllowance + 4*3600
+	if summary, err := f.biller(t, false, november).Deliver(ctx); err != nil || summary.Shadowed != 0 {
+		t.Fatalf("shadow after live = %+v, %v; want nothing recorded", summary, err)
+	}
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 60_000 {
+		t.Fatalf("recorded %+v; want the live charge kept", delivery)
+	}
+}
+
 func TestOverageBillerClosesThePreviousMonthInsideTheWindow(t *testing.T) {
 	ctx := context.Background()
 	november := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
@@ -200,19 +262,19 @@ func TestOverageDeliveryAdvancesOnlyFromThePreviousCharge(t *testing.T) {
 	store := NewMemoryStore()
 	november := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	delivery := OverageDelivery{Provider: "polar", SubjectID: "acct", PeriodStart: november, Live: true, BilledUnitSeconds: 3600, Millicents: 20_000, UpdatedAt: november.Add(time.Hour)}
-	if recorded, err := store.RecordOverageDelivery(ctx, delivery, 0); err != nil || !recorded {
+	if recorded, err := store.RecordOverageDelivery(ctx, delivery, OverageDelivery{}); err != nil || !recorded {
 		t.Fatalf("first = %v, %v", recorded, err)
 	}
-	if recorded, err := store.RecordOverageDelivery(ctx, delivery, 0); err != nil || recorded {
+	if recorded, err := store.RecordOverageDelivery(ctx, delivery, OverageDelivery{}); err != nil || recorded {
 		t.Fatalf("a replica that lost the race recorded: %v, %v", recorded, err)
 	}
 	delivery.Millicents = 10_000
-	if _, err := store.RecordOverageDelivery(ctx, delivery, 20_000); err == nil {
+	if _, err := store.RecordOverageDelivery(ctx, delivery, OverageDelivery{Live: true, Millicents: 20_000}); err == nil {
 		t.Fatal("a lower charge was accepted")
 	}
 	delivery.PeriodStart = november.Add(time.Hour)
 	delivery.Millicents = 30_000
-	if _, err := store.RecordOverageDelivery(ctx, delivery, 20_000); err == nil {
+	if _, err := store.RecordOverageDelivery(ctx, delivery, OverageDelivery{Live: true, Millicents: 20_000}); err == nil {
 		t.Fatal("a mid-month period was accepted")
 	}
 }
