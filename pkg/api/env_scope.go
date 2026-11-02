@@ -1,8 +1,6 @@
 package api
 
-import (
-	"regexp"
-)
+import "github.com/onebox-faas/faas/pkg/lazyregexp"
 
 // EnvScopePattern accepts every catalog environment slug and preserves the
 // existing 40-character limit for legacy deployment scopes (ADR-568). Scope
@@ -47,7 +45,7 @@ const PreviewEnvScope = "pr-preview"
 // envScopeRe is the compiled form of EnvScopePattern. Compiled once
 // at init so each ValidateScope call is a MatchString and not a
 // MustCompile. The pattern is small + constant — no need for sync.Once.
-var envScopeRe = regexp.MustCompile(EnvScopePattern)
+var envScopeRe = lazyregexp.New(EnvScopePattern)
 
 // ValidateScope returns nil when s is a well-formed scope name; otherwise
 // it returns one of:

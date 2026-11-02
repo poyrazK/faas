@@ -923,7 +923,8 @@ backend (driver name `firecracker`, registered in apid). It reaches schedd
 with apid's client certificate and writes verifiers through `pkg/dbcreds`.
 
 - **Provision** asks schedd for a VM of the class's fixed shape (development
-  1 vCPU/512 MiB, burstable 2 vCPU/1 GiB), then runs an init batch through
+  1 vCPU/512 MiB, burstable 2 vCPU/1 GiB). Once schedd has bootstrapped it
+  (see "Background provisioning"), an init batch runs through
   `DatabaseAdmin`: the `gregale_schema_owner` role, the customer database it
   owns, and PUBLIC locked out of CONNECT/CREATE/TEMPORARY. Inspect derives
   the class back from the VM shape.
@@ -2158,6 +2159,41 @@ Backend configuration (`FAAS_MANAGED_POSTGRES_CONFIG`):
               "max_restore_window_seconds": "604800"},
  "secret_env": {"credential-key": "FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY"}}
 ```
+
+### Background provisioning (amendment 2026-11-02)
+
+A new database's bootstrap (volume, initdb, the first base backup) took
+about 10 s on internal-test-1, and schedd ran it inside `ProvisionDatabase`.
+The create request apid serves has a 5 s budget, so creating a native
+database through the API answered 503 although the reconciler later
+finished it. Worse, a caller whose deadline cut the bootstrap off made
+schedd stop the VM and mark the database `failed` for good.
+
+- `ProvisionDatabase` now only places the database and answers
+  `provisioning`. schedd bootstraps it in the background, detached from the
+  RPC, and parks it; `GetDatabase` reports it provisioning until then.
+- The bootstrap runs under a lease in `database_vms`, the column a restore
+  uses (a database is never both), so concurrent schedd replicas do not
+  bootstrap the same database. The replica running it renews the lease;
+  restarts and the idle sweep resume any whose lease lapsed
+  (`ResumeProvisions`). Repeating `ProvisionDatabase` resumes it too.
+- Only a failed step, or `ProvisionTimeout` (default 15 min), fails the
+  database. A bootstrap cut off by a delete, a lost lease or a dying
+  replica leaves the database provisioning for the next holder, which
+  boots it again; every step is safe to repeat.
+- The driver's `Provision` reports the database pending. While the service
+  is still provisioning it, it inspects the database through
+  `InspectProvision` (`managedpostgres.ProvisionInspector`), which runs the
+  init batch once schedd reports the database bootstrapped and only then
+  reports it ready. `Inspect` itself never runs it, so observing a
+  database never wakes it. Qualification polls the same way. A restore
+  needs no init batch: it recovers the source's customer database.
+- Release skew: an apid from before this change, facing the new schedd,
+  runs its init batch while the database is still provisioning. The
+  replica bootstrapping it holds the batch until the bootstrap ends;
+  another refuses it. Either way the service retries `Provision` until the
+  batch lands. A new apid facing an old schedd gets a parked database from
+  `ProvisionDatabase` and runs the init batch at once, as before.
 
 ## Phasing
 

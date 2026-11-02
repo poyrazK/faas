@@ -49,6 +49,10 @@ type fakeScheduler struct {
 	provisionErr error
 	deleteErr    error
 	failVM       bool
+	// bootstrapping places new databases provisioning, as schedd does
+	// before bootstrapping them in the background; otherwise they are
+	// parked at once (a retry after schedd finished).
+	bootstrapping bool
 	// imports are the import requests; importState is what they report.
 	imports       []*scheddpb.ImportDatabaseRequest
 	importState   string
@@ -129,8 +133,11 @@ func (f *fakeScheduler) ProvisionDatabase(_ context.Context, in *scheddpb.Provis
 		return nil, f.provisionErr
 	}
 	state := "parked"
-	if f.failVM {
+	switch {
+	case f.failVM:
 		state = "failed"
+	case f.bootstrapping:
+		state = "provisioning"
 	}
 	rt := &scheddpb.DatabaseRuntime{DatabaseId: in.GetDatabaseId(), State: state, PostgresMajor: in.GetPostgresMajor(),
 		VcpuCount: in.GetVcpuCount(), MemMib: in.GetMemMib(), VolumeBytes: in.GetVolumeBytes(), AlwaysOn: in.GetAlwaysOn(),
@@ -485,6 +492,38 @@ func TestProvisionCreatesVMAndDatabase(t *testing.T) {
 	obs, err = p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: "1b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e", Spec: burstable})
 	if err != nil || obs.Spec != burstable {
 		t.Fatalf("burstable observed = %+v, %v", obs.Spec, err)
+	}
+}
+
+// Schedd bootstraps a new database in the background (ADR-1027 amendment
+// 2026-11-02): Provision reports it pending, Inspect never runs the init
+// batch, and InspectProvision runs it once the VM is bootstrapped, before
+// reporting the database ready.
+func TestProvisionWaitsForTheBackgroundBootstrap(t *testing.T) {
+	p, sched, _ := newTestProvider(t)
+	sched.bootstrapping = true
+	ctx := context.Background()
+	obs, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: devSpec()})
+	if err != nil || obs.Status != managedpostgres.ProviderStatusPending || obs.ProviderResourceID != testDatabaseID {
+		t.Fatalf("provision = %+v, %v; want pending under its id", obs, err)
+	}
+	if obs, err = p.InspectProvision(ctx, testDatabaseID); err != nil || obs.Status != managedpostgres.ProviderStatusPending || len(sched.admin) != 0 {
+		t.Fatalf("while bootstrapping = %+v, %v; %d admin batches", obs, err, len(sched.admin))
+	}
+	sched.vms[testDatabaseID].State = "parked"
+	if obs, err = p.Inspect(ctx, testDatabaseID); err != nil || obs.Status != managedpostgres.ProviderStatusReady || len(sched.admin) != 0 {
+		t.Fatalf("inspect = %+v, %v; ran %d admin batches", obs, err, len(sched.admin))
+	}
+	obs, err = p.InspectProvision(ctx, testDatabaseID)
+	if err != nil || obs.Status != managedpostgres.ProviderStatusReady || obs.Spec != devSpec() {
+		t.Fatalf("bootstrapped = %+v, %v", obs, err)
+	}
+	if init := sched.lastAdmin(); len(sched.admin) != 1 || !strings.Contains(init, "CREATE DATABASE gregale OWNER gregale_schema_owner") {
+		t.Fatalf("admin batches %d, last %q", len(sched.admin), init)
+	}
+	sched.vms[testDatabaseID].State = "failed"
+	if obs, err = p.InspectProvision(ctx, testDatabaseID); err != nil || obs.Status != managedpostgres.ProviderStatusFailed || len(sched.admin) != 1 {
+		t.Fatalf("failed bootstrap = %+v, %v; %d admin batches", obs, err, len(sched.admin))
 	}
 }
 

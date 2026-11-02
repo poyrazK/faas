@@ -80,6 +80,10 @@ type RestoreDatabaseRequest struct {
 	// source must still have this provider identity, but later desired spec
 	// edits cannot replace the captured target configuration.
 	SourceDefinition *RestoreSourceDefinition
+	// WithinLimit refuses the restore with ErrQuotaExceeded instead of
+	// giving it the restore slot: a database switch's copy becomes the
+	// app's database, and the slot's end would revoke its bindings.
+	WithinLimit bool
 }
 
 type RestoreSourceDefinition struct {
@@ -335,6 +339,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if err != nil {
 		return Database{}, false, err
 	}
+	if request.WithinLimit {
+		ctx = reserveWithinLimit(ctx)
+	}
 	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
 		AccountID:               request.AccountID,
@@ -497,6 +504,8 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
 				Verification: recorded,
 			})
+		} else if inspector, ok := backend.Provider.(ProvisionInspector); ok && database.RestoreSourceResourceID == "" {
+			observed, err = inspector.InspectProvision(providerContext, database.ProviderResourceID)
 		} else {
 			observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
 		}

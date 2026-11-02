@@ -13,20 +13,44 @@ import (
 
 const workflowScheduleBatch = api.WorkflowScheduleBatch
 
+// workflowFailurePolicyInterval spaces complete failure-policy passes. Each
+// policy costs a locked transaction of several statements, so evaluating every
+// policy on every one-second tick grew database load with the number of
+// policies rather than with failures. ADR-905 detection is eventual and the
+// shortest observation window is 60 s, so a pass every 10 s keeps a latch well
+// inside it. A pass with more pages keeps paging on consecutive ticks.
+const workflowFailurePolicyInterval = 10 * time.Second
+
 // The keyed workflow worker serializes this scan within one process. Database
 // admission serializes it across scheduler replicas and manual run producers.
 func (l *Loop) runWorkflowSchedulesTick(ctx context.Context) error {
 	if !l.workflowsDispatched {
 		return nil
 	}
-	if store, ok := l.engine.Store().(state.AutomationFailurePolicyStore); ok {
-		next, err := store.EvaluateAutomationFailurePolicies(ctx, l.engine.OwnerNodeID(), l.workflowFailurePolicyAfter, api.AutomationFailurePolicyBatch, l.now())
-		if err != nil {
-			return fmt.Errorf("workflow failure policies: %w", err)
-		}
-		l.workflowFailurePolicyAfter = next
+	if err := l.runWorkflowFailurePoliciesTick(ctx); err != nil {
+		return err
 	}
 	return errors.Join(l.runApplicationWorkflowSchedulesTick(ctx), l.runTenantWorkflowSchedulesTick(ctx))
+}
+
+func (l *Loop) runWorkflowFailurePoliciesTick(ctx context.Context) error {
+	store, ok := l.engine.Store().(state.AutomationFailurePolicyStore)
+	if !ok {
+		return nil
+	}
+	now := l.now()
+	if l.workflowFailurePolicyAfter == "" && now.Before(l.workflowFailurePolicyNextPass) {
+		return nil
+	}
+	next, err := store.EvaluateAutomationFailurePolicies(ctx, l.engine.OwnerNodeID(), l.workflowFailurePolicyAfter, api.AutomationFailurePolicyBatch, now)
+	if err != nil {
+		return fmt.Errorf("workflow failure policies: %w", err)
+	}
+	l.workflowFailurePolicyAfter = next
+	if next == "" {
+		l.workflowFailurePolicyNextPass = now.Add(workflowFailurePolicyInterval)
+	}
+	return nil
 }
 
 func (l *Loop) runApplicationWorkflowSchedulesTick(ctx context.Context) error {

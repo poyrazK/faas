@@ -136,7 +136,11 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	slug := strings.TrimSpace(r.FormValue("slug"))
-	if !validSlug(slug) || api.IsReservedAppSlug(slug) {
+	existingApp := strings.TrimSpace(r.FormValue("existing_app"))
+	if existingApp != "" {
+		slug = existingApp
+	}
+	if !validSlug(slug) || (existingApp == "" && api.IsReservedAppSlug(slug)) {
 		redirectGitHubWizardError(w, r, "Choose an available app slug using lowercase letters, digits, and dashes.", repo, strconv.FormatInt(installationID, 10), r.FormValue("production_branch"), slug)
 		return
 	}
@@ -146,8 +150,16 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	expectedLogin, ok := s.sessionGithubLogin(w, r)
-	if !ok {
+	// The account's durable connection authorizes the installation, as for
+	// the JSON bind route (ADR-1345); the Gregale session's sign-in provider
+	// does not matter (ADR-20261101160300).
+	installation, err := s.store.GitHubInstallForAccountInstallation(r.Context(), acct.ID, installationID)
+	if errors.Is(err, state.ErrNotFound) {
+		redirectGitHubWizardError(w, r, "That GitHub installation is not connected to your account. Connect GitHub and try again.", repo, "", branch, slug)
+		return
+	}
+	if err != nil {
+		redirectGitHubWizardError(w, r, "Your GitHub connection could not be read. Retry in a minute.", repo, strconv.FormatInt(installationID, 10), branch, slug)
 		return
 	}
 	verified, accountLogin, defaultBranch, err := s.githubd.VerifyInstallation(r.Context(), installationID, "")
@@ -156,10 +168,6 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !verified {
-		if accountLogin != "" {
-			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "forged", "This installation belongs to a different GitHub user", "reconnect GitHub with the identity that owns this installation"))
-			return
-		}
 		redirectGitHubWizardError(w, r, "That GitHub installation is no longer available. Reconnect GitHub and try again.", repo, strconv.FormatInt(installationID, 10), branch, slug)
 		return
 	}
@@ -191,10 +199,21 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	app, problem := s.createDashboardWizardApp(r.Context(), r, acct, slug)
-	if problem != nil {
-		redirectGitHubWizardError(w, r, wizardProblemMessage(problem), repo, strconv.FormatInt(installationID, 10), branch, slug)
-		return
+	var app state.App
+	if existingApp != "" {
+		existing, err := s.store.AppBySlug(r.Context(), existingApp)
+		if err != nil || existing.AccountID != acct.ID || existing.Status == state.AppDeleted || existing.PreviewOfSlug != "" {
+			redirectGitHubWizardError(w, r, "That app was not found in your account.", repo, strconv.FormatInt(installationID, 10), branch, "")
+			return
+		}
+		app = existing
+	} else {
+		created, problem := s.createDashboardWizardApp(r.Context(), r, acct, slug)
+		if problem != nil {
+			redirectGitHubWizardError(w, r, wizardProblemMessage(problem), repo, strconv.FormatInt(installationID, 10), branch, slug)
+			return
+		}
+		app = created
 	}
 	bindingID, err := s.githubd.BindAppRepo(r.Context(), app.ID, acct.ID, installationID, repo, branch)
 	if err != nil {
@@ -209,7 +228,7 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 	s.audit.Emit(r.Context(), "auth.install.bound", &acctID, map[string]any{
 		"install_id":        installationID,
 		"app_id":            app.ID,
-		"github_login":      expectedLogin,
+		"connection_login":  installation.AuditGithubLogin,
 		"install_owner":     accountLogin,
 		"repo_full_name":    repo,
 		"production_branch": branch,
@@ -274,6 +293,9 @@ func redirectGitHubWizardError(w http.ResponseWriter, r *http.Request, message, 
 	}
 	if slug != "" {
 		q.Set("slug", slug)
+	}
+	if existing := strings.TrimSpace(r.FormValue("existing_app")); validSlug(existing) {
+		q.Set("app", existing)
 	}
 	http.Redirect(w, r, "/dashboard/apps/new?"+q.Encode(), http.StatusSeeOther)
 }

@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // CommitSubscriberWaitResult describes the original acceptance recipient only.
@@ -159,4 +160,4 @@ func commitSubscriberInterrupted(out CommitSubscriberWaitResult, err error) (Com
 	return out, fmt.Errorf("subscriber wait interrupted: %w", err)
 }
 
-var commitSubscriberUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
+var commitSubscriberUUID = lazyregexp.New(`(?i)^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)

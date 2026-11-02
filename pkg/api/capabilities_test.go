@@ -60,6 +60,25 @@ func TestCapabilitiesForPlanResolvesPlanEntitlements(t *testing.T) {
 	}
 }
 
+// The catalog's wildcard-domains entitlement must match the limits table,
+// which enforces it; GET /v1/capabilities reported it enabled on Free and
+// Hobby while domain create refused it.
+func TestWildcardDomainsEntitlementMatchesLimits(t *testing.T) {
+	for _, plan := range Plans {
+		limits, ok := LimitsFor(plan)
+		if !ok {
+			t.Fatalf("no limits for %s", plan)
+		}
+		entitled, err := CapabilityEntitled("wildcard-domains", plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entitled != limits.WildcardDomainsAllowed {
+			t.Fatalf("%s: catalog entitles wildcard-domains = %v, limits allow = %v", plan, entitled, limits.WildcardDomainsAllowed)
+		}
+	}
+}
+
 func TestCapabilitiesForPlanExplainsRestrictionsAndOmitsEnabledReasons(t *testing.T) {
 	for _, plan := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale, Plan("unknown")} {
 		t.Run(string(plan), func(t *testing.T) {

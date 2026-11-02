@@ -56,6 +56,32 @@ func nodeAdmissionExpectation(ctx context.Context, nodeID string) (NodeAdmission
 	return expected, present, nil
 }
 
+type thawAdmissionKey struct{}
+
+// WithThawAdmission binds what a frozen VM's return to service books on its
+// node: the reservation allowance and the vCPU and CPU, with the scheduler's
+// discounts, as WithNodeAdmission does for a new instance. A thaw keeps its
+// node, so no placement generation binds it. The thaw's publication checks
+// the node against them under the durable guard's lock, since a frozen row is
+// outside the node's bookings until it runs again (ADR 20261102072403).
+func WithThawAdmission(ctx context.Context, admission NodeAdmission) context.Context {
+	return context.WithValue(ctx, thawAdmissionKey{}, admission)
+}
+
+// thawAdmission is ctx's thaw binding for nodeID, clamped as a placement
+// binding is; without one a thaw books 100% and no compute.
+func thawAdmission(ctx context.Context, nodeID string) (percent int, compute NodeCompute) {
+	a, ok := ctx.Value(thawAdmissionKey{}).(NodeAdmission)
+	if !ok || a.NodeID != nodeID {
+		return 100, NodeCompute{}
+	}
+	c := a.Compute
+	return min(max(a.ReservationPercent, 100), api.MeasuredAdmissionMaxOvercommitPercent), NodeCompute{
+		VCPU: max(c.VCPU, 0), CPUMillicores: max(c.CPUMillicores, 0),
+		QuietVCPU: max(c.QuietVCPU, 0), QuietCPUMillicores: max(c.QuietCPUMillicores, 0),
+	}
+}
+
 // nodeReservationPercent is the reservation allowance ctx grants an admission
 // to nodeID (ADR-909 amendment 1). Only a binding for this node counts.
 func nodeReservationPercent(ctx context.Context, nodeID string) int {
