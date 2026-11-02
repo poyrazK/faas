@@ -339,6 +339,15 @@ and `gregale logs my-api --deployment <id>` to read the build. A key created
 with only `deploy:write` and the deploy Action's OIDC credential work the
 same way, for any app in the account.
 
+These credentials deploy a `gregale.yaml` with workflows, companions,
+extensions, crons and queue bindings; Gregale checks the plan limits when it
+creates the deployment. A function-set deploy with crons needs a
+`deploy:write` key or the OIDC credential, since a deploy token reaches only
+its app's routes. Attaching databases or binding buckets grants the app a
+credential, so a manifest with a `databases` block needs `postgres:manage`
+and one with a `buckets` block needs `storage:manage`. The deploy stops before
+it uploads and names the missing scope.
+
 ## Safe changes
 
 Preview a change with `gregale deploy --diff` or `--dry-run`. For a bad live

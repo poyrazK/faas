@@ -83,6 +83,8 @@ var cliTreeFlagFolds = []cliTreeFlagFold{
 	{New: "environment release-sets rollback", Flag: "prepare", Old: "projects environments release-sets prepare-rollback", Short: "select a retained graph and freeze current routing and policies"},
 	{New: "api route health check", Flag: "review", Only: true, Old: "routes health review-release", Short: "gate an aggregate preview review on canary route health"},
 	{New: "debug issue update", Flag: "issues", Keep: true, Only: true, Old: "issues bulk", Short: "triage up to 50 selected issue groups at once (with --action)"},
+	{New: "debug issue lifecycle-alert set", Flag: "dry-run", Old: "issues lifecycle-alerts preview", Short: "show the alerts the draft filters would send without saving them"},
+	{New: "debug issue compound-alert set", Flag: "dry-run", Old: "issues compound-alerts preview", Short: "preview the rule against retained events without saving it"},
 	{New: "org standards reviews approve", Flag: "dry-run", Old: "orgs standards reviews preview", Short: "save affected applications and blockers without activating a change"},
 }
 

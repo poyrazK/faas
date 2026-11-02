@@ -1691,6 +1691,13 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 		return []api.WorkflowSpec{}, nil
 	}
 	acct, err := client.Whoami(ctx)
+	if readRefused(err) {
+		// A deploy credential (deploy:write) may not read the account. apid
+		// checks the workflows against the plan when it creates the
+		// deployment, so the CLI's early check is only skipped
+		// (ADR-20261031162858 amendment 1).
+		return append([]api.WorkflowSpec{}, m.Workflows...), nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve account plan for workflow manifest: %w", err)
 	}
@@ -1718,6 +1725,11 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 		return nil, err
 	}
 	acct, err := client.Whoami(ctx)
+	if readRefused(err) {
+		// As for workflows: a deploy credential skips the early plan check
+		// and apid decides (ADR-20261031162858 amendment 1).
+		return m.ToSidecars()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve account plan for companion manifest: %w", err)
 	}
@@ -3459,6 +3471,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			whoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			if acct, werr := client.Whoami(whoCtx); werr == nil {
 				planCapMB = api.MustLimitsFor(api.Plan(acct.Plan)).SourceTarballMaxMB
+			} else if readRefused(werr) {
+				// A deploy credential may not read the account's plan. apid
+				// refuses an upload above the account's cap, so the pack is
+				// bounded only by the largest plan's (ADR-20261031162858
+				// amendment 1); the Free floor refused Pro and Scale sources.
+				planCapMB = largestSourceTarballMB()
 			} else {
 				PrintWarn(osStderr, "Whoami round-trip for per-plan cap failed (%v); using %d MB Free/Hobby floor", werr, planCapMB)
 			}

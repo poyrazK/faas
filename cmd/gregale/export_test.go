@@ -1406,6 +1406,7 @@ var LoadOrCreateDeveloperID = loadOrCreateDeveloperID
 var LoadTestStep = loadTestStep
 var LoadToken = loadToken
 var LoadWorkflowManifestForDeploy = loadWorkflowManifestForDeploy
+var LargestSourceTarballMB = largestSourceTarballMB
 var LocalTestConsumerEnv = localTestConsumerEnv
 var LockAutomationLiveSuite = lockAutomationLiveSuite
 var LockBucketUploadCheckpoint = lockBucketUploadCheckpoint
