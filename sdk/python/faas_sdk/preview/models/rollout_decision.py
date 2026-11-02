@@ -54,9 +54,9 @@ class RolloutDecision:
     gates: list[ReleaseGateResult] | Unset = UNSET
     """The release gates judged with this decision."""
     rollback_skipped: str | Unset = UNSET
-    """Post-release watch decisions only: the problem code that kept the release from being rolled back
-    automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until
-    someone rolls back or ships a fix."""
+    """Post-release decisions only: why an automatic rollback did not take the release off: the problem code that
+    refused it, such as rollback_crosses_release, or rollback_failed when it ran and did not restore the previous
+    release. The regression was found; the release keeps serving until someone rolls back or ships a fix."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

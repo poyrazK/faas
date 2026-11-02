@@ -44,7 +44,9 @@ type ResidentInstancesOnNodeReader interface {
 }
 
 // ListResidentInstancesOnNode returns the instances in a live state (IsLive) on
-// nodeID, newest start first, through instances_resident_node_idx.
+// nodeID, newest start first. Its state set is the recovery runner's, so it
+// reads instances_recovery_node_live_idx (node_id, started_at); the live node
+// index leaves out snapshotting, migrating and frozen rows.
 func (s *PgStore) ListResidentInstancesOnNode(ctx context.Context, nodeID string) ([]Instance, error) {
 	if !validUUID(nodeID) {
 		return nil, nil
@@ -54,7 +56,7 @@ func (s *PgStore) ListResidentInstancesOnNode(ctx context.Context, nodeID string
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		   from instances
 		  where node_id = $1::uuid
-		    and state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
+		    and state in ('running','cold_booting','waking','draining','snapshotting','migrating','warm','frozen')
 		  order by started_at desc`, nodeID)
 	if err != nil {
 		return nil, err

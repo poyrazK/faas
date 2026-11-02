@@ -34,6 +34,20 @@ func ReserveGatewayRead(ctx context.Context, metrics state.ObjectStorageProvider
 	return store.ReserveObjectStorageGatewayEgress(ctx, bucket, response.ContentLength, at, p)
 }
 
+// ReserveGatewayBytes reserves egress for a response body the gateway renders
+// itself, such as a listing, under gateway-safety accounting. It is the
+// same monthly egress an object body counts against (bug hunt 33).
+func ReserveGatewayBytes(ctx context.Context, metrics state.ObjectStorageProviderUsageStore, bucket string, bytes int64, p api.ObjectStoragePolicy, at time.Time) error {
+	store, ok := metrics.(state.ObjectStorageGatewayEgressStore)
+	if !ok || bytes < 0 {
+		return state.ErrObjectUsageStale
+	}
+	if bytes == 0 {
+		return nil
+	}
+	return store.ReserveObjectStorageGatewayEgress(ctx, bucket, bytes, at, p)
+}
+
 // RecordDeliveredEgress retains the legacy delivered-byte measurement. The
 // detached, bounded write survives a client disconnect, but cannot claim the
 // crash-safe reservation semantics of gateway safety mode.

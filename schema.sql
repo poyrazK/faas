@@ -55964,6 +55964,7 @@ CREATE TABLE public.usage_minutes (
     job_id uuid,
     job_run_id uuid,
     job_execution_class text,
+    paused_mb_seconds bigint DEFAULT 0 NOT NULL,
     CONSTRAINT usage_minutes_app_or_job_chk CHECK ((((meter_kind = 'app'::text) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((meter_kind = 'job'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
     CONSTRAINT usage_minutes_job_execution_class_check CHECK ((((meter_kind = 'app'::text) AND (job_execution_class IS NULL) AND (job_run_id IS NULL)) OR ((meter_kind = 'job'::text) AND (job_execution_class = ANY (ARRAY['standard'::text, 'flexible'::text]))))),
     CONSTRAINT usage_minutes_meter_kind_check CHECK ((meter_kind = ANY (ARRAY['app'::text, 'job'::text])))
@@ -74422,13 +74423,6 @@ CREATE INDEX instances_reaper_state_idx ON public.instances USING btree (started
 --
 
 CREATE INDEX instances_recovery_node_live_idx ON public.instances USING btree (node_id, started_at) WHERE (state = ANY (ARRAY['running'::text, 'cold_booting'::text, 'waking'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'frozen'::text]));
-
-
---
--- Name: instances_resident_node_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX instances_resident_node_idx ON public.instances USING btree (node_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'frozen'::text]));
 
 
 --

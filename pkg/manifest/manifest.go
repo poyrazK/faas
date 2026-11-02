@@ -212,6 +212,11 @@ type ObjectStorage struct {
 	// Compute nodes get it instead of ProviderEnvSrc, so they never hold the
 	// bucket-admin credential.
 	GatewayProviderEnvSrc string `yaml:"gateway_provider_env_src,omitempty"`
+	// ComputePublicReads has each compute node's app edge serve public
+	// bucket reads itself, with the gateway credential and a part of the
+	// node's port share, instead of forwarding them to the control plane
+	// (ADR-20261031122757 step 7). It needs ComputeNodes.
+	ComputePublicReads bool `yaml:"compute_public_reads,omitempty"`
 }
 
 // Managed reports whether the playbooks own s3-gatewayd.
@@ -241,6 +246,9 @@ func (o ObjectStorage) validate() Errors {
 	}
 	if !o.ComputeNodes && o.GatewayProviderEnvSrc != "" {
 		errs = append(errs, Error{"object_storage.gateway_provider_env_src", "is used only with compute_nodes"})
+	}
+	if o.ComputePublicReads && !o.ComputeNodes {
+		errs = append(errs, Error{"object_storage.compute_public_reads", "needs compute_nodes: the app edge reads with the gateway credential and port share the compute gateway gets"})
 	}
 	return errs
 }

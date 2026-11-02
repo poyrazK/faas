@@ -30,8 +30,7 @@ A third review of `pkg/sched` found:
    telemetry path (production) it listed every live instance in the fleet
    every 200 ms and kept its node's in Go: at a thousand instances a node and
    three schedulers, about 45,000 rows a second from the control-plane
-   database. The node index `instances_live_node_id_idx` leaves out frozen,
-   snapshotting and migrating rows, which are most of a dense node.
+   database.
 3. **`fcvm_resident_ram_pct` was meaningless on a multi-node fleet**: this
    scheduler's bookings over every node divided by the box-wide 47,600 MB,
    about 10% on production's 8,381 MB nodes whatever their load.
@@ -54,9 +53,10 @@ A third review of `pkg/sched` found:
    reason `no_capacity` and the wake places a fresh instance, as a refused
    ledger re-admission already did.
 2. **The poller reads its node.** `ListResidentInstancesOnNode` reads the live
-   instances on one node through a new partial index,
-   `instances_resident_node_idx` (built concurrently), covering every state
-   that holds memory on a node. Stores without it keep the old read.
+   instances on one node, every state that holds memory there, through the
+   recovery runner's existing `instances_recovery_node_live_idx`
+   (`node_id, started_at` over the same state set; no new index). Stores
+   without it keep the old read.
 3. **`fcvm_resident_ram_pct` reports the scheduler's node**: Σ(ram_mb + 8) of
    every owner's resident instances there, from the memory shadow, over the
    node's admission ceiling. A single-box scheduler keeps its ledger over the
