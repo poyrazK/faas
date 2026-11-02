@@ -43858,6 +43858,7 @@ CREATE TABLE public.managed_postgres_overage_deliveries (
     billed_unit_seconds bigint NOT NULL,
     delivered_millicents bigint NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    billed_storage_byte_seconds bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_deliveries_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_deliveries_check CHECK ((isfinite(updated_at) AND (updated_at >= period_start))),
     CONSTRAINT managed_postgres_overage_deliveries_delivered_millicents_check CHECK ((delivered_millicents > 0)),
@@ -63944,6 +63945,14 @@ ALTER TABLE ONLY public.managed_postgres_live_keys
 
 ALTER TABLE ONLY public.managed_postgres_live_logins
     ADD CONSTRAINT managed_postgres_live_logins_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_storage_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_deliveries
+    ADD CONSTRAINT managed_postgres_overage_deliveries_billed_storage_check CHECK ((billed_storage_byte_seconds >= 0)) NOT VALID;
 
 
 --

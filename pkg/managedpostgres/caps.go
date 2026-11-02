@@ -162,6 +162,10 @@ type CapLimits struct {
 	Ceiling     int64
 	Overage     bool
 	StoragePool int64
+
+	// StorageAllowance is the plan's pool in bytes, before overage doubles
+	// it: storage past it is charged (ADR-20261031110037 amendment 1).
+	StorageAllowance int64
 }
 
 // CapCeiling returns a usage subject's limits: an account, or an

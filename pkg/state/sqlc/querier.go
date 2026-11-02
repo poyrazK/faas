@@ -4301,6 +4301,10 @@ type Querier interface {
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	// ADR-20261031110037: managed PostgreSQL overage charges delivered per
 	// billing provider, usage subject and UTC month.
+	// Subjects that may owe overage for the month: those that reached the
+	// compute allowance (as the cap sweep recorded it), those with overage on,
+	// whose storage past the pool is billed (ADR-20261031110037 amendment 1), and
+	// those already charged.
 	ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, periodStart pgtype.Timestamptz) ([]ManagedPostgresOverageSubjectsRow, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
 	ManagedPostgresPersonalDatabaseReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalDatabaseReferenceParams) (bool, error)

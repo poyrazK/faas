@@ -385,7 +385,7 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 		}
 		return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
 			Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
-			StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
+			StoragePool: managedPostgresStoragePool(limits, overageOn), StorageAllowance: limits.StorageLimitBytes}, nil
 	}
 }
 
