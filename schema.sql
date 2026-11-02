@@ -74418,6 +74418,13 @@ CREATE INDEX instances_recovery_node_live_idx ON public.instances USING btree (n
 
 
 --
+-- Name: instances_resident_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instances_resident_node_idx ON public.instances USING btree (node_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'frozen'::text]));
+
+
+--
 -- Name: instances_startup_cpu_boost_until_idx; Type: INDEX; Schema: public; Owner: -
 --
 
