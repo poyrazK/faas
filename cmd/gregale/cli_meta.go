@@ -494,6 +494,9 @@ var (
 	platformTenantIDFlag = cliFlag{Name: "id", Short: "platform tenant UUID", Value: "UUID", Req: true}
 	// platformTenantStatementIDFlag addresses one cross-app statement revision.
 	platformTenantStatementIDFlag = cliFlag{Name: "statement-id", Short: "statement revision UUID", Value: "UUID", Req: true}
+	// usageMonthFlag and usageDayFlag select the period billing usage views read.
+	usageMonthFlag = cliFlag{Name: "month", Short: "month (YYYY-MM); default: current month", Value: "YYYY-MM"}
+	usageDayFlag   = cliFlag{Name: "day", Short: "day (YYYY-MM-DD); default: today UTC", Value: "YYYY-MM-DD"}
 )
 
 var templateNames13 = []string{
@@ -591,6 +594,7 @@ var cliCommands = []cliCommand{
 			{Name: "export", Short: "Export account data (GDPR)", Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "output file", Value: "PATH"},
 				{Name: "no-secrets", Short: "exclude the sealed-secret ciphertext slice", Bool: true},
+				{Name: "force", Short: "replace the output file if it exists", Bool: true},
 			}},
 			{Name: "delete", Short: "Schedule account deletion", Flags: []cliFlag{
 				{Name: "q", ShortName: "q", Short: "skip the confirmation prompt", Bool: true},
@@ -1883,7 +1887,9 @@ var cliCommands = []cliCommand{
 				{Name: "no-open", Short: "alias of --print", Bool: true},
 			}},
 			{Name: "retry", Short: "Retry failed payment when supported; Polar uses the portal"},
-			{Name: "cancel", Short: "Cancel the subscription at period end"},
+			{Name: "cancel", Short: "Cancel the subscription at period end", Flags: []cliFlag{
+				{Name: "yes", Short: "confirm the cancellation without prompting; required with --json or without a terminal", Bool: true},
+			}},
 			{Name: "payment-method", Short: "Show the card on file", Flags: []cliFlag{
 				{Name: "print", Short: "print the card summary and portal URL without opening a browser", Bool: true},
 				{Name: "no-open", Short: "alias of --print", Bool: true},
@@ -2883,8 +2889,8 @@ var cliCommands = []cliCommand{
 				{Name: "reason", Short: "cancel reason (default user)", Value: "REASON", ClosedSet: []string{"user", "auto_quota", "auto_health", "system"}},
 			}},
 			{Name: "reorder", Short: "Change one pending deployment's queue priority", Positionals: []string{"<id>"}},
-			{Name: "clear", Short: "Hide one deployment from the list", Positionals: []string{"<id|vN>"}, Flags: []cliFlag{{Name: "app", Short: "app slug for revision resolution", Value: "SLUG"}, {Name: "dry-run", Short: "preview cleanup without changing resources", Bool: true}, {Name: "force", Short: "confirm cleanup without prompting", Bool: true}}},
-			{Name: "clear-obsolete", Short: "Hide obsolete deployments older than a cutoff", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "older-than", Short: "cutoff age (default 168h)", Value: "D"}, {Name: "dry-run", Short: "preview age/status candidates without changing resources"}, {Name: "force", Short: "skip the confirmation"}}},
+			{Name: "clear", Short: "Hide one deployment from the list", Positionals: []string{"<id|vN>"}, Flags: []cliFlag{{Name: "app", Short: "app slug for revision resolution", Value: "SLUG"}, {Name: "dry-run", Short: "preview cleanup without changing resources", Bool: true}, {Name: "yes", Short: "confirm cleanup without prompting (alias: --force)", Bool: true}}},
+			{Name: "clear-obsolete", Short: "Hide obsolete deployments older than a cutoff", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "older-than", Short: "cutoff age (default 168h)", Value: "D"}, {Name: "dry-run", Short: "preview age/status candidates without changing resources"}, {Name: "yes", Short: "confirm cleanup without prompting (alias: --force)", Bool: true}}},
 			// ADR-117 §Production-ready follow-on, C2 — per-stage
 			// retry. The verb is `retry` (NOT a `--retry` flag on
 			// show/status) because the action mutates state — a
@@ -3563,7 +3569,7 @@ var cliCommands = []cliCommand{
 			{Name: "rate-cards", Short: "List an app's per-request price versions", Positionals: []string{"<slug>"}},
 			{Name: "rate-card-create", Short: "Add an immutable per-request price version", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE", Req: true},
-				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "price-millicents", Short: "price per request; 100000 = 1.00; required unless --tier", Value: "N"},
 				{Name: "included-units", Short: "free requests per consumer per UTC calendar month", Value: "N"},
 				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
 				{Name: "weight", Short: "count each request on a route as N units; unlisted routes count 1", Value: "METHOD /template=N", Repeatable: true},
@@ -3574,7 +3580,7 @@ var cliCommands = []cliCommand{
 				{Name: "base-fee-millicents", Short: "fixed charge per consumer per UTC month, billed by the month's statement", Value: "N"},
 				{Name: "minimum-millicents", Short: "minimum usage charge per consumer per UTC month; the statement tops up the difference", Value: "N"},
 				{Name: "prorate-monthly-fees", Short: "scale the fee and minimum in a consumer's first month to the share of it left after the consumer was created"},
-			}, Examples: []string{"gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 1 --unit app:output_tokens"}},
+			}, Examples: []string{"gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale api consumer rate-card create my-api --currency EUR --tier 1000:100 --tier inf:60 --tier-mode volume", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 1 --unit app:output_tokens"}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
@@ -3827,7 +3833,7 @@ var cliCommands = []cliCommand{
 			{Name: subCreate, Short: "Create a list", Positionals: []string{"<name>"}, Examples: []string{
 				"gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1",
 				"gregale edge rule-list create blocked --kind country --items-file countries.txt",
-				`gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'`,
+				`gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --throttle-burst 10 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'`,
 			}, Flags: []cliFlag{
 				{Name: "kind", Short: "list kind", Value: "KIND", Req: true, ClosedSet: []string{"ip", "country", "host", "string", "asn"}},
 				{Name: "item", Short: "list item (repeat)", Value: "VALUE"},
@@ -3889,7 +3895,7 @@ var cliCommands = []cliCommand{
 				"gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /login --throttle-requests-per-second 0.1 --throttle-burst 5 --throttle-key-by composite --throttle-key-field ip --throttle-key-field header:x-username --throttle-count-status 401",
 				"gregale edge rule create --app my-api --kind redirect --match-host my-api.gregale.dev --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.dev/new",
 				"gregale edge rule create --app my-api --kind cache --match-host my-api.gregale.dev --match-path /catalog --cache-max-age-seconds 60",
-				`gregale edge rule create --app my-site --kind challenge --match-host my-site.gregale.dev --match-path '/*' --match '{"field":"verified_bot","op":"missing"}'`,
+				`gregale edge rule create --app my-site --kind challenge --match-host @app --match-path '/*' --match '{"field":"verified_bot","op":"missing"}'`,
 				"gregale edge rule create --app my-api --kind budget --match-host my-api.gregale.dev --match-path /reports --budget-ms 20000",
 				"gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block",
 				"cat schema.json | gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema -",
@@ -4196,7 +4202,7 @@ var cliCommands = []cliCommand{
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "to", Short: "version to restore", Req: true, Value: "N"},
-				{Name: "quiet", Short: "skip the typed confirmation (for scripts)"},
+				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)", Bool: true},
 			}},
 		},
 		Flags: []cliFlag{
@@ -4732,8 +4738,8 @@ var cliCommands = []cliCommand{
 	{Name: "issues", DocSlug: "issues", Short: "Group failures into issues and track ownership and resolution", Examples: []string{"gregale debug issue list --app my-api", "gregale debug issue list --app my-api --assignee me", "gregale debug issue list --app my-api --assignee unassigned", "gregale debug issue list --app my-api --sort impact", "gregale debug issue impact-alert --app my-api --min-customers 5", "gregale debug issue ownership-rules --app my-api", "gregale debug issue ownership-rules --app my-api --rules-file issue-routing.json", "gregale debug issue get ISSUE_ID --app my-api", "gregale debug issue resolve ISSUE_ID --app my-api --release DEPLOYMENT_ID"}, Subcommands: []cliSub{
 		{Name: "list", Short: "List grouped issues", Flags: issueAppFlags}, {Name: "get", Short: "Read evidence and release history", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue get --app my-api --interactive", "gregale debug issue get --app <SLUG> <issue-id>"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "browse issues by state and order, then inspect one"})}, {Name: "assign", Short: "Assign an issue to an account or team", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue assign --app my-api --interactive"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "choose an open issue, assign to yourself or unassign, and confirm ownership"}, cliFlag{Name: "team", Value: "UUID", Short: "team assignment or shared inbox"}, cliFlag{Name: "assignee", Short: "owner account UUID (empty unassigns)", Value: "UUID"})}, {Name: "resolve", Short: "Resolve in a deployment", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue resolve --app my-api --interactive"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "choose an open issue and fixing release, then confirm resolution"}, cliFlag{Name: "deployment", Short: "fixing deployment UUID or vN revision (required unless interactive)", Value: "UUID|vN"})}, {Name: "reopen", Short: "Reopen an issue", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue reopen --app my-api --interactive"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "choose a resolved or ignored issue, review its state, and confirm reopening"})}, {Name: "ignore", Short: "Ignore until a timestamp", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue ignore --app my-api --interactive"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "choose an open issue and duration, then confirm expiry"}, cliFlag{Name: "until", Short: "ignore until RFC3339 (required unless interactive)", Value: "RFC3339"})},
 		{Name: "merge", Short: "Merge an issue into another issue group", Positionals: []string{"<issue-id>"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "target", Short: "destination issue UUID", Value: "UUID", Req: true})},
-		{Name: "split", Short: "Split an original group back out of an issue", Positionals: []string{"<issue-id>"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "member", Short: "original group UUID to split out", Value: "UUID", Req: true})}, {Name: "impact-alert", Short: "Read or configure customer-impact alert threshold", Flags: issueAppFlags}, {Name: "compound-alerts", Short: "Manage and preview shared-window event and customer conditions", Positionals: []string{"<get|save|remove|preview>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "key", Value: "KEY", Short: "stable rule key"}, {Name: "environment", Value: "NAME", Short: "exact environment; empty matches all"}, {Name: "minimum-events", Value: "N", Short: "event threshold in the shared window"}, {Name: "minimum-customers", Value: "N", Short: "verified distinct customer threshold in the shared window"}, {Name: "window-seconds", Value: "N"}, {Name: "cooldown-seconds", Value: "N"}, {Name: "enabled", Bool: true, ClosedSet: []string{"true", "false"}, Short: "use --enabled=false to disable a saved rule"}, {Name: "expected-revision", Value: "N", Short: "required for save/remove"}, {Name: "issue", Value: "UUID", Short: "existing issue for an unsaved preview"}}}, {Name: "tickets", Short: "Create tracker tickets or preview and apply lifecycle sync", Positionals: []string{"<create|sync|auto-sync|linear-connection>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "issue", Value: "UUID", Req: true}, {Name: "provider", Value: "PROVIDER"}, {Name: "target", Value: "TARGET"}, {Name: "title", Value: "TEXT"}, {Name: "request-id", Value: "UUID"}, {Name: "description", Value: "TEXT"}, {Name: "token-env", Value: "NAME"}, {Name: "journal-dir", Value: "PATH"}, {Name: "recover-url", Value: "URL"}, {Name: "recover", Bool: true}, {Name: "link", Value: "UUID"}, {Name: "direction", Value: "push|pull|outbound|inbound|both"}, {Name: "apply", Bool: true}, {Name: "deployment", Value: "UUID"}, {Name: "linear-state", Value: "UUID"}, {Name: "webhook-secret-env", Value: "NAME"}, {Name: "linear-open-state", Value: "UUID"}, {Name: "linear-resolved-state", Value: "UUID"}, {Name: "native", Bool: true}, {Name: "enable", Bool: true}, {Name: "disable", Bool: true}, {Name: "connect", Bool: true}, {Name: "disconnect", Bool: true}, {Name: "team", Value: "UUID"}}}, {Name: "links", Short: "Manage GitHub and Linear tracker references", Positionals: []string{"<list|save|delete>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "issue", Value: "UUID", Req: true}, {Name: "url", Value: "URL"}, {Name: "title", Value: "TEXT"}, {Name: "link", Value: "UUID"}, {Name: "cursor", Value: "CURSOR"}}}, {Name: "teams", Short: "Manage team members and shared inboxes", Positionals: []string{"<list|get|save|delete|inbox>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "key", Value: "KEY"}, {Name: "name", Value: "NAME"}, {Name: "members", Value: "UUID,UUID"}, {Name: "cursor", Value: "CURSOR"}}}, {Name: "codeowners", Short: "Preview or replace ownership rules from a bounded CODEOWNERS subset", Positionals: []string{"<preview|apply>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Req: true}, {Name: "bindings-file", Value: "PATH", Req: true}, {Name: "source-root", Value: "PATH", Req: true}, {Name: "app", Value: "SLUG"}, {Name: "replace", Bool: true, Short: "explicitly replace the existing policy"}}}, {Name: "views", Short: "Manage and apply shared saved issue inbox filters", Positionals: []string{"<list|get|save|delete|apply>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "key", Value: "KEY"}, {Name: "name", Value: "NAME"}, {Name: "state", Value: "STATE"}, {Name: "environment", Value: "NAME"}, {Name: "team", Value: "UUID", Short: "team assignment or shared inbox"}, {Name: "assignee", Value: "OWNER"}, {Name: "sort", Value: "ORDER"}, {Name: "min-customers", Value: "N"}, {Name: "tag", Value: "KEY=VALUE"}, {Name: "cursor", Value: "CURSOR"}}}, {Name: "compare-releases", Short: "Compare observed request health and Issues across deployments", Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "baseline", Value: "UUID", Req: true}, {Name: "candidate", Value: "UUID", Req: true}, {Name: "environment", Value: "NAME"}}}, {Name: "bulk", Short: "Atomically triage up to 50 selected issue groups", Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "issues", Value: "UUID,UUID", Req: true}, {Name: "action", Value: "ACTION", Req: true}, {Name: "team", Value: "UUID", Short: "team assignment or shared inbox"}, {Name: "assignee", Value: "UUID"}, {Name: "deployment", Value: "UUID"}, {Name: "until", Value: "RFC3339"}}}, {Name: "source-maps", Short: "Publish, inspect or retire deployment mapping artifacts", Positionals: []string{"<publish|status|retire>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "deployment", Value: "UUID", Req: true}, {Name: "directory", Value: "PATH", Short: "deployed directory corresponding to the build scan root"}, {Name: "manifest-file", Value: "PATH", Short: "portable source-map manifest file"}}},
-		{Name: "lifecycle-alerts", Short: "Read, save or preview new-issue/regression alert filters", Positionals: []string{"<get|save|preview>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "environments", Value: "ENVS", Short: "comma-separated exact names; empty means all"}, {Name: "cooldown-seconds", Value: "N", Short: "shared cooldown; zero disables throttling"}, {Name: "expected-revision", Value: "N", Short: "required when saving"}, {Name: "issue", Value: "UUID", Short: "existing issue for draft preview"}, {Name: "event", Value: "EVENT", Short: "created or regressed for preview"}}},
+		{Name: "split", Short: "Split an original group back out of an issue", Positionals: []string{"<issue-id>"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "member", Short: "original group UUID to split out", Value: "UUID", Req: true})}, {Name: "impact-alert", Short: "Read or configure customer-impact alert threshold", Flags: issueAppFlags}, {Name: "compound-alerts", Short: "Manage and preview shared-window event and customer conditions", Subcommands: issueModeSubs(issueCompoundAlertFlags, "get", "Read the compound rules", "save", "Save a compound rule", "remove", "Remove a compound rule", "preview", "Preview a rule against retained events"), Flags: issueCompoundAlertFlags}, {Name: "tickets", Short: "Create tracker tickets or preview and apply lifecycle sync", Positionals: []string{"<create|sync|auto-sync|linear-connection>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "issue", Value: "UUID", Req: true}, {Name: "provider", Value: "PROVIDER"}, {Name: "target", Value: "TARGET"}, {Name: "title", Value: "TEXT"}, {Name: "request-id", Value: "UUID"}, {Name: "description", Value: "TEXT"}, {Name: "token-env", Value: "NAME"}, {Name: "journal-dir", Value: "PATH"}, {Name: "recover-url", Value: "URL"}, {Name: "recover", Bool: true}, {Name: "link", Value: "UUID"}, {Name: "direction", Value: "push|pull|outbound|inbound|both"}, {Name: "apply", Bool: true}, {Name: "deployment", Value: "UUID"}, {Name: "linear-state", Value: "UUID"}, {Name: "webhook-secret-env", Value: "NAME"}, {Name: "linear-open-state", Value: "UUID"}, {Name: "linear-resolved-state", Value: "UUID"}, {Name: "native", Bool: true}, {Name: "enable", Bool: true}, {Name: "disable", Bool: true}, {Name: "connect", Bool: true}, {Name: "disconnect", Bool: true}, {Name: "team", Value: "UUID"}}}, {Name: "links", Short: "Manage GitHub and Linear tracker references", Positionals: []string{"<list|save|delete>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "issue", Value: "UUID", Req: true}, {Name: "url", Value: "URL"}, {Name: "title", Value: "TEXT"}, {Name: "link", Value: "UUID"}, {Name: "cursor", Value: "CURSOR"}}}, {Name: "teams", Short: "Manage team members and shared inboxes", Positionals: []string{"<list|get|save|delete|inbox>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "key", Value: "KEY"}, {Name: "name", Value: "NAME"}, {Name: "members", Value: "UUID,UUID"}, {Name: "cursor", Value: "CURSOR"}}}, {Name: "codeowners", Short: "Preview or replace ownership rules from a bounded CODEOWNERS subset", Positionals: []string{"<preview|apply>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Req: true}, {Name: "bindings-file", Value: "PATH", Req: true}, {Name: "source-root", Value: "PATH", Req: true}, {Name: "app", Value: "SLUG"}, {Name: "replace", Bool: true, Short: "explicitly replace the existing policy"}}}, {Name: "views", Short: "Manage and apply shared saved issue inbox filters", Positionals: []string{"<list|get|save|delete|apply>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "key", Value: "KEY"}, {Name: "name", Value: "NAME"}, {Name: "state", Value: "STATE"}, {Name: "environment", Value: "NAME"}, {Name: "team", Value: "UUID", Short: "team assignment or shared inbox"}, {Name: "assignee", Value: "OWNER"}, {Name: "sort", Value: "ORDER"}, {Name: "min-customers", Value: "N"}, {Name: "tag", Value: "KEY=VALUE"}, {Name: "cursor", Value: "CURSOR"}}}, {Name: "compare-releases", Short: "Compare observed request health and Issues across deployments", Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "baseline", Value: "UUID", Req: true}, {Name: "candidate", Value: "UUID", Req: true}, {Name: "environment", Value: "NAME"}}}, {Name: "bulk", Short: "Atomically triage up to 50 selected issue groups", Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "issues", Value: "UUID,UUID", Req: true}, {Name: "action", Value: "ACTION", Req: true}, {Name: "team", Value: "UUID", Short: "team assignment or shared inbox"}, {Name: "assignee", Value: "UUID"}, {Name: "deployment", Value: "UUID"}, {Name: "until", Value: "RFC3339"}}}, {Name: "source-maps", Short: "Publish, inspect or retire deployment mapping artifacts", Subcommands: issueModeSubs(issueSourceMapFlags, "publish", "Publish a deployment's mapping artifact", "status", "Show a deployment's mapping artifact", "retire", "Retire a deployment's mapping artifact"), Flags: issueSourceMapFlags},
+		{Name: "lifecycle-alerts", Short: "Read, save or preview new-issue/regression alert filters", Subcommands: issueModeSubs(issueLifecycleAlertFlags, "get", "Read the alert filters", "save", "Save the alert filters", "preview", "Preview the alerts a draft would send"), Flags: issueLifecycleAlertFlags},
 		{Name: "ownership-rules", Short: "Read or replace automatic assignment rules", Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "rules-file", Short: "JSON policy file to replace rules; use - for stdin", Value: "PATH"})}, {Name: "tokens", Short: "List ingest credentials", Flags: issueAppFlags}, {Name: "create-token", Short: "Create a deployment-bound ingest credential", Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "deployment", Short: "deployment UUID the credential is bound to", Req: true, Value: "UUID"})}, {Name: "revoke-token", Short: "Revoke an ingest credential", Positionals: []string{"<token-id>"}, Flags: issueAppFlags},
 	}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "application slug"}, {Name: "deployment", Value: "UUID", Short: "fixed or token-bound deployment"}, {Name: "state", Value: "STATE", Short: "filter issue state"}, {Name: "environment", Value: "ENV", Short: "environment filter"}, {Name: "cursor", Value: "CURSOR", Short: "issue-list or occurrence cursor"}, {Name: "release-cursor", Value: "CURSOR", Short: "release history cursor"}, {Name: "activity-cursor", Value: "CURSOR", Short: "activity history cursor"}, {Name: "team", Value: "UUID", Short: "team assignment or shared inbox"}, {Name: "assignee", Value: "OWNER", Short: "list filter me, unassigned, or account UUID; assignment owner UUID"}, {Name: "sort", Value: "ORDER", Short: "list order: recent or impact by verified customers in 24h"}, {Name: "tag", Value: "KEY=VALUE", Short: "allowed operational tag filter over retained occurrences in 24h"}, {Name: "min-customers", Value: "N", Short: "issue list threshold, or impact-alert policy threshold (0 disables)"}, {Name: "since", Value: "RFC3339", Short: "impact window start"}, {Name: "until", Value: "RFC3339", Short: "ignore until"}, {Name: "name", Value: "NAME", Short: "credential name"}, {Name: "expires-in", Value: "D", Short: "credential lifetime"}, {Name: "rules-file", Value: "PATH", Short: "ownership-rules JSON policy file to replace rules; use - for stdin"}}},
 
@@ -5191,7 +5197,7 @@ var cliCommands = []cliCommand{
 				{Name: "app-id", Short: "filter by application UUID", Value: "UUID"},
 				{Name: "limit", Short: "page size (1..100)", Value: "N"},
 			}},
-			{Name: "rm", Short: "Delete one org", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "q", ShortName: "q", Short: "skip the confirmation prompt", Bool: true}}},
+			{Name: "rm", Short: "Delete one org", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the confirmation prompt (aliases: -q, --quiet)", Bool: true}}},
 			{Name: "members", Short: "Manage org members", Subcommands: []cliSub{
 				{Name: "list", Short: "List org members", Positionals: []string{"<slug>"}},
 				{Name: "invite", Short: "Invite a member by email", Flags: []cliFlag{
@@ -6203,8 +6209,8 @@ var cliCommands = []cliCommand{
 			{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
 			{Name: "json", Short: "machine-readable output"},
 		},
-		Subcommands: []cliSub{{Name: "status", Short: "Read an exact rollback operation", Notes: []string{"Waiting never submits another rollback."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
-			{Name: "operation", Short: "accepted rollback operation UUID", Value: "UUID", Req: true},
+		Subcommands: []cliSub{{Name: "status", Short: "Read an exact rollback operation", Notes: []string{"Waiting never submits another rollback.", "With a switch ID in place of --operation, it shows a rollback that restores the database (`gregale rollback status <slug> <switch-id>`)."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "operation", Short: "accepted rollback operation UUID", Value: "UUID"},
 			{Name: "wait", Short: "wait for completion with a committed audit receipt"},
 			{Name: "timeout", Short: "wait deadline (default 10m)", Value: "duration"},
 			{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
@@ -6214,7 +6220,7 @@ var cliCommands = []cliCommand{
 				{Name: "json", Short: "machine-readable output"},
 			}},
 			{Name: "switch", Short: "Show, follow or cancel a rollback that restores the database",
-				Notes:       []string{"A switch can be cancelled until it starts switching the release and the bindings."},
+				Notes:       []string{"A switch can be cancelled until it starts switching the release and the bindings.", "With --operation UUID in place of a switch ID, it reads a rollback operation, as `gregale rollback status` does."},
 				Positionals: []string{"<slug>", "<switch-id>"},
 				Examples:    []string{"gregale release rollback status my-api 6f1c2b0e-7d2a-4f7e-9a51-3c8d2f0b9e41 --wait"},
 				Flags: []cliFlag{
@@ -6222,6 +6228,7 @@ var cliCommands = []cliCommand{
 					{Name: "wait", Short: "follow the switch until it ends", Bool: true},
 					{Name: "timeout", Short: "wait deadline (default 60m)", Value: "duration"},
 					{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
+					{Name: "operation", Short: "read this rollback operation instead of a switch", Value: "UUID"},
 					{Name: "json", Short: "machine-readable output"},
 				}}},
 	},
@@ -6567,15 +6574,13 @@ var cliCommands = []cliCommand{
 		DocSlug: "usage",
 		Short:   "Show this month's usage, or daily, storage and summary views",
 		Subcommands: []cliSub{
-			{Name: "daily", Short: "Per-day breakdown"},
-			{Name: "storage", Short: "Per-app storage bytes"},
+			{Name: "daily", Short: "Per-day breakdown", Flags: []cliFlag{usageDayFlag}},
+			{Name: "storage", Short: "Per-app storage bytes", Flags: []cliFlag{usageDayFlag}},
 			{Name: "object-storage", Short: "Account object storage observations, safety policy and billing state"},
-			{Name: "summary", Short: "Account roll-up"},
+			{Name: "summary", Short: "Account roll-up", Flags: []cliFlag{usageMonthFlag}},
 		},
-		Flags: []cliFlag{
-			{Name: "month", Short: "month (YYYY-MM)", Value: "YYYY-MM"},
-			{Name: "day", Short: "day (YYYY-MM-DD)", Value: "YYYY-MM-DD"},
-		},
+		// --day belongs to daily and storage; usage itself reads only --month.
+		Flags: []cliFlag{usageMonthFlag},
 	},
 	{
 		Name:    "version",
@@ -6893,3 +6898,19 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<command>"},
 	},
 }
+
+// issueModeSubs lists the mode words of an issue command that takes its mode
+// as its first argument (`debug issue lifecycle-alerts get`) as verbs sharing
+// the command's flags, so the tree can name each mode (ADR-20261026145832).
+// pairs alternates a mode word and its summary.
+func issueModeSubs(flags []cliFlag, pairs ...string) []cliSub {
+	subs := make([]cliSub, 0, len(pairs)/2)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		subs = append(subs, cliSub{Name: pairs[i], Short: pairs[i+1], Flags: flags})
+	}
+	return subs
+}
+
+var issueLifecycleAlertFlags = []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "environments", Value: "ENVS", Short: "comma-separated exact names; empty means all"}, {Name: "cooldown-seconds", Value: "N", Short: "shared cooldown; zero disables throttling"}, {Name: "expected-revision", Value: "N", Short: "required when saving"}, {Name: "issue", Value: "UUID", Short: "existing issue for draft preview"}, {Name: "event", Value: "EVENT", Short: "created or regressed for preview"}}
+var issueCompoundAlertFlags = []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "key", Value: "KEY", Short: "stable rule key"}, {Name: "environment", Value: "NAME", Short: "exact environment; empty matches all"}, {Name: "minimum-events", Value: "N", Short: "event threshold in the shared window"}, {Name: "minimum-customers", Value: "N", Short: "verified distinct customer threshold in the shared window"}, {Name: "window-seconds", Value: "N"}, {Name: "cooldown-seconds", Value: "N"}, {Name: "enabled", Bool: true, ClosedSet: []string{"true", "false"}, Short: "use --enabled=false to disable a saved rule"}, {Name: "expected-revision", Value: "N", Short: "required for save/remove"}, {Name: "issue", Value: "UUID", Short: "existing issue for an unsaved preview"}}
+var issueSourceMapFlags = []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "deployment", Value: "UUID", Req: true}, {Name: "directory", Value: "PATH", Short: "deployed directory corresponding to the build scan root"}, {Name: "manifest-file", Value: "PATH", Short: "portable source-map manifest file"}}

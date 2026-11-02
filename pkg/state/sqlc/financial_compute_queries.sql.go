@@ -690,6 +690,46 @@ func (q *Queries) FinancialComputeHolds(ctx context.Context, db DBTX, accountID 
 	return items, nil
 }
 
+const financialComputeLatestAppInstanceLeases = `-- name: FinancialComputeLatestAppInstanceLeases :many
+SELECT DISTINCT ON (instance_id) instance_id, payload FROM financial_compute_leases
+ WHERE instance_id=ANY($1::text[]) AND account_id=ANY($2::uuid[]) AND app_id=ANY($3::uuid[])
+ ORDER BY instance_id, started_at DESC,(payload->>'granted_at')::timestamptz DESC
+`
+
+type FinancialComputeLatestAppInstanceLeasesParams struct {
+	InstanceIds []string
+	AccountIds  []pgtype.UUID
+	AppIds      []pgtype.UUID
+}
+
+type FinancialComputeLatestAppInstanceLeasesRow struct {
+	InstanceID string
+	Payload    []byte
+}
+
+// FinancialComputeLatestLease for many app instances in one statement, through
+// financial_compute_instance_history (ADR 20261102160622). The caller matches
+// each row's account and app to its instance's.
+func (q *Queries) FinancialComputeLatestAppInstanceLeases(ctx context.Context, db DBTX, arg FinancialComputeLatestAppInstanceLeasesParams) ([]FinancialComputeLatestAppInstanceLeasesRow, error) {
+	rows, err := db.Query(ctx, financialComputeLatestAppInstanceLeases, arg.InstanceIds, arg.AccountIds, arg.AppIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FinancialComputeLatestAppInstanceLeasesRow{}
+	for rows.Next() {
+		var i FinancialComputeLatestAppInstanceLeasesRow
+		if err := rows.Scan(&i.InstanceID, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const financialComputeLatestLease = `-- name: FinancialComputeLatestLease :one
 SELECT payload FROM financial_compute_leases
  WHERE account_id=$1::uuid AND (app_id=$2::uuid OR job_id=$3::uuid) AND instance_id=$4::text

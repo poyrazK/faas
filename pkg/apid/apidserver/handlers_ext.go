@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -3291,9 +3292,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)
 	}
 	s.notifyAppRenamed(r.Context(), acct, updated, oldSlug, req.NewSlug)
-	// A rename moves the app's public hostname and frees the old one for any
-	// tenant; it belongs in the account's audit trail, not only the daemon
-	// log (production-us hunt #9: four renames left no audit event).
+	// A rename moves the app's public hostname; the old slug stays held for
+	// this account for api.AppSlugHoldDuration (app_slug_holds, bug hunt
+	// 2026-10-28 H80). It belongs in the account's audit trail, not only the
+	// daemon log (production-us hunt #9: four renames left no audit event).
 	s.audit.Emit(r.Context(), "app.renamed", &acct.ID, map[string]any{"app_id": updated.ID, "from": oldSlug, "to": req.NewSlug})
 	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
@@ -4174,15 +4176,10 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 const defaultCronTimezone = "UTC"
 
 func normalizeCronTimezone(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if strings.TrimSpace(raw) == "" {
 		return defaultCronTimezone, nil
 	}
-	loc, err := time.LoadLocation(raw)
-	if err != nil {
-		return "", err
-	}
-	return loc.String(), nil
+	return cronexpr.NormalizeCustomerTimezone(raw)
 }
 
 func validCronRetryPolicy(retryMax, backoffSeconds int) bool {
@@ -4310,6 +4307,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, api.ErrPlanCronQuota(acct.Plan, string(qe.Scope), qe.Limit, qe.Observed))
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such app")
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.ErrCronConflict())
 		default:
 			api.WriteProblem(w, api.ErrCapacity("could not create cron"))
 		}
@@ -4345,8 +4344,17 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// ?slug= (an app slug or id, sent by `gregale crons list --app`) scopes
 	// the list to one app; without it, every cron on the account's apps.
 	// The filter used to be ignored, so `--app X` listed other apps' crons.
+	ref := r.URL.Query().Get("slug")
+	// deploy:write reads one app's crons, which a function-set deploy
+	// reconciles and may already update; the account's whole list keeps
+	// apps:read (ADR-20261031162858 amendment 1).
+	if ref == "" && !middleware.HasScope(r, api.ScopesReadSurface...) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Insufficient scope", "listing every app's crons requires one of: admin,apps:read; deploy:write lists one app's with ?slug="))
+		return
+	}
 	var apps []state.App
-	if ref := r.URL.Query().Get("slug"); ref != "" {
+	if ref != "" {
 		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
 		if !ok {
 			s.notFound(w, "no such app")
@@ -4500,6 +4508,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		timezonePatch = &timezone
 	}
 	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.ErrCronConflict())
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // loginErrorCredential also covers an explicit token that has not been saved yet.
@@ -54,6 +55,15 @@ func authenticationHint() string {
 	return "Run " + command + " login, then retry."
 }
 
+// missingRouteHint explains apid's answer for a route it does not offer
+// (pkg/apid/httpkit.NoSuchRoute). Without it the error read exactly like a
+// missing app or a typo, though the usual cause is a CLI release newer or
+// older than the server, or a feature not released to the account
+// (ADR-20261023115741).
+func missingRouteHint() string {
+	return "This gregale (" + wire.Version + ") may be newer or older than the server, or the feature is not enabled for your account. Check the CLI release with gregale version; curl -fsSL https://get.gregale.dev | sh installs the current one."
+}
+
 // Supply fallbacks without replacing server-specific remediation or codes.
 func diagnosticProblem(p api.Problem) api.Problem {
 	if p.Title == "" {
@@ -61,6 +71,8 @@ func diagnosticProblem(p api.Problem) api.Problem {
 	}
 	if p.Hint == "" {
 		switch {
+		case p.Status == 404 && p.Detail == noSuchRouteDetail:
+			p.Hint = missingRouteHint()
 		case p.Status == 401:
 			p.Hint = authenticationHint()
 		case p.Status == 403 && authorizationRefusal(p.Code):

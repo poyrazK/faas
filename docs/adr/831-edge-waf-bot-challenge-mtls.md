@@ -1372,3 +1372,25 @@ Tests: `TestChallengePassSurvivesAShadowingCookie`,
 `TestWAFCookieOnlyDetectionBlocksWithoutBoxing`,
 `TestCheckInlineMarksCookieOnlyDetections`,
 `TestChallengedPreflightIsAnsweredAtTheEdge` and the trace's preflight case.
+
+## Amendment 19 (2026-11-02): a check scores bounded headers
+
+The cost of a WAF check grows faster than its input. Measured on a loaded
+workstation, one in-path check took 0.29 ms with no extra header, 1.7 ms
+with a 1 KiB cookie, 16 ms with 8 KiB, 307 ms with 32 KiB and 10 s with
+512 KiB. The edge accepts 1 MiB of headers, a check cannot be stopped once it
+holds a slot (three per production compute node), and the app's budget is
+charged after the check. A few requests a second with large headers, to any
+app with a `warn` or `block` rule, could hold every slot, so every other
+app's checks on the node failed open as `busy`, and burn gateway CPU.
+
+A check (in-path and sampled) now scores each header value up to
+`api.EdgeWAFMaxInspectHeaderValueBytes` (4 KiB) and at most
+`api.EdgeWAFMaxInspectHeaderBytes` (16 KiB) of header names and values in all,
+taken in name order; a longer value is cut on a character boundary and
+headers past the total are not scored. The URI and query are scored in full.
+This bounds every check, so the per-app budget again bounds what one app's
+traffic can take from the node. Like a body past its inspection limit,
+header content past the bound is not inspected; the docs say so.
+
+Tests: `TestBoundHeaders`.

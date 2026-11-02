@@ -2,9 +2,9 @@ package state
 
 import (
 	"context"
-	"regexp"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -17,7 +17,7 @@ type ManagedPostgresEgressEndpoint struct {
 	Port  int
 }
 
-var managedPostgresEndpointHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+var managedPostgresEndpointHost = lazyregexp.New(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
 // RecordManagedPostgresDatabaseEndpoint stores a host name and port a
 // database's credentials connect to. Host names are lower-cased; IP literals

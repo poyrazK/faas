@@ -245,7 +245,9 @@ belongs to a project.
 **Deploy only after CI passes.** A push the GitHub App deploys does not wait
 for your tests. To deploy only commits your CI passed, name your CI
 workflow (its `name:` field): `gregale github setup my-api --repo acme/my-api
---wait-for CI`. The workflow then deploys a branch push once that
+--wait-for CI`. Setup checks that a workflow of that name in
+`.github/workflows` runs on pushes to the deploy branches and refuses
+otherwise. The workflow then deploys a branch push once that
 workflow's run for the commit succeeds; a failed run, a pull request run and
 a run from a fork deploy nothing. If runs finish out of order, a commit that
 is no longer the branch head is skipped, so production never goes back to an
@@ -255,7 +257,9 @@ older commit. Release tags and manual runs still deploy directly.
 organization, keeps the binding.
 
 **When it does not deploy.** `gregale github status my-api` shows the binding,
-its health and the recent GitHub events that reached the app. `gregale github
+its health and the recent GitHub events that reached the app, with the reason
+an event deployed nothing (for example, production deploys come from your
+GitHub Actions workflow, or nothing deploys that branch). `gregale github
 sync my-api` rechecks access after you change the installation's
 repositories on GitHub.
 
@@ -328,6 +332,15 @@ deployment's status and failure reason instead. Use a key with `apps:read`
 and `gregale logs my-api --deployment <id>` to read the build. A key created
 with only `deploy:write` and the deploy Action's OIDC credential work the
 same way, for any app in the account.
+
+These credentials deploy a `gregale.yaml` with workflows, companions,
+extensions, crons and queue bindings; Gregale checks the plan limits when it
+creates the deployment. A function-set deploy with crons needs a
+`deploy:write` key or the OIDC credential, since a deploy token reaches only
+its app's routes. Attaching databases or binding buckets grants the app a
+credential, so a manifest with a `databases` block needs `postgres:manage`
+and one with a `buckets` block needs `storage:manage`. The deploy stops before
+it uploads and names the missing scope.
 
 ## Safe changes
 
@@ -1018,6 +1031,11 @@ The earlier canary's traffic returns to the serving release, its rollout ends
 `rollout.aborted` webhook), and only the newest release rolls out. A release
 deployed with `--rollout immediate` takes all traffic and ends the earlier
 canary's rollout the same way.
+If the app cannot run the new release beside both the serving release and the
+earlier canary (with the default max_concurrency of 1 it cannot), the earlier
+canary is replaced just before the new release's health check instead of when
+it goes live, so the check can wake it. If that check then fails, the app stays
+on the serving release.
 
 ### Safe by default
 

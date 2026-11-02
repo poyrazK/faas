@@ -1659,6 +1659,13 @@ type AppSloHourly struct {
 	Total int64
 }
 
+type AppSlugHold struct {
+	Slug      string
+	AccountID pgtype.UUID
+	HeldUntil pgtype.Timestamptz
+	Reason    string
+}
+
 type AppTask struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID
@@ -6291,6 +6298,7 @@ type GithubWebhookDelivery struct {
 	InstallationID pgtype.Int8
 	RepoFullName   pgtype.Text
 	CommitSha      pgtype.Text
+	SkipReason     string
 }
 
 type GithubWebhookSecret struct {

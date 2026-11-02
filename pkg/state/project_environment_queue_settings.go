@@ -7,16 +7,16 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"regexp"
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 var (
 	ErrProjectEnvironmentQueueCollectionUnavailable = fmt.Errorf("environment queue collection is unavailable: %w", ErrConflict)
 	ErrProjectEnvironmentQueueActivationUnavailable = fmt.Errorf("environment queue activation proof is unavailable: %w", ErrConflict)
-	environmentQueueNameRE                          = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	environmentQueueNameRE                          = lazyregexp.New(`^[a-z][a-z0-9-]{0,62}$`)
 )
 
 // Queue settings contain logical names and desired delivery configuration.
