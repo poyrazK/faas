@@ -11,7 +11,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/role"
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func computeGatewayRegistry(t *testing.T, gatewayCredential bool, bytesPerSecond int64) *objectstorage.Registry {
@@ -82,16 +81,32 @@ func TestComputeGatewayHoldsOnlyWhatTheNodeMay(t *testing.T) {
 	}
 }
 
-// A compute node's gateway runs no provider usage export, so it never needs
-// the provider account keys the control plane's gateway holds.
-func TestComputeGatewayRunsNoUsageExports(t *testing.T) {
-	registry := computeGatewayRegistry(t, true, 37_500_000)
-	getenv := func(string) string { return "" }
-	store := state.NewMemStore()
-	if jobs, err := usageExportJobsForRole(role.RoleComputeOnly, registry, store, getenv); err != nil || len(jobs) != 0 {
-		t.Fatalf("compute jobs = %d, %v; want none", len(jobs), err)
-	}
-	if _, err := usageExportJobsForRole(role.RoleControlPlane, registry, store, getenv); err == nil || !strings.Contains(err.Error(), "incomplete ovh usage credentials") {
-		t.Fatalf("control-plane err = %v, want the missing provider account keys refused", err)
+func TestCheckListeners(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		role    role.Role
+		data    string
+		control string
+		wantErr string
+	}{
+		{name: "control plane on loopback", role: role.RoleControlPlane, data: "127.0.0.1:8084", control: "127.0.0.1:9096"},
+		{name: "compute control on every address", role: role.RoleComputeOnly, data: "127.0.0.1:8084", control: "0.0.0.0:9096"},
+		{name: "control plane control off loopback", role: role.RoleControlPlane, data: "127.0.0.1:8084", control: "0.0.0.0:9096", wantErr: "control listener"},
+		{name: "single box control off loopback", role: role.RoleSingleBox, data: "127.0.0.1:8084", control: "10.0.0.1:9096", wantErr: "control listener"},
+		{name: "compute data off loopback", role: role.RoleComputeOnly, data: "0.0.0.0:8084", control: "0.0.0.0:9096", wantErr: "data listener"},
+		{name: "control plane data off loopback", role: role.RoleControlPlane, data: "0.0.0.0:8084", control: "127.0.0.1:9096", wantErr: "data listener"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkListeners(tc.role, tc.data, tc.control)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("checkListeners: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("checkListeners err = %v, want one naming the %s", err, tc.wantErr)
+			}
+		})
 	}
 }

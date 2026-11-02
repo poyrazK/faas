@@ -119,6 +119,36 @@ func TestPKIRenewalUsesRoutableVMMDHostnameAsTransportSAN(t *testing.T) {
 	}
 }
 
+// adr: 1027 — database nodes' internal leaves (vmmd under the node
+// identity, pgproxyd's clients) renew with the fleet: identity flags, the
+// overlay SAN, SIGHUP for both daemons, and their own readiness check.
+func TestPKIRenewalCoversDatabaseNodes(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "pki_renew.yml"))
+	if err != nil {
+		t.Fatalf("read pki renewal playbook: %v", err)
+	}
+	text := string(body)
+	for _, required := range []string{
+		"hosts: control_plane:compute_nodes:database_nodes",
+		"faas_box_role in ['control-plane', 'compute-only', 'database']",
+		"else database_vmmd_overlay_ip\n         if faas_box_role == 'database'",
+		"pgproxyd: faas-pgproxyd.service",
+		"      - faas-pgproxyd.service\n",
+		"when: faas_pki_action_required and faas_box_role != 'database'",
+		"pki renewal — verify database node daemons after activation",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("renewal playbook lacks %q", required)
+		}
+	}
+	if got := strings.Count(text, "if faas_box_role in ['compute-only', 'database'] else []) }}"); got != 4 {
+		t.Errorf("node identity flags reach %d of the 4 bundle commands for database nodes", got)
+	}
+	if strings.Contains(text, "if faas_box_role == 'compute-only' else []) }}") {
+		t.Error("a bundle command still passes the node identity for compute nodes only")
+	}
+}
+
 func TestPKIRenewalIncludesUnavailableRegisteredNodes(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "pki_renew.yml"))
 	if err != nil {

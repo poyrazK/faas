@@ -110,6 +110,17 @@ CREATE TABLE agent_runs (
  workflow_step text,
  workflow_event text
 );
+CREATE TABLE agent_run_callbacks (
+ run_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ tool_call_id text NOT NULL,
+ provider_call_id text,
+ issued_at timestamptz NOT NULL,
+ delivered_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE agent_run_outputs (
  run_id uuid PRIMARY KEY,
  account_id uuid NOT NULL,
@@ -182,4 +193,11 @@ CREATE TABLE workflow_events (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  run_id uuid NOT NULL,
  event_name text NOT NULL
+);
+CREATE TABLE agent_callback_revocations (
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ account_id uuid NOT NULL,
+ revoked_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (endpoint_id, thread_id)
 );

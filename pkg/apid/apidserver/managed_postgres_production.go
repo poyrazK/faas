@@ -17,7 +17,10 @@ const managedPostgresCapability = "managed-postgres"
 // managedPostgresReleased decides production provisioning for one account by
 // the managed-postgres capability flag, for the account's plan and the
 // request's organization. Without a gate (unit tests) every account is
-// released; an account that cannot be read is not.
+// released; an account that cannot be read is not. While the compute or
+// storage cap is not on, only an account a flag rule names (or that opted in)
+// is released: the flag's GA default would otherwise open uncapped databases
+// to every account (ADR-20261031091607).
 func (s *server) managedPostgresReleased(ctx context.Context, accountID string) bool {
 	if s.capGate == nil {
 		return true
@@ -26,7 +29,11 @@ func (s *server) managedPostgresReleased(ctx context.Context, accountID string) 
 	if err != nil {
 		return false
 	}
-	return s.capGate.Enabled(managedPostgresCapability, platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: managedpostgres.Organization(ctx)})
+	subject := platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: managedpostgres.Organization(ctx)}
+	if s.managedPostgresUncapped {
+		return s.capGate.EnabledByRule(managedPostgresCapability, subject)
+	}
+	return s.capGate.Enabled(managedPostgresCapability, subject)
 }
 
 // logManagedPostgresProductionReadiness reports at startup why production

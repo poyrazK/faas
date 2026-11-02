@@ -206,6 +206,21 @@ func writeChallengePage(w http.ResponseWriter, r *http.Request, token string, di
 	_ = renderChallengePage(w, d)
 }
 
+// writeChallengedPreflight answers a CORS preflight on a challenged route
+// with 204 and the headers api.EdgeChallengePreflightHeaders allows, and
+// reports whether it did; any other request is left to the challenge.
+func writeChallengedPreflight(w http.ResponseWriter, r *http.Request) bool {
+	headers, ok := api.EdgeChallengePreflightHeaders(r.Method, r.Header)
+	if !ok {
+		return false
+	}
+	for name, values := range headers {
+		w.Header()[name] = values
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return true
+}
+
 // challengeSolveAction is where the page posts its solution: the solve path
 // with the token in the query, so the gateway recognises the post as its own
 // before any gate that could move or refuse it (ADR-831 amendment 17).

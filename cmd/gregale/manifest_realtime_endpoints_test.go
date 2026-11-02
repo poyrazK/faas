@@ -21,6 +21,8 @@ type fakeRealtimeEndpointClient struct {
 	restarts  []string
 	nextID    int
 	log       []string
+	// groupRequests are the consumer-group create requests, in order.
+	groupRequests []api.RealtimeConsumerGroupCreateRequest
 }
 
 func newFakeRealtimeEndpointClient(existing ...api.ManagedRealtimeEndpointResponse) *fakeRealtimeEndpointClient {
@@ -97,6 +99,7 @@ func (f *fakeRealtimeEndpointClient) ListRealtimeConsumerGroups(_ context.Contex
 
 func (f *fakeRealtimeEndpointClient) CreateRealtimeConsumerGroup(_ context.Context, _, id, channel string, req api.RealtimeConsumerGroupCreateRequest) (api.RealtimeConsumerGroup, error) {
 	f.groups[id+"/"+channel] = append(f.groups[id+"/"+channel], req.Name)
+	f.groupRequests = append(f.groupRequests, req)
 	f.log = append(f.log, "group "+channel+"/"+req.Name)
 	return api.RealtimeConsumerGroup{Name: req.Name, Channel: channel}, nil
 }
@@ -136,11 +139,12 @@ func (f *fakeRealtimeEndpointClient) bySlug(slug string) (api.ManagedRealtimeEnd
 func TestReconcileManifestRealtimeCreatesAndRollsBack(t *testing.T) {
 	t.Setenv("FAAS_REALTIME_PREVIEW_ACCOUNTS", "*")
 	client := newFakeRealtimeEndpointClient()
+	thread := "thread_id"
 	m := &gregalemanifest.Manifest{
 		Realtime: &gregalemanifest.RealtimeConfig{Endpoints: []gregalemanifest.RealtimeEndpoint{{
 			Slug: "chat", Auth: gregalemanifest.RealtimeAuthNone, AllowedOrigins: []string{"https://shop.example.com"},
 			Callbacks:      &gregalemanifest.RealtimeCallbacks{Message: "/rt/message"},
-			ConsumerGroups: []gregalemanifest.RealtimeConsumerGroup{{Channel: "orders", Name: "billing"}},
+			ConsumerGroups: []gregalemanifest.RealtimeConsumerGroup{{Channel: "orders", Name: "billing", OrderingMetadataKey: &thread}},
 		}}},
 		Triggers: []gregalemanifest.Trigger{{Kind: gregalemanifest.TriggerKindRealtime, App: "shop", Slug: "orders",
 			Config: map[string]any{"endpoint": "chat", "channel": "orders", "group": "billing"}}},
@@ -159,6 +163,9 @@ func TestReconcileManifestRealtimeCreatesAndRollsBack(t *testing.T) {
 	}
 	if !slices.Equal(client.groups[chat.ID+"/orders"], []string{"billing"}) {
 		t.Fatalf("groups = %v", client.groups)
+	}
+	if req := client.groupRequests[0]; req.OrderingMetadataKey == nil || *req.OrderingMetadataKey != "thread_id" {
+		t.Fatalf("group request = %+v, want the declared ordering key", req)
 	}
 	var created api.Trigger
 	for _, tr := range client.triggers {

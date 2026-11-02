@@ -49,6 +49,10 @@ export type { AdoptEnvironmentGitOpsResponse } from './models/AdoptEnvironmentGi
 export type { AdvanceAutomationLiveSuiteRequest } from './models/AdvanceAutomationLiveSuiteRequest.js';
 export type { AdvanceCanaryRequest } from './models/AdvanceCanaryRequest.js';
 export type { AfterRestoreHook } from './models/AfterRestoreHook.js';
+export type { AgentClientRequest } from './models/AgentClientRequest.js';
+export type { AgentConnectionResponse } from './models/AgentConnectionResponse.js';
+export type { AgentConnectionsResponse } from './models/AgentConnectionsResponse.js';
+export type { AgentConnectionsRevokeAllResponse } from './models/AgentConnectionsRevokeAllResponse.js';
 export type { AIDeploymentUsage } from './models/AIDeploymentUsage.js';
 export type { AIDeploymentUsageList } from './models/AIDeploymentUsageList.js';
 export type { AlertDeliveryResponse } from './models/AlertDeliveryResponse.js';
@@ -1101,6 +1105,7 @@ export type { GithubCheckUpdateRecord } from './models/GithubCheckUpdateRecord.j
 export type { GitHubDeploymentPolicy } from './models/GitHubDeploymentPolicy.js';
 export type { GitHubDeploymentPolicyPatch } from './models/GitHubDeploymentPolicyPatch.js';
 export type { GitHubInstallActivity } from './models/GitHubInstallActivity.js';
+export type { GitHubInstallationSummary } from './models/GitHubInstallationSummary.js';
 export type { GitHubInstallMutationRequest } from './models/GitHubInstallMutationRequest.js';
 export type { GitHubInstallStatus } from './models/GitHubInstallStatus.js';
 export type { GithubRecoveryRetryResponse } from './models/GithubRecoveryRetryResponse.js';
@@ -1311,6 +1316,7 @@ export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
 export type { ManagedPostgresOverage } from './models/ManagedPostgresOverage.js';
 export type { ManagedPostgresOverageRequest } from './models/ManagedPostgresOverageRequest.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
+export type { ManagedPostgresRestoreRange } from './models/ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresUsageImportReading } from './models/ManagedPostgresUsageImportReading.js';
 export type { ManagedPostgresUsageImportRequest } from './models/ManagedPostgresUsageImportRequest.js';
 export type { ManagedPostgresUsageImportResult } from './models/ManagedPostgresUsageImportResult.js';

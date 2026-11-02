@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // MaxProjectEnvironmentConfigBytes bounds the non-secret configuration
@@ -17,8 +18,8 @@ import (
 const MaxProjectEnvironmentConfigBytes = 64 << 10
 
 var (
-	projectEnvironmentConfigKeyRE  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
-	projectEnvironmentConfigHashRE = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	projectEnvironmentConfigKeyRE  = lazyregexp.New(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
+	projectEnvironmentConfigHashRE = lazyregexp.New(`^[a-f0-9]{64}$`)
 )
 
 // ValidProjectEnvironmentConfigHash reports whether hash is a canonical

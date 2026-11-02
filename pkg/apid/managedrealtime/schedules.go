@@ -49,9 +49,13 @@ func (s *Service) RunManagedRealtimeSchedules(ctx context.Context) {
 			}
 			return
 		}
+		pass := scheduleWritePass{accounts: map[string]string{}, deferred: map[string]int{}}
 		for _, schedule := range due {
 			if passCtx.Err() != nil {
 				return
+			}
+			if !s.admitScheduledWrite(passCtx, schedule, &pass) {
+				continue
 			}
 			msg, err := store.PublishManagedRealtimeSchedule(passCtx, schedule)
 			if errors.Is(err, state.ErrManagedRealtimeScheduleSkipped) || errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
@@ -93,4 +97,45 @@ func (s *Service) RunManagedRealtimeSchedules(ctx context.Context) {
 			Run()
 		}
 	}
+}
+
+// scheduleWritePass is what one schedule pass learned: each endpoint's account
+// and how many of an account's schedules it postponed.
+type scheduleWritePass struct {
+	accounts map[string]string
+	deferred map[string]int
+}
+
+// admitScheduledWrite takes one write for a due schedule from its account's
+// realtime write rate. Over the rate, the schedule is postponed, without
+// counting an attempt, until the account's bucket has room for it and for the
+// account's schedules postponed before it in this pass, so a busy account's
+// schedules leave the due list to other accounts'. A failed lookup admits the
+// schedule: the publish reports its own errors.
+func (s *Service) admitScheduledWrite(ctx context.Context, row state.ManagedRealtimeSchedule, pass *scheduleWritePass) bool {
+	accountID, known := pass.accounts[row.EndpointID]
+	if !known {
+		endpoints, ok := realtimeEndpointStore(s)
+		if !ok {
+			return true
+		}
+		ep, err := endpoints.ManagedRealtimeEndpointByID(ctx, row.EndpointID)
+		if err != nil {
+			return true
+		}
+		accountID = ep.AccountID
+		pass.accounts[row.EndpointID] = accountID
+	}
+	limits, wait, ok, err := s.takeAccountWrites(ctx, accountID, 1)
+	if err != nil || ok {
+		return true
+	}
+	if deferrer, available := s.Host.Store().(state.ManagedRealtimeScheduleDeferStore); available {
+		wait += time.Duration(pass.deferred[accountID]) * time.Second / time.Duration(limits.RetainedWritesPerSecond)
+		pass.deferred[accountID]++
+		if err := deferrer.DeferManagedRealtimeSchedule(ctx, row, time.Now().Add(wait)); err != nil && s.Host.Logger() != nil {
+			s.Host.Logger().Warn("realtime schedule deferral failed", "schedule_id", row.ID, "err", err)
+		}
+	}
+	return false
 }
