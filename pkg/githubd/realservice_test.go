@@ -177,15 +177,29 @@ func TestRealService_BindAndLookup(t *testing.T) {
 	}
 }
 
-func TestRealService_BindDefaultsToMain(t *testing.T) {
-	svc, fake := newTestBindableRealService(t, "acct-1", testInstallableRepo())
+// A bind without a branch takes the repository's default branch; "main"
+// bound repositories that deploy from another branch to one that never
+// receives pushes (ADR-20261101160300). A repository without one keeps main.
+func TestRealService_BindDefaultsToRepositoryDefaultBranch(t *testing.T) {
+	repos := testInstallableRepo()
+	repos[0]["default_branch"] = "trunk"
+	svc, fake := newTestBindableRealService(t, "acct-1", repos)
 	defer fake.Close()
 	if _, err := svc.BindAppRepo("app-2", "acct-1", 1, "octo/api", ""); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := svc.GetAppBinding("app-2", "acct-1")
-	if b.ProductionBranch != "main" {
-		t.Errorf("default branch = %q, want main", b.ProductionBranch)
+	if b.ProductionBranch != "trunk" {
+		t.Errorf("default branch = %q, want the repository's trunk", b.ProductionBranch)
+	}
+
+	bare, fake := newTestBindableRealService(t, "acct-1", testInstallableRepo())
+	defer fake.Close()
+	if _, err := bare.BindAppRepo("app-3", "acct-1", 1, "octo/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := bare.GetAppBinding("app-3", "acct-1"); b.ProductionBranch != "main" {
+		t.Errorf("default branch without a repository default = %q, want main", b.ProductionBranch)
 	}
 }
 
@@ -287,8 +301,8 @@ func TestRealService_ExchangeOAuthCode_MakesRealAPICall(t *testing.T) {
 	if instID != "4242" {
 		t.Errorf("installation_id = %q, want 4242", instID)
 	}
-	if branch == "" {
-		t.Error("default_branch empty, want non-empty")
+	if branch != "" {
+		t.Errorf("default_branch = %q, want empty: an installation has no default branch (ADR-20261101160300)", branch)
 	}
 
 	// Audit fired with the right event.

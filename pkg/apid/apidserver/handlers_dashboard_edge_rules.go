@@ -160,6 +160,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 				apiRules = append(apiRules, s.edgeRules.RuleResponse(acct, rule))
 			}
 			apiRules = append(apiRules, s.dashboardPreviewInheritedRules(ctx, log, acct, app)...)
+			apiRules = append(apiRules, s.dashboardCoveringRules(r, log, acct, app)...)
 			if names := edgeruletrace.ReferencedEdgeRuleLists(apiRules); len(names) > 0 {
 				if store, ok := s.store.(state.EdgeRuleListStore); ok {
 					lists, listErr := store.EdgeRuleListsByName(ctx, acct.ID, names)
@@ -369,6 +370,23 @@ func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	default:
 		return ""
 	}
+}
+
+// dashboardCoveringRules returns the rules of the account's other apps whose
+// host pattern can cover app's hosts (ADR-091 amendment 2026-10-31), so the
+// trace matches the gateway. A read failure leaves the trace with the app's
+// own rules and is logged.
+func (s *server) dashboardCoveringRules(r *http.Request, log *slog.Logger, acct state.Account, app state.App) []api.EdgeRuleResponse {
+	rules, err := s.edgeRules.VisibleCoveringRules(r, acct, app)
+	if err != nil {
+		log.Warn("dashboard edge rules: list covering rules for trace", "app_id", app.ID, "err", err)
+		return nil
+	}
+	responses := make([]api.EdgeRuleResponse, 0, len(rules))
+	for _, rule := range rules {
+		responses = append(responses, s.edgeRules.RuleResponse(acct, rule))
+	}
+	return responses
 }
 
 // dashboardPreviewInheritedRules returns, for a PR preview, the production

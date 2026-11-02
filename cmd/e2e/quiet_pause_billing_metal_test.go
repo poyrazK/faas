@@ -14,10 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -52,6 +54,9 @@ func TestQuietPauseBillingMetal(t *testing.T) {
 	t.Setenv("FAAS_QUIET_PAUSE_UNBILLED", "on")
 	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Meterd)
 	defer h.DumpLogs(t)
+	// On mode subtracts only for the accounts the quiet_pause_unbilled
+	// platform flag releases; every other account bills in full.
+	releaseQuietPauseUnbilled(t, state.NewPgStore(pool))
 	key := h.SeedAccount(ctx, api.PlanPro)
 	img, _ := e2etest.HelloImageAboveBase("library/hello", helloBody)
 	ref := registry.AddImage("library/hello", img)
@@ -136,15 +141,24 @@ func TestQuietPauseBillingMetal(t *testing.T) {
 		t.Fatalf("read instance RAM: %v", err)
 	}
 	for _, minute := range measured {
-		var mbSeconds int64
+		var mbSeconds, pausedMBSeconds int64
 		if err := pool.QueryRow(ctx,
-			`select mb_seconds from usage_minutes where instance_id = $1 and minute = $2`, instanceID, minute).Scan(&mbSeconds); err != nil {
+			`select mb_seconds, paused_mb_seconds from usage_minutes where instance_id = $1 and minute = $2`,
+			instanceID, minute).Scan(&mbSeconds, &pausedMBSeconds); err != nil {
 			t.Fatalf("read usage for %v: %v", minute, err)
 		}
 		billed := mbSeconds / int64(api.BillableRAMMB(ramMB))
-		t.Logf("minute %s: billed %d s (%d MB-seconds at %d MB)", minute.Format(time.TimeOnly), billed, mbSeconds, api.BillableRAMMB(ramMB))
+		unbilled := pausedMBSeconds / int64(api.BillableRAMMB(ramMB))
+		t.Logf("minute %s: billed %d s, quiet paused unbilled %d s (%d + %d MB-seconds at %d MB)",
+			minute.Format(time.TimeOnly), billed, unbilled, mbSeconds, pausedMBSeconds, api.BillableRAMMB(ramMB))
 		if billed < 6 || billed > 16 {
 			t.Errorf("minute %s billed %d s, want 6-16: three requests, each running ~2 s before its quiet pause", minute.Format(time.TimeOnly), billed)
+		}
+		// The customer's usage records what was not billed: together with
+		// the billed seconds it is the minute's residency.
+		if total := billed + unbilled; total < 58 || total > 60 {
+			t.Errorf("minute %s billed %d s + recorded %d s unbilled = %d s, want the minute's 58-60 s residency",
+				minute.Format(time.TimeOnly), billed, unbilled, total)
 		}
 	}
 	// The ledger holds the pauses: three of about 18 s in each minute.
@@ -160,6 +174,38 @@ select count(*), coalesce(sum(extract(epoch from ended_at - started_at)), 0)
 	t.Logf("ledger: %d closed pauses, %.1f s paused in the measured minutes", closed, pausedSeconds)
 	if closed < 8 || pausedSeconds < 8*15 {
 		t.Errorf("ledger has %d closed pauses totalling %.1f s in the measured minutes, want about 9 of ~18 s", closed, pausedSeconds)
+	}
+}
+
+// releaseQuietPauseUnbilled turns the quiet_pause_unbilled platform flag on
+// for every account the way an operator does, and waits until meterd has
+// applied it.
+func releaseQuietPauseUnbilled(t *testing.T, s *state.PgStore) {
+	t.Helper()
+	value, err := json.Marshal(platformflags.Definition{Enabled: true, Default: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := platformflags.ConfigKey(platformflags.QuietPauseUnbilled)
+	row, err := s.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: key, Scope: state.RuntimeConfigScopeGlobal,
+		DesiredValue: value, ApplyMode: state.RuntimeConfigApplyHot, ActorID: uuid.NewString(), Reason: "native quiet pause billing"})
+	if err != nil {
+		t.Fatalf("release %s: %v", platformflags.QuietPauseUnbilled, err)
+	}
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		receipts, err := s.ListRuntimeConfigApplyReceipts(t.Context(), []string{key})
+		if err != nil {
+			t.Fatalf("read apply receipts: %v", err)
+		}
+		for _, r := range receipts {
+			if r.Daemon == "meterd" && r.Status == state.RuntimeConfigReceiptApplied && r.Version >= row.Version {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("meterd did not apply %s version %d within 30 s: %+v", key, row.Version, receipts)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 

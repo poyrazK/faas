@@ -2574,7 +2574,9 @@
       "github_install_id",
       "github_install_linked_at",
       "github_owner_id",
+      "github_preview_enabled",
       "github_production_branch",
+      "github_production_trigger",
       "github_repo_full_name",
       "github_repo_id",
       "id",
@@ -5382,6 +5384,7 @@
       "parked_reason",
       "pr_number",
       "priority",
+      "promoted_at",
       "pusher_login",
       "reason",
       "release_command",
@@ -11950,6 +11953,18 @@
     "kind": "operational"
   },
   {
+    "table": "node_memory_reports",
+    "columns": [
+      "frozen_instances",
+      "measured_at",
+      "measured_mb",
+      "node_id",
+      "reported_at",
+      "used_mb"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "notification_channels",
     "columns": [
       "account_id",
@@ -12881,6 +12896,7 @@
     "table": "oidc_exchanged_tokens",
     "columns": [
       "account_id",
+      "app_id",
       "audience",
       "created_at",
       "expires_at",
@@ -17034,6 +17050,7 @@
       "latency_ms",
       "method",
       "node_id",
+      "platform_refusal",
       "platform_tenant_id",
       "received_at",
       "referrer_host",
@@ -18635,6 +18652,7 @@
       "net_rx_bytes",
       "net_tx_bytes",
       "org_id",
+      "paused_mb_seconds",
       "requests",
       "tail_seconds",
       "tx_bytes"
@@ -19611,6 +19629,21 @@
       "endpoint_id",
       "revoked_at",
       "thread_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_callbacks",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "issued_at",
+      "provider_call_id",
+      "run_id",
+      "thread_id",
+      "tool_call_id"
     ],
     "kind": "operational"
   },

@@ -25,5 +25,5 @@ jobs:
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
           # Report the terminal deployment result to this workflow.
           wait: "true"
-          # Optional: balanced health-gated production rollout (Pro/Scale only).
+          # Optional: balanced health-gated production rollout (every plan).
           # rollout: "safe"

@@ -27,7 +27,7 @@ const (
 	maxResultBytes     = 128 << 10
 	maxPageSize        = 100
 	defaultPageSize    = 20
-	maxLogBytes        = 1 << 20
+	maxLogStreamBytes  = 64 << 20
 	maxLogLineBytes    = 1024
 	maxDiagnosticBytes = 2048
 )

@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -786,12 +787,10 @@ func cmdApp(args []string) int {
 		req.OverflowNode = &v
 	}
 
-	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.RequestTimeoutS == nil && req.FunctionConcurrency == nil && req.RevisionPinTTLSeconds == nil && req.MinInstances == nil &&
-		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
-		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
-		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil && req.PlatformTenantRequired == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.PreAuthRateLimit == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
+	// Any update flag sets a field of req; none means a read. Listing fields
+	// by hand here missed --release-policy and --release-probe-paths, which
+	// then printed the settings and changed nothing.
+	if reflect.ValueOf(req).IsZero() {
 		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -1912,7 +1911,7 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
-	case "function-rust":
+	case "function-rust", "agent-infinity-rust":
 		// ADR-987: built from the template's Dockerfile; the handler value
 		// is vestigial, but the deploy API requires it to be non-empty.
 		return runtimeBinary, "handler", true
@@ -2474,10 +2473,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *safeDeploy {
 		if explicit["canary-preset"] || explicit["canary-stages"] || explicit["traffic-percent"] {
-			return printErr("Invalid rollout policy", fmt.Errorf("--safe cannot be combined with --canary-preset, --canary-stages, or --traffic-percent"))
+			return printErr("Invalid rollout policy", fmt.Errorf("%s cannot be combined with --canary-preset, --canary-stages, or --traffic-percent", safeFlagName(explicit)))
 		}
 		if (explicit["wait"] && !*waitDeploy) || (explicit["no-wait"] && *noWaitDeploy) {
-			return printErr("Invalid flags", fmt.Errorf("--safe cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete"))
+			return printErr("Invalid flags", fmt.Errorf("%s cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete (a deploy without --rollout follows the app's release policy and returns at 1%% with --no-wait)", safeFlagName(explicit)))
 		}
 		*canaryPreset = api.DefaultReleaseCanaryPreset
 		if !explicit["timeout"] {
@@ -2485,7 +2484,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 	if *safeDeploy && projectRequested {
-		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
+		return printErr("Invalid flags", fmt.Errorf("%s currently supports single-app deploys only; use --canary-preset with a project deploy", safeFlagName(explicit)))
 	}
 	releaseAt, releaseNotify, releaseAtErr := resolveDeployReleaseAt(*releaseAtFlag, *releaseNotifyFlag, explicit, *noTraffic,
 		projectRequested || *githubSnippet || *simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil)
@@ -3950,6 +3949,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		return renderProjectDeployReceipt(plan, apply, projectSession, projectWaitTimedOut, nil)
+	}
+
+	// A template or gregale.yaml that turns on a capability the account does
+	// not have stops here, before the app or an upload exists (#5756).
+	if err := refuseHiddenManifestCapabilities(ctx, *templateName, sourceDir); err != nil {
+		return printErr("Capability not enabled", err)
 	}
 
 	var workflowDefs []api.WorkflowSpec
@@ -6248,6 +6253,11 @@ func renderUsageSummary(w io.Writer, s api.UsageSummaryResponse) {
 	_, _ = fmt.Fprintf(w, "  %-*s %d GB-hours\n", labelWidth, "Included:", s.IncludedGBHours)
 	_, _ = fmt.Fprintf(w, "  %-*s %.3f GB-hours\n", labelWidth, "Overage:", s.OverageGBHours)
 	_, _ = fmt.Fprintf(w, "  %-*s %d cents\n", labelWidth, "Overage cost:", s.OverageCents)
+	// ADR-20261023171905: quiet-paused time between requests that was not
+	// billed, beside Used rather than inside it. Shown once there is any.
+	if s.QuietPausedGBHours > 0 {
+		_, _ = fmt.Fprintf(w, "  %-*s %.3f GB-hours (not billed)\n", labelWidth, "Quiet paused:", s.QuietPausedGBHours)
+	}
 	// Issue #279 / PR-B: per-month CPU-hours is informational —
 	// not billed. Surfaced as a separate line so the customer
 	// sees the measurement next to the billing total without
@@ -7158,6 +7168,10 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	}
 	printedLines := retainedLines
 	parkedFallback := false
+	// reconnectAt is set when a follow stream ended on its idle timeout:
+	// `gregale logs -f` reconnects instead of exiting 0 after ten quiet
+	// minutes.
+	var reconnectAt time.Time
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
 		// when schedd's StreamAppLogs RPC isn't wired yet (the
@@ -7201,10 +7215,25 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 					return true, 3
 				}
 			}
+			if follow && archive == nil && appLogsArchiveEndReason(e.Data) == "timeout" {
+				reconnectAt = time.Now()
+				return true, 0
+			}
 			if collector != nil && !jsonOutput {
 				collector.flush(osStdout)
 			}
 			return true, 0
+		}
+		if e.Event == "error" {
+			// A rejected filter or plan gate: report it and fail, not
+			// print it as a log line and exit 0.
+			problem := appLogsStreamErrorProblem(e.Data)
+			if jsonOutput {
+				_ = writeJSONProblem(problem)
+			} else {
+				renderAPIError(os.Stderr, &APIError{Problem: problem})
+			}
+			return true, 1
 		}
 		if e.Data != "" {
 			if archive != nil && !retainedLineMatches(e.Data, filter.Grep) {
@@ -7227,6 +7256,12 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	}
 	if streamErr != nil {
 		return printErr("Stream closed", streamErr)
+	}
+	if !reconnectAt.IsZero() && ctx.Err() == nil {
+		_ = dec.Close()
+		_ = body.Close()
+		filter.Since = reconnectAt.UTC().Format(time.RFC3339Nano)
+		return runLogsExplainingMissingArchive(ctx, slug, deployment, filter, archive, follow, explain, archiveMissing)
 	}
 	if parkedFallback {
 		if retainedLines > 0 {

@@ -326,9 +326,9 @@ func previewPlatformEnv(ev PullRequestEvent) map[string]string {
 // closePRDependencies advances every sibling in the same project and PR to
 // the janitor's closed state with the same grace deadline. The bound preview
 // may already have expired, so this is deliberately independent of its lookup path.
-func (s *Service) closePRDependencies(ctx context.Context, parent state.App, prNumber int, expiresAt time.Time) error {
+func (s *Service) closePRDependencies(ctx context.Context, parent state.App, installationID int64, repo string, prNumber int, expiresAt time.Time) error {
 	if parent.ProjectID == "" {
-		return nil // a legacy binding has no project-scoped sibling set
+		return s.closePlainPRSiblings(ctx, parent, installationID, repo, prNumber, expiresAt)
 	}
 	previews, err := s.Reconcile.Store.ListPreviewsForAccount(ctx, parent.AccountID)
 	if err != nil {
@@ -336,6 +336,42 @@ func (s *Service) closePRDependencies(ctx context.Context, parent state.App, prN
 	}
 	for _, preview := range previews {
 		if preview.ProjectID != parent.ProjectID || preview.PreviewPrNumber != prNumber || preview.PreviewOfSlug == parent.Slug ||
+			preview.PreviewPrState == state.PreviewPrStateStale || preview.PreviewPrState == state.PreviewPrStateTearingDown ||
+			preview.PreviewPrState == state.PreviewPrStateTornDown {
+			continue
+		}
+		if _, err := s.closePRPreview(ctx, preview.ID, expiresAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// closePlainPRSiblings closes the previews of the other apps bound without a
+// project that the PR's preview set holds (ADR-20261101160300). The set, not
+// the current bindings, names them: an app unbound since still had one.
+func (s *Service) closePlainPRSiblings(ctx context.Context, parent state.App, installationID int64, repo string, prNumber int, expiresAt time.Time) error {
+	sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore)
+	if !ok || installationID <= 0 || repo == "" {
+		return nil
+	}
+	set, err := sets.GetPRPreviewSet(ctx, installationID, repo, prNumber)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("githubd: read PR preview set: %w", err)
+	}
+	for _, id := range set.MemberAppIDs {
+		preview, err := s.Reconcile.Store.AppByID(ctx, id)
+		if errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("githubd: load PR preview %s: %w", id, err)
+		}
+		if preview.AccountID != parent.AccountID || preview.ProjectID != "" || preview.PreviewPrNumber != prNumber ||
+			preview.PreviewOfSlug == "" || preview.PreviewOfSlug == parent.Slug ||
 			preview.PreviewPrState == state.PreviewPrStateStale || preview.PreviewPrState == state.PreviewPrStateTearingDown ||
 			preview.PreviewPrState == state.PreviewPrStateTornDown {
 			continue

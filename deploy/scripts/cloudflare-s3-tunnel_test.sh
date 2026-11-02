@@ -14,18 +14,34 @@ mkdir -p "$ROOT/bin"
 # The fake curl logs "METHOD URL DATA" per call and answers from MOCK_* state.
 cat >"$ROOT/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-method=GET data=
+method=GET data= out= format=
 while (($#)); do
   case "$1" in
     -X) method=$2; shift 2 ;;
     --data) data=$2; shift 2 ;;
     -H) shift 2 ;;
+    -o) out=$2; shift 2 ;;
+    -w) format=$2; shift 2 ;;
     -*) shift ;;
     *) url=$1; shift ;;
   esac
 done
 printf '%s %s %s\n' "$method" "$url" "$data" >>"$MOCK_LOG"
+# respond STATUS BODY honours -o and -w '%{http_code}'.
+respond() {
+  if [[ -n "$out" ]]; then printf '%s' "$2" >"$out"; else printf '%s' "$2"; fi
+  if [[ -n "$format" ]]; then printf '%s' "$1"; fi
+}
 case "$method $url" in
+  "GET "*"/rulesets/phases/"*"/entrypoint")
+    phase=${url%/entrypoint}; phase=${phase##*/}
+    case "${MOCK_RULESETS:-none}" in
+      none) respond 404 '{"success":false,"errors":[{"code":10003}]}' ;;
+      other) respond 200 "{\"result\":{\"id\":\"rs-$phase\",\"rules\":[{\"id\":\"r-other\",\"ref\":\"someone_else\"}]}}" ;;
+      own) respond 200 "{\"result\":{\"id\":\"rs-$phase\",\"rules\":[{\"id\":\"r-other\",\"ref\":\"someone_else\"},{\"id\":\"r-cache\",\"ref\":\"gregale_s3_cache_bypass\"},{\"id\":\"r-config\",\"ref\":\"gregale_s3_config\"}]}}" ;;
+      forbidden) respond 403 '{"success":false}' ;;
+    esac ;;
+  "PUT "*"/rulesets/phases/"*"/entrypoint"|"POST "*"/rulesets/"*"/rules"|"PATCH "*"/rulesets/"*"/rules/"*) printf '{"success":true}' ;;
   "GET "*"/cfd_tunnel?name="*)
     if [[ -n "${MOCK_TUNNEL:-}" ]]; then printf '{"result":[{"id":"%s"}]}' "$MOCK_TUNNEL"; else printf '{"result":[]}'; fi ;;
   "POST "*"/cfd_tunnel") printf '{"result":{"id":"tun-new"}}' ;;
@@ -83,6 +99,38 @@ fi
 run env INGRESS_HOSTS="s3-pilot.gregale.dev s3.gregale.dev" CUTOVER=yes >/dev/null
 grep -q '"hostname":"s3.gregale.dev","service":"http://127.0.0.1:8084"' "$ROOT/log" \
   || fail "CUTOVER=yes did not add s3.gregale.dev: $(cat "$ROOT/log")"
+
+# The zone rules cover s3.<domain> and every ingress host. A phase without
+# rules gets an entrypoint holding only ours.
+expression='"expression":"(http.host in {\"s3-pilot.gregale.dev\" \"s3.gregale.dev\"})"'
+run env >/dev/null
+grep -q '^PUT .*/zones/zone/rulesets/phases/http_request_cache_settings/entrypoint {"rules":\[{"ref":"gregale_s3_cache_bypass",.*"action":"set_cache_settings","action_parameters":{"cache":false}' "$ROOT/log" \
+  || fail "cache bypass rule not created: $(cat "$ROOT/log")"
+grep -q '^PUT .*/zones/zone/rulesets/phases/http_config_settings/entrypoint {"rules":\[{"ref":"gregale_s3_config",.*"action":"set_config","action_parameters":{"bic":false,' "$ROOT/log" \
+  || fail "config rule not created: $(cat "$ROOT/log")"
+grep -qF "$expression" "$ROOT/log" || fail "rules do not cover both hosts: $(cat "$ROOT/log")"
+
+# A phase that already holds other rules gets ours added; the others stay.
+run env MOCK_RULESETS=other >/dev/null
+grep -q '^POST .*/zones/zone/rulesets/rs-http_request_cache_settings/rules {"ref":"gregale_s3_cache_bypass"' "$ROOT/log" \
+  || fail "cache rule not added beside the others: $(cat "$ROOT/log")"
+grep -q '^POST .*/zones/zone/rulesets/rs-http_config_settings/rules {"ref":"gregale_s3_config"' "$ROOT/log" \
+  || fail "config rule not added beside the others: $(cat "$ROOT/log")"
+! grep -q '/entrypoint {' "$ROOT/log" || fail "an existing entrypoint was replaced: $(cat "$ROOT/log")"
+
+# A re-run updates its own rules in place.
+run env MOCK_RULESETS=own >/dev/null
+grep -q '^PATCH .*/zones/zone/rulesets/rs-http_request_cache_settings/rules/r-cache ' "$ROOT/log" \
+  || fail "own cache rule not updated: $(cat "$ROOT/log")"
+grep -q '^PATCH .*/zones/zone/rulesets/rs-http_config_settings/rules/r-config ' "$ROOT/log" \
+  || fail "own config rule not updated: $(cat "$ROOT/log")"
+! grep -q '^POST .*/rulesets/' "$ROOT/log" || fail "an own rule was added twice: $(cat "$ROOT/log")"
+
+# A token that cannot read the rules fails rather than guessing.
+if run env MOCK_RULESETS=forbidden >/dev/null 2>&1; then
+  fail "continued without reading the zone rules"
+fi
+! grep -q '/entrypoint {' "$ROOT/log" || fail "wrote rules it could not read: $(cat "$ROOT/log")"
 
 # Without NODES the script refuses before any call.
 : >"$ROOT/log"

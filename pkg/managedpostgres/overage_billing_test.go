@@ -30,9 +30,10 @@ func TestOverageChargeIsBoundedByTheCeiling(t *testing.T) {
 			t.Errorf("%s: OverageCharge = %d CU-s, %d millicents; want %d, %d", tc.name, billed, millicents, tc.billed, tc.millicents)
 		}
 	}
-	// Hobby's whole overage room costs $5.
-	if _, millicents := OverageCharge(2*testAllowance, testAllowance); millicents != 500*api.MillicentsPerCent {
-		t.Fatalf("Hobby overage room = %d millicents, want $5", millicents)
+	// Hobby's whole overage room is its 25 CU-hours at the overage price,
+	// $5.8275 (ADR-20261102072425).
+	if _, millicents := OverageCharge(2*testAllowance, testAllowance); millicents != 582_750 {
+		t.Fatalf("Hobby overage room = %d millicents, want 582750", millicents)
 	}
 }
 
@@ -99,17 +100,17 @@ func TestOverageBillerDeliversCumulativeStepsOnce(t *testing.T) {
 	biller := f.biller(t, true, november)
 	f.reachAllowance(t, "acct", november, true)
 	f.store.used["acct2026-11"] = testAllowance + 2*3600
-	if summary, err := biller.Deliver(ctx); err != nil || summary.Delivered != 1 || summary.Millicents != 40_000 {
+	if summary, err := biller.Deliver(ctx); err != nil || summary.Delivered != 1 || summary.Millicents != 2*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("first pass = %+v, %v", summary, err)
 	}
-	if len(f.published) != 1 || f.published[0].DeliveredMillicents != 0 || f.published[0].TargetMillicents != 40_000 || f.published[0].BilledUnitSeconds != 2*3600 {
+	if len(f.published) != 1 || f.published[0].DeliveredMillicents != 0 || f.published[0].TargetMillicents != 2*api.ManagedPostgresOverageMillicentsPerComputeUnitHour || f.published[0].BilledUnitSeconds != 2*3600 {
 		t.Fatalf("published %+v", f.published)
 	}
 	if summary, err := biller.Deliver(ctx); err != nil || summary.Delivered != 0 || len(f.published) != 1 {
 		t.Fatalf("unchanged usage charged again: %+v, %v", summary, err)
 	}
 	f.store.used["acct2026-11"] = testAllowance + 3*3600
-	if _, err := biller.Deliver(ctx); err != nil || len(f.published) != 2 || f.published[1].DeliveredMillicents != 40_000 || f.published[1].TargetMillicents != 60_000 {
+	if _, err := biller.Deliver(ctx); err != nil || len(f.published) != 2 || f.published[1].DeliveredMillicents != 2*api.ManagedPostgresOverageMillicentsPerComputeUnitHour || f.published[1].TargetMillicents != 3*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("second step %+v, %v", f.published, err)
 	}
 	// Usage past the ceiling is charged only up to it.
@@ -118,7 +119,7 @@ func TestOverageBillerDeliversCumulativeStepsOnce(t *testing.T) {
 		t.Fatalf("ceiling step %+v, %v", f.published, err)
 	}
 	delivery, err := f.store.OverageDelivered(ctx, "polar", "acct", november)
-	if err != nil || !delivery.Live || delivery.Millicents != 500_000 || delivery.BilledUnitSeconds != testAllowance {
+	if err != nil || !delivery.Live || delivery.Millicents != 25*api.ManagedPostgresOverageMillicentsPerComputeUnitHour || delivery.BilledUnitSeconds != testAllowance {
 		t.Fatalf("recorded %+v, %v", delivery, err)
 	}
 }
@@ -154,7 +155,7 @@ func TestOverageBillerRetriesAFailedStepAndShadowsWithoutSending(t *testing.T) {
 		t.Fatalf("a failed step was recorded: %+v", delivery)
 	}
 	f.fail = nil
-	if _, err := f.biller(t, true, november).Deliver(ctx); err != nil || len(f.published) != 1 || f.published[0].TargetMillicents != 20_000 {
+	if _, err := f.biller(t, true, november).Deliver(ctx); err != nil || len(f.published) != 1 || f.published[0].TargetMillicents != api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("retry %+v, %v", f.published, err)
 	}
 
@@ -165,7 +166,7 @@ func TestOverageBillerRetriesAFailedStepAndShadowsWithoutSending(t *testing.T) {
 	if err != nil || summary.Shadowed != 1 || len(shadow.published) != 0 {
 		t.Fatalf("shadow = %+v, %v, published %v", summary, err, shadow.published)
 	}
-	if delivery, _ := shadow.store.OverageDelivered(ctx, "polar", "acct", november); delivery.Live || delivery.Millicents != 20_000 {
+	if delivery, _ := shadow.store.OverageDelivered(ctx, "polar", "acct", november); delivery.Live || delivery.Millicents != api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("shadow recorded %+v", delivery)
 	}
 }

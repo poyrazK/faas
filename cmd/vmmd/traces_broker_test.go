@@ -199,12 +199,136 @@ func TestTraceBrokerAccountMismatchRefused(t *testing.T) {
 	}
 }
 
+// The node's forward slots are taken only after the frame was read, so a
+// busy node refuses a complete frame as limited without reaching apid.
 func TestTraceBrokerBusy(t *testing.T) {
-	b := newTestTraceBroker(&fakeGuestSpansClient{outcome: api.TraceIngestAccepted}, &api.TracingConfig{Enabled: true})
+	client := &fakeGuestSpansClient{outcome: api.TraceIngestAccepted}
+	b := newTestTraceBroker(client, &api.TracingConfig{Enabled: true})
 	for i := 0; i < cap(b.slots); i++ {
 		b.slots <- struct{}{}
 	}
-	if ack, reason := runTraceBroker(t, b, "vm", nil); ack != api.TraceAckLimited || reason != "limited" {
+	if ack, reason := runTraceBroker(t, b, "vm", traceTestFrame(api.TraceCodecProtobuf, []byte("x"))); ack != api.TraceAckLimited || reason != "limited" {
 		t.Fatalf("busy ack=%d reason=%q", ack, reason)
+	}
+	if client.got != nil {
+		t.Fatal("frame forwarded while every node slot was taken")
+	}
+	if b.perVM["vm"] != 0 {
+		t.Fatalf("per-VM slot leaked: %d", b.perVM["vm"])
+	}
+}
+
+// Logs/traces audit 2026-10-31 T7: a guest that opened four streams to the
+// trace port and sent nothing held the node's only four slots for the
+// transport timeout, so every other VM's exports were refused. Its streams
+// now count against its own limit only.
+func TestTraceBrokerStalledVMDoesNotBlockOtherVMs(t *testing.T) {
+	client := &fakeGuestSpansClient{outcome: api.TraceIngestAccepted}
+	identities := fakeTraceIdentities{
+		"noisy": {AccountID: "acct", AppID: "app", DeploymentID: "dep"},
+		"quiet": {AccountID: "acct", AppID: "app", DeploymentID: "dep"},
+	}
+	apps := fakeTraceApps{"app": {ID: "app", AccountID: "acct", Manifest: state.AppManifest{Tracing: &api.TracingConfig{Enabled: true}}}}
+	b := newTraceBroker(identities, apps, client)
+	b.timeout = 5 * time.Second
+	stalled := make([]net.Conn, 0, api.TraceMaxConcurrentUploads)
+	reasons := make(chan string, api.TraceMaxConcurrentUploads)
+	for i := 0; i < api.TraceMaxConcurrentUploads; i++ {
+		guest, host := net.Pipe()
+		stalled = append(stalled, guest)
+		go func() {
+			reason, _ := b.handle(context.Background(), "noisy", host)
+			_ = host.Close()
+			reasons <- reason
+		}()
+		go func() { _, _ = io.Copy(io.Discard, guest) }() // drain the ack once refused
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b.mu.Lock()
+		held := b.perVM["noisy"]
+		b.mu.Unlock()
+		if held == api.TraceMaxConcurrentUploads {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stalled streams hold %d slots, want %d", held, api.TraceMaxConcurrentUploads)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if ack, reason := runTraceBroker(t, b, "noisy", traceTestFrame(api.TraceCodecProtobuf, []byte("x"))); ack != api.TraceAckLimited || reason != "limited" {
+		t.Fatalf("stalled VM's next stream ack=%d reason=%q, want limited", ack, reason)
+	}
+	if ack, reason := runTraceBroker(t, b, "quiet", traceTestFrame(api.TraceCodecProtobuf, []byte("spans"))); ack != api.TraceAckAccepted || reason != api.TraceIngestAccepted {
+		t.Fatalf("another VM's frame ack=%d reason=%q while one VM stalls, want accepted", ack, reason)
+	}
+	if got := client.got; got.GetInstanceId() != "quiet" || string(got.GetPayload()) != "spans" {
+		t.Fatalf("forwarded %+v, want the quiet VM's frame", got)
+	}
+	for _, guest := range stalled {
+		_ = guest.Close()
+	}
+	for range stalled {
+		if reason := <-reasons; reason != "read" {
+			t.Fatalf("stalled stream reason = %q, want read", reason)
+		}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.perVM) != 0 {
+		t.Fatalf("per-VM slots leaked: %v", b.perVM)
+	}
+}
+
+type countingTraceApps struct {
+	apps  fakeTraceApps
+	calls int
+	err   error
+}
+
+func (c *countingTraceApps) AppByID(ctx context.Context, id string) (state.App, error) {
+	c.calls++
+	if c.err != nil {
+		return state.App{}, c.err
+	}
+	return c.apps.AppByID(ctx, id)
+}
+
+// T7: every frame read the app row. The broker now reuses a lookup for
+// traceAppCacheTTL, does not cache a failed lookup, and sees a tracing
+// change once the entry expires.
+func TestTraceBrokerCachesAppLookup(t *testing.T) {
+	client := &fakeGuestSpansClient{outcome: api.TraceIngestAccepted}
+	identities := fakeTraceIdentities{"vm": {AccountID: "acct", AppID: "app", DeploymentID: "dep"}}
+	apps := &countingTraceApps{apps: fakeTraceApps{"app": {ID: "app", AccountID: "acct", Manifest: state.AppManifest{Tracing: &api.TracingConfig{Enabled: true}}}}}
+	b := newTraceBroker(identities, apps, client)
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	b.now = func() time.Time { return now }
+	frame := traceTestFrame(api.TraceCodecProtobuf, []byte("x"))
+
+	apps.err = errors.New("db down")
+	if ack, reason := runTraceBroker(t, b, "vm", frame); ack != api.TraceAckUnavailable || reason != "identity" {
+		t.Fatalf("lookup error ack=%d reason=%q, want unavailable/identity", ack, reason)
+	}
+	apps.err = nil
+	for i := 0; i < 3; i++ {
+		if ack, _ := runTraceBroker(t, b, "vm", frame); ack != api.TraceAckAccepted {
+			t.Fatalf("frame %d ack=%d, want accepted", i, ack)
+		}
+	}
+	if apps.calls != 2 {
+		t.Fatalf("app lookups = %d, want 2 (the failed one is not cached, then one for three frames)", apps.calls)
+	}
+
+	apps.apps["app"] = state.App{ID: "app", AccountID: "acct", Manifest: state.AppManifest{Tracing: &api.TracingConfig{}}}
+	if ack, _ := runTraceBroker(t, b, "vm", frame); ack != api.TraceAckAccepted {
+		t.Fatalf("cached entry ack=%d, want accepted until it expires", ack)
+	}
+	now = now.Add(traceAppCacheTTL)
+	if ack, reason := runTraceBroker(t, b, "vm", frame); ack != api.TraceAckRejected || reason != "disabled" {
+		t.Fatalf("after expiry ack=%d reason=%q, want rejected/disabled", ack, reason)
+	}
+	if apps.calls != 3 {
+		t.Fatalf("app lookups = %d, want 3", apps.calls)
 	}
 }

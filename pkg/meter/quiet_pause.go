@@ -146,6 +146,47 @@ func (s *Sampler) unbilledQuietSeconds(paused map[string]state.QuietPausedSecond
 	return seconds
 }
 
+// quietPausedApp holds one app's unbilled paused usage for a rolled minute
+// until its capacity floor is settled: a floor bills paused seconds back, and
+// those were not free (ADR-20261023171905 rollout step 3).
+type quietPausedApp struct {
+	records []quietPausedRecord
+	// refilled is the seconds the app's floor billed back this minute.
+	refilled int64
+}
+
+type quietPausedRecord struct {
+	accountID, appID, instanceID string
+	seconds                      int64
+	mb                           int
+}
+
+// recordQuietPaused writes the held records for minute, net of the seconds
+// the app's floor billed back, and resets p. The record is the customer's
+// view of their usage, never billing: a failed write is logged and dropped,
+// so it never makes meterd roll again a minute whose rows are written.
+func (s *Sampler) recordQuietPaused(ctx context.Context, p *quietPausedApp, minute time.Time) {
+	records, refilled := p.records, p.refilled
+	*p = quietPausedApp{}
+	if len(records) == 0 {
+		return
+	}
+	store, ok := s.store.(state.QuietPausedUsageStore)
+	if !ok {
+		return
+	}
+	for _, r := range records {
+		back := min(refilled, r.seconds)
+		refilled -= back
+		if r.seconds -= back; r.seconds <= 0 {
+			continue
+		}
+		if err := store.RecordQuietPausedUsage(ctx, r.accountID, r.appID, r.instanceID, minute, r.seconds*int64(r.mb)); err != nil {
+			slog.Default().Warn("meter: record quiet paused usage", "instance_id", r.instanceID, "minute", minute, "err", err)
+		}
+	}
+}
+
 // QuietPauseRetentionOnce deletes pauses older than
 // api.QuietPauseLedgerRetentionDays in RetentionBatchSize batches, at most
 // MaxRetentionBatches per call.

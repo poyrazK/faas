@@ -2046,8 +2046,9 @@ func buildArgv(m api.BuildManifest) []string {
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
 
-// buildkitSnapshotter returns BuildKit's worker snapshotter. fuse-overlayfs
-// is the default. With BuildKitSnapshotterAuto (ADR-20261029105325) rootless
+// buildkitSnapshotter returns BuildKit's worker snapshotter: fuse-overlayfs
+// when the manifest names none. With BuildKitSnapshotterAuto, which builderd
+// sends by default (ADR-20261029105325), rootless
 // BuildKit prefers kernel overlayfs, whose layer diffs read only the overlay
 // upper directory, and falls back to fuse-overlayfs, then native, when the
 // kernel refuses an unprivileged overlay mount. A FUSE snapshotter sends every
