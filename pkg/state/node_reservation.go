@@ -354,6 +354,27 @@ func (m *MemStore) checkNodeAdmissionReservationLocked(ctx context.Context, node
 		nodeCPUBudgetMillicores(int64(node.VPCPUs)), usedCPU)
 }
 
+// checkThawReservationLocked mirrors PgStore.reserveThawDB: a frozen VM going
+// back into service books its plan RAM and ctx's thaw compute against its
+// node like an admission (ADR 20261102072403).
+func (m *MemStore) checkThawReservationLocked(ctx context.Context, instanceID, nodeID string) error {
+	ins, ok := m.instances[instanceID]
+	if !ok || ins.NodeID != nodeID {
+		return nil
+	}
+	percent, compute := thawAdmission(ctx, nodeID)
+	if err := m.checkNodeReservationWithinLocked(nodeID, string(StateRunning), ins.RAMMB, percent); err != nil {
+		return err
+	}
+	node, ok := m.computeNodes[nodeID]
+	if !ok || compute.VCPU == 0 && compute.CPUMillicores == 0 {
+		return nil
+	}
+	usedVCPU, usedCPU := m.nodeLiveComputeLocked(nodeID, time.Now())
+	return nodeComputeRefusal(nodeID, compute, int64(node.VCPUBudget), usedVCPU,
+		nodeCPUBudgetMillicores(int64(node.VPCPUs)), usedCPU)
+}
+
 // nodeLiveComputeLocked mirrors the guard's vCPU and CPU sums over the live
 // instances on nodeID: placement's sums without migration reservations.
 func (m *MemStore) nodeLiveComputeLocked(nodeID string, now time.Time) (vcpu, cpuMillicores int64) {

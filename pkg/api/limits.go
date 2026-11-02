@@ -7100,6 +7100,11 @@ const (
 	// timeout's order of magnitude.
 	FrozenEarlyFreezeMinSeconds = 2
 	FrozenEarlyFreezeMaxSeconds = 300
+	// FrozenEarlyFreezeDefaultSeconds is schedd's frozen_tier_early_freeze_after_s
+	// when unset (ADR 20261102072403): a quiet between_requests instance
+	// freezes 15 s after its last request, releasing its vCPU, CPU and
+	// concurrency bookings half way through a function's 30 s idle timeout.
+	FrozenEarlyFreezeDefaultSeconds = 15
 	// FrozenMaxPerNode caps a node's frozen instances: each holds a
 	// Firecracker process, a jail uid and a network namespace.
 	FrozenMaxPerNode = 1000
@@ -13421,6 +13426,10 @@ const (
 	// the local vmmd to name the trace of the one request a calling instance
 	// is serving (ADR-1138); past it the call starts its own trace.
 	ServiceTraceInferenceTimeout = 25 * time.Millisecond
+	// ServiceCallDeadlineHopOverhead is kept back from the calling request's
+	// remaining budget when a service call inherits it, so the caller still
+	// has time to read the answer (ADR-20261102082606).
+	ServiceCallDeadlineHopOverhead = 10 * time.Millisecond
 	// Private guest DNS reads the scenario DNS chaos policy for every
 	// *.svc.gregale question, rehearsing or not (ADR-20261024230731). A read
 	// gets ServiceDNSChaosLookupTimeout; after a failed read the node answers
