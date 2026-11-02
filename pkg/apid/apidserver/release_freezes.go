@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -285,6 +286,12 @@ func (s *server) checkReleaseFreeze(r *http.Request, acct state.Account, app sta
 	if prob := freeze.ValidateReason("override_freeze", override); prob != nil {
 		return prob, nil
 	}
+	for _, f := range active {
+		if prob := s.freezeOverrideProblem(r, acct, f); prob != nil {
+			s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+			return prob, nil
+		}
+	}
 	s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "overridden")
 	ids := make([]string, 0, len(active))
 	for _, f := range active {
@@ -295,6 +302,28 @@ func (s *server) checkReleaseFreeze(r *http.Request, acct state.Account, app sta
 		overridden["org_id"] = orgID
 	}
 	return nil, overridden
+}
+
+// freezeOverrideProblem holds overriding a company organization's freeze to
+// the right to lift it (ADR-20261019071733 amendment 5): an owner or admin,
+// or the member who created a window, signed in or with an admin-scoped key.
+// A member's deploy:write key, as CI holds, could otherwise ship past a freeze
+// an admin set for the whole company. An account's own freezes keep the open
+// override: one person both sets and overrides them.
+func (s *server) freezeOverrideProblem(r *http.Request, acct state.Account, f state.ReleaseFreeze) *api.Problem {
+	if f.OrgID == "" {
+		return nil
+	}
+	if p, ok := principalFrom(r); ok && p.Key != nil && !httpkit.APIKeyCarriesScope(*p.Key, api.ScopeAdmin) {
+		return api.ErrReleaseFreezeOverrideNotAllowed(f.ID,
+			"Overriding a company's freeze needs a signed-in person or an admin key; this key can only deploy.")
+	}
+	owner := state.ReleaseFreezeOwner{OrgID: f.OrgID}
+	if prob := s.freezeLiftProblem(r, owner, f, configActor(r, actorAccount(r, acct))); prob != nil {
+		return api.ErrReleaseFreezeOverrideNotAllowed(f.ID,
+			"Only a member who may lift this freeze can override it: an owner or admin, or the member who created the window.")
+	}
+	return nil
 }
 
 // pendingFreezeOverrideKey carries an accepted deploy override until the

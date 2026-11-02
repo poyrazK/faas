@@ -1,11 +1,24 @@
+import { readFileSync } from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
 import { limits, enginePool } from './config.mjs'
 import { createPoolObservation } from './pool.mjs'
 
+// The image's runtime version (ADR-20261031095954); owner tooling compares it
+// with the runtime the platform currently serves. Local runs may lack it.
+export function readRuntimeVersion(file = new URL('./runtime-version.json', import.meta.url)) {
+  try {
+    const { version } = JSON.parse(readFileSync(file, 'utf8'))
+    return typeof version === 'string' && /^[0-9a-f]{16}$/.test(version) ? version : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
 // Share in-flight work without caching completed results. Reuse the existing
 // engine pool and reserved refresh reader; never create a diagnostic SQL pool.
 export function createHealth(config, upstreamPort, readyPort) {
+  const runtimeVersion = config.runtimeVersion ?? readRuntimeVersion()
   const pool = config.poolObservation ?? createPoolObservation(readyPort, enginePool(config))
   const pending = new Map()
   const bounded = (work, fallback) => new Promise(resolve => {
@@ -73,7 +86,7 @@ export function createHealth(config, upstreamPort, readyPort) {
       // PostgREST 14.3's admin /live also checks SQL with listeners disabled.
       // A TCP check observes only the engine listener, never pool availability.
       const [sql, listener, gate, poolObservation] = await Promise.all([probe('/ready'), engine(), refresh(), pool()])
-      return { version: 1, live: true, ready: sql === 'ready' && gate !== 'unavailable',
+      return { version: 1, runtime_version: runtimeVersion, live: true, ready: sql === 'ready' && gate !== 'unavailable',
         checks: { engine: listener,
           sql, database: sql === 'ready' || gate === 'active' || gate === 'paused' ? 'reachable' : 'unknown', refresh: gate },
         admission: admission(), pool: poolObservation, ...(gate === 'active' || gate === 'paused' ? { refresh_paused: gate === 'paused' } : {}) }

@@ -264,7 +264,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 // selection is marked, so admission reads afresh, and a wake the fast path
 // does not take drops it.
 func (e *Engine) ticketSelection(ctx context.Context, appID, deploymentID string) (wakeEnvironment, frozenTicket, bool) {
-	if !e.frozenFastPath.Load() || deploymentID != "" || ScopeFrom(ctx) != "" || e.ledger.Concurrency(appID) > 0 {
+	if !e.frozenFastPath.Load() || deploymentID != "" || !ticketScope(ScopeFrom(ctx)) || e.ledger.Concurrency(appID) > 0 {
 		return wakeEnvironment{}, frozenTicket{}, false
 	}
 	ticket, ok := e.thawTickets.peek(appID, PreferredInstanceFromContext(ctx), e.ledger.IsFrozen)
@@ -275,17 +275,35 @@ func (e *Engine) ticketSelection(ctx context.Context, appID, deploymentID string
 	return wakeEnvironment{app: plan.app, deployment: plan.dep, owner: ticket.owner, account: plan.acct, limits: plan.limits, fromTicket: true}, ticket, true
 }
 
+// errThawSpendCap refuses a ticketed thaw for an account at its monthly spend
+// cap; the ordinary path then answers with the cap's refusal.
+var errThawSpendCap = errors.New("sched: frozen fast path: account at its spend cap")
+
 // checkThawAdmission runs, at once, the admission checks a thaw ticket does
 // not stand in for: the financial budget for the ticket's deployment, whose
-// rows move no runtime generation, and the application-standards rule on the
-// apps row read at freeze. EnsureWake's fresh path runs the same two.
+// rows move no runtime generation, the application-standards rule on the
+// apps row read at freeze, and the account's monthly spend cap. Frozen time is
+// not billed and a thaw starts billing again, so a ticketed thaw honours the
+// cap as the ordinary thaw does (ADR-1162, ADR 20261031190030). EnsureWake's
+// fresh path runs the same checks.
 func (e *Engine) checkThawAdmission(ctx context.Context, ticket frozenTicket) error {
-	var budgetErr, standardsErr error
+	var budgetErr, standardsErr, capErr error
 	concurrently(
 		func() { budgetErr = e.checkFinancialBudgetAdmission(ctx, ticket.plan.app, ticket.plan.dep.ID) },
 		func() { standardsErr = e.checkApplicationStandardEnrollment(ctx, ticket.app) },
+		func() {
+			if e.thawSpendCapReached(ctx, ticket) {
+				capErr = errThawSpendCap
+			}
+		},
 	)
-	return errors.Join(budgetErr, standardsErr)
+	return errors.Join(budgetErr, standardsErr, capErr)
+}
+
+// thawSpendCapReached reports whether the ticket's account is at its monthly
+// spend cap. The check is cached and fails open (OverageChecker).
+func (e *Engine) thawSpendCapReached(ctx context.Context, ticket frozenTicket) bool {
+	return e.spendCapReached(ctx, e.spendCapSubject(ctx, ticket.app))
 }
 
 // thawFromTicketLocked is wake phase 1's fast path (ADR-1740). It runs
@@ -298,7 +316,7 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 	if !e.frozenFastPath.Load() || e.ledger.Concurrency(appID) > 0 {
 		return WakeResult{}, false
 	}
-	if deploymentID != "" || scope != "" {
+	if deploymentID != "" || !ticketScope(scope) {
 		reason := "scope"
 		if deploymentID != "" {
 			reason = "deployment"
@@ -338,12 +356,18 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 	// A wake that did not come through EnsureWake (the scheduler's Wake RPC)
 	// has not checked the budget or the standards rule: check them before
 	// the VM resumes. A refusal leaves the ordinary path to report it.
+	// EnsureWake's fresh selection checks the budget but not the spend cap,
+	// so the cap is checked here whichever way the wake came.
+	var admissionErr error
 	if !haveSelection || !selected.admissionChecked {
-		if err := e.checkThawAdmission(ctx, ticket); err != nil {
-			e.thawTickets.put(ticket)
-			e.observeFastPathSkip(appID, "admission")
-			return WakeResult{}, false
-		}
+		admissionErr = e.checkThawAdmission(ctx, ticket)
+	} else if e.thawSpendCapReached(ctx, ticket) {
+		admissionErr = errThawSpendCap
+	}
+	if admissionErr != nil {
+		e.thawTickets.put(ticket)
+		e.observeFastPathSkip(appID, "admission")
+		return WakeResult{}, false
 	}
 	plan, timing := ticket.plan, thawTiming{wakeStarted: wakeStarted, thawTried: time.Now()}
 	if _, _, refused := e.wakeServingCapacity(plan.app, plan.limits, plan.dep.ID, plan.environmentKey, plan.production).refusal(); refused {
@@ -373,6 +397,16 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 		return WakeResult{}, false
 	}
 	return e.answerThaw(ctx, plan, fresh, bookkeeping, timing, "fast"), true
+}
+
+// ticketScope reports whether a wake for scope may take the fast path. A
+// ticket is issued only for the deployment the production lane selects
+// (FrozenThawBasis: production, default or empty scope), which is what a wake
+// for any of those scopes resolves to. The gateway names "production" for
+// every project app, so refusing every non-empty scope left the fast path
+// unused (ADR 20261031190030); another scope still decides from fresh reads.
+func ticketScope(scope string) bool {
+	return reaperProductionScope(scope)
 }
 
 // serves reports whether a coordinated wake's selection is the thaw this

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/api"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,8 +69,13 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string, rea
 	defer base.Close()
 	settings := 0
 	created := 0
+	// The CLI deploys the runtime the control plane serves, not its own copy.
+	served := servedDataAPIRuntime(t, "served-by-the-control-plane")
+	var uploaded map[string]string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/apps/notes-data/data-api/runtime":
+			writeJSONTest(w, served)
 		case r.Method == "GET" && r.URL.Path == "/v1/postgres/databases":
 			writeJSONTest(w, api.ManagedPostgresDatabaseList{Items: []api.ManagedPostgresDatabase{{ID: database, State: "ready"}}})
 		case r.Method == "POST" && r.URL.Path == "/v1/apps":
@@ -124,6 +130,12 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string, rea
 			if settings != 7 {
 				t.Errorf("deployment preceded configuration: %d writes", settings)
 			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+			}
+			uploaded = uploadedSourceFiles(t, r.Header.Get("Content-Type"), body)
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
 			base.Config.Handler.ServeHTTP(w, r)
 		default:
 			base.Config.Handler.ServeHTTP(w, r)
@@ -147,6 +159,14 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string, rea
 	}
 	if created != wantCreated || atomic.LoadInt32(&dockerfile) != 1 || atomic.LoadInt32(&source) != 1 {
 		t.Fatalf("incomplete create: created=%d dockerfile=%d source=%d", created, dockerfile, source)
+	}
+	if !uploadedServerHas(uploaded, "served-by-the-control-plane") || !strings.Contains(uploaded["data-api/runtime-version.json"], servedRuntimeVersion) {
+		t.Fatal("create did not deploy the runtime the control plane serves")
+	}
+	for name := range uploaded {
+		if strings.Contains(name, "/test/") || strings.Contains(name, "/.") {
+			t.Fatalf("create uploaded %s", name)
+		}
 	}
 }
 

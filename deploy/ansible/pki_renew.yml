@@ -52,8 +52,11 @@
           renewal inventory {{ faas_pki_inventory_nodes }}. Reconcile the
           generated inventory before rotating any certificate.
 
+# Database nodes (ADR-1027) come from the manifest, not the compute registry:
+# their vmmd serves schedd under the node identity <name>.faas and pgproxyd
+# dials schedd and vmmd as pgproxyd.faas.
 - name: Renew internal mTLS leaves across the complete fleet
-  hosts: control_plane:compute_nodes
+  hosts: control_plane:compute_nodes:database_nodes
   gather_facts: true
   become: true
   serial: 1
@@ -69,6 +72,8 @@
     faas_pki_transport_san: >-
       {{ (faas_vmmd_target_url | ansible.builtin.urlsplit('hostname'))
          if faas_box_role == 'compute-only'
+         else database_vmmd_overlay_ip
+         if faas_box_role == 'database'
          else (faas_private_dns_address
                | default(faas_private_address | default(ansible_default_ipv4.address, true), true)) }}
     faas_pki_unit_by_directory:
@@ -81,18 +86,20 @@
       githubd: faas-githubd.service
       imaged: faas-imaged.service
       meterd: faas-meterd.service
+      pgproxyd: faas-pgproxyd.service
       schedd: faas-schedd.service
       vmmd: faas-vmmd.service
     faas_pki_hup_units:
       - faas-apid.service
       - faas-schedd.service
       - faas-vmmd.service
+      - faas-pgproxyd.service
 
   pre_tasks:
     - name: pki renewal — validate host identity
       ansible.builtin.assert:
         that:
-          - faas_box_role in ['control-plane', 'compute-only']
+          - faas_box_role in ['control-plane', 'compute-only', 'database']
           - faas_node_name is defined
           - faas_node_name | length > 0
 
@@ -135,7 +142,7 @@
               {{ ['/usr/local/bin/gregalectl', 'pki', 'status',
                   '--root-dir', faas_pki_root, '--box-role', faas_box_role]
                  + (['--cn', faas_node_name, '--transport-san', faas_pki_transport_san]
-                    if faas_box_role == 'compute-only' else []) }}
+                    if faas_box_role in ['compute-only', 'database'] else []) }}
           register: faas_pki_status
           changed_when: false
           failed_when: false
@@ -184,7 +191,7 @@
                   '--box-role', faas_box_role,
                   '--for-renewal']
                  + (['--cn', faas_node_name, '--transport-san', faas_pki_transport_san]
-                    if faas_box_role == 'compute-only' else []) }}
+                    if faas_box_role in ['compute-only', 'database'] else []) }}
           changed_when: true
           when: faas_pki_action_required and not faas_pki_resume_activation
 
@@ -254,7 +261,7 @@
                   '--changed-file', faas_pki_remote_outgoing + '/changed.json',
                   '--box-role', faas_box_role]
                  + (['--cn', faas_node_name, '--transport-san', faas_pki_transport_san]
-                    if faas_box_role == 'compute-only' else []) }}
+                    if faas_box_role in ['compute-only', 'database'] else []) }}
           delegate_to: "{{ faas_pki_issuer_host }}"
           no_log: true
           changed_when: true
@@ -379,7 +386,7 @@
                   '--bundle-dir', faas_pki_remote_candidate,
                   '--root-dir', faas_pki_root, '--box-role', faas_box_role]
                  + (['--cn', faas_node_name, '--transport-san', faas_pki_transport_san]
-                    if faas_box_role == 'compute-only' else []) }}
+                    if faas_box_role in ['compute-only', 'database'] else []) }}
           changed_when: true
           when: faas_pki_action_required and not faas_pki_resume_activation
 
@@ -494,7 +501,29 @@
             name: fleet_verify
           vars:
             faas_verify_strict: false
-          when: faas_pki_action_required
+          when: faas_pki_action_required and faas_box_role != 'database'
+
+        # fleet_verify knows the registered daemon topology; a database
+        # node runs vmmd in database mode and pgproxyd, ready on its
+        # overlay ops listeners (database_node_metrics_host).
+        - name: pki renewal — verify database node daemons after activation
+          ansible.builtin.uri:
+            url: "http://{{ database_node_metrics_host | default('127.0.0.1') }}:{{ item.port }}/readyz"
+            status_code: 200
+          loop:
+            - {unit: faas-vmmd.service, port: 9104}
+            - {unit: faas-pgproxyd.service, port: 9109}
+          loop_control:
+            label: "{{ item.unit }}"
+          register: faas_pki_database_ready
+          retries: 30
+          delay: 2
+          until: faas_pki_database_ready.status == 200
+          when:
+            - faas_pki_action_required
+            - faas_box_role == 'database'
+            # the reloaded consumers that are enabled on this node
+            - item.unit in (faas_pki_enabled_changed_units | default([]))
 
         - name: pki renewal — record a successful scheduled check
           ansible.builtin.copy:

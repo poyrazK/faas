@@ -32,6 +32,11 @@ from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_client_request import AgentClientRequest
+from .agent_connection_response import AgentConnectionResponse
+from .agent_connection_response_kind import AgentConnectionResponseKind
+from .agent_connections_response import AgentConnectionsResponse
+from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
@@ -433,6 +438,7 @@ from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
+from .custom_domain_hosts_response import CustomDomainHostsResponse
 from .custom_domain_response import CustomDomainResponse
 from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
@@ -841,6 +847,7 @@ from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBra
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .git_hub_installation_summary import GitHubInstallationSummary
 from .git_hub_webhook_activity import GitHubWebhookActivity
 from .git_hub_webhook_activity_status import GitHubWebhookActivityStatus
 from .grace_window_response import GraceWindowResponse
@@ -1033,6 +1040,7 @@ from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
@@ -2156,6 +2164,7 @@ from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
 from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
+from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
@@ -2576,6 +2585,11 @@ __all__ = (
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentClientRequest",
+    "AgentConnectionResponse",
+    "AgentConnectionResponseKind",
+    "AgentConnectionsResponse",
+    "AgentConnectionsRevokeAllResponse",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
@@ -2973,6 +2987,7 @@ __all__ = (
     "CronRun",
     "CronRunOutcome",
     "CSRFTokenResponse",
+    "CustomDomainHostsResponse",
     "CustomDomainResponse",
     "CustomMetricListResponse",
     "CustomMetricRequest",
@@ -3363,6 +3378,7 @@ __all__ = (
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
+    "GitHubInstallationSummary",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusDeployBranches",
@@ -3553,6 +3569,7 @@ __all__ = (
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",
@@ -4546,6 +4563,7 @@ __all__ = (
     "SetAccountEgressAllowlistExtraRequest",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",
+    "SetCustomDomainHostsRequest",
     "SetDeploymentAliasRequest",
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",

@@ -119,7 +119,11 @@ at most one per backoff per gateway.
   token is debited. At most `N * A` requests per counter can pass beyond the
   shared bucket, and only when the last known remainder was at least `A`.
   With two gateways and `a = 0.05` that is 10% of one burst: 2 requests for a
-  Free app, 200 for a Scale app. Every other admission spent a token that was
+  Free app, 200 for a Scale app. `A` is `floor(a * burst)` with no floor of
+  one (amended 2026-10-31): a counter whose burst is below `1/a` (20), such as
+  a sign-in throttle, gets no allowance, so its requests wait for a lease and
+  none passes beyond the bucket. A floor of one let such a rule admit about
+  one extra request per gateway, half again or more of a burst of 2. Every other admission spent a token that was
   debited first. (The breaker fallback during a Postgres outage is unchanged
   and still admits at the full plan rate per gateway.)
 - **Bounded under-admission:** at most `N * L` tokens can expire unspent

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ci/db/sqlc"
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 var _ RuntimeStore = (*PostgresStore)(nil)
@@ -30,10 +30,49 @@ type runtimeState struct {
 	now       time.Time
 }
 
-func runtimeCapability(run, instance, lease string) string {
+// The CI runtime capability and its stored hash belong to the scheduler
+// credential family (ADR 20261029202403 amendment 1): schedd issues the
+// capability and apid checks it.
+const (
+	tagRuntimeCapability credhash.Tag = "ci_job_runtime.capability"
+	tagRuntimeHash       credhash.Tag = "ci_job_runtime.capability_hash"
+)
+
+// legacyRuntimeCapability is the capability before amendment 1: an HMAC
+// keyed by the task's lease token, which the database stores in plaintext.
+func legacyRuntimeCapability(run, instance, lease string) string {
 	mac := hmac.New(sha256.New, []byte(lease))
 	_, _ = mac.Write([]byte("gregale:ci-runtime:v1\x00" + run + "\x00" + instance))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func runtimeCapabilityMaterial(run, instance, lease string) []byte {
+	return []byte("gregale:ci-runtime:v2\x00" + run + "\x00" + instance + "\x00" + lease)
+}
+
+// runtimeCapability is the capability issued for a task's lease: an HMAC
+// under the scheduler key once its keyed writes are on.
+func runtimeCapability(run, instance, lease string) string {
+	return credhash.For(credhash.FamilyScheduler).Derive(tagRuntimeCapability, runtimeCapabilityMaterial(run, instance, lease), legacyRuntimeCapability(run, instance, lease))
+}
+
+// runtimeCapabilityMatches reports whether capability is one the scheduler
+// policy accepts for the lease.
+func runtimeCapabilityMatches(run, instance, lease, capability string) bool {
+	return credhash.For(credhash.FamilyScheduler).DerivedMatches(tagRuntimeCapability, runtimeCapabilityMaterial(run, instance, lease), legacyRuntimeCapability(run, instance, lease), capability)
+}
+
+// storedRuntimeHash is the capability_hash written for capability.
+func storedRuntimeHash(capability string) []byte {
+	digest := sha256.Sum256([]byte(capability))
+	return credhash.For(credhash.FamilyScheduler).Store(tagRuntimeHash, digest[:])
+}
+
+// runtimeHashMatches reports whether a stored capability_hash is one
+// capability may be stored as.
+func runtimeHashMatches(stored []byte, capability string) bool {
+	digest := sha256.Sum256([]byte(capability))
+	return credhash.For(credhash.FamilyScheduler).Matches(tagRuntimeHash, digest[:], stored)
 }
 
 func (s *PostgresStore) runtimeState(ctx context.Context, runID string) (runtimeState, error) {
@@ -127,12 +166,11 @@ func (s *PostgresStore) IssueJobsRuntime(ctx context.Context, cfg Config, host R
 		return RuntimeProof{}, ErrRuntimeAuthority
 	}
 	proof := RuntimeProof{RunID: host.RunID, InstanceID: host.InstanceID, Capability: runtimeCapability(host.RunID, host.InstanceID, host.LeaseToken)}
-	digest := sha256.Sum256([]byte(proof.Capability))
-	if err := s.q.InsertCIJobsRuntime(ctx, state.tx, sqlc.InsertCIJobsRuntimeParams{AttemptID: dbUUID(host.RunID), InstanceID: dbUUID(host.InstanceID), CapabilityHash: digest[:], ExpiresAt: timestamp(runtimeExpiry(state.manifest.Deadline)), CreatedAt: timestamp(state.now)}); err != nil {
+	if err := s.q.InsertCIJobsRuntime(ctx, state.tx, sqlc.InsertCIJobsRuntimeParams{AttemptID: dbUUID(host.RunID), InstanceID: dbUUID(host.InstanceID), CapabilityHash: storedRuntimeHash(proof.Capability), ExpiresAt: timestamp(runtimeExpiry(state.manifest.Deadline)), CreatedAt: timestamp(state.now)}); err != nil {
 		return RuntimeProof{}, storeError(err)
 	}
 	grant, err := s.q.ReadCIJobsRuntime(ctx, state.tx, dbUUID(host.RunID))
-	if err != nil || uuidString(grant.InstanceID) != host.InstanceID || subtle.ConstantTimeCompare(grant.CapabilityHash, digest[:]) != 1 || grant.SealedAt.Valid || grant.CancelledAt.Valid {
+	if err != nil || uuidString(grant.InstanceID) != host.InstanceID || !runtimeHashMatches(grant.CapabilityHash, proof.Capability) || grant.SealedAt.Valid || grant.CancelledAt.Valid {
 		return RuntimeProof{}, ErrRuntimeAuthority
 	}
 	return proof, storeError(state.tx.Commit(ctx))
@@ -151,15 +189,13 @@ func (s *PostgresStore) authorizedRuntime(ctx context.Context, proof RuntimeProo
 		return runtimeState{}, false, err
 	}
 	state.grant, err = s.q.ReadCIJobsRuntime(ctx, state.tx, dbUUID(proof.RunID))
-	digest := sha256.Sum256([]byte(proof.Capability))
 	if err != nil || !runtimeLiveTask(state) || uuidString(state.task.InstanceID) != proof.InstanceID || uuidString(state.grant.InstanceID) != proof.InstanceID ||
-		subtle.ConstantTimeCompare(state.grant.CapabilityHash, digest[:]) != 1 || !state.now.Before(state.grant.ExpiresAt.Time) {
+		!runtimeHashMatches(state.grant.CapabilityHash, proof.Capability) || !state.now.Before(state.grant.ExpiresAt.Time) {
 		return failed(ErrRuntimeAuthority)
 	}
 	leased := state.task.Status == "claimed" && state.task.LeaseToken.Valid && state.task.LeaseExpiresAt.Valid && state.now.Before(state.task.LeaseExpiresAt.Time)
 	if leased {
-		expected := runtimeCapability(proof.RunID, proof.InstanceID, uuidString(state.task.LeaseToken))
-		if subtle.ConstantTimeCompare([]byte(expected), []byte(proof.Capability)) != 1 {
+		if !runtimeCapabilityMatches(proof.RunID, proof.InstanceID, uuidString(state.task.LeaseToken), proof.Capability) {
 			return failed(ErrRuntimeAuthority)
 		}
 	}

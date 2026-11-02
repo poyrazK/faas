@@ -1213,6 +1213,8 @@ var DeployIdempotencyKey = deployIdempotencyKey
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings
+
+var DeployManifestLabels = deployManifestLabels
 var DeployManifestTriggersWithRollback = deployManifestTriggersWithRollback
 var DeployOperationIdempotencyKey = deployOperationIdempotencyKey
 var DeployOptionsFingerprint = deployOptionsFingerprint
@@ -2127,6 +2129,17 @@ var WriteWaitedDeploymentReceiptUntil = writeWaitedDeploymentReceiptUntil
 var WriteWaitedDeploymentReceiptUntilWithOptions = writeWaitedDeploymentReceiptUntilWithOptions
 var ZeroConfigDeployServer = zeroConfigDeployServer
 
+// Data API runtime served by the control plane (ADR-20261031095954).
+var ServedDataAPIRuntime = servedDataAPIRuntime
+var UploadedSourceFiles = uploadedSourceFiles
+var UploadedServerHas = uploadedServerHas
+var ReadDataAPIRuntimeArchive = readDataAPIRuntimeArchive
+var AttachDataAPIRuntime = attachDataAPIRuntime
+
+type DataAPIHealthProbe = dataAPIHealthProbe
+
+const ServedRuntimeVersion = servedRuntimeVersion
+
 // Members of appTaskStreamSession
 func (r *appTaskStreamSession) Stdout() **io.PipeReader { return &r.stdout }
 
@@ -2600,3 +2613,7 @@ func TierDiscoverableFlags(names, capabilities []string) []string {
 var BindExclusiveLock = bindExclusiveLock
 
 type ExclusiveLock = exclusiveLock
+
+// GitHub connector commands (ADR-20261101160300).
+var CmdGithub = cmdGithub
+var CmdGithubSetup = cmdGithubSetup

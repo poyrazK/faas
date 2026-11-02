@@ -202,3 +202,18 @@ A security audit found two ways around an app's policy.
   self-approval and the release has no recorded deployer, it needs one more
   approval than the policy asks, so at least one approver is someone else.
   The status shows the higher `required_approvals`.
+
+## Amendment 4 (2026-10-31): a person approves, signed in
+
+A release review found that any API key with `deploy:write`, the scope CI holds to deploy, could approve a release, and a bearer key skips MFA. A bot account's key, or a teammate's key in a CI job, could therefore give the second sign-off this ADR exists to require.
+
+- **Approving needs the dashboard session.** `POST /v1/deployments/{id}/approvals` with `decision: approve` answers `403 release_approval_session_required` to any API key or token, including the CLI's login token, with the release's approval page as the hint. The approval page and the notification links already decide with the session, so the organization access, role, MFA and self-approval checks apply as before.
+- **Rejecting stays open to keys.** Stopping a release needs no second person, and keys can already abort a rollout.
+- **The CLI and notices point to the page.** `gregale release approve` fails with the page's link; email notices drop the terminal command; the approval-required problem and the hold text name the approval page.
+
+## Amendment 5 (2026-11-01): the policy cannot be switched off by a mode change or a deploy key
+
+A second release review found two ways around a policy.
+
+- **Leaving request mode.** Approvals wait in a canary stage, so the policy only gates request-mode apps, and setting one on a service, worker or job is refused. But a member who may configure the app (developers included) could switch it to `service`, which still serves HTTP, through `PATCH /v1/apps/{slug}` or a `gregale.yaml` lifecycle block. The policy stayed set and stopped gating. Leaving request mode now answers `409` while the app has a policy; an owner or admin removes the policy first.
+- **Deploy keys.** Changing or removing the policy, deleting a release gate and lifting a freeze accepted any key with `deploy:write`, the scope CI and agents hold. An admin's CI key could remove the policy, deploy and put it back, around amendment 4. These routes now need the `admin` scope: a signed-in session, the CLI's login or an admin key. Creating a gate or a freeze still takes `deploy:write`, since it only adds a guard.

@@ -109,7 +109,7 @@ func (p *Provider) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/" {
-		_, _ = w.Write([]byte(`{"items":[{"id":"fixture-org","subscription_settings":{"allow_multiple_subscriptions":false}}]}`))
+		_, _ = w.Write([]byte(`{"items":[{"id":"fixture-org","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"}}]}`))
 		return
 	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/products/") {

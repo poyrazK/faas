@@ -37,6 +37,10 @@ type Config struct {
 type FleetConfig struct {
 	MaxDatabases             int   `json:"max_databases"`
 	MaxMonthlyCostMillicents int64 `json:"max_monthly_cost_millicents"`
+	// PaidReserveDatabases is how many of MaxDatabases only paid plans may
+	// add. Unset reserves api.ManagedPostgresFleetPaidReservePercent of
+	// MaxDatabases; 0 reserves none.
+	PaidReserveDatabases *int `json:"paid_reserve_databases,omitempty"`
 }
 
 func (c FleetConfig) policy() (FleetPolicy, error) {
@@ -44,7 +48,14 @@ func (c FleetConfig) policy() (FleetPolicy, error) {
 		c.MaxMonthlyCostMillicents < 0 || c.MaxMonthlyCostMillicents > api.ManagedPostgresFleetMonthlyCostCeilingMillicents {
 		return FleetPolicy{}, errors.New("managed postgres: invalid fleet policy")
 	}
-	return FleetPolicy(c), nil
+	reserve := c.MaxDatabases * api.ManagedPostgresFleetPaidReservePercent / 100
+	if c.PaidReserveDatabases != nil {
+		reserve = *c.PaidReserveDatabases
+	}
+	if reserve < 0 || (reserve > 0 && reserve >= c.MaxDatabases) {
+		return FleetPolicy{}, errors.New("managed postgres: the paid reserve must be below the fleet's database cap")
+	}
+	return FleetPolicy{MaxDatabases: c.MaxDatabases, MaxMonthlyCostMillicents: c.MaxMonthlyCostMillicents, PaidReserve: reserve}, nil
 }
 
 // UsageConfig is the JSON-safe form of UsagePolicy. Prices are integer
@@ -151,7 +162,12 @@ type Registry struct {
 
 func NewRegistry(config Config, getenv func(string) string, factories map[string]Factory) (*Registry, error) {
 	if config.MaxDatabasesPerAccount == 0 {
+		// Production sells the plans' limits; elsewhere a small cap keeps
+		// staging accounts from filling a shared provider.
 		config.MaxDatabasesPerAccount = 3
+		if ProductionEnvironmentActive(getenv) {
+			config.MaxDatabasesPerAccount = api.ManagedPostgresPlanDatabasesMax()
+		}
 	}
 	if config.MaxDatabasesPerAccount < 1 || config.MaxDatabasesPerAccount > 100 {
 		return nil, errors.New("managed postgres: invalid per-account database limit")

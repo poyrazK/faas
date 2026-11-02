@@ -44,14 +44,12 @@ func RequestIDFrom(r *http.Request) string {
 	return NewRequestID()
 }
 
-// NewRequestID returns a 128-bit random hex (uuid-like without dashes).
-// crypto/rand so we don't pull google/uuid just for this. On the
-// (extremely unlikely) rand.Read failure we emit zero rather than
-// panicking in the request hot path.
+// NewRequestID returns a 128-bit time-prefixed request ID as 32 hex
+// characters (see wire.NewRequestID).
 //
 // Re-exported from pkg/wire so the layering reads downward — wire is
 // the transport-level home and middleware depends on it (not the other
-// way around). Behaviour is identical to the prior implementation.
+// way around).
 func NewRequestID() string {
 	return wire.NewRequestID()
 }

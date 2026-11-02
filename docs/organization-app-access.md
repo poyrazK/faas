@@ -80,7 +80,11 @@ request budgets and future usage billing. Human verification, audit attribution
 and credential revocation continue to use the actual caller. Organizations do
 not become login accounts.
 
-Free organizations own resources immediately. Existing paid organizations adopt
+Free organizations own resources immediately, so each has its own Free app and
+allowance. An account may own one organization on the Free plan
+(`api.FreeOrganizationsOwnedMax`); creating another answers `403
+org_free_limit_exceeded` until one is upgraded or deleted
+(ADR-20261031090658). Existing paid organizations adopt
 ownership when their own provider-qualified subscription is confirmed; a customer
 ID or cached subscription handle alone does not activate it. Until then, existing
 billing remains in place and creator erasure returns 409. Personal provider IDs

@@ -11,7 +11,9 @@
 #                  alerting, storage, control, delivery, account)
 #                  and the recipient of every domain (apid seals to it)
 #   compute        identities of the domains read there (runtime, build, edge,
-#                  control, delivery)
+#                  control, delivery), and storage's when the S3 gateway runs
+#                  on the compute nodes (SEAL_DOMAIN_STORAGE_ON_COMPUTE=true,
+#                  ADR-20261031122757)
 #
 # Secrets, per domain: SEAL_DOMAIN_<DOMAIN>_AGE_KEY and
 # SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT, from `gregalectl seal-domain init`. Set
@@ -78,6 +80,11 @@ for domain in outbound source alerting storage control delivery account runtime 
       ;;
     compute/runtime | compute/build | compute/edge | compute/control | compute/delivery | control-plane/control | control-plane/account)
       stage identity "$domain" "$key"
+      ;;
+    compute/storage)
+      if [[ "${SEAL_DOMAIN_STORAGE_ON_COMPUTE:-}" == true ]]; then
+        stage identity "$domain" "$key"
+      fi
       ;;
   esac
   recipients+="# $domain recipient: $pub"$'\n'

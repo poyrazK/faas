@@ -145,6 +145,8 @@ type workloadSeed struct {
 	// k8sEnvFrom are a Kubernetes container's envFrom sources, whose keys
 	// join envKeys once the whole scan has read them (ADR-20261029093621 §5).
 	k8sEnvFrom []k8sEnvFromRef
+	// labels are a Kubernetes object's usable metadata.labels.
+	labels map[string]string
 }
 
 // workloadKey is the merge-by-(RootDir, Name) key. Two seeds with

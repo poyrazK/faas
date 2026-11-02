@@ -4528,3 +4528,28 @@ retained workloads first. This feature does not delete customer data.
 Production enforcement remains gated. These changes do not replace the
 required end-to-end run and leak checks on an exclusive dedicated native
 x86_64 KVM host.
+
+## Retired namespace proof under inode reuse — 2026-10-31
+
+Recovery and cleanup prove that a retired attempt's jail mount namespace is
+gone before they acknowledge its helper frames (jail devices, snapshot outputs).
+The proof scans every task's `ns/mnt` for the namespace's recorded nsfs device
+and inode number. Linux reuses that inode number once the namespace is freed,
+so a newer VM's jail namespace can take it. Native lane B on n2 refused vmmd's
+restart this way four times (2026-10-29 to 2026-10-30): the holder was always a
+`firecracker` newer than the retired launch, and in eaedb-20261030T230509 its
+cgroup named another instance (`76973f50`) than the retired one (`9e4ea724`).
+
+A task found under the recorded identity now ends the proof only when it is the
+launched process of a live launch record for another instance: the task's
+cgroup leaf names that instance, as native recovery already reads it, and the
+record is authorized, not revoked, not resource-removed, and names the same pid
+and start time. Every jail gets its own mount namespace and two live namespaces
+never share an inode number, so that namespace is the other launch's and the
+retired attempt's namespace ended. Any other holder, including a task of the
+retired instance, an unverified incarnation or an open descriptor, still blocks
+the acknowledgement and vmmd's start, as before.
+
+The refusal names the holder (pid, command, task, cgroup) and the retired owner
+or helper frame. Validation:
+`TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch`.
