@@ -300,6 +300,10 @@ func managedPostgresManifestProblem(err error, detail string) *api.Problem {
 		status, code, title = http.StatusBadRequest, "managed_postgres_invalid", "Invalid managed PostgreSQL request"
 	case errors.Is(err, managedpostgres.ErrUnsupported):
 		status, code, title = http.StatusUnprocessableEntity, "managed_postgres_unsupported", "Managed PostgreSQL feature unsupported"
+	case errors.Is(err, managedpostgres.ErrNotInPlan):
+		status, code, title = http.StatusForbidden, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan"
+	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
+		status, code, title = http.StatusForbidden, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
 	}
 	if detail == "" {
 		detail = "The managed PostgreSQL operation could not be completed."
