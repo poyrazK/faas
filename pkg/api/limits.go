@@ -13363,6 +13363,10 @@ const (
 	// the local vmmd to name the trace of the one request a calling instance
 	// is serving (ADR-1138); past it the call starts its own trace.
 	ServiceTraceInferenceTimeout = 25 * time.Millisecond
+	// ServiceCallDeadlineHopOverhead is kept back from the calling request's
+	// remaining budget when a service call inherits it, so the caller still
+	// has time to read the answer (ADR-20261102082606).
+	ServiceCallDeadlineHopOverhead = 10 * time.Millisecond
 	// Private guest DNS reads the scenario DNS chaos policy for every
 	// *.svc.gregale question, rehearsing or not (ADR-20261024230731). A read
 	// gets ServiceDNSChaosLookupTimeout; after a failed read the node answers
