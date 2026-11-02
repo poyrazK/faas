@@ -279,15 +279,20 @@ func TestHistoryReadsAreSharedPerGeneration(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Go(func() { _, _ = h.read(context.Background(), "ep", "room", 3, read) })
+		wg.Go(func() { _, _ = h.read(context.Background(), "ep", "room", 3, historyShareFor, read) })
 	}
 	wg.Wait()
-	if _, err := h.read(context.Background(), "ep", "room", 3, read); err != nil || reads.Load() != 1 {
+	if _, err := h.read(context.Background(), "ep", "room", 3, historyShareFor, read); err != nil || reads.Load() != 1 {
 		t.Fatalf("reads = %d (%v), want one shared read", reads.Load(), err)
 	}
-	h.published(channelKey{endpointID: "ep", channel: "room"})
-	_, _ = h.read(context.Background(), "ep", "room", 3, read)
+	// A new subscription never reuses a finished page.
+	_, _ = h.read(context.Background(), "ep", "room", 3, 0, read)
 	if reads.Load() != 2 {
+		t.Fatalf("a subscribe read reused a finished page: %d reads", reads.Load())
+	}
+	h.published(channelKey{endpointID: "ep", channel: "room"})
+	_, _ = h.read(context.Background(), "ep", "room", 3, historyShareFor, read)
+	if reads.Load() != 3 {
 		t.Fatalf("a read after a publish was served from before it: %d reads", reads.Load())
 	}
 }

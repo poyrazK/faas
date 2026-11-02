@@ -63,11 +63,22 @@ type ManagedRealtimeChannelRouteReporter interface {
 	ReportChannelRoute(context.Context, string, string, bool) error
 }
 
-// readResumeHistory reads a page of a channel's history, shared with the
-// node's other readers of the same position (history_reads.go). Only reads
-// that reach the control plane are recorded.
+// readResumeHistory reads a page of a channel's history for a new
+// subscription or a reset: it joins a read of the same position already in
+// flight, but never reuses a finished one (history_reads.go).
 func (m *Manager) readResumeHistory(ctx context.Context, endpointID, channel string, after int64) (state.ManagedRealtimeChannelHistory, error) {
-	return m.historyReads.read(ctx, endpointID, channel, after, func(ctx context.Context) (state.ManagedRealtimeChannelHistory, error) {
+	return m.readHistoryShared(ctx, endpointID, channel, after, 0)
+}
+
+// pollResumeHistory reads a page for a subscription that is woken or polling:
+// readers of the same position reuse it for historyShareFor.
+func (m *Manager) pollResumeHistory(ctx context.Context, endpointID, channel string, after int64) (state.ManagedRealtimeChannelHistory, error) {
+	return m.readHistoryShared(ctx, endpointID, channel, after, historyShareFor)
+}
+
+// readHistoryShared records only the reads that reach the control plane.
+func (m *Manager) readHistoryShared(ctx context.Context, endpointID, channel string, after int64, maxAge time.Duration) (state.ManagedRealtimeChannelHistory, error) {
+	return m.historyReads.read(ctx, endpointID, channel, after, maxAge, func(ctx context.Context) (state.ManagedRealtimeChannelHistory, error) {
 		started := time.Now()
 		page, err := m.cfg.HistoryReader.ReadChannelHistory(ctx, endpointID, channel, after, resumeHistoryPageSize)
 		result := resumeHistoryReadSuccess
@@ -1149,7 +1160,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 			lastLeaseRenewal = time.Now()
 		}
 		next, err := retryHistoryRead(ctx, c, func(readCtx context.Context) (state.ManagedRealtimeChannelHistory, error) {
-			return m.readResumeHistory(readCtx, c.info.EndpointID, channel, lastSent)
+			return m.pollResumeHistory(readCtx, c.info.EndpointID, channel, lastSent)
 		})
 		if err != nil {
 			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: channel, Code: "history_read_failed"})

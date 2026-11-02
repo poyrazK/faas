@@ -59,15 +59,16 @@ func (h *historyReads) published(key channelKey) {
 }
 
 // read returns a shared page for (endpoint, channel, after), reading it with
-// fn when no reader of the current generation has one.
-func (h *historyReads) read(ctx context.Context, endpointID, channel string, after int64, fn func(context.Context) (state.ManagedRealtimeChannelHistory, error)) (state.ManagedRealtimeChannelHistory, error) {
+// fn when no reader of the current generation has one. A finished read is
+// reused for maxAge: zero shares only a read still in flight.
+func (h *historyReads) read(ctx context.Context, endpointID, channel string, after int64, maxAge time.Duration, fn func(context.Context) (state.ManagedRealtimeChannelHistory, error)) (state.ManagedRealtimeChannelHistory, error) {
 	h.mu.Lock()
 	key := historyReadKey{endpointID: endpointID, channel: channel, after: after, gen: h.gens[channelKey{endpointID: endpointID, channel: channel}]}
 	now := time.Now()
 	if r := h.reads[key]; r != nil {
 		select {
 		case <-r.done:
-			if now.Sub(r.at) < historyShareFor {
+			if now.Sub(r.at) < maxAge {
 				h.mu.Unlock()
 				return r.page, r.err
 			}

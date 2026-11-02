@@ -159,12 +159,15 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer m.releaseResume(node.account)
-	read := func() (state.ManagedRealtimeChannelHistory, error) {
+	read := func(poll bool) (state.ManagedRealtimeChannelHistory, error) {
 		readCtx, stop := context.WithTimeout(ctx, resumeHistoryReadTimeout)
 		defer stop()
+		if poll {
+			return m.pollResumeHistory(readCtx, id, channel, after)
+		}
 		return m.readResumeHistory(readCtx, id, channel, after)
 	}
-	page, err := read()
+	page, err := read(false)
 	if err != nil {
 		http.Error(w, "history unavailable", http.StatusServiceUnavailable)
 		return
@@ -266,7 +269,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		page, err = read()
+		page, err = read(true)
 		if err != nil {
 			// Transient: end the stream so the client reconnects from its cursor.
 			return
