@@ -6,7 +6,8 @@
 --    deletion, so meterd keeps delivering the usage it ran before then, as it
 --    already does for accounts. A trigger stamps it whenever deleted_pending
 --    turns on, on every path and for the previous release's writes too.
---    Organizations already pending deletion take their last update time.
+--    Organizations already pending deletion are not backfilled: their usage
+--    from before the request was already past delivery, as before.
 -- 2. managed_postgres_overage_pending holds a managed PostgreSQL overage step
 --    apid reserved before sending it to the billing provider. A step that was
 --    sent but not recorded is sent again with the same target, which the
@@ -52,8 +53,6 @@ END $$;
 DROP TRIGGER IF EXISTS orgs_deletion_requested_at ON orgs;
 CREATE TRIGGER orgs_deletion_requested_at BEFORE INSERT OR UPDATE OF deleted_pending, deletion_requested_at ON orgs
     FOR EACH ROW EXECUTE FUNCTION stamp_org_deletion_requested_at();
-
-UPDATE orgs SET deletion_requested_at = updated_at WHERE deleted_pending AND deletion_requested_at IS NULL;
 
 ALTER TABLE orgs VALIDATE CONSTRAINT orgs_deletion_requested_at_chk;
 

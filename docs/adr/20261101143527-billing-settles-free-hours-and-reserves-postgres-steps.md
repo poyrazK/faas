@@ -45,8 +45,9 @@ A fourth billing audit of `main` (2026-11-01) found:
 2. **Organizations record when deletion was requested.**
    `orgs.deletion_requested_at` (migration `20261101143525306`, expand) is
    stamped by a trigger whenever `deleted_pending` turns on, on every path
-   and for the previous release's writes; organizations already pending
-   deletion take their last update time. The organization billing subject
+   and for the previous release's writes. Organizations already pending
+   deletion are not backfilled (an unbatched update of `orgs` would lock it;
+   their earlier usage was already past delivery). The organization billing subject
    carries it, so the pusher delivers an organization's hours that began
    before the request, as it does for accounts.
 3. **Managed PostgreSQL overage steps are reserved before they are sent.**
