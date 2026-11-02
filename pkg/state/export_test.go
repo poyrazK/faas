@@ -1141,3 +1141,13 @@ func (r *workflowOperationWindow) Deadline() *time.Time { return &r.deadline }
 func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
 
 var LiveServiceProxyIdentities = liveServiceProxyIdentities
+
+// XFreezeDeploymentRuntime stores a reviewed candidate's frozen runtime on an
+// existing deployment, as GitOps candidate preparation does.
+func (m *MemStore) XFreezeDeploymentRuntime(id, raw string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.deployments[id]
+	d.EnvironmentWorkloadRuntime = raw
+	m.deployments[id] = d
+}
