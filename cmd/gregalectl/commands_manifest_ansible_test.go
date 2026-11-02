@@ -562,11 +562,13 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 		placement bool
 		direct    bool
 		edgedns   bool
+		spread    bool
 	}{
 		{name: "off", yaml: base},
 		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
 		{name: "placement routing", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n", enabled: true, placement: true},
 		{name: "direct entry", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: both\n", enabled: true, direct: true},
+		{name: "spread and local first", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n  placement_node_set: true\n  local_first: true\n", enabled: true, placement: true, spread: true},
 		{name: "direct entry with edgednsd", yaml: strings.Replace(base, "address: 10.42.0.2:50051\n", "address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n", 1) +
 			"public_edge:\n  compute_nodes: true\n  entry: both\n  dns:\n    zone_id: zone-1\n    names: [pilot.example.dev]\n", enabled: true, direct: true, edgedns: true},
 	} {
@@ -638,6 +640,15 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			}
 			if strings.Contains(computeVars, "faas_edgednsd") {
 				t.Errorf("edgednsd rendered on a compute host:\n%s", computeVars)
+			}
+			// ADR-20261102081618 §5: both switches are compute-node settings.
+			for _, line := range []string{"faas_edge_placement_node_set: true\n", "faas_gateway_edge_local_first: true\n"} {
+				if got := strings.Contains(computeVars, line); got != tc.spread {
+					t.Errorf("compute host has %q = %v, want %v:\n%s", line, got, tc.spread, computeVars)
+				}
+				if strings.Contains(controlVars, line) {
+					t.Errorf("%q rendered on the control plane:\n%s", line, controlVars)
+				}
 			}
 		})
 	}

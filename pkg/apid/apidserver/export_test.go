@@ -2025,6 +2025,9 @@ func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func
 	p.purgeAll(ctx)
 }
 
+// LoadOrGenerateAuditHMACKey exposes the boot-time audit HMAC key loader.
+var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
+
 // OIDCAccountLookup is the OIDC exchange's account lookup with project
 // repository bindings confirmed through repos (ADR-20261101160300,
 // amendment 1).

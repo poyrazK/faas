@@ -1,0 +1,25 @@
+name: cloudflare-ranges
+
+# ADR-20261102081618 §2: the compute nodes Cloudflare reaches directly admit
+# 80/443 only from the pinned Cloudflare ranges. Cloudflare changes its list
+# rarely; a weekly check catches a new range before it is refused.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Compare the pinned ranges with Cloudflare's lists
+        run: make cloudflare-ranges-check
