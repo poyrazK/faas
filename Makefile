@@ -438,6 +438,14 @@ adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet ov
 adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
 	bash scripts/ci/check_adr_number_uniqueness_test.sh
 
+.PHONY: cloudflare-ranges-check
+cloudflare-ranges-check: ## Compare the pinned Cloudflare ranges with Cloudflare's published lists (network; ADR-20261102081618)
+	bash scripts/ci/check_cloudflare_ranges.sh "$(CURDIR)"
+
+.PHONY: cloudflare-ranges-check-test
+cloudflare-ranges-check-test: ## Exercise the Cloudflare range check offline
+	bash scripts/ci/check_cloudflare_ranges_test.sh
+
 .PHONY: migration-version-hygiene-check
 migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
 	bash scripts/ci/check_migration_version_hygiene.sh
