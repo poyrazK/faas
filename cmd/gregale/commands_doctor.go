@@ -38,6 +38,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -211,7 +212,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if _, err := os.ReadDir(abs); err != nil {
 		return printErr("Could not read source directory", err)
 	}
-	appEnv := loadDoctorAppEnv(*appFlag, abs)
+	appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
 	report := withSourceCheck(runDoctorChecksForApp(abs, detectShape(abs), &appEnv), abs)
 	// Honour --strict: a warn under strict promotes to exit 1.
 	// Use the doctorReport helpers so the standalone cmdDoctor
@@ -429,16 +430,10 @@ func platformProvidedEnvVar(name string) bool {
 	return name == "PORT" || strings.HasPrefix(name, "GREGALE_") || strings.HasPrefix(name, "FAAS_") || api.IsPlatformIdentityEnvKey(name)
 }
 
-// doctorCheckEnvRequired scans source for env-var references and flags any
-// not declared in `.env` or `.gregale/env.json`. Without the app's own env
-// and secret names the local files may be incomplete, so a finding is a
-// warning; see doctorCheckEnvRequiredForApp.
-func doctorCheckEnvRequired(path string) doctorCheck {
-	return doctorCheckEnvRequiredForApp(path, nil)
-}
-
-// doctorCheckEnvRequiredForApp also treats the app's env and secret names as
-// declared. A reference still missing after that comparison is an error; one
+// doctorCheckEnvRequiredForApp scans source for env-var references and flags
+// any not declared in `.env`, `.gregale/env.json` or, when app was read, the
+// app's env and secret names. Without the app (nil or unchecked) the local
+// files may be incomplete, so a finding is a warning. A reference still missing after that comparison is an error; one
 // missing only from the local files is a warning, because values set with
 // `env set` or `secrets set` never appear there (CLI audit 2026-10-31).
 func doctorCheckEnvRequiredForApp(path string, app *doctorAppEnv) doctorCheck {

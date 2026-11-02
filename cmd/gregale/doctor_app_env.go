@@ -36,7 +36,7 @@ const doctorAppEnvTimeout = 10 * time.Second
 // for: --app, else the linked project's app. Nothing is read when no app is
 // known or the CLI is logged out; env-required then warns instead of
 // failing, because its local view may be incomplete (CLI audit 2026-10-31).
-func loadDoctorAppEnv(explicitApp, dir string) doctorAppEnv {
+func loadDoctorAppEnv(parent context.Context, explicitApp, dir string) doctorAppEnv {
 	app := explicitApp
 	if app == "" {
 		linked, err := linkedAppSlug(dir)
@@ -57,7 +57,7 @@ func loadDoctorAppEnv(explicitApp, dir string) doctorAppEnv {
 		return doctorAppEnv{App: app, Reason: err.Error()}
 	}
 	scope = scopeOrDefault(scope)
-	ctx, cancel := context.WithTimeout(context.Background(), doctorAppEnvTimeout)
+	ctx, cancel := context.WithTimeout(parent, doctorAppEnvTimeout)
 	defer cancel()
 	client := NewClient(apiBase(), token)
 	secrets, err := client.ListSecretsWithScope(ctx, app, scope)

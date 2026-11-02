@@ -3370,7 +3370,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// local files is a warning (CLI audit 2026-10-31).
 		var appEnv *doctorAppEnv
 		if *doctorStrict {
-			loaded := loadDoctorAppEnv(slug, sourceDir)
+			loaded := loadDoctorAppEnv(ctx, slug, sourceDir)
 			appEnv = &loaded
 		}
 		rep := runDoctorChecksForApp(sourceDir, doctorShape, appEnv)
