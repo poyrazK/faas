@@ -72,6 +72,9 @@ type WorkflowOrchestrator struct {
 	agentsAllowed func(ctx context.Context, appID string) bool
 	// dbPhase bounds dispatch slots' database work (workflow_db_phase.go).
 	dbPhase *workflowDBPhase
+	// platformRetryDelay is the shortest wait before retrying an attempt
+	// Gregale refused before delivery (api.WorkflowStepPlatformRetryDelay).
+	platformRetryDelay time.Duration
 }
 
 // NewWorkflowOrchestrator constructs a new orchestrator.
@@ -89,6 +92,8 @@ func NewWorkflowOrchestrator(
 		metrics:  metrics,
 		log:      log,
 		dbPhase:  newWorkflowDBPhase(api.WorkflowDispatchDBPhaseSlots),
+
+		platformRetryDelay: api.WorkflowStepPlatformRetryDelay,
 	}
 }
 
@@ -122,6 +127,27 @@ func workflowRetryDelay(spec api.WorkflowStepSpec, attempt int) time.Duration {
 		return 5 * time.Minute
 	}
 	return delay
+}
+
+// workflowAttemptRefused reports a step attempt Gregale refused before the
+// app received it: a 5xx from the gateway's dispatch endpoint, which answers
+// 200 whenever the app received the request. Outbound integration steps do
+// not go through the gateway.
+func workflowAttemptRefused(spec api.WorkflowStepSpec, err error) bool {
+	return spec.Outbound == nil && errors.Is(err, ErrDispatchRefused)
+}
+
+// workflowStepAttemptLimit is how many attempts a pending for_each item or
+// resumed step may have made before it is ended as exhausted by a crash.
+// Starting an attempt clears next_retry_at, so a step that still has one
+// holds a retry the policy scheduled, which may be a platform retry past
+// max_attempts (ADR-081 amendment 2026-11-02); a crashed attempt leaves none.
+func workflowStepAttemptLimit(step *state.WorkflowStep, spec api.WorkflowStepSpec) int {
+	limit := api.WorkflowStepMaxAttempts(spec)
+	if step.NextRetryAt != nil && spec.Outbound == nil {
+		limit += api.WorkflowStepPlatformRetries
+	}
+	return limit
 }
 
 // workflowStepIdempotencyKey identifies the logical step across all of its
@@ -1163,7 +1189,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			return o.failWorkflowStepBeforeStart(ctx, run, step, spec, failureContext, "workflow outbound attempt limit exhausted after recovery")
 		}
 	}
-	if (step.ForEachParent != nil || run.ResumeCount > 0) && step.Attempt-step.RetryBase >= api.WorkflowStepMaxAttempts(spec) {
+	if (step.ForEachParent != nil || run.ResumeCount > 0) && step.Attempt-step.RetryBase >= workflowStepAttemptLimit(step, spec) {
 		return o.failWorkflowStepBeforeStart(ctx, run, step, spec, nil, "for_each item attempt limit exhausted after recovery")
 	}
 	start := time.Now()
@@ -1349,10 +1375,20 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	}
 	attemptNumber := step.Attempt + 1 - step.RetryBase
 	retryDecision := api.EvaluateWorkflowRetry(spec, statusCode, err != nil, attemptNumber)
+	refused := workflowAttemptRefused(spec, err)
+	if refused && attemptNumber < retryDecision.MaxAttempts+api.WorkflowStepPlatformRetries {
+		// Gregale refused this attempt before the app received it, so it
+		// does not end the step (ADR-081 amendment 2026-11-02).
+		retryDecision.ShouldRetry = true
+	}
 	if retryDecision.ShouldRetry {
 		// Retry eligible — schedule the next attempt after the configured
 		// backoff so a failing dependency cannot hot-loop the dispatcher.
-		retryAt := time.Now().UTC().Add(workflowRetryDelay(spec, step.Attempt+1-step.RetryBase))
+		now := time.Now().UTC()
+		retryAt := now.Add(workflowRetryDelay(spec, step.Attempt+1-step.RetryBase))
+		if platformRetryAt := now.Add(o.platformRetryDelay); refused && platformRetryAt.After(retryAt) {
+			retryAt = platformRetryAt
+		}
 		if outboundRetryAt.After(retryAt) {
 			retryAt = outboundRetryAt
 		}

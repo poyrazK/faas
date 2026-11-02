@@ -184,6 +184,11 @@ prom_targets:
     port: 9109
     box_roles: [control-plane, single-box]
     enabled: "{{ faas_agentd_managed | default(false) | bool }}"
+  - job: edgednsd
+    host: 127.0.0.1
+    port: 9113
+    box_roles: [control-plane, single-box]
+    enabled: "{{ faas_edgednsd_managed | default(false) | bool }}"
   - job: prometheus
     host: 127.0.0.1
     port: 9095

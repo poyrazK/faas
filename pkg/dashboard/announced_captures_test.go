@@ -33,7 +33,7 @@ func TestAnnouncedProfileCapturesBanner(t *testing.T) {
 	view := dashboard.BuildAnnouncedProfileCaptures("demo", captures)
 	if view == nil || view.Count != 3 || view.OOMKilled != 2 || view.Latest.ID != "slow-1" || view.Days != 7 ||
 		view.LatestURL != "/dashboard/apps/demo/profiles/captures/slow-1" || view.LatestTrigger != "slow request" ||
-		view.ListURL != "/dashboard/apps/demo/profiles#profile-captures" {
+		view.ListURL != "/dashboard/apps/demo/profiles/captures" {
 		t.Fatalf("banner = %+v", view)
 	}
 
@@ -48,7 +48,7 @@ func TestAnnouncedProfileCapturesBanner(t *testing.T) {
 		"Profile captures to review: 3</strong> in the last 7 days, 2 linked to an OOM kill.",
 		`href="/dashboard/apps/demo/profiles/captures/slow-1">slow request · GET /orders in flight for 12s</a>`,
 		"2026-10-14T21:03:00Z",
-		`href="/dashboard/apps/demo/profiles#profile-captures">All captures</a>`,
+		`href="/dashboard/apps/demo/profiles/captures">All captures</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("app page lacks %q", want)

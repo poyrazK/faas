@@ -51,6 +51,7 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"operator_alert_triage_and_retention_are_durable", testOperatorAlertTriageRetention},
 		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
+		{"operator_actions_reach_the_audit_log_under_the_operator", testOperatorActionsReachAuditLog},
 		{"operator_queue_count_excludes_running_and_terminal_builds", testOperatorQueuedBuildsCount},
 		{"operator_queue_snapshot_preserves_wait_across_requeue", testOperatorBuildQueueSnapshot},
 		{"operator_build_recovery_snapshot_preserves_cleanup_age", testOperatorBuildRecoverySnapshot},
@@ -122,6 +123,7 @@ func Run(t *testing.T, open Open) {
 		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
 		{"rehearsal_apps_leave_account_alerts", testRehearsalAppsLeaveAccountAlerts},
 		{"rehearsal_app_logs_stay_inside_the_run", testRehearsalAppLogsStayInsideTheRun},
+		{"log_drains_deliver_only_what_the_plan_covers", testLogDrainsDeliverOnlyWhatThePlanCovers},
 		{"rehearsal_apps_never_poll_real_brokers", testRehearsalAppsNeverPollRealBrokers},
 		{"rehearsal_crons_never_fire_from_the_clock", testRehearsalCronsNeverFireFromTheClock},
 		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
@@ -173,6 +175,7 @@ func Run(t *testing.T, open Open) {
 		{"oidc_empty_subject_pattern_binds_nothing", testOIDCEmptySubjectPatternBindsNothing},
 		{"oidc_repository_binding_resolution", testOIDCRepositoryBindingResolution},
 		{"oidc_repository_ids_for_subject", testOIDCRepositoryIDsForSubject},
+		{"oidc_project_repository_bindings", testOIDCProjectRepositoryBindings},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},

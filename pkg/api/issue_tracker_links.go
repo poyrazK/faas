@@ -3,12 +3,13 @@ package api
 import (
 	"fmt"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 type PutIssueTrackerLinkRequest struct {
@@ -36,10 +37,10 @@ type NormalizedIssueTrackerLink struct {
 	Provider, ExternalKey string
 }
 
-var trackerGithubOwner = regexp.MustCompile(`^[A-Za-z0-9-]{1,39}$`)
-var trackerGithubRepo = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
-var trackerLinearWorkspace = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,62}$`)
-var trackerLinearKey = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]{0,31}-[1-9][0-9]{0,18}$`)
+var trackerGithubOwner = lazyregexp.New(`^[A-Za-z0-9-]{1,39}$`)
+var trackerGithubRepo = lazyregexp.New(`^[A-Za-z0-9_.-]{1,100}$`)
+var trackerLinearWorkspace = lazyregexp.New(`^[A-Za-z0-9][A-Za-z0-9-]{0,62}$`)
+var trackerLinearKey = lazyregexp.New(`^[A-Za-z][A-Za-z0-9]{0,31}-[1-9][0-9]{0,18}$`)
 
 // NormalizeIssueTrackerLink canonicalizes public GitHub issue and Linear issue
 // URLs. It never fetches a URL, validates provider access, or creates a ticket.

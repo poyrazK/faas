@@ -249,28 +249,49 @@ var usageMeters = []managedpostgres.Meter{
 	managedpostgres.MeterHistoryByteSeconds, managedpostgres.MeterEgressBytes,
 }
 
-// Provision creates the database VM and its customer database. Schedd
-// placement is idempotent per resource id, and so is the init batch.
+// Provision places the database VM. Schedd bootstraps it in the background
+// (ADR-1027 amendment 2026-11-02), so the database is pending until
+// InspectProvision finds it bootstrapped and has created its customer
+// database. Schedd placement is idempotent per resource id, and so is the
+// init batch.
 func (p *Provider) Provision(ctx context.Context, req managedpostgres.ProvisionRequest) (managedpostgres.ObservedDatabase, error) {
 	if err := p.supports(req.Spec); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	id := resourceUUID(req.ResourceID)
-	rt, err := p.scheduler.ProvisionDatabase(ctx, p.provisionRequest(id, req.Spec))
+	rt, err := p.scheduler.ProvisionDatabase(ctx, p.provisionRequest(resourceUUID(req.ResourceID), req.Spec))
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, providerError(err)
 	}
-	if rt.GetState() == "failed" {
-		return p.observed(rt), nil
+	return p.initialized(ctx, p.observed(rt))
+}
+
+var _ managedpostgres.ProvisionInspector = (*Provider)(nil)
+
+// InspectProvision is Inspect for a database still being provisioned: once
+// schedd has bootstrapped it, it creates the customer database before
+// reporting it ready. Inspect never does, since it must not wake the VM.
+func (p *Provider) InspectProvision(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
+	obs, err := p.Inspect(ctx, providerResourceID)
+	if err != nil {
+		return obs, err
+	}
+	return p.initialized(ctx, obs)
+}
+
+// initialized runs the init batch on a bootstrapped database and observes
+// it again; any other observation is returned as it is.
+func (p *Provider) initialized(ctx context.Context, obs managedpostgres.ObservedDatabase) (managedpostgres.ObservedDatabase, error) {
+	if obs.Status != managedpostgres.ProviderStatusReady {
+		return obs, nil
 	}
 	init, err := initSQL(p.cfg.Database)
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if err := p.admin(ctx, id, init); err != nil {
+	if err := p.admin(ctx, obs.ProviderResourceID, init); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	return p.Inspect(ctx, id)
+	return p.Inspect(ctx, obs.ProviderResourceID)
 }
 
 func (p *Provider) provisionRequest(id string, spec managedpostgres.Spec) *scheddpb.ProvisionDatabaseRequest {

@@ -245,6 +245,7 @@ type Loop struct {
 	workflowsDispatched               bool
 	workflowScheduleMinute            int64
 	workflowFailurePolicyAfter        string
+	workflowFailurePolicyNextPass     time.Time
 	workflowScheduleAfter             string
 	workflowScheduleComplete          bool
 	workflowScheduleFailed            bool
@@ -4399,11 +4400,15 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	// while every lower slot is still busy, so an idle scheduler polls as
 	// before and capacity grows by one slot a tick under load (ADR-20261025232118).
 	busy := 0
+	gate := newWorkflowDueGate(l.engine.Store())
 	for slot := range api.WorkflowDispatchSlots {
 		if slot >= api.WorkflowDispatchBaseSlots && busy < slot {
 			break
 		}
 		outcome := l.workPool().submit(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
+			if !gate.open(ctx) {
+				return
+			}
 			orch := l.workflowOrch
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
@@ -4421,6 +4426,35 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	if l.workflowOrch != nil {
 		l.workflowOrch.metrics.SetDispatchSlots(busy, api.WorkflowDispatchSlots)
 	}
+}
+
+// workflowDueGate asks once per dispatch tick whether any workflow run is due.
+// Each slot's claim used to ask on its own: with nothing due, every scheduler
+// read the same answer once per base slot every second.
+type workflowDueGate struct {
+	once sync.Once
+	read state.WorkflowRunDueReader
+	due  bool
+}
+
+// newWorkflowDueGate gates on store's due check; a store without one opens
+// every slot.
+func newWorkflowDueGate(store state.Store) *workflowDueGate {
+	read, _ := store.(state.WorkflowRunDueReader)
+	return &workflowDueGate{read: read}
+}
+
+// open reports whether a slot should try to claim. A failed check opens it,
+// leaving the decision to the claim.
+func (g *workflowDueGate) open(ctx context.Context) bool {
+	if g.read == nil {
+		return true
+	}
+	g.once.Do(func() {
+		due, err := g.read.WorkflowRunsDue(ctx)
+		g.due = err != nil || due
+	})
+	return g.due
 }
 
 func (l *Loop) dispatchTriggerTick(ctx context.Context) {
@@ -5309,7 +5343,7 @@ func reservationEvictions(ledger *NodeLedger, now time.Time, snapshot []Instance
 // evictForMeasuredMemory evicts on nodes whose measured memory exceeds their
 // ceiling (ADR-909). It runs only under measured admission: otherwise each
 // VM's memory.max keeps a node's memory under its reservations. A node
-// without a fresh vmmd capacity report is skipped.
+// without a fresh vmmd capacity report or published node report is skipped.
 func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceInfo, activity map[string]InstanceActivity, now time.Time) {
 	ledger := l.engine.Ledger()
 	if !ledger.MeasuredAdmissionEnabled() {
@@ -5320,11 +5354,17 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 		if _, seen := used[in.NodeID]; seen || in.NodeID == "" {
 			continue
 		}
-		report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now)
-		if !ok {
+		// A peer node's vmmd reports only to its own scheduler; its
+		// published report carries the same used memory, so this
+		// scheduler's instances there are evicted under its pressure too
+		// (ADR 20261101091815).
+		if report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now); ok {
+			used[in.NodeID] = int(report.UsedMB)
+		} else if peer, ok := l.engine.PeerNodeMemory(in.NodeID, now); ok && peer.UsedMB != nil {
+			used[in.NodeID] = *peer.UsedMB
+		} else {
 			continue
 		}
-		used[in.NodeID] = int(report.UsedMB)
 		ceiling[in.NodeID] = ledger.CeilingForNode(in.NodeID)
 	}
 	resident := make(map[string]int, len(activity))

@@ -109,6 +109,7 @@ type PlatformTenantHostBinding struct {
 //     and older introspection; they do not affect request selection.
 type targetSet struct {
 	next       atomic.Uint64 // global request round-robin cursor.
+	localNext  atomic.Uint64 // local-first cursor (ADR-20261102081618 §5c).
 	entries    []Target
 	nodeOrder  []string                  // stable node-id order for tie-break
 	subCursors map[string]*atomic.Uint64 // nodeID -> per-node cursor
@@ -1709,6 +1710,59 @@ func (b *PGBackend) HealthyCount(appID string) int {
 	n := b.routableTargetCountLocked(appID)
 	b.tgtMu.RUnlock()
 	return n
+}
+
+// ReadyNodeCounts returns appID's routable instances per node across its live
+// deployments, sorted by node id (ADR-20261102081618 §5a).
+func (b *PGBackend) ReadyNodeCounts(appID string) []NodeCount {
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return nil
+	}
+	byNode := map[string]int{}
+	for _, set := range picker.sets {
+		for _, t := range set.entries {
+			if t.routeReady() && t.NodeID != "" {
+				byNode[t.NodeID]++
+			}
+		}
+	}
+	counts := make([]NodeCount, 0, len(byNode))
+	for node, n := range byNode {
+		counts = append(counts, NodeCount{NodeID: node, Ready: n})
+	}
+	sort.Slice(counts, func(i, j int) bool { return counts[i].NodeID < counts[j].NodeID })
+	return counts
+}
+
+// LocalReadyTargets returns deploymentID's routable instances on nodeID,
+// starting at a rotating offset so local first spreads a node's requests over
+// its instances (ADR-20261102081618 §5c).
+func (b *PGBackend) LocalReadyTargets(appID, deploymentID, nodeID string) []Target {
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	if picker == nil || nodeID == "" {
+		return nil
+	}
+	set := picker.sets[deploymentID]
+	if set == nil {
+		return nil
+	}
+	var local []Target
+	for _, t := range set.entries {
+		if t.routeReady() && t.NodeID == nodeID {
+			t.DeploymentID = deploymentID
+			local = append(local, t)
+		}
+	}
+	if len(local) > 1 {
+		start := int(set.localNext.Add(1)-1) % len(local)
+		local = append(local[start:], local[:start]...)
+	}
+	return local
 }
 
 // CapacityCount returns all live cached instances, including targets
