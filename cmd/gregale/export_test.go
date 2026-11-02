@@ -2648,6 +2648,10 @@ var BindExclusiveLock = bindExclusiveLock
 
 type ExclusiveLock = exclusiveLock
 
+// CLI audit 2026-10-31 (auth and credentials).
+var CmdLogin = cmdLogin
+var WithEntry = withEntry
+
 // GitHub connector commands (ADR-20261101160300).
 var CmdGithub = cmdGithub
 var CmdGithubSetup = cmdGithubSetup
