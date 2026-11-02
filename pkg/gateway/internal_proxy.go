@@ -313,6 +313,9 @@ func (p *InternalReverseProxy) markPlacement(h http.Header) {
 func (p *InternalReverseProxy) takeInstanceNode(r *http.Request, h http.Header) {
 	node := strings.TrimSpace(h.Get(InstanceNodeHeader))
 	h.Del(InstanceNodeHeader)
+	// ADR-20261102081618 §5a: a gatewayd-internal with local-first on also
+	// names every node of the app; no client sees it.
+	h.Del(InstanceNodesHeader)
 	if node != "" && p.placement != nil {
 		p.placement.Learn(r, node)
 	}
