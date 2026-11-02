@@ -1,7 +1,7 @@
 -- migration-compat: expand
 -- filename: 20261102085140417_managed_postgres_overage_storage.sql
 --
--- ADR-20261031110037 amendment 1: managed PostgreSQL storage held past the
+-- ADR-20261031110037 amendment 2: managed PostgreSQL storage held past the
 -- plan's pool is billed on the same delivery row as compute overage. The row
 -- records the storage byte-seconds its cumulative charge billed. The previous
 -- release's upsert does not name the column, so its rows keep the default;

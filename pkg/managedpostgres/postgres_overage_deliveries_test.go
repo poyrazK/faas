@@ -69,7 +69,7 @@ func TestPostgresStoreOverageDeliveries(t *testing.T) {
 
 // A subject with overage on, or one already charged in the month, is listed
 // even when it never reached the compute allowance: its storage past the
-// pool is charged (ADR-20261031110037 amendment 1).
+// pool is charged (ADR-20261031110037 amendment 2).
 func TestPostgresStoreOverageSubjectsIncludeStorage(t *testing.T) {
 	store, _, ctx, accountID := postgresStoreFixture(t)
 	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)

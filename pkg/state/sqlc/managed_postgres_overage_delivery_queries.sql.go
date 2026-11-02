@@ -76,7 +76,7 @@ type ManagedPostgresOverageSubjectsRow struct {
 // billing provider, usage subject and UTC month.
 // Subjects that may owe overage for the month: those that reached the
 // compute allowance (as the cap sweep recorded it), those with overage on,
-// whose storage past the pool is billed (ADR-20261031110037 amendment 1), and
+// whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
 // those already charged.
 func (q *Queries) ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, periodStart pgtype.Timestamptz) ([]ManagedPostgresOverageSubjectsRow, error) {
 	rows, err := db.Query(ctx, managedPostgresOverageSubjects, periodStart)

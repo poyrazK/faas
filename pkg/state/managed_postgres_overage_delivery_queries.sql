@@ -4,7 +4,7 @@
 -- name: ManagedPostgresOverageSubjects :many
 -- Subjects that may owe overage for the month: those that reached the
 -- compute allowance (as the cap sweep recorded it), those with overage on,
--- whose storage past the pool is billed (ADR-20261031110037 amendment 1), and
+-- whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
 -- those already charged.
 SELECT s.subject_id, max(s.allowance_unit_seconds)::bigint AS allowance_unit_seconds,
     bool_or(s.overage_enabled) AS overage_enabled

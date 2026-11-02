@@ -18,7 +18,7 @@ import (
 // sweep and keeps delivering a closed month for
 // api.ManagedPostgresOverageCloseWindow while late usage windows arrive.
 //
-// Amendment 1: storage a subject with overage on holds past its plan's pool,
+// Amendment 2: storage a subject with overage on holds past its plan's pool,
 // averaged over the UTC month, is charged on the same step at
 // api.ManagedPostgresStorageOverageMillicentsPerGiBMonth, never past one pool
 // for the month.
@@ -75,7 +75,7 @@ type OverageDelivery struct {
 	UpdatedAt         time.Time
 
 	// BilledStorageByteSeconds is the storage past the pool the cumulative
-	// charge includes (ADR-20261031110037 amendment 1).
+	// charge includes (ADR-20261031110037 amendment 2).
 	BilledStorageByteSeconds int64
 }
 
@@ -112,7 +112,7 @@ type OverageChargeStep struct {
 	DeliveredMillicents int64
 	TargetMillicents    int64
 
-	// Storage held past the plan's pool (ADR-20261031110037 amendment 1).
+	// Storage held past the plan's pool (ADR-20261031110037 amendment 2).
 	UsedStorageByteSeconds   int64
 	StoragePoolBytes         int64
 	BilledStorageByteSeconds int64
