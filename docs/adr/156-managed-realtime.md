@@ -157,3 +157,17 @@ and custom domains, inside that site's origin and `connect-src` policy.
 - Release skew: a request without the header (an older gateway) keeps the
   host-independent behavior, and an older `realtimed` ignores it.
 
+## Amendment (2026-11-02): shared history reads, and polls that survive an outage
+
+- A retained publish wakes every resume subscriber of its channel on a node,
+  and each read the channel's history from the control plane: N reads per
+  publish per node. SSE streams polled every second each. Reads of one
+  (endpoint, channel, position) on a node now share one control-plane read and
+  its page for a second. The key includes the channel's publish generation on
+  the node, bumped before subscribers are woken, so a woken reader never gets
+  a page read before the publish. At most 16 MiB of pages are kept.
+- A failed history poll closed the connection with 1013 at once, so an apid
+  restart or a database blip disconnected every subscriber of the fleet and
+  they reconnected together, each with connect callbacks (waking apps) and
+  fresh reads. Resume and inbox polls now retry with jittered backoff (1 s
+  doubling to 15 s) and close with 1013 only after two minutes of failures.

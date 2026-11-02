@@ -2656,9 +2656,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// node hold a lookup stream on whichever listener carries their request
 	// telemetry; one hub serves both and the debug request lookup.
 	srv.requestIDLookups = receivers.NewRequestIDLookupHub(log)
+	// One access change feed serves realtime nodes on every listener
+	// (ADR-1113, amendment of 2026-11-02).
+	realtimeAccessFeed := receivers.StartRealtimeAccessFeed(ctx, srv.store, log)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, spans, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, spans, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, realtimeAccessFeed, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -2684,7 +2687,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, spans, log, true, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, spans, log, true, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, realtimeAccessFeed, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2749,7 +2752,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
 		}
 		var listenErr error
-		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, spans, log, false, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, spans, log, false, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, realtimeAccessFeed, srv.realtime.Owner)
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
@@ -3318,7 +3321,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -3347,9 +3350,9 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 		receivers.RegisterAuthReceiver(srv, store, spans.tracing)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
-			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
+			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
 		} else {
-			receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush)
+			receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush, accessFeed)
 		}
 	}
 	// Split-box deployments reuse the same private mTLS listener for both
@@ -3381,7 +3384,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
@@ -3394,9 +3397,9 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
 	receivers.RegisterAuthReceiver(srv, store, spans.tracing)
 	if len(fleetRouter) > 0 {
-		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
+		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
 	} else {
-		receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush)
+		receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush, accessFeed)
 	}
 	return srv, lis, nil
 }

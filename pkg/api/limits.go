@@ -2386,6 +2386,34 @@ const (
 	RealtimeResumeCommandBurst      = 40
 )
 
+// A realtime node reads a subscription ticket a new connection presents from
+// the control plane before it can tell a real ticket from a made-up one, so
+// these reads are bounded per endpoint and per node; a connection past them
+// gets 503 with Retry-After. Known tickets come from the node's access cache,
+// and an endpoint holds at most RealtimeTicketMaxPerEndpoint (1,024) live
+// tickets, so the endpoint burst admits all of them reconnecting at once
+// within seconds (ADR-1117, amendment of 2026-11-02).
+const (
+	RealtimeTicketReadsPerEndpointPerSecond = 50
+	RealtimeTicketReadBurstPerEndpoint      = 500
+	RealtimeTicketReadsPerNodePerSecond     = 200
+	RealtimeTicketReadBurstPerNode          = 1_000
+)
+
+// A client message on a plain (v1) realtime WebSocket is written to the
+// node's callback spool, with two fsyncs, and delivered to the endpoint's
+// message callback. A connection may send RealtimeClientMessagesPerSecond
+// (bursts of RealtimeClientMessageBurst), and a node writes at most
+// RealtimeNodeClientMessagesPerSecond: past either, the node stops reading
+// the socket until it may, so TCP slows the client and nothing is dropped
+// (ADR-1323, amendment of 2026-11-02).
+const (
+	RealtimeClientMessagesPerSecond     = 20
+	RealtimeClientMessageBurst          = 40
+	RealtimeNodeClientMessagesPerSecond = 2_000
+	RealtimeNodeClientMessageBurst      = 4_000
+)
+
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (

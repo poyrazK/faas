@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -98,7 +99,11 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	var identity JWTIdentity
 	var err error
 	if usesTicket {
-		claims, e := m.readTicket(ctx, id, token)
+		claims, e := m.cachedTicket(ctx, id, token, true)
+		if e != nil && !errors.Is(e, state.ErrNotFound) {
+			writeTicketRefusal(w, e)
+			return
+		}
 		principal, err = claims.Principal, e
 		ticketExpiry = claims.ExpiresAt
 		if e == nil {
@@ -356,7 +361,10 @@ func (a *sseAuthorization) checkTicket(ctx context.Context, now time.Time) sseVe
 	if now.Sub(a.refreshedAt) < realtimeAccessRefreshInterval {
 		return sseAllowed
 	}
-	claims, err := a.m.readTicket(ctx, a.endpointID, a.token)
+	claims, err := a.m.cachedTicket(ctx, a.endpointID, a.token, false)
+	if errors.Is(err, state.ErrNotFound) {
+		return sseDenied
+	}
 	if err != nil {
 		return sseUnavailable
 	}
@@ -423,9 +431,7 @@ func (a *sseAuthorization) checkAccess(ctx context.Context, now time.Time) sseVe
 	if !a.node.config.Load().accessOn(a.m.cfg) || now.Sub(a.refreshedAt) < realtimeAccessRefreshInterval {
 		return sseAllowed
 	}
-	accessCtx, done := context.WithTimeout(ctx, realtimeAccessReadTimeout)
-	access, err := a.m.cfg.AccessReader.ReadRealtimeAccess(accessCtx, a.endpointID, a.principal)
-	done()
+	access, err := a.m.cachedAccess(ctx, a.endpointID, a.principal)
 	if err != nil {
 		return sseUnavailable
 	}
