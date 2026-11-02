@@ -442,13 +442,20 @@ func (s *Service) ValidateEdgeRuleAsyncDestinations(ctx context.Context, appID, 
 // listEdgeRulesForApp returns every rule bound to the slug's app,
 // ordered by priority ASC then created_at DESC (the same shape the
 // gateway matcher sees so the dashboard's "match order" preview
-// matches the wire behaviour).
+// matches the wire behaviour). With ?covering=true it also returns the
+// rules of the account's other apps whose host pattern can cover this app's
+// hosts (CoveringRules), each with its own app_id; the ETag stays this app's.
 func (s *Service) ListEdgeRulesForApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
 	rules, err := s.Host.Store().ListEdgeRulesForApp(r.Context(), app.ID)
+	if err == nil && wantsCoveringRules(r) {
+		var covering []state.EdgeRule
+		covering, err = s.VisibleCoveringRules(r, acct, app)
+		rules = state.MergeEdgeRulesInOrder(rules, covering)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
 		return
