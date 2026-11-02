@@ -4458,6 +4458,20 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_change_hook_reports",
+    "columns": [
+      "app_id",
+      "reported_at",
+      "pending",
+      "failed",
+      "oldest_pending_at",
+      "last_published_at",
+      "last_failure_code",
+      "publishing"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "data_api_usage_hourly",
     "columns": [
       "anonymous_requests",

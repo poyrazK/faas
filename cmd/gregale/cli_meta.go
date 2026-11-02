@@ -5642,7 +5642,7 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "timeout", Value: "DURATION", Short: "deployment and release wait (default 15m)"},
 			}, Examples: []string{"gregale data-api deploy shop-data --migrations migrations", "gregale data-api deploy shop-data"}},
-			{Name: "delete", Short: "Revoke a Data API's database bindings and delete the app", Notes: []string{"Deleting the app alone is refused while its bindings are live."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "delete", Short: "Revoke a Data API's database bindings and delete the app", Notes: []string{"Deleting the app alone is refused while its bindings are live.", "An API with storage buckets is refused before anything is revoked: delete its buckets first."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "yes", Bool: true, Short: "confirm deletion without prompting"},
 				{Name: "timeout", Value: "DURATION", Short: "maximum time for the API calls (default 2m)"},
 			}, Examples: []string{"gregale data-api delete shop-data --yes"}},
@@ -5691,14 +5691,16 @@ var cliCommands = []cliCommand{
 				{Name: "sql", Short: "Print the change hooks migration", Notes: []string{"Creates the change event table, its trigger and the enable and disable helpers."}, Flags: []cliFlag{
 					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
 				}, Examples: []string{"gregale data-api hooks export > migrations/0006_change_hooks.sql"}},
-				{Name: "enable", Short: "Publish recorded changes as events from the Data API app's source", Positionals: []string{"<name>"}, Flags: []cliFlag{
-					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
-					{Name: "no-restart", Short: "store settings without a fresh restart"},
-				}, Examples: []string{"gregale data-api hooks enable shop-data"}},
-				{Name: "status", Short: "Show whether change hooks are on and their event source", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "enable", Short: "Publish recorded changes as events from the Data API app's source", Positionals: []string{"<name>"},
+					Notes: []string{"--drain-every adds a platform cron that wakes a parked API so changes other writers recorded publish; it counts against the plan's cron limits and each run is app time."}, Flags: []cliFlag{
+						{Name: "drain-every", Value: "DURATION|off", Short: "wake a parked API this often to publish waiting changes (1m-30m dividing an hour, 1h-12h dividing a day, or 24h)"},
+						{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+						{Name: "no-restart", Short: "store settings without a fresh restart"},
+					}, Examples: []string{"gregale data-api hooks enable shop-data", "gregale data-api hooks enable shop-data --drain-every 5m"}},
+				{Name: "status", Short: "Show change hooks, their drain schedule and delivery", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				}},
-				{Name: "disable", Short: "Stop publishing; recorded changes stay in the table", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "disable", Short: "Stop publishing and remove the drain schedule", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 					{Name: "no-restart", Short: "store settings without a fresh restart"},
 				}},

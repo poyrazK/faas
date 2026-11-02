@@ -72,27 +72,34 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // workload verifies the token and resolves its live app and account.
 func (h Handler) workload(r *http.Request) (state.Account, string, error) {
-	if h.Verifier == nil || h.Store == nil {
-		return state.Account{}, "", errors.New("workload trust is not configured")
+	acct, app, err := liveWorkload(r, h.Verifier, h.Store, h.now())
+	return acct, app.ID, err
+}
+
+// liveWorkload verifies a gregale:data-api:events token and resolves its
+// live app and the account its resources belong to.
+func liveWorkload(r *http.Request, verifier *workloadidentity.Verifier, store Store, now time.Time) (state.Account, state.App, error) {
+	if verifier == nil || store == nil {
+		return state.Account{}, state.App{}, errors.New("workload trust is not configured")
 	}
 	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	claims, err := h.Verifier.Verify(token, workloadidentity.DataAPIEventsAudience, h.now())
+	claims, err := verifier.Verify(token, workloadidentity.DataAPIEventsAudience, now)
 	if err != nil {
-		return state.Account{}, "", err
+		return state.Account{}, state.App{}, err
 	}
-	app, err := h.Store.AppByID(r.Context(), claims.AppID)
+	app, err := store.AppByID(r.Context(), claims.AppID)
 	if err != nil || app.AccountID != claims.AccountID || app.Status == state.AppDeleted {
-		return state.Account{}, "", errors.New("token does not name this app")
+		return state.Account{}, state.App{}, errors.New("token does not name this app")
 	}
-	acct, err := state.AppResourceAccount(r.Context(), h.Store, app)
+	acct, err := state.AppResourceAccount(r.Context(), store, app)
 	if err != nil || !acct.Active() {
-		return state.Account{}, "", errors.New("account is not active")
+		return state.Account{}, state.App{}, errors.New("account is not active")
 	}
-	instance, err := h.Store.InstanceByID(r.Context(), claims.InstanceID)
+	instance, err := store.InstanceByID(r.Context(), claims.InstanceID)
 	if err != nil || instance.AppID != app.ID || !state.State(instance.State).CountsForConcurrency() {
-		return state.Account{}, "", errors.New("instance is not live")
+		return state.Account{}, state.App{}, errors.New("instance is not live")
 	}
-	return acct, app.ID, nil
+	return acct, app, nil
 }
 
 // publish publishes events in order. It stops at the first event that may

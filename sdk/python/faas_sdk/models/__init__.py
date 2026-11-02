@@ -126,6 +126,8 @@ from .app_manifest_secret_reload_signal_type_2_type_1 import AppManifestSecretRe
 from .app_manifest_secret_reload_signal_type_3_type_1 import AppManifestSecretReloadSignalType3Type1
 from .app_metrics_response import AppMetricsResponse
 from .app_metrics_response_range import AppMetricsResponseRange
+from .app_postgres_binding import AppPostgresBinding
+from .app_postgres_binding_list import AppPostgresBindingList
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_release_review import AppReleaseReview
@@ -2683,6 +2685,8 @@ __all__ = (
     "AppManifestSecretReloadSignalType3Type1",
     "AppMetricsResponse",
     "AppMetricsResponseRange",
+    "AppPostgresBinding",
+    "AppPostgresBindingList",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppReleaseReview",

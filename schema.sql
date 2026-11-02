@@ -34733,6 +34733,34 @@ COMMENT ON TABLE public.data_api_access_configs IS 'ADR-20261016151947 Data API 
 
 
 --
+-- Name: data_api_change_hook_reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_change_hook_reports (
+    app_id uuid NOT NULL,
+    reported_at timestamp with time zone NOT NULL,
+    pending bigint NOT NULL,
+    failed bigint NOT NULL,
+    oldest_pending_at timestamp with time zone,
+    last_published_at timestamp with time zone,
+    last_failure_code text,
+    publishing text NOT NULL,
+    CONSTRAINT data_api_change_hook_reports_check CHECK (((pending = 0) = (oldest_pending_at IS NULL))),
+    CONSTRAINT data_api_change_hook_reports_failed_check CHECK (((failed >= 0) AND (failed <= '1000000000000'::bigint))),
+    CONSTRAINT data_api_change_hook_reports_last_failure_code_check CHECK ((last_failure_code ~ '^[a-z0-9_]{1,64}$'::text)),
+    CONSTRAINT data_api_change_hook_reports_pending_check CHECK (((pending >= 0) AND (pending <= '1000000000000'::bigint))),
+    CONSTRAINT data_api_change_hook_reports_publishing_check CHECK ((publishing = ANY (ARRAY['ok'::text, 'retrying'::text])))
+);
+
+
+--
+-- Name: TABLE data_api_change_hook_reports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_api_change_hook_reports IS 'ADR-20261022121642 amendment 1: change hook delivery last reported by each Data API runtime (counts and codes only).';
+
+
+--
 -- Name: data_api_runtime_connection_observations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -60051,6 +60079,14 @@ ALTER TABLE ONLY public.dashboards
 
 ALTER TABLE ONLY public.data_api_access_configs
     ADD CONSTRAINT data_api_access_configs_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: data_api_change_hook_reports data_api_change_hook_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_change_hook_reports
+    ADD CONSTRAINT data_api_change_hook_reports_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -91027,6 +91063,14 @@ ALTER TABLE ONLY public.dashboards
 
 ALTER TABLE ONLY public.data_api_access_configs
     ADD CONSTRAINT data_api_access_configs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_change_hook_reports data_api_change_hook_reports_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_change_hook_reports
+    ADD CONSTRAINT data_api_change_hook_reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

@@ -833,6 +833,11 @@ var DataAPIHooksSQL = dataAPIHooksSQL
 var EnableDataAPIHooks = enableDataAPIHooks
 var DisableDataAPIHooks = disableDataAPIHooks
 var DataAPIHooksStatus = dataAPIHooksStatus
+var DataAPIHooksDelivery = dataAPIHooksDelivery
+var ApplyDataAPIDrainSchedule = applyDataAPIDrainSchedule
+var DataAPIDrainSchedule = dataAPIDrainSchedule
+var DataAPIDrainEvery = dataAPIDrainEvery
+var CheckDataAPIReportSettings = checkDataAPIReportSettings
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
 var CmdDataAPIRefresh = cmdDataAPIRefresh
@@ -2147,6 +2152,7 @@ var UploadedSourceFiles = uploadedSourceFiles
 var UploadedServerHas = uploadedServerHas
 var ReadDataAPIRuntimeArchive = readDataAPIRuntimeArchive
 var AttachDataAPIRuntime = attachDataAPIRuntime
+var CurrentDataAPIRuntimeVersion = currentDataAPIRuntimeVersion
 
 type DataAPIHealthProbe = dataAPIHealthProbe
 
