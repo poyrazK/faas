@@ -65,6 +65,11 @@ type ManagedPostgresChargeStep struct {
 	BilledUnitSeconds   int64
 	DeliveredMillicents int64
 	TargetMillicents    int64
+
+	// Storage held past the plan's pool (ADR-20261031110037 amendment 2).
+	UsedStorageByteSeconds   int64
+	StoragePoolBytes         int64
+	BilledStorageByteSeconds int64
 }
 
 // ManagedPostgresChargeSink is the provider seam for managed PostgreSQL
