@@ -69,7 +69,7 @@ func TestPlatformReleasePauseHoldsAReleaseThatNeverServed(t *testing.T) {
 	}{
 		"traffic": {http.MethodPatch, "/v1/deployments/" + staged.ID + "/traffic", map[string]int{"traffic_percent": 100}},
 		"rollback to it": {http.MethodPost, "/v1/apps/pause-staged/rollback",
-			api.RollbackRequest{TargetDeploymentID: &staged.ID, Reason: "ship the staged release"}},
+			api.RollbackRequest{TargetDeploymentID: &staged.ID}},
 	} {
 		rec := guardDo(t, f.e, call.method, call.path, call.body, nil)
 		if rec.Code != http.StatusServiceUnavailable || decodeProblemCode(rec.Body.Bytes()) != api.CodePlatformReleasePaused {
@@ -77,7 +77,7 @@ func TestPlatformReleasePauseHoldsAReleaseThatNeverServed(t *testing.T) {
 		}
 	}
 	target := f.previous.ID
-	rec := guardDo(t, f.e, http.MethodPost, "/v1/apps/pause-staged/rollback", api.RollbackRequest{TargetDeploymentID: &target, Reason: "incident"}, nil)
+	rec := guardDo(t, f.e, http.MethodPost, "/v1/apps/pause-staged/rollback", api.RollbackRequest{TargetDeploymentID: &target}, nil)
 	if decodeProblemCode(rec.Body.Bytes()) == api.CodePlatformReleasePaused {
 		t.Fatalf("rollback to a release that served was paused: %d %s", rec.Code, rec.Body)
 	}
