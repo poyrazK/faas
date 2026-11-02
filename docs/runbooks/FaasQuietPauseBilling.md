@@ -67,7 +67,11 @@ node stopped writing.
 3. The over-billed minutes cannot be re-rolled: `usage_minutes` keeps the
    first value. If the incident was large, credit affected accounts with the
    `meterd_quiet_pause_unproven_minutes_total` window as evidence (spec
-   §4.7.1).
+   §4.7.1). meterd keeps ended pauses for 3 days
+   (`api.QuietPauseLedgerRetentionDays`); copy the incident's
+   `instance_quiet_pauses` rows before then if the credit needs them. What
+   each minute did not bill stays in `usage_minutes.paused_mb_seconds`, which
+   customers see as `quiet_paused_gb_hours` in their usage summary.
 
 ## FaasQuietPauseUnbilledExceedsMeasured
 
