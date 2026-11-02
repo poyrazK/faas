@@ -16,8 +16,13 @@ import (
 func TestFinancialBudgetMonitorEvaluatesOrganizations(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := t.Context()
-	org, err := store.CreateOrg(ctx, state.Org{Slug: "monitored-" + uuid.NewString()[:8], Name: "Monitored Co", Plan: api.PlanPro})
+	// A MemStore organization created on Free owns its resources, and keeps
+	// them on a paid plan.
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "monitored-" + uuid.NewString()[:8], Name: "Monitored Co", Plan: api.PlanFree})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateOrgPlan(ctx, org.ID, api.PlanPro); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpdateOrgBillingEmail(ctx, org.ID, "billing@monitored.example"); err != nil {
@@ -36,10 +41,15 @@ func TestFinancialBudgetMonitorEvaluatesOrganizations(t *testing.T) {
 	if err := store.RecordFinancialSamplingWindow(ctx, at, true, false); err != nil {
 		t.Fatal(err)
 	}
-	spec := financial.BudgetSpec{Name: "Company compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100, NotifyMillicents: []int64{80}, Mode: "monitored", Action: "notify", ResumeRule: "next_period", Enabled: true}
-	if _, err := store.CreateFinancialBudget(ctx, org.ID, uuid.NewString(), "account:member", spec); err != nil {
+	// Gross usage: the organization's Pro activation grants an allowance that
+	// would absorb this little usage on a net basis.
+	spec := financial.BudgetSpec{Name: "Company compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 100, NotifyMillicents: []int64{80}, Mode: "monitored", Action: "notify", ResumeRule: "next_period", Enabled: true}
+	p, err := store.CreateFinancialBudget(ctx, org.ID, uuid.NewString(), "account:member", spec)
+	if err != nil {
 		t.Fatal(err)
 	}
+	// The evaluation clock must not precede the sampling window's observation.
+	now = time.Now().UTC()
 	sender := &fakeMailer{}
 	loop := meter.NewLoop(store, nil, nil, nil, nil, sender, nil, nil, nil, func() time.Time { return now }, nil, nil, nil)
 	if err := loop.RunFinancialBudgetsOnce(ctx); err != nil {
@@ -49,6 +59,10 @@ func TestFinancialBudgetMonitorEvaluatesOrganizations(t *testing.T) {
 		t.Fatal(err)
 	}
 	if sender.count() != 1 || sender.sent[0].To[0] != "billing@monitored.example" {
-		t.Fatalf("organization alert = %+v, want one mail to the billing contact", sender.sent)
+		runtime, err := store.FinancialBudgetRuntime(ctx, org.ID, p.ID, p.Revision, start)
+		if err == nil && runtime.Evaluation != nil {
+			t.Fatalf("organization alert = %+v, want one mail to the billing contact (evaluation %+v)", sender.sent, *runtime.Evaluation)
+		}
+		t.Fatalf("organization alert = %+v, want one mail to the billing contact (runtime %+v, %v)", sender.sent, runtime, err)
 	}
 }

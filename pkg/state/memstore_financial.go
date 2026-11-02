@@ -86,8 +86,9 @@ func (m *MemStore) retainFinancialUsageLocked(previous, current usageMinute) {
 		a.AppID = ""
 		a.JobID = current.JobID
 		a.Name = m.jobs[current.JobID].Name
-	} else {
-		app := m.apps[current.AppID]
+	}
+	app := m.apps[current.AppID]
+	if current.MeterKind != "job" {
 		a.Name = app.Slug
 		a.ProjectID = app.ProjectID
 	}
@@ -95,7 +96,11 @@ func (m *MemStore) retainFinancialUsageLocked(previous, current usageMinute) {
 		a.DeploymentID = ins.DeploymentID
 		deployment := m.deployments[ins.DeploymentID]
 		for _, environment := range m.projectEnvironments {
-			if environment.AccountID == current.AccountID && environment.ProjectID == a.ProjectID && environment.Slug == deployment.Scope {
+			// An organization's evidence is recorded under the organization,
+			// while the environment carries the member who created it
+			// (migration 20261031210054142, ADR-20261031211500).
+			owned := environment.AccountID == current.AccountID || app.OrgID != "" && app.OrgID == current.AccountID
+			if owned && environment.ProjectID == a.ProjectID && environment.Slug == deployment.Scope {
 				a.EnvironmentID = environment.ID
 				break
 			}
