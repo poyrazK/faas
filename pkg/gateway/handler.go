@@ -3160,6 +3160,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 		})
 		return false
 	}
+	keepFromSharedCaches(w)
 	if rule.MCP != nil {
 		return h.applyMCPResourcePolicy(w, r, app, rule)
 	}
@@ -3400,6 +3401,7 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 		}
 		return false
 	}
+	keepFromSharedCaches(w)
 	clientIP, ok := clientIPFromTrustedXFF(r)
 	if !ok {
 		// Defense-in-depth: gatewayd-public is required to set
@@ -3540,6 +3542,7 @@ func (h *Handler) applyIngressIPAllowlist(w http.ResponseWriter, r *http.Request
 	if app.PublicAuth.Mode != publicAuthModeIPAllowlist {
 		return false
 	}
+	keepFromSharedCaches(w)
 	if len(app.PublicAuth.IPAllowlist) == 0 {
 		// Operator misconfig: ip_allowlist mode without CIDRs.
 		// 500 makes the noise operator-loud — the cold-boot
@@ -4477,6 +4480,7 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 		}
 		return false
 	}
+	keepFromSharedCaches(w)
 	if h.geoReader == nil {
 		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, "geo_reader_not_configured")
 		return true
@@ -6286,6 +6290,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		markTrafficPhase(r.Context(), trafficOwnership)
+		// Cloudflare would otherwise keep serving this 404 for a while
+		// after the app is created.
+		w.Header().Set("Cache-Control", "no-store")
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", appHost)))
 		h.observe(r, rec.status, "", "", false, Target{})
@@ -6870,6 +6877,11 @@ haveApp:
 		api.WriteProblem(w, api.ErrPlatformTenantRequired())
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+	// An answer to a verified caller may depend on who asked; Cloudflare must
+	// not hand it to the next client (ADR-091 amendment 2026-11-02).
+	if authenticatedFrom(r.Context()).carriesVerifiedCredential() {
+		keepFromSharedCaches(w)
 	}
 	// ADR-831 amendment 7 / kind=challenge. After every auth gate, so a
 	// verified credential bypasses it, and before respond, cache and wake, so
@@ -9065,6 +9077,9 @@ type statusRecorder struct {
 	// Validated candidate probes must remain uncacheable after guest headers
 	// and customer header rules, including gateway failures before forwarding.
 	deploymentSmoke bool
+	// sharedCachePrivate is set when an access control decided the request
+	// (keepFromSharedCaches): no shared cache may store the answer.
+	sharedCachePrivate bool
 
 	// Streaming fields (PR-B, nil → buffered path). Install via
 	// installFlushHook; the fields stay zero otherwise.
@@ -9152,7 +9167,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// reading it here is race-free relative to the underlying
 		// ResponseWriter.
 		s.ContentType = s.ResponseWriter.Header().Get("Content-Type")
-		s.headCachePrivate = responseForbidsSharedCaching(s.Header())
+		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed
 		// BEFORE the status code is committed. The ops run in
@@ -9178,6 +9193,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	}
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
+	}
+	if s.sharedCachePrivate {
+		markSharedCachePrivate(s.Header())
 	}
 }
 

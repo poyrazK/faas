@@ -946,3 +946,32 @@ func TestWarnRootOnlyProtectiveRule(t *testing.T) {
 		}
 	}
 }
+
+// adr: 091 — amendment 2026-11-02: an app is always served at its platform
+// hostname too, so a gate naming one exact host leaves the app's other hosts
+// open and says so on create.
+func TestWarnSingleHostProtectiveRule(t *testing.T) {
+	cases := []struct {
+		kind, host string
+		warn       bool
+	}{
+		{kind: "waf", host: "shop.example.com", warn: true},
+		{kind: "challenge", host: "shop.example.com", warn: true},
+		{kind: "ip", host: "shop.gregale.dev", warn: true},
+		{kind: "waf", host: "@app"},
+		{kind: "ip", host: "*"},
+		{kind: "geo", host: "*.example.com"},
+		{kind: "redirect", host: "shop.example.com"},
+	}
+	for _, tc := range cases {
+		var stderr bytes.Buffer
+		old := (*main.OsStderr)
+		(*main.OsStderr) = &stderr
+		main.WarnSingleHostProtectiveRule(tc.kind, tc.host, "shop")
+		(*main.OsStderr) = old
+		got := strings.Contains(stderr.String(), "--match-host @app")
+		if got != tc.warn {
+			t.Errorf("kind=%s host=%s: warned=%v, want %v (stderr %q)", tc.kind, tc.host, got, tc.warn, stderr.String())
+		}
+	}
+}

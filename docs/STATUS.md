@@ -384,6 +384,16 @@ amendment 18). Open: such a planted cookie still trips `block` rules on
 `gregale.dev` hosts until apps move to a domain on the Public Suffix List
 (ADR-20261026100000 amendment 1, proposed).
 
+2026-11-02: a third review fixed four more. Cloudflare cached gated
+responses and served them past `ip`, `geo` and `jwt` rules; such responses
+are now CDN-private (ADR-091 amendment 2026-11-02). Any client could escape
+the penalty box by sending `Sec-Fetch-Site: cross-site`; such refusals now
+count, and only a box made of them alone is capped at a minute
+(ADR-20261022105846 amendment 3). Large request headers made WAF checks slow
+enough to hold every check slot; a check now scores at most 16 KiB of
+headers (ADR-831 amendment 19). Docs and a CLI warning now steer gates to
+`@app`, since a rule naming one host leaves the app's platform hostname open.
+
 ## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the

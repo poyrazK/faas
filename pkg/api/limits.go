@@ -7807,6 +7807,16 @@ const (
 	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
 	EdgeWAFInlineMsPerAppPerSecond = 500
 	EdgeWAFInlineMsPerAppBurst     = 1000
+	// EdgeWAFMaxInspectHeaderBytes and EdgeWAFMaxInspectHeaderValueBytes
+	// bound the request headers a WAF check scores. A check's cost grows
+	// faster than its input (a 32 KiB cookie measured about 1,000 times an
+	// empty request's), a check cannot be stopped once it holds a slot, and
+	// the edge accepts 1 MiB of headers, so one client sending large headers
+	// could hold every slot and leave other apps' checks to fail open. A
+	// longer value is cut, and headers past the total are not scored
+	// (ADR-831 amendment 19).
+	EdgeWAFMaxInspectHeaderBytes      = 16 << 10
+	EdgeWAFMaxInspectHeaderValueBytes = 4 << 10
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
@@ -7901,6 +7911,13 @@ const (
 	EdgePenaltyBoxMaxPerApp  = 10000
 	EdgePenaltyBoxMaxEntries = 200000
 	EdgePenaltyHitsMaxPerApp = 10000
+	// EdgePenaltyCrossSiteMaxSeconds caps a box every counted rejection of
+	// which said it came from a page on another site (Sec-Fetch-Site:
+	// cross-site). A browser sends that for requests another site's page
+	// makes it send, which must not box a real visitor for long; any other
+	// client can send it too, so it shortens the box instead of preventing
+	// it (ADR-20261022105846 amendment 3).
+	EdgePenaltyCrossSiteMaxSeconds = 60
 
 	// --- ADR-20261021220456: attack mode ------------------------------
 
