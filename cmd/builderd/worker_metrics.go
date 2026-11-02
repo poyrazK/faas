@@ -44,7 +44,7 @@ func newBuildWorkerMetrics(reg prometheus.Registerer, interval, busyAllowance ti
 	} {
 		m.descs = append(m.descs, prometheus.NewDesc(item.name, item.help, nil, nil))
 	}
-	for _, outcome := range []string{"completed", "not_claimed", "no_slot", "error", "canceled", "draining"} {
+	for _, outcome := range []string{"completed", "not_claimed", "no_slot", "coalesced", "error", "canceled", "draining"} {
 		m.iterations.WithLabelValues(outcome)
 	}
 	reg.MustRegister(m)
@@ -109,6 +109,8 @@ func (m *buildWorkerMetrics) finish(err error) {
 		outcome = "canceled"
 	case errors.Is(err, builderd.ErrNoSlot):
 		outcome = "no_slot"
+	case errors.Is(err, builderd.ErrCoalesced):
+		outcome = "coalesced"
 	case errors.Is(err, state.ErrNotFound) && !isVanishedRowErr(err):
 		outcome = "not_claimed"
 	}
