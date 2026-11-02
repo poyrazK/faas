@@ -41,8 +41,8 @@ func TestSourceCronsKeepDeclaredTimezone(t *testing.T) {
 }
 
 // A push's cron session comes from its delivery, so githubd retrying the
-// delivery stages under the same session; another delivery gets its own.
-// Withdrawing an intent frees the app for the next push's crons.
+// delivery finds its own intent prepared; another delivery prepares its own,
+// which supersedes an intent whose deployment was never created.
 func TestDeliveryCronsSessionFollowsTheDelivery(t *testing.T) {
 	store, acct, app, manifest := deliveryCronFixture(t)
 	ctx, intent, err := PrepareDeliveryCrons(t.Context(), store, acct, app, manifest, "delivery-1")
@@ -57,14 +57,8 @@ func TestDeliveryCronsSessionFollowsTheDelivery(t *testing.T) {
 	if err != nil || state.DeploymentSubmissionAttempt(retried) != session {
 		t.Fatalf("retried session = %q (err %v), want %q", state.DeploymentSubmissionAttempt(retried), err, session)
 	}
-	other, _, err := PrepareDeliveryCrons(context.Background(), store, acct, app, manifest, "delivery-2")
-	if err != nil || state.DeploymentSubmissionAttempt(other) == session {
-		t.Fatalf("another delivery reused session %q (err %v)", session, err)
-	}
-	if err := CancelSourceCrons(ctx, store, acct.ID, app.ID, intent); err != nil {
-		t.Fatal(err)
-	}
-	if _, next, err := PrepareDeliveryCrons(context.Background(), store, acct, app, manifest, "delivery-3"); err != nil || next == nil {
-		t.Fatalf("after withdrawal the next push staged %+v, err %v", next, err)
+	other, next, err := PrepareDeliveryCrons(context.Background(), store, acct, app, manifest, "delivery-2")
+	if err != nil || next == nil || state.DeploymentSubmissionAttempt(other) == session {
+		t.Fatalf("another delivery: intent %+v, session %q (err %v); want its own intent", next, state.DeploymentSubmissionAttempt(other), err)
 	}
 }

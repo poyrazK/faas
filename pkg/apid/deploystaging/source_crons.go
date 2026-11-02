@@ -88,16 +88,3 @@ func PrepareDeliveryCrons(ctx context.Context, store state.DeploymentCronStaging
 	}
 	return PrepareSourceCrons(ctx, store, acct, app, m)
 }
-
-// CancelSourceCrons withdraws an intent PrepareSourceCrons returned when its
-// deployment was definitely not created, so it does not hold the app's later
-// source deploys back from staging their crons.
-func CancelSourceCrons(ctx context.Context, store state.DeploymentCronStagingStore, accountID, appID string, intent *api.DeploymentCronStagingRequest) error {
-	if intent == nil {
-		return nil
-	}
-	r := *intent
-	r.Operation = "cancel"
-	_, err := store.ApplyDeploymentCronStaging(ctx, appID, state.DeploymentCronStagingParams{AccountID: accountID, Request: r})
-	return err
-}

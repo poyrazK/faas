@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -12,12 +13,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func wantCronProblem(t *testing.T, rec interface {
-	Result() *http.Response
-}, body []byte, status int, code string) {
+func wantCronProblem(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) {
 	t.Helper()
-	if got := rec.Result().StatusCode; got != status {
-		t.Fatalf("status = %d, want %d; body=%s", got, status, body)
+	body := rec.Body.Bytes()
+	if rec.Code != status {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, status, body)
 	}
 	var problem api.Problem
 	if err := json.Unmarshal(body, &problem); err != nil || problem.Code != code {
@@ -36,7 +36,7 @@ func TestCronWithTakenScheduleAndPathIsConflict(t *testing.T) {
 		t.Fatalf("first create: status = %d; body=%s", rec.Code, rec.Body.String())
 	}
 	rec = e.Do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{AppID: appID, Schedule: "0 9 * * *", Path: "/report", Timezone: "America/New_York"}, nil)
-	wantCronProblem(t, rec, rec.Body.Bytes(), http.StatusConflict, api.CodeConflict)
+	wantCronProblem(t, rec, http.StatusConflict, api.CodeConflict)
 
 	rec = e.Do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{AppID: appID, Schedule: "0 9 * * *", Path: "/report?tz=newyork", Timezone: "America/New_York"}, nil)
 	if rec.Code != http.StatusCreated {
@@ -48,7 +48,7 @@ func TestCronWithTakenScheduleAndPathIsConflict(t *testing.T) {
 	}
 	taken := "/report"
 	rec = e.Do(t, http.MethodPatch, "/v1/crons/"+second.ID, api.UpdateCronRequest{Path: &taken}, nil)
-	wantCronProblem(t, rec, rec.Body.Bytes(), http.StatusConflict, api.CodeConflict)
+	wantCronProblem(t, rec, http.StatusConflict, api.CodeConflict)
 }
 
 // "Local" is whatever timezone the scheduler's host runs in, not a place.
@@ -56,7 +56,7 @@ func TestCronTimezoneLocalIsRefused(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	appID := apidserver.MustSeedApp(t, e, "cron-local")
 	rec := e.Do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{AppID: appID, Schedule: "0 9 * * *", Path: "/", Timezone: "Local"}, nil)
-	wantCronProblem(t, rec, rec.Body.Bytes(), http.StatusBadRequest, api.CodeCronInvalid)
+	wantCronProblem(t, rec, http.StatusBadRequest, api.CodeCronInvalid)
 }
 
 // A suspended cron is not run by hand: the API says so at once instead of
@@ -68,7 +68,7 @@ func TestSuspendedCronManualRunIsConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := e.Do(t, http.MethodPost, "/v1/crons/"+cronID+"/run", nil, nil)
-	wantCronProblem(t, rec, rec.Body.Bytes(), http.StatusConflict, api.CodeConflict)
+	wantCronProblem(t, rec, http.StatusConflict, api.CodeConflict)
 }
 
 // Status reports an enabled cron the plan's limits stop as not ready; it read

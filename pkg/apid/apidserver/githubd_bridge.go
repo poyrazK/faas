@@ -532,15 +532,13 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 			}
 		}
 	}
-	ctx, cronIntent, cronProblem := g.prepareDeliveryCrons(ctx, req, resource, app, manifest, kind, params)
+	ctx, _, cronProblem := g.prepareDeliveryCrons(ctx, req, resource, app, manifest, kind, params)
 	if cronProblem != nil {
 		return nil, grpcerr.ToStatus(cronProblem)
 	}
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
-		grpcErr := g.asGRPC("enqueue", err)
-		g.cancelDeliveryCrons(ctx, resource, app, cronIntent, grpcErr)
-		return nil, grpcErr
+		return nil, g.asGRPC("enqueue", err)
 	}
 
 	// §12 metric: apid_githubd_bridge_enqueued_total. The
@@ -797,7 +795,10 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 // app, as a source deploy of the same commit does (crons audit 2026-11-01):
 // pushes ignored them. They activate when the deployment goes live. A PR
 // preview, a non-production scope and a release staged without traffic do not
-// stage crons, as on the source API.
+// stage crons, as on the source API. An intent whose deployment was never
+// created is left in place: it activates nothing, the app's next push
+// supersedes it, and githubd retrying the delivery prepares it again (a
+// cancelled intent would refuse that retry).
 func (g *githubdBridge) prepareDeliveryCrons(ctx context.Context, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, manifest *gregalemanifest.Manifest, kind state.DeploymentKind, params apidsource.EnqueueParams) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
 	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
 	production := req.DeploymentScope == "" || req.DeploymentScope == state.DefaultEnvScope
@@ -813,21 +814,4 @@ func (g *githubdBridge) prepareDeliveryCrons(ctx context.Context, req *githubdpb
 		return ctx, nil, sourceRefManifestStoreProblem(err, resource.Plan, true)
 	}
 	return ctx, intent, nil
-}
-
-// cancelDeliveryCrons withdraws the push's cron intent when the deployment was
-// definitely refused. An unavailable or internal error may still have created
-// it, and githubd retries such a delivery, which prepares the same intent.
-func (g *githubdBridge) cancelDeliveryCrons(ctx context.Context, resource state.Account, app state.App, intent *api.DeploymentCronStagingRequest, enqueueErr error) {
-	switch status.Code(enqueueErr) {
-	case codes.Unavailable, codes.Internal, codes.Unknown, codes.DeadlineExceeded, codes.Aborted:
-		return
-	}
-	store, ok := g.store.(state.DeploymentCronStagingStore)
-	if !ok || intent == nil {
-		return
-	}
-	if err := deploystaging.CancelSourceCrons(context.WithoutCancel(ctx), store, resource.ID, app.ID, intent); err != nil {
-		g.log.Warn("githubd bridge: withdraw push crons", "app_id", app.ID, "err", err)
-	}
 }
