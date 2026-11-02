@@ -598,7 +598,20 @@ func cmdEdgeRulesCreate(args []string) int {
 	}
 	PrintOK(osStdout, "Edge rule %s created for app %s (kind=%s, priority=%d).", out.ID, *slug, out.Kind, out.Priority)
 	warnRootOnlyProtectiveRule(*kind, visited["match-path"])
+	warnSingleHostProtectiveRule(*kind, *matchHost, *slug)
 	return 0
+}
+
+// warnSingleHostProtectiveRule flags a gate written for one exact host. An
+// app is always served at its own platform hostname as well as its custom
+// domains (and companion hostnames), and a rule naming one of them leaves the
+// others open (ADR-091 amendment 2026-11-02).
+func warnSingleHostProtectiveRule(kind, matchHost, slug string) {
+	host := strings.TrimSpace(matchHost)
+	if !api.EdgeRuleKindUsesProtectivePathMatch(kind) || api.IsEdgeRuleAppHosts(host) || strings.ContainsAny(host, "*?") {
+		return
+	}
+	PrintWarn(osStderr, "This %s rule covers only %s. App %s is also served at its own platform hostname and any other domains; pass --match-host @app to cover every host it serves.", kind, host, slug)
 }
 
 // warnRootOnlyProtectiveRule flags a gate created without --match-path. The
@@ -1089,7 +1102,7 @@ func cmdEdgeRulesRm(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale edge rule delete <id> [--app <slug>] [--yes]", "edge-rules")
 		return 1
 	}
-	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+	if code := requireConfirmationFlag(*quiet, "--yes", "edge rule deletion"); code != 0 {
 		return code
 	}
 	id := fs.Arg(0)

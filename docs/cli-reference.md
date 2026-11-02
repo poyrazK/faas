@@ -1681,26 +1681,26 @@ gregale release timeline v42 --app my-api --json
 
 Hide one deployment from the list
 
-`gregale release hide [--app <SLUG>] [--dry-run] [--force] <id|vN>`
+`gregale release hide [--app <SLUG>] [--dry-run] [--yes] <id|vN>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug for revision resolution |  |
 | `--dry-run` | preview cleanup without changing resources |  |
-| `--force` | confirm cleanup without prompting |  |
+| `--yes` | confirm cleanup without prompting (alias: --force) |  |
 
 ### release prune
 
 Hide obsolete deployments older than a cutoff
 
-`gregale release prune --app <slug> [--older-than <D>] [--dry-run] [--force]`
+`gregale release prune --app <slug> [--older-than <D>] [--dry-run] [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--older-than <D>` | cutoff age (default 168h) |  |
 | `--dry-run` | preview age/status candidates without changing resources |  |
-| `--force` | skip the confirmation |  |
+| `--yes` | confirm cleanup without prompting (alias: --force) |  |
 
 ### release reorder
 
@@ -6149,7 +6149,7 @@ gregale edge rule create --app my-api --kind throttle --match-host my-api.gregal
 gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /login --throttle-requests-per-second 0.1 --throttle-burst 5 --throttle-key-by composite --throttle-key-field ip --throttle-key-field header:x-username --throttle-count-status 401
 gregale edge rule create --app my-api --kind redirect --match-host my-api.gregale.dev --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.dev/new
 gregale edge rule create --app my-api --kind cache --match-host my-api.gregale.dev --match-path /catalog --cache-max-age-seconds 60
-gregale edge rule create --app my-site --kind challenge --match-host my-site.gregale.dev --match-path '/*' --match '{"field":"verified_bot","op":"missing"}'
+gregale edge rule create --app my-site --kind challenge --match-host @app --match-path '/*' --match '{"field":"verified_bot","op":"missing"}'
 gregale edge rule create --app my-api --kind budget --match-host my-api.gregale.dev --match-path /reports --budget-ms 20000
 gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block
 cat schema.json | gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema -
@@ -6405,13 +6405,13 @@ Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days.
 
 Restore an app&#39;s edge rules to a recorded version
 
-`gregale edge rule rollback --app <slug> --to <N> [--quiet]`
+`gregale edge rule rollback --app <slug> --to <N> [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--to <N>` | version to restore | required |
-| `--quiet` | skip the typed confirmation (for scripts) |  |
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
 
 Examples:
 
@@ -6455,7 +6455,7 @@ Examples:
 ```sh
 gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
 gregale edge rule-list create blocked --kind country --items-file countries.txt
-gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'
+gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --throttle-burst 10 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'
 ```
 
 #### edge rule-list update
@@ -9125,6 +9125,66 @@ Show whether storage is on and its bound buckets
 Turn storage off; buckets stay bound and keep their files
 
 `gregale data-api storage disable [--env <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+### data-api hooks
+
+Change hooks: publish committed row changes as events
+
+#### data-api hooks export
+
+Print the change hooks migration
+
+`gregale data-api hooks export [--schema <SCHEMA>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <SCHEMA>` | the Data API&#39;s first exposed schema (default api) |  |
+
+Examples:
+
+```sh
+gregale data-api hooks export > migrations/0006_change_hooks.sql
+```
+
+Creates the change event table, its trigger and the enable and disable helpers.
+
+#### data-api hooks enable
+
+Publish recorded changes as events from the Data API app&#39;s source
+
+`gregale data-api hooks enable [--env <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+Examples:
+
+```sh
+gregale data-api hooks enable shop-data
+```
+
+#### data-api hooks status
+
+Show whether change hooks are on and their event source
+
+`gregale data-api hooks status [--env <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+
+#### data-api hooks disable
+
+Stop publishing; recorded changes stay in the table
+
+`gregale data-api hooks disable [--env <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -18279,12 +18339,13 @@ Placeholders are filled when the agreement is signed.
 
 Export account data (GDPR)
 
-`gregale account export [-o <PATH>] [--no-secrets]`
+`gregale account export [-o <PATH>] [--no-secrets] [--force]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `-o <PATH>` | output file |  |
 | `--no-secrets` | exclude the sealed-secret ciphertext slice |  |
+| `--force` | replace the output file if it exists |  |
 
 ### account delete
 
@@ -18790,11 +18851,11 @@ Show the global infrastructure timeline
 
 Delete one org
 
-`gregale org delete [-q] <slug>`
+`gregale org delete [--yes] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `-q` | skip the confirmation prompt |  |
+| `--yes` | skip the confirmation prompt (aliases: -q, --quiet) |  |
 
 ### org keys
 
@@ -18972,30 +19033,41 @@ Plans: free, hobby, pro and scale. Paid upgrades open the billing provider&#39;s
 
 Show this month&#39;s usage, or daily, storage and summary views
 
-`gregale billing usage <daily|storage|summary> [--month <YYYY-MM>] [--day <YYYY-MM-DD>]`
+`gregale billing usage <daily|storage|summary> [--month <YYYY-MM>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--month <YYYY-MM>` | month (YYYY-MM) |  |
-| `--day <YYYY-MM-DD>` | day (YYYY-MM-DD) |  |
+| `--month <YYYY-MM>` | month (YYYY-MM); default: current month |  |
 
 #### billing usage daily
 
 Per-day breakdown
 
-`gregale billing usage daily`
+`gregale billing usage daily [--day <YYYY-MM-DD>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--day <YYYY-MM-DD>` | day (YYYY-MM-DD); default: today UTC |  |
 
 #### billing usage storage
 
 Per-app storage bytes
 
-`gregale billing usage storage`
+`gregale billing usage storage [--day <YYYY-MM-DD>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--day <YYYY-MM-DD>` | day (YYYY-MM-DD); default: today UTC |  |
 
 #### billing usage summary
 
 Account roll-up
 
-`gregale billing usage summary`
+`gregale billing usage summary [--month <YYYY-MM>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | month (YYYY-MM); default: current month |  |
 
 ### billing invoices
 
@@ -19062,6 +19134,12 @@ Retry failed payment when supported; Polar uses the portal
 ### billing cancel
 
 Cancel the subscription at period end
+
+`gregale billing cancel [--yes]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | confirm the cancellation without prompting; required with --json or without a terminal |  |
 
 ### billing status
 

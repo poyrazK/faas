@@ -1969,6 +1969,16 @@
     }
   },
   {
+    "table": "app_slug_holds",
+    "columns": [
+      "account_id",
+      "held_until",
+      "reason",
+      "slug"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_task_attach_sessions",
     "columns": [
       "attach_token_sha256",
@@ -3075,6 +3085,7 @@
       "cache_status",
       "cancelled_at",
       "cancelled_by_deployment_cascade",
+      "coalesced_with",
       "deployment_id",
       "enqueued_at",
       "failure_class",
@@ -9729,6 +9740,7 @@
   {
     "table": "managed_postgres_overage_deliveries",
     "columns": [
+      "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
       "live",

@@ -1581,6 +1581,11 @@ func testEnvCommon(dbURL string) []string {
 	if currentHarness != nil && currentHarness.RecoveryHMACKeyHex != "" {
 		env = append(env, "FAAS_MFA_RECOVERY_HMAC_KEY="+currentHarness.RecoveryHMACKeyHex)
 	}
+	// apid refuses to boot without an audit HMAC key it can keep; it
+	// mints one into this per-test file on first boot.
+	if currentHarness != nil && currentHarness.TmpDir != "" {
+		env = append(env, "FAAS_AUDIT_HMAC_KEY_FILE="+filepath.Join(currentHarness.TmpDir, "audit-hmac.key"))
+	}
 	if currentHarness != nil && currentHarness.HostHMACKeyPath != "" {
 		env = append(env, "FAAS_HOST_HMAC_KEY_PATH="+currentHarness.HostHMACKeyPath)
 	}

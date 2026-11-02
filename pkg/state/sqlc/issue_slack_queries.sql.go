@@ -614,6 +614,21 @@ func (q *Queries) IssueSlackChallengePut(ctx context.Context, db DBTX, arg Issue
 	return err
 }
 
+const issueSlackChallengeRotate = `-- name: IssueSlackChallengeRotate :exec
+UPDATE issue_slack_link_challenges SET token=$3 WHERE app_id=$1 AND request_key=$2 AND consumed_at IS NULL
+`
+
+type IssueSlackChallengeRotateParams struct {
+	AppID      pgtype.UUID
+	RequestKey string
+	Token      string
+}
+
+func (q *Queries) IssueSlackChallengeRotate(ctx context.Context, db DBTX, arg IssueSlackChallengeRotateParams) error {
+	_, err := db.Exec(ctx, issueSlackChallengeRotate, arg.AppID, arg.RequestKey, arg.Token)
+	return err
+}
+
 const issueSlackChallengesExpire = `-- name: IssueSlackChallengesExpire :exec
 DELETE FROM issue_slack_link_challenges WHERE app_id=$1 AND expires_at<=clock_timestamp()
 `

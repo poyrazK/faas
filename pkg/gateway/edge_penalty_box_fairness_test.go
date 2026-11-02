@@ -71,10 +71,12 @@ func TestPenaltyBoxCountsArePerAppBounded(t *testing.T) {
 	}
 }
 
-// A browser's cross-site request, such as an <img> a third-party page
-// embeds, is still refused by the rule but never counts toward a box, so
-// that page cannot get the app's real visitors boxed.
-func TestPenaltyBoxIgnoresCrossSiteRefusals(t *testing.T) {
+// adr: 20261022105846 — amendment 3: a browser's cross-site request, such as
+// an <img> a third-party page embeds, is refused by the rule and counts, but
+// any client can claim to be one, so it shortens the box instead of
+// escaping it: a box only cross-site refusals made ends within a minute.
+func TestPenaltyBoxShortensCrossSiteOnlyBoxes(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
 	b := &fakeBackend{app: App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}, host: "p.example.com", upstream: "127.0.0.1:0", running: true}
 	b.targets = append(b.targets, Target{NodeID: b.upstream, InstanceID: "i-fake"})
 	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
@@ -84,7 +86,7 @@ func TestPenaltyBoxIgnoresCrossSiteRefusals(t *testing.T) {
 		stubEdgeRuleMatcher: stubEdgeRuleMatcher{ip: &EdgeRuleIPResolved{ID: "rule-1", AccountID: "acct-1", AppID: "app-1", Deny: []*net.IPNet{denyNet}}},
 		penalties:           map[string]api.EdgeRulePenalty{"rule-1": {Seconds: 600, After: 1, WithinSeconds: 60}},
 	}, nil, nil)
-	box := NewPenaltyBox()
+	box := penaltyBoxAt(&now)
 	h.WithPenaltyBox(box)
 	get := func(site string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "http://p.example.com/", nil)
@@ -96,16 +98,37 @@ func TestPenaltyBoxIgnoresCrossSiteRefusals(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		return rec
 	}
-	for range 3 {
-		if rec := get("cross-site"); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), api.CodePenaltyBox) {
-			t.Fatalf("cross-site refusal = %d %s, want the rule's own 403", rec.Code, rec.Body)
-		}
+	client := net.ParseIP("203.0.113.7")
+	if rec := get("cross-site"); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), api.CodePenaltyBox) {
+		t.Fatalf("cross-site refusal = %d %s, want the rule's own 403", rec.Code, rec.Body)
 	}
-	if _, _, ok := box.Boxed("app-1", net.ParseIP("203.0.113.7")); ok {
-		t.Fatal("cross-site refusals boxed the client")
+	_, left, ok := box.Boxed("app-1", client)
+	if !ok || left > api.EdgePenaltyCrossSiteMaxSeconds*time.Second {
+		t.Fatalf("cross-site refusal: boxed=%v for %v, want a box of at most %ds", ok, left, api.EdgePenaltyCrossSiteMaxSeconds)
+	}
+	now = now.Add((api.EdgePenaltyCrossSiteMaxSeconds + 1) * time.Second)
+	if _, _, ok := box.Boxed("app-1", client); ok {
+		t.Fatal("the cross-site box outlived its cap")
 	}
 	get("same-origin")
-	if _, _, ok := box.Boxed("app-1", net.ParseIP("203.0.113.7")); !ok {
-		t.Fatal("a same-origin refusal did not box the client")
+	if _, left, ok := box.Boxed("app-1", client); !ok || left <= api.EdgePenaltyCrossSiteMaxSeconds*time.Second {
+		t.Fatalf("same-origin refusal: boxed=%v for %v, want the rule's 600s", ok, left)
+	}
+}
+
+// One first-party refusal in the window gives the box the rule's full length.
+func TestPenaltyBoxMixedRefusalsKeepTheFullBox(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	box := penaltyBoxAt(&now)
+	p := api.EdgeRulePenalty{Seconds: 600, After: 2, WithinSeconds: 60}
+	ip := net.ParseIP("198.51.100.9")
+	if box.Hit("app-1", "rule-1", ip, p) {
+		t.Fatal("boxed before the threshold")
+	}
+	if !box.HitCrossSite("app-1", "rule-1", ip, p) {
+		t.Fatal("not boxed at the threshold")
+	}
+	if _, left, ok := box.Boxed("app-1", ip); !ok || left != 600*time.Second {
+		t.Fatalf("boxed=%v for %v, want 600s", ok, left)
 	}
 }
