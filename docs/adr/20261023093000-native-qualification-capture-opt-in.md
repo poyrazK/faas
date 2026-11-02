@@ -338,8 +338,26 @@ ADR-568 requires.
   - 6bc1801865 treats the fence as met when the reviewed graph qualified,
     activated and served in the same pass. Freshness checks still apply,
     and report mode keeps the fence.
-- Pending: the n2 native GitOps journey through serving and the resilience
-  phases.
+- 2026-11-01, n2, rerun with 6bc1801865 and an uncommitted apid diagnostic:
+  - Runtime readiness passed, but no pass finished. Each run was
+    superseded when its 60 s lease lapsed.
+  - The converged finish returned a conflict, which the worker drops
+    silently. `HasEnvironmentGitOpsRuntimeDrift` counted the graph's own
+    managed `source` and `runtime/*` fields as drift.
+  - 41a368edce does not count a field as drift when a served receipt of the
+    approved graph names its resource. The in-memory store applies the same
+    rule.
+- 2026-11-01, n2, rerun with 41a368edce:
+  - gitlab recorded its applied revision and passed `baseline_serving`.
+  - github's worker cold boots took 55 s against the 35 s budget
+    (`ColdBootTimeout`, spec §6.1), with 19 s in `env_prepare`. The first
+    queue delivery used its five attempts in 50 s while no worker ran, then
+    dead-lettered.
+  - gitlab's first two resilience requests, sent 22 s after a 32 s cold
+    boot, missed the 250 ms public host read (`TrafficPublicHostReadTimeout`,
+    ADR-570). The gateway refused them with 503 `traffic_policy_unavailable`
+    as designed.
+- Pending: the n2 native GitOps journey through the resilience phases.
 
 ## Rejected alternatives
 
