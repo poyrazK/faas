@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -175,6 +176,35 @@ func TestDatabaseSwitchRollbackRefusals(t *testing.T) {
 	if code, p := plain.rollback(t, api.RollbackRequest{TargetDeploymentID: &plain.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true}); code != http.StatusConflict ||
 		p.Code != api.CodeDatabaseSwitchUnavailable {
 		t.Fatalf("switch without managed PostgreSQL = %d %+v", code, p)
+	}
+}
+
+// The switch's copy becomes the app's database, so it cannot take the
+// restore slot (ADR-20261031123259): at the plan's database limit the
+// rollback is refused before a switch is recorded.
+func TestDatabaseSwitchRollbackNeedsRoomForTheCopy(t *testing.T) {
+	f := newSwitchFixture(t)
+	ctx := context.Background()
+	service := *(*f.env.Srv()).ManagedPostgres()
+	source, err := service.Get(ctx, *f.env.AcctID(), f.sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The source and the cutover fixture's restore target, plus this one,
+	// fill Pro's three databases.
+	if _, err := service.Create(ctx, managedpostgres.CreateRequest{AccountID: *f.env.AcctID(), Name: "invoices", Spec: source.Spec}); err != nil {
+		t.Fatal(err)
+	}
+	w := f.do(t, http.MethodPost, "/v1/apps/"+f.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true})
+	var p api.Problem
+	if w.Code != http.StatusForbidden || json.Unmarshal(w.Body.Bytes(), &p) != nil || p.Code != "managed_postgres_quota_exceeded" ||
+		p.Limit == nil || *p.Limit != 3 || p.Observed == nil || *p.Observed != 3 {
+		t.Fatalf("switch at the limit = %d %s, want 403 managed_postgres_quota_exceeded with 3 of 3", w.Code, w.Body)
+	}
+	w = f.do(t, http.MethodGet, "/v1/apps/"+f.slug+"/database-switches", nil)
+	var list api.DatabaseSwitchList
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &list) != nil || len(list.Items) != 0 {
+		t.Fatalf("a refused switch was recorded: %d %s", w.Code, w.Body)
 	}
 }
 

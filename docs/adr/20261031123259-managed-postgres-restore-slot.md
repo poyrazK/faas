@@ -14,6 +14,9 @@
      - A restore may reserve one database past the plan's database limit. The new constant is `api.ManagedPostgresRestoreSlots = 1` in `pkg/api/limits.go`.
      - The reservation keeps today's count and lock (undeleted databases of the owner, under the owner's reservation lock). A restore is admitted while the count is below `limit + 1` and no other database of the owner holds the slot.
      - Creates, environment clones and snapshot copies never use the slot.
+     - **Amended 2026-11-02 (owner):** neither does the copy a rollback restores ([ADR-20261023181931](20261023181931-rollbacks-that-restore-the-database.md)). That copy becomes the app's database, and the source cannot be deleted while it exists, so on a full plan the slot would end with the app's bindings revoked.
+       - The switch must fit inside the limit. apid refuses it with `403 managed_postgres_quota_exceeded` (limit and observed count) before recording it.
+       - The switch's restore marks its reservation (`RestoreDatabaseRequest.WithinLimit`), and both stores refuse it instead of granting the slot. A limit reached after apid's check fails the switch with `database_limit` while the app keeps serving.
      - The rule is the same on every plan, and for organization databases it applies per organization.
      - A restore admitted inside the limit does not take the slot.
   2. **The slot lasts 7 days.**
@@ -57,4 +60,5 @@
   - **Raise the database limit for Free and Hobby.** That would be a permanent second database the financial model does not sell.
   - **Leave restored databases out of the count.** Unbounded restores would make unbounded databases.
   - **Suspend the copy at expiry instead of scheduling its delete.** That keeps the data forever, but the account would stay over its limit with no way back except an upgrade or a manual purge. It also needs a held-but-ready state that released SDKs' closed `state` enum cannot express. A scheduled delete reuses the undo window customers already know.
+  - **Exempt a switch's copy from the slot's end** (2026-11-02). The account would keep two databases on a one-database plan for as long as the app runs on the copy. The owner chose to refuse the switch instead.
   - **Restore in place first.** It is the better product, but it touches bindings, credentials, cutover and usage accounting. The slot fixes the gap now and stays useful after in-place restore exists.
