@@ -61,7 +61,13 @@ type Handler struct {
 	Now             func() time.Time
 	// Revocations records closed threads; without it the callback routes
 	// answer capacity_unavailable.
-	Revocations    CallbackRevocations
+	Revocations CallbackRevocations
+	// Sleeps holds gregale_sleep's wake-ups (ADR-20261030125501 §4,
+	// tools.go); without it the toolset routes answer capacity_unavailable.
+	Sleeps SleepSchedules
+	// RunCallbacks lists and settles finished gregale_run runs (run_tool.go);
+	// without it no apid delivers them.
+	RunCallbacks   RunCallbackStore
 	callbackLimits callbackLimiter
 }
 

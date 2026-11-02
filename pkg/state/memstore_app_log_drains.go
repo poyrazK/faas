@@ -143,14 +143,76 @@ func (m *MemStore) ListAppLogDrainsForApp(_ context.Context, appID string) ([]Ap
 func (m *MemStore) ListEnabledAppLogDrains(_ context.Context) ([]AppLogDrain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	rows := listAppLogDrains(func(d AppLogDrain) bool {
-		_, enrolled := m.scenarioActionPolicies[d.AppID] // mirrors PgStore (ADR-20261019180000)
-		return d.Enabled && !enrolled
-	}, m.appLogDrains)
+	rows := m.deliverableAppLogDrainsLocked()
 	for i := range rows {
 		rows[i].StandardBinding = m.standardLogBindingLocked(rows[i])
 	}
 	return rows, nil
+}
+
+// deliverableAppLogDrainsLocked is the drains log delivery runs, as both
+// PgStore delivery reads select them: enabled, not on a rehearsal-enrolled
+// app (ADR-20261019180000), and covered by the app owner's plan.
+func (m *MemStore) deliverableAppLogDrainsLocked() []AppLogDrain {
+	rows := m.enabledAppLogDrainsLocked(func(AppLogDrain) bool { return true })
+	owners := make([]appLogDrainOwnership, len(rows))
+	for i, d := range rows {
+		owners[i] = m.appLogDrainOwnershipLocked(d)
+	}
+	return planCoveredAppLogDrains(rows, owners)
+}
+
+func (m *MemStore) enabledAppLogDrainsLocked(match func(AppLogDrain) bool) []AppLogDrain {
+	return listAppLogDrains(func(d AppLogDrain) bool {
+		_, enrolled := m.scenarioActionPolicies[d.AppID]
+		return d.Enabled && !enrolled && match(d)
+	}, m.appLogDrains)
+}
+
+// appLogDrainOwnershipLocked mirrors the owner object of PgStore's delivery
+// reads. A drain whose app is gone has no plan, so it is not delivered.
+func (m *MemStore) appLogDrainOwnershipLocked(d AppLogDrain) appLogDrainOwnership {
+	app, ok := m.apps[d.AppID]
+	if !ok {
+		return appLogDrainOwnership{}
+	}
+	owner, _ := m.appResourceAccountLocked(app)
+	return appLogDrainOwnership{
+		Plan:     string(owner.Plan),
+		Subject:  m.appBillingSubjectLocked(app.AccountID, app.ID),
+		Counted:  app.Status != AppDeleted,
+		Standard: m.standardBoundLogDrainLocked(d),
+	}
+}
+
+func (m *MemStore) standardBoundLogDrainLocked(d AppLogDrain) bool {
+	for _, b := range m.applicationStandardControlBindings {
+		if b.Field == appstandards.LogDestinations && sameStandardUUID(b.AppID, d.AppID) && sameStandardUUID(b.PhysicalID, d.ID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MemStore) ListAppLogDrainsPausedByPlan(_ context.Context, appID string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	paused := []string{}
+	app, ok := m.apps[appID]
+	if !ok {
+		return paused, nil
+	}
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
+	ledger := newAppLogDrainPlanLedger()
+	for _, d := range m.enabledAppLogDrainsLocked(func(d AppLogDrain) bool {
+		other, ok := m.apps[d.AppID]
+		return ok && m.appBillingSubjectLocked(other.AccountID, other.ID) == subject
+	}) {
+		if !ledger.admit(d.AppID, m.appLogDrainOwnershipLocked(d)) && d.AppID == appID {
+			paused = append(paused, d.ID)
+		}
+	}
+	return paused, nil
 }
 
 func listAppLogDrains(match func(AppLogDrain) bool, rows map[string]AppLogDrain) []AppLogDrain {

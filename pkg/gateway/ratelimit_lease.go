@@ -221,7 +221,18 @@ func (l *Limiter) leaseConsume(ctx context.Context, batch CentralBatchBackend, s
 		// one that arrived later may need the next. A few rounds settle it.
 		waits++
 		if st.tokens == 0 && (waits >= leaseMaxWaits || !now.Before(deadline)) {
+			// The counter answered every statement this request waited for.
+			// When the last answer emptied the shared bucket, the request is
+			// over the limit, as a batched consume's requests past its grant
+			// are: a verified 429. Refusing it as unverified answered a burst
+			// past a small limit with 503 rate_limit_unavailable, and inside
+			// the outage grace admitted it from this gateway's own bucket
+			// (PulseWatch F16, ADR-20261027173012 amendment 3).
+			drained := now.Before(st.emptyUntil) || st.remaining == 0
 			t.mu.Unlock()
+			if drained {
+				return 0, false, true, nil
+			}
 			return 0, false, false, errCentralBatchWait
 		}
 	}

@@ -4,3 +4,19 @@
 [Service]
 Environment=FAAS_APPS_DOMAIN={{ gatewayd_apps_domain | default('gregale.dev') }}
 Environment=FAAS_PUBLIC_EDGE_CONTROL_PLANE_TARGET={{ faas_edge_control_plane_target }}
+{% if (faas_edge_placement_routing | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+# ADR-20261031105055: route each app host to the node that last served it.
+Environment=FAAS_EDGE_PLACEMENT_ROUTING=1
+{% endif %}
+{% if (faas_edge_entry | default('tunnel') | string | lower) == 'both' %}
+# ADR-20261102081618: Cloudflare also connects to this edge directly. The edge
+# binds the TLS port itself and reads its TLS material as credentials.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LoadCredential=edge_tls_cert:{{ faas_edge_public_tls_cert }}
+LoadCredential=edge_tls_key:{{ faas_edge_public_tls_key }}
+LoadCredential=edge_tls_client_ca:{{ faas_edge_public_tls_client_ca }}
+Environment=FAAS_EDGE_PUBLIC_TLS_ADDR=:{{ faas_edge_public_tls_port | default(443) }}
+Environment=FAAS_EDGE_PUBLIC_TLS_CERT_FILE=%d/edge_tls_cert
+Environment=FAAS_EDGE_PUBLIC_TLS_KEY_FILE=%d/edge_tls_key
+Environment=FAAS_EDGE_PUBLIC_TLS_CLIENT_CA_FILE=%d/edge_tls_client_ca
+{% endif %}
