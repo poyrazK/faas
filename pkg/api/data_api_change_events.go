@@ -3,9 +3,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // DataAPIChangeEventKeyPrefix namespaces change hook producer keys
@@ -37,7 +38,7 @@ type DataAPIChangeEventBatchResponse struct {
 	Results []PublishEventBatchResult `json:"results"`
 }
 
-var dataAPIChangeEventID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var dataAPIChangeEventID = lazyregexp.New(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // Validate checks one change event's identity, type and data bounds. Types
 // are SCHEMA.TABLE.inserted|updated|deleted.
