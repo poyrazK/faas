@@ -891,4 +891,39 @@ func TestRenderManifestAnsibleFiles_ComputeObjectGateway(t *testing.T) {
 	if strings.Contains(controlVars, "faas_object_gateway_max_bytes_per_second") || strings.Contains(controlVars, "gateway_provider_env_src") {
 		t.Errorf("control host got compute gateway vars:\n%s", controlVars)
 	}
+	if strings.Contains(computeVars, "public_read") {
+		t.Errorf("compute host serves public reads without compute_public_reads:\n%s", computeVars)
+	}
+
+	// With compute_public_reads the edge's public reads take 33% of the
+	// share and s3-gatewayd the rest: 12,375,000 and 25,125,000 bytes/s.
+	m, err = manifest.Parse([]byte(yaml + "  compute_public_reads: true\n"))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	if files, err = renderManifestAnsibleFiles(m, t.TempDir()); err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	for _, file := range files {
+		body := string(file.Body)
+		switch {
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			if strings.Contains(body, "public_read") {
+				t.Errorf("control host got compute public read vars:\n%s", body)
+			}
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			for _, want := range []string{
+				"faas_object_gateway_max_bytes_per_second: 25125000\n",
+				"faas_object_public_reads_on_compute_nodes: true\n",
+				"faas_object_public_read_max_bytes_per_second: 12375000\n",
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("compute host vars missing %q:\n%s", want, body)
+				}
+			}
+		}
+	}
 }
