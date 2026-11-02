@@ -8716,7 +8716,8 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		if _, err := tx.Exec(ctx,
 			`update deployments
 			    set traffic_percent = $2,
-			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end
+			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end,
+			        promoted_at = case when $2 = 100 and traffic_percent < 100 then clock_timestamp() else promoted_at end
 			  where id = $1`,
 			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false), manualTrafficKeepsExplicit(stamp.prior, stamp.next)); err != nil {
 			if stamp.target {
@@ -28059,10 +28060,12 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	}
 	// Per-request telemetry and logs of the personal apps, as the app purge
 	// removes them: the apps' rows go below, and request_telemetry has no FK
-	// to them, so it outlived the account (bug hunt 2026-10-28 B11).
+	// to them, so it outlived the account (bug hunt 2026-10-28 B11). Company
+	// apps the account created stay with their organization, and so do their
+	// logs and telemetry (bug hunt 35).
 	for _, step := range []struct{ name, sql string }{
-		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1)`},
-		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1)`},
+		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
+		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 		// No FK either: the app purge deletes it, account erasure did not.
 		{"debug_regression_observations", `delete from debug_regression_observations where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 	} {

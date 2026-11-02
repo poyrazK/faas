@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"regexp"
 	"slices"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // CodeSLOInvalid and CodeSLOLimit are the stable problem codes for the
@@ -17,7 +18,7 @@ const (
 	CodeSLOLimit   = "slo_limit_reached"
 )
 
-var sloNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+var sloNamePattern = lazyregexp.New(`^[a-z][a-z0-9_-]{0,62}$`)
 
 // CreateSLORequest is the POST /v1/apps/{slug}/slos body. ObjectivePct is a
 // percentage with at most two decimals (99.9, 99.95); LatencyThresholdMS is

@@ -94,8 +94,9 @@ compute edge gains a TLS listener on port 443:
   credential-bound routes to the control plane, placement routing, and the
   drain grace.
 - **Firewall.** nftables admits port 443 only from Cloudflare's published
-  address ranges. The list lives in the edge role's defaults, and a check
-  compares it with Cloudflare's published list. Everything else on the public
+  address ranges. The list lives in the nftables role's files, and a weekly
+  workflow (`make cloudflare-ranges-check`) compares it with Cloudflare's
+  published list. Everything else on the public
   address is dropped.
 - **GCP.** An external IP on the network interface would move all of the
   node's egress off Cloud NAT, tenant traffic included. On GCP the address is
@@ -124,7 +125,10 @@ other than its metrics port.
   Cloudflare API only when a node's state changes.
 - **Metrics:** `edge_dns_records{name}`,
   `edge_dns_changes_total{name,action,dry_run}`,
-  `edge_dns_probe_failures_total{node}` and `edge_dns_node_in{node}`.
+  `edge_dns_probe_failures_total{node}`, `edge_dns_node_in{node}` and
+  `edge_dns_errors_total{op}`. The `faas_edge_dns` alerts and
+  `docs/runbooks/FaasEdgeDNS.md` cover a cell with no ready edge, a
+  withdrawn node, failing Cloudflare calls and a down `edgednsd`.
 
 ### 4. Drain and restart
 
@@ -184,7 +188,8 @@ demand.
 - **Switches.** `FAAS_EDGE_PLACEMENT_NODE_SET` on the edge turns on b.
   `FAAS_GATEWAY_EDGE_LOCAL_FIRST` on gatewayd-internal turns on a, c and d.
   Turn on the edge's first: with c alone, the hint would settle on one node
-  and starve the others.
+  and starve the others. The manifest's `public_edge.placement_node_set`
+  and `public_edge.local_first` set them, and the second needs the first.
 - **Independent of the rest.** These changes do not depend on §1–§4, and they
   matter under the tunnel too, once an app spans nodes. On 2026-11-02
   production had 4 running instances for 4 apps, so no app spanned nodes yet.
@@ -195,10 +200,14 @@ demand.
   - `both` runs cloudflared and the TLS listener side by side, for the
     migration and its rollback.
   - `direct` removes cloudflared.
-- `compute_nodes[].public_ipv4` and `public_ipv6` give the addresses.
+- `fleet.hosts[].public_ipv4` gives each compute host's address. IPv6
+  records can follow the same way.
+- `public_edge.dns` turns on `edgednsd`: `zone_id`, the `names` it manages
+  (a pilot host first, the app wildcard later), and `live`.
 - The edge's TLS listener has its own switch, `FAAS_EDGE_PUBLIC_TLS_ADDR`,
   unset by default; the role sets it from `entry`.
-- `edgednsd` starts in dry run: it logs and exports the changes it would make.
+- `edgednsd` starts in dry run: it logs and exports the changes it would make
+  until `public_edge.dns.live` is set.
 
 ## Rollout
 

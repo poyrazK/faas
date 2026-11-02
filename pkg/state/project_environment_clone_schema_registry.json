@@ -5393,6 +5393,7 @@
       "parked_reason",
       "pr_number",
       "priority",
+      "promoted_at",
       "pusher_login",
       "reason",
       "release_command",
@@ -9738,6 +9739,7 @@
   {
     "table": "managed_postgres_overage_deliveries",
     "columns": [
+      "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
       "live",
@@ -19626,6 +19628,21 @@
       "endpoint_id",
       "revoked_at",
       "thread_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_callbacks",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "issued_at",
+      "provider_call_id",
+      "run_id",
+      "thread_id",
+      "tool_call_id"
     ],
     "kind": "operational"
   },

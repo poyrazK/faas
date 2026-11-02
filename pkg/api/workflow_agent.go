@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // The automation agent step (ADR-20261027090010 §9). A step names an agent; its
@@ -25,9 +25,9 @@ const workflowAgentEventPrefix = "workflow.agent."
 var (
 	// ErrWorkflowAgentStepInvalid is an agent step with options it cannot take.
 	ErrWorkflowAgentStepInvalid = errors.New("workflow: invalid agent step")
-	workflowAgentName           = regexp.MustCompile(fmt.Sprintf(`^[a-z][a-z0-9-]{0,%d}$`, AgentNameMaxLen-1))
-	agentRepository             = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$`)
-	agentCommit                 = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	workflowAgentName           = lazyregexp.New(fmt.Sprintf(`^[a-z][a-z0-9-]{0,%d}$`, AgentNameMaxLen-1))
+	agentRepository             = lazyregexp.New(`^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$`)
+	agentCommit                 = lazyregexp.New(`^[0-9a-f]{40}$`)
 )
 
 // WorkflowAgentRunInput is an agent step's rendered input: the run request.
