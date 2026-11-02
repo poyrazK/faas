@@ -11,9 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// openBuildLogDB returns a migrated private database whether or not the
+// template database is enabled (OpenMigrated falls back to an empty Open).
+func openBuildLogDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	return pool
+}
 
 type buildLogFixture struct {
 	t     *testing.T
@@ -99,7 +111,7 @@ func (f buildLogFixture) sweepAll() int64 {
 // newest deployments, whatever their status; the count is per app.
 func TestBuildLogRetentionKeepsLiveAndNewestDeployments(t *testing.T) {
 	ctx := t.Context()
-	pool := pgtest.OpenMigrated(t)
+	pool := openBuildLogDB(t)
 	f := buildLogFixture{t: t, ctx: ctx, pool: pool, store: state.NewPgStore(pool)}
 	retainedOld := BuildLogRetentionDays + 10
 
@@ -196,7 +208,7 @@ func TestBuildLogRetentionKeepsLiveAndNewestDeployments(t *testing.T) {
 // sweep leaves a build still being written alone.
 func TestBuildLogRetentionKeepsABuildWithARecentLine(t *testing.T) {
 	ctx := t.Context()
-	pool := pgtest.OpenMigrated(t)
+	pool := openBuildLogDB(t)
 	f := buildLogFixture{t: t, ctx: ctx, pool: pool, store: state.NewPgStore(pool)}
 	app := f.app("recent")
 	var ds []state.Deployment
@@ -218,7 +230,7 @@ func TestBuildLogRetentionKeepsABuildWithARecentLine(t *testing.T) {
 // DeploymentLogUsage is what builderd's byte cap re-derives after a restart.
 func TestPgDeploymentLogUsageCountsBytesAndMarker(t *testing.T) {
 	ctx := t.Context()
-	pool := pgtest.OpenMigrated(t)
+	pool := openBuildLogDB(t)
 	f := buildLogFixture{t: t, ctx: ctx, pool: pool, store: state.NewPgStore(pool)}
 	d := f.deployment(f.app("usage"), true)
 	if usage, err := f.store.DeploymentLogUsage(ctx, d.ID); err != nil || usage != (state.DeploymentLogUsage{}) {
