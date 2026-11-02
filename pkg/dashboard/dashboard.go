@@ -3646,6 +3646,9 @@ type ManagedPostgresDatabaseItem struct {
 	// RestoreSlotUntil is set while a restored copy is past the plan's
 	// database limit (ADR-20261031123259).
 	RestoreSlotUntil string
+	// PlanExcess is database_limit or service_class while the plan no
+	// longer includes the database and it is suspended (ADR-20261102125208).
+	PlanExcess string
 	// Labels are the database's labels (ADR-20261031100025); nil while the
 	// account does not have resource labels.
 	Labels map[string]string

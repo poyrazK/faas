@@ -47,10 +47,10 @@ func TestStartSelectedSourcePinsDeploymentAndConfigurationScope(t *testing.T) {
 			if linked {
 				startTestLink(t, source, "shop", "shop-api", "staging")
 				slug, environment, scope = "shop-api", "staging", "staging"
-				writeFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA, process.env.FAAS_TEST_BETA);\n")
+				writeFile(t, source, "needs-env.js", "console.log(process.env.APP_TEST_ALPHA, process.env.APP_TEST_BETA);\n")
 			}
 			file := filepath.Join(t.TempDir(), "selected.env")
-			writeFile(t, filepath.Dir(file), filepath.Base(file), "FAAS_TEST_GAMMA=private-start-value\n")
+			writeFile(t, filepath.Dir(file), filepath.Base(file), "APP_TEST_GAMMA=private-start-value\n")
 			requests, creates, uploads, seals := 0, 0, 0, 0
 			public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
@@ -82,19 +82,19 @@ func TestStartSelectedSourcePinsDeploymentAndConfigurationScope(t *testing.T) {
 					if r.URL.Query().Get("scope") != scope {
 						t.Error("secret metadata used another scope")
 					}
-					_ = json.NewEncoder(w).Encode(api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "FAAS_TEST_BETA", Scope: scope}}})
+					_ = json.NewEncoder(w).Encode(api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "APP_TEST_BETA", Scope: scope}}})
 				case r.URL.Path == "/v1/apps/"+slug+"/env":
 					if r.URL.Query().Get("scope") != scope {
 						t.Error("variable metadata used another scope")
 					}
-					_ = json.NewEncoder(w).Encode(api.AppEnvListResponse{Env: []api.AppEnvResponse{{Key: "FAAS_TEST_ALPHA"}}})
+					_ = json.NewEncoder(w).Encode(api.AppEnvListResponse{Env: []api.AppEnvResponse{{Key: "APP_TEST_ALPHA"}}})
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
 					creates++
 					if linked {
 						t.Error("linked launch tried to create an app")
 					}
 					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: slug})
-				case r.Method == http.MethodPut && r.URL.Path == "/v1/apps/"+slug+"/secrets/FAAS_TEST_GAMMA":
+				case r.Method == http.MethodPut && r.URL.Path == "/v1/apps/"+slug+"/secrets/APP_TEST_GAMMA":
 					seals++
 					if scopeOrDefault(r.URL.Query().Get("scope")) != scope {
 						t.Error("secret upload used another environment")
@@ -316,13 +316,13 @@ func TestStartAcceptedDeploymentMustMatchReviewedTarget(t *testing.T) {
 func TestStartNamedEnvironmentCannotUseDefaultConfiguration(t *testing.T) {
 	startTestEnvironment(t)
 	source := startTestSource(t)
-	writeFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA);\n")
+	writeFile(t, source, "needs-env.js", "console.log(process.env.APP_TEST_ALPHA);\n")
 	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("scope") != "staging" || r.Method != http.MethodGet {
 			t.Error("environment configuration lookup used the wrong scope or mutated state")
 		}
 		if strings.HasSuffix(r.URL.Path, "/secrets") {
-			_ = json.NewEncoder(w).Encode(api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "FAAS_TEST_ALPHA", Scope: "default"}}})
+			_ = json.NewEncoder(w).Encode(api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "APP_TEST_ALPHA", Scope: "default"}}})
 		} else {
 			_ = json.NewEncoder(w).Encode(api.AppEnvListResponse{})
 		}

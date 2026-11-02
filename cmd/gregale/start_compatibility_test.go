@@ -70,7 +70,7 @@ func TestStartCompatibilityRecheckedBeforeAppSecretsOrUpload(t *testing.T) {
 	source := main.StartTestSource(t)
 	main.WithCwd(t, source)
 	file := filepath.Join(t.TempDir(), "credentials.env")
-	main.WriteFile(t, filepath.Dir(file), filepath.Base(file), "FAAS_TEST_ALPHA=only-for-this-fixture\n")
+	main.WriteFile(t, filepath.Dir(file), filepath.Base(file), "APP_TEST_ALPHA=only-for-this-fixture\n")
 	var reads, writes atomic.Int32
 	main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

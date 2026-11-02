@@ -150,7 +150,8 @@ RULES = [
     (r"app-config-(guard|revision)", "`gregale.yaml` deploy overrides"),
     (r"actioncompare|behaviorcompare|rehearsal", "Scenario tests"),
     (r"apptask", "App tasks"),
-    (r"apphealth", "App health assessment"),
+    # app_memory_pressure is app health's memory-pressure rollup (ADR-20261102124306).
+    (r"apphealth|^app-memory-pressure$", "App health assessment"),
     (r"appstandards", "Org application standards"),
     (r"authsettings", "Application Auth"),
     (r"^authz$", "Orgs:"),

@@ -91,6 +91,21 @@ func (e *Engine) QueueMemoryPressureCapture(ctx context.Context, instanceID stri
 	return e.queueAutomaticCapture(ctx, instanceID, capture, api.ProfileCaptureAutomaticMinInterval)
 }
 
+// RecordMemoryPressure folds a guest's memory-pressure report into its app's
+// rollup for app health (ADR-20261102124306). An instance of any state is
+// recorded: the episode happened whether or not the instance still runs.
+func (e *Engine) RecordMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) error {
+	store, ok := e.store.(state.AppMemoryPressureStore)
+	if !ok {
+		return nil
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	return store.RecordAppMemoryPressure(ctx, ins.AppID, time.Now().UTC(), availableMB, totalMB, anonMB)
+}
+
 // QueueSlowRequestCapture turns a gateway report of a request in flight for
 // too long into one automatic stacks+CPU capture of the serving instance
 // (ADR-1155): the stacks show where the request is waiting, the CPU where any
