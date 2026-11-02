@@ -132,8 +132,8 @@ func TestPushToAppsBoundWithoutProjectHonorsActionsTrigger(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec.calls = nil
-	if _, err := svc.HandlePushRequest(ctx, []byte(appBoundPush)); !errors.Is(err, ErrIgnored) {
-		t.Fatalf("every app on Actions: err = %v, want ErrIgnored", err)
+	if _, err := svc.HandlePushRequest(ctx, []byte(appBoundPush)); !errors.Is(err, ErrIgnored) || SkipReason(err) != SkipReasonActionsTrigger {
+		t.Fatalf("every app on Actions: err = %v (reason %q), want ErrIgnored for %s", err, SkipReason(err), SkipReasonActionsTrigger)
 	}
 	if len(rec.calls) != 0 {
 		t.Fatalf("enqueued %d builds although GitHub Actions deploys every bound app", len(rec.calls))

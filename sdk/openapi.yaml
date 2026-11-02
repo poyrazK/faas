@@ -23567,6 +23567,10 @@ components:
         received_at: {type: string, format: date-time}
         processed_at: {type: [string, "null"], format: date-time}
         updated_at: {type: string, format: date-time}
+        skip_reason:
+          type: string
+          description: >-
+            Why a processed event deployed nothing: actions_trigger (production deploys come from a GitHub Actions workflow), branch_not_deployed, superseded (a newer commit reached the branch first), not_enabled, tag_not_branch_head, no_binding, skip_marker, invalid_release_tag, release_tag_moved or ignored. Absent when the event did its work.
     GitHubCheckActivity:
       description: Redacted Check Run synchronization activity for the bound GitHub app.
       type: object

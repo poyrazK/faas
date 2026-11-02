@@ -4,6 +4,7 @@ package oidcrepo_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/apid/oidcrepo"
@@ -24,22 +25,33 @@ func (f fakeProjects) GitHubProjectBindingsForOIDCSubject(_ context.Context, iss
 	return f.repo, f.bindings, true, nil
 }
 
-// fakeRepos answers by installation ID; an installation absent from repos
-// fails the listing.
-type fakeRepos map[int64][]oidcrepo.Repo
+// repo is one repository an installation sees.
+type repo struct {
+	id       int64
+	fullName string
+}
 
-func (f fakeRepos) ListInstallableRepos(_ context.Context, _ string, installationID int64) ([]oidcrepo.Repo, error) {
+// fakeRepos answers by installation ID; an installation absent from repos
+// fails the lookup.
+type fakeRepos map[int64][]repo
+
+func (f fakeRepos) InstallationRepositoryID(_ context.Context, _ string, installationID int64, fullName string) (int64, error) {
 	repos, ok := f[installationID]
 	if !ok {
-		return nil, errors.New("githubd unavailable")
+		return 0, errors.New("githubd unavailable")
 	}
-	return repos, nil
+	for _, r := range repos {
+		if strings.EqualFold(r.fullName, fullName) {
+			return r.id, nil
+		}
+	}
+	return 0, nil
 }
 
 func TestAccountID(t *testing.T) {
 	acme := state.GitHubProjectRepositoryBinding{AccountID: "acct-acme", InstallationID: 1}
 	other := state.GitHubProjectRepositoryBinding{AccountID: "acct-other", InstallationID: 2}
-	sees := []oidcrepo.Repo{{ID: 42, FullName: "Acme/API"}}
+	sees := []repo{{42, "Acme/API"}}
 	for _, tc := range []struct {
 		name     string
 		repo     state.GitHubActionsRepository
@@ -51,7 +63,7 @@ func TestAccountID(t *testing.T) {
 		{name: "installation sees the repository", repo: state.GitHubActionsRepository{FullName: "acme/api"}, bindings: []state.GitHubProjectRepositoryBinding{acme}, repos: fakeRepos{1: sees}, want: "acct-acme"},
 		{name: "immutable subject names the same repository", repo: state.GitHubActionsRepository{FullName: "acme/api", RepoID: 42}, bindings: []state.GitHubProjectRepositoryBinding{acme}, repos: fakeRepos{1: sees}, want: "acct-acme"},
 		{name: "immutable subject names a re-created repository", repo: state.GitHubActionsRepository{FullName: "acme/api", RepoID: 7}, bindings: []state.GitHubProjectRepositoryBinding{acme}, repos: fakeRepos{1: sees}},
-		{name: "installation no longer sees the repository", repo: state.GitHubActionsRepository{FullName: "acme/api"}, bindings: []state.GitHubProjectRepositoryBinding{acme}, repos: fakeRepos{1: {{ID: 9, FullName: "acme/web"}}}},
+		{name: "installation no longer sees the repository", repo: state.GitHubActionsRepository{FullName: "acme/api"}, bindings: []state.GitHubProjectRepositoryBinding{acme}, repos: fakeRepos{1: {{9, "acme/web"}}}},
 		{name: "only the binding GitHub confirms counts", repo: state.GitHubActionsRepository{FullName: "acme/api"}, bindings: []state.GitHubProjectRepositoryBinding{acme, other}, repos: fakeRepos{1: sees, 2: nil}, want: "acct-acme"},
 		{name: "two confirmed accounts are ambiguous", repo: state.GitHubActionsRepository{FullName: "acme/api"}, bindings: []state.GitHubProjectRepositoryBinding{acme, other}, repos: fakeRepos{1: sees, 2: sees}},
 		{name: "githubd failure is an error", repo: state.GitHubActionsRepository{FullName: "acme/api"}, bindings: []state.GitHubProjectRepositoryBinding{acme}, repos: fakeRepos{}, wantErr: true},
@@ -82,7 +94,7 @@ func TestRepositoryID(t *testing.T) {
 			{AccountID: "acct-other", InstallationID: 2},
 			{AccountID: "acct-acme", InstallationID: 1},
 		}},
-		Repos: fakeRepos{1: {{ID: 42, FullName: "acme/api"}}},
+		Repos: fakeRepos{1: {{42, "acme/api"}}},
 	}
 	ctx := context.Background()
 	if id, err := resolver.RepositoryID(ctx, "acct-acme", issuer, "repo:acme/api:ref:refs/heads/main"); err != nil || id != 42 {

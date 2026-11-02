@@ -24,6 +24,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -380,6 +381,11 @@ type InstallableRepo struct {
 	Private       bool   `json:"private"`
 }
 
+// ErrRepositoryNotVisible reports that an installation sees no repository of
+// the requested name: GitHub answered 404, or the name now leads to another
+// repository.
+var ErrRepositoryNotVisible = errors.New("githubd: repository not visible to the installation")
+
 func (a *AppAuth) GetInstallableRepo(ctx context.Context, installToken, fullName string) (InstallableRepo, error) {
 	owner, name, ok := strings.Cut(fullName, "/")
 	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
@@ -406,6 +412,9 @@ func (a *AppAuth) GetInstallableRepo(ctx context.Context, installToken, fullName
 	if err != nil {
 		return InstallableRepo{}, fmt.Errorf("githubd: read repository %q response: %w", fullName, err)
 	}
+	if resp.StatusCode == http.StatusNotFound {
+		return InstallableRepo{}, fmt.Errorf("githubd: repository %q unavailable to installation (status %d): %w", fullName, resp.StatusCode, ErrRepositoryNotVisible)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return InstallableRepo{}, fmt.Errorf("githubd: repository %q unavailable to installation (status %d)", fullName, resp.StatusCode)
 	}
@@ -414,7 +423,7 @@ func (a *AppAuth) GetInstallableRepo(ctx context.Context, installToken, fullName
 		return InstallableRepo{}, fmt.Errorf("githubd: decode repository %q: %w", fullName, err)
 	}
 	if !strings.EqualFold(repo.FullName, fullName) {
-		return InstallableRepo{}, fmt.Errorf("githubd: repository lookup returned %q for %q", repo.FullName, fullName)
+		return InstallableRepo{}, fmt.Errorf("githubd: repository lookup returned %q for %q: %w", repo.FullName, fullName, ErrRepositoryNotVisible)
 	}
 	if repo.ID <= 0 || repo.Owner.ID <= 0 {
 		return InstallableRepo{}, fmt.Errorf("githubd: repository %q is missing immutable GitHub IDs", repo.FullName)

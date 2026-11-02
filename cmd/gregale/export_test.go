@@ -1346,6 +1346,7 @@ var GeneratedTestCIRunCommand = generatedTestCIRunCommand
 var GeneratedTestCIVMConfigCommand = generatedTestCIVMConfigCommand
 var GeneratedTestCIVMRunCommand = generatedTestCIVMRunCommand
 var GitArchiveHEAD = gitArchiveHEAD
+var GithubSetupCheckWaitFor = githubSetupCheckWaitFor
 var GithubTarballURL = githubTarballURL
 var GithubWebhookSecretSet = githubWebhookSecretSet
 var GroupDigits = groupDigits

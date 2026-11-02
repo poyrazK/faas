@@ -2007,6 +2007,6 @@ func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func
 // OIDCAccountLookup is the OIDC exchange's account lookup with project
 // repository bindings confirmed through repos (ADR-20261101160300,
 // amendment 1).
-func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLister) oidc.AccountLookup {
+func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
 	return newOIDCAccountLookup(store, repos)
 }

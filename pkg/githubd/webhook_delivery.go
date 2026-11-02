@@ -68,6 +68,7 @@ type WebhookActivityRecord struct {
 	ReceivedAt  time.Time
 	ProcessedAt *time.Time
 	UpdatedAt   time.Time
+	SkipReason  string
 }
 
 // WebhookActivityStore is the customer-safe read seam used by the activity
@@ -138,10 +139,16 @@ func (s *PGWebhookStore) Claim(ctx context.Context) (WebhookDelivery, error) {
 }
 
 func (s *PGWebhookStore) Complete(ctx context.Context, deliveryID string) error {
+	return s.CompleteSkipped(ctx, deliveryID, "")
+}
+
+// CompleteSkipped completes a delivery and records why it deployed nothing;
+// an empty reason means it did its work (ADR-20261101160300, amendment 2).
+func (s *PGWebhookStore) CompleteSkipped(ctx context.Context, deliveryID, reason string) error {
 	_, err := s.pool.Exec(ctx, `
 		update github_webhook_deliveries
-		set status = 'succeeded', processed_at = now(), updated_at = now(), last_error = ''
-		where delivery_id = $1`, deliveryID)
+		set status = 'succeeded', processed_at = now(), updated_at = now(), last_error = '', skip_reason = $2
+		where delivery_id = $1`, deliveryID, reason)
 	if err != nil {
 		return fmt.Errorf("githubd: complete webhook delivery: %w", err)
 	}
@@ -185,7 +192,7 @@ func (s *PGWebhookStore) ListWebhookDeliveriesForApp(ctx context.Context, accoun
 	}
 	rows, err := s.pool.Query(ctx, `
 		select d.event_type, d.status, coalesce(d.commit_sha, ''),
-		       d.received_at, d.processed_at, d.updated_at
+		       d.received_at, d.processed_at, d.updated_at, d.skip_reason
 		from github_webhook_deliveries d
 		join apps a on a.id = $2 and a.account_id = $1
 		where d.installation_id = a.github_install_id
@@ -200,7 +207,7 @@ func (s *PGWebhookStore) ListWebhookDeliveriesForApp(ctx context.Context, accoun
 	for rows.Next() {
 		var record WebhookActivityRecord
 		if err := rows.Scan(&record.EventType, &record.Status, &record.CommitSHA,
-			&record.ReceivedAt, &record.ProcessedAt, &record.UpdatedAt); err != nil {
+			&record.ReceivedAt, &record.ProcessedAt, &record.UpdatedAt, &record.SkipReason); err != nil {
 			return nil, fmt.Errorf("githubd: scan app webhook activity: %w", err)
 		}
 		out = append(out, record)
@@ -245,7 +252,7 @@ func (s *PGWebhookStore) RetryWebhookDelivery(ctx context.Context, deliveryID st
 	tag, err := s.pool.Exec(ctx, `
 		update github_webhook_deliveries
 		set status = 'pending', attempts = 0, next_attempt_at = now(),
-		    last_error = '', processed_at = null, updated_at = now()
+		    last_error = '', skip_reason = '', processed_at = null, updated_at = now()
 		where delivery_id = $1 and status = 'dead'`, deliveryID)
 	if err != nil {
 		return false, fmt.Errorf("githubd: retry webhook delivery: %w", err)
@@ -274,7 +281,7 @@ func (s *PGWebhookStore) RetryWebhookDeliveriesForApp(ctx context.Context, accou
 		)
 		update github_webhook_deliveries d
 		set status = 'pending', attempts = 0, next_attempt_at = now(),
-		    last_error = '', processed_at = null, updated_at = now()
+		    last_error = '', skip_reason = '', processed_at = null, updated_at = now()
 		from targets
 		where d.delivery_id = targets.delivery_id`, accountID, appID, limit)
 	if err != nil {
@@ -369,7 +376,7 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 			}
 			dispatchErr := service.HandleWebhookDelivery(ctx, delivery)
 			if dispatchErr == nil || IsNoBinding(dispatchErr) || IsIgnored(dispatchErr) || IsSkipDeploy(dispatchErr) || isReleaseTagRejected(dispatchErr) {
-				if err := store.Complete(ctx, delivery.DeliveryID); err != nil {
+				if err := completeWebhookDelivery(ctx, store, delivery.DeliveryID, SkipReason(dispatchErr)); err != nil {
 					log.Error("githubd: complete webhook delivery", "delivery_id", delivery.DeliveryID, "err", err)
 				}
 				continue
@@ -401,4 +408,17 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 			}
 		}
 	}
+}
+
+// webhookSkipCompleter is the optional store method that records why a
+// completed delivery deployed nothing.
+type webhookSkipCompleter interface {
+	CompleteSkipped(ctx context.Context, deliveryID, reason string) error
+}
+
+func completeWebhookDelivery(ctx context.Context, store WebhookDeliveryStore, deliveryID, reason string) error {
+	if skipper, ok := store.(webhookSkipCompleter); ok {
+		return skipper.CompleteSkipped(ctx, deliveryID, reason)
+	}
+	return store.Complete(ctx, deliveryID)
 }

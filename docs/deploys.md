@@ -244,7 +244,9 @@ belongs to a project.
 **Deploy only after CI passes.** A push the GitHub App deploys does not wait
 for your tests. To deploy only commits your CI passed, name your CI
 workflow (its `name:` field): `gregale github setup my-api --repo acme/my-api
---wait-for CI`. The workflow then deploys a branch push once that
+--wait-for CI`. Setup checks that a workflow of that name in
+`.github/workflows` runs on pushes to the deploy branches and refuses
+otherwise. The workflow then deploys a branch push once that
 workflow's run for the commit succeeds; a failed run, a pull request run and
 a run from a fork deploy nothing. If runs finish out of order, a commit that
 is no longer the branch head is skipped, so production never goes back to an
@@ -254,7 +256,9 @@ older commit. Release tags and manual runs still deploy directly.
 organization, keeps the binding.
 
 **When it does not deploy.** `gregale github status my-api` shows the binding,
-its health and the recent GitHub events that reached the app. `gregale github
+its health and the recent GitHub events that reached the app, with the reason
+an event deployed nothing (for example, production deploys come from your
+GitHub Actions workflow, or nothing deploys that branch). `gregale github
 sync my-api` rechecks access after you change the installation's
 repositories on GitHub.
 
