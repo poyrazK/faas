@@ -242,7 +242,10 @@ func TestBrokerLanesRotateSoEveryTriggerGetsATurn(t *testing.T) {
 func TestBrokerTriggerPollsWithinThePlanRecordRate(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	app, trigger := laneTrigger(t, store, "rated-broker@example.test", "rated-broker")
+	_, trigger := laneTrigger(t, store, "rated-broker@example.test", "rated-broker")
+	// The scheduler keys the budget by the trigger's app UUID; a MemStore
+	// app ID is compact hex, so draining app.ID would drain another bucket.
+	appID := trigger.AppID.String()
 	sources := installLaneSources(t)
 	source := sources.add(trigger, &laneSource{})
 	var mu sync.Mutex
@@ -265,7 +268,7 @@ func TestBrokerTriggerPollsWithinThePlanRecordRate(t *testing.T) {
 	}
 
 	perSecond := api.PlanScale.TriggerRecordsPerSecondPerApp()
-	if got := rate.Take(app.ID, api.PlanScale, perSecond); got != perSecond {
+	if got := rate.Take(appID, api.PlanScale, perSecond); got != perSecond {
 		t.Fatalf("draining the app's budget took %d, want %d", got, perSecond)
 	}
 	tick()

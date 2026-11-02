@@ -289,10 +289,6 @@ type triggerConsumerHealthWriter interface {
 	RecordTriggerConsumerHealth(context.Context, string, state.TriggerConsumerHealthObservation) error
 }
 
-type terminalNacker interface {
-	NackTerminal(context.Context, sqlc.Trigger, []string, string) error
-}
-
 type queueDispatchAcknowledgement struct {
 	ItemIdentifier string
 	DeploymentID   string
@@ -1848,20 +1844,6 @@ func claimedItemIDs(claimed []sqlc.TriggerRecord) []string {
 		out = append(out, c.ItemIdentifier)
 	}
 	return out
-}
-
-func missingItemIDs(all, completed []string) []string {
-	set := make(map[string]struct{}, len(completed))
-	for _, id := range completed {
-		set[id] = struct{}{}
-	}
-	var missing []string
-	for _, id := range all {
-		if _, ok := set[id]; !ok {
-			missing = append(missing, id)
-		}
-	}
-	return missing
 }
 
 // unclaimedItemIDs returns the broker identifiers from batch that are not
