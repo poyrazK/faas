@@ -6,16 +6,29 @@
 -- records the storage byte-seconds its cumulative charge billed. The previous
 -- release's upsert does not name the column, so its rows keep the default;
 -- the charge itself stays cumulative in delivered_millicents. The CHECK is
--- added NOT VALID: new writes are checked at once.
+-- added NOT VALID: new writes are checked at once. Every step is
+-- re-runnable.
 
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE managed_postgres_overage_deliveries
     ADD COLUMN IF NOT EXISTS billed_storage_byte_seconds bigint NOT NULL DEFAULT 0;
-ALTER TABLE managed_postgres_overage_deliveries
-    ADD CONSTRAINT managed_postgres_overage_deliveries_billed_storage_check
-    CHECK (billed_storage_byte_seconds >= 0) NOT VALID;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $check$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'managed_postgres_overage_deliveries'::regclass
+      AND conname = 'managed_postgres_overage_deliveries_billed_storage_check'
+  ) THEN
+    ALTER TABLE managed_postgres_overage_deliveries
+      ADD CONSTRAINT managed_postgres_overage_deliveries_billed_storage_check
+      CHECK (billed_storage_byte_seconds >= 0) NOT VALID;
+  END IF;
+END
+$check$;
 -- +goose StatementEnd
 
 -- +goose Down
