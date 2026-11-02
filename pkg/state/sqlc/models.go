@@ -6287,6 +6287,7 @@ type GithubWebhookDelivery struct {
 	InstallationID pgtype.Int8
 	RepoFullName   pgtype.Text
 	CommitSha      pgtype.Text
+	SkipReason     string
 }
 
 type GithubWebhookSecret struct {

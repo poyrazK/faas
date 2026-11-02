@@ -40045,8 +40045,10 @@ CREATE TABLE public.github_webhook_deliveries (
     installation_id bigint,
     repo_full_name text,
     commit_sha text,
+    skip_reason text DEFAULT ''::text NOT NULL,
     CONSTRAINT github_webhook_deliveries_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT github_webhook_deliveries_event_type_chk CHECK ((event_type = ANY (ARRAY['push'::text, 'pull_request'::text, 'installation'::text, 'installation_repositories'::text, 'repository'::text, 'issues'::text, 'installation_target'::text]))),
+    CONSTRAINT github_webhook_deliveries_skip_reason_chk CHECK ((skip_reason ~ '^[a-z_]{0,64}$'::text)),
     CONSTRAINT github_webhook_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'succeeded'::text, 'dead'::text])))
 );
 

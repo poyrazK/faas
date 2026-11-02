@@ -237,9 +237,12 @@ func (h *Handler) metricsIncCacheOutcome(appID, outcome string) {
 
 // hasCacheCredentials applies the shared cache's presence-based credential
 // bypass. Header.Get cannot detect an empty first Authorization field followed
-// by a credential in another field, and even an empty field must bypass.
+// by a credential in another field, and even an empty field must bypass. A
+// preview request whose gate credential was withheld from the app still
+// carried one (ADR-20261102100000).
 func hasCacheCredentials(r *http.Request) bool {
-	return r != nil && (len(r.Header.Values("Authorization")) != 0 || hasSessionCookie(r))
+	return r != nil && (len(r.Header.Values("Authorization")) != 0 || hasSessionCookie(r) ||
+		authenticatedFrom(r.Context()).CredentialWithheld)
 }
 
 // hasSessionCookie treats any remaining Cookie field as session state. The

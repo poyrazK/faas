@@ -6548,7 +6548,12 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 	if b.LinkedAt.IsZero() {
 		b.LinkedAt = time.Now()
 	}
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub bind: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	tag, err := tx.Exec(ctx,
 		`update apps
 		 set github_install_id = $2,
 		     github_repo_full_name = $3,
@@ -6562,9 +6567,60 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 		b.AppID, b.InstallID, nullString(b.RepoFullName), nullableInt64(b.OwnerID), nullableInt64(b.RepoID),
 		nullString(b.ProductionBranch), b.BindingID, b.AccountID, b.LinkedAt,
 	)
-	if err == nil && tag.RowsAffected() == 0 {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	// A project left without an installation by a revoke or a repository
+	// removal takes the installation its app is reconnected through, for the
+	// same repository (ADR-20261102100000).
+	if _, err := tx.Exec(ctx, `
+		update projects p set install_id = $2, updated_at = now()
+		  from apps a
+		 where a.id = $1 and a.account_id = $4 and p.id = a.project_id and p.account_id = a.account_id
+		   and p.install_id is null and lower(p.repo_full_name) = lower($3)`,
+		b.AppID, b.InstallID, b.RepoFullName, b.AccountID); err != nil {
+		return fmt.Errorf("state: restore project GitHub installation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub bind: %w", err)
+	}
+	return nil
+}
+
+// markInstallationPRPreviewsStaleTx retires the PR previews of the apps an
+// installation binds (only those of repos, when repos is non-nil): without the
+// installation, or the repository's access, no close event reaches them. A
+// preview belongs to the production app its PR environment's root previews,
+// so the previews of a project's other services go with the bound app's
+// (ADR-20261102100000); they kept serving PR code to the end of their lease.
+func markInstallationPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, installationID int64, repos []string) error {
+	_, err := tx.Exec(ctx, `
+		update apps set preview_pr_state = $2, preview_expires_at = now()
+		 where id in (
+		   select p.id
+		     from apps p
+		     left join lateral (
+		       select root.preview_of_slug as anchor
+		         from pr_preview_sets s
+		         join apps root on root.id = s.root_app_id
+		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
+		        order by s.updated_at desc
+		        limit 1
+		     ) env on true
+		     join apps parent on parent.account_id = p.account_id
+		                     and parent.slug = coalesce(env.anchor, p.preview_of_slug)
+		    where p.preview_of_slug is not null
+		      and coalesce(p.preview_pr_number, 0) > 0
+		      and p.status <> 'deleted'
+		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
+		      and parent.preview_of_slug is null
+		      and parent.status <> 'deleted'
+		      and parent.github_install_id = $1
+		      and ($5::text[] is null or parent.github_repo_full_name = any($5::text[])))`,
+		installationID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown, repos)
 	return err
 }
 
@@ -6933,20 +6989,11 @@ func (s *PgStore) RevokeGitHubInstallation(ctx context.Context, installationID i
 		return fmt.Errorf("state: begin revoke GitHub installation: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, `
-		update apps p
-		   set preview_pr_state = $2,
-		       preview_expires_at = now()
-		 where p.preview_of_slug is not null
-		   and coalesce(p.preview_pr_state, '') <> $3
-		   and exists (
-			 select 1 from apps parent
-			  where parent.account_id = p.account_id
-				and parent.slug = p.preview_of_slug
-				and parent.github_install_id = $1
-				and parent.status <> 'deleted'
-		   )`, installationID, PreviewPrStateStale, PreviewPrStateTornDown); err != nil {
+	if err := markInstallationPRPreviewsStaleTx(ctx, tx, installationID, nil); err != nil {
 		return fmt.Errorf("state: mark GitHub previews stale: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `update projects set install_id = null, updated_at = now() where install_id = $1`, installationID); err != nil {
+		return fmt.Errorf("state: detach projects from GitHub installation: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		update apps
@@ -6986,21 +7033,13 @@ func (s *PgStore) RemoveGitHubRepositories(ctx context.Context, installationID i
 		return fmt.Errorf("state: begin remove GitHub repositories: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, `
-		update apps p
-		   set preview_pr_state = $2,
-		       preview_expires_at = now()
-		 where p.preview_of_slug is not null
-		   and coalesce(p.preview_pr_state, '') <> $3
-		   and exists (
-			 select 1 from apps parent
-			  where parent.account_id = p.account_id
-				and parent.slug = p.preview_of_slug
-				and parent.github_install_id = $1
-				and parent.github_repo_full_name = any($4::text[])
-				and parent.status <> 'deleted'
-		   )`, installationID, PreviewPrStateStale, PreviewPrStateTornDown, repoFullNames); err != nil {
+	if err := markInstallationPRPreviewsStaleTx(ctx, tx, installationID, repoFullNames); err != nil {
 		return fmt.Errorf("state: mark removed-repository previews stale: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update projects set install_id = null, updated_at = now()
+		 where install_id = $1 and repo_full_name = any($2::text[])`, installationID, repoFullNames); err != nil {
+		return fmt.Errorf("state: detach projects from removed GitHub repositories: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		update apps
