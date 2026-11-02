@@ -5383,6 +5383,7 @@
       "parked_reason",
       "pr_number",
       "priority",
+      "promoted_at",
       "pusher_login",
       "reason",
       "release_command",
