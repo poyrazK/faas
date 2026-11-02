@@ -894,6 +894,8 @@ type App struct {
 	DeploymentCronBefore              []byte
 	DeploymentMailRevision            int64
 	Labels                            []byte
+	GithubProductionTrigger           pgtype.Text
+	GithubPreviewEnabled              pgtype.Bool
 }
 
 type AppApiRoute struct {

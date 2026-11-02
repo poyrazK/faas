@@ -54,22 +54,35 @@ export class GithubService {
   /**
    * List repositories visible to the account's GitHub App installation.
    * Bearer API-key surface for customer automation. Requires the
-   * dedicated `github:manage` scope. The account's durable GitHub App
-   * installation is resolved server-side, so callers do not need to
-   * copy or provide an installation id. Installation credentials are
-   * never returned.
+   * dedicated `github:manage` scope. `installation_id` names one of
+   * the account's connected installations; without it the account's
+   * only installation is used, and an account with several gets a 409
+   * `github_installation_required` naming them. Installation
+   * credentials are never returned.
    *
    * @returns RepoResponse Repositories currently visible to the account's GitHub App installation.
    * @throws ApiError
    */
-  public static listGitHubRepositories(): CancelablePromise<Array<RepoResponse>> {
+  public static listGitHubRepositories({
+    installationId,
+  }: {
+    /**
+     * A GitHub App installation connected to the account.
+     */
+    installationId?: number,
+  }): CancelablePromise<Array<RepoResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/github/repos',
+      query: {
+        'installation_id': installationId,
+      },
       errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `The account has not completed GitHub App installation.`,
+        409: `The account has several connected installations and none was named.`,
         502: `GitHub could not be reached while listing repositories.`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -163,6 +176,9 @@ export class GithubService {
    * calls. A missing policy row resolves to the safe defaults for a new
    * project. Legacy allow_marked compatibility rows are migrated to deny;
    * customers can explicitly opt back in when production calls are safe.
+   * An app without a project reports the defaults with an empty
+   * `project_id` and its own `production_trigger` and
+   * `preview_enabled`.
    *
    * @returns GitHubDeploymentPolicy Current GitHub deployment policy.
    * @throws ApiError
@@ -197,7 +213,9 @@ export class GithubService {
    * trailing `**` directory patterns. `preview_service_policy=deny`
    * rejects preview calls to production dependencies before discovery or
    * wake-up; `allow_marked` preserves the marked-call compatibility mode.
-   * Mutations require MFA.
+   * An app without a project can set only `production_trigger` and
+   * `preview_enabled`, once it is bound to a repository; other fields
+   * answer 409 `project_required`. Mutations require MFA.
    *
    * @returns GitHubDeploymentPolicy Updated GitHub deployment policy.
    * @throws ApiError

@@ -17,6 +17,13 @@ type InstallationLifecycleStore interface {
 	RenameGitHubRepository(ctx context.Context, installationID int64, oldRepoFullName, newRepoFullName string) error
 }
 
+// AccountRenameStore moves an installation's bindings, projects and PR
+// preview environments to a renamed user's or organization's repository
+// names (ADR-20261101160300).
+type AccountRenameStore interface {
+	RenameGitHubAccount(ctx context.Context, installationID int64, oldLogin, newLogin string) error
+}
+
 // HandleInstallationLifecycle processes GitHub App installation and repository
 // access changes. Unknown actions are acknowledged deliberately; GitHub emits
 // actions unrelated to deployment access and retrying those forever would fill
@@ -129,6 +136,30 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 				s.InvalidateInstallationBindings(ev.Installation.ID)
 			}
 		}
+		return nil
+	case "installation_target":
+		ev, err := DecodeInstallationTarget(body)
+		if err != nil {
+			return unprocessableWebhook(err)
+		}
+		oldLogin, newLogin := ev.Changes.Login.From, ev.Account.Login
+		if !strings.EqualFold(ev.Action, "renamed") || oldLogin == "" || newLogin == "" || oldLogin == newLogin {
+			s.Log.Debug("githubd: acknowledged installation_target action", "installation_id", ev.Installation.ID, "action", logsanitize.Field(ev.Action))
+			return nil
+		}
+		renamer, ok := s.Lifecycle.(AccountRenameStore)
+		if !ok {
+			s.Log.Warn("githubd: account rename received without a rename store", "installation_id", ev.Installation.ID)
+			return nil
+		}
+		if err := renamer.RenameGitHubAccount(ctx, ev.Installation.ID, oldLogin, newLogin); err != nil {
+			return fmt.Errorf("githubd: rename account %q to %q: %w", oldLogin, newLogin, err)
+		}
+		if s.InvalidateInstallationBindings != nil {
+			s.InvalidateInstallationBindings(ev.Installation.ID)
+		}
+		s.Log.Info("githubd: GitHub account renamed; bindings moved", "installation_id", ev.Installation.ID,
+			"from", logsanitize.Field(oldLogin), "to", logsanitize.Field(newLogin))
 		return nil
 	default:
 		return fmt.Errorf("githubd: unsupported lifecycle event %q", eventType)

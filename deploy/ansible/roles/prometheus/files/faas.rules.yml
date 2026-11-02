@@ -4028,6 +4028,21 @@ groups:
           description: "No successful poll of GET /app/hook/deliveries for over an hour, so a broken GitHub webhook would go unnoticed. Check the App private key and GitHub API reachability from the control plane."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubAppWebhook.md"
 
+      # The App's events and permissions live on GitHub (docs/ops/github-app.md).
+      # A missing repository event silently stops rename handling; a missing
+      # permission makes GitHub refuse githubd's writes.
+      - alert: FaasGithubAppConfigDrift
+        expr: max by (kind, name) (githubd_github_app_config_missing) == 1
+        for: 30m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "The GitHub App lacks a required {{ $labels.kind }}: {{ $labels.name }}"
+          description: "GET /app shows the Gregale GitHub App without the {{ $labels.kind }} {{ $labels.name }} that docs/ops/github-app.md requires. Subscribe the event or grant the permission in the App's settings on GitHub; a new permission also needs each installation's owner to accept it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubAppWebhook.md"
+
   # Billing drift detector (ADR-049 §B.1). The reconciler
   # (pkg/billing/reconciler) computes abs(local-pushed) / max(local,
   # pushed) over a rolling window per (account, provider) and

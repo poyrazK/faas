@@ -1,14 +1,28 @@
 package api
 
-import "context"
+import (
+	"context"
+	"strconv"
+)
 
 // ListGitHubRepositories returns the repositories visible to the account's
 // durable GitHub App installation. The server resolves the installation id
 // from the bearer token's account, so callers do not need browser state or a
 // manually copied installation id.
 func (c *Client) ListGitHubRepositories(ctx context.Context) ([]RepoResponse, error) {
+	return c.ListGitHubRepositoriesForInstallation(ctx, 0)
+}
+
+// ListGitHubRepositoriesForInstallation names the installation to list. An
+// account with several installations must name one; zero takes the
+// account's only installation.
+func (c *Client) ListGitHubRepositoriesForInstallation(ctx context.Context, installationID int64) ([]RepoResponse, error) {
 	var out []RepoResponse
-	return out, c.do(ctx, "GET", "/v1/github/repos", nil, &out)
+	path := "/v1/github/repos"
+	if installationID > 0 {
+		path += "?installation_id=" + strconv.FormatInt(installationID, 10)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // GetGitHubConnection returns the account-scoped GitHub installation and app

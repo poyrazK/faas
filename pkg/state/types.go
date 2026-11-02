@@ -2450,6 +2450,14 @@ type GitHubBinding struct {
 	OwnerID          int64
 	RepoID           int64
 	ProductionBranch string
+	// ProductionTrigger chooses the webhook or GitHub Actions for an app
+	// bound without a project (ADR-20261101160300). Empty is the webhook.
+	// A binding upsert keeps it; unbinding clears it.
+	ProductionTrigger ProductionTrigger
+	// PreviewsOff turns off pull-request previews for an app bound without
+	// a project; a project-backed app follows its project's policy. Kept and
+	// cleared like ProductionTrigger.
+	PreviewsOff bool
 }
 
 // GitHubInstall is the durable OAuth handshake state for one account's

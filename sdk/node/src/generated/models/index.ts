@@ -1100,6 +1100,7 @@ export type { GitHubDeploymentPolicyPatch } from './GitHubDeploymentPolicyPatch.
 export type { GitHubInstallActivity } from './GitHubInstallActivity.js';
 export type { GitHubInstallMutationRequest } from './GitHubInstallMutationRequest.js';
 export type { GitHubInstallStatus } from './GitHubInstallStatus.js';
+export type { GitHubInstallationSummary } from './GitHubInstallationSummary.js';
 export type { GitHubWebhookActivity } from './GitHubWebhookActivity.js';
 export type { GithubCheckUpdateRecord } from './GithubCheckUpdateRecord.js';
 export type { GithubRecoveryRetryResponse } from './GithubRecoveryRetryResponse.js';

@@ -7866,7 +7866,39 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
+	// Mirrors PgStore: a re-bind keeps the app's GitHub policy.
+	b.ProductionTrigger = m.githubBindings[b.AppID].ProductionTrigger
+	b.PreviewsOff = m.githubBindings[b.AppID].PreviewsOff
 	m.githubBindings[b.AppID] = b
+	return nil
+}
+
+// SetGitHubAppProductionTrigger mirrors PgStore.
+func (m *MemStore) SetGitHubAppProductionTrigger(ctx context.Context, appID, accountID string, trigger ProductionTrigger) error {
+	return m.UpdateGitHubAppPolicy(ctx, appID, accountID, GitHubAppPolicyPatch{ProductionTrigger: &trigger})
+}
+
+// UpdateGitHubAppPolicy mirrors PgStore.
+func (m *MemStore) UpdateGitHubAppPolicy(_ context.Context, appID, accountID string, patch GitHubAppPolicyPatch) error {
+	if appID == "" || accountID == "" {
+		return ErrNotFound
+	}
+	if err := patch.Validate(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.githubBindings[appID]
+	if !ok || b.InstallID == 0 || b.AccountID != accountID {
+		return ErrNotFound
+	}
+	if patch.ProductionTrigger != nil {
+		b.ProductionTrigger = *patch.ProductionTrigger
+	}
+	if patch.PreviewEnabled != nil {
+		b.PreviewsOff = !*patch.PreviewEnabled
+	}
+	m.githubBindings[appID] = b
 	return nil
 }
 

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { GitHubInstallActivity } from './GitHubInstallActivity.js';
+import type { GitHubInstallationSummary } from './GitHubInstallationSummary.js';
 /**
  * Account-scoped GitHub installation and app binding health. Sealed
  * installation credentials are never returned. `state` is
@@ -15,7 +16,17 @@ export type GitHubInstallStatus = {
   health: 'not_connected' | 'unknown' | 'healthy' | 'degraded';
   connected: boolean;
   installation_id?: number;
+  /**
+   * The GitHub user or organization the App is installed on.
+   */
   github_login?: string;
+  /**
+   * Empty for newer connections: an installation has no default
+   * branch, and a bind without a branch takes the repository's
+   * default branch. Older connections report the `main` they stored.
+   *
+   * @deprecated
+   */
   default_branch?: string;
   repo_full_name?: string;
   production_branch?: string;
@@ -39,5 +50,12 @@ export type GitHubInstallStatus = {
     synced_at?: string;
   };
   activity?: GitHubInstallActivity;
+  /**
+   * The account's connected installations when it has more than
+   * one. An unbound app then reports no `installation_id`; a bind or
+   * repository listing names one of these.
+   *
+   */
+  installations?: Array<GitHubInstallationSummary>;
 };
 

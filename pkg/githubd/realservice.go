@@ -340,13 +340,10 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 		return "", "", fmt.Errorf("githubd: list user installations: %w", err)
 	}
 	if len(installs) == 0 {
-		return "", "", fmt.Errorf("githubd: user has no app installations")
+		return "", "", api.ErrGitHubAppNotInstalled()
 	}
-	pick, err := s.selectOAuthInstallation(context.Background(), accountID, stateStr, installs)
+	pick, err := s.selectOAuthInstallation(context.Background(), userToken, stateStr, installs)
 	if err != nil {
-		return "", "", err
-	}
-	if err := s.Auth.AuthorizeInstallationBinder(context.Background(), userToken, pick); err != nil {
 		return "", "", err
 	}
 	// Defense-in-depth §11 re-verify.
@@ -369,25 +366,11 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 		return "", "", fmt.Errorf("githubd: seal install token: %w", err)
 	}
 
-	// default_branch: the /app/installations/{id} verify response
-	// doesn't carry the install's default branch (per GitHub's API
-	// surface — that's a per-repo field, not a per-install field).
-	// Capture-time options for PR-C:
-	//
-	//   1. (chosen) store the GitHub App convention "main" as a
-	//      best-effort seed. The bind path will refresh this from
-	//      ListInstallableRepos at /v1/apps/{slug}/install/bind
-	//      time, where the per-repo default_branch is available.
-	//   2. (deferred) do a 4th round-trip to
-	//      /app/installations/{id}/repositories to capture the
-	//      first repo's default_branch at handshake time. PR-D
-	//      scope — adds latency to the OAuth handshake.
-	//
-	// PR-C review finding #1 was originally framed as "the verify
-	// payload carries DefaultBranch" — that was wrong; the field
-	// doesn't exist on the Installation struct. The fix is the
-	// bind-path refresh, not a different field reference here.
-	branch := defaultProductionBranch
+	// An installation has no default branch; each repository has its own.
+	// The connection records none, and a bind without a branch takes the
+	// repository's (ADR-20261101160300). A "main" seed here used to become
+	// the production branch of repositories that deploy from another one.
+	branch := ""
 
 	// Verified-side login for the §11 audit trail. The
 	// /user/installations response is the user-claimed login; the
@@ -456,34 +439,58 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 	return strconv.FormatInt(pick.ID, 10), branch, nil
 }
 
-// selectOAuthInstallation binds the OAuth proof to the installation selected
-// during the GitHub App setup callback. The state cookie is already compared
-// by apid before this call; a `.N` suffix therefore cannot be forged. For a
-// reconnect without a suffix, preserve the account's current installation.
-func (s *RealService) selectOAuthInstallation(ctx context.Context, accountID, stateStr string, installs []UserInstallation) (UserInstallation, error) {
+// selectOAuthInstallation picks the installation the OAuth proof connects.
+// An installation chosen during setup or in the chooser travels in the state
+// (apid compared it with the state cookie, so the `.N` suffix cannot be
+// forged) and must be visible to the GitHub user. Without one, the user's
+// installations they may connect are the candidates: one is taken, several
+// are returned for the customer to choose (ADR-20261101160300), and none
+// returns why the first could not be connected.
+func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, stateStr string, installs []UserInstallation) (UserInstallation, error) {
 	desired := int64(0)
 	if dot := strings.LastIndexByte(stateStr, '.'); dot >= 0 && dot+1 < len(stateStr) {
 		if parsed, err := strconv.ParseInt(stateStr[dot+1:], 10, 64); err == nil && parsed > 0 {
 			desired = parsed
 		}
 	}
-	if desired == 0 && s.Installs != nil {
-		if current, err := s.Installs.ForAccount(ctx, accountID); err == nil {
-			desired = current.InstallationID
-		}
-	}
 	if desired != 0 {
 		for _, installation := range installs {
 			if installation.ID == desired {
+				if err := s.Auth.AuthorizeInstallationBinder(ctx, userToken, installation); err != nil {
+					return UserInstallation{}, err
+				}
 				return installation, nil
 			}
 		}
-		return UserInstallation{}, fmt.Errorf("githubd: selected installation %d is not accessible to this GitHub user", desired)
+		return UserInstallation{}, api.ErrGitHubInstallationNotAccessible(desired)
 	}
-	if len(installs) == 1 {
-		return installs[0], nil
+	var eligible []UserInstallation
+	var firstErr error
+	for i, installation := range installs {
+		if i == githubdgrpc.MaxInstallationCandidates {
+			break
+		}
+		if err := s.Auth.AuthorizeInstallationBinder(ctx, userToken, installation); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		eligible = append(eligible, installation)
 	}
-	return UserInstallation{}, fmt.Errorf("githubd: multiple GitHub App installations are available; choose an installation before connecting")
+	switch {
+	case len(eligible) == 1:
+		return eligible[0], nil
+	case len(eligible) == 0:
+		return UserInstallation{}, firstErr
+	}
+	candidates := make([]githubdgrpc.InstallationCandidate, 0, len(eligible))
+	for _, installation := range eligible {
+		candidates = append(candidates, githubdgrpc.InstallationCandidate{
+			ID: installation.ID, Account: installation.Account.Login, AccountType: installation.Account.Type,
+		})
+	}
+	return UserInstallation{}, &githubdgrpc.InstallationChoiceError{Candidates: candidates}
 }
 
 // ListInstallableRepos returns the repos the installation can see.
@@ -539,14 +546,17 @@ func (s *RealService) BindAppRepo(appID, accountID string, installationID int64,
 	if appID == "" || accountID == "" || installationID <= 0 || repoFullName == "" {
 		return "", fmt.Errorf("githubd: appID, accountID, installationID, repoFullName required")
 	}
-	if productionBranch == "" {
-		productionBranch = defaultProductionBranch
-	}
 	repo, err := s.repositoryForInstallation(context.Background(), accountID, installationID, repoFullName)
 	if err != nil {
 		return "", err
 	}
 	repoFullName = repo.FullName
+	if productionBranch == "" {
+		productionBranch = repo.DefaultBranch
+	}
+	if productionBranch == "" {
+		productionBranch = defaultProductionBranch
+	}
 
 	if s.Store == nil {
 		return "", fmt.Errorf("githubd: bindings store not configured")
@@ -902,7 +912,8 @@ func (s *RealService) VerifyInstallation(installationID int64, expectedLogin str
 		// forged caller.
 		return false, "", "", nil
 	}
-	return true, inst.AccountLogin, defaultProductionBranch, nil
+	// An installation has no default branch; a bind takes its repository's.
+	return true, inst.AccountLogin, "", nil
 }
 
 // MintInstallationToken returns a fresh installation token for

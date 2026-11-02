@@ -68,8 +68,11 @@ type HookDeliveryMonitor struct {
 	BaseURL string
 	Window  time.Duration
 	Metrics *HookDeliveryMetrics
-	Log     *slog.Logger
-	Now     func() time.Time
+	// AppConfigMetrics, when set, also checks the App's events and
+	// permissions on every poll (app_config.go).
+	AppConfigMetrics *AppConfigMetrics
+	Log              *slog.Logger
+	Now              func() time.Time
 
 	lastLoggedID int64
 }
@@ -79,6 +82,7 @@ var errHookDeliveriesUnavailable = errors.New("githubd: app hook deliveries unav
 // PollOnce fetches the newest page of deliveries, records the summary and
 // logs failed deliveries it has not logged before.
 func (m *HookDeliveryMonitor) PollOnce(ctx context.Context) (HookDeliverySummary, error) {
+	m.checkAppConfig(ctx)
 	deliveries, err := m.fetch(ctx)
 	if err != nil {
 		m.Metrics.observeFailure()

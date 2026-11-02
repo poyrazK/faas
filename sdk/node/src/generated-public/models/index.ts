@@ -389,6 +389,7 @@ export type { GitHubDeploymentPolicyPatch } from './GitHubDeploymentPolicyPatch.
 export type { GitHubInstallActivity } from './GitHubInstallActivity.js';
 export type { GitHubInstallMutationRequest } from './GitHubInstallMutationRequest.js';
 export type { GitHubInstallStatus } from './GitHubInstallStatus.js';
+export type { GitHubInstallationSummary } from './GitHubInstallationSummary.js';
 export type { GitHubWebhookActivity } from './GitHubWebhookActivity.js';
 export type { GraceWindowResponse } from './GraceWindowResponse.js';
 export type { GregaleRelease } from './GregaleRelease.js';

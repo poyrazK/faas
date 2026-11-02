@@ -100,6 +100,9 @@ func (c *Client) ExchangeOAuthCode(ctx context.Context, accountID, code, state s
 		State:     state,
 	})
 	if err != nil {
+		if choice, ok := liftInstallationChoice(err); ok {
+			return "", "", choice
+		}
 		return "", "", liftErr(err)
 	}
 	return resp.GetInstallationId(), resp.GetDefaultBranch(), nil

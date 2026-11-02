@@ -57,6 +57,29 @@ const (
 	ProductionTriggerActions ProductionTrigger = "actions"
 )
 
+// GitHubAppPolicyStore is the optional extension that stores the GitHub
+// policy of an app bound to GitHub without a project (ADR-20261101160300):
+// its production trigger and whether it gets pull-request previews. A
+// project-backed app keeps both in the project's GitHubDeployPolicy.
+type GitHubAppPolicyStore interface {
+	UpdateGitHubAppPolicy(ctx context.Context, appID, accountID string, patch GitHubAppPolicyPatch) error
+}
+
+// GitHubAppPolicyPatch names the fields of an app's GitHub policy to change;
+// a nil field is left as it is. An empty trigger restores the webhook.
+type GitHubAppPolicyPatch struct {
+	ProductionTrigger *ProductionTrigger
+	PreviewEnabled    *bool
+}
+
+// Validate rejects an unknown production trigger.
+func (p GitHubAppPolicyPatch) Validate() error {
+	if p.ProductionTrigger != nil && *p.ProductionTrigger != "" && !p.ProductionTrigger.Valid() {
+		return fmt.Errorf("state: production_trigger must be %q or %q", ProductionTriggerWebhook, ProductionTriggerActions)
+	}
+	return nil
+}
+
 func (t ProductionTrigger) Valid() bool {
 	return t == ProductionTriggerWebhook || t == ProductionTriggerActions
 }
