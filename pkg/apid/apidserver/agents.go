@@ -52,6 +52,9 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	if sleeps, ok := s.store.(agents.SleepSchedules); ok {
 		h.Sleeps = sleeps
 	}
+	if runs, ok := h.Store.(agents.RunCallbackStore); ok {
+		h.RunCallbacks = runs
+	}
 	if s.sessions != nil {
 		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
 			h.Callbacks = signer
@@ -259,12 +262,36 @@ func (s *server) getAgentToolset(w http.ResponseWriter, r *http.Request) {
 	s.agentAPI.Toolset(w, r)
 }
 
-func (s *server) invokeAgentTool(w http.ResponseWriter, r *http.Request) {
+// agentToolInvokeRoute serves an invocation with or without the app's
+// credential. A credential goes through the callback issuers' chain, so a
+// bad one is refused as it is there; gregale_run requires one.
+func (s *server) agentToolInvokeRoute() http.HandlerFunc {
+	credentialed := s.agentCallbackCallerRoute(func(w http.ResponseWriter, r *http.Request, caller agents.CallbackCaller) {
+		s.invokeAgentTool(w, r, &caller)
+	})
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			credentialed(w, r)
+			return
+		}
+		s.invokeAgentTool(w, r, nil)
+	}
+}
+
+func (s *server) invokeAgentTool(w http.ResponseWriter, r *http.Request, caller *agents.CallbackCaller) {
 	if s.agentAPI == nil {
 		http.NotFound(w, r)
 		return
 	}
-	s.agentAPI.InvokeTool(w, r)
+	s.agentAPI.InvokeTool(w, r, caller)
+}
+
+// runAgentRunCallbacks publishes finished gregale_run runs into their
+// threads (ADR-20261030125501 §4).
+func (s *server) runAgentRunCallbacks(ctx context.Context) {
+	if s.agentAPI != nil {
+		s.agentAPI.RunRunCallbacks(ctx)
+	}
 }
 
 func (s *server) closeAgentToolThread(w http.ResponseWriter, r *http.Request) {
