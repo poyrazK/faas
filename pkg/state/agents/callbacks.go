@@ -34,3 +34,14 @@ func (s *Store) CallbacksRevokedAt(ctx context.Context, endpointID, threadID str
 	}
 	return row.Time, true, nil
 }
+
+// CallbackClock is the time on the clock RevokeCallbacks records. apid
+// stamps a callback token's issue time with it, so a token compares with a
+// revocation on one clock whichever apid replica issued it.
+func (s *Store) CallbackClock(ctx context.Context) (time.Time, error) {
+	now, err := s.q.AgentCallbackClock(ctx, s.pool)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("callback clock: %w", err)
+	}
+	return now.Time, nil
+}

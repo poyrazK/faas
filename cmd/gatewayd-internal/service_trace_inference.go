@@ -1,4 +1,4 @@
-// adr: 1138
+// adr: 1138, 20261102082606
 package main
 
 import (
@@ -9,38 +9,44 @@ import (
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
-// newServiceTraceInference asks the local vmmd for the traceparent of the one
-// request the instance behind a guest service call's source address is
-// serving (ADR-1138). vmmd resolves the caller from its own live identity, so
-// no cached address mapping is involved. Any failure, a timeout or an older
-// vmmd (Unimplemented) means no link.
-func newServiceTraceInference(clients vmmdClientLookup, localNode *localNodeID, timeout time.Duration) func(context.Context, string) string {
-	return func(ctx context.Context, remoteAddr string) string {
+// newServiceTraceInference asks the local vmmd for the traceparent and
+// deadline of the one request the instance behind a guest service call's
+// source address is serving (ADR-1138, ADR-20261102082606). vmmd resolves the
+// caller from its own live identity, so no cached address mapping is
+// involved. Any failure, a timeout or an older vmmd (Unimplemented) means no
+// link and no deadline.
+func newServiceTraceInference(clients vmmdClientLookup, localNode *localNodeID, timeout time.Duration) func(context.Context, string) gateway.InferredCallerRequest {
+	return func(ctx context.Context, remoteAddr string) gateway.InferredCallerRequest {
 		host := strings.TrimSpace(remoteAddr)
 		if parsed, _, err := net.SplitHostPort(host); err == nil {
 			host = parsed
 		}
 		address, err := netip.ParseAddr(host)
 		if err != nil || !address.Is4() {
-			return ""
+			return gateway.InferredCallerRequest{}
 		}
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		nodeID, err := localNode.Get(ctx)
 		if err != nil {
-			return ""
+			return gateway.InferredCallerRequest{}
 		}
 		client, closer, ok := clients.ClientFor(ctx, nodeID)
 		if !ok {
-			return ""
+			return gateway.InferredCallerRequest{}
 		}
 		defer func() { _ = closer.Close() }()
 		resp, err := client.InflightRequestTrace(ctx, &vmmdpb.InflightRequestTraceRequest{SourceIp: address.String()})
 		if err != nil {
-			return ""
+			return gateway.InferredCallerRequest{}
 		}
-		return resp.GetTraceparent()
+		inferred := gateway.InferredCallerRequest{Traceparent: resp.GetTraceparent()}
+		if ms := resp.GetDeadlineUnixMs(); ms > 0 {
+			inferred.Deadline = time.UnixMilli(ms)
+		}
+		return inferred
 	}
 }

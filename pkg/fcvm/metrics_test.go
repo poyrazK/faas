@@ -79,6 +79,31 @@ func TestDashboardGaugesResidentPct(t *testing.T) {
 	}
 }
 
+// ADR 20261102072403: a scheduler on a multi-node fleet reports its node over
+// that node's ceiling; an unset or failing ceiling keeps the box-wide one.
+func TestDashboardGaugesResidentPctOverTheNodeCeiling(t *testing.T) {
+	quarter := int64(2000) << 20 // 2000 MB of an 8000 MB node
+	for _, tc := range []struct {
+		name    string
+		ceiling func(context.Context) (int, error)
+		want    float64
+	}{
+		{"node ceiling", func(context.Context) (int, error) { return 8000, nil }, 25},
+		{"no ceiling", func(context.Context) (int, error) { return 0, nil }, 100 * 2000.0 / 47600},
+		{"ceiling error", func(context.Context) (int, error) { return 0, errors.New("no node row") }, 100 * 2000.0 / 47600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewDashboardGauges(DashboardMetrics{
+				ResidentBytes: func(context.Context) (int64, error) { return quarter, nil },
+				CeilingMB:     tc.ceiling,
+			}).WithTTL(time.Hour)
+			if got := g.residentPct(); got != tc.want {
+				t.Errorf("resident_pct = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestDashboardGaugesSourceErrorKeepsPriorValue asserts the
 // graceful-degradation contract: a transient source error must not
 // reset the cached value to zero. Seed with 42, return an error on

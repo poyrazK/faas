@@ -689,3 +689,85 @@ func TestRunnerTickClaimsOnlyWhenTheProbeFindsWork(t *testing.T) {
 		})
 	}
 }
+
+// scriptedProbeStore reports each probe on probes and answers with the next
+// added count from added (0 once it runs out), never claimable.
+type scriptedProbeStore struct {
+	fakeReplicaStore
+	added  []int
+	n      int
+	probes chan int
+}
+
+func (f *scriptedProbeStore) ReconcileSnapshotReplicas(context.Context, string) (int, bool, error) {
+	added := 0
+	if f.n < len(f.added) {
+		added = f.added[f.n]
+	}
+	f.n++
+	f.probes <- f.n
+	return added, false, nil
+}
+
+// TestRunnerWithWakeSleepsUntilWokenWhileCaughtUp pins the wake-driven loop: a
+// caught-up runner waits for its wake signal (or the idle interval) instead of
+// probing every interval, and a tick that found work keeps the fast interval
+// until the node is caught up.
+func TestRunnerWithWakeSleepsUntilWokenWhileCaughtUp(t *testing.T) {
+	store := &scriptedProbeStore{added: []int{0, 1}, probes: make(chan int, 16)}
+	wake := make(chan struct{}, 1)
+	r := New(store, &fakeBackend{}, "node-2", slog.Default()).
+		WithInterval(time.Millisecond).
+		WithIdleInterval(time.Hour).
+		WithWake(wake)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	}()
+
+	expectProbe := func(want int) {
+		t.Helper()
+		select {
+		case got := <-store.probes:
+			if got != want {
+				t.Fatalf("probe %d, want %d", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("probe %d never ran", want)
+		}
+	}
+	expectQuiet := func() {
+		t.Helper()
+		select {
+		case got := <-store.probes:
+			t.Fatalf("caught-up runner probed again (probe %d) without a wake", got)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	expectProbe(1) // start-up tick: caught up
+	expectQuiet()
+	wake <- struct{}{}
+	expectProbe(2) // woken: enqueues work, so the fast interval follows
+	expectProbe(3) // no wake needed: caught up again
+	expectQuiet()
+}
+
+func TestRunnerNextTick(t *testing.T) {
+	r := New(nil, nil, "node", nil).WithInterval(time.Millisecond).WithIdleInterval(time.Minute)
+	if got := r.nextTick(false); got != time.Millisecond {
+		t.Fatalf("no wake signal: next tick %s, want the fixed interval", got)
+	}
+	r.WithWake(make(chan struct{}))
+	if got := r.nextTick(true); got != time.Millisecond {
+		t.Fatalf("busy: next tick %s, want the fast interval", got)
+	}
+	if got := r.nextTick(false); got != time.Minute {
+		t.Fatalf("caught up: next tick %s, want the idle interval", got)
+	}
+}

@@ -148,6 +148,18 @@ func (r *Reader) MemoryReport(nodeID string, now time.Time) (measuredMB, frozen 
 	return s.MeasuredMB, s.Frozen, snap.asOf, ok
 }
 
+// ReservedMB is the node's Σ(ram_mb + 8) over its resident instances from the
+// latest tick, every owner's, under MeasuredMB's freshness: 0 for a node with
+// none. fcvm_resident_ram_pct reports it over the node's ceiling (ADR
+// 20261102072403).
+func (r *Reader) ReservedMB(nodeID string, now time.Time) (int, bool) {
+	snap := r.shadow.Load()
+	if snap == nil || now.Sub(snap.asOf) > time.Duration(api.MeasuredAdmissionSampleMaxAgeMillis)*time.Millisecond {
+		return 0, false
+	}
+	return snap.byNode[nodeID].ReservedMB, true
+}
+
 // MeasuredMB is the node's ADR-909 measured charge from the latest tick and
 // the time that tick read the instances. ok is false when the node was not
 // measured or the measurement is older than MeasuredAdmissionSampleMaxAgeMillis.
