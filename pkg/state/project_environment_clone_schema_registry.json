@@ -9753,6 +9753,7 @@
   {
     "table": "managed_postgres_overage_deliveries",
     "columns": [
+      "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
       "live",

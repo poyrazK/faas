@@ -418,3 +418,58 @@ func TestPostgresOrgResourcePersonalTelemetryErasure(t *testing.T) {
 		t.Fatalf("personal rows=%d company rows=%d", personalRows, companyRows)
 	}
 }
+
+// Bug hunt 35: erasing a creator's account deleted the request telemetry and
+// logs of the company apps the creator had made, though the apps stay with
+// their organization. Only the personal apps' rows go with the account.
+func TestPostgresCreatorErasureKeepsCompanyAppLogsAndTelemetry(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	f := setupOffboarding(t, store)
+	ctx := t.Context()
+	if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_company_logs"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_company_logs"); err != nil {
+		t.Fatal(err)
+	}
+	personal, err := store.CreateApp(ctx, state.App{AccountID: f.actor.ID, Slug: "personal-logs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range []state.App{f.app, personal} {
+		if _, err := pool.Exec(ctx, `INSERT INTO request_telemetry (account_id, app_id, deployment_id, route, method, status, latency_ms)
+VALUES ($1, $2, $3, '/', 'GET', 200, 5)`, app.AccountID, app.ID, uuid.NewString()); err != nil {
+			t.Fatalf("seed request telemetry: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO log_events (occurred_at, account_id, app_id, source, message)
+VALUES (now(), $1, $2, 'runtime', 'hello')`, app.AccountID, app.ID); err != nil {
+			t.Fatalf("seed log event: %v", err)
+		}
+	}
+	if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteAccount(ctx, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	count := func(table, appID string) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE app_id = $1`, appID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, table := range []string{"request_telemetry", "log_events"} {
+		if got := count(table, personal.ID); got != 0 {
+			t.Errorf("%s rows of the personal app after erasure = %d, want 0", table, got)
+		}
+		if got := count(table, f.app.ID); got != 1 {
+			t.Errorf("%s rows of the company app after its creator's erasure = %d, want 1", table, got)
+		}
+	}
+}

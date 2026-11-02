@@ -46,6 +46,9 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	if inbox, ok := s.store.(agents.CallbackInbox); ok {
 		h.Inbox = inbox
 	}
+	if access, ok := s.store.(agents.CallbackAccess); ok {
+		h.Access = access
+	}
 	if revocations, ok := h.Store.(agents.CallbackRevocations); ok {
 		h.Revocations = revocations
 	}
@@ -183,6 +186,8 @@ func (s *server) agentCallbackCallerRoute(next func(http.ResponseWriter, *http.R
 	keyed := s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		next(w, r, agents.CallbackCaller{Account: acct, Authorize: func(endpoint state.ManagedRealtimeEndpoint) *api.Problem {
 			return s.authorizeCallbackEndpoint(r, acct, endpoint)
+		}, Issuer: func(endpoint state.ManagedRealtimeEndpoint) (agents.CallbackIssuer, *api.Problem) {
+			return s.callbackIssuer(r, acct, endpoint)
 		}})
 	})))
 	workload := middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(
@@ -224,6 +229,38 @@ func (s *server) authorizeCallbackEndpoint(r *http.Request, acct state.Account, 
 		return api.ErrCapacity("could not load the endpoint's app; retry shortly")
 	}
 	return s.authorizeNamedApp(r, acct, app)
+}
+
+// callbackIssuer is the organization membership an API-key caller issues a
+// company app's callback URL under: the human actor's role version, which
+// each use of the URL checks again (bug hunt 34). A personal app, or an
+// actor with no membership to pin, pins nothing.
+func (s *server) callbackIssuer(r *http.Request, acct state.Account, endpoint state.ManagedRealtimeEndpoint) (agents.CallbackIssuer, *api.Problem) {
+	ctx := r.Context()
+	app, err := s.store.AppByID(ctx, endpoint.AppID)
+	if err != nil {
+		return agents.CallbackIssuer{}, api.ErrCapacity("could not load the endpoint's app; retry shortly")
+	}
+	if app.OrgID == "" {
+		return agents.CallbackIssuer{}, nil
+	}
+	org, err := s.store.OrgByID(ctx, app.OrgID)
+	if err != nil {
+		return agents.CallbackIssuer{}, api.ErrCapacity("could not load the app's organization; retry shortly")
+	}
+	access, ok := s.store.(state.OrgAccessStore)
+	if org.Personal || !ok {
+		return agents.CallbackIssuer{}, nil
+	}
+	actor := actorAccount(r, acct)
+	snapshot, err := access.OrgAccessSnapshot(ctx, app.OrgID, actor.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return agents.CallbackIssuer{}, nil
+	}
+	if err != nil {
+		return agents.CallbackIssuer{}, api.ErrCapacity("could not read the organization membership; retry shortly")
+	}
+	return agents.CallbackIssuer{OrgID: app.OrgID, AccountID: actor.ID, Revision: snapshot.Revision}, nil
 }
 
 func (s *server) createAgentCallback(w http.ResponseWriter, r *http.Request, caller agents.CallbackCaller) {
