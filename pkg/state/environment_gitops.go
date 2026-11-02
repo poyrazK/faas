@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"regexp"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 var ErrEnvironmentGitManaged = errors.New("setting is managed by the environment Git source")
@@ -99,7 +99,7 @@ type EnvironmentGitOpsModeClaimStore interface {
 	ClaimEnvironmentGitOpsMode(context.Context, string, string, time.Time, time.Duration) (EnvironmentGitOpsLease, error)
 }
 
-var environmentCommitRE = regexp.MustCompile(`^([a-f0-9]{40}|[a-f0-9]{64})$`)
+var environmentCommitRE = lazyregexp.New(`^([a-f0-9]{40}|[a-f0-9]{64})$`)
 
 type EnvironmentGitOpsLifecycleStore interface {
 	RebindEnvironmentGitSource(context.Context, string, string, int64, EnvironmentGitSourceSpec) (EnvironmentGitSource, error)
