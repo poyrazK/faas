@@ -41,16 +41,7 @@ func LimitProblem(err error) *api.Problem {
 
 // PlanAllowsClass reports whether the plan includes the service class.
 func PlanAllowsClass(limits api.ManagedPostgresPlanLimits, class managedpostgres.ServiceClass) bool {
-	switch class {
-	case managedpostgres.ClassDevelopment:
-		return limits.DevelopmentAllowed
-	case managedpostgres.ClassBurstable:
-		return limits.BurstableAllowed
-	case managedpostgres.ClassProduction:
-		return limits.ProductionAllowed
-	default:
-		return false
-	}
+	return managedpostgres.PlanAllowsClass(limits, class)
 }
 
 // AdmitResize checks a new resize request against the plan: a class, if
