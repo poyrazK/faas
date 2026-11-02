@@ -536,6 +536,10 @@ type Host struct {
 	// host that runs the object gateway gets its share of it
 	// (ADR-20261031122757 §3); required there, unused elsewhere.
 	PortMbps int `yaml:"port_mbps,omitempty"`
+	// PublicIPv4 is the address Cloudflare connects to for a compute host's
+	// edge under direct entry (ADR-20261102081618): its own on bare metal,
+	// an inbound-only forwarding rule on GCP. Unused elsewhere.
+	PublicIPv4 string `yaml:"public_ipv4,omitempty"`
 }
 
 // Daemons is the per-daemon configuration. Keys are daemon names;
@@ -762,6 +766,18 @@ type PublicEdge struct {
 	// 443 for proxied address records, for the move off the tunnel and its
 	// rollback. Needs compute_nodes.
 	Entry string `yaml:"entry,omitempty"`
+	// DNS turns on edgednsd (ADR-20261102081618 §3), which points the names
+	// at the compute hosts whose edges are ready. Needs entry both.
+	DNS *PublicEdgeDNS `yaml:"dns,omitempty"`
+}
+
+// PublicEdgeDNS is the Cloudflare zone and the names edgednsd manages.
+type PublicEdgeDNS struct {
+	ZoneID string   `yaml:"zone_id"`
+	Names  []string `yaml:"names"`
+	// Live makes edgednsd write records; until then it only logs and
+	// counts the changes it would make.
+	Live bool `yaml:"live,omitempty"`
 }
 
 // Public edge entries (ADR-20261102081618).
@@ -810,6 +826,39 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 	}
 	if computeNodes == 0 {
 		errs = append(errs, Error{"public_edge.compute_nodes", "needs at least one compute-only host to run the edge"})
+	}
+	return append(errs, e.validateDNS(hosts)...)
+}
+
+// validateDNS checks public_edge.dns: edgednsd sends Cloudflare to the TLS
+// listeners entry both opens, at the compute hosts' public addresses.
+func (e PublicEdge) validateDNS(hosts []Host) Errors {
+	if e.DNS == nil {
+		return nil
+	}
+	var errs Errors
+	if !e.DirectEntry() {
+		errs = append(errs, Error{"public_edge.dns", "needs public_edge.entry: both, whose TLS listeners the records point at"})
+	}
+	if strings.TrimSpace(e.DNS.ZoneID) == "" {
+		errs = append(errs, Error{"public_edge.dns.zone_id", "is required"})
+	}
+	if len(e.DNS.Names) == 0 {
+		errs = append(errs, Error{"public_edge.dns.names", "needs at least one host name"})
+	}
+	addressed := 0
+	for i, h := range hosts {
+		if h.PublicIPv4 == "" {
+			continue
+		}
+		if addr, err := netip.ParseAddr(h.PublicIPv4); err != nil || !addr.Is4() {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].public_ipv4", i), fmt.Sprintf("%q is not an IPv4 address", h.PublicIPv4)})
+		} else if h.Role == "compute-only" {
+			addressed++
+		}
+	}
+	if addressed == 0 {
+		errs = append(errs, Error{"public_edge.dns", "needs a compute-only host with public_ipv4"})
 	}
 	return errs
 }

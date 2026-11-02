@@ -574,6 +574,7 @@ var ApplyJSONFlag = applyJSONFlag
 var ApplyMCPGatewayPolicy = applyMCPGatewayPolicy
 var ApplyMCPTasksStatusChecks = applyMCPTasksStatusChecks
 var ApplyRolloutFlag = applyRolloutFlag
+var SafeFlagName = safeFlagName
 var ApplySimpleAppPlanToCreateRequest = applySimpleAppPlanToCreateRequest
 var ApplyTestConnectionLeaks = applyTestConnectionLeaks
 var ApplyTestFaultMatrixCase = applyTestFaultMatrixCase

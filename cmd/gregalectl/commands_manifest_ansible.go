@@ -226,6 +226,9 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		}
 		body += databases.hostVars(host, hostScheddTarget)
 		body += renderComputeEdgeVars(m.PublicEdge, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		if host.Role == roleControlPlane {
+			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts)
+		}
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
 		body += renderLogArchiveVars(m.LogArchive)
 		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
@@ -779,6 +782,31 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, role, controlPlaneAddress s
 			b.WriteString("faas_cloudflare_origin_only: true\n")
 		}
 	}
+	return b.String()
+}
+
+// renderEdgeDNSVars turns on edgednsd on the control plane
+// (ADR-20261102081618 §3) with the managed names and each compute host's
+// public address under the name it registers with.
+func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
+	if edge.DNS == nil || !edge.DirectEntry() {
+		return ""
+	}
+	names := make([]string, 0, len(edge.DNS.Names))
+	for _, name := range edge.DNS.Names {
+		names = append(names, edge.DNS.ZoneID+":"+name)
+	}
+	var addresses []string
+	for _, h := range hosts {
+		if h.Role == roleComputeOnly && h.PublicIPv4 != "" {
+			addresses = append(addresses, canonicalComputeNodeName(h.Name, roleTemplating.Role(h.Role))+"="+h.PublicIPv4)
+		}
+	}
+	var b strings.Builder
+	b.WriteString("faas_edgednsd_managed: true\n")
+	fmt.Fprintf(&b, "faas_edgednsd_names: [%s]\n", quotedYAMLList(names))
+	fmt.Fprintf(&b, "faas_edgednsd_node_addresses: [%s]\n", quotedYAMLList(addresses))
+	fmt.Fprintf(&b, "faas_edgednsd_dry_run: %t\n", !edge.DNS.Live)
 	return b.String()
 }
 

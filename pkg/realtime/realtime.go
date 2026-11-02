@@ -36,6 +36,15 @@ const (
 	// admission, so an open managed connection never pins an application VM.
 	ManagedPathPrefix = "/__gregale/realtime/"
 
+	// HostAccountHeader carries the account of the app the request's host is
+	// routed to. gatewayd-internal resolves the host before it dispatches the
+	// managed namespace, replaces any client copy of this header, and
+	// realtimed refuses an endpoint of another account, so one tenant's
+	// endpoints are not served on another tenant's hosts (ADR-156, amendment
+	// of 2026-11-02). A request without it comes from an older gateway and
+	// keeps the host-independent behavior.
+	HostAccountHeader = "X-Gregale-Realtime-Host-Account"
+
 	defaultMaxMessageSize     = 1 << 20 // 1 MiB
 	defaultOutboundQueue      = 64
 	defaultOutboundQueueBytes = 4 << 20 // 4 MiB per connection, including an in-flight write
@@ -570,6 +579,9 @@ type connection struct {
 	presenceWindow          time.Time
 	presenceCount           int
 	commands                *rate.Limiter
+	// admission is the credential and origin the connection was admitted
+	// with; an endpoint update that no longer accepts them closes it.
+	admission connectionAdmission
 }
 
 type callbackAuthSnapshot struct {
@@ -827,6 +839,7 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 			}
 			m.mu.RUnlock()
 		}
+		m.closeConnectionsNoLongerAdmitted(state, &e)
 		return nil
 	}
 	if canUpdateCallbacks {
@@ -914,7 +927,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value, ok := m.endpoints.Load(endpointID)
-	if !ok {
+	if !ok || !servedOnHost(value.(*endpointState), r) {
 		m.rejectedConnections.Add(1)
 		http.NotFound(w, r)
 		return
@@ -986,6 +999,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	authMetricMode := authMetricModeForEndpoint(endpoint)
+	admittedToken := ""
 	principal := ""
 	var issuedAt time.Time
 	var identity JWTIdentity
@@ -1014,6 +1028,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			admittedToken = token
 			principal = "token"
 		case AuthModeOIDCJWT:
 			token, ok := bearerToken(r)
@@ -1140,6 +1155,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		conn.mu.Unlock()
 	}
+	conn.admission = newConnectionAdmission(endpoint, usesTicket, browserCredential, admittedToken, r.Header.Get("Origin"))
 	state.gate.Unlock()
 	conn.browser = r.Header.Get("Origin") != ""
 	conn.liveOnly = liveOnly
@@ -1230,6 +1246,17 @@ func checkAllowedOrigins(allowed []string) func(*http.Request) bool {
 		}
 		return false
 	}
+}
+
+// servedOnHost reports whether the endpoint may answer on the request's host:
+// the gateway names the host's account in HostAccountHeader. An endpoint of
+// another account answers 404, as if it did not exist.
+func servedOnHost(state *endpointState, r *http.Request) bool {
+	values := r.Header.Values(HostAccountHeader)
+	if len(values) == 0 {
+		return true
+	}
+	return len(values) == 1 && values[0] != "" && values[0] == state.config.Load().AccountID
 }
 
 func endpointIDFromPath(path string) (string, bool) {

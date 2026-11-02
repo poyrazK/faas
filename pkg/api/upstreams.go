@@ -27,7 +27,8 @@ package api
 
 import (
 	"fmt"
-	"regexp"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // DataUpstreamKind is the closed vocabulary for the data-upstream
@@ -132,7 +133,7 @@ func DefaultPortForKind(k DataUpstreamKind) (int, bool) {
 //   - IPv4 dotted-quad literals are rejected via the secondary
 //     `!~ '^[0-9]+(\.[0-9]+)+$'` check in the SQL CHECK; the Go
 //     side mirrors it in ValidateUpstreamHost.
-var upstreamHostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
+var upstreamHostPattern = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
 
 // ipv4LiteralPattern matches a host whose every label is all
 // digits separated by dots (i.e. an IPv4 dotted-quad literal). The
@@ -140,7 +141,7 @@ var upstreamHostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])
 // '^[0-9]+(\.[0-9]+)+$'` to reject; the Go side mirrors it so
 // apid's ValidateUpstreamHost surfaces 400 upstream_invalid_host
 // before INSERT, not a 23514 at INSERT.
-var ipv4LiteralPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)+$`)
+var ipv4LiteralPattern = lazyregexp.New(`^[0-9]+(\.[0-9]+)+$`)
 
 // ValidateUpstreamHost returns nil when host is a valid RFC-952
 // /1123 hostname AND not an IPv4 literal. Returns *Problem with
