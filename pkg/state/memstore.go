@@ -7879,10 +7879,6 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
-	// Mirrors PgStore: rebinding to another repository retires its previews.
-	if previous, bound := m.githubBindings[b.AppID]; bound && githubBindingRepoChanged(previous, b) {
-		m.markAppPRPreviewsStaleLocked(app)
-	}
 	// Mirrors PgStore: a re-bind keeps the app's GitHub policy.
 	b.ProductionTrigger = m.githubBindings[b.AppID].ProductionTrigger
 	b.PreviewsOff = m.githubBindings[b.AppID].PreviewsOff
@@ -7933,14 +7929,7 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 	if !ok {
 		return ErrNotFound
 	}
-	m.markAppPRPreviewsStaleLocked(parent)
-	delete(m.githubBindings, appID)
-	return nil
-}
-
-// markAppPRPreviewsStaleLocked mirrors PgStore's markAppPRPreviewsStaleTx.
-// Callers hold m.mu.
-func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
+	// Mirrors PgStore: the app's PR preview environments go stale.
 	anchors := make(map[string]string)
 	for _, set := range m.previewSets {
 		if root, ok := m.apps[set.RootAppID]; ok {
@@ -7965,6 +7954,8 @@ func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 			m.apps[id] = preview
 		}
 	}
+	delete(m.githubBindings, appID)
+	return nil
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch

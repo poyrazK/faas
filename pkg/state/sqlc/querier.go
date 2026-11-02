@@ -6099,10 +6099,8 @@ type Querier interface {
 	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, db DBTX, arg RecordManagedPostgresDatabaseEndpointParams) error
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
-	// Advances the cumulative charge only from the row as read (previous_millicents
-	// and previous_live; zero: no row yet), so a replica that lost the race records
-	// nothing. A live delivery may replace a shadow row, which charged nothing; a
-	// shadow delivery never replaces a live one (bug hunt 33).
+	// Advances the cumulative charge only from previous_millicents (zero: no row
+	// yet), so a replica that lost the race records nothing.
 	RecordManagedPostgresOverageDelivery(ctx context.Context, db DBTX, arg RecordManagedPostgresOverageDeliveryParams) (bool, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
 	// ADR-20261031123259: one notice per copy and kind; the first sweep to reach

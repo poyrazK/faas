@@ -63,7 +63,7 @@ func (h *Handler) listObjectsV2(w http.ResponseWriter, r *http.Request, req requ
 			return
 		}
 	}
-	h.writeListingXML(w, r, req, encodedObjectsResult(req.bucket.Name, q, limit, page))
+	writeS3XML(w, http.StatusOK, req.requestID, encodedObjectsResult(req.bucket.Name, q, limit, page))
 }
 func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, req requestContext) {
 	if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
@@ -84,11 +84,6 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, r
 	lister, ok := h.multipartStore.(state.ObjectS3MultipartLister)
 	if !ok {
 		h.unsupported(w, r, req.requestID)
-		return
-	}
-	// Admitted and counted like the other listings: it skipped the monthly
-	// limits and the organization fence (bug hunt 33).
-	if !h.admit(w, r, req, "__list__", 0, false) || !h.recordProviderRequest(w, r, req) {
 		return
 	}
 	result := listMultipartUploadsResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Prefix: prefix, KeyMarker: keyMarker, UploadMarker: uploadMarker, EncodingType: encoding, MaxUploads: limit}
@@ -112,7 +107,7 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, r
 	result.Prefix = encodeListText(result.Prefix, encoding == "url")
 	result.KeyMarker = encodeListText(result.KeyMarker, encoding == "url")
 	result.NextKeyMarker = encodeListText(result.NextKeyMarker, encoding == "url")
-	h.writeListingXML(w, r, req, result)
+	writeS3XML(w, http.StatusOK, req.requestID, result)
 }
 
 func listProviderObjects(ctx context.Context, p objectstorage.Provider, bucket string, req objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error) {
