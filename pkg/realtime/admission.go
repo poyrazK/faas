@@ -16,6 +16,9 @@ import (
 // changed auth mode or OIDC policy, or an origin removed from allowed_origins.
 // Without it those sockets lived until their maximum age, up to 7 days.
 type connectionAdmission struct {
+	// recorded is false for a connection admitted without a record (the zero
+	// value); such a connection is never closed by an endpoint update.
+	recorded          bool
 	ticket            bool
 	mode              AuthMode
 	oidcPolicy        string
@@ -25,7 +28,7 @@ type connectionAdmission struct {
 }
 
 func newConnectionAdmission(endpoint Endpoint, ticket, browserCredential bool, staticToken, origin string) connectionAdmission {
-	a := connectionAdmission{ticket: ticket, mode: endpoint.ClientAuth.Mode, browserCredential: browserCredential}
+	a := connectionAdmission{recorded: true, ticket: ticket, mode: endpoint.ClientAuth.Mode, browserCredential: browserCredential}
 	if endpoint.ClientAuth.Mode == AuthModeOIDCJWT {
 		a.oidcPolicy = oidcPolicyFingerprint(endpoint.ClientAuth)
 	}
@@ -53,6 +56,9 @@ func oidcPolicyFingerprint(policy AuthPolicy) string {
 // admits reports whether endpoint, as configured now, would still accept
 // the connection. Tickets are rechecked against their own store every second.
 func (a connectionAdmission) admits(endpoint *Endpoint, now time.Time) bool {
+	if !a.recorded {
+		return true
+	}
 	if a.origin != "" && (a.browserCredential || len(endpoint.AllowedOrigins) > 0) && !slices.Contains(endpoint.AllowedOrigins, a.origin) {
 		return false
 	}

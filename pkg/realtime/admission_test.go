@@ -42,6 +42,7 @@ func TestConnectionAdmissionAfterEndpointUpdate(t *testing.T) {
 		{"origin removed from allowed origins", admittedOIDC, Endpoint{ClientAuth: oidc, AllowedOrigins: []string{"https://other.example.com"}}, false},
 		{"browser credential needs an origin policy", browser, Endpoint{ClientAuth: oidc}, false},
 		{"ticket survives an auth mode change", ticket, Endpoint{ClientAuth: AuthPolicy{Mode: AuthModeOIDCJWT}}, true},
+		{"no admission record is never judged", connectionAdmission{}, static, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.admission.admits(&tt.endpoint, now); got != tt.want {
