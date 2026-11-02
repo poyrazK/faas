@@ -70,6 +70,12 @@ static_check() {
     || fail "basebackup push does not use the keyless backup identity helper"
   grep -Fq 'Environment=FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py' "$prune_unit" \
     || fail "WAL prune does not use the keyless backup identity helper"
+  # The daily prune hashes about 24 GB of WAL from PostgreSQL's disk; unbounded
+  # it stalled every control-plane database call for minutes.
+  grep -Eq '^IOReadBandwidthMax=/var/lib/pgsql/archive [0-9]+[KMG]$' "$prune_unit" \
+    || fail "WAL prune unit does not cap its reads of the WAL archive disk"
+  grep -Eq '^MemoryHigh=[0-9]+[KMG]$' "$prune_unit" \
+    || fail "WAL prune unit does not bound its page cache"
   grep -Fq 'off_host_backup_wal_path' "$postgres" \
     || fail "PostgreSQL archive command is not tied to the canonical WAL variable"
   grep -Fq 'ALTER SYSTEM RESET archive_command' "$postgres" \

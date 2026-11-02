@@ -31,7 +31,6 @@ AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
 AppendDeploymentLog
 AppendDeploymentStage
-AppendEventWithTrace
 AppendSnapshotStorage
 AppendUploadBytes
 ApplyProjectPlan
