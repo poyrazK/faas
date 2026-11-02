@@ -47505,7 +47505,7 @@ CREATE TABLE public.oidc_exchanged_tokens (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     scopes text[] DEFAULT ARRAY['deploy:write'::text] NOT NULL,
     app_id uuid,
-    CONSTRAINT oidc_exchanged_tokens_scopes_check CHECK (((scopes <@ ARRAY['deploy:write'::text, 'project_environments:read'::text, 'project_environments:qualify'::text]) AND (cardinality(scopes) > 0)))
+    CONSTRAINT oidc_exchanged_tokens_scopes_v2_check CHECK (((scopes <@ ARRAY['deploy:write'::text, 'project_environments:read'::text, 'project_environments:qualify'::text, 'previews:read'::text]) AND (cardinality(scopes) > 0)))
 );
 
 
