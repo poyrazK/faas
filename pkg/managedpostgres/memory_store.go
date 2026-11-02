@@ -80,12 +80,12 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	if limit < 1 || limit > 100 {
 		return Database{}, false, ErrInvalid
 	}
-	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" {
+	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" || !database.Preview.IsZero() {
 		return Database{}, false, ErrInvalid
 	}
 	key := databaseNameKey(database)
 	if id, ok := s.names[key]; ok {
-		if s.databases[id].EnvironmentCloneOperationID != "" {
+		if s.databases[id].EnvironmentCloneOperationID != "" || !s.databases[id].Preview.IsZero() {
 			return Database{}, false, ErrConflict
 		}
 		return cloneDatabase(s.databases[id]), false, nil
@@ -111,7 +111,9 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	}
 	active := 0
 	for _, existing := range s.databases {
-		if s.sameQuotaOwner(ctx, existing, database) && existing.State != StateDeleted {
+		// A PR preview environment's database is outside the plan's limit
+		// (ADR-20261102123523).
+		if s.sameQuotaOwner(ctx, existing, database) && existing.State != StateDeleted && existing.Preview.IsZero() {
 			active++
 		}
 	}

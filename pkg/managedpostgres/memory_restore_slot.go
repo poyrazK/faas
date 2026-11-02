@@ -38,7 +38,7 @@ func (s *MemoryStore) CountSubjectDatabases(_ context.Context, subjectID string)
 	defer s.mu.Unlock()
 	var count int64
 	for _, database := range s.databases {
-		if database.State != StateDeleted && s.billingSubject(database) == subjectID {
+		if database.State != StateDeleted && database.Preview.IsZero() && s.billingSubject(database) == subjectID {
 			count++
 		}
 	}
