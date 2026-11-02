@@ -195,8 +195,11 @@ tracing:
   sample_ratio: 0.25
 ```
 
-Exports also count toward your plan's request telemetry rate limit; spans that
-exceed it are dropped and the app keeps serving.
+Exports have their own rate limit, the same per-minute rate as your plan's
+request telemetry, so tracing never uses up the budget your request records
+need. Spans that exceed it are dropped and the app keeps serving. An app in an
+organization that owns its resources is limited by the organization's plan,
+not the plan of whoever created the app.
 
 ## Using your own collector
 
@@ -206,6 +209,18 @@ your OpenTelemetry configuration alone, and a Python app that ships its own
 `opentelemetry-sdk` is never instrumented a second time. Your existing exporter
 keeps working; to send spans to the debugger as well, export to the public
 `/v1/otel/v1/traces` endpoint with an API key.
+
+The key needs the `admin`, `deploy:write` or `metrics:write` scope; a
+read-only key gets `403`. Spans attach to requests of the trace in apps the
+key can write to:
+
+- A key bound to an organization attaches spans to that organization's apps,
+  whoever created them, while you can deploy there (owner, admin or
+  developer).
+- Any other key attaches spans to your own apps. Apps of an organization you
+  have left, or can no longer deploy to, are skipped.
+
+The endpoint answers `404` while tracing is not enabled for your account.
 
 ## Limits and behavior
 

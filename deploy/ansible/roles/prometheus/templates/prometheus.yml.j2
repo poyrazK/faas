@@ -138,6 +138,13 @@ scrape_configs:
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
     target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
+    # Where s3.<domain> resolves (ADR step 6): "tunnel" once the operator sets
+    # faas_object_gateway_endpoint_on_tunnel at the cutover. Before it the
+    # compute gateways serve at most the load test's pilot host, and
+    # FaasComputeObjectGatewayUnavailable stays silent.
+    relabel_configs:
+      - target_label: s3_endpoint_route
+        replacement: "{{ 'tunnel' if faas_object_gateway_endpoint_on_tunnel | default(false) | bool else 'control_plane' }}"
   - job_name: "cloudflared-s3"
     http_sd_configs:
       - url: "{{ prom_compute_cloudflared_s3_discovery_url }}"

@@ -423,7 +423,8 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if eventType != "" && eventType != "issues" && eventType != "push" && eventType != "pull_request" &&
-		eventType != "installation" && eventType != "installation_repositories" && eventType != "repository" {
+		eventType != "installation" && eventType != "installation_repositories" && eventType != "repository" &&
+		eventType != "installation_target" {
 		// An authenticated event githubd does not route (check_suite,
 		// workflow_run, ... when the App subscribes to more than it needs) is
 		// not a failure: a 4xx would show as a failed delivery in GitHub's log
@@ -513,7 +514,7 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 		s.writeWebhookResult(w, result, err, observe)
 		return
 	}
-	if eventType == "installation" || eventType == "installation_repositories" || eventType == "repository" {
+	if eventType == "installation" || eventType == "installation_repositories" || eventType == "repository" || eventType == "installation_target" {
 		if err := s.Service.HandleInstallationLifecycle(r.Context(), eventType, body); err != nil {
 			s.Log.Error("githubd lifecycle webhook handle", "event_type", logsanitize.Field(eventType), "err", logsanitize.FieldAny(err))
 			http.Error(w, "internal", http.StatusInternalServerError)

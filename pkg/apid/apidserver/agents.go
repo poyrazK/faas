@@ -38,7 +38,8 @@ func (s *server) configureAgents(pool *pgxpool.Pool) {
 	s.agentAPI = h
 }
 
-// configureAgentCallbacks wires ADR-20261030125501 §3's callback URLs. The
+// configureAgentCallbacks wires ADR-20261030125501 §3's callback URLs and
+// §4's toolset, whose sleeps are realtime schedules on the inbox. The
 // signing key derives from the session key, which every apid replica shares;
 // a callback's account must have the agents capability when it posts.
 func (s *server) configureAgentCallbacks(h *agents.Handler) {
@@ -47,6 +48,12 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	}
 	if revocations, ok := h.Store.(agents.CallbackRevocations); ok {
 		h.Revocations = revocations
+	}
+	if sleeps, ok := s.store.(agents.SleepSchedules); ok {
+		h.Sleeps = sleeps
+	}
+	if runs, ok := h.Store.(agents.RunCallbackStore); ok {
+		h.RunCallbacks = runs
 	}
 	if s.sessions != nil {
 		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
@@ -243,6 +250,56 @@ func (s *server) receiveAgentCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agentAPI.ReceiveCallback(w, r)
+}
+
+// The ADR-20261030125501 §4 toolset routes carry no account credential:
+// an invocation is backed by the callback URL in its body.
+func (s *server) getAgentToolset(w http.ResponseWriter, r *http.Request) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.Toolset(w, r)
+}
+
+// agentToolInvokeRoute serves an invocation with or without the app's
+// credential. A credential goes through the callback issuers' chain, so a
+// bad one is refused as it is there; gregale_run requires one.
+func (s *server) agentToolInvokeRoute() http.HandlerFunc {
+	credentialed := s.agentCallbackCallerRoute(func(w http.ResponseWriter, r *http.Request, caller agents.CallbackCaller) {
+		s.invokeAgentTool(w, r, &caller)
+	})
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			credentialed(w, r)
+			return
+		}
+		s.invokeAgentTool(w, r, nil)
+	}
+}
+
+func (s *server) invokeAgentTool(w http.ResponseWriter, r *http.Request, caller *agents.CallbackCaller) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.InvokeTool(w, r, caller)
+}
+
+// runAgentRunCallbacks publishes finished gregale_run runs into their
+// threads (ADR-20261030125501 §4).
+func (s *server) runAgentRunCallbacks(ctx context.Context) {
+	if s.agentAPI != nil {
+		s.agentAPI.RunRunCallbacks(ctx)
+	}
+}
+
+func (s *server) closeAgentToolThread(w http.ResponseWriter, r *http.Request) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.CloseThread(w, r)
 }
 
 func (s *server) cancelAgentRun(w http.ResponseWriter, r *http.Request, acct state.Account) {

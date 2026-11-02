@@ -19,7 +19,10 @@ import (
 // read. The counts are the month's so far, and the maxima are the
 // plan-tightened ceilings they are checked against.
 type ObjectReadAdmission struct {
-	Err               error
+	Err error
+	// DownloadErr refuses object bodies, not HEAD or listing, while the
+	// account stores more than its plan's ceiling (ADR-20261101214152).
+	DownloadErr       error
 	Period            time.Time
 	Requests          int64
 	EgressBytes       int64
@@ -68,6 +71,7 @@ func objectReadAdmission(s ObjectUsageSnapshot, bucket string, at time.Time, p a
 	}
 	p = s.planPolicy(p)
 	u, _ := summarizeObjectUsage(s, p, at)
+	out.DownloadErr = storedOverPlanCeiling(s, u)
 	out.Requests, out.EgressBytes, out.Authorizations = u.RequestCount, u.EgressBytes, u.Authorizations
 	out.MaxRequests, out.MaxEgressBytes, out.MaxAuthorizations = p.MaxMonthlyRequests, p.MaxMonthlyEgressBytes, p.MaxMonthlyAuthorizations
 	return out

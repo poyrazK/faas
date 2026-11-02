@@ -74,6 +74,12 @@ func (l *AccountRequestLimiter) Allow(b state.ObjectBucket) bool {
 // writePublicReadRefusal answers an admission or reservation failure. A
 // reached budget is the account's own limit, not an outage.
 func writePublicReadRefusal(w http.ResponseWriter, err error) {
+	var limit *state.ObjectStorageLimitError
+	if errors.As(err, &limit) && limit.Kind == "account_bytes" {
+		// ADR-20261101214152: the owner stores more than its plan's ceiling.
+		http.Error(w, "this bucket's owner stores more than its plan allows; downloads resume once it is back under", http.StatusPaymentRequired)
+		return
+	}
 	if errors.Is(err, state.ErrObjectBudget) {
 		http.Error(w, "this bucket's public read allowance for the month is used up", http.StatusTooManyRequests)
 		return

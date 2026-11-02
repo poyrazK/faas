@@ -132,3 +132,112 @@ func (s *PgStore) DeleteQuietPausesBefore(ctx context.Context, cutoff time.Time,
 	}
 	return n, nil
 }
+
+// QuietPausedUsageStore records and reads the customer-visible quiet pause
+// usage: per instance-minute, the MB-seconds meterd did not bill because the
+// ledger proved the VM quiet-paused (ADR-20261023171905 rollout step 3).
+// PgStore and MemStore implement it; meterd and apid type-assert and skip
+// it without it.
+type QuietPausedUsageStore interface {
+	// RecordQuietPausedUsage records one instance-minute's unbilled
+	// paused MB-seconds. The first positive value wins, as for
+	// mb_seconds, so a caught-up minute never changes what the customer
+	// already saw.
+	RecordQuietPausedUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, pausedMBSeconds int64) error
+	// QuietPausedMBSecondsByMonth returns an account's unbilled paused
+	// MB-seconds for the UTC calendar month containing month.
+	QuietPausedMBSecondsByMonth(ctx context.Context, accountID string, month time.Time) (int64, error)
+}
+
+var (
+	_ QuietPausedUsageStore = (*PgStore)(nil)
+	_ QuietPausedUsageStore = (*MemStore)(nil)
+)
+
+// quietPausedMonth returns the half-open UTC calendar month containing t.
+func quietPausedMonth(t time.Time) (start, end time.Time) {
+	t = t.UTC()
+	start = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return start, start.AddDate(0, 1, 0)
+}
+
+// RecordQuietPausedUsage implements QuietPausedUsageStore.
+func (s *PgStore) RecordQuietPausedUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, pausedMBSeconds int64) error {
+	if pausedMBSeconds <= 0 {
+		return nil
+	}
+	arg := sqlc.RecordQuietPausedUsageParams{
+		Minute: pgTime(minute.UTC().Truncate(time.Minute)), PausedMbSeconds: pausedMBSeconds,
+	}
+	var err error
+	if arg.AccountID, err = parsePgUUID(accountID); err != nil {
+		return fmt.Errorf("state: record quiet paused usage: account %q: %w", accountID, err)
+	}
+	if arg.AppID, err = parsePgUUID(appID); err != nil {
+		return fmt.Errorf("state: record quiet paused usage: app %q: %w", appID, err)
+	}
+	if arg.InstanceID, err = parsePgUUID(instanceID); err != nil {
+		return fmt.Errorf("state: record quiet paused usage: instance %q: %w", instanceID, err)
+	}
+	if err := sqlc.New().RecordQuietPausedUsage(ctx, s.pool, arg); err != nil {
+		return fmt.Errorf("state: record quiet paused usage for instance %s: %w", instanceID, mapErr(err))
+	}
+	return nil
+}
+
+// QuietPausedMBSecondsByMonth implements QuietPausedUsageStore.
+func (s *PgStore) QuietPausedMBSecondsByMonth(ctx context.Context, accountID string, month time.Time) (int64, error) {
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return 0, fmt.Errorf("state: quiet paused usage: account %q: %w", accountID, err)
+	}
+	start, end := quietPausedMonth(month)
+	n, err := sqlc.New().QuietPausedMBSecondsByMonth(ctx, s.pool, sqlc.QuietPausedMBSecondsByMonthParams{
+		AccountID: account, MonthStart: pgTime(start), MonthEnd: pgTime(end),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("state: quiet paused usage for account %s: %w", accountID, mapErr(err))
+	}
+	return n, nil
+}
+
+// RecordQuietPausedUsage implements QuietPausedUsageStore. A new row
+// mirrors the SQL insert: zero billed usage, owned by the app's billing
+// subject.
+func (m *MemStore) RecordQuietPausedUsage(_ context.Context, accountID, appID, instanceID string, minute time.Time, pausedMBSeconds int64) error {
+	if pausedMBSeconds <= 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := minute.UTC().Truncate(time.Minute)
+	for i := range m.usage {
+		if m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
+			if m.usage[i].PausedMBSeconds == 0 {
+				m.usage[i].PausedMBSeconds = pausedMBSeconds
+			}
+			return nil
+		}
+	}
+	accountID = m.appBillingSubjectLocked(accountID, appID)
+	m.usage = append(m.usage, usageMinute{
+		AccountID: accountID, AppID: appID, MeterKind: "app", InstanceID: instanceID,
+		Minute: key, PausedMBSeconds: pausedMBSeconds,
+	})
+	m.recomputeMonthLocked(accountID, appID, key)
+	return nil
+}
+
+// QuietPausedMBSecondsByMonth implements QuietPausedUsageStore.
+func (m *MemStore) QuietPausedMBSecondsByMonth(_ context.Context, accountID string, month time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	start, end := quietPausedMonth(month)
+	var n int64
+	for _, u := range m.usage {
+		if u.AccountID == accountID && !u.Minute.Before(start) && u.Minute.Before(end) {
+			n += u.PausedMBSeconds
+		}
+	}
+	return n, nil
+}

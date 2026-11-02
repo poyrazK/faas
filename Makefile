@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -783,6 +783,8 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/cloudflare-s3-tunnel_test.sh
 	bash tests/load/s3-gateway/run_test.sh
 	bash deploy/scripts/cloudflare-app-dns_test.sh
+	bash deploy/scripts/cloudflare-origin-pull_test.sh
+	bash deploy/scripts/gcp-compute-edge-address_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check

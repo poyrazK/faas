@@ -74,6 +74,8 @@ The invocation limit is the app's request timeout under ADR-1180: Hobby 1 min, P
 
 The capability gateway (ADR-20261027090016) serves these platform tools over RAP. They acknowledge at once and post their results to the callback URL.
 
+Amendment (2026-11-02): until the gateway exists, apid serves them as a RAP toolset at `/v1/agent-tools` (rollout step 5). RAP tool names allow letters, digits, `_` and `-`, and model APIs refuse dots, so each tool's operation name is written with `_`: `gregale_sleep`, `gregale_run`, `gregale_github_subscribe`.
+
 | Tool | What it does |
 |---|---|
 | `gregale.run` | Starts an agent run (ADR-20261027090010) with the given harness, prompt and inputs, and posts its result when the run ends. Sandboxed shell, build and test work happens here, with the run's own pause and compression. |
@@ -123,10 +125,10 @@ Each step is one PR behind the `agents` capability.
    - **Routes.** `POST /v1/agent-callbacks` issues a URL for one thread of one of the account's realtime endpoints. `POST /v1/agent-callbacks/{token}` is the token-only route a tool posts to; it is limited per IP like `/v1/hooks/{token}`. The root is not `/v1/agents/callbacks/…` because that pattern conflicts with `/v1/agents/{agent}/runs` in Go's router. Both routes belong to the `agents` capability.
    - **Token.** `agcb1.<payload>.<mac>`: an HMAC-SHA256 over account, endpoint, thread, allowed kinds, issue time and expiry. Its key is derived with HKDF from apid's session key, which every replica shares. Decoding is strict, so a token has one spelling.
    - **When a tool posts.** The token's expiry is checked, then the account's `agents` capability, then that the endpoint still belongs to the account. A failure answers like an unknown route.
-   - **Publish.** `data` (JSON, at most `AgentCallbackPayloadMaxBytes`, the realtime message limit) is appended to the endpoint's `agent-inbox` channel with metadata `thread_id`, `kind` and `message_id`, and idempotency key `callback:{thread}:{message_id}`. A retried post lands once and gets the first sequence; the same `message_id` with other data is a 409.
+   - **Publish.** `data` (JSON, at most `AgentCallbackPayloadMaxBytes`, the realtime message limit) is appended to the endpoint's `agent-inbox` channel with metadata `thread_id`, `kind` and `message_id`, and idempotency key `callback:{thread}:{message_id}`, where each `:` in the thread becomes `~` (fix, 2026-11-02: both IDs may carry `:`, so thread `a:b` with message `c` and thread `a` with message `b:c` shared a key and the second result was refused with a 409; `~` is in neither ID, and a thread without `:` keeps its key). A retried post lands once and gets the first sequence; the same `message_id` with other data is a 409.
    - **Tests.** Unit and property tests in `pkg/apid/agents` cover the thread scope against tampered tokens, issue and post rules, refusal after issue, and landing once.
    **Built, part two (2026-11-01).**
-   - **Revocation.** `POST /v1/agent-callbacks/revocations` with `{endpoint_id, thread_id}` closes a thread to every URL issued for it until then. apid records the time in `agent_callback_revocations`, one row per endpoint and thread. A post is refused like an unknown route when its token was issued at or before that time. A URL issued later works, so a thread can reopen.
+   - **Revocation.** `POST /v1/agent-callbacks/revocations` with `{endpoint_id, thread_id}` closes a thread to every URL issued for it until then. apid records the time in `agent_callback_revocations`, one row per endpoint and thread. A post is refused like an unknown route when its token was issued at or before that time. A URL issued later works, so a thread can reopen. The database's clock dates both the revocation and a token's issue, so they compare on one clock (fix, 2026-11-02: tokens took apid's clock and revocations the database's, so with apid behind, a URL issued after a revocation never worked, and with apid ahead, one issued before a revocation outlived it).
    - **Rate limit.** Each apid counts one thread's posts in fixed one-minute windows. Past `AgentCallbacksPerMinutePerThread` (600) it answers `429 agent_callback_rate_limited` with the limit and the count. Each replica counts alone, so N replicas accept at most N × 600: the limit stops a runaway tool, and a post needs a valid token anyway.
    - **Tests.** `TestPropertyRevokedCallbackNeverPublishes`: over random issues, revocations and posts, a URL publishes exactly when it was issued after its thread's latest revocation. Tests also cover the revoke and rate-limit rules and the store's revocation record.
 4. The Infinity Postgres store adapter and the template app, and a journey in `tests/journeys`: a two-turn stateless agent that sleeps, wakes on its callback and answers.
@@ -175,6 +177,44 @@ Each step is one PR behind the `agents` capability.
    - **Model.** It is still scripted. Model access through the AI gateway (§6) waits on the relay in production.
    - **Journey.** `TestStatelessAgent` now runs once per template. The Infinity run's tool answers with a RAP `tool_result`.
 5. The platform tools: `gregale.sleep`, `gregale.run`, then `gregale.github.subscribe`.
+
+   **Step 5, part one (2026-11-02): Gregale's RAP toolset and `gregale_sleep`.** The capability gateway is still proposed, so apid serves the toolset, behind `agents`. The gateway can serve the same toolset later.
+   - **A standard RAP tool server.** `GET /v1/agent-tools/.well-known/rap-toolset` returns the toolset, `POST /v1/agent-tools/invoke` takes invocations, and `POST /v1/agent-tools/close_thread` is acknowledged. An Infinity runtime adds `https://api.gregale.dev/v1/agent-tools` to its tool servers.
+   - **The callback URL is the credential.** RAP leaves invocation authentication to the implementation.
+     - An invocation's `callback_url` must be a callback URL apid issued for the invocation's `group_id`, carrying tool results. It is checked as a post to it would be: signature, expiry, revocation, the account's `agents` capability and the per-thread rate limit.
+     - So the toolset needs no key, and a call can only answer its own thread.
+     - An invocation apid cannot answer is refused like an unknown route, and counts toward the per-IP failure limit.
+   - **Errors are tool results.** As RAP asks, a valid invocation is acknowledged with 200. Bad arguments, an unknown operation or a full schedule budget reach the agent as the call's tool result.
+   - **`gregale_sleep`.** It takes `seconds`, as Infinity's own `sleep` tool does, or an RFC 3339 `until`, and an optional `reason`. A sleep reaches at most `AgentSleepMaxSeconds` (30 days) ahead; an `until` that has passed wakes at once.
+     - The wake-up is the call's RAP tool result, such as `Slept for 60 seconds.`, held as a realtime schedule on the inbox until it is due. It is the inbox message a RAP tool posting that result would publish. A sleeping thread holds that row and nothing else.
+     - The schedule's ID derives from the thread and the call ID, so a retried invocation finds its sleep. A wake-up that fails to publish is retried.
+     - Revoking a thread's callback URLs cancels its pending sleeps. A sleep created while a revocation runs checks the revocation again and cancels itself, so a revoked thread never wakes (`TestPropertyRevokedThreadNeverWakes`).
+     - Sleeps count against the endpoint's 256 realtime schedules (`state.ManagedRealtimeScheduleLimit`, which also counts finished schedules for a day). That bounds the sleeps of one endpoint in preview; a sleep store of its own is left to the capability gateway.
+   - **Thread closure.** RAP's `close_thread` names a thread without a credential, so it changes nothing. A thread closes by revoking its callback URLs.
+   - **Next.** The templates do not call it yet. Part two wires `gregale_sleep` into the templates and the journey.
+
+   **Step 5, part two (2026-11-02): `agent-infinity-rust` sleeps.**
+   - **The template loads Gregale's toolset** from its RAP discovery endpoint, once per process, as RAP asks runtimes to. Each tool is invoked with Infinity's own `invoke_rap_tool` and a callback URL issued for the calling thread. Without the toolset, the agent runs with `lookup` alone.
+   - **The scripted model sleeps:** `sleep N` calls `gregale_sleep` when the toolset offers it, and an answer names the tool its result came from.
+   - **Journey.** The Infinity run of `TestStatelessAgent` also sleeps for 30 seconds, parks, and checks that the woken thread answers from the platform's tool result.
+   - **`agent-stateless-node` stays on `lookup`.** It is the hand-written loop, without a RAP client.
+   - **Fix: schema creation takes an advisory lock.** A new database's first slices run in parallel, and concurrent `CREATE TABLE IF NOT EXISTS` of one table collide in Postgres's catalog. The store tests hit it; the failed slice was retried, so it healed, but it failed once. Store errors now keep the server's code and message.
+   - **Prerequisite.** The wake-up is a realtime schedule, so it needs `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` on apid, as realtime triggers already do (ADR-1322).
+
+   **Step 5, part three (2026-11-02): `gregale_run`.**
+   - **The app's credential.** A callback URL names a thread, and tool servers hold callback URLs, so one alone cannot start a run.
+     - A `gregale_run` invocation also carries the app's `gregale:agents` workload token, or an API key with `deploy:write`. It goes through the same check as issuing a callback URL, and the caller must own the callback's endpoint.
+     - Without a credential the invocation gets a 401, which Infinity's RAP client turns into the call's error result. Any invocation that carries a credential is checked the same way.
+   - **Admission.** The arguments are those of `POST /v1/agents/{agent}/runs` without a checkout, GitHub target or deliveries: `agent`, `version`, `prompt`, `inputs` and `tenant`.
+     - The run is admitted under the account's plan limits, with trigger `api`.
+     - Its dedupe key derives from the endpoint, thread and call ID, so a retried invocation finds its run.
+     - Refusals the agent can act on, such as an unknown agent, a plan limit or bad arguments, are the call's tool result.
+   - **The link.** `agent_run_callbacks` (a new table, expand) records the run's endpoint, thread, call IDs and the callback URL's issue time, in the admitting transaction.
+   - **Delivery.** Every apid polls finished linked runs every 5 seconds and publishes each run's end into its thread as the call's RAP tool result.
+     - The result is JSON text with `run_id`, `state`, `outcome` and, for a run that succeeded, `result`. A result too large for one inbox message is left out, with `result_omitted`.
+     - The publish is idempotent and the link is marked after it, so a run's end lands once.
+     - A thread that can no longer receive it gets nothing: revoked since the call, its endpoint deleted, or its account without `agents`. The run itself still finishes; revoking a thread does not cancel its runs.
+   - **Next.** The template sends the app's workload token with platform tool invocations, and its scripted model learns to call `gregale_run`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 
 ## Open questions

@@ -241,6 +241,7 @@ type Loop struct {
 	workflowsDispatched               bool
 	workflowScheduleMinute            int64
 	workflowFailurePolicyAfter        string
+	workflowFailurePolicyNextPass     time.Time
 	workflowScheduleAfter             string
 	workflowScheduleComplete          bool
 	workflowScheduleFailed            bool

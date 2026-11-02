@@ -9,10 +9,11 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Edge-rule list kinds.
@@ -28,7 +29,7 @@ const (
 // EdgeRuleListMaxDescriptionBytes bounds a list's free-text description.
 const EdgeRuleListMaxDescriptionBytes = 500
 
-var edgeRuleListNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+var edgeRuleListNameRe = lazyregexp.New(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 // ValidateEdgeRuleListName checks a list name: 1–64 bytes of lowercase
 // letters, digits, '_' and '-', starting with a letter or digit.

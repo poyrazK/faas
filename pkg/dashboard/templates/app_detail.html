@@ -313,6 +313,7 @@
       {{if .Data.ProductControlURL}}<p><a href="{{.Data.ProductControlURL}}">Manage Product Control →</a></p>{{end}}
       {{if $.On "issues"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>{{end}}
       {{if $.On "debug"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/debug">Open production debugger →</a></p>{{end}}
+      {{if $.On "profile-captures"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/profiles/captures">Capture a profile from a running instance →</a></p>{{end}}
       {{if $.On "progressive-rollouts"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/release-safety">Review release safety →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/domains">Manage custom domains →</a></p>
       {{if $.On "instances"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/instances">Inspect instances →</a></p>{{end}}
@@ -409,10 +410,10 @@
         {{end}}
       {{else if eq .Data.GitHubConnection.State "installed"}}
         <p>GitHub is connected for <code>{{.Data.GitHubConnection.GitHubLogin}}</code>, but this app has no repository binding.</p>
-        <p><a href="/dashboard/apps/new">Bind a repository from the deploy wizard →</a></p>
+        <p><a href="/dashboard/apps/new?app={{.Data.App.Slug}}">Bind a repository →</a></p>
       {{else}}
         <p>This app is not connected to GitHub yet.</p>
-        <p><a href="/dashboard/account">Connect GitHub →</a></p>
+        <p><a href="/dashboard/apps/new?app={{.Data.App.Slug}}">Connect GitHub and bind a repository →</a></p>
       {{end}}
       {{end}}
 
