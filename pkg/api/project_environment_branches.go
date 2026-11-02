@@ -37,6 +37,9 @@ const (
 	CodeEnvironmentBranchManagedData = "environment_branch_managed_data_unsupported"
 	// CodeEnvironmentBranchDepth: a branch of a branch went too deep.
 	CodeEnvironmentBranchDepth = "environment_branch_depth_exceeded"
+	// CodeEnvironmentBranchPrivateNetwork: a project cannot have both
+	// environment branches and a workload on a private network yet.
+	CodeEnvironmentBranchPrivateNetwork = "environment_branch_private_network_unsupported"
 	// CodeEnvironmentBranchHasBranches: delete the branches of an
 	// environment before the environment itself.
 	CodeEnvironmentBranchHasBranches = "environment_has_branches"

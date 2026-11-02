@@ -8,3 +8,8 @@ func TestPgObjectBucketOverlays(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	objectBucketOverlays(t, s)
 }
+
+func TestPgProjectEnvironmentBranchPrivateNetworks(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	projectEnvironmentBranchPrivateNetworks(t, s)
+}

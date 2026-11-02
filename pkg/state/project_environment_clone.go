@@ -233,6 +233,13 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 			}
 		}
 	}
+	if clone.branch != nil {
+		for appID := range apps {
+			if _, attached := m.privateNetworkAttachments[appID]; attached {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrProjectEnvironmentBranchPrivateNetwork
+			}
+		}
+	}
 	if clone.branch != nil && managed > 0 && !clone.ShareResources && !clone.ManagedBindingsPrepared {
 		postgres, objects := m.projectCloneManagedSecretKindsLocked(apps, valueScopes)
 		clone.branchManagedPostgres, managed = postgres+objects, 0

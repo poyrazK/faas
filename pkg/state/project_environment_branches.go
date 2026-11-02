@@ -41,6 +41,11 @@ var (
 	ErrProjectEnvironmentBranchLimit    = fmt.Errorf("%w: environment branch limit reached", ErrConflict)
 	ErrProjectEnvironmentBranchChildren = fmt.Errorf("%w: environment has branches", ErrConflict)
 	ErrProjectEnvironmentNotBranch      = fmt.Errorf("%w: environment is not a branch", ErrNotFound)
+	// ErrProjectEnvironmentBranchPrivateNetwork keeps branches and private
+	// networks out of the same project (ADR-20261031193635 section 6). An
+	// attachment is per app and vmmd applies it to every instance of the app,
+	// so a branch instance would join the parent's network.
+	ErrProjectEnvironmentBranchPrivateNetwork = fmt.Errorf("%w: environment branches and private networks cannot share a project yet", ErrConflict)
 )
 
 // ProjectEnvironmentBranch is one branch row joined with its environment and

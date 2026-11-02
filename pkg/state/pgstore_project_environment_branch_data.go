@@ -11,6 +11,27 @@ import (
 
 // ADR-20261031193635 slice 2: the branch data reconciler's PostgreSQL state.
 
+// checkProjectEnvironmentBranchPrivateNetworks refuses a branch of a project
+// with a workload attached to a private network. The clone transaction holds
+// the project's app rows, which an attachment write locks too, so neither can
+// slip in beside the other.
+func checkProjectEnvironmentBranchPrivateNetworks(ctx context.Context, tx pgx.Tx, accountID, projectID string) error {
+	var attached bool
+	err := tx.QueryRow(ctx, `
+		select exists (
+			select 1 from app_private_network_attachments n
+			  join apps a on a.id = n.app_id
+			 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null
+		)`, accountID, projectID).Scan(&attached)
+	if err != nil {
+		return mapErr(err)
+	}
+	if attached {
+		return ErrProjectEnvironmentBranchPrivateNetwork
+	}
+	return nil
+}
+
 // checkProjectEnvironmentBranchManagedBindings counts the source's managed
 // PostgreSQL and object-storage secrets. The branch data reconciler copies
 // the databases and gives each bucket an overlay (slice 3), so both leave the

@@ -250,20 +250,34 @@ Overlay data must always pass through the gateway.
 
 ### 6. Networking and identity are scoped to the branch
 
-- **Service calls and DNS.**
-  - Service calls resolve inside the branch (#6034).
-  - Private service DNS gets the branch namespace that PR previews already have.
-  - A branch caller with no target in its branch is refused, not sent to production
-    (#6034's decision).
-- **Private networks.** Branch instances start without the parent app's private-network
-  attachments, because attachments are per app and the networks are shared at account
-  level. Opting a branch into a private network needs environment-scoped attachments,
-  which is a later slice.
-- **Egress identity.** Branches use shared egress, never the parent's static IP (#6044).
-  The egress allowlist comes with the per-environment workload settings.
-- **Workload identity.** Tokens carry the branch environment (#6044), so cloud trust
-  policies can tell a branch from production. Outbound integrations are refused to
-  branches, as they are to stages (#6044).
+A branch is a project environment whose deployments run under the branch's scope, so
+the stage-isolation fixes apply to it unchanged. Each keys on the caller deployment's
+scope, which for a branch is its slug: never `default` (reserved for every environment)
+or `production` (refused for branches).
+- **Service calls and DNS** (#6034). A service call resolves to the target's deployment
+  in the caller's environment. A branch has one for every parent workload (section 2), so
+  branch calls stay in the branch. A branch caller whose target has no branch deployment
+  is refused, not sent to production. PR previews keep their separate-app namespace; a
+  branch needs none.
+- **Private networks** (slice 4, as built). An attachment is per app, and vmmd applies an
+  app's attachment to every live instance of the app, at boot and on every replay of the
+  attachment. A branch instance would therefore join the parent's network. Until vmmd can
+  keep an instance out of its app's network, branches and private networks do not share
+  a project: branching a project with an attached workload is refused, and so is
+  attaching a workload while its project has branches. Both answer 409
+  `environment_branch_private_network_unsupported`. The store checks both sides under the
+  project's app-row locks, so neither can slip in beside the other. The follow-up lets
+  branch instances start without the parent's attachments: a per-instance exclusion
+  carried from schedd to vmmd and kept across vmmd adoption, which needs `test-metal`.
+  Opting a branch into a network needs environment-scoped attachments after that.
+- **Egress identity** (#6044). Only a production-lane deployment gets the app's static
+  egress IP, so branches leave through shared egress. The egress allowlist comes with the
+  per-environment workload settings.
+- **Workload identity** (#6044). Tokens carry the caller's environment, so cloud trust
+  policies can tell a branch from production. Outbound integrations refuse every
+  non-production environment, branches included.
+
+`environment_branches_enabled` stays off until #6034 and #6044 merge.
 - **Credentials.**
   - Every managed binding in a branch gets fresh credentials for the branch's own
     database or overlay bucket, never the parent's.
@@ -323,7 +337,7 @@ Overlay data must always pass through the gateway.
 | 1 | Branch primitive: schema, create/list/delete, TTL sweeper, config copy, unprimed artifact deployments, cold boot on first request, limits, gate. | Create p99 < 100 ms apid-side. First request cold-boots with no build row. Parent deployments, traffic and snapshots unchanged. Delete leaves nothing. |
 | 2 | PostgreSQL branches: branch data reconciler (restore at T, bind into the branch, data-gated activation), orphaned-copy deletion. A separate database allowance is a follow-up. | The copy is restored at T and bound with new credentials. Workloads stay dark until it exists. The copy and its binding are gone after delete. |
 | 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and read-through copy are follow-ups. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
-| 4 | Network and identity scoping: branch DNS namespace, private networks off, identity claims. | A branch caller never reaches a production service or private network. |
+| 4 | Network and identity scoping. Service calls, egress and identity come from #6034 and #6044, which key on the deployment scope. Built here: branches and private networks refuse each other per project. Branch instances without the parent's attachments are a follow-up. | A branch caller never reaches a production service or private network. |
 | 5 | Restore with a new identity (opt-in), after the credential gate in section 3. | Identity digest acknowledged. A wrong or missing digest cold-boots. Parent credentials are refused from the branch. |
 | 6 | `contained` and `simulated` egress. | Rehearsal conformance against a branch. |
 

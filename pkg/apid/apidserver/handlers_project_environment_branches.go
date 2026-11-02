@@ -132,10 +132,40 @@ func (s *server) publishEnvironmentBranchWorkloads(ctx context.Context, store st
 	return workloads, nil
 }
 
+// environmentBranchPrivateNetworkProblem answers both sides of the rule
+// that branches and private networks do not share a project yet
+// (ADR-20261031193635 section 6): a private-network attachment is per app,
+// and every instance of the app would join the network, a branch's too.
+func environmentBranchPrivateNetworkProblem() *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchPrivateNetwork,
+		"Environment branches cannot use private networks yet",
+		"a project cannot have environment branches while one of its workloads is attached to a private network: detach the workload, or delete the project's branches first")
+}
+
+// environmentBranchesBlockPrivateNetwork refuses attaching a project
+// workload while the project has environment branches. The store refuses the
+// same race-free; this answers before a network address is reserved.
+func (s *server) environmentBranchesBlockPrivateNetwork(ctx context.Context, acct state.Account, app state.App) *api.Problem {
+	store, ok := s.store.(state.ProjectEnvironmentBranchStore)
+	if !ok || app.ProjectID == "" {
+		return nil
+	}
+	branches, err := store.ListProjectEnvironmentBranches(ctx, acct.ID, app.ProjectID)
+	if err != nil {
+		return api.ErrCapacity("could not check the project's environment branches")
+	}
+	if len(branches) > 0 {
+		return environmentBranchPrivateNetworkProblem()
+	}
+	return nil
+}
+
 func (s *server) environmentBranchCreateProblem(ctx context.Context, acct state.Account, project state.Project, parent, slug string, limits api.Limits, err error) *api.Problem {
 	var managed *state.ProjectEnvironmentCloneManagedBindingsError
 	var quota *state.ProjectEnvironmentCloneQuotaError
 	switch {
+	case errors.Is(err, state.ErrProjectEnvironmentBranchPrivateNetwork):
+		return environmentBranchPrivateNetworkProblem()
 	case errors.As(err, &managed):
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchManagedData,
 			"Environment branch cannot copy the parent's managed data",
