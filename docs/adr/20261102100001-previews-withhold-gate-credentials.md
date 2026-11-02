@@ -1,4 +1,4 @@
-# ADR-20261102100000: Previews withhold platform gate credentials; losing the repository retires whole PR environments
+# ADR-20261102100001: Previews withhold platform gate credentials; losing the repository retires whole PR environments
 
 - **Status:** accepted
 - **Date:** 2026-11-02

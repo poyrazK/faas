@@ -40,7 +40,7 @@ func previewCredentialHandler(t *testing.T, mode string, preview bool) *Handler 
 // A preview keeps its production app's password and API-key gates, and runs
 // a pull request's unreviewed code. The gateway handed the verified
 // Authorization header on, so the PR's code could read the production
-// password or the caller's Gregale API key (ADR-20261102100000).
+// password or the caller's Gregale API key (ADR-20261102100001).
 func TestPreviewDoesNotReceiveGateCredential(t *testing.T) {
 	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte("alice:s3cret"))
 	bearer := "Bearer " + validKeyFormat("000000000000000000000000000000000000000000000001")

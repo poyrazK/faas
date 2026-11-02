@@ -6575,7 +6575,7 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 	}
 	// A project left without an installation by a revoke or a repository
 	// removal takes the installation its app is reconnected through, for the
-	// same repository (ADR-20261102100000).
+	// same repository (ADR-20261102100001).
 	if _, err := tx.Exec(ctx, `
 		update projects p set install_id = $2, updated_at = now()
 		  from apps a
@@ -6595,7 +6595,7 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 // installation, or the repository's access, no close event reaches them. A
 // preview belongs to the production app its PR environment's root previews,
 // so the previews of a project's other services go with the bound app's
-// (ADR-20261102100000); they kept serving PR code to the end of their lease.
+// (ADR-20261102100001); they kept serving PR code to the end of their lease.
 func markInstallationPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, installationID int64, repos []string) error {
 	_, err := tx.Exec(ctx, `
 		update apps set preview_pr_state = $2, preview_expires_at = now()
