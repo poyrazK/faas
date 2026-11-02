@@ -591,7 +591,10 @@ Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication,
 ACLs, and bucket create/delete through the S3 protocol remain explicit
-`NotImplemented` gaps. Browser form uploads (presigned POST with a policy
+`NotImplemented` gaps, except that a write's `x-amz-acl: private` or
+`bucket-owner-full-control` is accepted and ignored. Every s3-gatewayd response
+carries `Cloudflare-CDN-Cache-Control: no-store`, so Cloudflare never keeps a
+private response; the cache-bypass rule below is still needed for HEAD requests. Browser form uploads (presigned POST with a policy
 document) are not supported: the gateway treats them as anonymous requests and
 answers 403 `SignatureDoesNotMatch`, so browsers should upload with a presigned
 PUT URL instead. Keys containing `/./` or `/../` path segments cannot be used
@@ -911,8 +914,20 @@ Gateway safety needs:
 - a `gateway_metering_since` that is not in the future;
 - `max_monthly_cost_millicents: 0`.
 
-Paid plans set no byte, request or authorization ceilings of their own, so
-size these values for the largest plan.
+Only buckets created after `gateway_metering_since` qualify (ADR-627), and an
+account with an older bucket, even one deleted this month, has every read and
+write of every bucket refused as stale. Never move it later on a deployment
+that already has buckets, and turn the mode on before the first customer
+bucket. Production has run this mode since `2026-10-12T08:41:00Z`, before its
+first bucket.
+
+A paid account's stored-bytes ceiling is its included storage plus what its
+spend cap buys (ADR-20261101214152); without a cap it is
+`max_account_bytes`. Paid plans set no request or authorization ceilings of
+their own, so size those values, and `max_account_bytes` for accounts that
+clear their cap, for the largest plan. `max_account_keys` is at most one
+million (`api.MaxObjectStorageAccountKeys`), because a bucket is metered by
+listing it whole.
 
 Example safety values **only**, not approved pricing or plan allowances:
 

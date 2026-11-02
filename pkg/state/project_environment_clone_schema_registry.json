@@ -11949,6 +11949,18 @@
     "kind": "operational"
   },
   {
+    "table": "node_memory_reports",
+    "columns": [
+      "frozen_instances",
+      "measured_at",
+      "measured_mb",
+      "node_id",
+      "reported_at",
+      "used_mb"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "notification_channels",
     "columns": [
       "account_id",
@@ -12880,6 +12892,7 @@
     "table": "oidc_exchanged_tokens",
     "columns": [
       "account_id",
+      "app_id",
       "audience",
       "created_at",
       "expires_at",

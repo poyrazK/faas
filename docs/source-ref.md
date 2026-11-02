@@ -278,6 +278,12 @@ the job JWT is exchanged through `/v1/auth/oidc/exchange` for a five-minute
 deploy bearer. The optional `api-key` input remains available for installations
 that have not configured an OIDC subject binding yet.
 
+Under the trust policy Gregale creates for a connected repository, the bearer
+can deploy only the `app` the Action names, which must be bound to that
+repository, and only from runs on its deploy branches or `v*` release tags.
+Pull request runs cannot deploy (ADR-20261101100000; see
+[OIDC token exchange](auth.md#oidc-token-exchange)).
+
 ### Repository discovery for automation
 
 Customers with a `github:manage` API key can list the repositories visible to

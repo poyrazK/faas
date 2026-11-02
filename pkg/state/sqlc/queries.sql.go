@@ -27798,7 +27798,8 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, db DBTX, arg GetNo
 
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
-       audience, coalesce(jti, '') as jti, scopes, created_at
+       audience, coalesce(jti, '') as jti, scopes, created_at,
+       coalesce(app_id::text, '')::text as app_id
 from oidc_exchanged_tokens
 where token_hash = $1
   and expires_at > now()
@@ -27815,6 +27816,7 @@ type GetOIDCExchangedTokenByHashRow struct {
 	Jti       string
 	Scopes    []string
 	CreatedAt pgtype.Timestamptz
+	AppID     string
 }
 
 // Bearer hot-path lookup. Filters past-TTL rows out at the SQL
@@ -27834,6 +27836,7 @@ func (q *Queries) GetOIDCExchangedTokenByHash(ctx context.Context, db DBTX, toke
 		&i.Jti,
 		&i.Scopes,
 		&i.CreatedAt,
+		&i.AppID,
 	)
 	return i, err
 }
@@ -34569,8 +34572,8 @@ func (q *Queries) InsertNotificationChannel(ctx context.Context, db DBTX, arg In
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
 insert into oidc_exchanged_tokens
     (id, account_id, token_hash, expires_at, issuer_url, subject,
-     audience, jti, scopes)
-values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
+     audience, jti, scopes, app_id)
+values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9::uuid)
 returning id, account_id, token_hash, expires_at, issuer_url,
           subject, audience, coalesce(jti, '') as jti, scopes,
           created_at
@@ -34585,6 +34588,7 @@ type InsertOIDCExchangedTokenParams struct {
 	Audience  []string
 	Jti       pgtype.Text
 	Scopes    []string
+	AppID     pgtype.UUID
 }
 
 type InsertOIDCExchangedTokenRow struct {
@@ -34612,6 +34616,7 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 		arg.Audience,
 		arg.Jti,
 		arg.Scopes,
+		arg.AppID,
 	)
 	var i InsertOIDCExchangedTokenRow
 	err := row.Scan(
@@ -70571,6 +70576,26 @@ func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype
 	var plan string
 	err := row.Scan(&plan)
 	return plan, err
+}
+
+const objectUsageAccountPlanCap = `-- name: ObjectUsageAccountPlanCap :one
+SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+UNION ALL
+SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
+`
+
+type ObjectUsageAccountPlanCapRow struct {
+	Plan            string
+	OverageCapCents pgtype.Int8
+}
+
+// The plan and spend cap that set an account's object-storage ceilings
+// (ADR-1320, ADR-20261101214152). A null cap is no cap.
+func (q *Queries) ObjectUsageAccountPlanCap(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectUsageAccountPlanCapRow, error) {
+	row := db.QueryRow(ctx, objectUsageAccountPlanCap, id)
+	var i ObjectUsageAccountPlanCapRow
+	err := row.Scan(&i.Plan, &i.OverageCapCents)
+	return i, err
 }
 
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one

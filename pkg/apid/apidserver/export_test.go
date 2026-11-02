@@ -1973,3 +1973,14 @@ var ProjectReadinessOverrides = projectReadinessOverrides
 
 // SetEventPublishClock pins the event publish rate limiter's clock.
 func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }
+
+// AppErrorsPurgeStore is the store the app_errors retention purge needs.
+type AppErrorsPurgeStore = appErrorsPurgeStore
+
+// PurgeAppErrorsOnce runs one app_errors retention pass at now over every
+// account the store lists.
+func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func() time.Time) {
+	p := newAppErrorsPurger(store, nil, nil, slog.New(slog.DiscardHandler), true)
+	p.now = now
+	p.purgeAll(ctx)
+}

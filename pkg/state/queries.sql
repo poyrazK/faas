@@ -3308,8 +3308,8 @@ where a.account_id = sqlc.arg(account_id)::uuid
 -- Returns the full row (with created_at server-stamped).
 insert into oidc_exchanged_tokens
     (id, account_id, token_hash, expires_at, issuer_url, subject,
-     audience, jti, scopes)
-values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
+     audience, jti, scopes, app_id)
+values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, sqlc.narg(app_id)::uuid)
 returning id, account_id, token_hash, expires_at, issuer_url,
           subject, audience, coalesce(jti, '') as jti, scopes,
           created_at;
@@ -3319,7 +3319,8 @@ returning id, account_id, token_hash, expires_at, issuer_url,
 -- layer so the pg contract is "WHERE expires_at > NOW()". The
 -- MemStore mirror in pkg/state/memstore.go lazy-deletes instead.
 select id, account_id, token_hash, expires_at, issuer_url, subject,
-       audience, coalesce(jti, '') as jti, scopes, created_at
+       audience, coalesce(jti, '') as jti, scopes, created_at,
+       coalesce(app_id::text, '')::text as app_id
 from oidc_exchanged_tokens
 where token_hash = $1
   and expires_at > now();
@@ -5377,6 +5378,13 @@ SELECT id FROM resource_namespaces WHERE id = $1 FOR UPDATE;
 
 -- name: ObjectUsageAccountPlan :one
 SELECT a.plan FROM accounts a WHERE a.id=$1 UNION ALL SELECT o.plan FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
+
+-- name: ObjectUsageAccountPlanCap :one
+-- The plan and spend cap that set an account's object-storage ceilings
+-- (ADR-1320, ADR-20261101214152). A null cap is no cap.
+SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+UNION ALL
+SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
 
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;

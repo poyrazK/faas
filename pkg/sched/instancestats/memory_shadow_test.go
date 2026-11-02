@@ -107,6 +107,33 @@ func TestFrozenInstancesSkipThePeakHold(t *testing.T) {
 	}
 }
 
+// adr: 20261101091815 — an instance that misses samples keeps its recent
+// charge for MeasuredChargeHoldSeconds instead of its full reservation, so a
+// stream gap does not refuse every wake on a node booked past its ceiling; the
+// report counts the node's frozen instances.
+func TestMissedSamplesHoldTheRecentCharge(t *testing.T) {
+	r := NewReader()
+	p := &Poller{Reader: r}
+	instances := []state.Instance{
+		{ID: "a", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+		{ID: "f", NodeID: "n1", State: string(state.StateFrozen), RAMMB: 1024},
+	}
+	t0 := time.Unix(1_800_000_000, 0)
+	p.publishMemoryShadow(instances, []InstanceStat{{InstanceID: "a", RSSMB: 400}, {InstanceID: "f", RSSMB: 40}}, t0)
+	gap := t0.Add(10 * time.Second)
+	p.publishMemoryShadow(instances, nil, gap) // no samples this tick
+	// a: 400 x 1.25 = 500; f: 40 x 1.25 = 50.
+	if mb, frozen, _, ok := r.MemoryReport("n1", gap); !ok || mb != 550 || frozen != 1 {
+		t.Fatalf("during the gap MemoryReport = %d MB, %d frozen, %v; want 550, 1", mb, frozen, ok)
+	}
+	late := t0.Add(time.Duration(api.MeasuredChargeHoldSeconds+1) * time.Second)
+	p.publishMemoryShadow(instances, nil, late)
+	// Past the hold both book their full 1032 MB reservation.
+	if mb, _, _, ok := r.MemoryReport("n1", late); !ok || mb != 2*1032 {
+		t.Fatalf("after the hold MemoryReport = %d MB, %v; want 2064", mb, ok)
+	}
+}
+
 // adr: 20261017 connection survival, §2 memory (the ADR-909 amendment):
 // a node's instance bridges add to its measured charge and reserve nothing.
 func TestMemoryShadowChargesInstanceBridges(t *testing.T) {

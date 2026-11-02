@@ -1036,6 +1036,16 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
+// ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
+// memory report (ADR 20261101091815).
+func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
+	r.reportNodeMemory(ctx, r.store.(state.NodeMemoryReportStore), now)
+}
+func (r *Engine) NodeFrozenCount(nodeID string) int { return r.nodeFrozenCount(nodeID) }
+func (r *Engine) UnreportedNodeUsedMB(node state.ComputeNode, bookedMB int64) int64 {
+	return r.unreportedNodeUsedMB(node, bookedMB)
+}
+
 // MarkRestartInFlight records appID as restarting, as restartApp does, until
 // the returned func runs.
 func (e *Engine) MarkRestartInFlight(appID string) func() {

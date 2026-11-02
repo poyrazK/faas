@@ -1365,6 +1365,9 @@ type MemStore struct {
 	// CreateComputeNode to exercise the single-box path. Production
 	// (PgStore) gets the same row from migrations/00024_compute_nodes.
 	computeNodes map[string]ComputeNode
+	// nodeMemoryReports mirrors node_memory_reports by node id (ADR
+	// 20261101091815); nil until a scheduler first publishes.
+	nodeMemoryReports map[string]NodeMemoryReport
 	// edgeListenerHeartbeats mirrors compute_nodes.edge_listener_heartbeat_at,
 	// keyed by node name; nil until a gateway first reports.
 	edgeListenerHeartbeats map[string]time.Time
@@ -16455,7 +16458,8 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining):
+		// A migrating VM is resident on a node too (ADR 20261101091815).
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining), string(StateMigrating):
 			out = append(out, ins)
 		}
 	}
