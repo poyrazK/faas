@@ -404,23 +404,33 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 	if req.Region == "" {
 		req.Region = s.Host.ObjectStorage().DefaultRegion
 	}
+	id := uuid.NewString()
+	want := state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}
+	return s.ReserveRegionBucket(ctx, st, want)
+}
+
+// ReserveRegionBucket reserves want in its region the way a customer's new
+// bucket is reserved: on the region's placement pool when its backends have
+// bucket ceilings (ADR-20261029174627), else on the region's default
+// backend. Environment branch buckets (ADR-20261031193635) use it too, so
+// they never bypass a backend's ceiling.
+func (s *Service) ReserveRegionBucket(ctx context.Context, st state.ObjectBucketStore, want state.ObjectBucket) (state.ObjectBucket, error) {
 	if !s.Host.ObjectStorage().CanProvisionAllRegions() {
 		return state.ObjectBucket{}, state.ErrObjectUsageStale
 	}
-	id := uuid.NewString()
-	want := state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}
 	var b state.ObjectBucket
-	if s.Host.ObjectStorage().PlacementLimited(req.Region) {
+	var err error
+	if s.Host.ObjectStorage().PlacementLimited(want.Region) {
 		b, err = s.reservePlacedBucket(ctx, st, want)
 	} else {
 		var backend objectstorage.Backend
-		if backend, err = s.Host.ObjectStorage().Default(req.Region); err != nil {
+		if backend, err = s.Host.ObjectStorage().Default(want.Region); err != nil {
 			return state.ObjectBucket{}, err
 		}
 		want.BackendID, want.BackendFingerprint = backend.ID, backend.Fingerprint
 		b, err = st.ReserveObjectBucket(ctx, want, s.Host.ObjectStorage().MaxBucketsPerApp)
 	}
-	if err == nil && b.Region != req.Region {
+	if err == nil && b.Region != want.Region {
 		return b, state.ErrConflict
 	}
 	return b, err

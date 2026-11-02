@@ -101,9 +101,10 @@ The create request makes no provider call, boots nothing and copies no data.
    is recovered by schedd's prime recovery, which re-primes rows left in `snapshotting`.
 4. If any deployment cannot be created, apid deletes the branch.
 
-Managed PostgreSQL is copied after the transaction by the branch data reconciler
-(section 4). A parent with managed object storage is still refused
-(`environment_branch_managed_data_unsupported`) until overlay buckets land (section 5).
+Managed PostgreSQL and managed object storage are copied after the transaction by the
+branch data reconciler: databases as point-in-time copies (section 4), buckets as overlay
+buckets (section 5). Either leaves the branch's data pending, and its workloads dark,
+until the copies are bound.
 
 **Target:** apid-side p99 under 100 ms for a project at the plan's app cap. Rows are
 bounded by existing per-project caps.
@@ -194,27 +195,54 @@ As built in slice 2:
 
 ### 5. Object storage: overlay buckets in the S3 gateway
 
-Each bucket bound in the parent gets an **overlay bucket** in the branch. It is a real
-bucket row with its own physical name, its own credentials,
-`overlay_parent_bucket_id`, and `overlay_as_of = T`. The overlay lives in s3-gatewayd
-behind credential resolution, since a credential is bound to exactly one bucket
-(`pkg/s3gateway/credential_cache.go`).
+Each bucket bound in the parent gets an **overlay bucket** in the branch. It is a real,
+empty bucket in the branch's scope with its own physical name and its own credential,
+shaped like the parent's binding (same label, permission and secret prefix). Its link to
+the parent is a row in `object_bucket_overlays` (source bucket, consistency, `as_of = T`),
+a new table, so an older gateway or apid ignores it. Branch creation stays metadata only.
+The branch data reconciler (section 4) reserves each overlay bucket the way a customer's
+new bucket is reserved, in the parent's region and through the placement pool
+(`object.Service.ReserveRegionBucket`), so it never bypasses a backend's bucket ceiling.
+It writes the overlay row before provisioning the bucket, then binds it into the branch's
+scope (`pkg/apid/apidserver/environment_branch_objects.go`). No object is copied.
+
+The overlay lives in s3-gatewayd behind credential resolution, since a credential is
+bound to exactly one bucket (`pkg/s3gateway/overlay.go`):
 
 | Operation | Behaviour |
 |---|---|
-| GET/HEAD | Serve the branch's own object, or 404 on a branch tombstone. Otherwise read through to the parent (`prepareGatewayRead`, `pkg/s3gateway/version_reads.go`). |
-| PUT, multipart, copy | Write to the branch only. A copy whose source exists only in the parent becomes a server-side read-through copy. |
-| DELETE | Write a branch tombstone. The parent is never deleted from. |
-| LIST | Merge the branch's keys and tombstones over the parent's listing (`pkg/s3gateway/listing.go`). |
-| Version listing | Shows the branch's own versions only. |
+| GET/HEAD | Serve the branch's own object. On a branch 404 that is not a delete marker, and with no tombstone for the key, read through to the parent's current object through the parent's own backend, which may differ from the branch's. A read-through returns no version ID. |
+| PUT, multipart | Write to the branch only. |
+| DELETE (single and bulk) | Write a tombstone, then delete the branch's own object. The tombstone lands first, so the parent's object never shows through in between. The parent is never deleted from. A delete of a version ID is branch-only. |
+| ListObjectsV2 | Merge the branch's entries over the parent's (`listOverlayObjects`). The branch wins a key both hold, tombstoned parent keys are skipped, and a page stops at the first truncated list's last entry, so no key is skipped. Continuation tokens are the gateway's own: the start-after boundary of the next page. |
+| Copy, version listing, tagging, attributes, multipart listing | The branch's own objects only. |
 
-**Consistency.** Each overlay bucket records and reports its consistency:
-- **`as_of`**: used when the parent's placement supports versioning (today S3 and GCS) and
-  versioning is observed on. A read-through resolves the parent version that was current
-  at T, cached per key.
-- **`live_parent`**: used otherwise. A read-through serves the parent's current object, so
-  parent writes made after T show through. The branch says so in its `branch.data`
-  state.
+A read-through is admitted and metered against the branch bucket, which belongs to the
+same account. The gateway caches each bucket's overlay for 30 seconds. An overlay never
+changes its source, so only a deleted parent bucket can go stale, and a read through to
+it finds nothing.
+
+**Consistency.** Each overlay row records its consistency:
+- **`live_parent`** (built): a read-through serves the parent's current object, so parent
+  writes made after T show through.
+- **`as_of`** (later): for parents whose placement supports versioning (today S3 and GCS)
+  with versioning observed on, a read-through resolves the parent version that was
+  current at T. The gateway serves no other consistency, so a row it does not know reads
+  as an empty branch.
+
+**Known limits of `live_parent`.** A parent common prefix whose keys the branch deleted
+still lists. A copy whose source exists only in the parent returns 404; a server-side
+read-through copy is a follow-up. apid's object API (console and CLI object commands)
+shows the branch bucket's own objects only. Overlay data with the parent's objects is
+served by the gateway alone.
+
+**Cleanup.** The branch owns each overlay bucket through
+`project_environment_branch_buckets`, written before the bucket is reserved. After the
+branch is gone, the reconciler revokes the bucket's credentials, empties and deletes it
+(an environment-clone bucket is always emptied on delete) and drops its overlay and
+tombstones. A bucket reserved before its row recorded it is found by its deterministic
+name, which includes the branch environment's ID, so a branch re-created with the same
+slug never adopts its predecessor's bucket.
 
 **Direct-to-provider presigning.** It stays refused for overlay buckets. Today the one
 direct path is job-artifact download (`pkg/apid/apidserver/job_managed_objects.go`).
@@ -294,7 +322,7 @@ Overlay data must always pass through the gateway.
 | 0 | Prerequisites: #6034, #6037, #6044 merged; the clone-database cleanup fixes (E1/E2 from the 2026-10-30 stage audit) merged. | Already tracked. |
 | 1 | Branch primitive: schema, create/list/delete, TTL sweeper, config copy, unprimed artifact deployments, cold boot on first request, limits, gate. | Create p99 < 100 ms apid-side. First request cold-boots with no build row. Parent deployments, traffic and snapshots unchanged. Delete leaves nothing. |
 | 2 | PostgreSQL branches: branch data reconciler (restore at T, bind into the branch, data-gated activation), orphaned-copy deletion. A separate database allowance is a follow-up. | The copy is restored at T and bound with new credentials. Workloads stay dark until it exists. The copy and its binding are gone after delete. |
-| 3 | Overlay buckets with `as_of` and `live_parent` consistency. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. |
+| 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and read-through copy are follow-ups. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
 | 4 | Network and identity scoping: branch DNS namespace, private networks off, identity claims. | A branch caller never reaches a production service or private network. |
 | 5 | Restore with a new identity (opt-in), after the credential gate in section 3. | Identity digest acknowledged. A wrong or missing digest cold-boots. Parent credentials are refused from the branch. |
 | 6 | `contained` and `simulated` egress. | Rehearsal conformance against a branch. |

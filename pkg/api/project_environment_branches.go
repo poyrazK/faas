@@ -31,8 +31,9 @@ const (
 
 	// CodeEnvironmentBranchUnavailable: branches are switched off.
 	CodeEnvironmentBranchUnavailable = "environment_branch_unavailable"
-	// CodeEnvironmentBranchManagedData: the parent binds managed object
-	// storage, which branches cannot copy yet.
+	// CodeEnvironmentBranchManagedData: the parent binds managed data a
+	// branch cannot copy. Managed PostgreSQL and object storage are copied
+	// after creation (ADR-20261031193635 slices 2 and 3).
 	CodeEnvironmentBranchManagedData = "environment_branch_managed_data_unsupported"
 	// CodeEnvironmentBranchDepth: a branch of a branch went too deep.
 	CodeEnvironmentBranchDepth = "environment_branch_depth_exceeded"

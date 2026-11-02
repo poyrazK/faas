@@ -138,8 +138,8 @@ func (s *server) environmentBranchCreateProblem(ctx context.Context, acct state.
 	switch {
 	case errors.As(err, &managed):
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchManagedData,
-			"Environment branch cannot copy object storage yet",
-			"the parent environment binds managed object storage, which environment branches do not copy yet")
+			"Environment branch cannot copy the parent's managed data",
+			fmt.Sprintf("the parent environment binds %d managed secret(s) that environment branches cannot copy", managed.ManagedSecretCount))
 	case errors.As(err, &quota):
 		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Environment branch exceeds a configuration quota",
 			fmt.Sprintf("workload %s would hold %d %s; the plan allows %d", quota.WorkloadSlug, quota.Observed, quota.Resource, quota.Limit))

@@ -42,9 +42,10 @@ type ProjectEnvironmentClone struct {
 	// the same transaction (ADR-20261031193635); branchOut receives its row.
 	branch    *ProjectEnvironmentBranchCreate
 	branchOut *ProjectEnvironmentBranch
-	// branchManagedPostgres counts the source's managed PostgreSQL secrets.
-	// The branch's data reconciler copies them, so they leave the branch's
-	// data pending instead of refusing it.
+	// branchManagedPostgres counts the source's managed PostgreSQL and
+	// object-storage secrets. The branch's data reconciler copies the
+	// databases and overlays the buckets, so they leave the branch's data
+	// pending instead of refusing it.
 	branchManagedPostgres int
 }
 
@@ -234,10 +235,7 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 	}
 	if clone.branch != nil && managed > 0 && !clone.ShareResources && !clone.ManagedBindingsPrepared {
 		postgres, objects := m.projectCloneManagedSecretKindsLocked(apps, valueScopes)
-		if objects > 0 {
-			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, &ProjectEnvironmentCloneManagedBindingsError{ManagedSecretCount: objects}
-		}
-		clone.branchManagedPostgres, managed = postgres, 0
+		clone.branchManagedPostgres, managed = postgres+objects, 0
 	}
 	if managed > 0 && !clone.ShareResources && !clone.ManagedBindingsPrepared {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, &ProjectEnvironmentCloneManagedBindingsError{ManagedSecretCount: managed}

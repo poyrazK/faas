@@ -12,8 +12,9 @@ import (
 // ADR-20261031193635 slice 2: the branch data reconciler's PostgreSQL state.
 
 // checkProjectEnvironmentBranchManagedBindings counts the source's managed
-// PostgreSQL secrets, which the branch's data reconciler copies, and refuses
-// managed object storage, which a branch cannot copy yet.
+// PostgreSQL and object-storage secrets. The branch data reconciler copies
+// the databases and gives each bucket an overlay (slice 3), so both leave the
+// branch's data pending.
 func checkProjectEnvironmentBranchManagedBindings(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (int, error) {
 	var postgres, objects int
 	err := tx.QueryRow(ctx, `
@@ -27,10 +28,7 @@ func checkProjectEnvironmentBranchManagedBindings(ctx context.Context, tx pgx.Tx
 	if err != nil {
 		return 0, mapErr(err)
 	}
-	if objects > 0 {
-		return 0, &ProjectEnvironmentCloneManagedBindingsError{ManagedSecretCount: objects}
-	}
-	return postgres, nil
+	return postgres + objects, nil
 }
 
 func (s *PgStore) ClaimProjectEnvironmentBranchData(ctx context.Context, leaseToken string, now time.Time, lease time.Duration) (ProjectEnvironmentBranch, error) {

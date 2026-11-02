@@ -45983,6 +45983,49 @@ CREATE TABLE public.object_bucket_object_lock (
 
 
 --
+-- Name: object_bucket_overlay_tombstones; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_overlay_tombstones (
+    bucket_id uuid NOT NULL,
+    key text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_bucket_overlay_tombstones_key CHECK (((octet_length(key) >= 1) AND (octet_length(key) <= 1024)))
+);
+
+
+--
+-- Name: TABLE object_bucket_overlay_tombstones; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_bucket_overlay_tombstones IS 'ADR-20261031193635 keys an environment branch deleted, hiding its source bucket''s objects.';
+
+
+--
+-- Name: object_bucket_overlays; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_overlays (
+    bucket_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    source_app_id uuid NOT NULL,
+    consistency text DEFAULT 'live_parent'::text NOT NULL,
+    as_of timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_bucket_overlays_consistency CHECK ((consistency = ANY (ARRAY['live_parent'::text, 'as_of'::text]))),
+    CONSTRAINT object_bucket_overlays_not_self CHECK ((source_bucket_id <> bucket_id))
+);
+
+
+--
+-- Name: TABLE object_bucket_overlays; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_bucket_overlays IS 'ADR-20261031193635 environment branch buckets that read through to their source bucket for keys they never wrote.';
+
+
+--
 -- Name: object_bucket_versioning; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -50115,6 +50158,32 @@ CREATE TABLE public.project_environment_approvals (
     CONSTRAINT project_environment_approvals_project_slug_shape CHECK ((project_slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT project_environment_approvals_token_kind_check CHECK ((token_kind = ANY (ARRAY['plan'::text, 'promotion'::text])))
 );
+
+
+--
+-- Name: project_environment_branch_buckets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_branch_buckets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    app_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    copy_bucket_id uuid,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE project_environment_branch_buckets; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.project_environment_branch_buckets IS 'ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.';
 
 
 --
@@ -64578,6 +64647,22 @@ ALTER TABLE ONLY public.object_bucket_object_lock
 
 
 --
+-- Name: object_bucket_overlay_tombstones object_bucket_overlay_tombstones_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlay_tombstones
+    ADD CONSTRAINT object_bucket_overlay_tombstones_pkey PRIMARY KEY (bucket_id, key);
+
+
+--
+-- Name: object_bucket_overlays object_bucket_overlays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlays
+    ADD CONSTRAINT object_bucket_overlays_pkey PRIMARY KEY (bucket_id);
+
+
+--
 -- Name: object_bucket_versioning object_bucket_versioning_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66335,6 +66420,22 @@ ALTER TABLE ONLY public.project_environment_approvals
 
 ALTER TABLE ONLY public.project_environment_approvals
     ADD CONSTRAINT project_environment_approvals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_branch_buckets project_environment_branch_buckets_one_copy; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_buckets
+    ADD CONSTRAINT project_environment_branch_buckets_one_copy UNIQUE (environment_id, app_id, source_bucket_id);
+
+
+--
+-- Name: project_environment_branch_buckets project_environment_branch_buckets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_buckets
+    ADD CONSTRAINT project_environment_branch_buckets_pkey PRIMARY KEY (id);
 
 
 --
@@ -77488,6 +77589,13 @@ CREATE INDEX project_environment_approvals_id_lookup_idx ON public.project_envir
 --
 
 CREATE INDEX project_environment_approvals_lookup_idx ON public.project_environment_approvals USING btree (account_id, project_slug, environment_slug, plan_token_hash, expires_at);
+
+
+--
+-- Name: project_environment_branch_buckets_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branch_buckets_environment_idx ON public.project_environment_branch_buckets USING btree (environment_id);
 
 
 --
@@ -96162,6 +96270,30 @@ ALTER TABLE ONLY public.object_bucket_object_lock
 
 
 --
+-- Name: object_bucket_overlay_tombstones object_bucket_overlay_tombstones_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlay_tombstones
+    ADD CONSTRAINT object_bucket_overlay_tombstones_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_bucket_overlays(bucket_id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_overlays object_bucket_overlays_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlays
+    ADD CONSTRAINT object_bucket_overlays_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_overlays object_bucket_overlays_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlays
+    ADD CONSTRAINT object_bucket_overlays_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
 -- Name: object_bucket_versioning object_bucket_versioning_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -98327,6 +98459,14 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 ALTER TABLE ONLY public.project_environment_approvals
     ADD CONSTRAINT project_environment_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_buckets project_environment_branch_buckets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_buckets
+    ADD CONSTRAINT project_environment_branch_buckets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

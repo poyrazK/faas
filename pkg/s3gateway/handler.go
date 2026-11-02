@@ -113,6 +113,8 @@ type Handler struct {
 	log             *slog.Logger
 	touchMu         sync.Mutex
 	lastTouch       map[string]time.Time
+	// overlays caches environment branch bucket overlays (ADR-20261031193635).
+	overlays overlayCache
 }
 
 func New(c Config) (*Handler, error) {
@@ -958,6 +960,12 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 		return
 	}
 	defer h.closeResponseBody(response.Body, req.requestID)
+	// A key an environment branch never wrote reads through to its parent's
+	// bucket (ADR-20261031193635); a delete marker is the branch's own delete.
+	if native == "" && response.StatusCode == http.StatusNotFound && response.Header.Get("X-Amz-Delete-Marker") == "" &&
+		h.readThroughOverlay(w, r, req, key) {
+		return
+	}
 	if !h.downloadVersionHeaders(w, r, req, key, native, response) {
 		return
 	}

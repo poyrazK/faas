@@ -1416,6 +1416,9 @@ type MemStore struct {
 	projectEnvironmentBranches                map[string]ProjectEnvironmentBranch           // environment ID
 	projectEnvironmentBranchDeployments       map[string]projectEnvironmentBranchDeployment // deployment ID
 	projectEnvironmentBranchDatabases         map[string]ProjectEnvironmentBranchDatabase   // copy row ID
+	projectEnvironmentBranchBuckets           map[string]ProjectEnvironmentBranchBucket     // copy row ID
+	objectBucketOverlays                      map[string]ObjectBucketOverlay                // bucket ID
+	objectBucketOverlayTombstones             map[string]map[string]bool                    // bucket ID -> key
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
 	projectEnvironmentPromotionFlags          map[string]promotionFeatureFlags
 	projectEnvironmentQualifications          map[string][]ProjectEnvironmentQualification
@@ -2017,6 +2020,9 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		projectEnvironmentBranches:                map[string]ProjectEnvironmentBranch{},
 		projectEnvironmentBranchDeployments:       map[string]projectEnvironmentBranchDeployment{},
 		projectEnvironmentBranchDatabases:         map[string]ProjectEnvironmentBranchDatabase{},
+		projectEnvironmentBranchBuckets:           map[string]ProjectEnvironmentBranchBucket{},
+		objectBucketOverlays:                      map[string]ObjectBucketOverlay{},
+		objectBucketOverlayTombstones:             map[string]map[string]bool{},
 		projectEnvironmentPromotions:              map[string]ProjectEnvironmentPromotion{},
 		projectEnvironmentQualifications:          map[string][]ProjectEnvironmentQualification{},
 		projectEnvironmentPromotionWorkloads:      map[string][]ProjectEnvironmentPromotionWorkload{},

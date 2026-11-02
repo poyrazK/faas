@@ -9562,6 +9562,24 @@ type ObjectBucketObjectLock struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+// ADR-20261031193635 environment branch buckets that read through to their source bucket for keys they never wrote.
+type ObjectBucketOverlay struct {
+	BucketID       pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceBucketID pgtype.UUID
+	SourceAppID    pgtype.UUID
+	Consistency    string
+	AsOf           pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
+// ADR-20261031193635 keys an environment branch deleted, hiding its source bucket's objects.
+type ObjectBucketOverlayTombstone struct {
+	BucketID  pgtype.UUID
+	Key       string
+	CreatedAt pgtype.Timestamptz
+}
+
 type ObjectBucketVersioning struct {
 	BucketID         pgtype.UUID
 	DesiredStatus    string
@@ -11962,6 +11980,21 @@ type ProjectEnvironmentBranch struct {
 	DataLeaseToken      pgtype.UUID
 	DataLeaseUntil      pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+}
+
+// ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.
+type ProjectEnvironmentBranchBucket struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	EnvironmentSlug string
+	AppID           pgtype.UUID
+	SourceBucketID  pgtype.UUID
+	CopyBucketID    pgtype.UUID
+	LeaseToken      pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
 }
 
 // ADR-20261031193635 managed PostgreSQL copies owned by an environment branch; deleted with their bindings after the branch is gone.

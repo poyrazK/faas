@@ -13,15 +13,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-20261031193635 slice 2: the branch data reconciler. A branch whose
-// parent binds managed PostgreSQL starts with its data pending. The
-// reconciler restores each source database as of the branch point (a Neon
-// point-in-time branch), binds the copy into the branch's scope with fresh
-// credentials, marks the data ready and primes the branch's workloads, which
-// stay dark until then. It also deletes the copies of branches that are gone.
+// ADR-20261031193635 slices 2 and 3: the branch data reconciler. A branch
+// whose parent binds managed PostgreSQL or object storage starts with its
+// data pending. The reconciler restores each source database as of the
+// branch point (a Neon point-in-time branch) and gives each source bucket an
+// overlay bucket (environment_branch_objects.go), binds the copies into the
+// branch's scope with fresh credentials, marks the data ready and primes the
+// branch's workloads, which stay dark until then. It also deletes the copies
+// of branches that are gone.
 
 const (
 	environmentBranchDataInterval    = 5 * time.Second
@@ -29,8 +32,6 @@ const (
 	environmentBranchDataBatch       = 10
 	environmentBranchDataMaxAttempts = 20
 )
-
-var errEnvironmentBranchObjectStorage = errors.New("the parent binds object storage, which branches cannot copy yet")
 
 func (s *server) runEnvironmentBranchDataReconciler(ctx context.Context) {
 	store, ok := s.store.(state.ProjectEnvironmentBranchDataStore)
@@ -54,7 +55,7 @@ func (s *server) runEnvironmentBranchDataReconciler(ctx context.Context) {
 // reconcileEnvironmentBranchData deletes orphaned copies, then copies the
 // data of due branches, one bounded batch of each.
 func (s *server) reconcileEnvironmentBranchData(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, now time.Time) error {
-	var errs error
+	errs := s.reconcileOrphanedEnvironmentBranchBuckets(ctx, now)
 	for range environmentBranchDataBatch {
 		lease := uuid.NewString()
 		row, err := store.ClaimOrphanedProjectEnvironmentBranchDatabase(ctx, lease, now, environmentBranchDataLease)
@@ -104,6 +105,34 @@ func (s *server) reconcileEnvironmentBranchData(ctx context.Context, store state
 	return errs
 }
 
+// reconcileOrphanedEnvironmentBranchBuckets empties and deletes one bounded
+// batch of the buckets of branches that are gone.
+func (s *server) reconcileOrphanedEnvironmentBranchBuckets(ctx context.Context, now time.Time) error {
+	store, ok := s.store.(state.ProjectEnvironmentBranchBucketStore)
+	if !ok {
+		return nil
+	}
+	var errs error
+	for range environmentBranchDataBatch {
+		lease := uuid.NewString()
+		row, err := store.ClaimOrphanedProjectEnvironmentBranchBucket(ctx, lease, now, environmentBranchDataLease)
+		if errors.Is(err, state.ErrNotFound) {
+			break
+		}
+		if err != nil {
+			return errors.Join(errs, err)
+		}
+		if err := s.deleteEnvironmentBranchBucket(ctx, row); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("delete branch bucket for source %s: %w", row.SourceBucketID, err))
+			continue // the lease lapses and a later pass retries
+		}
+		if err := store.RemoveProjectEnvironmentBranchBucket(ctx, row.ID, lease); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+	return errs
+}
+
 func environmentBranchDataRetryDelay(attempt int) time.Duration {
 	delay := 5 * time.Second
 	for i := 1; i < attempt && delay < 10*time.Minute; i++ {
@@ -115,7 +144,7 @@ func environmentBranchDataRetryDelay(attempt int) time.Duration {
 // Permanent errors fail the branch's data instead of retrying: the plan
 // forbids the copy, or the request can never succeed.
 func environmentBranchDataPermanent(err error) bool {
-	return errors.Is(err, errEnvironmentBranchObjectStorage) || errors.Is(err, managedpostgres.ErrQuotaExceeded) ||
+	return errors.Is(err, errEnvironmentBranchBucketLimit) || errors.Is(err, managedpostgres.ErrQuotaExceeded) ||
 		errors.Is(err, managedpostgres.ErrInvalid) || errors.Is(err, managedpostgres.ErrUnsupported)
 }
 
@@ -123,8 +152,10 @@ func environmentBranchDataPermanent(err error) bool {
 // never carries provider text.
 func environmentBranchDataMessage(err error) string {
 	switch {
-	case errors.Is(err, errEnvironmentBranchObjectStorage):
-		return errEnvironmentBranchObjectStorage.Error()
+	case errors.Is(err, errEnvironmentBranchBucketLimit):
+		return errEnvironmentBranchBucketLimit.Error()
+	case errors.Is(err, objectstorage.ErrUnavailable), errors.Is(err, state.ErrObjectUsageStale):
+		return "object storage is unavailable; retrying"
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
 		return "the plan has no room for a copy of the parent's database; branching a database needs point-in-time restore and a free database slot"
 	case errors.Is(err, managedpostgres.ErrInvalid), errors.Is(err, managedpostgres.ErrUnsupported):
@@ -144,12 +175,10 @@ func environmentBranchDatabaseName(branch state.ProjectEnvironmentBranch, source
 }
 
 // copyEnvironmentBranchData restores each database the parent binds as of
-// the branch point and binds the copy into the branch's scope, once per
-// parent binding. Every step is idempotent, so a retry resumes.
+// the branch point, overlays each bucket it binds, and binds the copies into
+// the branch's scope once per parent binding. Every step is idempotent, so a
+// retry resumes.
 func (s *server) copyEnvironmentBranchData(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, branch state.ProjectEnvironmentBranch) error {
-	if s.managedPostgres == nil || s.managedPostgresBindings == nil {
-		return managedpostgres.ErrUnavailable
-	}
 	acct, err := s.store.AccountByID(ctx, branch.AccountID)
 	if err != nil {
 		return err
@@ -165,18 +194,30 @@ func (s *server) copyEnvironmentBranchData(ctx context.Context, store state.Proj
 	if err != nil {
 		return err
 	}
-	plans, err := s.planProjectEnvironmentBindingClones(ctx, acct, apps, snapshot.ValueScopes, false)
+	plans, err := s.planProjectEnvironmentBindingClonesFor(ctx, acct, apps, snapshot.ValueScopes, false, true)
 	if err != nil {
 		return err
 	}
+	if err := s.copyEnvironmentBranchDatabases(ctx, store, acct, branch, plans); err != nil {
+		return err
+	}
+	return s.overlayEnvironmentBranchBuckets(ctx, acct, branch, plans)
+}
+
+// copyEnvironmentBranchDatabases restores each database the parent binds as
+// of the branch point and binds the copy into the branch's scope.
+func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, acct state.Account, branch state.ProjectEnvironmentBranch, plans []projectEnvironmentBindingClone) error {
 	sources := map[string]managedpostgres.Database{}
 	for _, plan := range plans {
-		switch plan.kind {
-		case "managed_postgres":
+		if plan.kind == "managed_postgres" {
 			sources[plan.database.ID] = plan.database
-		case "object_storage":
-			return errEnvironmentBranchObjectStorage
 		}
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+	if s.managedPostgres == nil || s.managedPostgresBindings == nil {
+		return managedpostgres.ErrUnavailable
 	}
 	ids := make([]string, 0, len(sources))
 	for id := range sources {
@@ -186,7 +227,7 @@ func (s *server) copyEnvironmentBranchData(ctx context.Context, store state.Proj
 	for _, id := range ids {
 		source := sources[id]
 		row, err := store.RecordProjectEnvironmentBranchDatabase(ctx, state.ProjectEnvironmentBranchDatabase{
-			AccountID: acct.ID, ProjectID: project.ID, EnvironmentID: branch.EnvironmentID, EnvironmentSlug: branch.Slug,
+			AccountID: acct.ID, ProjectID: branch.ProjectID, EnvironmentID: branch.EnvironmentID, EnvironmentSlug: branch.Slug,
 			SourceDatabaseID: id, CopyName: environmentBranchDatabaseName(branch, id), PointInTime: branch.BranchPoint,
 		})
 		if err != nil {

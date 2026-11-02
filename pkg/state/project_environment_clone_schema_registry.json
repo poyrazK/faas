@@ -12068,6 +12068,28 @@
     }
   },
   {
+    "table": "object_bucket_overlay_tombstones",
+    "columns": [
+      "bucket_id",
+      "created_at",
+      "key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_bucket_overlays",
+    "columns": [
+      "account_id",
+      "as_of",
+      "bucket_id",
+      "consistency",
+      "created_at",
+      "source_app_id",
+      "source_bucket_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_bucket_versioning",
     "columns": [
       "bucket_id",
@@ -15037,6 +15059,23 @@
       "plan_token_hash",
       "project_slug",
       "token_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_branch_buckets",
+    "columns": [
+      "account_id",
+      "app_id",
+      "copy_bucket_id",
+      "created_at",
+      "environment_id",
+      "environment_slug",
+      "id",
+      "lease_token",
+      "lease_until",
+      "project_id",
+      "source_bucket_id"
     ],
     "kind": "operational"
   },

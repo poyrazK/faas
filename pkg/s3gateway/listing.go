@@ -2,6 +2,7 @@ package s3gateway
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -52,6 +53,15 @@ func (h *Handler) listObjectsV2(w http.ResponseWriter, r *http.Request, req requ
 	if !h.admit(w, r, req, "__list__", 0, false) {
 		return
 	}
+	through, overlaid, err := h.overlaySource(r.Context(), req)
+	if err != nil {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, "")
+		return
+	}
+	if overlaid {
+		h.listOverlayObjectsV2(w, r, req, through, q, limit)
+		return
+	}
 	page := objectstorage.ObjectPage{}
 	if limit > 0 {
 		if !h.recordProviderRequest(w, r, req) {
@@ -65,6 +75,35 @@ func (h *Handler) listObjectsV2(w http.ResponseWriter, r *http.Request, req requ
 	}
 	writeS3XML(w, http.StatusOK, req.requestID, encodedObjectsResult(req.bucket.Name, q, limit, page))
 }
+
+// listOverlayObjectsV2 answers ListObjectsV2 on an environment branch bucket
+// with the merge of the branch's objects and its parent's
+// (ADR-20261031193635). Its continuation tokens are the gateway's own.
+func (h *Handler) listOverlayObjectsV2(w http.ResponseWriter, r *http.Request, req, through requestContext, q url.Values, limit int32) {
+	after := q.Get("start-after")
+	if cursor := q.Get("continuation-token"); cursor != "" {
+		decoded, ok := decodeOverlayListCursor(cursor)
+		if !ok {
+			writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "The continuation token is invalid.", r.URL.Path, req.requestID)
+			return
+		}
+		after = decoded
+	}
+	page := objectstorage.ObjectPage{}
+	if limit > 0 {
+		var err error
+		page, err = h.listOverlayObjects(w, r, req, through, objectstorage.ObjectListRequest{Prefix: q.Get("prefix"), Delimiter: q.Get("delimiter"), StartAfter: after, Limit: limit})
+		if errors.Is(err, errOverlayListAnswered) {
+			return
+		}
+		if err != nil {
+			h.providerError(w, r, req, err, "")
+			return
+		}
+	}
+	writeS3XML(w, http.StatusOK, req.requestID, encodedObjectsResult(req.bucket.Name, q, limit, page))
+}
+
 func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, req requestContext) {
 	if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
 		return
