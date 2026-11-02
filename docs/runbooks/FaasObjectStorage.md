@@ -4,7 +4,8 @@ Alerts: `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
 `FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`,
 `FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`,
-`FaasComputeObjectGatewayDown`, `FaasComputeObjectGatewayConnectorDisconnected`.
+`FaasComputeObjectGatewayDown`, `FaasComputeObjectGatewayConnectorDisconnected`,
+`FaasComputeObjectGatewayUnavailable`.
 Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 `s3-gatewayd` (`pkg/s3gateway`), apid's provider usage exporter
 (`pkg/apid/object/usage_export.go`), and public bucket reads in `gatewayd-public`
@@ -32,7 +33,7 @@ Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-buck
 [ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),
 [ADR 20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md) (cached read admission),
 [ADR 20261031122757](../adr/20261031122757-s3-gateway-on-compute-nodes.md) (gateway on compute nodes, port share).
-Severity: warn.
+Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
 
 ## Symptom
 
@@ -68,6 +69,12 @@ Severity: warn.
   Cloudflare sends the node's share to the other connectors. A node whose s3
   tunnel token is not staged keeps its connector inactive and stays in this
   alert.
+- **No compute gateway serving (page).** After the cutover (ADR step 6),
+  `s3.<domain>` resolves to the s3 tunnel, and no compute node has both its
+  gateway answering and its connector connected. Every S3 request fails at
+  Cloudflare. Prometheus labels the gateways `s3_endpoint_route="tunnel"`
+  only while the control plane's `faas_object_gateway_endpoint_on_tunnel` is
+  true, so the page stays silent during the load test pilot.
 
 ## Check
 
@@ -155,3 +162,12 @@ Severity: warn.
    token: stage the s3 tunnel's token (root, mode 0600) and `systemctl start
    faas-cloudflared-s3`. Never put the app tunnel's token there: that node
    would answer app hosts on the s3 tunnel.
+8. No compute gateway serving: recover one node first, as in step 7; the
+   page clears once any node serves. `up{job="s3-gatewayd-compute"}` and
+   `cloudflared_tunnel_ha_connections{job="cloudflared-s3"}` show which
+   half each node is missing. Every node at once points at what they share:
+   the compute database, the storage seal domain, the s3 tunnel itself (its
+   token, or the tunnel deleted in Cloudflare). While the control-plane
+   gateway is still the fallback (one release after the cutover), point
+   `s3.<domain>`'s record back at the control-plane origin and set
+   `faas_object_gateway_endpoint_on_tunnel` back to false.

@@ -192,6 +192,15 @@ Each step is one PR behind the `agents` capability.
      - Sleeps count against the endpoint's 256 realtime schedules (`state.ManagedRealtimeScheduleLimit`, which also counts finished schedules for a day). That bounds the sleeps of one endpoint in preview; a sleep store of its own is left to the capability gateway.
    - **Thread closure.** RAP's `close_thread` names a thread without a credential, so it changes nothing. A thread closes by revoking its callback URLs.
    - **Next.** The templates do not call it yet. Part two wires `gregale_sleep` into the templates and the journey.
+
+   **Step 5, part two (2026-11-02): `agent-infinity-rust` sleeps.**
+   - **The template loads Gregale's toolset** from its RAP discovery endpoint, once per process, as RAP asks runtimes to. Each tool is invoked with Infinity's own `invoke_rap_tool` and a callback URL issued for the calling thread. Without the toolset, the agent runs with `lookup` alone.
+   - **The scripted model sleeps:** `sleep N` calls `gregale_sleep` when the toolset offers it, and an answer names the tool its result came from.
+   - **Journey.** The Infinity run of `TestStatelessAgent` also sleeps for 30 seconds, parks, and checks that the woken thread answers from the platform's tool result.
+   - **`agent-stateless-node` stays on `lookup`.** It is the hand-written loop, without a RAP client.
+   - **Fix: schema creation takes an advisory lock.** A new database's first slices run in parallel, and concurrent `CREATE TABLE IF NOT EXISTS` of one table collide in Postgres's catalog. The store tests hit it; the failed slice was retried, so it healed, but it failed once. Store errors now keep the server's code and message.
+   - **Prerequisite.** The wake-up is a realtime schedule, so it needs `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` on apid, as realtime triggers already do (ADR-1322).
+
    **Step 5, part three (2026-11-02): `gregale_run`.**
    - **The app's credential.** A callback URL names a thread, and tool servers hold callback URLs, so one alone cannot start a run.
      - A `gregale_run` invocation also carries the app's `gregale:agents` workload token, or an API key with `deploy:write`. It goes through the same check as issuing a callback URL, and the caller must own the callback's endpoint.
