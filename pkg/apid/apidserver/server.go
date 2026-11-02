@@ -471,6 +471,9 @@ type server struct {
 	// apiRequests is each account's budget of authenticated API requests a
 	// minute (api_request_budget.go). Nil (bare test servers) is unlimited.
 	apiRequests *apiRequestBudget
+	// inboundWebhookAccepts is each account's budget of verified inbound
+	// webhook deliveries a minute (ADR-20261101093517). Nil is unlimited.
+	inboundWebhookAccepts *apiRequestBudget
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
@@ -1540,6 +1543,7 @@ func newServerWithDeps(
 		signups:                newSignupNetworkLimiter(),
 		loginFailures:          newLoginFailureLimiter(),
 		apiRequests:            newAPIRequestBudget(),
+		inboundWebhookAccepts:  newAPIRequestBudget(),
 		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),

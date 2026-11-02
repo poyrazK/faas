@@ -60457,7 +60457,7 @@ func (q *Queries) LockUDPListenerAppOwner(ctx context.Context, db DBTX, appID st
 }
 
 const lockWebhookAutomationEndpoint = `-- name: LockWebhookAutomationEndpoint :one
-SELECT id, app_id, account_id, name, provider, token_hash, signing_secret_sealed, delivery_path, enabled, created_at, updated_at FROM inbound_webhook_endpoints
+SELECT id, app_id, account_id, name, provider, token_hash, signing_secret_sealed, delivery_path, enabled, created_at, updated_at, previous_signing_secret_sealed, previous_signing_secret_expires_at FROM inbound_webhook_endpoints
 WHERE id=$1 AND app_id=$2 AND account_id=$3 FOR UPDATE
 `
 
@@ -60482,6 +60482,8 @@ func (q *Queries) LockWebhookAutomationEndpoint(ctx context.Context, db DBTX, ar
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PreviousSigningSecretSealed,
+		&i.PreviousSigningSecretExpiresAt,
 	)
 	return i, err
 }

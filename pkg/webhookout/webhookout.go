@@ -223,7 +223,21 @@ func (s *Signer) Verify(unix int64, deliveryID string, body []byte, gotHex strin
 type Target struct {
 	URL    string
 	Signer *Signer
+	// PreviousSigner holds the secret a rotation replaced while its
+	// overlap window lasts (ADR-20261101093517). The webhook header set
+	// then carries a second signature, made with it, in
+	// HeaderWebhookSignaturePrevious, so a receiver still holding the old
+	// secret verifies the delivery. nil (the usual case) sends none.
+	PreviousSigner *Signer
 }
+
+// HeaderWebhookSignaturePrevious carries the signature made with the
+// previous secret during a rotation overlap (ADR-20261101093517). It is a
+// separate header, not a second value in X-Faas-Webhook-Signature, so a
+// receiver that checks only that header with the new secret is unaffected.
+// Only the webhook header set sends it; the alert wire never rotates with
+// overlap.
+const HeaderWebhookSignaturePrevious = "X-Faas-Webhook-Signature-Previous"
 
 // Event is the JSON payload posted to the customer. Payload is the
 // rule-specific body (threshold value, current value, app slug).
@@ -494,13 +508,16 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 		// Datadog authenticates with its API key and ignores Gregale
 		// signatures (ADR-752): the sealed secret is the key, sent as a
 		// header instead of an HMAC input.
-		sig, apiKey := "", ""
+		sig, prevSig, apiKey := "", "", ""
 		if d.opts.Format == DeliveryFormatDatadog {
 			apiKey = string(t.Signer.secret)
 		} else {
 			sig = t.Signer.Sign(unix, evt.ID, body)
+			if t.PreviousSigner != nil && d.opts.HeaderSet == HeaderSetWebhook {
+				prevSig = t.PreviousSigner.Sign(unix, evt.ID, body)
+			}
 		}
-		lastResult = d.attempt(ctx, t.URL, sig, apiKey, unix, evt.ID, max(d.opts.FirstAttempt, 1)+attempt, body)
+		lastResult = d.attempt(ctx, t.URL, signatures{current: sig, previous: prevSig, apiKey: apiKey}, unix, evt.ID, max(d.opts.FirstAttempt, 1)+attempt, body)
 		lastResult.Attempts = attempt + 1
 		if lastResult.Err == nil {
 			return lastResult
@@ -658,7 +675,13 @@ func (d *Dispatcher) logExhausted(evt Event, r Result) {
 // 408, 429, network, a body that breaks mid-read). A body larger than
 // MaxBodyBytes is truncated rather than failing the delivery, because
 // the receiver has already acted on it by the time it answers.
-func (d *Dispatcher) attempt(ctx context.Context, url, sig, apiKey string, unix int64, deliveryID string, attempt int, body []byte) Result {
+// signatures is what authenticates one attempt: an HMAC with the current
+// secret, optionally one with the previous secret, or a Datadog API key.
+type signatures struct {
+	current, previous, apiKey string
+}
+
+func (d *Dispatcher) attempt(ctx context.Context, url string, sigs signatures, unix int64, deliveryID string, attempt int, body []byte) Result {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		// Malformed URL — permanent.
@@ -668,10 +691,13 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig, apiKey string, unix 
 	if d.opts.Format == DeliveryFormatCloudEvents {
 		req.Header.Set("Content-Type", "application/cloudevents+json")
 	}
-	if apiKey != "" {
-		req.Header.Set(datadogAPIKeyHeader, apiKey)
+	if sigs.apiKey != "" {
+		req.Header.Set(datadogAPIKeyHeader, sigs.apiKey)
 	} else {
-		req.Header.Set(d.headerSig, "sha256="+sig)
+		req.Header.Set(d.headerSig, "sha256="+sigs.current)
+		if sigs.previous != "" {
+			req.Header.Set(HeaderWebhookSignaturePrevious, "sha256="+sigs.previous)
+		}
 	}
 	req.Header.Set(d.headerID, deliveryID)
 	req.Header.Set(d.headerTime, fmt.Sprintf("%d", unix))
