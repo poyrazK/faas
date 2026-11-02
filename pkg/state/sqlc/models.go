@@ -3946,6 +3946,7 @@ type Deployment struct {
 	MailFailureAccountRevision pgtype.Int8
 	MailFailureAppRevision     pgtype.Int8
 	MailFailureSuccessRevision pgtype.Int8
+	PromotedAt                 pgtype.Timestamptz
 }
 
 type DeploymentAlias struct {

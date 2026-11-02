@@ -64,9 +64,9 @@ func DecideRollback(c api.RouteMonitorConfig, i api.RouteMonitorIncident, releas
 
 // ReleasedAt is the latest traffic transition of a serving deployment, the
 // same deployment-owned anchors the monitor report uses.
-func ReleasedAt(created time.Time, stageStarted, rolloutCompleted *time.Time) time.Time {
+func ReleasedAt(created time.Time, transitions ...*time.Time) time.Time {
 	at := created
-	for _, t := range []*time.Time{stageStarted, rolloutCompleted} {
+	for _, t := range transitions {
 		if t != nil && t.After(at) {
 			at = *t
 		}

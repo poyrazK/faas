@@ -453,6 +453,14 @@ type ObservedRouteResolver interface {
 	ResolveObservedRoute(ctx context.Context, app App, path, method string) (string, bool, error)
 }
 
+// RouteLabelPins reports whether an app's route health guard or production
+// monitor selects a route label ("METHOD /path"), so the label survives a
+// full route set and that route's evidence never folds into __route_other__
+// (ADR-20261028110044 amendment 4). It never changes request handling.
+type RouteLabelPins interface {
+	RouteLabelPinned(ctx context.Context, app App, label string) bool
+}
+
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
 // per-app public-URL auth mode bundle plumbed onto App. Mode is
 // the canonical text from apps.public_auth_mode CHECK enum
@@ -967,6 +975,7 @@ type Handler struct {
 	devBridgeForward         func(http.ResponseWriter, *http.Request, App) bool
 	backend                  Backend
 	declaredRoutes           DeclaredRouteMatcher
+	routeLabelPins           RouteLabelPins
 	limiter                  *Limiter
 	preAuthLimiter           *preAuthSourceLimiter
 	preAuthCentral           CentralBackend
@@ -2071,6 +2080,13 @@ func (h *Handler) WithAsyncRouteEnqueuer(enqueuer AsyncRouteEnqueuer) *Handler {
 // configuration error for apps that have OnlyAllowDeclaredRoutes enabled.
 func (h *Handler) WithDeclaredRouteMatcher(matcher DeclaredRouteMatcher) *Handler {
 	h.declaredRoutes = matcher
+	return h
+}
+
+// WithRouteLabelPins wires the selected-route lookup (ADR-20261028110044
+// amendment 4). Nil keeps every label evictable, as before.
+func (h *Handler) WithRouteLabelPins(pins RouteLabelPins) *Handler {
+	h.routeLabelPins = pins
 	return h
 }
 
@@ -6497,10 +6513,12 @@ haveApp:
 	// bucket. The label is empty when the app is not opted in
 	// (route metrics are disabled) — Handler.observe short-circuits
 	// the per-route emission on "". Request telemetry uses the same bounded
-	// route set for entitled apps even when the operator disables those series.
+	// route set whether or not the app opted into those series: route health,
+	// production monitoring and route removal read it (ADR-20261028110044
+	// amendment 4).
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
-	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
+	telemetryRouteSet := h.routeSetFor(app.ID, h.requestTelemetry != nil)
 	// Consumer- and tenant-surface-attributed traffic always carries a
 	// bounded billing route so rate cards can weight routes (ADR-952,
 	// ADR-1310); consumer and surface attribution ran above. A JWT rule can
@@ -6535,6 +6553,13 @@ haveApp:
 		if !routeLabelMethodAllowed(r.Method) {
 			labelRoute = otherRouteLabel
 		}
+		pinned := !declared && labelRoute != otherRouteLabel && h.routeLabelPins != nil && h.routeLabelPins.RouteLabelPinned(r.Context(), app, labelRoute)
+		labelFor := func(s *routeLabelSet) string {
+			if pinned {
+				return s.admitPinned(labelRoute)
+			}
+			return s.labelBeforeResponse(labelRoute, declared)
+		}
 		pendingSet := set
 		if pendingSet == nil {
 			pendingSet = telemetryRouteSet
@@ -6542,7 +6567,7 @@ haveApp:
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
 			if telemetryRouteSet != nil {
-				telemetryRoute = telemetryRouteSet.labelBeforeResponse(labelRoute, declared)
+				telemetryRoute = labelFor(telemetryRouteSet)
 			}
 			r = withRequestTelemetryRoute(r, telemetryRoute)
 		}
@@ -6550,7 +6575,7 @@ haveApp:
 			// The histogram classes are pre-instantiated when
 			// Handler.observe first emits the route under the
 			// gateway's series budget (ADR-20261024154324).
-			routeLabel = set.labelBeforeResponse(labelRoute, declared)
+			routeLabel = labelFor(set)
 			r = withRouteLabel(r, routeLabel)
 		}
 		if pendingSet != nil {
