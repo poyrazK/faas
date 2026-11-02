@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": 1,
   "comment": "Tier 3 (issue #197 B3.5 + B3.6). The FROM line in each Dockerfile below this lock is digest-pinned; this lock is the source of truth. `make images-lock-update` resolves the current registry digest and updates BOTH the lock and the FROM line. CI runs `make images-lock-check` to fail any PR that drifts (either a Dockerfile with a non-digest-pinned FROM, or a Dockerfile whose FROM line doesn't match the lock's `pinned_in_dockerfile` field). The PLACEHOLDER digests below fail the check by design \u2014 the operator runs `make images-lock-update` once at PR-merge time, before this file is squashed into main. `scratch` is the canonical empty image and is exempt from the lock (audit_dockerfile_froms.py whitelists it).",
-  "generated_at": "2026-10-30T13:10:50Z",
+  "generated_at": "2026-11-02T13:39:28Z",
   "generated_by": "make images-lock-update",
   "pinned": [
     {
@@ -117,8 +117,8 @@
       "resolved_repo": "cgr.dev/chainguard/bash",
       "resolved_tag": "latest",
       "platform": "linux/amd64",
-      "digest": "sha256:506cbd019905aece3639a22e3023e96d1679dc9fceab944ed4f1f5631e696aa2",
-      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/bash:latest@sha256:506cbd019905aece3639a22e3023e96d1679dc9fceab944ed4f1f5631e696aa2"
+      "digest": "sha256:2a81a79d712663db43b1e4c81b03579ff5b5cfd2305c71726cf7665ad7d537db",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/bash:latest@sha256:2a81a79d712663db43b1e4c81b03579ff5b5cfd2305c71726cf7665ad7d537db"
     },
     {
       "dockerfile": "images/runner-go124-alpine.Dockerfile",
