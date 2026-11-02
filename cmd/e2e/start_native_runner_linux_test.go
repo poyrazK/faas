@@ -279,7 +279,7 @@ assert os.environ['FAAS_TOKEN'] not in run.path.read_text()
 				cmd := exec.CommandContext(ctx, python, "-c", code)
 				cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 				cmd.WaitDelay = 5 * time.Second
-				cmd.Env = append(f.cliEnv, "START_CONTRACT_ACCOUNT="+app.AccountID, "START_CONTRACT_PROJECT="+project.Slug,
+				cmd.Env = append(f.cliEnv, "FAAS_TOKEN="+f.platform.key, "START_CONTRACT_ACCOUNT="+app.AccountID, "START_CONTRACT_PROJECT="+project.Slug,
 					"START_CONTRACT_PROJECT_ID="+project.ID, "START_CONTRACT_ENV_ID="+environment.ID, "START_CONTRACT_SLUG="+app.Slug,
 					"START_CONTRACT_APP="+app.ID, "START_CONTRACT_CLI="+bin, "START_CONTRACT_SOURCE="+f.source, "START_CONTRACT_RECEIPT="+receipt,
 					"START_CONTRACT_BASELINE="+baseline.ID, "START_CONTRACT_SCOPE="+f.environment, "START_CONTRACT_MARKER="+marker, "START_CONTRACT_CASE="+name,
