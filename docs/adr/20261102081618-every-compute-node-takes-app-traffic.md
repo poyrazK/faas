@@ -184,7 +184,8 @@ demand.
 - **Switches.** `FAAS_EDGE_PLACEMENT_NODE_SET` on the edge turns on b.
   `FAAS_GATEWAY_EDGE_LOCAL_FIRST` on gatewayd-internal turns on a, c and d.
   Turn on the edge's first: with c alone, the hint would settle on one node
-  and starve the others.
+  and starve the others. The manifest's `public_edge.placement_node_set`
+  and `public_edge.local_first` set them, and the second needs the first.
 - **Independent of the rest.** These changes do not depend on §1–§4, and they
   matter under the tunnel too, once an app spans nodes. On 2026-11-02
   production had 4 running instances for 4 apps, so no app spanned nodes yet.

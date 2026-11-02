@@ -25,3 +25,9 @@ Environment=FAAS_GATEWAYD_ROLE={{ faas_box_role }}
 # instance-health breaker shared by the public path and the service proxy.
 Environment=FAAS_GATEWAY_RETRY={{ 'true' if (faas_gateway_retry | default(true) | bool) else 'false' }}
 Environment=FAAS_GATEWAY_CIRCUIT_BREAKER={{ 'true' if (faas_gateway_circuit_breaker | default(true) | bool) else 'false' }}
+{% if (faas_gateway_edge_local_first | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+
+# ADR-20261102081618 §5: requests a compute edge forwarded use this node's
+# instances first; responses name every node of the app.
+Environment=FAAS_GATEWAY_EDGE_LOCAL_FIRST=1
+{% endif %}
