@@ -2455,6 +2455,9 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+	// TelemetryGaps lists why the window may be missing requests; empty
+	// when every gateway delivered it or when it could not be judged.
+	TelemetryGaps []string
 }
 
 type RequestAnalyticsComputeCostView struct {

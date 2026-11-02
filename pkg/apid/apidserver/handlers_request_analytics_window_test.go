@@ -58,6 +58,23 @@ func TestParseRequestAnalyticsWindow(t *testing.T) {
 			wantSince: "2d",
 		},
 		{
+			// Retention runs back from now, not from until: rows before
+			// now-3d are gone even though the window is only two days long.
+			name:      "historical range is clamped to retention from now",
+			query:     "?since=2026-09-01T00:00:00Z&until=2026-09-03T00:00:00Z",
+			retention: 3 * 24 * time.Hour,
+			wantFrom:  time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC),
+			wantUntil: time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC),
+			wantSince: "12h",
+			wantClamp: true,
+		},
+		{
+			name:      "until older than retention",
+			query:     "?since=2026-08-30T00:00:00Z&until=2026-09-01T00:00:00Z",
+			retention: 3 * 24 * time.Hour,
+			wantErr:   true,
+		},
+		{
 			name:      "invalid since",
 			query:     "?since=not-a-window",
 			retention: 7 * 24 * time.Hour,
