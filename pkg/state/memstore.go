@@ -10093,9 +10093,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		if d.Status != DeployLive {
 			for _, other := range m.deployments {
 				if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
-					d.Status = DeploySuperseded
-					d.TrafficPercent = 0
-					m.putDeploymentLocked(id, d)
+					m.putDeploymentLocked(id, m.supersedeOutpacedDeploymentLocked(d))
 					return ErrDeploymentSuperseded
 				}
 			}

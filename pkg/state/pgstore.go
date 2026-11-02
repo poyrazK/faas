@@ -10525,7 +10525,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 				return fmt.Errorf("state: check newer deployment revision: %w", err)
 			}
 			if newer {
-				if _, err := tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1`, id); err != nil {
+				if err := supersedeOutpacedDeploymentTx(ctx, tx, id); err != nil {
 					return fmt.Errorf("state: supersede stale deployment: %w", err)
 				}
 				if err := tx.Commit(ctx); err != nil {
