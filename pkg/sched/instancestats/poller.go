@@ -294,6 +294,10 @@ func (p *Poller) Tick(ctx context.Context) error {
 		// an owner's app may have instances on any active node. Only live
 		// instances have stats, so terminal history stays in Postgres.
 		instances, err = p.Store.ListLiveInstancesByNodeID(ctx, p.OwnerNodeID)
+	} else if onNode, ok := p.Store.(state.ResidentInstancesOnNodeReader); ok && p.Telemetry != nil && p.OwnerNodeID != "" {
+		// The local stream covers only this node: read its resident
+		// instances, not the fleet's (ADR 20261102072403).
+		instances, err = onNode.ListResidentInstancesOnNode(ctx, p.OwnerNodeID)
 	} else {
 		instances, err = p.Store.ListAllInstances(ctx)
 	}

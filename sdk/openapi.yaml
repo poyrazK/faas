@@ -6091,12 +6091,19 @@ paths:
       summary: List repositories visible to the account's GitHub App installation.
       description: |
         Bearer API-key surface for customer automation. Requires the
-        dedicated `github:manage` scope. The account's durable GitHub App
-        installation is resolved server-side, so callers do not need to
-        copy or provide an installation id. Installation credentials are
-        never returned.
+        dedicated `github:manage` scope. `installation_id` names one of
+        the account's connected installations; without it the account's
+        only installation is used, and an account with several gets a 409
+        `github_installation_required` naming them. Installation
+        credentials are never returned.
       security:
         - bearerAuth: ['github:manage']
+      parameters:
+        - name: installation_id
+          in: query
+          required: false
+          description: A GitHub App installation connected to the account.
+          schema: {type: integer, format: int64, minimum: 1}
       responses:
         '200':
           description: Repositories currently visible to the account's GitHub App installation.
@@ -6105,10 +6112,16 @@ paths:
               schema:
                 type: array
                 items: {$ref: '#/components/schemas/RepoResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404':
           description: The account has not completed GitHub App installation.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '409':
+          description: The account has several connected installations and none was named.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -6176,6 +6189,9 @@ paths:
         calls. A missing policy row resolves to the safe defaults for a new
         project. Legacy allow_marked compatibility rows are migrated to deny;
         customers can explicitly opt back in when production calls are safe.
+        An app without a project reports the defaults with an empty
+        `project_id` and its own `production_trigger` and
+        `preview_enabled`.
       security:
         - bearerAuth: ['github:manage']
       responses:
@@ -6199,7 +6215,9 @@ paths:
         trailing `/**` directory patterns. `preview_service_policy=deny`
         rejects preview calls to production dependencies before discovery or
         wake-up; `allow_marked` preserves the marked-call compatibility mode.
-        Mutations require MFA.
+        An app without a project can set only `production_trigger` and
+        `preview_enabled`, once it is bound to a repository; other fields
+        answer 409 `project_required`. Mutations require MFA.
       security:
         - bearerAuth: ['github:manage']
       requestBody:
@@ -11786,6 +11804,19 @@ paths:
       tags: [edge_rules]
       operationId: listEdgeRulesForApp
       summary: List every edge rule bound to one app.
+      parameters:
+        - name: covering
+          in: query
+          required: false
+          description: |
+            When true, also return the rules written on the account's other
+            apps with the same owner whose host pattern (anything but `@app`)
+            can cover this app's hosts. The gateway applies those to this
+            app's hosts too. Each rule carries its own `app_id`; the ETag
+            stays this app's rule set.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Edge rules for this app, ordered by priority ASC.
@@ -19188,6 +19219,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
+    dataAPIEventsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived Gregale workload identity for audience gregale:data-api:events, naming the publishing app and its live instance. Customer API keys cannot publish change events.
     operationsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -23474,8 +23510,16 @@ components:
         health: {type: string, enum: [not_connected, unknown, healthy, degraded]}
         connected: {type: boolean}
         installation_id: {type: integer, format: int64}
-        github_login: {type: string}
-        default_branch: {type: string}
+        github_login:
+          type: string
+          description: The GitHub user or organization the App is installed on.
+        default_branch:
+          type: string
+          deprecated: true
+          description: |
+            Empty for newer connections: an installation has no default
+            branch, and a bind without a branch takes the repository's
+            default branch. Older connections report the `main` they stored.
         repo_full_name: {type: string}
         production_branch: {type: string}
         deploy_branches:
@@ -23499,6 +23543,21 @@ components:
             synced_at: {type: string, format: date-time}
         activity:
           $ref: '#/components/schemas/GitHubInstallActivity'
+        installations:
+          type: array
+          description: |
+            The account's connected installations when it has more than
+            one. An unbound app then reports no `installation_id`; a bind or
+            repository listing names one of these.
+          items:
+            $ref: '#/components/schemas/GitHubInstallationSummary'
+    GitHubInstallationSummary:
+      description: One GitHub App installation connected to the account.
+      type: object
+      required: [installation_id]
+      properties:
+        installation_id: {type: integer, format: int64}
+        github_login: {type: string}
     GitHubInstallActivity:
       description: |
         Bounded, redacted activity for the currently bound app. Webhook
@@ -27537,7 +27596,7 @@ components:
           maxItems: 10
           items: {$ref: '#/components/schemas/ReleaseGateResult'}
           description: "The release gates judged with this decision."
-        rollback_skipped: {type: string, description: "Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix."}
+        rollback_skipped: {type: string, description: "Post-release decisions only: why an automatic rollback did not take the release off: the problem code that refused it, such as rollback_crosses_release, or rollback_failed when it ran and did not restore the previous release. The regression was found; the release keeps serving until someone rolls back or ships a fix."}
         decided_at: {type: string, format: date-time}
     RolloutDecisionSample:
       description: "One side's aggregates over the observation window. Request counts are organic requests; probe counts are reported separately."
@@ -38312,6 +38371,10 @@ components:
         included_gb_hours: {type: integer, format: int64}
         overage_gb_hours: {type: number}
         overage_cents: {type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.'}
+        quiet_paused_gb_hours:
+          type: number
+          description: 'GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero.'
+          x-since: "2026-10"
         used_cpu_hours:
           type: number
           description: 'Per-month CPU-hours (informational; not billed).'

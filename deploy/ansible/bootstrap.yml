@@ -220,6 +220,11 @@
       when:
         - faas_agentd_managed | default(false) | bool
         - faas_cp_converge_roles | default(none) is none or 'agentd_service' in faas_cp_converge_roles
+    # ADR-20261102081618: the app hosts' records for direct entry to the compute edges.
+    - role: edgednsd_service
+      when:
+        - faas_edgednsd_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'edgednsd_service' in faas_cp_converge_roles
     - role: log_archive
       when: faas_cp_converge_roles | default(none) is none or 'log_archive' in faas_cp_converge_roles
     - role: optional_credentials

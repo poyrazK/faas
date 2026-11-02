@@ -13,7 +13,7 @@ type MemStore struct {
 	mu    sync.Mutex
 	nodes map[string]Node
 	vms   map[string]VM
-	// leases are restore leases by database id.
+	// leases are restore and bootstrap leases by database id.
 	leases map[string]time.Time
 	// ledger is the usage ledger by database id.
 	ledger map[string][]UsageRow
@@ -266,6 +266,16 @@ func (m *MemStore) Delete(_ context.Context, id string) error {
 }
 
 func (m *MemStore) ClaimRestore(_ context.Context, id string, held time.Time, lease time.Duration) (time.Time, error) {
+	return m.claimProvisioning(id, true, held, lease)
+}
+
+func (m *MemStore) ClaimProvision(_ context.Context, id string, held time.Time, lease time.Duration) (time.Time, error) {
+	return m.claimProvisioning(id, false, held, lease)
+}
+
+// claimProvisioning takes or renews the lease on a provisioning restore,
+// or on a provisioning database that is not one.
+func (m *MemStore) claimProvisioning(id string, restore bool, held time.Time, lease time.Duration) (time.Time, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	vm, ok := m.vms[id]
@@ -274,7 +284,7 @@ func (m *MemStore) ClaimRestore(_ context.Context, id string, held time.Time, le
 	}
 	current, leased := m.leases[id]
 	now := m.now()
-	if vm.State != StateProvisioning || vm.RestoreSource == "" || (leased && !current.Before(now) && !current.Equal(held)) {
+	if vm.State != StateProvisioning || (vm.RestoreSource != "") != restore || (leased && !current.Before(now) && !current.Equal(held)) {
 		return time.Time{}, ErrConflict
 	}
 	next := now.Add(lease)

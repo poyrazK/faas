@@ -232,8 +232,9 @@ func postCliAuthForTest(t *testing.T, srv http.Handler, code, email, cookieValue
 }
 
 // TestMintCliAuthCode_ReturnsCodeAndURL exercises the happy path of
-// the anonymous /v1/cli-auth/code endpoint. The code shape must be
-// "XXXX-NNNN" (4 hex + dash + 4 hex, case-insensitive); the URL
+// the anonymous /v1/cli-auth/code endpoint. A code minted without a
+// device code is exchanged by itself, so its shape must be
+// "XXXX-XXXX-XXXX-XXXX" (64 bits of hex, case-insensitive); the URL
 // must end with the full code as a query parameter so the dashboard
 // page picks it up.
 func TestMintCliAuthCode_ReturnsCodeAndURL(t *testing.T) {
@@ -242,8 +243,8 @@ func TestMintCliAuthCode_ReturnsCodeAndURL(t *testing.T) {
 	resp := mintCliAuthCodeForTest(t, srv)
 
 	parts := strings.Split(resp.Code, "-")
-	if len(parts) != 2 || len(parts[0]) != 4 || len(parts[1]) != 4 {
-		t.Errorf("code = %q, want XXXX-NNNN shape", resp.Code)
+	if len(parts) != 4 || len(parts[0]) != 4 || len(parts[1]) != 4 || len(parts[2]) != 4 || len(parts[3]) != 4 {
+		t.Errorf("code = %q, want XXXX-XXXX-XXXX-XXXX shape", resp.Code)
 	}
 	for _, p := range parts {
 		for _, c := range p {
@@ -483,13 +484,13 @@ func TestClaimUnknownCode_ReturnsNotFound(t *testing.T) {
 // TestExchangeCliAuthCode_UnknownCodeReturns410 exercises the
 // never-minted path: a code that was never inserted returns
 // ErrNotFound from ConsumeCliAuthCode, which the exchange handler
-// surfaces as 410 cli_auth_code_unavailable. DEAD-BEEF is valid hex
-// (unlike ZZZZ-9999 where Z is not) so we reach the store lookup
-// rather than the 400 normalization gate.
+// surfaces as 410 cli_auth_code_unavailable. The code is valid hex
+// (unlike ZZZZ-9999 where Z is not) and 16 characters long so we
+// reach the store lookup rather than the 400 normalization gate.
 func TestExchangeCliAuthCode_UnknownCodeReturns410(t *testing.T) {
 	srv, _ := newCliAuthTestServer(t)
 
-	body, _ := json.Marshal(api.CliAuthExchangeRequest{Code: "DEAD-BEEF"})
+	body, _ := json.Marshal(api.CliAuthExchangeRequest{Code: "DEAD-BEEF-DEAD-BEEF"})
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/cli-auth/exchange", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")

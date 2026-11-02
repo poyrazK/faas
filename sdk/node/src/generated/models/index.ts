@@ -569,6 +569,9 @@ export type { DashboardWidget } from './DashboardWidget.js';
 export type { DashboardWidgetValue } from './DashboardWidgetValue.js';
 export type { DashboardsResponse } from './DashboardsResponse.js';
 export type { DataAPIAccessConfig } from './DataAPIAccessConfig.js';
+export type { DataAPIChangeEvent } from './DataAPIChangeEvent.js';
+export type { DataAPIChangeEventBatch } from './DataAPIChangeEventBatch.js';
+export type { DataAPIChangeEventBatchResponse } from './DataAPIChangeEventBatchResponse.js';
 export type { DataAPIConnectionBudgets } from './DataAPIConnectionBudgets.js';
 export type { DataAPIRuntime } from './DataAPIRuntime.js';
 export type { DataAPIRuntimeConnectionReport } from './DataAPIRuntimeConnectionReport.js';
@@ -1100,6 +1103,7 @@ export type { GitHubDeploymentPolicyPatch } from './GitHubDeploymentPolicyPatch.
 export type { GitHubInstallActivity } from './GitHubInstallActivity.js';
 export type { GitHubInstallMutationRequest } from './GitHubInstallMutationRequest.js';
 export type { GitHubInstallStatus } from './GitHubInstallStatus.js';
+export type { GitHubInstallationSummary } from './GitHubInstallationSummary.js';
 export type { GitHubWebhookActivity } from './GitHubWebhookActivity.js';
 export type { GithubCheckUpdateRecord } from './GithubCheckUpdateRecord.js';
 export type { GithubRecoveryRetryResponse } from './GithubRecoveryRetryResponse.js';

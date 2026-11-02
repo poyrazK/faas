@@ -97,3 +97,46 @@ func TestRollbackApp_TrafficSplitPointsAtEarlierRelease(t *testing.T) {
 		t.Fatalf("summary rollback target = %s during a split, want none", summary.RollbackTargetID)
 	}
 }
+
+// A plain rollback during a canary pointed at `gregale traffic promote`, which
+// the canary refuses (409 traffic_change_during_canary), so the customer had
+// no command that worked. The refusal now names the rollout abort, and
+// following it returns all traffic to the release the canary replaced.
+func TestRollbackApp_DuringCanaryPointsAtRolloutAbort(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := t.Context()
+	store := *e.Store()
+	_, stable, canary := apidserver.SeedCanaryFixture(t, e, "rb-canary")
+	for _, id := range []string{stable.ID, canary.ID} {
+		d, err := store.DeploymentByID(ctx, id)
+		if err != nil || d.Status != state.DeployLive || d.TrafficPercent <= 0 || d.TrafficPercent >= 100 {
+			t.Fatalf("setup: %s = %+v, err=%v; want live with a share of traffic", id, d, err)
+		}
+	}
+
+	rec := e.Do(t, http.MethodPost, "/v1/apps/rb-canary/rollback", nil, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("rollback during canary = %d %s, want 409", rec.Code, rec.Body)
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != api.CodeNoRollbackTarget || !strings.Contains(problem.Detail, "gregale rollouts recover rb-canary --action abort") {
+		t.Fatalf("problem = %+v, want the rollout abort command", problem)
+	}
+	if strings.Contains(problem.Detail, "traffic promote") {
+		t.Fatalf("problem = %+v, still offers a traffic promote the canary refuses", problem)
+	}
+
+	rec = e.Do(t, http.MethodPost, "/v1/apps/rb-canary/rollouts/recover", api.RecoverRolloutRequest{Action: "abort"}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("following the hint = %d %s, want 200", rec.Code, rec.Body)
+	}
+	if d, err := store.DeploymentByID(ctx, stable.ID); err != nil || d.TrafficPercent != 100 {
+		t.Fatalf("stable after abort = %+v, err=%v; want 100%% of traffic", d, err)
+	}
+	if d, err := store.DeploymentByID(ctx, canary.ID); err != nil || d.TrafficPercent != 0 || d.RolloutState != "aborted" {
+		t.Fatalf("canary after abort = %+v, err=%v; want aborted at 0%%", d, err)
+	}
+}

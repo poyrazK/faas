@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"net/http"
 	"path"
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // FunctionHandlerFileMaxBytes bounds a function handler file path.
 const FunctionHandlerFileMaxBytes = 256
 
-var functionHandlerFileRE = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+var functionHandlerFileRE = lazyregexp.New(`^[A-Za-z0-9._/-]+$`)
 
 // FunctionHandlerProblem validates a function deploy's handler: it must be
 // set, and a handler naming a source file must stay inside the source root

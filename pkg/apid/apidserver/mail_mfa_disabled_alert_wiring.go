@@ -85,6 +85,9 @@ func (s *server) completeMFADisabledEmailAlert(w http.ResponseWriter, r *http.Re
 		s.writeMFADisabledAlertError(w, r, acct, ready, err, true)
 		return
 	}
+	// An email-assisted MFA reset ends interactive sign-in keys as well
+	// (bug hunt 2026-10-28 H71).
+	s.revokeInteractiveSignInKeys(r, acct, "mfa_reset_email")
 	s.audit.Emit(r.Context(), "account.mfa_disabled", &acct.ID, map[string]any{"method": "email"})
 	writeJSON(w, http.StatusOK, api.MFADisableEmailConfirmResponse{})
 }

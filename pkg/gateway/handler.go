@@ -453,6 +453,14 @@ type ObservedRouteResolver interface {
 	ResolveObservedRoute(ctx context.Context, app App, path, method string) (string, bool, error)
 }
 
+// RouteLabelPins reports whether an app's route health guard or production
+// monitor selects a route label ("METHOD /path"), so the label survives a
+// full route set and that route's evidence never folds into __route_other__
+// (ADR-20261028110044 amendment 4). It never changes request handling.
+type RouteLabelPins interface {
+	RouteLabelPinned(ctx context.Context, app App, label string) bool
+}
+
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
 // per-app public-URL auth mode bundle plumbed onto App. Mode is
 // the canonical text from apps.public_auth_mode CHECK enum
@@ -967,6 +975,7 @@ type Handler struct {
 	devBridgeForward         func(http.ResponseWriter, *http.Request, App) bool
 	backend                  Backend
 	declaredRoutes           DeclaredRouteMatcher
+	routeLabelPins           RouteLabelPins
 	limiter                  *Limiter
 	preAuthLimiter           *preAuthSourceLimiter
 	preAuthCentral           CentralBackend
@@ -1043,6 +1052,10 @@ type Handler struct {
 	// queue-depth budget remains fleet-wide. The guest listener stays runtime-
 	// agnostic while the edge accounts for streams and upgrades.
 	vmConcurrency *vmConcurrencyManager
+	// edgeLocalFirst, when set, makes requests a compute edge forwarded use
+	// this node's instances first (ADR-20261102081618 §5); nil keeps the
+	// global rotation.
+	edgeLocalFirst *edgeLocalFirst
 	// vmConcurrencyAudit emits vm.inflight_threshold_reached when a request
 	// observes a full instance slot set. It shares the gateway audit sink so
 	// operators can correlate saturation with wake and reaper events.
@@ -2071,6 +2084,13 @@ func (h *Handler) WithAsyncRouteEnqueuer(enqueuer AsyncRouteEnqueuer) *Handler {
 // configuration error for apps that have OnlyAllowDeclaredRoutes enabled.
 func (h *Handler) WithDeclaredRouteMatcher(matcher DeclaredRouteMatcher) *Handler {
 	h.declaredRoutes = matcher
+	return h
+}
+
+// WithRouteLabelPins wires the selected-route lookup (ADR-20261028110044
+// amendment 4). Nil keeps every label evictable, as before.
+func (h *Handler) WithRouteLabelPins(pins RouteLabelPins) *Handler {
+	h.routeLabelPins = pins
 	return h
 }
 
@@ -3160,6 +3180,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 		})
 		return false
 	}
+	keepFromSharedCaches(w)
 	if rule.MCP != nil {
 		return h.applyMCPResourcePolicy(w, r, app, rule)
 	}
@@ -3400,6 +3421,7 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 		}
 		return false
 	}
+	keepFromSharedCaches(w)
 	clientIP, ok := clientIPFromTrustedXFF(r)
 	if !ok {
 		// Defense-in-depth: gatewayd-public is required to set
@@ -3540,6 +3562,7 @@ func (h *Handler) applyIngressIPAllowlist(w http.ResponseWriter, r *http.Request
 	if app.PublicAuth.Mode != publicAuthModeIPAllowlist {
 		return false
 	}
+	keepFromSharedCaches(w)
 	if len(app.PublicAuth.IPAllowlist) == 0 {
 		// Operator misconfig: ip_allowlist mode without CIDRs.
 		// 500 makes the noise operator-loud — the cold-boot
@@ -4477,6 +4500,7 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 		}
 		return false
 	}
+	keepFromSharedCaches(w)
 	if h.geoReader == nil {
 		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, "geo_reader_not_configured")
 		return true
@@ -6090,7 +6114,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// hold an application request slot or wake/parking lease for its lifetime.
 	if h.managedRealtime != nil && strings.HasPrefix(r.URL.Path, realtime.ManagedPathPrefix) {
 		w.Header().Set(trafficSecurityHeader, trafficSecurityRealtime)
-		h.managedRealtime.ServeHTTP(w, r)
+		if h.stampRealtimeHostAccount(w, r) {
+			h.managedRealtime.ServeHTTP(w, r)
+		}
 		return
 	}
 
@@ -6286,6 +6312,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		markTrafficPhase(r.Context(), trafficOwnership)
+		// Cloudflare would otherwise keep serving this 404 for a while
+		// after the app is created.
+		w.Header().Set("Cache-Control", "no-store")
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", appHost)))
 		h.observe(r, rec.status, "", "", false, Target{})
@@ -6497,10 +6526,12 @@ haveApp:
 	// bucket. The label is empty when the app is not opted in
 	// (route metrics are disabled) — Handler.observe short-circuits
 	// the per-route emission on "". Request telemetry uses the same bounded
-	// route set for entitled apps even when the operator disables those series.
+	// route set whether or not the app opted into those series: route health,
+	// production monitoring and route removal read it (ADR-20261028110044
+	// amendment 4).
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
-	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
+	telemetryRouteSet := h.routeSetFor(app.ID, h.requestTelemetry != nil)
 	// Consumer- and tenant-surface-attributed traffic always carries a
 	// bounded billing route so rate cards can weight routes (ADR-952,
 	// ADR-1310); consumer and surface attribution ran above. A JWT rule can
@@ -6535,6 +6566,13 @@ haveApp:
 		if !routeLabelMethodAllowed(r.Method) {
 			labelRoute = otherRouteLabel
 		}
+		pinned := !declared && labelRoute != otherRouteLabel && h.routeLabelPins != nil && h.routeLabelPins.RouteLabelPinned(r.Context(), app, labelRoute)
+		labelFor := func(s *routeLabelSet) string {
+			if pinned {
+				return s.admitPinned(labelRoute)
+			}
+			return s.labelBeforeResponse(labelRoute, declared)
+		}
 		pendingSet := set
 		if pendingSet == nil {
 			pendingSet = telemetryRouteSet
@@ -6542,7 +6580,7 @@ haveApp:
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
 			if telemetryRouteSet != nil {
-				telemetryRoute = telemetryRouteSet.labelBeforeResponse(labelRoute, declared)
+				telemetryRoute = labelFor(telemetryRouteSet)
 			}
 			r = withRequestTelemetryRoute(r, telemetryRoute)
 		}
@@ -6550,7 +6588,7 @@ haveApp:
 			// The histogram classes are pre-instantiated when
 			// Handler.observe first emits the route under the
 			// gateway's series budget (ADR-20261024154324).
-			routeLabel = set.labelBeforeResponse(labelRoute, declared)
+			routeLabel = labelFor(set)
 			r = withRouteLabel(r, routeLabel)
 		}
 		if pendingSet != nil {
@@ -6870,6 +6908,11 @@ haveApp:
 		api.WriteProblem(w, api.ErrPlatformTenantRequired())
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+	// An answer to a verified caller may depend on who asked; Cloudflare must
+	// not hand it to the next client (ADR-091 amendment 2026-11-02).
+	if authenticatedFrom(r.Context()).carriesVerifiedCredential() {
+		keepFromSharedCaches(w)
 	}
 	// ADR-831 amendment 7 / kind=challenge. After every auth gate, so a
 	// verified credential bypasses it, and before respond, cache and wake, so
@@ -7693,6 +7736,10 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
+	if preferredInstanceID == "" {
+		// An instance-affinity pick stays where the session is.
+		capacityCtx = h.localFirstContext(capacityCtx)
+	}
 	pick, vmRelease, vmWaited, err = h.acquireVMTarget(withRoutePriorityRequest(capacityCtx, r), app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
@@ -7808,7 +7855,7 @@ haveApp:
 		attribute.Bool("cold", cold),
 	)
 	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward", forwardAttrs...)
-	r = r.WithContext(forwardCtx)
+	r = r.WithContext(h.instanceNodesContext(forwardCtx, app.ID))
 	defer func() {
 		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		forwardSpan.End()
@@ -8444,7 +8491,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// the time.Since(startTime(r)) call here would yield the same result
 	// but recomputes; `elapsed` was already measured above.
 	requestLog := h.log
-	if decision := trafficDecisionEvidence(r.Context(), status, false); decision.path != "" && requestLog != nil {
+	decision := trafficDecisionEvidence(r.Context(), status, false)
+	if decision.path != "" && requestLog != nil {
 		requestLog = requestLog.With(decision.logAttribute())
 	}
 	if revision := TrafficPolicyRevision(r.Context()); revision != "" && requestLog != nil {
@@ -8557,6 +8605,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
+				PlatformRefusal:                      decision.platformRefusal(status),
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {
@@ -9063,6 +9112,9 @@ type statusRecorder struct {
 	// Validated candidate probes must remain uncacheable after guest headers
 	// and customer header rules, including gateway failures before forwarding.
 	deploymentSmoke bool
+	// sharedCachePrivate is set when an access control decided the request
+	// (keepFromSharedCaches): no shared cache may store the answer.
+	sharedCachePrivate bool
 
 	// Streaming fields (PR-B, nil → buffered path). Install via
 	// installFlushHook; the fields stay zero otherwise.
@@ -9150,7 +9202,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// reading it here is race-free relative to the underlying
 		// ResponseWriter.
 		s.ContentType = s.ResponseWriter.Header().Get("Content-Type")
-		s.headCachePrivate = responseForbidsSharedCaching(s.Header())
+		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed
 		// BEFORE the status code is committed. The ops run in
@@ -9176,6 +9228,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	}
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
+	}
+	if s.sharedCachePrivate {
+		markSharedCachePrivate(s.Header())
 	}
 }
 

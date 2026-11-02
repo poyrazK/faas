@@ -49,7 +49,7 @@ func (p ObjectStoragePolicy) Valid() bool {
 			return false
 		}
 	}
-	return p.MaxAccountKeys <= ObjectStorageInventoryMaxPages*1000 && p.MaxBucketBytes <= p.MaxAccountBytes && p.MaxReportAgeSeconds >= 60 && p.MaxReportAgeSeconds <= MaxObjectStorageReportAgeSeconds
+	return p.MaxAccountKeys <= MaxObjectStorageAccountKeys && p.MaxBucketBytes <= p.MaxAccountBytes && p.MaxReportAgeSeconds >= 60 && p.MaxReportAgeSeconds <= MaxObjectStorageReportAgeSeconds
 }
 
 const ObjectStorageGatewaySafetyV1 = "gateway_safety_v1"

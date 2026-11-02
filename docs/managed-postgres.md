@@ -28,12 +28,21 @@ database reservation boundary:
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
+A Free-plan database needs enforced compute caps, because Free has no
+overage to pay for compute past its allowance. Until the platform enforces
+them, `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors
+and restores answer `403 managed_postgres_not_in_plan` on Free, and a
+Compose `postgres` service is not provisioned (the deploy names the plan as
+the reason).
+
 Storage is pooled across the account's databases: one database may use the
-whole pool. Storage is a limit, not billed overage
-([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
-Compute is a limit too, unless a paid account turns overage on: then compute
-above the allowance costs $0.20 per CU-hour, up to twice the allowance
-([Compute overage](#compute-overage)).
+whole pool. Storage and compute are limits unless a paid account turns
+overage on ([Compute overage](#compute-overage)):
+
+- compute above the allowance costs $0.2331 per CU-hour, up to twice the
+  allowance;
+- the pool doubles, and storage past the plan's pool, averaged over the
+  month, costs $0.50 per GiB-month.
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -147,6 +156,9 @@ customers out until the owner has tested production
    `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
    maild). Create the [SQL probe](#sql-availability-probe) canary databases.
+   Keep `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` at `shadow` until
+   [databases past a lowered plan](#databases-past-a-lowered-plan) are shown
+   to the customer, then set it `on`.
 4. Approve the production backend ([Production](#production)) with fleet
    ceilings sized to the Neon plan.
 5. Run the customer journey with the owner's account:
@@ -516,6 +528,16 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
 | `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
 | `data_api` | Pooled, with direct fallback | `api`-schema DML only for the [Data API](data-api.md); RLS enforced |
+
+The pooled connection is a transaction pool: each transaction may run on a
+different server session, and a session goes back to the pool between
+transactions without being reset. Keep session state inside a transaction:
+use `SET LOCAL` rather than `SET`, transaction-level advisory locks
+(`pg_advisory_xact_lock`) rather than session ones, and protocol-level
+prepared statements (drivers' defaults) rather than SQL `PREPARE`. `LISTEN`
+needs the direct connection. Settings, roles and locks a session sets outside
+a transaction stay on that server session, and other connections of the same
+credential may pick them up.
 
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing
@@ -967,11 +989,18 @@ choice, `{"enabled": true|false}`:
 - Off is the default, and the databases are suspended at the allowance.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
-- Compute above the allowance costs $0.20 per CU-hour
-  (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`). It is charged
-  only past the allowance and only up to the ceiling, so a month of overage
-  costs at most one allowance: $5 on Hobby, $15 on Pro, $40 on Scale. It
-  appears on the next invoice as its own line.
+- Compute above the allowance costs $0.2331 per CU-hour
+  (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`): Neon Scale's
+  $0.222 plus 5% ([ADR-20261102072425](adr/20261102072425-managed-postgres-overage-at-provider-price-plus-5.md)).
+  It is charged only past the allowance and only up to the ceiling, so a
+  month of overage costs at most one allowance: $5.83 on Hobby, $17.48 on
+  Pro, $46.62 on Scale. It appears on the next invoice as its own line.
+- With overage on the storage pool doubles. Storage held past the plan's pool,
+  averaged over the UTC month, costs $0.50 per GiB-month
+  (`api.ManagedPostgresStorageOverageMillicentsPerGiBMonth`). At most one more
+  pool is charged a month: $0.50 on Hobby, $2.50 on Pro, $10 on Scale. It is
+  part of the same charge. A month that charged storage keeps charging it
+  after overage is turned off, so the month's total never drops.
 - Free accounts get `403 managed_postgres_not_in_plan`.
 
 The charge does not count toward the account's spend cap: the overage
@@ -981,7 +1010,9 @@ apid delivers the charge after each compute cap sweep
 ([ADR-20261031110037](adr/20261031110037-managed-postgres-overage-invoicing.md)):
 
 - It charges subjects that reached their allowance in the month (the
-  `allowance` cap event) with overage on at the time, or turned on later.
+  `allowance` cap event) with overage on at the time, or turned on later,
+  subjects with overage on (for storage past the pool), and subjects already
+  charged in the month.
 - The month's total is cumulative. Each step sends only the difference from
   the last delivered total, keyed by that total, so a retry is a duplicate,
   never a second charge.
@@ -1124,6 +1155,45 @@ The run creates a disposable database, probes it, and deletes it. The probe:
 The command exits non-zero, and `on` refuses the file, if any observation
 fails. If the compute is suspended at the limit, the pool would stop
 databases rather than block writes, and must not be turned on as specified.
+
+### Databases past a lowered plan
+
+A downgrade the customer asks for is refused while their databases do not fit
+the target plan. A plan can also drop without that check: a subscription ends
+and the account falls to Free, or the plan changes in the billing portal or by
+an operator. The compute and storage caps follow the new plan at the next
+sweep. The same sweep suspends the databases the plan no longer includes
+([ADR-20261102125208](adr/20261102125208-managed-postgres-databases-past-a-lowered-plan-are-suspended.md)):
+
+- The subject's databases rank oldest first. A database ranked past the
+  plan's database limit, or in a service class the plan does not include, is
+  past the plan.
+- A restore holding the restore slot, a deleting database and one without a
+  provider resource are not ranked.
+- A database past the plan has its project's compute quota held at its own
+  use, so Neon suspends it and it cannot start. Its data, credentials,
+  bindings and restore history stay, and its storage still counts toward the
+  pool.
+- A project that also holds a database inside the plan (a restore inside its
+  source's project) is left running and logged as shared.
+- Each sweep recomputes the set. Once the subject fits (an upgrade, a deleted
+  database, or a resize to an included class), the next sweep restores the
+  ordinary quota. Nothing is deleted.
+
+`FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres plan excess (shadow)` for each
+  project it would suspend, and writes nothing.
+- `on` writes the quota, only while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` is
+  `on` too; it logs `managed postgres plan excess suspended` when it does.
+- `off` does nothing.
+
+Keep it at `shadow` in production until customers are told: the database view
+field and the owner's email are the ADR's step 2. Metrics:
+
+- `apid_managed_postgres_plan_excess_databases`
+- `apid_managed_postgres_plan_excess_scopes{state}`, where `state` is
+  `suspended`, `shadowed` or `shared`
 
 ## Restore-to-new-database safety
 

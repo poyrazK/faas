@@ -198,7 +198,13 @@ func cachedHiddenCapabilities(token string) ([]string, time.Time, bool) {
 // readHiddenCapabilities asks the API; the client stores the answer in the
 // completion cache on the way.
 func readHiddenCapabilities(token string) ([]string, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), capabilityViewTimeout)
+	return readHiddenCapabilitiesContext(context.Background(), token)
+}
+
+// readHiddenCapabilitiesContext is readHiddenCapabilities bounded by a
+// caller's context as well as capabilityViewTimeout.
+func readHiddenCapabilitiesContext(parent context.Context, token string) ([]string, bool) {
+	ctx, cancel := context.WithTimeout(parent, capabilityViewTimeout)
 	defer cancel()
 	response, err := NewClient(apiBase(), token).GetCapabilities(ctx)
 	if err != nil {

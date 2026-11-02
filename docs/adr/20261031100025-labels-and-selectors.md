@@ -209,8 +209,8 @@ read once at the start, so a resource labelled during the wait is not added.
 - Labels stay customer metadata: they change no scheduling, routing, billing or
   quota. Grouping usage and alert rules by label are separate decisions.
 - Selector matching in Go costs one full per-account list read per filtered
-  list; plan limits bound it for apps, databases and crons, and jobs need a
-  limit or an index first.
+  list; plan limits bound it for apps, databases and crons, and
+  `JobMaxPerAccount` bounds it for jobs (step 5).
 
 ## Alternatives considered
 

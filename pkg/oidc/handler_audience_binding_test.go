@@ -35,6 +35,7 @@ func exchangeOnce(t *testing.T, h *Handler, subject, aud string) *httptest.Respo
 	t.Helper()
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
+		App:      "web",
 		Token:    makeEnvelopeWithSub(t, testIssuer, subject, time.Now().Add(5*time.Minute)),
 		Audience: aud,
 	})
@@ -87,7 +88,7 @@ func TestServeHTTP_ExplicitPolicyIsNotWidenedByBinding(t *testing.T) {
 		stubAccountLookup: stubAccountLookup{bySubject: map[string]state.Account{testSub: account, other: account}},
 		bound:             map[string]state.Account{other: account},
 	}
-	fake := &fakeVerifier{claims: &Claims{Issuer: testIssuer, Aud: []string{"faas.example.com"}, Exp: time.Now().Add(5 * time.Minute)}}
+	fake := &fakeVerifier{claims: &Claims{Issuer: testIssuer, Aud: []string{"faas.example.com"}, Exp: time.Now().Add(5 * time.Minute), Ref: "refs/heads/main", EventName: "push"}}
 	h := NewHandler(HandlerDeps{
 		Verifier: patternVerifier{fake}, Policies: policies, Tokens: newMemTokenStore(),
 		Lookups: lookup, Audit: &memAuditor{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -106,7 +107,7 @@ func TestServeHTTP_BoundRepositoryIDsAreRequired(t *testing.T) {
 		bindingAwareLookup: bindingAwareLookup{stubAccountLookup: stubAccountLookup{bySubject: map[string]state.Account{testSub: account}}},
 		ownerID:            583231, repoID: 1296269,
 	}
-	fake := &fakeVerifier{claims: &Claims{Issuer: testIssuer, Aud: []string{"faas.example.com"}, Exp: time.Now().Add(5 * time.Minute)}}
+	fake := &fakeVerifier{claims: &Claims{Issuer: testIssuer, Aud: []string{"faas.example.com"}, Exp: time.Now().Add(5 * time.Minute), Ref: "refs/heads/main", EventName: "push"}}
 	h := NewHandler(HandlerDeps{
 		Verifier: fake, Policies: newMemTrustPolicyStore(), Tokens: newMemTokenStore(),
 		Lookups: lookup, Audit: &memAuditor{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),

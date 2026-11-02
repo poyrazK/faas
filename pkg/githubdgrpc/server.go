@@ -549,6 +549,9 @@ func toStatusErr(err error) error {
 	if _, ok := status.FromError(err); ok {
 		return err
 	}
+	if choice, ok := AsInstallationChoice(err); ok {
+		return installationChoiceStatus(choice)
+	}
 	if p := api.AsProblem(err); p != nil {
 		return grpcerr.ToStatus(p)
 	}

@@ -39,13 +39,14 @@ func (s *PostgresStore) lockReservationOwner(ctx context.Context, tx sqlc.DBTX, 
 
 // reservationTakesRestoreSlot decides a reservation at or past the owner's
 // database limit (ADR-20261031123259): only a restore may go one database
-// past it, and only while no other database of the owner holds the slot.
-// It runs under the owner's reservation lock.
+// past it, and only while no other database of the owner holds the slot;
+// a restore that must fit inside the limit never does. It runs under the
+// owner's reservation lock.
 func (s *PostgresStore) reservationTakesRestoreSlot(ctx context.Context, tx sqlc.DBTX, database Database, active int64, limit int) (bool, error) {
 	if active < int64(limit) {
 		return false, nil
 	}
-	if database.RestoreSourceDatabaseID == "" {
+	if database.RestoreSourceDatabaseID == "" || !restoreSlotAllowed(ctx) {
 		return false, ErrQuotaExceeded
 	}
 	q := sqlc.New()

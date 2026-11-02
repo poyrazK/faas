@@ -1982,8 +1982,15 @@ groups:
   # ────────────────────────────────────────────────────────────────────
   - name: faas_compute_edge
     rules:
+      # A node serves only while its edge answers and its connector holds a
+      # tunnel connection. A connector that is down exports no connection
+      # series at all, so the expression counts serving nodes instead of
+      # summing connections, which is empty, not 0, once every connector stops.
       - alert: FaasComputeEdgeUnavailable
-        expr: (sum(up{job="gatewayd-public-edge"}) == 0) or (sum(cloudflared_tunnel_ha_connections{job="cloudflared"}) == 0)
+        expr: |
+          count(up{job="gatewayd-public-edge"})
+            unless on()
+          (count((up{job="gatewayd-public-edge"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared"} > 0)) > 0)
         for: 2m
         labels:
           severity: page
@@ -1992,7 +1999,7 @@ groups:
           public_status: internal
         annotations:
           summary: "No compute-node app edge is serving"
-          description: "Every compute edge is down or every Cloudflare Tunnel connector has lost its connections for 2 minutes. App requests routed through the tunnel are failing."
+          description: "For 2 minutes no compute node has both its edge answering and its Cloudflare Tunnel connector connected. App requests routed through the tunnel are failing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
       - alert: FaasComputeEdgeDown
@@ -2052,10 +2059,96 @@ groups:
   # in compute mode and its s3 tunnel connector). Prometheus scrapes the two
   # jobs only while the cell runs the gateway on its compute nodes, so these
   # stay silent on fleets without it. One node down is lost capacity;
-  # Cloudflare sends its share to the other connectors.
+  # Cloudflare sends its share to the other connectors. Once s3.<domain>
+  # resolves to the s3 tunnel (step 6), no node serving is an outage.
   # ────────────────────────────────────────────────────────────────────
+  # ADR-20261102081618 §3: edgednsd keeps the app hosts' address records
+  # pointed at the compute edges that are ready. Cloudflare does not
+  # health-check those records, so edgednsd is the failover.
+  - name: faas_edge_dns
+    rules:
+      - alert: FaasEdgeDNSNoReadyNode
+        expr: |
+          (max(edge_dns_records) > 0)
+            and on()
+          (sum(edge_dns_node_in) == 0)
+        for: 2m
+        labels:
+          severity: page
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "No compute edge is ready for direct entry"
+          description: "For 2 minutes no compute node's edge has answered edgednsd's readiness probes. edgednsd keeps the last address records rather than remove them all, so Cloudflare still sends app requests to edges that may fail them."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
+      - alert: FaasEdgeDNSNodeWithdrawn
+        expr: |
+          (edge_dns_node_in == 0)
+            and on(node)
+          (increase(edge_dns_probe_failures_total[5m]) > 0)
+        for: 5m
+        labels:
+          severity: warn
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The edge on {{ $labels.node }} is out of DNS"
+          description: "edgednsd withdrew {{ $labels.node }}'s address because its edge stopped answering readiness probes. The other nodes carry its share; it comes back after five answers in a row."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
+      - alert: FaasEdgeDNSWritesFailing
+        expr: sum by (op) (increase(edge_dns_errors_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "edgednsd cannot {{ $labels.op }} DNS records"
+          description: "edgednsd's Cloudflare {{ $labels.op }} calls have failed for 10 minutes. The records stay as they are, so a node that fails now is not withdrawn."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
+      - alert: FaasEdgeDNSDown
+        expr: up{job="edgednsd"} == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "edgednsd is not answering"
+          description: "Prometheus cannot scrape edgednsd on the control plane. The records stay as they were, so traffic flows, but a compute node that fails now is not withdrawn."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
   - name: faas_compute_object_gateway
     rules:
+      # Gated on the s3_endpoint_route target label, which Prometheus sets
+      # to "tunnel" only after the cutover: before it the tunnel carries at
+      # most the load test's pilot host. A node serves only while its
+      # gateway answers and its connector holds a connection; a connector
+      # that is down exports no connection series, so this counts serving
+      # nodes instead of summing connections.
+      - alert: FaasComputeObjectGatewayUnavailable
+        expr: |
+          count(up{job="s3-gatewayd-compute",s3_endpoint_route="tunnel"})
+            unless on()
+          (count((up{job="s3-gatewayd-compute"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared-s3"} > 0)) > 0)
+        for: 2m
+        labels:
+          severity: page
+          component: s3-gatewayd
+          family: object_storage
+          public_status: internal
+        annotations:
+          summary: "No compute node is serving the S3 endpoint"
+          description: "s3.<domain> resolves to the s3 tunnel, and for 2 minutes no compute node has both its S3 gateway answering and its s3 tunnel connector connected. Every S3 request fails at Cloudflare."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
       - alert: FaasComputeObjectGatewayDown
         expr: up{job="s3-gatewayd-compute"} == 0
         for: 2m
@@ -4026,6 +4119,21 @@ groups:
         annotations:
           summary: "githubd cannot read GitHub's App webhook delivery log"
           description: "No successful poll of GET /app/hook/deliveries for over an hour, so a broken GitHub webhook would go unnoticed. Check the App private key and GitHub API reachability from the control plane."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubAppWebhook.md"
+
+      # The App's events and permissions live on GitHub (docs/ops/github-app.md).
+      # A missing repository event silently stops rename handling; a missing
+      # permission makes GitHub refuse githubd's writes.
+      - alert: FaasGithubAppConfigDrift
+        expr: max by (kind, name) (githubd_github_app_config_missing) == 1
+        for: 30m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "The GitHub App lacks a required {{ $labels.kind }}: {{ $labels.name }}"
+          description: "GET /app shows the Gregale GitHub App without the {{ $labels.kind }} {{ $labels.name }} that docs/ops/github-app.md requires. Subscribe the event or grant the permission in the App's settings on GitHub; a new permission also needs each installation's owner to accept it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubAppWebhook.md"
 
   # Billing drift detector (ADR-049 §B.1). The reconciler
@@ -7478,8 +7586,13 @@ groups:
       # ADR-20261031122757 §7: a gateway on a compute node keeps to its share
       # of the node's port. Past 10% of a week at the share, its cell moves to
       # dedicated gateway machines.
+      # The app edge's public reads on a compute node keep to their own part
+      # of the node's share (ADR-20261031122757 step 7), as
+      # gatewayd_public_object_transfer_*.
       - alert: FaasS3GatewayPortShareSaturated
-        expr: max by (instance) (rate(s3_gateway_transfer_throttled_seconds_total[7d])) > 0.1
+        expr: |
+          max by (instance) (rate(s3_gateway_transfer_throttled_seconds_total[7d])) > 0.1
+          or max by (instance) (rate(gatewayd_public_object_transfer_throttled_seconds_total[7d])) > 0.1
         for: 1h
         labels:
           severity: warn
@@ -7487,8 +7600,8 @@ groups:
           family: object_storage
         annotations:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
-          summary: "s3-gatewayd spends more than 10% of the week at its port share"
-          description: "Transfers through {{ $labels.instance }} waited for the gateway's port share {{ $value | humanizePercentage }} of the last 7 days. Customers see slower transfers, not errors. Plan the cell's move to dedicated gateway machines (ADR-20261031122757 §7)."
+          summary: "An object gateway spends more than 10% of the week at its port share"
+          description: "Transfers through {{ $labels.instance }} waited for its part of the node's port share {{ $value | humanizePercentage }} of the last 7 days. Customers see slower transfers, not errors. Plan the cell's move to dedicated gateway machines (ADR-20261031122757 §7)."
       - alert: FaasObjectStorageUsageExportStale
         expr: time() - faas_object_storage_usage_export_last_success_timestamp_seconds > 3600
         for: 15m

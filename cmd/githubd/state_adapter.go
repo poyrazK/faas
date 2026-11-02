@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -86,6 +87,23 @@ func (a *stateBindingsAdapter) GetForApp(ctx context.Context, appID, accountID s
 // ListForAccount returns the per-account bind map.
 func (a *stateBindingsAdapter) ListForAccount(ctx context.Context, accountID string) (map[string]state.GitHubBinding, error) {
 	return a.store.ListGithubInstallBindingsForAccount(ctx, accountID)
+}
+
+// ListForInstallationRepo returns the live bindings of repoFullName under
+// installationID; a release tag finds apps bound to a non-default branch
+// with it.
+func (a *stateBindingsAdapter) ListForInstallationRepo(ctx context.Context, installationID int64, repoFullName string) ([]state.GitHubBinding, error) {
+	all, err := a.store.ListGitHubInstallBindingsForInstallation(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]state.GitHubBinding, 0, len(all))
+	for _, binding := range all {
+		if strings.EqualFold(binding.RepoFullName, repoFullName) {
+			out = append(out, binding)
+		}
+	}
+	return out, nil
 }
 
 // FindForRepoBranch is the inbound-webhook dispatch lookup.
@@ -177,6 +195,10 @@ func (a *stateLifecycleAdapter) RemoveGitHubRepositories(ctx context.Context, in
 
 func (a *stateLifecycleAdapter) RenameGitHubRepository(ctx context.Context, installationID int64, oldRepoFullName, newRepoFullName string) error {
 	return a.store.RenameGitHubRepository(ctx, installationID, oldRepoFullName, newRepoFullName)
+}
+
+func (a *stateLifecycleAdapter) RenameGitHubAccount(ctx context.Context, installationID int64, oldLogin, newLogin string) error {
+	return a.store.RenameGitHubAccount(ctx, installationID, oldLogin, newLogin)
 }
 
 func (a *stateLifecycleAdapter) ListGitHubInstallations(ctx context.Context) ([]state.GitHubInstall, error) {

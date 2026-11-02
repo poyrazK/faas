@@ -70,3 +70,53 @@ tests:
               summary: "The s3 tunnel connector on cn-2 is not connected"
               description: "faas-cloudflared-s3 on cn-2 is down or holds no tunnel connections. The node serves no S3 traffic until it reconnects; the other connectors carry its share. A node whose s3 tunnel token is not staged yet stays here."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
+  # Step 6: the page waits for the cutover. Before it the compute gateways
+  # serve at most the load test's pilot host.
+  - name: no serving node does not page before the cutover
+    interval: 1m
+    input_series:
+      - series: up{job="s3-gatewayd-compute",node="cn-1",s3_endpoint_route="control_plane"}
+        values: 1+0x10
+      - series: up{job="cloudflared-s3",node="cn-1"}
+        values: 0+0x10
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: FaasComputeObjectGatewayUnavailable
+        exp_alerts: []
+
+  - name: after the cutover no serving node pages, counting a gateway on one node and a connector on another
+    interval: 1m
+    input_series:
+      - series: up{job="s3-gatewayd-compute",node="cn-1",s3_endpoint_route="tunnel"}
+        values: 1 1 1 1 0 0 0 0 0 0
+      - series: up{job="s3-gatewayd-compute",node="cn-2",s3_endpoint_route="tunnel"}
+        values: 1+0x10
+      - series: up{job="cloudflared-s3",node="cn-1"}
+        values: 1+0x10
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared-s3",node="cn-1"}
+        values: 4+0x10
+      # cn-2's connector stops: its connection series goes stale, not to 0.
+      - series: up{job="cloudflared-s3",node="cn-2"}
+        values: 1 1 1 0 0 0 0 0 0 0
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared-s3",node="cn-2"}
+        values: 4 4 4 stale
+      # The app tunnel's connections serve no S3 traffic.
+      - series: cloudflared_tunnel_ha_connections{job="cloudflared",node="cn-2"}
+        values: 4+0x10
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasComputeObjectGatewayUnavailable
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: FaasComputeObjectGatewayUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: s3-gatewayd
+              family: object_storage
+              public_status: internal
+            exp_annotations:
+              summary: "No compute node is serving the S3 endpoint"
+              description: "s3.<domain> resolves to the s3 tunnel, and for 2 minutes no compute node has both its S3 gateway answering and its s3 tunnel connector connected. Every S3 request fails at Cloudflare."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"

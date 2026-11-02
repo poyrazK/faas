@@ -1090,6 +1090,10 @@ from .dashboard_widget_window import DashboardWidgetWindow
 from .dashboards_response import DashboardsResponse
 from .data_api_access_config import DataAPIAccessConfig
 from .data_api_access_config_version import DataAPIAccessConfigVersion
+from .data_api_change_event import DataAPIChangeEvent
+from .data_api_change_event_batch import DataAPIChangeEventBatch
+from .data_api_change_event_batch_response import DataAPIChangeEventBatchResponse
+from .data_api_change_event_batch_version import DataAPIChangeEventBatchVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
@@ -2202,6 +2206,7 @@ from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBra
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .git_hub_installation_summary import GitHubInstallationSummary
 from .git_hub_webhook_activity import GitHubWebhookActivity
 from .git_hub_webhook_activity_status import GitHubWebhookActivityStatus
 from .github_check_update_record import GithubCheckUpdateRecord
@@ -7298,6 +7303,10 @@ __all__ = (
     "DashboardWidgetWindow",
     "DataAPIAccessConfig",
     "DataAPIAccessConfigVersion",
+    "DataAPIChangeEvent",
+    "DataAPIChangeEventBatch",
+    "DataAPIChangeEventBatchResponse",
+    "DataAPIChangeEventBatchVersion",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
@@ -8364,6 +8373,7 @@ __all__ = (
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
+    "GitHubInstallationSummary",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusDeployBranches",

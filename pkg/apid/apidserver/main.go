@@ -855,6 +855,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.realtime.RunManagedRealtimeHistoryReaper(ctx)
 		go srv.realtime.RunManagedRealtimeEntityExpirations(ctx)
 		go srv.realtime.RunManagedRealtimeSchedules(ctx)
+		go srv.runAgentRunCallbacks(ctx)
 		go srv.realtime.RunRealtimeConsumerGroupAlerts(ctx)
 		go srv.realtime.RunRealtimeConsumerGroupDeadRetention(ctx)
 		go srv.realtime.RunRealtimeReplayJobs(ctx)
@@ -2221,9 +2222,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//      requiring operator action. The file path is gated on
 	//      FAAS_AUDIT_HMAC_KEY_FILE for tests / non-standard
 	//      deployments.
-	//   3. nil (zero-key fallback) — only if both above paths fail.
-	//      pkg/auth logs a Warn; HashEmail still produces a stable
-	//      join key, just without rainbow-table resistance.
+	//   3. FAIL — boot refuses, as for the recovery-code key below. A
+	//      zero key would make every audit email hash reversible.
 	auditHMACKey, err := loadOrGenerateAuditHMACKey(deps.getenv, log)
 	if err != nil {
 		return fmt.Errorf("apid: load or generate audit HMAC key: %w", err)
@@ -2234,15 +2234,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// threat on a leaked PG blob (logical change 7 of the IAM-hardening
 	// mega-PR, ADR-035 §"Rejected alternatives" #4). The recovery-code
 	// hash column is bytea; the digest algorithm is HMAC-SHA256 keyed
-	// by a per-box secret. The audit-hmac.key path above uses a
-	// Warn-and-continue zero-key fallback because HashEmail joins
-	// can degrade gracefully to "this row's join key is rainbow-
-	// reversible" — there is no service-level outage. The recovery-
-	// code path is different: the recovery code IS the only fallback
-	// when the customer's TOTP device is lost. A zero-key HMAC gives
-	// exactly the same threat surface as bare SHA-256, so refusing
-	// to start is the correct tradeoff — "no service" beats "no
-	// defence" for the recovery fall-back path.
+	// by a per-box secret. Like the audit-hmac.key path above, it
+	// refuses to start without a key: the recovery code IS the only
+	// fallback when the customer's TOTP device is lost, and a zero-key
+	// HMAC gives exactly the same threat surface as bare SHA-256 —
+	// "no service" beats "no defence".
 	//
 	// Loading precedence (mirrors the audit-HMAC loader, with one
 	// difference: there is no precedence 3 zero-key fallback):
@@ -2254,10 +2250,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//      recovery-code store — every customer would have to re-enroll).
 	//      The path is gated on FAAS_RECOVERY_HMAC_KEY_FILE for tests
 	//      and non-standard state dirs.
-	//   3. FAIL — boot refuses. The audit-hmac.key loader returns nil
-	//      when no key is configured; this loader returns an error
-	//      instead. The error propagates as a top-level run() error and
-	//      systemd brings apid back into the failed-state pattern.
+	//   3. FAIL — boot refuses, as the audit-hmac.key loader does. The
+	//      error propagates as a top-level run() error and systemd
+	//      brings apid back into the failed-state pattern.
 	recoveryHMACKey, err := loadOrGenerateRecoveryHMACKey(deps.getenv, log)
 	if err != nil {
 		return fmt.Errorf("apid: load or generate recovery HMAC key: %w", err)
@@ -2603,22 +2598,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// telemetry to be durable.
 	//
 	// ADR-127 PR-D code-review #3: sharedLimiter is the per-account
-	// token-bucket pool shared with runSpansWriterServer below. One limiter
-	// instance covers both IncrementRequestTelemetry and WriteSpansSummary
-	// paths so a customer's plan cap is enforced against one bucket pool.
+	// token-bucket pool for request rows (IncrementRequestTelemetry).
+	// Tracing tenancy T8 (2026-10-31 logs/traces audit, ADR-127 PR-D
+	// amendment): spans get their own pool, spansLimiter, shared by the
+	// in-guest exports and every WriteSpansSummary listener, so enabling
+	// tracing never crowds out request evidence.
 	sharedLimiter := peraccount.NewLimiter()
+	spansLimiter := peraccount.NewLimiter()
+	// The tracing capability gates span ingest as it gates trace reads.
+	tracing := receivers.TracingReleased(srv.tracingReleased)
+	spans := spansIngest{limiter: spansLimiter, tracing: tracing}
 	// ADR-958: one in-guest span ingester shared by both SpansWriter listeners.
 	// Its flush loop writes back through WriteSpansSummary so guest spans share
 	// that path's validation, rate cap and outcome metrics.
 	var guestSpans *receivers.GuestSpansIngester
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-		guestSpans = receivers.NewGuestSpansIngester(srv.store, sharedLimiter, log).WithLogs(srv.store)
+		guestSpans = receivers.NewGuestSpansIngester(srv.store, spansLimiter, log).WithLogs(srv.store).WithTracingRelease(tracing)
 		// Multi-box: a node's vmmd/apid-client leaf names the node, so its
 		// spans and logs must come from instances on that node.
 		if nodes, ok := nodeVerifier.(wire.NodeIdentityResolver); ok {
 			guestSpans.WithPeerNodes(nodes, srv.store)
 		}
-		guestSpansWriter := receivers.NewSpansWriterReceiver(srv.store, srv.ops, sharedLimiter, true)
+		guestSpansWriter := receivers.NewSpansWriterReceiver(srv.store, srv.ops, spansLimiter, true)
 		go func() {
 			if err := guestSpans.Run(ctx, receivers.OtelFlushInterval(deps.getenv), guestSpansWriter.WriteSpansSummary); err != nil && ctx.Err() == nil {
 				log.Error("apid guest spans flush loop exited", "err", err)
@@ -2651,7 +2652,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.requestIDLookups = receivers.NewRequestIDLookupHub(log)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, spans, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -2665,6 +2666,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
+	// The retention purge runs even with app errors switched off: rows
+	// written while it was on (request samples with headers) must still
+	// age out on the plan's schedule.
+	go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
 	if deps.getenv("FAAS_APP_ERRORS_ENABLED") != "false" { //nolint:goconst // kill-switch sentinel; the canonical "true" env literal.
 		appErrTarget := cfg.GetAppErrorsTarget(deps.getenv)
 		appErrTLS, tlsErr := cfg.LoadAppErrorsTLSWithPrefixAndVerifierAndReload(nodeVerifier, appErrRotator.Reload(nil))
@@ -2673,7 +2678,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, spans, log, true, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2696,8 +2701,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			go wire.WatchTLSReload(ctx, log, appErrHupCh, appErrRotator, appErrReload)
 		}
-		go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
-
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
 		// by watchLogLevelReload). Install three parallel ones — each
@@ -2740,7 +2743,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
 		}
 		var listenErr error
-		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, spans, log, false, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
@@ -2761,7 +2764,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// key authentication and the OTel handler.
 	if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
 		authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
-		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log)
+		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log, spans.tracing)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: auth server: %w", err)
@@ -2783,7 +2786,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if isUnixSocketPath(swTarget) {
 			var swLis net.Listener
 			var listenErr error
-			spansWriterSrv, swLis, listenErr = runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter, guestSpans, runtimeLogs)
+			spansWriterSrv, swLis, listenErr = runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, spans.limiter, guestSpans, runtimeLogs)
 			if listenErr != nil {
 				_ = l.Close()
 				return fmt.Errorf("apid: otel spans writer server: %w", listenErr)
@@ -2959,12 +2962,10 @@ const auditHMACKeyEnvVar = "FAAS_AUDIT_HMAC_KEY"
 const auditHMACKeyFileEnvVar = "FAAS_AUDIT_HMAC_KEY_FILE"
 
 // loadOrGenerateAuditHMACKey returns the per-daemon audit HMAC key
-// per the precedence documented at the call site. Returns nil with
-// no error if neither the env var nor the fallback file path yields
-// a key — pkg/auth.SetHMACSecret accepts nil and logs a Warn, so the
-// daemon still boots (in dev mode) with the zero-key fallback.
+// per the precedence documented at the call site. It never returns a
+// nil key without an error: apid does not boot on a zero key.
 //
-// Errors are returned only when:
+// Errors are returned when:
 //   - FAAS_AUDIT_HMAC_KEY is set but is not valid hex / wrong length.
 //     A malformed key is a hard error: silently using a partial key
 //     would let the operator think they have rainbow-table
@@ -3010,15 +3011,15 @@ func loadOrGenerateAuditHMACKey(getenv func(string) string, log *slog.Logger) ([
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	// Precedence 3: generate + persist (dev-mode first boot). Skip
-	// silently if /var/lib/faas doesn't exist (typical for tests
-	// running as non-root) — the zero-key fallback in pkg/auth
-	// will catch it.
+	// Precedence 3: generate + persist (dev-mode first boot). Like the
+	// recovery-HMAC loader, apid refuses to start without a key it can
+	// keep: a zero key makes every audit email hash reversible by
+	// guessing emails, and an in-process key would change the join key
+	// on the next restart.
 	dir := filepath.Dir(path)
 	if _, statErr := os.Stat(dir); statErr != nil {
-		log.Warn("audit HMAC key file dir unavailable; running on zero-key fallback (HashEmail is rainbow-table-reversible)",
-			"path", path, "err", statErr)
-		return nil, nil
+		return nil, fmt.Errorf("stat %s (refusing to start without an audit HMAC key; set %s, %s, or symlink %s into a writable dir): %w",
+			dir, auditHMACKeyEnvVar, auditHMACKeyFileEnvVar, auditHMACKeyFile, statErr)
 	}
 	key, err := auth.GenerateHMACSecret()
 	if err != nil {
@@ -3026,9 +3027,8 @@ func loadOrGenerateAuditHMACKey(getenv func(string) string, log *slog.Logger) ([
 	}
 	encoded := hex.EncodeToString(key)
 	if err := os.WriteFile(path, []byte(encoded+"\n"), 0o600); err != nil {
-		log.Warn("audit HMAC key auto-persist failed; running on in-process key (HashEmail joins break on restart)",
-			"path", path, "err", err)
-		return key, nil
+		return nil, fmt.Errorf("persist %s (refusing to start with an in-process-only key — the next restart would change every audit email hash): %w",
+			path, err)
 	}
 	log.Info("audit HMAC key generated and persisted", "path", path)
 	return key, nil
@@ -3115,10 +3115,8 @@ func loadOrGenerateRecoveryHMACKey(getenv func(string) string, log *slog.Logger)
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	// Precedence 3: generate + persist (dev-mode first boot). The
-	// audit-HMAC loader tolerates /var/lib/faas being missing
-	// (test runs as non-root); the recovery-HMAC loader does NOT
-	// — refusing to start is the correct strict-mode behaviour.
+	// Precedence 3: generate + persist (dev-mode first boot). Like the
+	// audit-HMAC loader, refuse to start when /var/lib/faas is missing.
 	dir := filepath.Dir(path)
 	if _, statErr := os.Stat(dir); statErr != nil {
 		return nil, fmt.Errorf("stat %s (refusing to start without a recovery HMAC key; set %s, %s, or symlink %s into a writable dir): %w",
@@ -3309,7 +3307,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -3335,7 +3333,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// credential hash itself (ADR 20261029202403); single-box gateways ask
 	// over /run/faas/auth.sock.
 	if !isUnixSocketPath(target) {
-		receivers.RegisterAuthReceiver(srv, store)
+		receivers.RegisterAuthReceiver(srv, store, spans.tracing)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
 			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
@@ -3354,7 +3352,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// listener in split-box deployments. The dedicated Unix socket remains the
 	// single-box path and is registered by runSpansWriterServer.
 	if !isUnixSocketPath(target) && os.Getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-		receivers.RegisterSpansWriterReceiver(srv, store, ops, limiter, true, guestSpans)
+		receivers.RegisterSpansWriterReceiver(srv, store, ops, spans.limiter, true, guestSpans)
 		receivers.RegisterRuntimeLogEventsReceiver(srv, runtimeLogs)
 	}
 	return srv, lis, nil
@@ -3372,7 +3370,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
@@ -3383,7 +3381,7 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	// and asks it to match Data API server keys there (ADR 20261029202403
 	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
-	receivers.RegisterAuthReceiver(srv, store)
+	receivers.RegisterAuthReceiver(srv, store, spans.tracing)
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
 	} else {
@@ -3424,12 +3422,20 @@ func runSpansWriterServer(ctx context.Context, target string, store state.Store,
 // serves; the gateway's OTel handler refuses to start without
 // auth, so a missing auth server == a missing OTel surface,
 // which is the desired fail-closed posture).
-func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger) (*grpc.Server, net.Listener, error) {
+func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger, tracing receivers.TracingReleased) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	receivers.RegisterAuthReceiver(srv, store)
+	receivers.RegisterAuthReceiver(srv, store, tracing)
 	return srv, lis, nil
+}
+
+// spansIngest is the span-ingest wiring every telemetry listener shares:
+// span writes' own bucket pool, apart from request rows' (tracing tenancy
+// T8), and the tracing capability gate for OTLP keys.
+type spansIngest struct {
+	limiter *peraccount.Limiter
+	tracing receivers.TracingReleased
 }

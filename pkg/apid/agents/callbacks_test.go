@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -58,8 +59,8 @@ func (f *fakeInbox) AppendManagedRealtimeChannelMetadata(_ context.Context, ep, 
 	return m, nil
 }
 
-// fakeRevocations keeps each thread's latest revocation, at the fixture's
-// clock.
+// fakeRevocations keeps each thread's latest revocation, at its own clock,
+// the database's, which the fixture runs with apid's unless a test skews it.
 type fakeRevocations struct {
 	now func() time.Time
 	at  map[string]time.Time
@@ -74,6 +75,10 @@ func (f *fakeRevocations) RevokeCallbacks(_ context.Context, _, endpointID, thre
 func (f *fakeRevocations) CallbacksRevokedAt(_ context.Context, endpointID, threadID string) (time.Time, bool, error) {
 	t, ok := f.at[endpointID+"/"+threadID]
 	return t, ok, nil
+}
+
+func (f *fakeRevocations) CallbackClock(context.Context) (time.Time, error) {
+	return f.now(), nil
 }
 
 const (
@@ -259,6 +264,58 @@ func TestCallbackMessageLandsOnce(t *testing.T) {
 	}
 }
 
+// Both IDs may carry ':'. Over random thread and message IDs made of 'a',
+// 'b' and ':', starting with thread "a:b" message "c" and thread "a" message
+// "b:c", every distinct pair lands as its own message, a repeated pair gets
+// its first sequence, and a thread without ':' keeps the key
+// "callback:{thread}:{message_id}".
+func TestPropertyCallbackThreadsNeverShareAKey(t *testing.T) {
+	r := rand.New(rand.NewPCG(20261102, 125501))
+	f := newCallbackFixture(t)
+	id := func() string {
+		b := make([]byte, 1+r.IntN(4))
+		for i := range b {
+			b[i] = "ab:"[r.IntN(3)]
+		}
+		return string(b)
+	}
+	pairs := [][2]string{{"a:b", "c"}, {"a", "b:c"}}
+	for i := 0; i < 300; i++ {
+		pairs = append(pairs, [2]string{id(), id()})
+	}
+	tokens, sequences := map[string]string{}, map[[2]string]string{}
+	for _, p := range pairs {
+		thread, message := p[0], p[1]
+		if _, ok := tokens[thread]; !ok {
+			token, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: thread})
+			if code != http.StatusCreated {
+				t.Fatalf("issue for thread %q = %d", thread, code)
+			}
+			tokens[thread] = token
+		}
+		code, receipt := f.post(t, tokens[thread], toolResult(message, `{"ok":true}`))
+		if code != http.StatusAccepted {
+			t.Fatalf("thread %q message %q = %d", thread, message, code)
+		}
+		if first, seen := sequences[p]; seen && receipt.Sequence != first {
+			t.Fatalf("retry of thread %q message %q = sequence %s, want %s", thread, message, receipt.Sequence, first)
+		}
+		sequences[p] = receipt.Sequence
+	}
+	if len(f.inbox.messages) != len(sequences) {
+		t.Fatalf("%d distinct posts made %d messages", len(sequences), len(f.inbox.messages))
+	}
+	for _, m := range f.inbox.messages {
+		thread, message := m.Metadata["thread_id"], m.Metadata["message_id"]
+		if sequences[[2]string{thread, message}] != strconv.FormatInt(m.Sequence, 10) {
+			t.Fatalf("message %d belongs to thread %q message %q, which got sequence %s", m.Sequence, thread, message, sequences[[2]string{thread, message}])
+		}
+		if !strings.Contains(thread, ":") && m.IdempotencyKey != "callback:"+thread+":"+message {
+			t.Fatalf("thread %q message %q has key %q", thread, message, m.IdempotencyKey)
+		}
+	}
+}
+
 // Over random grants, posts and tampered tokens, every published message
 // lands in the inbox of its token's endpoint, under its token's thread, and a
 // token changed in any byte publishes nothing.
@@ -416,6 +473,36 @@ func TestCallbackRevocation(t *testing.T) {
 	}
 	if code := f.revoke(t, callbackAccount, "ep-1", "a b"); code != http.StatusBadRequest {
 		t.Fatalf("revoking a bad thread = %d", code)
+	}
+}
+
+// A token's issue time is read from the clock revocations are recorded on,
+// so apid's clock running behind or ahead of the database changes nothing: a
+// URL issued before a revocation stops working, and one issued after it
+// works.
+func TestCallbackRevocationIgnoresAPIDClockSkew(t *testing.T) {
+	// skew is how far the database's clock runs ahead of apid's.
+	for _, skew := range []time.Duration{5 * time.Second, -5 * time.Second} {
+		t.Run(skew.String(), func(t *testing.T) {
+			f := newCallbackFixture(t)
+			f.h.Revocations = &fakeRevocations{now: func() time.Time { return f.now.Add(skew) }, at: map[string]time.Time{}}
+			before, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+			f.now = f.now.Add(time.Millisecond)
+			if code := f.revoke(t, callbackAccount, "ep-1", "t"); code != http.StatusOK {
+				t.Fatalf("revoke = %d", code)
+			}
+			if code, _ := f.post(t, before, toolResult("m1", `1`)); code != http.StatusNotFound {
+				t.Fatalf("a URL issued before the revocation answered %d", code)
+			}
+			f.now = f.now.Add(time.Millisecond)
+			after, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+			if code != http.StatusCreated {
+				t.Fatalf("issue = %d", code)
+			}
+			if code, _ := f.post(t, after, toolResult("m2", `1`)); code != http.StatusAccepted {
+				t.Fatalf("a URL issued after the revocation answered %d", code)
+			}
+		})
 	}
 }
 
