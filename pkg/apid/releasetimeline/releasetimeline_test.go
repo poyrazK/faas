@@ -218,6 +218,35 @@ func TestFailedAutomaticRollbackIsNotARollback(t *testing.T) {
 	}
 }
 
+// adr: 1445 amendment 5 — a release replaced inside its window was watched
+// only until then, and the timeline says so instead of a full-window pass.
+func TestWatchEndsWhenANewerReleaseReplacesIt(t *testing.T) {
+	in := releasetimeline.Inputs{Watched: true, WatchWindow: 30 * time.Minute, Now: at(120),
+		Stable:     &releasetimeline.Release{ID: "d1", Revision: 41},
+		ReplacedBy: &releasetimeline.Release{ID: "d3", Revision: 43, At: at(20)},
+		Deployment: live(func(d *api.DeploymentResponse) {
+			d.Status, d.TrafficPercent, d.RolloutState, d.RolloutCompletedAt = "superseded", 0, "complete", ptr(at(10))
+		}),
+	}
+	got := releasetimeline.Build(in)
+	var passed string
+	for _, e := range got.Events {
+		if e.Kind == api.ReleaseEventWatchPassed {
+			passed = e.Summary
+		}
+	}
+	if passed != "Post-release watch ended when v43 replaced it: no regression in 10 minutes" {
+		t.Fatalf("watch event = %q, want it to end at the replacement", passed)
+	}
+	in.ReplacedBy.At = at(90)
+	got = releasetimeline.Build(in)
+	for _, e := range got.Events {
+		if e.Kind == api.ReleaseEventWatchPassed && e.Summary != "Post-release watch passed: no regression in 30 minutes" {
+			t.Fatalf("a release replaced after its window = %q, want a full-window pass", e.Summary)
+		}
+	}
+}
+
 func TestScheduleAndUnknownAuditKinds(t *testing.T) {
 	in := releasetimeline.Inputs{Now: at(200), Deployment: live(func(d *api.DeploymentResponse) {
 		d.ScheduledRelease = &api.ScheduledRelease{State: api.ScheduledReleaseStateBlocked, ReleaseAt: at(60).Format(time.RFC3339),

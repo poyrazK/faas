@@ -28,6 +28,12 @@ type EnvironmentGitApprovalStore interface {
 	EnvironmentGitRevisionApproval(context.Context, string, string, string) (EnvironmentGitRevisionApproval, error)
 }
 
+// EnvironmentRevisionKeyApproverPrefix marks a revision approved with an API
+// key or token ("api_key:<id>"); a person's approval records their account
+// ID. Approving the same revision again as a person replaces a key's
+// approval, never the reverse (ADR-20261020085706 amendment 8).
+const EnvironmentRevisionKeyApproverPrefix = "api_key:"
+
 type ApproveEnvironmentRevision struct {
 	AccountID          string
 	SourceID           string

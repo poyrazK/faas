@@ -11103,12 +11103,22 @@ JOIN project_environments e ON e.id = s.environment_id AND e.account_id = s.acco
 WHERE s.id = sqlc.arg(source_id)::uuid;
 
 -- name: InsertEnvironmentDesiredRevision :one
+-- Approving the same revision again keeps its row. A person's approval
+-- replaces a key's ("api_key:<id>"), never the reverse, so a person can stand
+-- in for the apps' release approvals after CI approved the revision
+-- (ADR-20261020085706 amendment 8).
 INSERT INTO environment_desired_revisions
     (source_id, commit_sha, definition_digest, definition, approved_by)
 VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(commit_sha)::text,
         sqlc.arg(definition_digest)::text, sqlc.arg(definition)::jsonb, sqlc.arg(approved_by)::text)
 ON CONFLICT (source_id, commit_sha, definition_digest) DO UPDATE
-    SET source_id = excluded.source_id
+    SET source_id = excluded.source_id,
+        approved_by = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                           THEN excluded.approved_by ELSE environment_desired_revisions.approved_by END,
+        approved_at = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                           THEN now() ELSE environment_desired_revisions.approved_at END
 RETURNING *;
 
 -- name: SetEnvironmentApprovedRevision :one
@@ -14811,6 +14821,25 @@ WHERE n.mail_intent_id IS NULL AND n.recorded_at>sqlc.arg(since)::timestamptz
  AND (n.kind='expired' OR (d.restore_slot_until IS NOT NULL AND d.state NOT IN ('deleting','deleted')
   AND d.restore_slot_until>sqlc.arg(now)::timestamptz))
 ORDER BY n.recorded_at,n.database_id,n.kind LIMIT sqlc.arg(batch_size);
+
+-- name: ClearManagedPostgresPlanExcessNotices :exec
+-- ADR-20261102125208: a database back inside its plan loses its notice, so a
+-- later suspension is noticed again.
+DELETE FROM managed_postgres_plan_excess_notices WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]);
+
+-- name: RecordManagedPostgresPlanExcessNotice :execrows
+-- One notice per suspension; later sweeps leave it alone.
+INSERT INTO managed_postgres_plan_excess_notices(database_id,reason,recorded_at)
+VALUES(sqlc.arg(database_id)::uuid,sqlc.arg(reason)::text,sqlc.arg(recorded_at)::timestamptz)
+ON CONFLICT (database_id) DO NOTHING;
+
+-- name: ListUnmailedManagedPostgresPlanExcessNotices :many
+-- The notices still to mail: recorded after since, not yet linked to an
+-- intent, for databases not being deleted.
+SELECT n.database_id,n.reason,n.recorded_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.mail_intent_id IS NULL AND n.recorded_at>sqlc.arg(since)::timestamptz AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.recorded_at,n.database_id LIMIT sqlc.arg(batch_size);
 
 -- name: ReadManagedPostgresLifecycleRestoreSource :one
 SELECT * FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE;

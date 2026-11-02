@@ -480,6 +480,9 @@ type Querier interface {
 	ClearExpiredAppForkExecOutput(ctx context.Context, db DBTX, arg ClearExpiredAppForkExecOutputParams) (int64, error)
 	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
 	ClearMFA(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	// ADR-20261102125208: a database back inside its plan loses its notice, so a
+	// later suspension is noticed again.
+	ClearManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) error
 	ClearManagedPostgresRestoreSlot(ctx context.Context, db DBTX, arg ClearManagedPostgresRestoreSlotParams) (int64, error)
 	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
@@ -2518,6 +2521,10 @@ type Querier interface {
 	InsertEntityOutboxAcceptance(ctx context.Context, db DBTX, arg InsertEntityOutboxAcceptanceParams) (int64, error)
 	InsertEntityOutboxWebhookDelivery(ctx context.Context, db DBTX, arg InsertEntityOutboxWebhookDeliveryParams) (int64, error)
 	InsertEnvironmentBindingRelease(ctx context.Context, db DBTX, arg InsertEnvironmentBindingReleaseParams) (pgtype.Timestamptz, error)
+	// Approving the same revision again keeps its row. A person's approval
+	// replaces a key's ("api_key:<id>"), never the reverse, so a person can stand
+	// in for the apps' release approvals after CI approved the revision
+	// (ADR-20261020085706 amendment 8).
 	InsertEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg InsertEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	InsertEnvironmentGitOpsConfig(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsConfigParams) error
 	InsertEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsEffectParams) error
@@ -3625,8 +3632,11 @@ type Querier interface {
 	// ADR-1445: post-release watch.
 	// Completed live releases that kept automatic rollback, finished within the
 	// watch window (plus telemetry grace), are the newest deployment in their
-	// scope, and have a superseded predecessor created before them. Being the
-	// newest excludes rollback targets, which are older than what they replaced.
+	// scope to have served, and have a superseded predecessor created before them.
+	// Being the newest to have served excludes rollback targets, which are older
+	// than what they replaced. A newer release that never served (staged with no
+	// traffic, parked for its schedule, or still building) leaves the serving
+	// release watched (ADR-1445 amendment 5); before, it silenced the watch.
 	// An immediate release may not stamp rollout_started_at; its baseline then
 	// ends when it completed.
 	// The predecessor is the release a plain rollback returns to
@@ -3682,6 +3692,10 @@ type Querier interface {
 	// per-account projections; the broader ?actor + ?subject filter
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
+	// Approval policies whose only remaining approvals-capable channel is this
+	// one: deleting it would leave releases waiting for approval unannounced
+	// (ADR-20261020085706 amendment 7).
+	ListReleaseApprovalPoliciesOnlyNotifyingChannel(ctx context.Context, db DBTX, arg ListReleaseApprovalPoliciesOnlyNotifyingChannelParams) ([]string, error)
 	ListReleaseDatabaseSwitches(ctx context.Context, db DBTX, arg ListReleaseDatabaseSwitchesParams) ([]ReleaseDatabaseSwitch, error)
 	ListReleasesUndoneByDatabaseSwitches(ctx context.Context, db DBTX, arg ListReleasesUndoneByDatabaseSwitchesParams) ([]string, error)
 	// Account-wide `gregale trace` lookup: the newest retained row per app for
@@ -3738,6 +3752,9 @@ type Querier interface {
 	ListSLOHourStarts(ctx context.Context, db DBTX, arg ListSLOHourStartsParams) ([]pgtype.Timestamptz, error)
 	// Pending schedules first, soonest first; then the rest, newest first.
 	ListScheduledReleases(ctx context.Context, db DBTX, arg ListScheduledReleasesParams) ([]ListScheduledReleasesRow, error)
+	// Pending schedules whose only remaining approvals-capable channel is this
+	// one: deleting it would start or block them unannounced.
+	ListScheduledReleasesOnlyNotifyingChannel(ctx context.Context, db DBTX, arg ListScheduledReleasesOnlyNotifyingChannelParams) ([]ListScheduledReleasesOnlyNotifyingChannelRow, error)
 	ListScopedObservedRoutes(ctx context.Context, db DBTX, arg ListScopedObservedRoutesParams) ([]string, error)
 	ListScopedPendingRestarts(ctx context.Context, db DBTX, arg ListScopedPendingRestartsParams) ([]ListScopedPendingRestartsRow, error)
 	ListScopedPendingRollbacks(ctx context.Context, db DBTX, arg ListScopedPendingRollbacksParams) ([][]byte, error)
@@ -3811,6 +3828,9 @@ type Querier interface {
 	// An account's unlifted freezes that have not ended: active and upcoming
 	// windows, weekly windows and after-rollback policies.
 	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
+	// The notices still to mail: recorded after since, not yet linked to an
+	// intent, for databases not being deleted.
+	ListUnmailedManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresPlanExcessNoticesParams) ([]ListUnmailedManagedPostgresPlanExcessNoticesRow, error)
 	// The notices still to mail: recorded after since, not yet linked to an
 	// intent, and for 'ending' only while the copy still holds a slot that has
 	// not ended.
@@ -5599,7 +5619,12 @@ type Querier interface {
 	ReadLifecycleTrafficInputs(ctx context.Context, db DBTX, appID string) ([]byte, error)
 	ReadLiveTrafficSumInScope(ctx context.Context, db DBTX, arg ReadLiveTrafficSumInScopeParams) (int64, error)
 	ReadMCPAccessPolicyAppAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
-	ReadMCPAccessPolicyRules(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ReadMCPAccessPolicyRulesRow, error)
+	// The account's JWT rules the gateway can apply to the app's hosts (ADR-091
+	// amendment 2026-11-02, review round 8): the app's own, and those of its live
+	// sibling apps in the same owner scope (the company organization, or none for
+	// a personal app) other than "@app" ones. The CLI reads the same set from
+	// GET /v1/apps/{slug}/edge-rules?covering=true.
+	ReadMCPAccessPolicyRules(ctx context.Context, db DBTX, arg ReadMCPAccessPolicyRulesParams) ([]ReadMCPAccessPolicyRulesRow, error)
 	ReadMCPAttentionAction(ctx context.Context, db DBTX, arg ReadMCPAttentionActionParams) (McpReadinessAttentionAction, error)
 	ReadMCPAttentionIncident(ctx context.Context, db DBTX, arg ReadMCPAttentionIncidentParams) (McpReadinessIncident, error)
 	ReadMCPAttentionSnapshot(ctx context.Context, db DBTX, incidentID pgtype.UUID) ([]byte, error)
@@ -6122,6 +6147,8 @@ type Querier interface {
 	// nothing. A live delivery may replace a shadow row, which charged nothing; a
 	// shadow delivery never replaces a live one (bug hunt 33).
 	RecordManagedPostgresOverageDelivery(ctx context.Context, db DBTX, arg RecordManagedPostgresOverageDeliveryParams) (bool, error)
+	// One notice per suspension; later sweeps leave it alone.
+	RecordManagedPostgresPlanExcessNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresPlanExcessNoticeParams) (int64, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
 	// ADR-20261031123259: one notice per copy and kind; the first sweep to reach
 	// it records it and later sweeps leave it alone.

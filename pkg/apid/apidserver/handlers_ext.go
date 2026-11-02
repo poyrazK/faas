@@ -3269,10 +3269,11 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
 		return
 	}
-	// Route rules name their target by slug: fence their hosts, rename, and
-	// point them at the new slug before the fence lifts (ADR-091 amendment
-	// 2026-10-30).
-	routeEdit := s.edgeRules.RouteTargetRenameEdit(acct.ID, oldSlug)
+	// Route rules name their target by slug, and host rules may name the
+	// app's platform hostname: fence their hosts, rename, and point them at
+	// the new slug and hostname before the fence lifts (ADR-091 amendments
+	// 2026-10-30 and 2026-11-02).
+	routeEdit := s.edgeRules.RenameEdit(acct.ID, oldSlug, req.NewSlug)
 	convergences, release, prob := s.edgeRules.PrepareReferencedEdit(r.Context(), routeEdit)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -3287,6 +3288,9 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if retargeted, err := s.edgeRules.RetargetRouteRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
 		s.log.Error("app renamed but its route rules still name the old slug", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "retargeted", retargeted, "err", err)
+	}
+	if moved, err := s.edgeRules.RetargetPlatformHostRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
+		s.log.Error("app renamed but rules on its old hostname did not move", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "moved", moved, "err", err)
 	}
 	if prob := s.edgeRules.ApplyReferencedEdit(r.Context(), w, routeEdit, updated.ID, convergences); prob != nil {
 		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)
