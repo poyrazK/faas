@@ -9926,6 +9926,24 @@ func MustLimitsFor(p Plan) Limits {
 	return l
 }
 
+// TrafficSplitMaxReleases is how many releases of one app can hold traffic
+// at once. Every weighted release needs its own instance, and an app runs at
+// most its effective max_concurrency (the app's setting, capped by the plan)
+// plus RolloutConcurrencyGrant (invariant 1). A release past that count could
+// never wake beside the others, so its share of requests would wait and fail.
+// An unknown plan returns 0, which callers treat as no limit.
+func TrafficSplitMaxReleases(appMaxConcurrency int, p Plan) int {
+	l, ok := LimitsFor(p)
+	if !ok || l.MaxConcurrency <= 0 {
+		return 0
+	}
+	effective := l.MaxConcurrency
+	if appMaxConcurrency > 0 && appMaxConcurrency < effective {
+		effective = appMaxConcurrency
+	}
+	return effective + RolloutConcurrencyGrant
+}
+
 // PlanIncludedGBHours returns the included GB-RAM-hours per calendar month
 // for the plan. Returns 0 for unknown plans so callers default to "no
 // quota band" rather than treating unknown as Free. The meter aggregator

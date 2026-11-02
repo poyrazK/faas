@@ -811,10 +811,21 @@ While a canary rolls out it also prints the canary's current step and the
 `gregale deployment advance --expected-step` command for it.
 
 Setting one revision's weight hands the rest to the other live revisions, in
-proportion to their current weights, or evenly when all of them are at 0%. A
-canary its rollout aborted stays live at 0% but never takes that remainder: it
-receives traffic only when you name it. A change that would leave it the only
-recipient fails with `traffic_percent_sum_invalid` (409).
+proportion to their current weights, or evenly when all of them are at 0%. Two
+kinds of revision stay at 0% and never take that remainder: a canary its
+rollout aborted, and a revision that has not served yet (one staged with
+`--no-traffic`). They receive traffic only when you name them. A change that
+would leave only such revisions to take the remainder fails with
+`traffic_percent_sum_invalid` (409).
+
+Every revision in a split runs its own instance, and an app runs at most its
+`max_concurrency` plus one instance during a rollout. A split can therefore
+send traffic to at most `max_concurrency` + 1 revisions: with the default
+`max_concurrency` of 1, that is two. A change that would send traffic to more
+fails with `traffic_split_release_limit` (422), which reports the limit and
+the requested count. Take a revision out of the split first, or raise the
+limit with `gregale app my-api --max-concurrency N` (up to your plan's
+concurrency).
 
 Revision numbers are per app, so `v41` of one app is unrelated to `v41` of
 another. Numbers may skip values: preview deploys and retries consume them

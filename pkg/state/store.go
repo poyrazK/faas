@@ -287,10 +287,11 @@ var ErrInvalidPreviewPrState = errors.New("state: invalid preview_pr_state")
 var ErrTrafficPercentSumInvalid = errors.New("state: traffic_percent sum != 100")
 
 // ErrTrafficResidualUnassigned refuses a manual traffic change whose remaining
-// weight has no recipient but aborted canary candidates, which receive traffic
-// only when named (RedistributeManualTraffic). It wraps
-// ErrTrafficPercentSumInvalid: applied, the change would leave Σ below 100.
-var ErrTrafficResidualUnassigned = fmt.Errorf("%w: only an aborted canary could take the remaining traffic", ErrTrafficPercentSumInvalid)
+// weight has no recipient but aborted canary candidates or releases that have
+// never served, which receive traffic only when named
+// (RedistributeManualTraffic). It wraps ErrTrafficPercentSumInvalid: applied,
+// the change would leave Σ below 100.
+var ErrTrafficResidualUnassigned = fmt.Errorf("%w: only an aborted canary or a release that never served could take the remaining traffic", ErrTrafficPercentSumInvalid)
 
 // ErrInvalidMirrorPercent is returned by CreateMirrorRule /
 // UpdateMirrorRule when the requested percent falls outside
