@@ -2134,7 +2134,7 @@ func (m *Manager) WithLivenessSink(relay LivenessFailedSink) *Manager {
 // observed payload); the only difference is the payload shape
 // (peakMB + planMB ints instead of a closed-set reason string).
 // MemoryPressureSink receives a guest memory-pressure report in MiB.
-type MemoryPressureSink func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int)
+type MemoryPressureSink func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int, profiling bool)
 
 // WithMemoryPressureSink attaches the best-effort memory-pressure relay.
 func (m *Manager) WithMemoryPressureSink(relay MemoryPressureSink) *Manager {
@@ -2144,7 +2144,7 @@ func (m *Manager) WithMemoryPressureSink(relay MemoryPressureSink) *Manager {
 
 // ReportMemoryPressure relays one guest report for a live app instance.
 // Reports for unknown, execution-only or job VMs are dropped.
-func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int, profiling bool) {
 	if m.memoryPressureRelay == nil {
 		return
 	}
@@ -2155,7 +2155,7 @@ func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, a
 	if !ok {
 		return
 	}
-	m.memoryPressureRelay(ctx, instanceID, availableMB, totalMB, anonMB)
+	m.memoryPressureRelay(ctx, instanceID, availableMB, totalMB, anonMB, profiling)
 }
 
 func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {

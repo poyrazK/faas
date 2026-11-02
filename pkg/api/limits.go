@@ -14395,6 +14395,9 @@ const (
 	AppHealthWorkerRecordScan       = 1000
 	AppHealthWorkerBacklogAgeWarn   = 10 * time.Minute
 	AppHealthWorkerDeadLetterWindow = time.Hour
+	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
+	// app health counts the guest's reports within it (ADR-20261102124306).
+	AppHealthMemoryPressureWindow = 24 * time.Hour
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
