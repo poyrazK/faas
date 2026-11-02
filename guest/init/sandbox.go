@@ -138,14 +138,15 @@ func fileError(name string, err error) error {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return sandboxError(sandboxproto.CodeNotFound, "%s does not exist", name)
+	// fs.ErrExist matches ENOTEMPTY too, so it is checked first.
+	case errors.As(err, &errno) && errno == syscall.ENOTEMPTY:
+		return sandboxError(sandboxproto.CodeNotEmpty, "%s is not empty", name)
 	case errors.Is(err, fs.ErrExist):
 		return sandboxError(sandboxproto.CodeExists, "%s already exists", name)
 	case errors.As(err, &errno) && errno == syscall.ENOTDIR:
 		return sandboxError(sandboxproto.CodeNotADirectory, "a parent of %s is not a directory", name)
 	case errors.As(err, &errno) && errno == syscall.EISDIR:
 		return sandboxError(sandboxproto.CodeIsADirectory, "%s is a directory", name)
-	case errors.As(err, &errno) && errno == syscall.ENOTEMPTY:
-		return sandboxError(sandboxproto.CodeNotEmpty, "%s is not empty", name)
 	// os.Root does not export its escape error; a symlink that leaves the
 	// workspace is the only way left to escape it, since names were
 	// checked first.
