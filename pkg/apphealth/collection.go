@@ -32,12 +32,19 @@ type Options struct {
 	// AssessWorkers is the app_health_workers platform flag
 	// (ADR-20261102091500).
 	AssessWorkers bool
+	// AssessMemory is the app_health_memory platform flag
+	// (ADR-20261102124306).
+	AssessMemory bool
 }
 
 func CollectScopeWith(ctx context.Context, store EvidenceStore, client *promql.Client, app state.App, scope string, opts Options) api.AppHealthResponse {
-	e := Evidence{App: app, MetricsAllowed: opts.MetricsAllowed, AssessWorkers: opts.AssessWorkers, Scope: evidenceScope(scope)}
+	e := Evidence{App: app, MetricsAllowed: opts.MetricsAllowed, AssessWorkers: opts.AssessWorkers,
+		AssessMemory: opts.AssessMemory, Scope: evidenceScope(scope)}
 	collectDeployments(ctx, store, &e)
 	collectInstances(ctx, store, &e)
+	if e.AssessMemory {
+		collectMemory(ctx, store, &e)
+	}
 	if e.AssessWorkers && app.Manifest.ExecutionMode == api.ExecutionModeWorker {
 		// A worker serves no requests; its queue is the workload evidence.
 		collectWorkerQueue(ctx, store, &e, time.Now().UTC())

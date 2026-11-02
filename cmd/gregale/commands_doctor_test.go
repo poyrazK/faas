@@ -155,8 +155,10 @@ func TestRunDoctorChecks_PortFallbackAndNonRuntimeFilesDoNotWarn(t *testing.T) {
 
 // TestRunDoctorChecks_EnvVarMissing pins the env-required check.
 // Fixture writes source that references $DATABASE_URL but no
-// .gregale/env.json declares it. The check must flag it as
-// status=error + code=env_var_missing.
+// .gregale/env.json declares it. Without the app's env and secret names
+// the check cannot tell whether it is set, so it warns with
+// code=env_var_missing (CLI audit 2026-10-31); a checked app makes it an
+// error (TestDoctorEnvRequiredKnowsPlatformAndAppVariables).
 func TestRunDoctorChecks_EnvVarMissing(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "app.py"), []byte(`import os\nprint(os.environ["DATABASE_URL"])\n`), 0o644); err != nil {
@@ -172,8 +174,8 @@ func TestRunDoctorChecks_EnvVarMissing(t *testing.T) {
 	if envCheck == nil {
 		t.Fatalf("env-required check missing")
 	}
-	if envCheck.Status != "error" {
-		t.Fatalf("expected error, got %q", envCheck.Status)
+	if envCheck.Status != "warn" {
+		t.Fatalf("expected warn, got %q", envCheck.Status)
 	}
 	if envCheck.Code != api.CodeEnvVarMissing {
 		t.Fatalf("expected code %q, got %q", api.CodeEnvVarMissing, envCheck.Code)
@@ -191,13 +193,13 @@ func TestRunDoctorChecks_EnvVarReferenceForms(t *testing.T) {
 		wantStatus  string
 		wantSources []string
 	}{
-		{name: "node dot property", source: "const token = process.env.API_TOKEN;\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
-		{name: "node bracket property", source: "const token = process.env[\"API_TOKEN\"];\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
-		{name: "python get", source: "token = os.environ.get(\"API_TOKEN\")\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
-		{name: "python bracket", source: "token = os.environ[\"API_TOKEN\"]\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
-		{name: "go getenv", source: "token := os.Getenv(\"API_TOKEN\")\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
-		{name: "node object property", source: "const config = {token: process.env.API_TOKEN};\n", wantStatus: "error", wantSources: []string{"API_TOKEN"}},
-		{name: "multiple references", source: "a := os.Getenv(\"FIRST_KEY\"); b := os.Getenv(\"SECOND_KEY\")\n", wantStatus: "error", wantSources: []string{"FIRST_KEY", "SECOND_KEY"}},
+		{name: "node dot property", source: "const token = process.env.API_TOKEN;\n", wantStatus: "warn", wantSources: []string{"API_TOKEN"}},
+		{name: "node bracket property", source: "const token = process.env[\"API_TOKEN\"];\n", wantStatus: "warn", wantSources: []string{"API_TOKEN"}},
+		{name: "python get", source: "token = os.environ.get(\"API_TOKEN\")\n", wantStatus: "warn", wantSources: []string{"API_TOKEN"}},
+		{name: "python bracket", source: "token = os.environ[\"API_TOKEN\"]\n", wantStatus: "warn", wantSources: []string{"API_TOKEN"}},
+		{name: "go getenv", source: "token := os.Getenv(\"API_TOKEN\")\n", wantStatus: "warn", wantSources: []string{"API_TOKEN"}},
+		{name: "node object property", source: "const config = {token: process.env.API_TOKEN};\n", wantStatus: "warn", wantSources: []string{"API_TOKEN"}},
+		{name: "multiple references", source: "a := os.Getenv(\"FIRST_KEY\"); b := os.Getenv(\"SECOND_KEY\")\n", wantStatus: "warn", wantSources: []string{"FIRST_KEY", "SECOND_KEY"}},
 		{name: "node fallback", source: "model := process.env.MODEL || \"default\"\n", wantStatus: "ok"},
 		{name: "python fallback", source: "model = os.environ.get(\"MODEL\", \"default\")\n", wantStatus: "ok"},
 		{name: "platform port", source: "port := os.Getenv(\"PORT\")\n", wantStatus: "ok"},
