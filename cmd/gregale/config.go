@@ -267,11 +267,12 @@ func loadLegacyToken(diagnostics io.Writer) string {
 
 // warnEnvTokenOverride prints one stderr line when FAAS_TOKEN replaces a
 // credential the user selected: an explicit --profile, or a login saved for
-// the selected profile. Stdout stays clean, so --json output is unchanged.
+// the selected profile. JSON mode prints nothing: there stderr carries only
+// Problem documents, which scripts parse.
 func warnEnvTokenOverride() {
 	env := envToken()
 	switch {
-	case env == "":
+	case env == "" || jsonOutput:
 	case profileOverride != "":
 		PrintWarn(osStderr, "FAAS_TOKEN is set and overrides --profile %s's saved login; this command sends FAAS_TOKEN to %s. Unset FAAS_TOKEN to use the profile's login.", profileOverride, displayAPIBase(apiBase()))
 	case savedLoginShadowedBy(env):

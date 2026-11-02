@@ -214,16 +214,20 @@ func TestFAASTokenOverrideWarnsOnStderrOnly(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", env)
 
 	// An explicit --profile whose credential FAAS_TOKEN replaces.
-	code, stdout, stderr := runAuthAudit(t, "--profile", "staging", "--json", "whoami")
-	if code != 0 || !strings.Contains(stderr, "overrides --profile staging") {
+	if code, _, stderr := runAuthAudit(t, "--profile", "staging", "whoami"); code != 0 || !strings.Contains(stderr, "overrides --profile staging") {
 		t.Fatalf("--profile whoami exit=%d stderr=%s", code, stderr)
+	}
+	if authz, _ := recorder.saw("GET /v1/account"); authz != "Bearer "+env {
+		t.Fatalf("authorization = %q", authz)
+	}
+	// JSON mode keeps stderr for Problem documents and stdout for the result.
+	code, stdout, stderr := runAuthAudit(t, "--profile", "staging", "--json", "whoami")
+	if code != 0 || strings.Contains(stderr, "FAAS_TOKEN") {
+		t.Fatalf("--json --profile whoami exit=%d stderr=%s", code, stderr)
 	}
 	var account api.AccountResponse
 	if err := json.Unmarshal([]byte(stdout), &account); err != nil || account.ID != "acct-1" {
 		t.Fatalf("--json stdout is not one account: %q (%v)", stdout, err)
-	}
-	if authz, _ := recorder.saw("GET /v1/account"); authz != "Bearer "+env {
-		t.Fatalf("authorization = %q", authz)
 	}
 
 	// A saved login that FAAS_TOKEN shadows.
