@@ -7100,6 +7100,11 @@ const (
 	// timeout's order of magnitude.
 	FrozenEarlyFreezeMinSeconds = 2
 	FrozenEarlyFreezeMaxSeconds = 300
+	// FrozenEarlyFreezeDefaultSeconds is schedd's frozen_tier_early_freeze_after_s
+	// when unset (ADR 20261102072403): a quiet between_requests instance
+	// freezes 15 s after its last request, releasing its vCPU, CPU and
+	// concurrency bookings half way through a function's 30 s idle timeout.
+	FrozenEarlyFreezeDefaultSeconds = 15
 	// FrozenMaxPerNode caps a node's frozen instances: each holds a
 	// Firecracker process, a jail uid and a network namespace.
 	FrozenMaxPerNode = 1000
