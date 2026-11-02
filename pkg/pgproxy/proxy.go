@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -74,7 +75,10 @@ type Config struct {
 	HostSuffix string
 	// DecoySecret keys the decoy verifiers used for unknown databases and
 	// roles, so their failures look like a wrong password.
-	DecoySecret      []byte
+	DecoySecret []byte
+	// StartupTimeout bounds TLS and the startup message (default 5 s);
+	// HandshakeTimeout then bounds authentication and the wake.
+	StartupTimeout   time.Duration
 	HandshakeTimeout time.Duration
 	WakeTimeout      time.Duration
 	TouchInterval    time.Duration
@@ -86,6 +90,14 @@ type Config struct {
 	MaxConnections         int
 	MaxHandshakes          int
 	MaxHandshakesPerSource int
+	// TrustedSources are the platform's own networks (compute nodes).
+	// Their connections skip MaxHandshakes and MaxHandshakesPerSource, so
+	// strangers filling the handshake slots cannot lock apps out.
+	TrustedSources []netip.Prefix
+	// MaxAuthFailures caps one source's failed logins to one database per
+	// minute (default 10); past it the source is refused for the rest of
+	// the minute without a SCRAM exchange.
+	MaxAuthFailures int
 	// Transaction pooling (pool.go): PoolMaxServers caps each database's
 	// pooled server connections (default 10, of a native database's 25);
 	// PoolWait bounds a transaction's wait for one (default 30 s);
@@ -123,12 +135,20 @@ type Proxy struct {
 
 	cancelMu sync.Mutex
 	cancels  map[cancelKey]canceler
+	// failures counts failed logins per database and source.
+	failures *authFailures
 }
 
 // New validates cfg and builds a Proxy.
 func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *slog.Logger) (*Proxy, error) {
 	if cfg.TLS == nil || cfg.HostSuffix == "" || len(cfg.DecoySecret) < 32 || creds == nil || waker == nil || dialer == nil {
 		return nil, errors.New("pgproxy: incomplete config")
+	}
+	if cfg.StartupTimeout <= 0 {
+		cfg.StartupTimeout = defaultStartupTimeout
+	}
+	if cfg.MaxAuthFailures <= 0 {
+		cfg.MaxAuthFailures = defaultMaxAuthFailures
 	}
 	if cfg.HandshakeTimeout <= 0 {
 		cfg.HandshakeTimeout = 15 * time.Second
@@ -173,7 +193,7 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	// PostgreSQL 17 direct TLS requires the "postgresql" ALPN protocol.
 	tlsCfg.NextProtos = []string{"postgresql"}
 	cfg.HostSuffix = strings.ToLower(strings.TrimPrefix(cfg.HostSuffix, "."))
-	proxy := &Proxy{cfg: cfg, creds: creds, waker: waker, dialer: dialer, log: log, tlsCfg: tlsCfg, handshaking: map[string]int{}, cancels: map[cancelKey]canceler{}}
+	proxy := &Proxy{cfg: cfg, creds: creds, waker: waker, dialer: dialer, log: log, tlsCfg: tlsCfg, handshaking: map[string]int{}, cancels: map[cancelKey]canceler{}, failures: newAuthFailures(cfg.MaxAuthFailures)}
 	proxy.pools = newPoolSet(proxy)
 	return proxy, nil
 }
@@ -205,7 +225,8 @@ func (f *fatal) Error() string { return f.code + ": " + f.msg }
 func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 	defer func() { _ = raw.Close() }()
 	source := sourceOf(raw)
-	if !p.admit(source) {
+	trusted := p.trustedSource(raw.RemoteAddr())
+	if !p.admit(source, trusted) {
 		p.cfg.Metrics.result("limit")
 		return
 	}
@@ -213,10 +234,12 @@ func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 	authenticated := false
 	defer func() {
 		if !authenticated {
-			p.authenticated(source)
+			p.authenticated(source, trusted)
 		}
 	}()
-	_ = raw.SetDeadline(time.Now().Add(p.cfg.HandshakeTimeout))
+	// Until the startup message only StartupTimeout: a slot held idle must
+	// not be cheap (bug hunt 34). establish then allows HandshakeTimeout.
+	_ = raw.SetDeadline(time.Now().Add(p.cfg.StartupTimeout))
 	conn, err := p.negotiateTLS(ctx, raw)
 	if errors.Is(err, errCancelServed) {
 		return
@@ -227,7 +250,7 @@ func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 	}
 	defer func() { _ = conn.Close() }()
 	client := pgproto3.NewBackend(conn, conn)
-	est, err := p.establish(ctx, conn, client)
+	est, err := p.establish(ctx, conn, client, source)
 	if errors.Is(err, errCancelServed) {
 		return
 	}
@@ -245,7 +268,7 @@ func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 		return
 	}
 	authenticated = true
-	p.authenticated(source)
+	p.authenticated(source, trusted)
 	p.cfg.Metrics.result("ok")
 	p.cfg.Metrics.sessionStarted()
 	defer p.cfg.Metrics.sessionEnded()
@@ -340,12 +363,13 @@ func (c *prefixConn) Read(b []byte) (int, error) { return c.r.Read(b) }
 // endpoint, returns the role's pool with the client logged in to it. Either
 // way the client gets a cancel key of its own. A cancel request sent
 // after TLS is served (errCancelServed).
-func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.Backend) (established, error) {
+func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.Backend, source string) (established, error) {
 	none := established{release: func() {}}
 	msg, err := client.ReceiveStartupMessage()
 	if err != nil {
 		return none, err
 	}
+	_ = conn.SetDeadline(time.Now().Add(p.cfg.HandshakeTimeout))
 	if c, ok := msg.(*pgproto3.CancelRequest); ok {
 		p.handleCancel(ctx, c.ProcessID, c.SecretKey, false)
 		return none, errCancelServed
@@ -366,9 +390,14 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 			return none, &fatal{"08P01", fmt.Sprintf("the pooled endpoint does not support startup parameter %v; use the direct endpoint", err)}
 		}
 	}
+	failureKey := authFailureKey(databaseID, source)
+	if p.failures.blocked(failureKey, time.Now()) {
+		return none, &fatal{"53300", "too many failed logins from this address; retry in a minute"}
+	}
 	verifier := p.verifier(ctx, databaseID, user)
 	clientKey, serverFinal, err := authenticateClient(client, verifier)
 	if err != nil {
+		p.failures.fail(failureKey, time.Now())
 		p.creds.Forget(databaseID, user)
 		return none, &fatal{"28P01", fmt.Sprintf("password authentication failed for user %q", user)}
 	}
@@ -686,21 +715,30 @@ func (c *countingWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// admit counts a new connection from source against the caps.
-func (p *Proxy) admit(source string) bool {
+// admit counts a new connection from source against the caps. A trusted
+// source counts against MaxConnections only.
+func (p *Proxy) admit(source string, trusted bool) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.open >= p.cfg.MaxConnections || p.handshakes >= p.cfg.MaxHandshakes || p.handshaking[source] >= p.cfg.MaxHandshakesPerSource {
+	if p.open >= p.cfg.MaxConnections {
+		return false
+	}
+	if !trusted && (p.handshakes >= p.cfg.MaxHandshakes || p.handshaking[source] >= p.cfg.MaxHandshakesPerSource) {
 		return false
 	}
 	p.open++
-	p.handshakes++
-	p.handshaking[source]++
+	if !trusted {
+		p.handshakes++
+		p.handshaking[source]++
+	}
 	return true
 }
 
 // authenticated ends a connection's handshake phase.
-func (p *Proxy) authenticated(source string) {
+func (p *Proxy) authenticated(source string, trusted bool) {
+	if trusted {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.handshakes--
