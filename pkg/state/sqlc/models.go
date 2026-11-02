@@ -13654,6 +13654,7 @@ type RequestTelemetry struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202611 struct {
@@ -13693,6 +13694,7 @@ type RequestTelemetry202611 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202612 struct {
@@ -13732,6 +13734,7 @@ type RequestTelemetry202612 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202701 struct {
@@ -13771,6 +13774,7 @@ type RequestTelemetry202701 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -13835,6 +13839,7 @@ type RequestTelemetryDefault struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type ReservedIpInventory struct {
