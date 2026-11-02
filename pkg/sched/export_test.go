@@ -1130,3 +1130,12 @@ func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
 	}
 	return due
 }
+
+// NextLogFollowPoll exposes the follow stream's discovery backoff (O20).
+var NextLogFollowPoll = nextLogFollowPoll
+
+// Bounds of the follow stream's discovery poll.
+const (
+	LogFollowPollMin = logFollowPollMin
+	LogFollowPollMax = logFollowPollMax
+)

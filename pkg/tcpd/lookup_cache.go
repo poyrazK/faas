@@ -130,3 +130,24 @@ func (c *CachedInstanceSource) LiveDeployments(ctx context.Context, appID string
 func (c *CachedInstanceSource) ListInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error) {
 	return c.next.ListInstancesForApp(ctx, appID)
 }
+
+// ListLiveInstancesForApps forwards the live-only read when next has one, so
+// the resolver behind this cache does not fall back to an app's full history.
+func (c *CachedInstanceSource) ListLiveInstancesForApps(ctx context.Context, appIDs []string) ([]state.Instance, error) {
+	if reader, ok := c.next.(state.LiveInstancesForAppsReader); ok {
+		return reader.ListLiveInstancesForApps(ctx, appIDs)
+	}
+	var out []state.Instance
+	for _, id := range appIDs {
+		rows, err := c.next.ListInstancesForApp(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if state.IsLive(row.State) {
+				out = append(out, row)
+			}
+		}
+	}
+	return out, nil
+}
