@@ -24,8 +24,17 @@ func TestLoadConfig_FrozenTierEarlyFreeze(t *testing.T) {
 	if cfg, err = LoadConfig(offPath); err != nil || cfg.FrozenTierEarlyFreezeAfterS != 0 {
 		t.Fatalf("toml 0 = %v, %v; want off", cfg, err)
 	}
+	// The environment overrides apply to a loaded schedd.toml (a missing file
+	// keeps the defaults), so this one sets frozen_tier but not the delay.
+	unsetPath := filepath.Join(t.TempDir(), "unset.toml")
+	if err := os.WriteFile(unsetPath, []byte("frozen_tier = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(unsetPath); err != nil || cfg.FrozenTierEarlyFreezeAfterS != api.FrozenEarlyFreezeDefaultSeconds {
+		t.Fatalf("toml without the key = %v, %v; want %d s", cfg, err, api.FrozenEarlyFreezeDefaultSeconds)
+	}
 	t.Setenv("FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S", "0")
-	if cfg, err = LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err != nil || cfg.FrozenTierEarlyFreezeAfterS != 0 {
+	if cfg, err = LoadConfig(unsetPath); err != nil || cfg.FrozenTierEarlyFreezeAfterS != 0 {
 		t.Fatalf("env 0 = %v, %v; want off", cfg, err)
 	}
 	t.Setenv("FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S", "")
