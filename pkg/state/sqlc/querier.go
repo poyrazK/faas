@@ -3773,6 +3773,9 @@ type Querier interface {
 	// without dispatching the application again.
 	ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error)
 	// aborted_canary is the H5-62 candidate: aborted before its rollout completed.
+	// never_served is a live 0% release that has not served since it went live
+	// (a release staged with no traffic): serving_ended_at is stamped by trigger
+	// whenever a serving row stops serving.
 	ListTrafficSiblingsInScope(ctx context.Context, db DBTX, arg ListTrafficSiblingsInScopeParams) ([]ListTrafficSiblingsInScopeRow, error)
 	ListTriggerDeadLetter(ctx context.Context, db DBTX, arg ListTriggerDeadLetterParams) ([]TriggerDeadLetter, error)
 	// Used by GET /v1/triggers/{id}/records (dashboard + apid handler).

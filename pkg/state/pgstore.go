@@ -8741,8 +8741,15 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		helperSiblings[i].ID = s.ID
 		helperSiblings[i].Prior = s.Prior
 	}
-	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool { return rows[i].AbortedCanary }, 100-newPercent)
+	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool { return rows[i].AbortedCanary || rows[i].NeverServed }, 100-newPercent)
 	if err != nil {
+		return Deployment{}, err
+	}
+	priorWeights := make([]int, len(siblings))
+	for i, sibling := range siblings {
+		priorWeights[i] = sibling.Prior
+	}
+	if err := checkTrafficSplitReleaseLimit(ctx, currentTrafficPercent, newPercent, priorWeights, newWeights); err != nil {
 		return Deployment{}, err
 	}
 	for i, sibling := range siblings {
@@ -9243,10 +9250,13 @@ func RedistributeTraffic(siblings []struct {
 // change. An aborted canary candidate at 0% (abortedCanaryCandidate) keeps 0%:
 // it stays live after the abort, and lowering the only serving release used to
 // hand it an even share of the residual, serving the regression that the
-// canary gate had just rolled back (PulseWatch F1). It receives traffic only
-// when an operator names it. When every sibling is such a candidate and
-// residual remains, the change is refused with ErrTrafficResidualUnassigned.
-// heldAtZero(i) reports whether siblings[i] is an aborted canary candidate.
+// canary gate had just rolled back (PulseWatch F1). A live 0% release that has
+// never served (one staged with no traffic) keeps 0% too: lowering the serving
+// release used to spread the residual evenly over every staged release, none
+// of them named or verified. Either receives traffic only when an operator
+// names it. When every sibling is held and residual remains, the change is
+// refused with ErrTrafficResidualUnassigned. heldAtZero(i) reports whether
+// siblings[i] is held.
 func RedistributeManualTraffic(siblings []struct {
 	ID    string
 	Prior int
