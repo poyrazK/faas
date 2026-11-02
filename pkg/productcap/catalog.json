@@ -77,6 +77,7 @@
       "routes": [
         "/v1/agent-callbacks",
         "/v1/agent-runs",
+        "/v1/agent-tools",
         "/v1/agents"
       ],
       "consumers": [
@@ -2640,7 +2641,7 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/deploy-from-github",
-      "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath",
+      "acceptance_test": "pkg/githubd/app_binding_push_test.go::TestPushDeploysAppBoundWithoutProject",
       "consumers": [
         "githubd"
       ],
@@ -4038,6 +4039,25 @@
       ]
     },
     {
+      "id": "postgres-major-upgrades",
+      "name": "Postgres major version upgrades",
+      "category": "data",
+      "description": "Upgrade a native database in place to a later PostgreSQL major version.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "pkg/apid/apidserver/managed_postgres_upgrade_rollout_test.go::TestManagedPostgresUpgradeHiddenOutsideTheRollout",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/postgres/databases/{}/upgrade",
+        "/v1/postgres/databases/{}/upgrades"
+      ]
+    },
+    {
       "id": "postgres-overage",
       "name": "Postgres compute overage",
       "category": "data",
@@ -4066,6 +4086,8 @@
       "description": "Restore a database to an earlier point in time.",
       "maturity": "ga",
       "plans": [
+        "free",
+        "hobby",
         "pro",
         "scale"
       ],
@@ -4806,7 +4828,7 @@
       "id": "resource-labels",
       "name": "Resource labels",
       "category": "delivery",
-      "description": "Label apps with key/value pairs and filter app and domain lists with a selector.",
+      "description": "Label apps, managed databases, crons and jobs with key/value pairs and filter their lists with a selector.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -4814,13 +4836,22 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/apps",
+      "docs_url": "/docs/labels",
       "acceptance_test": "pkg/apid/apidserver/handlers_resource_labels_test.go::TestAppLabelsAPI",
+      "settings": [
+        "manifest.labels"
+      ],
       "routes": [
-        "/v1/apps/{}/labels"
+        "/v1/apps/{}/labels",
+        "/v1/postgres/databases/{}/labels",
+        "/v1/crons/{}/labels",
+        "/v1/jobs/{}/labels"
       ],
       "cli": [
-        "app label"
+        "app label",
+        "postgres label",
+        "crons label",
+        "jobs label"
       ]
     },
     {

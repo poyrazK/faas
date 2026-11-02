@@ -46,7 +46,7 @@ func (h *Handler) copyMultipartPart(w http.ResponseWriter, r *http.Request, req 
 			return
 		}
 	}
-	if !h.acquirePutSlot(req.bucket.AccountID) {
+	if !h.acquirePutSlot(r.Context(), req.bucket.AccountID) {
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
 		return
 	}

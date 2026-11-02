@@ -234,6 +234,12 @@ func newGitHubWizardPostServer(t *testing.T, gh apidserver.GithubdClient) (http.
 }
 
 func newGitHubWizardPostServerFor(t *testing.T, gh apidserver.GithubdClient, verified bool) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
+	return newGitHubWizardPostServerAs(t, gh, verified, "alice")
+}
+
+// newGitHubWizardPostServerAs seeds the account's connection to installation
+// 42. An empty githubLogin is a Google or password session.
+func newGitHubWizardPostServerAs(t *testing.T, gh apidserver.GithubdClient, verified bool, githubLogin string) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
 	t.Helper()
 	store := state.NewMemStore()
 	res, err := store.CreateAccountWithPersonalOrg(t.Context(), state.CreateAccountWithPersonalOrgParams{
@@ -251,7 +257,113 @@ func newGitHubWizardPostServerFor(t *testing.T, gh apidserver.GithubdClient, ver
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
-	return apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").Handler(), store, mgr, acct, stampCookie(t, mgr, rawCookie, "alice")
+	if err := store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{
+		AccountID: acct.ID, InstallationID: 42, AuditGithubLogin: "alice", SealedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed GitHub install: %v", err)
+	}
+	cookie := rawCookie
+	if githubLogin != "" {
+		cookie = stampCookie(t, mgr, rawCookie, githubLogin)
+	}
+	return apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").Handler(), store, mgr, acct, cookie
+}
+
+func postGitHubWizard(t *testing.T, h http.Handler, mgr *session.Manager, acct state.Account, sessionValue string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	csrf, err := middleware.IssueForAuthenticatedNamed(mgr, apidserver.GithubWizardCreateAction, acct.ID, apidserver.GithubWizardCreateCSRFCookie)
+	if err != nil {
+		t.Fatalf("issue wizard csrf: %v", err)
+	}
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/apps/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: sessionValue})
+	req.AddCookie(&http.Cookie{Name: apidserver.GithubWizardCreateCSRFCookie, Value: csrf})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// A Google or password session has no GitHub login after Connect GitHub
+// (ADR-1345); the wizard used to answer 403 github_login_required and loop
+// on "Connect GitHub" (ADR-20261101160300).
+func TestCreateAppFromGitHubWizard_PasswordSessionCreatesAndBinds(t *testing.T) {
+	gh := &appsNewFake{repos: []apidserver.Repo{{FullName: "octocat/hello", DefaultBranch: "trunk"}}}
+	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice", bindReturn: "bind-created"}
+	h, _, mgr, acct, sessionValue := newGitHubWizardPostServerAs(t, gh, true, "")
+
+	rec := postGitHubWizard(t, h, mgr, acct, sessionValue, url.Values{
+		"installation_id": {"42"}, "repo_full_name": {"octocat/hello"}, "slug": {"password-app"},
+	})
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/dashboard/apps/password-app?github=connected" {
+		t.Fatalf("code = %d Location = %q, want the connected app\nbody = %s", rec.Code, got, rec.Body.String())
+	}
+	if gh.bindCalls != 1 || gh.gotBranch != "trunk" {
+		t.Fatalf("BindAppRepo calls = %d branch = %q, want one bind of the repository's default branch", gh.bindCalls, gh.gotBranch)
+	}
+}
+
+// The app page's "Bind a repository" opens the wizard for an existing app.
+func TestCreateAppFromGitHubWizard_BindsExistingApp(t *testing.T) {
+	gh := &appsNewFake{repos: []apidserver.Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice", bindReturn: "bind-existing"}
+	h, store, mgr, acct, sessionValue := newGitHubWizardPostServerAs(t, gh, true, "")
+	existing, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "existing-app", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps, _ := store.ListApps(t.Context(), acct.ID)
+
+	rec := postGitHubWizard(t, h, mgr, acct, sessionValue, url.Values{
+		"installation_id": {"42"}, "repo_full_name": {"octocat/hello"}, "existing_app": {"existing-app"},
+	})
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/dashboard/apps/existing-app?github=connected" {
+		t.Fatalf("code = %d Location = %q\nbody = %s", rec.Code, got, rec.Body.String())
+	}
+	if gh.bindCalls != 1 || gh.gotAppID != existing.ID {
+		t.Fatalf("BindAppRepo calls = %d app = %q, want the existing app %q", gh.bindCalls, gh.gotAppID, existing.ID)
+	}
+	if after, _ := store.ListApps(t.Context(), acct.ID); len(after) != len(apps) {
+		t.Fatalf("apps = %d, want %d: binding an existing app creates none", len(after), len(apps))
+	}
+}
+
+// The installation must be one the account connected; knowing its ID is
+// not enough.
+func TestCreateAppFromGitHubWizard_RejectsUnconnectedInstallation(t *testing.T) {
+	gh := &appsNewFake{repos: []apidserver.Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice"}
+	h, store, mgr, acct, sessionValue := newGitHubWizardPostServerAs(t, gh, true, "")
+
+	rec := postGitHubWizard(t, h, mgr, acct, sessionValue, url.Values{
+		"installation_id": {"99"}, "repo_full_name": {"octocat/hello"}, "slug": {"foreign-app"},
+	})
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "not+connected") {
+		t.Fatalf("code = %d Location = %q, want the wizard with an error", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := store.AppBySlug(t.Context(), "foreign-app"); err == nil || gh.bindCalls != 0 || gh.gotInstallID != 0 {
+		t.Fatalf("app created or GitHub contacted for an installation the account did not connect")
+	}
+}
+
+// With a connection, a password session sees the installation and repository
+// pickers, not the Connect GitHub button.
+func TestRenderAppNew_PasswordSessionWithConnectionShowsPicker(t *testing.T) {
+	gh := &appsNewFake{repos: []apidserver.Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice"}
+	h, _, _, _, sessionValue := newGitHubWizardPostServerAs(t, gh, true, "")
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/new?app=existing-app", nil)
+	r.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: sessionValue})
+	h.ServeHTTP(rec, r)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `name="repo_full_name"`) || strings.Contains(body, `action="/dashboard/install/connect"`) {
+		t.Fatalf("code = %d, want the repository picker\n--- body ---\n%s", rec.Code, body)
+	}
+	if !strings.Contains(body, `name="existing_app" value="existing-app"`) {
+		t.Fatalf("body does not bind the existing app\n--- body ---\n%s", body)
+	}
 }
 
 func TestCreateAppFromGitHubWizard_CreatesAndBinds(t *testing.T) {

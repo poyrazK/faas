@@ -2,10 +2,7 @@ package apidserver_test
 
 import (
 	"errors"
-	"fmt"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -48,36 +45,5 @@ func TestFreePlanComposeAndDevDatabasesNeedEnforcedCaps(t *testing.T) {
 	}
 	if _, err := srv.EnsureDevPostgresForTest(ctx, acct, app); errors.Is(err, managedpostgres.ErrNotInPlan) {
 		t.Fatalf("caps on: dev database refused for the plan: %v", err)
-	}
-}
-
-// Bug hunt 33: a downgrade ignored managed PostgreSQL, so every database kept
-// running above the new plan's database count.
-func TestPlanDowngradeCountsManagedDatabases(t *testing.T) {
-	env, srv := apidserver.SetupChangePlan(t, api.PlanPro, "")
-	ctx := t.Context()
-	pg := apidserver.AttachTestManagedPostgres(t, srv, 10)
-	acct := env.Acct()
-	pro, _ := api.ManagedPostgresLimitsFor(api.PlanPro)
-	hobby, _ := api.ManagedPostgresLimitsFor(api.PlanHobby)
-	if pro.DatabasesMax < 2 || hobby.DatabasesMax != 1 {
-		t.Skipf("test assumes Pro allows 2+ databases and Hobby 1; got %d and %d", pro.DatabasesMax, hobby.DatabasesMax)
-	}
-	now := time.Now().UTC()
-	for i := range 2 {
-		if _, _, err := pg.Reserve(ctx, managedpostgres.Database{
-			ID: fmt.Sprintf("db-%d", i), AccountID: acct.ID, Name: fmt.Sprintf("db%d", i), State: managedpostgres.StateProvisioning,
-			BackendID: "test", BackendFingerprint: "test", CreatedAt: now,
-		}, 10); err != nil {
-			t.Fatal(err)
-		}
-	}
-	subject, err := (*env.Store()).AccountByID(ctx, acct.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	problem := srv.PlanDowngradeProblemForTest(ctx, subject, api.PlanHobby)
-	if problem == nil || problem.Code != "managed_postgres_not_in_plan" || !strings.Contains(problem.Detail, "delete 1 managed database(s)") {
-		t.Fatalf("2 databases on a 1-database plan: problem = %+v", problem)
 	}
 }

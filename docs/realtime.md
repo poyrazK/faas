@@ -147,9 +147,13 @@ at least once, so deduplicate by `message_id` or `sequence`.
   device or worker; acks then move a cursor Gregale stores (at most 256 per
   endpoint, kept 30 days after last use).
 - A connection holds at most 8 channels, and each frame from the client is at
-  most 4 KiB. Refusals arrive as `{"type":"error","code":...}` frames with the
-  channel, for example `not_authorized` or `subscription_limit`; the
-  connection stays open.
+  most 4 KiB. It may send 20 commands a second (bursts of 40): subscribe,
+  unsubscribe, reset, read state, inbox and preference frames. Acks, presence
+  and signals have their own limits. A command past the budget gets
+  `command_rate_limited` and is dropped.
+- Refusals arrive as `{"type":"error","code":...}` frames with the channel,
+  for example `not_authorized` or `subscription_limit`; the connection stays
+  open.
 - Code 1008 closes a connection whose token expired or changed: reconnect with
   a fresh token. Code 1013 means try again: reconnect from the saved cursor.
 
@@ -176,6 +180,9 @@ realtime:
         - channel: orders
           name: billing
           lease_seconds: 120
+          ordering_metadata_key: customer_id     # optional: one message per customer at a time, in order
+          deduplication_metadata_key: event_id   # optional: drop a repeated event_id within the window
+          dead_letter_policy: block              # block (default) holds the key's later messages; skip moves on
 ```
 
 - The first deploy creates the endpoint and stores a callback token in the app
@@ -184,7 +191,9 @@ realtime:
 - Later deploys update changed settings. An endpoint you remove from the file is
   disabled, not deleted, so its history and consumer groups survive; delete it
   with `gregale realtime delete` when you are sure.
-- Consumer groups are created when missing and never deleted by a deploy.
+- Consumer groups are created when missing and never deleted by a deploy. A
+  deploy does not change an existing group's settings; change them through the
+  group's own API.
 - Endpoints created without a slug (API, CLI, dashboard) are never touched. Give
   one a slug with `PATCH …/endpoints/{id}` `{"slug": "chat"}` to manage it from
   the file.

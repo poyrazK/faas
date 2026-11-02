@@ -379,3 +379,14 @@ SELECT r.id::text AS id,r.account_id::text AS account_id,r.workflow_run_id::text
  AND EXISTS (SELECT 1 FROM workflow_runs w WHERE w.id=r.workflow_run_id AND w.status IN ('pending','running','awaiting_event'))
  AND NOT EXISTS (SELECT 1 FROM workflow_events e WHERE e.run_id=r.workflow_run_id AND e.event_name=r.workflow_event)
  ORDER BY r.finished_at,r.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: RevokeAgentCallbacks :one
+-- ADR-20261030125501 §3: revoke every callback URL of a thread issued until now.
+INSERT INTO agent_callback_revocations (endpoint_id, thread_id, account_id, revoked_at)
+VALUES (sqlc.arg(endpoint_id)::text::uuid, sqlc.arg(thread_id)::text, sqlc.arg(account_id)::text::uuid, clock_timestamp())
+ON CONFLICT (endpoint_id, thread_id) DO UPDATE SET revoked_at = clock_timestamp(), account_id = excluded.account_id
+RETURNING revoked_at;
+
+-- name: AgentCallbacksRevokedAt :one
+SELECT revoked_at FROM agent_callback_revocations
+ WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND thread_id = sqlc.arg(thread_id)::text;

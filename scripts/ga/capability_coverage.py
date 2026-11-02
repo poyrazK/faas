@@ -170,7 +170,7 @@ RULES = [
     (r"internal/hosting|hosting-|internal-frontend|^sites$|^hosting|frontend-hosting|site-", "Internal frontend hosting"),
     (r"internal-?mail|maild|mailctl|mail-feedback|mail-metrics|mail-report|productemail|product-email", "Internal mail service"),
     (r"product-control|productcontrol|product_control|/product/|^product$|product-customers", "Product control"),
-    (r"agent-run|agent-execution|agent-callback|^agent|agents", "Gregale Agents"),
+    (r"agent-run|agent-execution|agent-callback|agent-tool|^agent|agents", "Gregale Agents"),
     (r"oci/registry|^/v2/?$|registry-storage|ociregistry", "Platform OCI registry"),
     (r"^/v1/admin|^admin|gregalectl|compute-nodes|operator|break-glass|abuse|^/admin|deployctl|nodes?-|fleet|cluster-signing", "Operator admin"),
     (r"data-repair|datarepair|repair", "Selective data repair"),
@@ -193,7 +193,7 @@ RULES = [
     (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink", "Signup, login"),
     (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags", "Customer feature flags"),
     # --- developer tools
-    (r"mcp-management|mcpmanagement|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
+    (r"mcp-management|mcpmanagement|agent-connections|agentconnections|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
     (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories", "Docs site and trust pages"),
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
@@ -361,6 +361,8 @@ PRIORITY_RULES = [
     (r"^apislogs$", "Logs, tail"),
     (r"^routestatus$", "Discovered routes"),
     (r"^s3gateway$|^s3-gatewayd$", "Object storage"),
+    # ADR-1027: the native backend's connection proxy and SCRAM verifiers.
+    (r"^pgproxyd?$|^pgscram$", "Managed Postgres"),
     (r"^apihosting(contract|receipt|scorecard)$|^api-hosting-(contract|scorecard)$", "Framework profiles"),
     (r"^mirror-(dispatch|redact)$", "Traffic mirroring"),
     (r"^api-discovery-enabled$", "OpenAPI:"),
@@ -378,8 +380,8 @@ INFRA_RULES = [
     r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$",
     # ADR-20261030115139: the public edge's status for platform problems.
     r"^platform-error-status$",
-    # ADR-20261031105055: the compute edge's host-to-node routing.
-    r"^edge-placement$",
+    # ADR-20261031105055: the compute edge's host-to-node routing and its switch.
+    r"^edge-placement(-routing)?$",
 ]
 
 

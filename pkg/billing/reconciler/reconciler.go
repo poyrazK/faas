@@ -2,12 +2,20 @@
 //
 // The reconciler is the read-only complement to meterd's pusher
 // (pkg/meter/pusher.go). Every FAAS_RECONCILE_INTERVAL it walks
-// every paid account, derives the last-24h provider billable quantity from
-// the local usage_minutes table, and asks the active billing.Provider for the
-// matching summary. The diff between local and pushed totals is
-// exposed as Prometheus gauges so the BillingDrift alert can page
-// on real provider outages that would otherwise go unobserved
-// (revenue leakage / over-billing).
+// every paid billing subject (accounts and company organizations), sums the
+// pusher's delivery receipts (billing_usage_deliveries) for the last 24
+// complete hours, by delivery time for a provider that stamps usage when it
+// is sent (Polar) and by usage hour otherwise, and asks the active
+// billing.Provider for the matching summary. The diff between delivered and provider totals is exposed as
+// Prometheus gauges so the BillingDrift alert pages when events the pusher
+// recorded as delivered are missing or duplicated at the provider (revenue
+// leakage / over-billing).
+//
+// Receipts, not usage, are the local side (ADR-20261031161842): an hour not
+// yet final, an hour above the spend cap, and a suspended subject's hours are
+// all correctly undelivered, and comparing usage made each of them page. The
+// ledger dual run (pkg/meter.LedgerReconciler) owns "receipts vs what should
+// have been billed".
 //
 // Per-account failures are fail-soft: a network blip or provider rate-limit
 // is logged, counted, and does not block the rest of the fleet. A provider
@@ -37,10 +45,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Reconciler compares local usage_minutes totals against the
-// active billing.Provider's pushed totals. The store is read-only
-// against usage_minutes; the provider is read-only against the
-// billing surface. No external state mutation happens here.
+// Reconciler compares the pusher's delivery receipts against the active
+// billing.Provider's totals. The store is read-only against
+// billing_usage_deliveries; the provider is read-only against the billing
+// surface. No external state mutation happens here.
 type Reconciler struct {
 	Store    state.Store
 	Provider billing.Provider
@@ -101,11 +109,11 @@ func New(providerName string, store state.Store, provider billing.Provider, log 
 		now:          time.Now,
 		driftMBSeconds: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "meterd_billing_drift_mb_seconds",
-			Help: "Signed diff between local usage_minutes mb_seconds total and the provider's pushed total over the rolling Window. ADR-049 §B.1.",
+			Help: "Signed diff between the mb_seconds meterd recorded as delivered (billing_usage_deliveries) and the provider's total over the rolling Window. ADR-049 §B.1, ADR-20261031161842.",
 		}, []string{"account_id", "provider"}),
 		driftRatio: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "meterd_billing_drift_ratio",
-			Help: "abs(local-pushed) / max(local, pushed) over the rolling Window. ADR-049 §B.1. The BillingDrift alert pages on ratio > 0.005 for 1h.",
+			Help: "abs(delivered-provider) / max(delivered, provider) over the rolling Window. ADR-049 §B.1, ADR-20261031161842. The BillingDrift alert pages on ratio > 0.005 for 1h.",
 		}, []string{"account_id", "provider"}),
 		supported: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "meterd_billing_reconcile_supported",
@@ -149,9 +157,8 @@ func (r *Reconciler) Handler() http.Handler {
 	return promhttp.HandlerFor(r.Registry, promhttp.HandlerOpts{})
 }
 
-// RunOnce is one pass over every paid account. The store's
-// ListAllAccounts is the only I/O — the reconciler does not
-// iterate per-app, only per-account, so the cost is O(paid_accounts).
+// RunOnce is one pass over every paid billing subject. The reconciler does
+// not iterate per-app, only per-subject, so the cost is O(paid_subjects).
 func (r *Reconciler) RunOnce(ctx context.Context) error {
 	if r.Window == 0 {
 		r.Window = DefaultWindow
@@ -174,7 +181,14 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 		return nil
 	}
 	r.supported.WithLabelValues(r.ProviderName).Set(1)
-	accounts, err := r.Store.ListAllAccounts(ctx)
+	deliveries, ok := r.Store.(state.BillingDeliveryReader)
+	if !ok {
+		r.failures.WithLabelValues(r.ProviderName, "store").Inc()
+		return errors.New("reconciler: store does not record billing deliveries")
+	}
+	// Company organizations are billing subjects of their own (#6029); the
+	// pusher delivers their hours, so their drift is measured too.
+	accounts, err := state.ListBillingResourceAccounts(ctx, r.Store)
 	if err != nil {
 		r.failures.WithLabelValues(r.ProviderName, "store").Inc()
 		return fmt.Errorf("list accounts: %w", err)
@@ -188,7 +202,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 		return nil
 	}
 	for _, acct := range accounts {
-		if err := r.reconcileOne(ctx, acct, start, end); err != nil {
+		if err := r.reconcileOne(ctx, deliveries, acct, start, end); err != nil {
 			// Fail-soft per account: log + skip, but retain a fleet-level
 			// counter so provider outages cannot masquerade as a healthy
 			// zero-drift scrape.
@@ -215,7 +229,7 @@ type reconcileError struct {
 func (e *reconcileError) Error() string { return e.err.Error() }
 func (e *reconcileError) Unwrap() error { return e.err }
 
-func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start, end time.Time) error {
+func (r *Reconciler) reconcileOne(ctx context.Context, deliveries state.BillingDeliveryReader, acct state.Account, start, end time.Time) error {
 	// Skip non-paid plans — no Stripe / Paddle surface to drift
 	// against. The metered quota math is identical but the
 	// provider-side count is zero by construction.
@@ -237,26 +251,19 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 	if r.stampsUsageAtDelivery() {
 		return r.reconcileDelivered(ctx, acct, start, end)
 	}
-	// Pending delivery excludes minute rows before BillingFrom, but stamps
-	// the resulting event at the start of its hour. Keep the local boundary
-	// exact while including that first event in the provider-side query.
-	providerStart := start.UTC().Truncate(time.Hour)
-	var local int64
-	if modeProvider, ok := r.Provider.(billing.UsageModeProvider); ok && modeProvider.UsageMode() == billing.UsageModeOverage {
-		local, err = billing.OverageMBSecondsForRange(ctx, r.Store, acct, start, end)
-		if err != nil {
-			return &reconcileError{reason: "usage", err: fmt.Errorf("usage by hour overage: %w", err)}
-		}
-	} else {
-		rows, err := r.Store.UsageByHour(ctx, acct.ID, start, end)
-		if err != nil {
-			return &reconcileError{reason: "usage", err: fmt.Errorf("usage by hour: %w", err)}
-		}
-		for _, u := range rows {
-			local += u.MBSeconds
-		}
+	// A provider that stamps usage at its hour gets each delivery at the
+	// start of that hour, including the first hour after BillingFrom, so both
+	// sides read whole hours.
+	start = start.UTC().Truncate(time.Hour)
+	// Receipts are what the pusher handed the provider: an hour that is not
+	// final yet, is above the spend cap, or belongs to a suspended subject
+	// has none, and the provider has nothing for it either
+	// (ADR-20261031161842).
+	delivered, err := deliveries.DeliveredComputeMBSeconds(ctx, r.ProviderName, acct.ID, start, end)
+	if err != nil {
+		return &reconcileError{reason: "usage", err: fmt.Errorf("delivered usage: %w", err)}
 	}
-	pushed, err := r.Provider.ReconcileUsage(ctx, acct, providerStart, end)
+	pushed, err := r.Provider.ReconcileUsage(ctx, acct, start, end)
 	if err != nil {
 		if errors.Is(err, billing.ErrNotImplemented) {
 			r.supported.WithLabelValues(r.ProviderName).Set(0)
@@ -264,8 +271,8 @@ func (r *Reconciler) reconcileOne(ctx context.Context, acct state.Account, start
 		}
 		return &reconcileError{reason: "provider", err: fmt.Errorf("provider reconcile: %w", err)}
 	}
-	drift := local - pushed
-	r.emit(acct.ID, local, pushed, drift)
+	drift := delivered - pushed
+	r.emit(acct.ID, delivered, pushed, drift)
 	return nil
 }
 

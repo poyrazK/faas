@@ -552,6 +552,174 @@
   changed_when: false
   when: "'compute_nodes' in group_names"
 
+# Every deploy scan reads the Grype vulnerability database (3.4 GB). When
+# memory pressure in faas-cp.slice drops it from page cache, the scan reads it
+# again from disk. On the GCP boot disk (50 GB pd-standard, about 37 read IOPS)
+# that took a scan from 9 s to 64 s at p50 while a build VM ran, and up to
+# 12 minutes. imaged keeps its path, so only the mount changes. Only imaged
+# and the supply_chain_scanners role write the database: copy it while imaged
+# runs, then stop imaged for the final pass.
+- name: storage — ensure the Grype database target exists
+  ansible.builtin.file:
+    path: "{{ faas_storage_mount }}/grype"
+    state: directory
+    owner: root
+    group: faas
+    mode: "0770"
+  when: "'compute_nodes' in group_names"
+
+- name: storage — ensure the Grype database mountpoint exists
+  ansible.builtin.file:
+    path: "{{ faas_storage_grype_mount }}"
+    state: directory
+    owner: root
+    group: faas
+    mode: "0770"
+  when: "'compute_nodes' in group_names"
+
+- name: storage — inspect the Grype database contract
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mountpoint -q "{{ faas_storage_grype_mount }}"
+    test "$(stat -c %d "{{ faas_storage_grype_mount }}")" = "$(stat -c %d "{{ faas_storage_mount }}")"
+  args:
+    executable: /bin/bash
+  register: faas_storage_grype_contract
+  changed_when: false
+  failed_when: false
+  when: "'compute_nodes' in group_names"
+
+- name: storage — inspect whether the Grype database path is a conflicting mount
+  ansible.builtin.command:
+    argv:
+      - mountpoint
+      - -q
+      - "{{ faas_storage_grype_mount }}"
+  register: faas_storage_grype_is_mount
+  changed_when: false
+  failed_when: false
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_grype_contract.rc != 0
+
+- name: storage — refuse to replace a conflicting Grype database mount
+  ansible.builtin.assert:
+    that:
+      - faas_storage_grype_is_mount.rc != 0
+    fail_msg: >-
+      {{ faas_storage_grype_mount }} is already a mountpoint but does not use
+      the {{ faas_storage_mount }} XFS device. Refusing to hide or unmount an
+      operator-managed filesystem automatically.
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_grype_contract.rc != 0
+
+- name: storage — install the Grype database migration tool
+  ansible.builtin.apt:
+    name: rsync
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_grype_contract.rc != 0
+
+# No --delete on either pass: a rerun after the boot-disk copy was removed
+# must not empty the target.
+- name: storage — copy the Grype database onto fast storage while imaged runs
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --hard-links
+      - --acls
+      - --xattrs
+      - --numeric-ids
+      - "{{ faas_storage_grype_mount }}/"
+      - "{{ faas_storage_mount }}/grype/"
+  changed_when: true
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_grype_contract.rc != 0
+
+- name: storage — stop imaged before the final Grype database copy
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if systemctl is-active --quiet faas-imaged.service; then
+      systemctl stop faas-imaged.service
+      echo stopped
+    fi
+  args:
+    executable: /bin/bash
+  register: faas_storage_grype_imaged_stop
+  changed_when: "'stopped' in faas_storage_grype_imaged_stop.stdout"
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_grype_contract.rc != 0
+
+- name: storage — finish the Grype database copy
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --hard-links
+      - --acls
+      - --xattrs
+      - --numeric-ids
+      - "{{ faas_storage_grype_mount }}/"
+      - "{{ faas_storage_mount }}/grype/"
+  changed_when: true
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_grype_contract.rc != 0
+
+# The bind would hide the boot-disk copy, which would then hold 3.4 GB of the
+# boot disk with no path to it.
+- name: storage — remove the boot-disk Grype database copy
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ faas_storage_grype_mount }}"
+      - -mindepth
+      - "1"
+      - -xdev
+      - -delete
+  changed_when: true
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_grype_contract.rc != 0
+
+- name: storage — bind the Grype database to fast storage
+  ansible.posix.mount:
+    path: "{{ faas_storage_grype_mount }}"
+    src: "{{ faas_storage_mount }}/grype"
+    fstype: none
+    opts: "bind,x-systemd.requires-mounts-for={{ faas_storage_mount }}/grype"
+    dump: "0"
+    passno: "0"
+    state: mounted
+  when: "'compute_nodes' in group_names"
+
+- name: storage — restart imaged after the Grype database move
+  ansible.builtin.systemd:
+    name: faas-imaged.service
+    state: started
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_grype_contract.rc != 0
+    - "'stopped' in (faas_storage_grype_imaged_stop.stdout | default(''))"
+
+- name: storage — verify the Grype database is on fast XFS storage
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mountpoint -q "{{ faas_storage_grype_mount }}"
+    test "$(stat -c %d "{{ faas_storage_grype_mount }}")" = "$(stat -c %d "{{ faas_storage_mount }}")"
+    test "$(findmnt -n -o FSTYPE --mountpoint "{{ faas_storage_grype_mount }}")" = xfs
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: "'compute_nodes' in group_names"
+
 - name: storage — verify final filesystem contract
   ansible.builtin.command:
     argv:

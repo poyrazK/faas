@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -19,8 +17,8 @@ import (
 // deployed-app count or per-app RAM (Hunt 17 H17-4). Without it a downgrade
 // was scheduled with the provider and every app kept running above the new
 // plan, because limits are checked only when an app is written. Managed
-// PostgreSQL databases are checked the same way: their count and each spec
-// (bug hunt 33).
+// PostgreSQL databases are checked the same way: their count and service
+// class against the target plan (ADR-20261031091607).
 func (s *server) planDowngradeProblem(ctx context.Context, subject state.Account, target api.Plan) *api.Problem {
 	limits, ok := api.LimitsFor(target)
 	if !ok {
@@ -53,12 +51,20 @@ func (s *server) planDowngradeProblem(ctx context.Context, subject state.Account
 		tasks = append(tasks, fmt.Sprintf("delete %d app(s): the %s plan allows %d deployed app(s) and you have %d", deployed-limits.DeployedApps, target, limits.DeployedApps, deployed))
 	}
 	tasks = append(tasks, ramTasks...)
-	databaseTasks, databases, err := s.managedPostgresDowngradeTasks(ctx, subject, target)
+	databaseTasks, databases, databasesMax, err := s.planDowngradeDatabaseTasks(ctx, subject, target)
 	if err != nil {
-		s.log.Error("plan downgrade: list managed databases", "account", subject.ID, "err", err)
+		s.log.Error("plan downgrade: list managed postgres databases", "account", subject.ID, "err", err)
 		return api.ErrCapacity("could not check the plan's limits; try again")
 	}
 	tasks = append(tasks, databaseTasks...)
+	storage, err := s.object.PlanChangeStorage(ctx, subject, target)
+	if err != nil {
+		s.log.Error("plan downgrade: read object storage", "account", subject.ID, "err", err)
+		return api.ErrCapacity("could not check the plan's limits; try again")
+	}
+	if storage.Task != "" {
+		tasks = append(tasks, storage.Task)
+	}
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -66,58 +72,52 @@ func (s *server) planDowngradeProblem(ctx context.Context, subject state.Account
 	switch {
 	case deployed > limits.DeployedApps:
 		problem = api.ErrPlanLimitApps(limits, deployed)
-	case largest > 0:
+	case len(ramTasks) > 0:
 		problem = api.ErrPlanLimitRAM(limits, largest)
+	case len(databaseTasks) > 0:
+		problem = api.NewProblem(403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded", "").
+			WithLimit(int64(databasesMax), int64(databases)).WithDocs("https://gregale.dev/docs/plans")
 	default:
-		databaseLimits, _ := api.ManagedPostgresLimitsFor(target)
-		problem = api.NewProblem(http.StatusForbidden, "managed_postgres_not_in_plan", "Databases over plan limit",
-			fmt.Sprintf("%s plan allows %d managed database(s); you have %d.", target, databaseLimits.DatabasesMax, databases)).
-			WithLimit(int64(databaseLimits.DatabasesMax), int64(databases)).
-			WithDocs("https://gregale.dev/docs/plans")
+		// ADR-20261101214152: the target plan's storage ceiling, with the
+		// spend cap the account would hold after the change.
+		problem = api.NewProblem(403, api.CodePlanLimitObjectStorage, "Object storage over plan ceiling", "").
+			WithLimit(storage.CeilingBytes, storage.StoredBytes).WithDocs(api.ObjectStorageLimitsDocsURL)
 	}
-	problem.Detail = fmt.Sprintf("the %s plan does not fit your apps yet; before downgrading: %s", target, strings.Join(tasks, "; "))
+	problem.Detail = fmt.Sprintf("the %s plan does not fit your apps, databases and stored objects yet; before downgrading: %s", target, strings.Join(tasks, "; "))
 	return problem
 }
 
-// managedPostgresDowngradeTasks lists what the subject's managed PostgreSQL
-// databases need before the target plan fits: fewer databases, and each
-// database's service class, storage, restore window and always-on compute
-// within the plan. It returns the number of live databases.
-func (s *server) managedPostgresDowngradeTasks(ctx context.Context, subject state.Account, target api.Plan) ([]string, int, error) {
+// planDowngradeDatabaseTasks lists what the subject's managed PostgreSQL
+// databases need before the target plan fits them: fewer databases, or a
+// service class the plan includes. A database whose delete is scheduled no
+// longer counts. It reports the live count and the plan's database limit.
+func (s *server) planDowngradeDatabaseTasks(ctx context.Context, subject state.Account, target api.Plan) ([]string, int, int, error) {
 	if s.managedPostgres == nil {
-		return nil, 0, nil
+		return nil, 0, 0, nil
 	}
 	limits, _ := api.ManagedPostgresLimitsFor(target)
-	var databases []managedpostgres.Database
-	var err error
 	if subject.ResourceOrgID != "" {
-		databases, err = s.managedPostgres.List(managedpostgres.WithOwnership(ctx, subject.ResourceOrgID, subject.ResourceOrgID), subject.ResourceOrgID)
-	} else {
-		scoped, scopeErr := postgresaccess.PersonalContext(ctx, s.store, subject.ID)
-		if scopeErr != nil {
-			return nil, 0, scopeErr
-		}
-		databases, err = s.managedPostgres.List(scoped, subject.ID)
+		ctx = managedpostgres.WithOwnership(ctx, subject.ResourceOrgID, subject.ID)
 	}
+	databases, err := s.managedPostgres.List(ctx, subject.ID)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
+	var tasks []string
 	live := 0
-	var specTasks []string
 	for _, database := range databases {
 		if database.State == managedpostgres.StateDeleting || database.State == managedpostgres.StateDeleted {
 			continue
 		}
 		live++
-		if limits.DatabasesMax > 0 && !managedPostgresSpecWithinPlan(limits, database.Spec) {
-			specTasks = append(specTasks, fmt.Sprintf("resize database %s to fit the %s plan's service class, storage and restore window", database.Name, target))
+		if limits.DatabasesMax > 0 && !managedPostgresPlanAllows(limits, database.Spec) {
+			tasks = append(tasks, fmt.Sprintf("resize database %s from the %s class to one the %s plan includes", database.Name, database.Spec.Class, target))
 		}
 	}
-	var tasks []string
 	if live > limits.DatabasesMax {
-		tasks = append(tasks, fmt.Sprintf("delete %d managed database(s): the %s plan allows %d and you have %d", live-limits.DatabasesMax, target, limits.DatabasesMax, live))
+		tasks = append([]string{fmt.Sprintf("delete %d managed PostgreSQL database(s): the %s plan allows %d and you have %d", live-limits.DatabasesMax, target, limits.DatabasesMax, live)}, tasks...)
 	}
-	return append(tasks, specTasks...), live, nil
+	return tasks, live, limits.DatabasesMax, nil
 }
 
 // planSubjectApps is the apps a plan governs: an organization's apps, or an

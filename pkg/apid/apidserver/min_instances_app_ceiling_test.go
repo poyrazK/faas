@@ -38,3 +38,18 @@ func TestValidateUpdateAppKeepsMinInstancesUnderTheAppCeiling(t *testing.T) {
 		}
 	}
 }
+
+// PulseWatch F12: `app <slug> --min 0 --max-queue-depth 40` sent min_instances
+// 0 beside a scaling policy copied from the app, still holding min_instances
+// 2. The store writes the policy's floor, so the app kept two warm instances.
+func TestValidateUpdateAppExplicitMinInstancesOverridesPolicyFloor(t *testing.T) {
+	acct := state.Account{Plan: api.PlanScale}
+	zero := 0
+	req := api.UpdateAppRequest{MinInstances: &zero, ScalingPolicy: &api.ScalingPolicy{MinInstances: 2, MaxQueueDepth: 40, ScaleOutCooldownS: 5, ScaleInCooldownS: 60}}
+	if prob := apidserver.ValidateUpdateApp(&req, acct, api.MustLimitsFor(acct.Plan), state.App{MaxConcurrency: 4, MinInstances: 2}); prob != nil {
+		t.Fatalf("rejected: %+v", prob)
+	}
+	if req.ScalingPolicy.MinInstances != 0 {
+		t.Fatalf("scaling_policy.min_instances = %d, want the explicit min_instances 0", req.ScalingPolicy.MinInstances)
+	}
+}

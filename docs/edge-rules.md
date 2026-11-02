@@ -35,6 +35,12 @@ A rule applies to a request when every selector it sets matches.
 | `match_headers` | Up to 10 request headers that must be present with an exact value. Names compare case-insensitively; any value of a repeated header can match. |
 | `match` | An optional condition over more request fields, ANDed with the selectors above. |
 
+In an organization, members who can read an app read its rules, history,
+events and traces; owners and admins create, change and delete them, roll
+them back and switch attack mode, whoever created the app. Lists and CORS
+presets stay with the account that holds the app's rules; an organization
+app's dashboard page manages the lists its rules use.
+
 A rule only ever applies to hosts your account owns: another account's rule
 never runs on your traffic, even with `match_host` `*`. A host pattern other
 than `@app` covers every host it matches among the apps with the same owner
@@ -567,10 +573,14 @@ apps accept this kind.
 
 Creating, changing or deleting a rule returns once the gateways serving your
 app have the new rules, and from then on no gateway serves the old ones.
-While a change is being applied, requests to the hosts it covers get 503
-`capacity_unavailable` ("Edge policy update in progress") with
-`Retry-After: 1`. If the gateways cannot be reached, the change is refused
-with 503 and nothing changes; retry it. Changes to one account's rules are
+While a change is being applied, your hosts keep serving: each gateway uses
+the rules it has until it takes the new ones, so for a second or two some
+requests run under the old rules and some under the new. Each request runs
+under one set from start to finish. The one exception is a `route` rule
+whose target app is being renamed: until the change lands, its requests get
+503 `traffic_policy_unavailable` with `Retry-After: 1` rather than being
+served by the app the host belongs to. If the gateways cannot be reached,
+the change is refused with 503 and nothing changes; retry it. Changes to one account's rules are
 applied one at a time; other accounts' changes never wait for yours.
 
 Two people editing the same app's rules at once cannot overwrite each other:
@@ -602,7 +612,11 @@ the same time.
 
 - `gregale edge rule trace` shows which rules a request would match and
   what each would do, and can compare a proposed change; see
-  [Reusable edge-rule trace scenarios](edge-rule-trace).
+  [Reusable edge-rule trace scenarios](edge-rule-trace). It includes the
+  `*` and host-pattern rules of your other apps with the same owner that
+  cover the host, as the gateway applies them; `GET
+  /v1/apps/{slug}/edge-rules?covering=true` lists them with each rule's
+  `app_id`.
 - Log mode counts what a rule would do without acting.
 - `gregale edge rule stats` shows match counts per rule for the last hour,
   day or week.

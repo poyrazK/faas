@@ -54,7 +54,8 @@ type githubSetupReceipt struct {
 func cmdGithubSetup(args []string) int {
 	fs := newFlagSet("github setup", flag.ContinueOnError)
 	repo := fs.String("repo", "", "GitHub repository OWNER/NAME (required for a dry run; otherwise defaults to the current binding)")
-	productionBranch := fs.String("production-branch", "", "production branch (defaults to the current binding or main)")
+	productionBranch := fs.String("production-branch", "", "production branch (defaults to the current binding or the repository's default branch)")
+	installationID := fs.Int64("installation-id", 0, "GitHub App installation id (the app's, or the account's only one, when omitted)")
 	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=environment mappings (default or a registered project environment)")
 	pinnedSHA := fs.String("pinned-sha", "", "pin the generated deploy Action to this full 40-character commit SHA (default: immutable SHA embedded in the CLI release)")
 	pinAction := fs.Bool("pin-action", false, "resolve the current v0 deploy Action tag to its commit SHA")
@@ -218,10 +219,35 @@ func cmdGithubSetup(args []string) int {
 			return printErr("GitHub setup found an invalid repository binding", errors.New("rerun with --repo OWNER/NAME"))
 		}
 	}
-	if branch == "" {
+	// An app without a project keeps only its production trigger and
+	// whether it gets previews; every other setting belongs to a project
+	// (ADR-20261101160300). Refuse those flags before anything changes.
+	projectBacked, err := githubSetupProjectBacked(ctx, client, positional[0])
+	if err != nil {
+		return printErr("GitHub deployment policy failed", err)
+	}
+	if !projectBacked {
+		if flag := githubSetupProjectOnlyFlag(fs); flag != "" {
+			return printErr("--"+flag+" needs a project-backed app", errors.New("an app without a project can bind a repository, hand production deploys to GitHub Actions and turn previews on or off; preview tuning, root directory, ignored paths and branch mappings are project settings"))
+		}
+		policyPatch = &api.GitHubDeploymentPolicyPatch{ProductionTrigger: policyPatch.ProductionTrigger, PreviewEnabled: policyPatch.PreviewEnabled}
+	}
+	bindInstallation := *installationID
+	if bindInstallation == 0 {
+		bindInstallation, err = githubBindInstallation(status)
+	}
+	if branch == "" && status.Connected && strings.EqualFold(strings.TrimSpace(status.RepoFullName), repoName) {
 		branch = strings.TrimSpace(status.ProductionBranch)
-		if branch == "" {
-			branch = "main"
+	}
+	if branch == "" {
+		// The workflow names the branch before the bind happens, so read
+		// the repository's default branch the bind would take.
+		if err != nil {
+			return printErr("GitHub setup needs an installation", err)
+		}
+		branch, err = githubRepositoryDefaultBranch(ctx, client, bindInstallation, repoName)
+		if err != nil {
+			return printErr("Could not read the repository's default branch", err)
 		}
 	}
 	if !validGithubSetupBranch(branch) {
@@ -266,11 +292,13 @@ func cmdGithubSetup(args []string) int {
 
 	bindingMutation := strings.TrimSpace(*repo) != "" || strings.TrimSpace(*productionBranch) != "" || strings.TrimSpace(*deployBranches) != ""
 	if bindingMutation {
-		if status.InstallationID <= 0 {
-			return printErr("GitHub bind failed", errors.New("no GitHub App installation is connected; run `gregale github connect` first"))
+		if bindInstallation <= 0 {
+			if _, err := githubBindInstallation(status); err != nil {
+				return printErr("GitHub bind failed", err)
+			}
 		}
 		bound, err := client.BindGitHubConnection(ctx, positional[0], api.InstallBindRequest{
-			InstallationID:   status.InstallationID,
+			InstallationID:   bindInstallation,
 			RepoFullName:     repoName,
 			ProductionBranch: branch,
 			DeployBranches:   parsedBranches,
@@ -316,6 +344,56 @@ func cmdGithubSetup(args []string) int {
 	}
 
 	return renderGithubSetupReceipt(receipt, existing, exists)
+}
+
+// githubSetupProjectBacked reports whether the app keeps its GitHub
+// deployment policy in a project. An apid from before ADR-20261101160300
+// answers project_required for an app without one.
+func githubSetupProjectBacked(ctx context.Context, client *Client, slug string) (bool, error) {
+	policy, err := client.GetGitHubDeploymentPolicy(ctx, slug)
+	if p := api.AsProblem(err); p != nil && p.Code == "project_required" {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return policy.ProjectID != "", nil
+}
+
+// githubSetupProjectOnlyFlag names the first flag set that only a
+// project-backed app supports, or "".
+func githubSetupProjectOnlyFlag(fs *flag.FlagSet) string {
+	projectOnly := map[string]bool{"preview-ttl-hours": true, "preview-bots": true,
+		"no-preview-bots": true, "preview-drafts": true, "no-preview-drafts": true, "preview-service-policy": true,
+		"root-dir": true, "ignore": true, "deploy-branches": true}
+	found := ""
+	fs.Visit(func(f *flag.Flag) {
+		if found == "" && projectOnly[f.Name] {
+			found = f.Name
+		}
+	})
+	return found
+}
+
+// githubRepositoryDefaultBranch reads repo's default branch from the
+// repositories installationID can see.
+func githubRepositoryDefaultBranch(ctx context.Context, client *Client, installationID int64, repo string) (string, error) {
+	repos, err := client.ListGitHubRepositoriesForInstallation(ctx, installationID)
+	if err != nil {
+		return "", err
+	}
+	for _, candidate := range repos {
+		if strings.EqualFold(candidate.FullName, repo) {
+			if candidate.DefaultBranch == "" {
+				break
+			}
+			if !validGithubSetupBranch(candidate.DefaultBranch) {
+				return "", fmt.Errorf("the default branch of %s contains an unsupported character; pass --production-branch", repo)
+			}
+			return candidate.DefaultBranch, nil
+		}
+	}
+	return "", fmt.Errorf("the GitHub installation cannot see %s, or it has no default branch; pass --production-branch", repo)
 }
 
 const githubActionPinResolveTimeout = 20 * time.Second

@@ -119,9 +119,12 @@ database and cron lists are per account and bounded by plan limits (100
 deployed apps, 10 databases, 500 crons on Scale), and `GET /v1/apps` already
 reads the whole account list. Translating selectors to SQL would need either
 string-built queries, which `CLAUDE.md` forbids, or a fixed query per selector
-shape. Jobs have no per-account cap and their list is paginated, so step 5
-decides between a job count limit and an index before jobs take a selector;
-filtering one page at a time would return short pages and is not done.
+shape. Jobs are bounded too: `JobMaxPerAccount` caps an account's job
+templates (100 on Scale) and image-run jobs are capped apart, so a selected
+`GET /v1/jobs` reads the account's whole list, filters it, and then pages the
+matches; `total` and `next_offset` count the matches. Filtering one page at a
+time would return short pages and is not done. (Step 5 settled this: the
+existing cap is the count limit, and no index is needed.)
 
 ### 5. API
 
@@ -186,9 +189,16 @@ read once at the start, so a resource labelled during the wait is not added.
      app responses, `?selector=` on `GET /v1/apps` and `GET /v1/domains`.
   4. CLI: `app label list|set|unset`, `app list -l`, `domain list -l`,
      `app wait -l`.
-  5. Databases, crons and jobs.
+  5. Databases, crons and jobs: `PATCH /v1/postgres/databases/{id}/labels`,
+     `PATCH /v1/crons/{id}/labels`, `PATCH /v1/jobs/{name}/labels`, `labels`
+     in their responses, and `?selector=` on their lists.
   6. Manifest `labels` and the Kubernetes importer.
-  7. Docs, dashboard, MCP tools and a journey; then beta.
+  7. Docs, dashboard, MCP tools and a journey; then beta. The management
+     MCP server reads first: app views carry labels and `gregale_list_apps`
+     takes a `selector`. A label write follows its plan/apply consent and
+     waits for a need. The dashboard shows labels without editing them: the
+     apps list has a labels column and a selector box, and the app page and
+     the managed PostgreSQL page show app, cron and database labels.
 
 ## Consequences
 
@@ -199,8 +209,8 @@ read once at the start, so a resource labelled during the wait is not added.
 - Labels stay customer metadata: they change no scheduling, routing, billing or
   quota. Grouping usage and alert rules by label are separate decisions.
 - Selector matching in Go costs one full per-account list read per filtered
-  list; plan limits bound it for apps, databases and crons, and jobs need a
-  limit or an index first.
+  list; plan limits bound it for apps, databases and crons, and
+  `JobMaxPerAccount` bounds it for jobs (step 5).
 
 ## Alternatives considered
 

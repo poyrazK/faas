@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +36,9 @@ type QueueConfig struct {
 	DrainID            string
 	MaxBytes           int64
 	DeadLetterMaxBytes int64
+	// Budget, when set, is shared by every queue of the node: an Enqueue
+	// that would take the node past it is refused with ErrQueueFull.
+	Budget *SpoolBudget
 }
 
 // QueueStats is a point-in-time view of the durable outbox. PendingBytes is
@@ -79,6 +81,9 @@ type queueState struct {
 	Offset        int64             `json:"offset"`
 	Attempts      int               `json:"attempts"`
 	LastSequences map[string]uint64 `json:"last_sequences,omitempty"`
+	// LastSeen is the Unix time each instance last had a line delivered,
+	// so cursors of instances gone for lastSequenceTTL are pruned.
+	LastSeen map[string]int64 `json:"last_seen,omitempty"`
 }
 
 // Queue is a single-consumer, multi-producer durable outbox. records.jsonl
@@ -100,6 +105,10 @@ type Queue struct {
 	deadLetters    int64
 	deadBytes      int64
 	pendingKeys    map[queueKey]struct{}
+	// budget is the node budget; budgeted is what this queue has charged
+	// to it, kept equal to pendingBytes by syncBudgetLocked.
+	budget   *SpoolBudget
+	budgeted int64
 }
 
 type queueKey struct {
@@ -133,6 +142,7 @@ func NewQueue(cfg QueueConfig) (*Queue, error) {
 		deadMax:     cfg.DeadLetterMaxBytes,
 		pendingKeys: make(map[queueKey]struct{}),
 		state:       queueState{LastSequences: make(map[string]uint64)},
+		budget:      cfg.Budget,
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -145,7 +155,29 @@ func NewQueue(cfg QueueConfig) (*Queue, error) {
 	if err := q.rebuildStatsLocked(); err != nil {
 		return nil, err
 	}
+	q.syncBudgetLocked()
 	return q, nil
+}
+
+// syncBudgetLocked charges the node budget with the change in pendingBytes.
+func (q *Queue) syncBudgetLocked() {
+	if q.budget == nil {
+		return
+	}
+	q.budget.add(q.pendingBytes - q.budgeted)
+	q.budgeted = q.pendingBytes
+}
+
+// Release returns this queue's pending bytes to the node budget. The
+// manager calls it when it stops the drain's worker; the queue stops
+// charging the budget afterwards.
+func (q *Queue) Release() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.budget != nil {
+		q.budget.add(-q.budgeted)
+	}
+	q.budget, q.budgeted = nil, 0
 }
 
 func (q *Queue) recoverCompactionLocked() error {
@@ -196,6 +228,9 @@ func (q *Queue) loadStateLocked() error {
 	if q.state.LastSequences == nil {
 		q.state.LastSequences = make(map[string]uint64)
 	}
+	if q.state.LastSeen == nil {
+		q.state.LastSeen = make(map[string]int64)
+	}
 	return nil
 }
 
@@ -205,7 +240,7 @@ func (q *Queue) loadStateLocked() error {
 func (q *Queue) rebuildStatsLocked() error {
 	info, err := os.Stat(q.recordsPath)
 	if errors.Is(err, os.ErrNotExist) {
-		q.state = queueState{LastSequences: q.state.LastSequences}
+		q.state = queueState{LastSequences: q.state.LastSequences, LastSeen: q.state.LastSeen}
 		return q.writeStateLocked(q.state)
 	}
 	if err != nil {
@@ -215,13 +250,13 @@ func (q *Queue) rebuildStatsLocked() error {
 		if info.Size() != 0 {
 			return fmt.Errorf("log drain: cursor exceeds durable queue: %w", ErrQueueData)
 		}
-		q.state = queueState{LastSequences: q.state.LastSequences}
+		q.state = queueState{LastSequences: q.state.LastSequences, LastSeen: q.state.LastSeen}
 	}
 	if q.state.Offset == info.Size() && info.Size() > 0 {
 		if err := os.Truncate(q.recordsPath, 0); err != nil {
 			return fmt.Errorf("log drain: compact durable queue: %w", err)
 		}
-		q.state = queueState{LastSequences: q.state.LastSequences}
+		q.state = queueState{LastSequences: q.state.LastSequences, LastSeen: q.state.LastSeen}
 		if err := q.writeStateLocked(q.state); err != nil {
 			return err
 		}
@@ -318,6 +353,9 @@ func (q *Queue) Enqueue(record Record, enqueuedAt time.Time) error {
 	if q.pendingBytes+int64(len(payload)) > q.maxBytes {
 		return ErrQueueFull
 	}
+	if q.budget != nil && !q.budget.fits(int64(len(payload))) {
+		return ErrQueueFull
+	}
 	file, err := os.OpenFile(q.recordsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 	if err != nil {
 		return fmt.Errorf("log drain: open durable queue for append: %w", err)
@@ -340,6 +378,7 @@ func (q *Queue) Enqueue(record Record, enqueuedAt time.Time) error {
 	q.pendingRecords++
 	q.pendingBytes += int64(len(payload))
 	q.addPendingKey(record)
+	q.syncBudgetLocked()
 	return nil
 }
 
@@ -402,22 +441,7 @@ func (q *Queue) Ack(item QueueItem) error {
 // advanceLocked commits the source cursor before changing the in-memory
 // head or backlog. A failed disk write leaves the same item retryable.
 func (q *Queue) advanceLocked(item QueueItem) error {
-	next := queueState{Offset: item.nextOffset, LastSequences: maps.Clone(q.state.LastSequences)}
-	if item.Record.InstanceID != "" && item.Record.Sequence > next.LastSequences[item.Record.InstanceID] {
-		next.LastSequences[item.Record.InstanceID] = item.Record.Sequence
-	}
-	if err := q.writeStateLocked(next); err != nil {
-		return err
-	}
-	q.pendingRecords--
-	q.pendingBytes -= item.nextOffset - item.offset
-	q.deletePendingKey(item.Record)
-	if q.pendingRecords == 0 {
-		q.pendingBytes, q.oldestPending = 0, time.Time{}
-	} else {
-		q.oldestPending = q.nextEnqueuedAtLocked()
-	}
-	return q.compactIfNeededLocked()
+	return q.advancePastLocked([]QueueItem{item}, time.Now())
 }
 
 // DeadLetter durably preserves a record after retry exhaustion, then removes

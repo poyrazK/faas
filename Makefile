@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -780,6 +780,8 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-check-compute-edges_test.sh
 	bash deploy/scripts/faas-app-edge-pilot-check_test.sh
 	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
+	bash deploy/scripts/cloudflare-s3-tunnel_test.sh
+	bash tests/load/s3-gateway/run_test.sh
 	bash deploy/scripts/cloudflare-app-dns_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
@@ -1137,6 +1139,10 @@ bootstrap-compute: ansible-preflight ## Bootstrap the compute-nodes group. Honor
 	@test -f deploy/ansible/bootstrap.yml || (echo "deploy/ansible/bootstrap.yml missing — run on the control-plane / compute node, not the dev box"; exit 1)
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/bootstrap.yml --limit $${ANSIBLE_LIMIT:-compute_nodes}
 
+.PHONY: bootstrap-database-nodes
+bootstrap-database-nodes: ansible-preflight ## ADR-1027: authorize pgproxyd on the control plane, then converge every database node (firewall + pgproxyd).
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/database_node.yml
+
 .PHONY: bootstrap-tenant-egress-gateway
 bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/tenant_egress_gateway.yml
@@ -1406,7 +1412,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/mcpmanagement/statepg/queries.sql pkg/mcpmanagement/statepg/schema.sql "$$tmp/pkg/mcpmanagement/statepg/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \

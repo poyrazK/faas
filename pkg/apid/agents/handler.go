@@ -59,6 +59,13 @@ type Handler struct {
 	CallbackBaseURL string
 	AgentsEnabled   func(ctx context.Context, accountID string) bool
 	Now             func() time.Time
+	// Revocations records closed threads; without it the callback routes
+	// answer capacity_unavailable.
+	Revocations CallbackRevocations
+	// Sleeps holds gregale_sleep's wake-ups (ADR-20261030125501 §4,
+	// tools.go); without it the toolset routes answer capacity_unavailable.
+	Sleeps         SleepSchedules
+	callbackLimits callbackLimiter
 }
 
 // CreateAgent handles POST /v1/agents.

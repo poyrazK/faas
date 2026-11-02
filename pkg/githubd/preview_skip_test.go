@@ -146,3 +146,28 @@ func TestHandlePullRequest_PreviewKeepsProductionProtocols(t *testing.T) {
 		t.Fatalf("preview after production turned WebSockets off = (%t, %v), want off", preview.WebSocketEnabled, err)
 	}
 }
+
+// With draft previews on, marking a previewed draft ready at the same head
+// rebuilt every workload; the preview already served that commit.
+func TestHandlePullRequest_ReadyForReviewKeepsLivePreview(t *testing.T) {
+	ctx := context.Background()
+	rig := newPreviewRig(t)
+	svc, _ := newSourcePreviewService(t, rig, []reposcan.Workload{{Name: "api"}})
+	enqueuer := svc.Enqueuer.(*previewDependencyEnqueuer)
+	head := strings.Repeat("a", 40)
+	opened, err := svc.handlePullRequest(ctx, pullRequestBody("opened", 42, head, "User", true))
+	if err != nil || len(opened.Added) != 1 {
+		t.Fatalf("open draft = (%+v, %v)", opened, err)
+	}
+	if _, err := rig.mem.CreateDeployment(ctx, state.Deployment{AppID: opened.Added[0].ID, Kind: state.DeploymentKindPreview,
+		CommitSHA: head, Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
+	builds := len(enqueuer.specs)
+	if _, err := svc.handlePullRequest(ctx, pullRequestBody("ready_for_review", 42, head, "User", false)); err != nil {
+		t.Fatalf("ready for review: %v", err)
+	}
+	if len(enqueuer.specs) != builds {
+		t.Fatalf("ready for review queued %d builds, want none for the live head", len(enqueuer.specs)-builds)
+	}
+}

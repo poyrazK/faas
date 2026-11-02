@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery"
 	probesql "github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/firecracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -167,6 +168,15 @@ func (c durableQualificationConfig) factory(getenv func(string) string) managedp
 			return session, err
 		}
 		fault := &atomic.Bool{}
+		nativePool, closeNative, err := nativeVerifierPool(ctx, getenv)
+		if err != nil {
+			return session, managedpostgres.ErrInvalid
+		}
+		defer func() {
+			if resultErr != nil {
+				closeNative()
+			}
+		}()
 		registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": func(config managedpostgres.BackendConfig, env func(string) string) (managedpostgres.Provider, error) {
 			provider, err := neon.New(config, env)
 			if err != nil {
@@ -177,6 +187,19 @@ func (c durableQualificationConfig) factory(getenv func(string) string) managedp
 				return nil, managedpostgres.ErrInvalid
 			}
 			return &qualificationNeon{Provider: p, stage: stage, observed: fault, disconnect: pool.Close}, nil
+		}, firecracker.Driver: func(config managedpostgres.BackendConfig, env func(string) string) (managedpostgres.Provider, error) {
+			if nativePool == nil {
+				return firecracker.DescribeFactory()(config, env)
+			}
+			provider, err := firecracker.Factory(nativePool)(config, env)
+			if err != nil {
+				return nil, managedpostgres.ErrInvalid
+			}
+			p, ok := provider.(*firecracker.Provider)
+			if !ok {
+				return nil, managedpostgres.ErrInvalid
+			}
+			return &qualificationNative{Provider: p, stage: stage, observed: fault, disconnect: pool.Close}, nil
 		}})
 		if err != nil || registry == nil {
 			return session, managedpostgres.ErrInvalid
@@ -203,7 +226,7 @@ func (c durableQualificationConfig) factory(getenv func(string) string) managedp
 			return session, err
 		}
 		observer := credentialdelivery.Observer{Store: store, Identity: c.identity, HMACKey: c.hmac, PostgresMajor: c.options.Spec.PostgresMajor, RunID: c.options.RunID}
-		return managedpostgres.DurableLifecycleSession{Catalog: catalog, Service: service, Bindings: bindings, FaultObserved: fault.Load, VerifyCredential: observer.Credential, VerifyDeleted: observer.Deleted, VerifyWorkload: observer.Workload, Close: pool.Close}, nil
+		return managedpostgres.DurableLifecycleSession{Catalog: catalog, Service: service, Bindings: bindings, FaultObserved: fault.Load, VerifyCredential: observer.Credential, VerifyDeleted: observer.Deleted, VerifyWorkload: observer.Workload, Close: func() { pool.Close(); closeNative() }}, nil
 	}
 }
 
@@ -226,6 +249,33 @@ func (p *qualificationNeon) Provision(ctx context.Context, r managedpostgres.Pro
 }
 
 func (p *qualificationNeon) IssueCredentials(ctx context.Context, r managedpostgres.CredentialRequest) (managedpostgres.CredentialMaterial, error) {
+	m, err := p.Provider.IssueCredentials(ctx, r)
+	if err == nil && p.stage.Fault == managedpostgres.QualificationCredentialAck && p.observed.CompareAndSwap(false, true) {
+		p.disconnect()
+		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnavailable
+	}
+	return m, err
+}
+
+// qualificationNative is qualificationNeon for the native backend
+// (ADR-1027): the same faults, after the same successful effects.
+type qualificationNative struct {
+	*firecracker.Provider
+	stage      managedpostgres.DurableQualificationStage
+	observed   *atomic.Bool
+	disconnect func()
+}
+
+func (p *qualificationNative) Provision(ctx context.Context, r managedpostgres.ProvisionRequest) (managedpostgres.ObservedDatabase, error) {
+	o, err := p.Provider.Provision(ctx, r)
+	if err == nil && p.stage.Fault == managedpostgres.QualificationProvisionAck && p.observed.CompareAndSwap(false, true) {
+		p.disconnect()
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+	}
+	return o, err
+}
+
+func (p *qualificationNative) IssueCredentials(ctx context.Context, r managedpostgres.CredentialRequest) (managedpostgres.CredentialMaterial, error) {
 	m, err := p.Provider.IssueCredentials(ctx, r)
 	if err == nil && p.stage.Fault == managedpostgres.QualificationCredentialAck && p.observed.CompareAndSwap(false, true) {
 		p.disconnect()

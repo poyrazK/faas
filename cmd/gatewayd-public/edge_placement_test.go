@@ -126,7 +126,7 @@ func TestLocalFirstDialerRoutesAHostToItsNode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newPlacementFixture(t)
 			rec := gateway.NewDialRecord(tc.excluded...)
-			ctx := gateway.WithDialRecord(context.Background(), rec)
+			ctx := gateway.WithPlacementAsked(gateway.WithDialRecord(context.Background(), rec))
 			if tc.pref != nil {
 				ctx = gateway.WithPreferredNode(ctx, *tc.pref)
 			}
@@ -200,6 +200,19 @@ func TestLocalFirstDialerPicksTheHostsNode(t *testing.T) {
 	up, err = f.dialer.PickUpstream(ctx, gateway.NewDialRecord(), []string{computeGatewayUpstreamKey(f.remote)})
 	if err != nil || up.Key != localUpstreamKey {
 		t.Fatalf("after a failed dial: %q %v, want the local gateway", up.Key, err)
+	}
+}
+
+// A health probe dials without a node lookup and is not counted.
+func TestLocalFirstDialerDoesNotCountProbesAsMisses(t *testing.T) {
+	f := newPlacementFixture(t)
+	conn, err := f.dialer.DialContext(context.Background(), "")
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	_ = conn.Close()
+	if got := f.result(placementMiss); got != 0 {
+		t.Fatalf("miss = %v for a probe, want 0", got)
 	}
 }
 

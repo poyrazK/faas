@@ -264,6 +264,21 @@ func (m *MemStore) AdmitCustomDomainTLSHost(_ context.Context, a CustomDomainTLS
 	return TLSHostAdmitted, nil
 }
 
+// forgetCustomDomainTLSHostsTx drops a domain's host allowlist and known
+// hosts when its row passes to a new claim (a reclaim after the verification
+// deadline or a takeover), as deleting the row would (ADR-520 amendment 2).
+// The previous claimant's list must not decide which names get the new
+// claim's certificates. The admission ledger stays, as on delete.
+func forgetCustomDomainTLSHostsTx(ctx context.Context, tx pgx.Tx, domain string) error {
+	if _, err := tx.Exec(ctx, `delete from custom_domain_tls_allowed_hosts where wildcard_domain = $1`, domain); err != nil {
+		return fmt.Errorf("forget custom-domain tls allowlist: %w", mapErr(err))
+	}
+	if _, err := tx.Exec(ctx, `delete from custom_domain_tls_hosts where wildcard_domain = $1`, domain); err != nil {
+		return fmt.Errorf("forget custom-domain tls hosts: %w", mapErr(err))
+	}
+	return nil
+}
+
 // dropCustomDomainTLSHostsLocked mirrors the ON DELETE CASCADE from
 // custom_domains to the known hosts and the host allowlist. The admission
 // ledger has no foreign key and stays. Callers hold m.mu.

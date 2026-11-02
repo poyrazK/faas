@@ -231,11 +231,26 @@ the model.)
    to everyone.)
 3. **Customer surface.** Pricing page, usage views with paused seconds,
    `gregale usage`, the changelog: "billed while running requests, plus 2 s".
+   (Amended 2026-10-31: the record and the account summary are in. For each
+   rolled instance-minute meterd writes the MB-seconds it did not bill to
+   `usage_minutes.paused_mb_seconds`, in the plan RAM + 8 MB unit, first
+   value wins. It writes only what went unbilled: `on` mode and an account
+   the flag releases, net of what the app's capacity floor billed back that
+   minute. A failed write is logged and dropped rather than failing a minute
+   whose rows are written. `GET /v1/usage/summary`, the `compute` part of
+   `GET /v1/account/usage` and `gregale usage summary` show the month's total
+   as `quiet_paused_gb_hours`, absent while zero. The daily and per-app
+   views, the pricing page and the changelog are still to come.)
 
 The prerequisite is quiet pause itself in production (vmmd `quiet_pause`,
 schedd `quiet_pause_admission`), whose canaries ADR-1151 still lists as
-pending. Ledger retention is `api.QuietPauseLedgerRetentionDays` (45), run by
-meterd's retention loop.
+pending. Ledger retention is `api.QuietPauseLedgerRetentionDays`, run by
+meterd's retention loop. (Amended 2026-10-31: 3 days, was 45. With what each
+minute did not bill kept in `usage_minutes`, the ledger only has to outlive
+meterd's 24 h catch-up window. Retention deletes pauses that ended before the
+cutoff, and open ones only when their node's watermark is also older than
+it, because a floor-held VM with no traffic stays paused for days and its
+node reports the pause once.)
 
 ## Metrics (§12 additions)
 

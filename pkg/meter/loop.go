@@ -121,6 +121,10 @@ type Loop struct {
 	// snapshots recordFinancialPricing last confirmed stored. Only the sample
 	// goroutine touches it.
 	pricedTerms map[string]string
+
+	// freePeriods caches when a Free account's Free period began this month
+	// (freePeriodStart). Only the quota goroutine touches it.
+	freePeriods map[string]freePeriod
 }
 
 // NewLoop wires the loop. The interfaces are local to pkg/meter so the
@@ -639,6 +643,11 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			l.recordSpendCapHold(ctx, acct, now, capCents)
 		}
 		used := MonthlyUsageGB(usages)
+		if acct.Plan != api.PlanFree {
+			delete(l.freePeriods, acct.ID)
+		} else if CheckQuota(acct.Plan, used).Action != "" {
+			used = l.freePeriodUsageGB(ctx, acct, now, used)
+		}
 		if _, err := (QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands}).Enforce(ctx, acct, used, now); err != nil {
 			// EnforceQuota already logged + skipped parked-instance failures;
 			// only status/structural errors reach here.

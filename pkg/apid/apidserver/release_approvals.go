@@ -104,6 +104,35 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, view)
 }
 
+// executionModeApprovalProblem refuses moving an app that requires release
+// approvals out of request mode (ADR-20261020085706 amendment 5). Approvals
+// wait in a canary stage, which services, workers and jobs do not have, so
+// the policy would stay set and stop gating: anyone who may configure the app
+// could release past it.
+func (s *server) executionModeApprovalProblem(ctx context.Context, app state.App, req *api.UpdateAppRequest) *api.Problem {
+	if req.ExecutionMode == nil || !approval.RequestMode(app) {
+		return nil
+	}
+	next := app
+	next.Manifest.ExecutionMode = *req.ExecutionMode
+	if approval.RequestMode(next) {
+		return nil
+	}
+	store, ok := s.store.(state.ReleaseApprovalStore)
+	if !ok {
+		return nil
+	}
+	if _, err := store.ReleaseApprovalPolicy(ctx, app.ID); errors.Is(err, state.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return api.ErrCapacity("could not read the app's release approval policy")
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "App requires release approvals",
+		fmt.Sprintf("%s requires release approvals, which wait in a canary stage. A %s has none, so its releases would ship unapproved.",
+			app.Slug, *req.ExecutionMode)).
+		WithHint(fmt.Sprintf("An owner or admin removes the policy first with `gregale release approval disable --app %s`, then the mode can change.", app.Slug))
+}
+
 // releaseApprovalPolicyEligible refuses a policy the app could never satisfy
 // and forces self-approval for an app only one person can act on.
 func (s *server) releaseApprovalPolicyEligible(ctx context.Context, acct state.Account, app state.App, req *api.SetReleaseApprovalPolicyRequest) *api.Problem {
