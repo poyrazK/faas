@@ -184,7 +184,15 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 	// The wire-side outcome distinguishes "inserted" from
 	// "merged" so the gateway can update its in-process LRU
 	// freshness on the merge path.
+	// A gateway folds an app's repeats of one error into a few records per
+	// flush; count says how many requests this one stands for. An older
+	// gateway sends 0 for its one request (bug hunt 2026-10-28 H41).
+	count := req.GetCount()
+	if count < 1 {
+		count = 1
+	}
 	inserted, incErr := a.store.IncrementAppError(ctx, sqlc.IncrementAppErrorParams{
+		Count:                   count,
 		ID:                      state.NewPgtypeUUID(newRowID()),
 		AccountID:               state.NewPgtypeUUID(accountID),
 		AppID:                   state.NewPgtypeUUID(appID),
@@ -232,6 +240,11 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 	// empty proto repeated field decodes to nil, which pgx sends as NULL:
 	// every error without a redaction (nearly all of them) failed this
 	// insert, so the customer drill-down stayed empty.
+	// A count-only record, or an error group already holding the plan's
+	// request rows, stores no request row (bug hunt 2026-10-28 H41).
+	if req.GetRequestRowOmitted() || a.requestRowsFull(ctx, accountID, appID, req.GetFingerprint()) {
+		return a.finish(out, inserted)
+	}
 	redactions := req.GetRedactionsApplied()
 	if redactions == nil {
 		redactions = []string{}
@@ -271,7 +284,37 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 		// Preserve legacy publication and record a separate issue-ingest failure.
 		a.ops.ObserveIssueEvent("db_error")
 	}
+	return a.finish(out, inserted)
+}
 
+// requestRowsFull reports whether an error group already keeps the account
+// plan's AppErrorsMaxRequestRowsPerFingerprint request rows. The cap was
+// declared but never read, so each erroring request added a row for the
+// retention window (bug hunt 2026-10-28 H41). A store that cannot count, or
+// a failed read, keeps the row.
+func (a *appErrorsReceiver) requestRowsFull(ctx context.Context, accountID, appID uuid.UUID, fingerprint string) bool {
+	counter, ok := a.store.(state.AppErrorRequestCounter)
+	if !ok {
+		return false
+	}
+	accounts, ok := a.store.(interface {
+		AccountByID(context.Context, string) (state.Account, error)
+	})
+	if !ok {
+		return false
+	}
+	acct, err := accounts.AccountByID(ctx, accountID.String())
+	if err != nil {
+		return false
+	}
+	rows, err := counter.CountAppErrorRequestsForFingerprint(ctx, sqlc.CountAppErrorRequestsForFingerprintParams{
+		AccountID: state.NewPgtypeUUID(accountID), AppID: state.NewPgtypeUUID(appID), Fingerprint: fingerprint,
+	})
+	return err == nil && rows >= int64(acct.Plan.AppErrorsMaxRequestRowsPerFingerprint())
+}
+
+// finish records a written record's outcome.
+func (a *appErrorsReceiver) finish(out *apidpb.IncrementAppErrorResponse, inserted bool) *apidpb.IncrementAppErrorResponse {
 	a.observe("ok")
 	if inserted {
 		out.Outcome = OutcomeInserted

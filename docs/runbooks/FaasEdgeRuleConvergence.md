@@ -7,10 +7,11 @@ Alerts (warn, family `edge_rules`), in
   listener heartbeat.
 - `FaasEdgeRuleConvergenceFailing`: apid's edge-rule changes are not
   converging.
-- `FaasEdgeRuleConvergenceStuck`: a gateway has held hosts behind edge-rule
-  fences for 10 minutes.
+- `FaasEdgeRuleConvergenceStuck`: a gateway has had hosts with prepared,
+  unapplied edge-rule changes for 10 minutes.
 
-Decision: ADR-091 amendments (2026-10-27).
+Decision: ADR-091 amendments (2026-10-27); ADR-20261101141123 (hosts keep
+serving during a change).
 
 ## How a rule change converges
 
@@ -18,14 +19,16 @@ Every edge-rule change (API, dashboard, GitOps, attack mode, rollback) runs
 a two-phase barrier:
 
 1. **prepare**: apid publishes `edge_rule_changed` with phase `prepare`.
-   Each live gateway fences the hosts the change covers, answering their
-   requests with `503 capacity_unavailable` ("Edge policy update in
-   progress", `Retry-After: 1`), and acknowledges. apid waits up to 3 s for
-   every gateway; if one does not answer, the change is refused with 503
-   and nothing is written.
+   Each live gateway records a fence on the hosts the change covers and
+   acknowledges. The hosts keep serving their current rules; a fence only
+   makes a `route` rule whose target no longer resolves answer 503
+   `traffic_policy_unavailable` instead of falling back to the source app
+   (an app rename). apid waits up to 3 s for every gateway; if one does not
+   answer, the change is refused with 503 and nothing is written.
 2. **commit**: apid writes the change.
 3. **apply**: apid publishes phase `apply`. Each gateway drops the hosts'
-   cached rules, lifts the fence and acknowledges.
+   cached rules, lifts the fence and acknowledges. apid answers the
+   customer only after every gateway's apply acknowledgement.
 
 A fence expires 10 s after its prepare even if no apply arrives.
 
@@ -72,8 +75,8 @@ long outage as a reason to drain the node.
   change was refused`, and its `err` names the gateways that did not answer
   (`missing gateway acknowledgements: <nodes>`).
 - **`phase="apply"`**: changes committed, but a gateway did not acknowledge
-  the apply. Its hosts stay fenced until the 10 s expiry, and it loads the
-  new rules on the next cache miss. apid logs `edge rule persisted but fleet
+  the apply. It keeps serving the old rules until its cache entries reload
+  (at most the 30 s rule cache TTL); its fence expires after 10 s. apid logs `edge rule persisted but fleet
   convergence is incomplete` with the same `err`.
 
 1. Find the gateways named in those log lines and check their listener and
@@ -101,7 +104,8 @@ an apply, or one account is changing rules continuously.
    grouped by account.
 2. If changes fail in `apply`, follow `FaasEdgeRuleConvergenceFailing`. If
    one client is editing in a loop (an automation retrying), contact the
-   account; every edit holds its hosts for up to a few seconds.
+   account. Its hosts keep serving, but each edit takes a few seconds of
+   fleet barrier and holds the account's other edits behind it.
 
 **Mitigation**: stop the loop. Fences clear by themselves 10 s after the last
 prepare.

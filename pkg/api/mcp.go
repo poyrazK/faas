@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 const (
@@ -16,7 +17,7 @@ const (
 	MCPProbeMaxResponseBytes = 512 << 10
 )
 
-var mcpProbeEndpointPathPattern = regexp.MustCompile(`^/(?:[A-Za-z0-9._~-]+/?)*$`)
+var mcpProbeEndpointPathPattern = lazyregexp.New(`^/(?:[A-Za-z0-9._~-]+/?)*$`)
 
 // ValidMCPProbeHost accepts a URL authority only. It is used to preserve the
 // app's deployment-preview hostname when the platform probes one exact replica;

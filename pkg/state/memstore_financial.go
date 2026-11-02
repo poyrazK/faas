@@ -98,7 +98,7 @@ func (m *MemStore) retainFinancialUsageLocked(previous, current usageMinute) {
 		for _, environment := range m.projectEnvironments {
 			// An organization's evidence is recorded under the organization,
 			// while the environment carries the member who created it
-			// (migration 20261031210054142, ADR-20261031211500).
+			// (migration 20261102160133118, ADR-20261031211500).
 			owned := environment.AccountID == current.AccountID || app.OrgID != "" && app.OrgID == current.AccountID
 			if owned && environment.ProjectID == a.ProjectID && environment.Slug == deployment.Scope {
 				a.EnvironmentID = environment.ID

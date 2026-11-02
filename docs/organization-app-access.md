@@ -47,7 +47,12 @@ attempting to access a teammate's app receives 409 `org_api_key_requires_org`.
 The first shared surface covers app detail/configuration, env and secret
 management, security/publishers, image or multipart deployment creation,
 deployment list/latest/summary/cancellation/retry, deployment/build evidence,
-and live/archive logs. The exact reviewed routes are in
+and live/archive logs, and edge rules: members who can read the app read its
+rules, history, events, stats and traces, and owners and admins create,
+change and delete them, roll them back and switch attack mode (purging cached
+responses takes the deploy permission). Edge-rule lists and CORS presets stay
+with the account that holds the app's rules; the app's dashboard page manages
+the lists its rules use. The exact reviewed routes are in
 [`routes.go`](../pkg/apid/appaccess/routes.go). Additional operations require a
 permission review before teammates can use them. Account-wide inventories remain
 creator-scoped and filter apps the caller can no longer read; select the
@@ -80,7 +85,11 @@ request budgets and future usage billing. Human verification, audit attribution
 and credential revocation continue to use the actual caller. Organizations do
 not become login accounts.
 
-Free organizations own resources immediately. Existing paid organizations adopt
+Free organizations own resources immediately, so each has its own Free app and
+allowance. An account may own one organization on the Free plan
+(`api.FreeOrganizationsOwnedMax`); creating another answers `403
+org_free_limit_exceeded` until one is upgraded or deleted
+(ADR-20261031090658). Existing paid organizations adopt
 ownership when their own provider-qualified subscription is confirmed; a customer
 ID or cached subscription handle alone does not activate it. Until then, existing
 billing remains in place and creator erasure returns 409. Personal provider IDs

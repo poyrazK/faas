@@ -82,3 +82,15 @@ type JobTaskCompletion struct {
 type JobTaskCompletionStore interface {
 	CompleteJobTaskAttempt(context.Context, JobTaskCompletion) error
 }
+
+// JobTaskRetryRefusalStore settles a finished attempt classified retry whose
+// automatic retry JobTaskRetry refused: an interactive run, a run owned by an
+// operation or CI, a job image that changed under the run, or a lost
+// exclusive lease. The task will not run again, so the attempt records the
+// given decision (dead_letter) on the task and its journal row and the run
+// counts a dead letter, as one past its retry budget does. Only that attempt
+// is changed, and only while it still reads retry, so a manual retry that has
+// already re-queued the task is left alone. It reports whether it settled.
+type JobTaskRetryRefusalStore interface {
+	SettleRefusedJobTaskRetry(ctx context.Context, runID string, taskIndex, attempt int, decision workpolicy.Decision) (bool, error)
+}

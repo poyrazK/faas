@@ -3,6 +3,7 @@ package managedrealtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -64,7 +65,8 @@ func (s *Service) ManagedRealtimeReadProgress(w http.ResponseWriter, r *http.Req
 	}
 	if err != nil {
 		if errors.Is(err, state.ErrManagedRealtimeDurableCursorLimit) {
-			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Read marker limit reached", "the endpoint has reached its 1024 principal/stream read marker limit"))
+			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Read marker limit reached",
+				fmt.Sprintf("the endpoint keeps at most %d read markers updated in the last 30 days; see https://gregale.dev/docs/realtime", api.RealtimeReadMarkersPerEndpoint)))
 			return
 		}
 		s.writeRealtimeInboxError(w, r, err)

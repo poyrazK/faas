@@ -70,6 +70,38 @@ func TestLoadAccountPolicyReadsUnitConfiguration(t *testing.T) {
 	}
 }
 
+// adr: 20261029202403 decision 2 — each family reads its own ring and
+// switches, and installing one family's policy leaves the others plain.
+func TestFamiliesHaveTheirOwnPolicies(t *testing.T) {
+	const events = credhash.FamilyDevBridge
+	keys, writes, plain := credhash.EnvNames(events)
+	if keys != "FAAS_CREDENTIAL_DEV_BRIDGE_KEYS_FILE" || writes != "FAAS_CREDENTIAL_DEV_BRIDGE_WRITES" || plain != "FAAS_CREDENTIAL_DEV_BRIDGE_PLAIN_LOOKUP" {
+		t.Fatalf("names = %s %s %s", keys, writes, plain)
+	}
+	if keys, _, _ := credhash.EnvNames(credhash.FamilyAccount); keys != credhash.EnvAccountKeysFile {
+		t.Fatalf("account ring variable = %s", keys)
+	}
+
+	t.Cleanup(func() { credhash.Set(events, nil); credhash.SetAccount(nil) })
+	env := map[string]string{keys: ringFile(t, 4), writes: "keyed"}
+	if err := credhash.Install(func(k string) string { return env[k] }, events); err != nil {
+		t.Fatal(err)
+	}
+	if p := credhash.For(events); p == nil || !p.KeyedWrites || p.Ring.Current() != 4 {
+		t.Fatalf("dev-bridge policy = %+v", p)
+	}
+	if credhash.Account() != nil {
+		t.Fatal("installing one family installed the account family")
+	}
+	credhash.Set(events, nil)
+	if credhash.For(events) != nil {
+		t.Fatal("Set(nil) kept the policy")
+	}
+	if err := credhash.Install(func(k string) string { return map[string]string{writes: "keyed"}[k] }, events); err == nil {
+		t.Fatal("keyed writes without a ring installed")
+	}
+}
+
 func TestNextKeyIDRotatesPastEveryKey(t *testing.T) {
 	cases := []struct {
 		kids []int

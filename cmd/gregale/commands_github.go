@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -38,20 +39,30 @@ func cmdGithub(args []string) int {
 }
 
 func cmdGithubRepos(args []string) int {
-	slug, ok := githubSlugArg(args, "github repos")
-	if !ok {
+	fs := newFlagSet("github repos", flag.ContinueOnError)
+	installationID := fs.Int64("installation-id", 0, "GitHub App installation id (defaults to the app's, or the account's only one)")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	if fs.NArg() != 1 || !validCLISlug(fs.Arg(0)) || *installationID < 0 {
+		PrintUsage(os.Stderr, "usage: gregale github repos <slug> [--installation-id ID]", "github")
+		return 1
+	}
+	slug := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	// Resolve the slug first so a typo cannot accidentally list a valid
 	// account-level installation while the caller meant another app.
-	if _, err := client.GetGitHubConnection(context.Background(), slug); err != nil {
+	status, err := client.GetGitHubConnection(context.Background(), slug)
+	if err != nil {
 		return printErr("GitHub status failed", err)
 	}
-	repos, err := client.ListGitHubRepositories(context.Background())
+	if *installationID == 0 && status.Connected {
+		*installationID = status.InstallationID
+	}
+	repos, err := client.ListGitHubRepositoriesForInstallation(context.Background(), *installationID)
 	if err != nil {
 		return printErr("GitHub repository listing failed", err)
 	}
@@ -105,7 +116,7 @@ func cmdGithubBind(args []string) int {
 	fs := newFlagSet("github bind", flag.ContinueOnError)
 	installationID := fs.Int64("installation-id", 0, "GitHub App installation id (optional; resolved from the account when omitted)")
 	repo := fs.String("repo", "", "GitHub repository OWNER/NAME (required)")
-	branch := fs.String("branch", "", "production branch (defaults to the installation default)")
+	branch := fs.String("branch", "", "production branch (defaults to the repository's default branch)")
 	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=scope mappings")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -127,10 +138,11 @@ func cmdGithubBind(args []string) int {
 		if err != nil {
 			return printErr("GitHub status failed", err)
 		}
-		if status.InstallationID <= 0 {
-			return printErr("GitHub bind failed", fmt.Errorf("no GitHub App installation is connected; run `gregale github connect` first"))
+		resolved, err := githubBindInstallation(status)
+		if err != nil {
+			return printErr("GitHub bind failed", err)
 		}
-		*installationID = status.InstallationID
+		*installationID = resolved
 	}
 	resp, err := client.BindGitHubConnection(context.Background(), fs.Arg(0), api.InstallBindRequest{
 		InstallationID: *installationID, RepoFullName: strings.TrimSpace(*repo),
@@ -168,6 +180,26 @@ func cmdGithubDisconnect(args []string) int {
 	return renderGitHubStatus(fs.Arg(0), status)
 }
 
+// githubBindInstallation picks the installation a bind uses when none was
+// named: the app's current one, else the account's only one.
+func githubBindInstallation(status api.GitHubInstallStatus) (int64, error) {
+	if status.InstallationID > 0 {
+		return status.InstallationID, nil
+	}
+	if len(status.Installations) > 1 {
+		ids := make([]string, 0, len(status.Installations))
+		for _, install := range status.Installations {
+			label := strconv.FormatInt(install.InstallationID, 10)
+			if install.GitHubLogin != "" {
+				label += " (" + install.GitHubLogin + ")"
+			}
+			ids = append(ids, label)
+		}
+		return 0, fmt.Errorf("this account has several GitHub installations (%s); pass --installation-id", strings.Join(ids, ", "))
+	}
+	return 0, fmt.Errorf("no GitHub App installation is connected; run `gregale github connect` first")
+}
+
 func githubSlugArg(args []string, command string) (string, bool) {
 	if len(args) != 1 || !validCLISlug(args[0]) {
 		PrintUsage(os.Stderr, "usage: gregale "+command+" <slug>", "github")
@@ -183,6 +215,12 @@ func renderGitHubStatus(slug string, status api.GitHubInstallStatus) int {
 	_, _ = fmt.Fprintf(osStdout, "GitHub connection for %s: %s (%s)\n", slug, status.State, status.Health)
 	if status.InstallationID > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  installation_id: %d\n", status.InstallationID)
+	}
+	if !status.Connected && len(status.Installations) > 1 {
+		_, _ = fmt.Fprintln(osStdout, "  installations:")
+		for _, install := range status.Installations {
+			_, _ = fmt.Fprintf(osStdout, "    %d %s\n", install.InstallationID, install.GitHubLogin)
+		}
 	}
 	if status.RepoFullName != "" {
 		_, _ = fmt.Fprintf(osStdout, "  repository:       %s\n  production_branch: %s\n", status.RepoFullName, status.ProductionBranch)

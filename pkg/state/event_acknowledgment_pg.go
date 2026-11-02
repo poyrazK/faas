@@ -3,7 +3,6 @@ package state
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -39,8 +38,7 @@ func acknowledgmentInvocation(row sqlc.EventAckInvocationLockRow) Invocation {
 	return Invocation{ID: uuidString(row.ID), AccountID: uuidString(row.AccountID), AppID: uuidString(row.AppID), Source: InvocationSource(row.Source), State: InvocationState(row.State), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration, Headers: row.Headers, OperationID: uuidString(row.OperationID), OnSuccessDestinationID: uuidString(row.OnSuccessDestinationID), OnFailureDestinationID: uuidString(row.OnFailureDestinationID), LeaseExpiresAt: timestamptzToTimePtr(row.LeaseExpiresAt), Result: row.Result, QuotaReserved: row.QuotaReserved, AsyncQuotaSubjectID: uuidString(row.QuotaSubjectID)}
 }
 func acknowledgmentFromSQL(row sqlc.EventDeliveryAcknowledgment) eventAcknowledgment {
-	var digest [32]byte
-	copy(digest[:], row.TokenDigest)
+	digest := append([]byte(nil), row.TokenDigest...)
 	return eventAcknowledgment{rejectionStatus: row.RejectionStatus, completionDigest: row.CompletionDigest, claim: InvocationClaim{Attempt: int(row.Attempt), ReplayGeneration: row.ReplayGeneration}, digest: digest, phase: row.Phase, seconds: int(row.LeaseSeconds), deadline: timeFromPgtype(row.DeadlineAt), maxAttempts: int(row.MaxAttempts), retryDelay: time.Duration(row.RetryDelayMs) * time.Millisecond}
 }
 func ackLockInvocation(ctx context.Context, tx pgx.Tx, account, app, id string) (Invocation, error) {
@@ -86,7 +84,7 @@ func (s *PgStore) OfferEventAcknowledgment(ctx context.Context, inv Invocation, 
 	if err != nil {
 		return "", err
 	}
-	err = q.EventAckOffer(ctx, tx, sqlc.EventAckOfferParams{InvocationID: mustPgUUID(inv.ID), Attempt: int32(claim.Attempt), ReplayGeneration: claim.ReplayGeneration, TokenDigest: digest[:], LeaseSeconds: int32(seconds), MaxAttempts: int32(budget), RetryDelayMs: delay.Milliseconds(), LifetimeSeconds: int32(api.EventAcknowledgmentLifetime / time.Second)})
+	err = q.EventAckOffer(ctx, tx, sqlc.EventAckOfferParams{InvocationID: mustPgUUID(inv.ID), Attempt: int32(claim.Attempt), ReplayGeneration: claim.ReplayGeneration, TokenDigest: digest, LeaseSeconds: int32(seconds), MaxAttempts: int32(budget), RetryDelayMs: delay.Milliseconds(), LifetimeSeconds: int32(api.EventAcknowledgmentLifetime / time.Second)})
 	if err != nil {
 		return "", err
 	}
@@ -141,7 +139,7 @@ func (s *PgStore) EventAcknowledgment(ctx context.Context, account, app, id, tok
 	if err != nil {
 		return api.EventAcknowledgmentStatus{}, err
 	}
-	if subtle.ConstantTimeCompare(digest[:], ack.digest[:]) != 1 || inv.Attempts != ack.claim.Attempt || inv.ReplayGeneration != ack.claim.ReplayGeneration {
+	if !acknowledgmentMatches(ctx, digest, ack.digest) || inv.Attempts != ack.claim.Attempt || inv.ReplayGeneration != ack.claim.ReplayGeneration {
 		return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
 	}
 	if ack.phase == "rejected" {

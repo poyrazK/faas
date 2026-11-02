@@ -8,12 +8,18 @@ join reserves one overlapping generation. `gregalectl deploy join-fleet`
 overrides that value with the batch's effective worker count, so
 `--max-parallel` and database admission use the same concurrency contract.
 
-The production daemon pool maxima are 40 sessions on the control plane and 34
-per compute node. The role keeps the steady fleet below the 75% warning
-threshold and fits the declared rollout overlap. It rounds the resulting
-postmaster ceiling to ten. With the standalone one-node overlap, two compute
-nodes derive 160 connections, ten derive 520, and twelve derive 610. A
-four-worker `join-fleet` batch at ten nodes derives 540 instead.
+The production daemon pool maxima are 55 sessions on the control plane and 34
+per compute node. A compute node also runs gatewayd-public when its cell puts
+the app edge on compute nodes (`faas_edge_on_compute_nodes`, 3 more) and
+s3-gatewayd when it puts the object gateway there
+(`faas_object_gateway_on_compute_nodes`, 6 more). Both read
+`/etc/faas/compute-db.env`, so the plan adds their budgets to every compute
+node once any compute host sets the switch. The role keeps the steady fleet
+below the 75% warning threshold and fits the declared rollout overlap. It
+rounds the resulting postmaster ceiling to ten. With the standalone one-node
+overlap, two compute nodes derive 180 connections, ten derive 540, and twelve
+derive 630; with the edge and the object gateway on, two derive 200 and twelve
+derive 770. A four-worker `join-fleet` batch at ten nodes derives 550 instead.
 
 The role changes only `max_connections` and
 `superuser_reserved_connections`, restarts PostgreSQL only when the running
@@ -23,9 +29,9 @@ run edited the file, so a run that failed after writing the file still
 restarts on the next run.
 It is included by both `bootstrap.yml` and `node_join_control_plane.yml`. A RAM
 guard rejects admission before modifying PostgreSQL when the control-plane
-host is too small. The 4 GB beta host supports the current two-node standalone
-join shape; the 12-node, one-overlap contract requires about 14.3 GB and
-therefore fits a 16 GB database host. Higher batch concurrency can require a
+host is too small. The 12-node, one-overlap contract requires about 14.4 GB
+and therefore fits a 16 GB database host; with the edge and the object gateway
+on compute nodes it requires about 17.7 GB. Higher batch concurrency can require a
 larger database host and is rejected before any new compute node is activated.
 
 ## Pooled fleets
@@ -36,14 +42,17 @@ terminate at pgbouncer and share its server pool, which is a constant rather
 than a per-node cost. What still scales per node is the session-scoped residue
 that cannot be pooled: `LISTEN` and session advisory locks on the direct DSN
 (`faas_postgres_per_compute_direct_budget`, 5 database daemons ×
-`db.directHubOnMaxConns`, plus imaged's ADR-570 nested traffic guard: 11).
+`db.directHubOnMaxConns`, plus imaged's ADR-570 nested traffic guard: 11; the
+edge and the object gateway each add `db.directHubOnMaxConns` where they run).
 
 | Nodes | Unpooled | Pooled |
 |---|---|---|
-| 2 | 160 conns / 3.4 GB | 200 conns / 4.4 GB |
-| 12 | 610 conns / 14.0 GB | 350 conns / 7.9 GB |
-| 50 | 2,330 conns / 54.3 GB | 900 conns / 20.8 GB |
-| 100 | 4,600 conns / 107.5 GB | 1,640 conns / 38.1 GB |
+| 2 | 180 conns / 3.9 GB | 220 conns / 4.8 GB |
+| 12 | 630 conns / 14.4 GB | 370 conns / 8.3 GB |
+| 50 | 2,350 conns / 54.7 GB | 920 conns / 21.2 GB |
+| 100 | 4,620 conns / 107.9 GB | 1,660 conns / 38.6 GB |
+
+The table leaves out the edge and the object gateway.
 
 **Do not enable the pooler below four compute nodes.** pgbouncer's server pool
 is a fixed 80 backends, so on a two-node fleet it costs more than the 68 it
@@ -70,7 +79,7 @@ MarkDeploymentLive's guarded policy transaction. The deployed pooler
 role targets compute nodes, so the control plane keeps the ordinary direct
 pool budget above. If the control plane is explicitly given a separate session
 pool, include that sibling pool in `faas_postgres_control_plane_pool_budget`;
-the default 40 assumes the existing control-plane pool topology.
+the default 55 assumes the existing control-plane pool topology.
 
 The per-daemon maxima come from `pkg/db.DaemonMaxConnections`, which applies
 while the ADR-190 notify hub is active — the supported configuration. Setting

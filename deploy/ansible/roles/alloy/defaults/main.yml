@@ -44,12 +44,15 @@ alloy_journal_units:
   - faas-mcp-bridge.service
   - faas-outboundd.service
   - faas-agentd.service
+  - faas-edgednsd.service
   - faas-realtimed.service
   - faas-profiled.service
   - faas-livequeryd.service
   - faas-maild.service
   - faas-s3-gatewayd.service
+  - faas-s3-gatewayd-compute.service
   - faas-cloudflared.service
+  - faas-cloudflared-s3.service
   # Host helpers and timers.
   - faas-serving-probe.service
   - faas-cgroup-metrics.service

@@ -161,7 +161,7 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 		h.unsupported(w, r, req.requestID)
 		return
 	}
-	if !h.acquirePutSlot(req.bucket.AccountID) {
+	if !h.acquirePutSlot(r.Context(), req.bucket.AccountID) {
 		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
 		return

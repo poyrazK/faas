@@ -7,6 +7,7 @@ package githubd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -78,6 +79,19 @@ func (m *memBindingsStore) ListForAccount(_ context.Context, accountID string) (
 	for appID, b := range m.byApp {
 		if b.AccountID == accountID {
 			out[appID] = b
+		}
+	}
+	return out, nil
+}
+
+func (m *memBindingsStore) ListForInstallationRepo(_ context.Context, installationID int64, repoFullName string) ([]state.GitHubBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []state.GitHubBinding
+	for appID, b := range m.byApp {
+		if b.InstallID == installationID && strings.EqualFold(b.RepoFullName, repoFullName) {
+			b.AppID = appID
+			out = append(out, b)
 		}
 	}
 	return out, nil

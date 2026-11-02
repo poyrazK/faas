@@ -39,6 +39,20 @@ func (l *Loop) earlyFreezeFromReaper(ctx context.Context, snapshot []InstanceInf
 	}
 }
 
+// settleSeededFrozen gives the frozen VMs schedd re-booked at a stand-in
+// charge after a restart their first measured charge (ADR 20261031190030).
+func (l *Loop) settleSeededFrozen(snapshot []InstanceInfo, activity map[string]InstanceActivity) {
+	ledger := l.engine.Ledger()
+	for _, in := range snapshot {
+		if in.State != state.StateFrozen {
+			continue
+		}
+		if a, ok := activity[in.Instance]; ok && a.ResidentMB > 0 {
+			ledger.SettleSeededFrozenCharge(in.Instance, frozenChargeMB(in.RAMMB, float64(a.ResidentMB)))
+		}
+	}
+}
+
 // parkExpiredFrozen parks frozen instances that outlived FrozenTTL and
 // publishes how many stay frozen (ADR-1151).
 func (l *Loop) parkExpiredFrozen(ctx context.Context, snapshot []InstanceInfo, now time.Time) {

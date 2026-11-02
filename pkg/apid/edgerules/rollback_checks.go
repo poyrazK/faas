@@ -52,6 +52,9 @@ func (s *Service) restoredRuleProblem(ctx context.Context, acct state.Account, a
 	if _, prob := api.NormalizeEdgeRuleMatchMethods(rule.MatchMethods); prob != nil {
 		return prob
 	}
+	if prob := s.AppBoundHostProblem(ctx, app, rule.MatchHost); prob != nil {
+		return prob
+	}
 	if prob := s.kindProblem(acct, kind); prob != nil {
 		return prob
 	}

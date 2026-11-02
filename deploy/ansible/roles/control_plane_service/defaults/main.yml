@@ -108,3 +108,43 @@ faas_postgres_runtime_role_units:
 # Setting this false, with gatewayd_public_service's faas_mcp_bridge_enabled,
 # stops it and removes its route.
 faas_mcp_bridge_enabled: true
+
+# ADR 20261029202403 amendment 1: the scheduler credential ring (event acknowledgements, consumer-group leases, CI and operation capabilities; apid and schedd),
+# an operator-local file from `gregalectl credentials keygen`. Empty
+# removes it. Set keyed writes only once every holder runs the release
+# that reads keyed digests; turn plain lookup off only at the contract step.
+faas_credential_scheduler_keys_src: ""
+faas_credential_scheduler_writes: plain
+faas_credential_scheduler_plain_lookup: true
+
+# ADR 20261029202403 amendment 1: the outbound credential ring (integration and AI access tokens; apid and outboundd),
+# an operator-local file from `gregalectl credentials keygen`. Empty
+# removes it. Set keyed writes only once every holder runs the release
+# that reads keyed digests; turn plain lookup off only at the contract step.
+faas_credential_outbound_keys_src: ""
+faas_credential_outbound_writes: plain
+faas_credential_outbound_plain_lookup: true
+
+# ADR 20261029202403 amendment 1: the attach credential ring (interactive attach tokens apid issues; vmmd checks them with the same ring),
+# an operator-local file from `gregalectl credentials keygen`. Empty
+# removes it. Set keyed writes only once every holder runs the release
+# that reads keyed digests; turn plain lookup off only at the contract step.
+faas_credential_attach_keys_src: ""
+faas_credential_attach_writes: plain
+faas_credential_attach_plain_lookup: true
+
+# ADR 20261029202403 amendment 1: the dev-bridge credential ring (dev-bridge tokens; apid and bridged),
+# an operator-local file from `gregalectl credentials keygen`. Empty
+# removes it. Set keyed writes only once every holder runs the release
+# that reads keyed digests; turn plain lookup off only at the contract step.
+faas_credential_dev_bridge_keys_src: ""
+faas_credential_dev_bridge_writes: plain
+faas_credential_dev_bridge_plain_lookup: true
+
+# ADR 20261029202403 amendment 1: the data-api credential ring (Data API server keys; apid alone),
+# an operator-local file from `gregalectl credentials keygen`. Empty
+# removes it. Set keyed writes only once every holder runs the release
+# that reads keyed digests; turn plain lookup off only at the contract step.
+faas_credential_data_api_keys_src: ""
+faas_credential_data_api_writes: plain
+faas_credential_data_api_plain_lookup: true

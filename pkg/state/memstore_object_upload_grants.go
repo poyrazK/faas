@@ -2,9 +2,11 @@ package state
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 var _ ObjectUploadGrantStore = (*MemStore)(nil)
@@ -13,6 +15,7 @@ func (m *MemStore) CreateObjectUploadGrant(ctx context.Context, g ObjectUploadGr
 	if !validObjectUploadGrant(g, ttl) {
 		return ObjectUploadGrant{}, ErrInvalidArgument
 	}
+	g.TokenHash = familyStoredCredentialHex(credhash.FamilyUploads, credTagUploadGrant, g.TokenHash)
 	if err := ctx.Err(); err != nil {
 		return ObjectUploadGrant{}, err
 	}
@@ -72,7 +75,7 @@ func (m *MemStore) ResolveObjectUploadGrant(ctx context.Context, hash string) (O
 
 	now := time.Now().UTC()
 	for _, g := range m.objectUploadGrants {
-		if g.TokenHash != hash || !g.ExpiresAt.After(now) {
+		if !slices.Contains(objectUploadGrantLookups(hash), g.TokenHash) || !g.ExpiresAt.After(now) {
 			continue
 		}
 		b, exists := m.objectBuckets[g.Bucket.ID]

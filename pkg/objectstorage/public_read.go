@@ -37,12 +37,16 @@ type PublicReadConfig struct {
 	// decisions and batches their counts (ADR-20261030075301 step 2). Build
 	// it with the registry's AnonymousReadPolicy.
 	ReadAdmitter *ReadAdmitter
-	Enabled      func() bool
-	AppsDomain   string
-	Next         http.Handler
-	HTTPClient   *http.Client
-	Now          func() time.Time
-	Log          *slog.Logger
+	// Transfers paces object bodies to the edge's part of its node's port
+	// share on a compute node; nil leaves them unpaced (ADR-20261031122757
+	// step 7).
+	Transfers  *TransferLimiter
+	Enabled    func() bool
+	AppsDomain string
+	Next       http.Handler
+	HTTPClient *http.Client
+	Now        func() time.Time
+	Log        *slog.Logger
 }
 
 type publicReadHandler struct {
@@ -51,6 +55,7 @@ type publicReadHandler struct {
 	requestMetrics state.ObjectStorageProviderUsageStore
 	accounting     state.ObjectStorageAccountingStore
 	readAdmitter   *ReadAdmitter
+	transfers      *TransferLimiter
 	enabled        func() bool
 	appsDomain     string
 	next           http.Handler
@@ -101,7 +106,7 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 	}
 	return &publicReadHandler{
 		store: c.Store, registry: c.Registry, requestMetrics: c.RequestMetrics,
-		accounting: c.Accounting, readAdmitter: c.ReadAdmitter, enabled: c.Enabled,
+		accounting: c.Accounting, readAdmitter: c.ReadAdmitter, transfers: c.Transfers, enabled: c.Enabled,
 		appsDomain: appsDomain, next: c.Next,
 		client: c.HTTPClient, now: c.Now, log: c.Log,
 		mounts: newPublicMountCache(), limiters: newPublicReadLimiters(),
@@ -246,6 +251,7 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.registry.Accounting.GatewaySafety() {
 		body = io.LimitReader(body, response.ContentLength)
 	}
+	body = h.transfers.Reader(r.Context(), body, TransferDownload)
 	n, _ := io.Copy(w, body)
 	if !h.registry.Accounting.GatewaySafety() {
 		if err := RecordDeliveredEgress(r.Context(), h.requestMetrics, bucket.ID, n, h.now()); err != nil {

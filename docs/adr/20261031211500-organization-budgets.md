@@ -78,7 +78,7 @@ and price contracts under the organization, and Polar bills it.
    command guard (`financial_preview_command_held`) read the payer's stops. An
    environment is matched by its project, not by the account that created it;
    the policy's environment was checked against the payer when it was written.
-6. **Evidence attribution.** Migration `20261031210054142` matches an
+6. **Evidence attribution.** Migration `20261102160133118` matches an
    environment by project and slug, and accepts the organization's own apps.
    Recorded evidence is immutable and keeps its attribution: organization
    environment budgets cover usage from the migration on.

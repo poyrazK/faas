@@ -812,6 +812,10 @@ const (
 	NotifySnapshotBoot             = "snapshot_boot"
 	NotifySnapshotWritten          = "snapshot_written"
 	NotifyDeploymentReady          = "deployment_ready"
+	// NotifySnapshotFanout is sent by the snapshots trigger when a snapshot
+	// gains a fan-out event. Its payload is empty: vmmd's replica worker
+	// wakes and rereads its cursor, and keeps a slow tick for retries.
+	NotifySnapshotFanout = "snapshot_fanout"
 	// NotifyAppTaskChanged is a durable terminal-state handoff. Release tasks
 	// use it to resume deployment priming only after their command succeeds;
 	// manual tasks currently have no daemon-side consumer.

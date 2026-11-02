@@ -339,7 +339,7 @@ func TestComputeEdgeRootForwardsUploads(t *testing.T) {
 	var hit string
 	forward := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "forward" })
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "next" })
-	root, err := computeEdgeRoot(next, forward, emptyPublicReadStore{}, testDomains(t, "", "gregale.dev"), quietEdgeLog())
+	root, err := computeEdgeRoot(next, forward, nil, emptyPublicReadStore{}, testDomains(t, "", "gregale.dev"), quietEdgeLog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,6 +350,31 @@ func TestComputeEdgeRootForwardsUploads(t *testing.T) {
 	} {
 		hit = ""
 		root.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "http://shop.gregale.dev"+path, nil))
+		if hit != want {
+			t.Errorf("%s went to %q, want %q", path, hit, want)
+		}
+	}
+}
+
+// adr: 20261031122757 — once the edge serves public reads itself, every
+// request but an upload reaches its read handler, which passes route misses
+// on; uploads still go to the control plane.
+func TestComputeEdgeRootServesPublicReadsLocally(t *testing.T) {
+	var hit string
+	forward := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "forward" })
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "next" })
+	local := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "local" })
+	root, err := computeEdgeRoot(next, forward, local, emptyPublicReadStore{}, testDomains(t, "", "gregale.dev"), quietEdgeLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		"/uploads/avatars": "forward",
+		"/assets/logo.png": "local",
+		"/api/users":       "local",
+	} {
+		hit = ""
+		root.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://shop.gregale.dev"+path, nil))
 		if hit != want {
 			t.Errorf("%s went to %q, want %q", path, hit, want)
 		}
