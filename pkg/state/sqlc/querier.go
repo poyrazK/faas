@@ -2177,6 +2177,11 @@ type Querier interface {
 	// Replay reads and locks one retained occurrence inside the app admission lock.
 	// The replay run identity is separate from the original skipped outcome.
 	GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg GetWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
+	// Projects bound to a repository name through an installation their account
+	// connected. A project records no immutable repository ID, so the OIDC
+	// exchange confirms each binding's repository with GitHub before trusting it
+	// (ADR-20261101160300, amendment 1).
+	GitHubProjectBindingsForRepository(ctx context.Context, db DBTX, repoFullName string) ([]GitHubProjectBindingsForRepositoryRow, error)
 	// The immutable owner and repository IDs an account's app binding recorded
 	// for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
 	// requires a token's repository_owner_id and repository_id claims to match

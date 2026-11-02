@@ -29101,6 +29101,46 @@ func (q *Queries) GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db
 	return i, err
 }
 
+const gitHubProjectBindingsForRepository = `-- name: GitHubProjectBindingsForRepository :many
+select p.account_id::text as account_id,
+       p.install_id::bigint as installation_id
+from projects p
+join github_installations gi
+  on gi.account_id = p.account_id
+ and gi.installation_id = p.install_id
+where lower(p.repo_full_name) = lower($1::text)
+order by p.account_id, p.install_id
+`
+
+type GitHubProjectBindingsForRepositoryRow struct {
+	AccountID      string
+	InstallationID int64
+}
+
+// Projects bound to a repository name through an installation their account
+// connected. A project records no immutable repository ID, so the OIDC
+// exchange confirms each binding's repository with GitHub before trusting it
+// (ADR-20261101160300, amendment 1).
+func (q *Queries) GitHubProjectBindingsForRepository(ctx context.Context, db DBTX, repoFullName string) ([]GitHubProjectBindingsForRepositoryRow, error) {
+	rows, err := db.Query(ctx, gitHubProjectBindingsForRepository, repoFullName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GitHubProjectBindingsForRepositoryRow{}
+	for rows.Next() {
+		var i GitHubProjectBindingsForRepositoryRow
+		if err := rows.Scan(&i.AccountID, &i.InstallationID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const gitHubRepositoryIDsBoundToAccount = `-- name: GitHubRepositoryIDsBoundToAccount :one
 select coalesce(max(a.github_owner_id), 0)::bigint as owner_id,
        coalesce(max(a.github_repo_id), 0)::bigint as repo_id
