@@ -3,6 +3,7 @@ package state_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func readyObjectBucket(t *testing.T, s contractTestStore, accountID, appID, name
 	ctx := context.Background()
 	id := uuid.NewString()
 	b, err := s.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: accountID, AppID: appID, Name: name, Scope: scope,
-		Region: "us-east-1", PhysicalName: "gregale-" + id[:8], BackendID: "test", BackendFingerprint: "fixture"}, 10)
+		Region: "us-east-1", PhysicalName: "gregale-" + id[:8], BackendID: "test", BackendFingerprint: strings.Repeat("a", 64)}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
