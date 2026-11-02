@@ -93,6 +93,7 @@ native_e2e_phase_files() {
       shared_runtime_python_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       object_storage_native_metal_test.go \
+      managed_postgres_database_node_metal_test.go \
       queue_binding_native_metal_test.go \
       queue_push_parallel_metal_test.go \
       private_service_tcp_metal_test.go \

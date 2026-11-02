@@ -372,6 +372,10 @@ type Querier interface {
 	// Marks a running replicated database's standby VM running; the caller
 	// checked the standby node's room under its lock.
 	ClaimDatabaseStandby(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
+	// ClaimDatabaseVMRestore for a provisioning database that is not a restore:
+	// the lease on its bootstrap, in the restore lease's column, since a
+	// database is never both.
+	ClaimDatabaseVMProvision(ctx context.Context, db DBTX, arg ClaimDatabaseVMProvisionParams) (pgtype.Timestamptz, error)
 	// Takes (held is NULL) or renews (held is the current lease) the lease on
 	// a provisioning restore. The lease is the database clock's, so replicas'
 	// clocks do not matter.

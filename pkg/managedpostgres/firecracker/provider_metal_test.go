@@ -133,10 +133,7 @@ func TestMetalDriverEndToEnd(t *testing.T) {
 
 	started := time.Now()
 	provisionStarted := started
-	obs, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: id, Spec: devSpec()})
-	if err != nil {
-		t.Fatalf("provision: %v", err)
-	}
+	obs := provisionReady(ctx, t, p, managedpostgres.ProvisionRequest{ResourceID: id, Spec: devSpec()})
 	provisioned := time.Since(started)
 	if obs.Status != managedpostgres.ProviderStatusReady || obs.Spec != devSpec() {
 		t.Fatalf("observed = %+v", obs)
@@ -297,6 +294,26 @@ type metalStack struct {
 	proxyAddr string
 	rt        *dbvm.Runtime
 	archive   *dbarchive.TieredStore
+}
+
+// provisionReady provisions a database and polls InspectProvision, as the
+// service does, until schedd has bootstrapped it and the customer database
+// exists.
+func provisionReady(ctx context.Context, t *testing.T, p *Provider, req managedpostgres.ProvisionRequest) managedpostgres.ObservedDatabase {
+	t.Helper()
+	obs, err := p.Provision(ctx, req)
+	for err == nil && obs.Status == managedpostgres.ProviderStatusPending {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("provision %s: %v", req.ResourceID, ctx.Err())
+		case <-time.After(250 * time.Millisecond):
+		}
+		obs, err = p.InspectProvision(ctx, obs.ProviderResourceID)
+	}
+	if err != nil {
+		t.Fatalf("provision %s: %v", req.ResourceID, err)
+	}
+	return obs
 }
 
 func newMetalStack(t *testing.T, workdir, base string) *metalStack {

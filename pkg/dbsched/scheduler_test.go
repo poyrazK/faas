@@ -102,6 +102,8 @@ type fakeVMM struct {
 	upgradeCode  string
 	upgradeHold  chan struct{}
 	upgradeFroms []int
+	// bootstrapHold keeps bootstraps running until closed or canceled.
+	bootstrapHold chan struct{}
 }
 
 func (f *fakeVMM) PutHold(_ context.Context, node Node, id, name string, point time.Time) (ArchiveHold, error) {
@@ -311,7 +313,17 @@ func (f *fakeVMM) Stop(_ context.Context, node Node, id string) error {
 	return nil
 }
 
-func (f *fakeVMM) Control(_ context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error) {
+func (f *fakeVMM) Control(ctx context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error) {
+	f.mu.Lock()
+	hold := f.bootstrapHold
+	f.mu.Unlock()
+	if req.Op == dbguest.OpBootstrap && hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return dbguest.Response{}, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.controlErr != nil {
