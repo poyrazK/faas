@@ -438,6 +438,14 @@ adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet ov
 adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
 	bash scripts/ci/check_adr_number_uniqueness_test.sh
 
+.PHONY: cloudflare-ranges-check
+cloudflare-ranges-check: ## Compare the pinned Cloudflare ranges with Cloudflare's published lists (network; ADR-20261102081618)
+	bash scripts/ci/check_cloudflare_ranges.sh "$(CURDIR)"
+
+.PHONY: cloudflare-ranges-check-test
+cloudflare-ranges-check-test: ## Exercise the Cloudflare range check offline
+	bash scripts/ci/check_cloudflare_ranges_test.sh
+
 .PHONY: migration-version-hygiene-check
 migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
 	bash scripts/ci/check_migration_version_hygiene.sh
@@ -495,6 +503,11 @@ deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip
 .PHONY: verify-action-ref-contents-check
 verify-action-ref-contents-check: ## Verify release.yml's Contents API check accepts a pinned ref that vendors the bare CLI
 	@bash scripts/ci/verify-action-ref-contents_test.sh
+
+.PHONY: release-scripts-check
+release-scripts-check: ## Verify release.yml's moving Action tag (stable tags, forward only) and rendered release notes
+	@bash scripts/ci/advance-action-major-tag_test.sh
+	@bash scripts/ci/render-release-notes_test.sh
 
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action

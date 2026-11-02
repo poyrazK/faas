@@ -262,6 +262,17 @@ func (g *Grace) deleteAccountAppArtifacts(ctx context.Context, accountID string)
 		if app.AccountID != accountID {
 			continue
 		}
+		// A company app outlives its creator's account: DeleteAccount keeps
+		// it, and its organization keeps running it. Its rootfs layers and
+		// snapshots must stay, or the app can neither wake nor cold-boot
+		// (invariant 3, bug hunt 35). Only personal apps go with the account.
+		personal, err := g.personalApp(ctx, app)
+		if err != nil {
+			return fmt.Errorf("check organization of app %s: %w", app.ID, err)
+		}
+		if !personal {
+			continue
+		}
 		artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
 		if err != nil {
 			return fmt.Errorf("list artifacts of app %s: %w", app.ID, err)
@@ -277,6 +288,19 @@ func (g *Grace) deleteAccountAppArtifacts(ctx context.Context, accountID string)
 		}
 	}
 	return nil
+}
+
+// personalApp reports whether app goes with its account on erasure: it has no
+// organization or the account's personal one, as DeleteAccount decides.
+func (g *Grace) personalApp(ctx context.Context, app state.App) (bool, error) {
+	if app.OrgID == "" {
+		return true, nil
+	}
+	org, err := g.p.Store.OrgByID(ctx, app.OrgID)
+	if err != nil {
+		return false, err
+	}
+	return org.Personal, nil
 }
 
 // RunAppsOnce permanently removes app tombstones whose seven-day restore

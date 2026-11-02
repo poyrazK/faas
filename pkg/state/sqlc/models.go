@@ -1659,6 +1659,13 @@ type AppSloHourly struct {
 	Total int64
 }
 
+type AppSlugHold struct {
+	Slug      string
+	AccountID pgtype.UUID
+	HeldUntil pgtype.Timestamptz
+	Reason    string
+}
+
 type AppTask struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID
@@ -2380,6 +2387,7 @@ type Build struct {
 	CancelledByDeploymentCascade bool
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
+	CoalescedWith                pgtype.UUID
 }
 
 type BuildExportPublication struct {
@@ -3959,6 +3967,7 @@ type Deployment struct {
 	MailFailureAccountRevision pgtype.Int8
 	MailFailureAppRevision     pgtype.Int8
 	MailFailureSuccessRevision pgtype.Int8
+	PromotedAt                 pgtype.Timestamptz
 }
 
 type DeploymentAlias struct {
@@ -8373,13 +8382,14 @@ type ManagedPostgresLiveLogin struct {
 
 // Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).
 type ManagedPostgresOverageDelivery struct {
-	Provider            string
-	SubjectID           pgtype.UUID
-	PeriodStart         pgtype.Timestamptz
-	Live                bool
-	BilledUnitSeconds   int64
-	DeliveredMillicents int64
-	UpdatedAt           pgtype.Timestamptz
+	Provider                 string
+	SubjectID                pgtype.UUID
+	PeriodStart              pgtype.Timestamptz
+	Live                     bool
+	BilledUnitSeconds        int64
+	DeliveredMillicents      int64
+	UpdatedAt                pgtype.Timestamptz
+	BilledStorageByteSeconds int64
 }
 
 type ManagedPostgresResize struct {

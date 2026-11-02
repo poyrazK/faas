@@ -3,8 +3,9 @@ package state
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // LogSavedSearch is one app's named ledger filter (ADR-20261018083536 slice
@@ -45,7 +46,7 @@ func (e *LogSavedSearchQuotaError) Error() string {
 }
 
 // logSavedSearchName is log_saved_searches_name_shape.
-var logSavedSearchName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var logSavedSearchName = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // ValidLogSavedSearchName reports whether name fits the stored name shape.
 func ValidLogSavedSearchName(name string) bool { return logSavedSearchName.MatchString(name) }

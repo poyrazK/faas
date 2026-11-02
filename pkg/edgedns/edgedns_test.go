@@ -250,3 +250,34 @@ func TestNewReconcilerNeedsNames(t *testing.T) {
 		t.Fatal("a reconciler with no names was accepted")
 	}
 }
+
+func TestReconcilerCountsFailedCloudflareCalls(t *testing.T) {
+	dns := newFakeDNS(addrA)
+	f := newFixture(t, dns, false)
+	dns.failCreate = true
+	for range edgedns.DefaultRestoreAfter {
+		_ = f.rec.Step(context.Background(), []edgedns.Node{
+			{Name: "a", Public: addrA, Active: true, Ready: true},
+			{Name: "b", Public: addrB, Active: true, Ready: true},
+		})
+	}
+	got, err := testutil.GatherAndCount(f.reg, "edge_dns_errors_total")
+	if err != nil || got != 3 {
+		t.Fatalf("edge_dns_errors_total series = %d %v, want read, create and delete", got, err)
+	}
+	if v := testutil.ToFloat64(f.metrics.ErrorsForTest("create")); v != 1 {
+		t.Fatalf("create errors = %v, want 1", v)
+	}
+}
+
+func TestReconcilerCountsProbeFailuresOnlyForNodesThatCouldServe(t *testing.T) {
+	f := newFixture(t, newFakeDNS(addrA), false)
+	_ = f.rec.Step(context.Background(), []edgedns.Node{
+		{Name: "a", Public: addrA, Active: true, Ready: true},
+		{Name: "drained", Public: addrB, Active: false, Ready: false},
+		{Name: "no-address", Active: true, Ready: false},
+	})
+	if n := testutil.CollectAndCount(f.reg, "edge_dns_probe_failures_total"); n != 0 {
+		t.Fatalf("probe failures counted for %d nodes that could not serve", n)
+	}
+}

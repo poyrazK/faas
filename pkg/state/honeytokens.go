@@ -5,8 +5,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"regexp"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // HoneytokenKindAPIKey is a decoy Gregale API key (ADR 20261024014500).
@@ -54,7 +55,7 @@ func HoneytokenDigest(hmacKey []byte, token string) (string, error) {
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
-var honeytokenDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var honeytokenDigestPattern = lazyregexp.New(`^[0-9a-f]{64}$`)
 
 func validHoneytoken(kind, digest, label string) bool {
 	return kind == HoneytokenKindAPIKey && honeytokenDigestPattern.MatchString(digest) && len(label) >= 1 && len(label) <= 200
