@@ -55,6 +55,27 @@ func TestPostgresStoreRestoreSlot(t *testing.T) {
 	}
 }
 
+// A reservation that must fit inside the limit (a database switch's copy)
+// is refused at the limit instead of taking the slot.
+func TestPostgresStoreRestoreWithinTheLimit(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	at := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	source := postgresReadyDatabase(t, store, accountID, "within-source", at)
+	input := postgresTestDatabase(accountID, "within-copy", at.Add(time.Minute))
+	input.RestoreSourceDatabaseID, input.RestoreSourceResourceID, input.RestorePointInTime = source.ID, databaseDataResource(source), at
+
+	if _, _, err := store.Reserve(reserveWithinLimit(ctx), input, 1); !errors.Is(err, ErrQuotaExceeded) || errors.Is(err, ErrRestoreSlotInUse) {
+		t.Fatalf("restore within a full limit = %v, want the plain quota refusal", err)
+	}
+	if holders, err := store.RestoreSlots(ctx, 100); err != nil || len(holders) != 0 {
+		t.Fatalf("RestoreSlots after the refusal = %+v, %v", holders, err)
+	}
+	copied, created, err := store.Reserve(reserveWithinLimit(ctx), input, 2)
+	if err != nil || !created || !copied.RestoreSlotUntil.IsZero() {
+		t.Fatalf("restore with room = %+v, created %v, %v", copied, created, err)
+	}
+}
+
 func TestPostgresStoreRestoreSlotNotices(t *testing.T) {
 	store, _, ctx, accountID := postgresStoreFixture(t)
 	at := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)

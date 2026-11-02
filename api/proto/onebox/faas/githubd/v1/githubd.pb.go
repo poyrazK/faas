@@ -706,13 +706,16 @@ func (x *GetAppActivityRequest) GetLimit() int32 {
 }
 
 type WebhookActivity struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	EventType     string                 `protobuf:"bytes,1,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
-	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	CommitSha     string                 `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
-	ReceivedAt    string                 `protobuf:"bytes,4,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"`
-	ProcessedAt   string                 `protobuf:"bytes,5,opt,name=processed_at,json=processedAt,proto3" json:"processed_at,omitempty"`
-	UpdatedAt     string                 `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	EventType   string                 `protobuf:"bytes,1,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
+	Status      string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	CommitSha   string                 `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	ReceivedAt  string                 `protobuf:"bytes,4,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"`
+	ProcessedAt string                 `protobuf:"bytes,5,opt,name=processed_at,json=processedAt,proto3" json:"processed_at,omitempty"`
+	UpdatedAt   string                 `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// Why a delivery that succeeded deployed nothing; empty when it did its
+	// work (ADR-20261101160300, amendment 2).
+	SkipReason    string `protobuf:"bytes,7,opt,name=skip_reason,json=skipReason,proto3" json:"skip_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -785,6 +788,13 @@ func (x *WebhookActivity) GetProcessedAt() string {
 func (x *WebhookActivity) GetUpdatedAt() string {
 	if x != nil {
 		return x.UpdatedAt
+	}
+	return ""
+}
+
+func (x *WebhookActivity) GetSkipReason() string {
+	if x != nil {
+		return x.SkipReason
 	}
 	return ""
 }
@@ -2821,6 +2831,126 @@ func (x *GetBranchHeadResponse) GetCommitSha() string {
 	return ""
 }
 
+type GetInstallationRepositoryRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AccountId      string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	InstallationId int64                  `protobuf:"varint,2,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RepoFullName   string                 `protobuf:"bytes,3,opt,name=repo_full_name,json=repoFullName,proto3" json:"repo_full_name,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetInstallationRepositoryRequest) Reset() {
+	*x = GetInstallationRepositoryRequest{}
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetInstallationRepositoryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetInstallationRepositoryRequest) ProtoMessage() {}
+
+func (x *GetInstallationRepositoryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetInstallationRepositoryRequest.ProtoReflect.Descriptor instead.
+func (*GetInstallationRepositoryRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *GetInstallationRepositoryRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *GetInstallationRepositoryRequest) GetInstallationId() int64 {
+	if x != nil {
+		return x.InstallationId
+	}
+	return 0
+}
+
+func (x *GetInstallationRepositoryRequest) GetRepoFullName() string {
+	if x != nil {
+		return x.RepoFullName
+	}
+	return ""
+}
+
+type GetInstallationRepositoryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RepoId        int64                  `protobuf:"varint,1,opt,name=repo_id,json=repoId,proto3" json:"repo_id,omitempty"`
+	OwnerId       int64                  `protobuf:"varint,2,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`
+	FullName      string                 `protobuf:"bytes,3,opt,name=full_name,json=fullName,proto3" json:"full_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetInstallationRepositoryResponse) Reset() {
+	*x = GetInstallationRepositoryResponse{}
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetInstallationRepositoryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetInstallationRepositoryResponse) ProtoMessage() {}
+
+func (x *GetInstallationRepositoryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetInstallationRepositoryResponse.ProtoReflect.Descriptor instead.
+func (*GetInstallationRepositoryResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *GetInstallationRepositoryResponse) GetRepoId() int64 {
+	if x != nil {
+		return x.RepoId
+	}
+	return 0
+}
+
+func (x *GetInstallationRepositoryResponse) GetOwnerId() int64 {
+	if x != nil {
+		return x.OwnerId
+	}
+	return 0
+}
+
+func (x *GetInstallationRepositoryResponse) GetFullName() string {
+	if x != nil {
+		return x.FullName
+	}
+	return ""
+}
+
 type GetCIPullRequestRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	AccountId      string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
@@ -2833,7 +2963,7 @@ type GetCIPullRequestRequest struct {
 
 func (x *GetCIPullRequestRequest) Reset() {
 	*x = GetCIPullRequestRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[40]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2845,7 +2975,7 @@ func (x *GetCIPullRequestRequest) String() string {
 func (*GetCIPullRequestRequest) ProtoMessage() {}
 
 func (x *GetCIPullRequestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[40]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2858,7 +2988,7 @@ func (x *GetCIPullRequestRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCIPullRequestRequest.ProtoReflect.Descriptor instead.
 func (*GetCIPullRequestRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{40}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *GetCIPullRequestRequest) GetAccountId() string {
@@ -2907,7 +3037,7 @@ type GetCIPullRequestResponse struct {
 
 func (x *GetCIPullRequestResponse) Reset() {
 	*x = GetCIPullRequestResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[41]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2919,7 +3049,7 @@ func (x *GetCIPullRequestResponse) String() string {
 func (*GetCIPullRequestResponse) ProtoMessage() {}
 
 func (x *GetCIPullRequestResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[41]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2932,7 +3062,7 @@ func (x *GetCIPullRequestResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCIPullRequestResponse.ProtoReflect.Descriptor instead.
 func (*GetCIPullRequestResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{41}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *GetCIPullRequestResponse) GetNumber() int64 {
@@ -3018,7 +3148,7 @@ type GetCIChangedFilesRequest struct {
 
 func (x *GetCIChangedFilesRequest) Reset() {
 	*x = GetCIChangedFilesRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[42]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3030,7 +3160,7 @@ func (x *GetCIChangedFilesRequest) String() string {
 func (*GetCIChangedFilesRequest) ProtoMessage() {}
 
 func (x *GetCIChangedFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[42]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3043,7 +3173,7 @@ func (x *GetCIChangedFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCIChangedFilesRequest.ProtoReflect.Descriptor instead.
 func (*GetCIChangedFilesRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{42}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *GetCIChangedFilesRequest) GetAccountId() string {
@@ -3092,7 +3222,7 @@ type CIChangedFile struct {
 
 func (x *CIChangedFile) Reset() {
 	*x = CIChangedFile{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[43]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3104,7 +3234,7 @@ func (x *CIChangedFile) String() string {
 func (*CIChangedFile) ProtoMessage() {}
 
 func (x *CIChangedFile) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[43]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3117,7 +3247,7 @@ func (x *CIChangedFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CIChangedFile.ProtoReflect.Descriptor instead.
 func (*CIChangedFile) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{43}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *CIChangedFile) GetPath() string {
@@ -3154,7 +3284,7 @@ type GetCIChangedFilesResponse struct {
 
 func (x *GetCIChangedFilesResponse) Reset() {
 	*x = GetCIChangedFilesResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[44]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3166,7 +3296,7 @@ func (x *GetCIChangedFilesResponse) String() string {
 func (*GetCIChangedFilesResponse) ProtoMessage() {}
 
 func (x *GetCIChangedFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[44]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3179,7 +3309,7 @@ func (x *GetCIChangedFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCIChangedFilesResponse.ProtoReflect.Descriptor instead.
 func (*GetCIChangedFilesResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{44}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *GetCIChangedFilesResponse) GetBaseSha() string {
@@ -3234,7 +3364,7 @@ type UpsertIssueCommentRequest struct {
 
 func (x *UpsertIssueCommentRequest) Reset() {
 	*x = UpsertIssueCommentRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[45]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3246,7 +3376,7 @@ func (x *UpsertIssueCommentRequest) String() string {
 func (*UpsertIssueCommentRequest) ProtoMessage() {}
 
 func (x *UpsertIssueCommentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[45]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3259,7 +3389,7 @@ func (x *UpsertIssueCommentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpsertIssueCommentRequest.ProtoReflect.Descriptor instead.
 func (*UpsertIssueCommentRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{45}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *UpsertIssueCommentRequest) GetAccountId() string {
@@ -3316,7 +3446,7 @@ type UpsertIssueCommentResponse struct {
 
 func (x *UpsertIssueCommentResponse) Reset() {
 	*x = UpsertIssueCommentResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[46]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3328,7 +3458,7 @@ func (x *UpsertIssueCommentResponse) String() string {
 func (*UpsertIssueCommentResponse) ProtoMessage() {}
 
 func (x *UpsertIssueCommentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[46]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3341,7 +3471,7 @@ func (x *UpsertIssueCommentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpsertIssueCommentResponse.ProtoReflect.Descriptor instead.
 func (*UpsertIssueCommentResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{46}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *UpsertIssueCommentResponse) GetCommentId() int64 {
@@ -3381,7 +3511,7 @@ type PublishGitHubEventRequest struct {
 
 func (x *PublishGitHubEventRequest) Reset() {
 	*x = PublishGitHubEventRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[47]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3393,7 +3523,7 @@ func (x *PublishGitHubEventRequest) String() string {
 func (*PublishGitHubEventRequest) ProtoMessage() {}
 
 func (x *PublishGitHubEventRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[47]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3406,7 +3536,7 @@ func (x *PublishGitHubEventRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishGitHubEventRequest.ProtoReflect.Descriptor instead.
 func (*PublishGitHubEventRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{47}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *PublishGitHubEventRequest) GetDeliveryId() string {
@@ -3454,7 +3584,7 @@ type PublishGitHubEventResponse struct {
 
 func (x *PublishGitHubEventResponse) Reset() {
 	*x = PublishGitHubEventResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[48]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3466,7 +3596,7 @@ func (x *PublishGitHubEventResponse) String() string {
 func (*PublishGitHubEventResponse) ProtoMessage() {}
 
 func (x *PublishGitHubEventResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[48]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3479,7 +3609,7 @@ func (x *PublishGitHubEventResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishGitHubEventResponse.ProtoReflect.Descriptor instead.
 func (*PublishGitHubEventResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{48}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *PublishGitHubEventResponse) GetAccountId() string {
@@ -3524,7 +3654,7 @@ type GetProtectedBranchEvidenceRequest struct {
 
 func (x *GetProtectedBranchEvidenceRequest) Reset() {
 	*x = GetProtectedBranchEvidenceRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[49]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3536,7 +3666,7 @@ func (x *GetProtectedBranchEvidenceRequest) String() string {
 func (*GetProtectedBranchEvidenceRequest) ProtoMessage() {}
 
 func (x *GetProtectedBranchEvidenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[49]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3549,7 +3679,7 @@ func (x *GetProtectedBranchEvidenceRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use GetProtectedBranchEvidenceRequest.ProtoReflect.Descriptor instead.
 func (*GetProtectedBranchEvidenceRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{49}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *GetProtectedBranchEvidenceRequest) GetAccountId() string {
@@ -3613,7 +3743,7 @@ type GetProtectedBranchEvidenceResponse struct {
 
 func (x *GetProtectedBranchEvidenceResponse) Reset() {
 	*x = GetProtectedBranchEvidenceResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[50]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3625,7 +3755,7 @@ func (x *GetProtectedBranchEvidenceResponse) String() string {
 func (*GetProtectedBranchEvidenceResponse) ProtoMessage() {}
 
 func (x *GetProtectedBranchEvidenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[50]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3638,7 +3768,7 @@ func (x *GetProtectedBranchEvidenceResponse) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use GetProtectedBranchEvidenceResponse.ProtoReflect.Descriptor instead.
 func (*GetProtectedBranchEvidenceResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{50}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *GetProtectedBranchEvidenceResponse) GetQualified() bool {
@@ -3728,7 +3858,7 @@ type GetReviewedMergeEvidenceResponse struct {
 
 func (x *GetReviewedMergeEvidenceResponse) Reset() {
 	*x = GetReviewedMergeEvidenceResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[51]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3740,7 +3870,7 @@ func (x *GetReviewedMergeEvidenceResponse) String() string {
 func (*GetReviewedMergeEvidenceResponse) ProtoMessage() {}
 
 func (x *GetReviewedMergeEvidenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[51]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3753,7 +3883,7 @@ func (x *GetReviewedMergeEvidenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetReviewedMergeEvidenceResponse.ProtoReflect.Descriptor instead.
 func (*GetReviewedMergeEvidenceResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{51}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *GetReviewedMergeEvidenceResponse) GetEvidenceJson() []byte {
@@ -3815,7 +3945,7 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
 	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x14\n" +
-	"\x05limit\x18\x03 \x01(\x05R\x05limit\"\xca\x01\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\"\xeb\x01\n" +
 	"\x0fWebhookActivity\x12\x1d\n" +
 	"\n" +
 	"event_type\x18\x01 \x01(\tR\teventType\x12\x16\n" +
@@ -3826,7 +3956,9 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"receivedAt\x12!\n" +
 	"\fprocessed_at\x18\x05 \x01(\tR\vprocessedAt\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\x06 \x01(\tR\tupdatedAt\"\xad\x01\n" +
+	"updated_at\x18\x06 \x01(\tR\tupdatedAt\x12\x1f\n" +
+	"\vskip_reason\x18\a \x01(\tR\n" +
+	"skipReason\"\xad\x01\n" +
 	"\rCheckActivity\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1d\n" +
@@ -3978,7 +4110,16 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x06branch\x18\x04 \x01(\tR\x06branch\"6\n" +
 	"\x15GetBranchHeadResponse\x12\x1d\n" +
 	"\n" +
-	"commit_sha\x18\x01 \x01(\tR\tcommitSha\"\x9f\x01\n" +
+	"commit_sha\x18\x01 \x01(\tR\tcommitSha\"\x90\x01\n" +
+	" GetInstallationRepositoryRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12'\n" +
+	"\x0finstallation_id\x18\x02 \x01(\x03R\x0einstallationId\x12$\n" +
+	"\x0erepo_full_name\x18\x03 \x01(\tR\frepoFullName\"t\n" +
+	"!GetInstallationRepositoryResponse\x12\x17\n" +
+	"\arepo_id\x18\x01 \x01(\x03R\x06repoId\x12\x19\n" +
+	"\bowner_id\x18\x02 \x01(\x03R\aownerId\x12\x1b\n" +
+	"\tfull_name\x18\x03 \x01(\tR\bfullName\"\x9f\x01\n" +
 	"\x17GetCIPullRequestRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12'\n" +
@@ -4087,7 +4228,7 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x15EnqueueBuildEventKind\x12\x1a\n" +
 	"\x16EVENT_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fEVENT_KIND_PUSH\x10\x01\x12\x1b\n" +
-	"\x17EVENT_KIND_PULL_REQUEST\x10\x022\x81\x17\n" +
+	"\x17EVENT_KIND_PULL_REQUEST\x10\x022\x94\x18\n" +
 	"\aGithubd\x12r\n" +
 	"\x0fGetInstallState\x12..onebox.faas.githubd.v1.GetInstallStateRequest\x1a/.onebox.faas.githubd.v1.GetInstallStateResponse\x12x\n" +
 	"\x11ExchangeOAuthCode\x120.onebox.faas.githubd.v1.ExchangeOAuthCodeRequest\x1a1.onebox.faas.githubd.v1.ExchangeOAuthCodeResponse\x12\x81\x01\n" +
@@ -4103,7 +4244,8 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x12VerifyInstallation\x121.onebox.faas.githubd.v1.VerifyInstallationRequest\x1a2.onebox.faas.githubd.v1.VerifyInstallationResponse\x12\x84\x01\n" +
 	"\x15MintInstallationToken\x124.onebox.faas.githubd.v1.MintInstallationTokenRequest\x1a5.onebox.faas.githubd.v1.MintInstallationTokenResponse\x12q\n" +
 	"\x0fStreamSourceRef\x12..onebox.faas.githubd.v1.StreamSourceRefRequest\x1a,.onebox.faas.githubd.v1.StreamSourceRefChunk0\x01\x12l\n" +
-	"\rGetBranchHead\x12,.onebox.faas.githubd.v1.GetBranchHeadRequest\x1a-.onebox.faas.githubd.v1.GetBranchHeadResponse\x12u\n" +
+	"\rGetBranchHead\x12,.onebox.faas.githubd.v1.GetBranchHeadRequest\x1a-.onebox.faas.githubd.v1.GetBranchHeadResponse\x12\x90\x01\n" +
+	"\x19GetInstallationRepository\x128.onebox.faas.githubd.v1.GetInstallationRepositoryRequest\x1a9.onebox.faas.githubd.v1.GetInstallationRepositoryResponse\x12u\n" +
 	"\x10GetCIPullRequest\x12/.onebox.faas.githubd.v1.GetCIPullRequestRequest\x1a0.onebox.faas.githubd.v1.GetCIPullRequestResponse\x12x\n" +
 	"\x11GetCIChangedFiles\x120.onebox.faas.githubd.v1.GetCIChangedFilesRequest\x1a1.onebox.faas.githubd.v1.GetCIChangedFilesResponse\x12\x93\x01\n" +
 	"\x1aGetProtectedBranchEvidence\x129.onebox.faas.githubd.v1.GetProtectedBranchEvidenceRequest\x1a:.onebox.faas.githubd.v1.GetProtectedBranchEvidenceResponse\x12\x8f\x01\n" +
@@ -4128,7 +4270,7 @@ func file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP() []byte {
 }
 
 var file_onebox_faas_githubd_v1_githubd_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_onebox_faas_githubd_v1_githubd_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
+var file_onebox_faas_githubd_v1_githubd_proto_msgTypes = make([]protoimpl.MessageInfo, 54)
 var file_onebox_faas_githubd_v1_githubd_proto_goTypes = []any{
 	(InstallState)(0),                          // 0: onebox.faas.githubd.v1.InstallState
 	(CheckPhase)(0),                            // 1: onebox.faas.githubd.v1.CheckPhase
@@ -4173,18 +4315,20 @@ var file_onebox_faas_githubd_v1_githubd_proto_goTypes = []any{
 	(*StreamSourceRefChunk)(nil),               // 40: onebox.faas.githubd.v1.StreamSourceRefChunk
 	(*GetBranchHeadRequest)(nil),               // 41: onebox.faas.githubd.v1.GetBranchHeadRequest
 	(*GetBranchHeadResponse)(nil),              // 42: onebox.faas.githubd.v1.GetBranchHeadResponse
-	(*GetCIPullRequestRequest)(nil),            // 43: onebox.faas.githubd.v1.GetCIPullRequestRequest
-	(*GetCIPullRequestResponse)(nil),           // 44: onebox.faas.githubd.v1.GetCIPullRequestResponse
-	(*GetCIChangedFilesRequest)(nil),           // 45: onebox.faas.githubd.v1.GetCIChangedFilesRequest
-	(*CIChangedFile)(nil),                      // 46: onebox.faas.githubd.v1.CIChangedFile
-	(*GetCIChangedFilesResponse)(nil),          // 47: onebox.faas.githubd.v1.GetCIChangedFilesResponse
-	(*UpsertIssueCommentRequest)(nil),          // 48: onebox.faas.githubd.v1.UpsertIssueCommentRequest
-	(*UpsertIssueCommentResponse)(nil),         // 49: onebox.faas.githubd.v1.UpsertIssueCommentResponse
-	(*PublishGitHubEventRequest)(nil),          // 50: onebox.faas.githubd.v1.PublishGitHubEventRequest
-	(*PublishGitHubEventResponse)(nil),         // 51: onebox.faas.githubd.v1.PublishGitHubEventResponse
-	(*GetProtectedBranchEvidenceRequest)(nil),  // 52: onebox.faas.githubd.v1.GetProtectedBranchEvidenceRequest
-	(*GetProtectedBranchEvidenceResponse)(nil), // 53: onebox.faas.githubd.v1.GetProtectedBranchEvidenceResponse
-	(*GetReviewedMergeEvidenceResponse)(nil),   // 54: onebox.faas.githubd.v1.GetReviewedMergeEvidenceResponse
+	(*GetInstallationRepositoryRequest)(nil),   // 43: onebox.faas.githubd.v1.GetInstallationRepositoryRequest
+	(*GetInstallationRepositoryResponse)(nil),  // 44: onebox.faas.githubd.v1.GetInstallationRepositoryResponse
+	(*GetCIPullRequestRequest)(nil),            // 45: onebox.faas.githubd.v1.GetCIPullRequestRequest
+	(*GetCIPullRequestResponse)(nil),           // 46: onebox.faas.githubd.v1.GetCIPullRequestResponse
+	(*GetCIChangedFilesRequest)(nil),           // 47: onebox.faas.githubd.v1.GetCIChangedFilesRequest
+	(*CIChangedFile)(nil),                      // 48: onebox.faas.githubd.v1.CIChangedFile
+	(*GetCIChangedFilesResponse)(nil),          // 49: onebox.faas.githubd.v1.GetCIChangedFilesResponse
+	(*UpsertIssueCommentRequest)(nil),          // 50: onebox.faas.githubd.v1.UpsertIssueCommentRequest
+	(*UpsertIssueCommentResponse)(nil),         // 51: onebox.faas.githubd.v1.UpsertIssueCommentResponse
+	(*PublishGitHubEventRequest)(nil),          // 52: onebox.faas.githubd.v1.PublishGitHubEventRequest
+	(*PublishGitHubEventResponse)(nil),         // 53: onebox.faas.githubd.v1.PublishGitHubEventResponse
+	(*GetProtectedBranchEvidenceRequest)(nil),  // 54: onebox.faas.githubd.v1.GetProtectedBranchEvidenceRequest
+	(*GetProtectedBranchEvidenceResponse)(nil), // 55: onebox.faas.githubd.v1.GetProtectedBranchEvidenceResponse
+	(*GetReviewedMergeEvidenceResponse)(nil),   // 56: onebox.faas.githubd.v1.GetReviewedMergeEvidenceResponse
 }
 var file_onebox_faas_githubd_v1_githubd_proto_depIdxs = []int32{
 	4,  // 0: onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse.deliveries:type_name -> onebox.faas.githubd.v1.WebhookDeliveryRecord
@@ -4195,7 +4339,7 @@ var file_onebox_faas_githubd_v1_githubd_proto_depIdxs = []int32{
 	22, // 5: onebox.faas.githubd.v1.ListInstallableReposResponse.repos:type_name -> onebox.faas.githubd.v1.Repo
 	1,  // 6: onebox.faas.githubd.v1.WriteCheckRequest.phase:type_name -> onebox.faas.githubd.v1.CheckPhase
 	2,  // 7: onebox.faas.githubd.v1.EnqueueBuildRequest.event_kind:type_name -> onebox.faas.githubd.v1.EnqueueBuildEventKind
-	46, // 8: onebox.faas.githubd.v1.GetCIChangedFilesResponse.files:type_name -> onebox.faas.githubd.v1.CIChangedFile
+	48, // 8: onebox.faas.githubd.v1.GetCIChangedFilesResponse.files:type_name -> onebox.faas.githubd.v1.CIChangedFile
 	18, // 9: onebox.faas.githubd.v1.Githubd.GetInstallState:input_type -> onebox.faas.githubd.v1.GetInstallStateRequest
 	20, // 10: onebox.faas.githubd.v1.Githubd.ExchangeOAuthCode:input_type -> onebox.faas.githubd.v1.ExchangeOAuthCodeRequest
 	23, // 11: onebox.faas.githubd.v1.Githubd.ListInstallableRepos:input_type -> onebox.faas.githubd.v1.ListInstallableReposRequest
@@ -4210,42 +4354,44 @@ var file_onebox_faas_githubd_v1_githubd_proto_depIdxs = []int32{
 	37, // 20: onebox.faas.githubd.v1.Githubd.MintInstallationToken:input_type -> onebox.faas.githubd.v1.MintInstallationTokenRequest
 	39, // 21: onebox.faas.githubd.v1.Githubd.StreamSourceRef:input_type -> onebox.faas.githubd.v1.StreamSourceRefRequest
 	41, // 22: onebox.faas.githubd.v1.Githubd.GetBranchHead:input_type -> onebox.faas.githubd.v1.GetBranchHeadRequest
-	43, // 23: onebox.faas.githubd.v1.Githubd.GetCIPullRequest:input_type -> onebox.faas.githubd.v1.GetCIPullRequestRequest
-	45, // 24: onebox.faas.githubd.v1.Githubd.GetCIChangedFiles:input_type -> onebox.faas.githubd.v1.GetCIChangedFilesRequest
-	52, // 25: onebox.faas.githubd.v1.Githubd.GetProtectedBranchEvidence:input_type -> onebox.faas.githubd.v1.GetProtectedBranchEvidenceRequest
-	52, // 26: onebox.faas.githubd.v1.Githubd.GetReviewedMergeEvidence:input_type -> onebox.faas.githubd.v1.GetProtectedBranchEvidenceRequest
-	3,  // 27: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:input_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsRequest
-	7,  // 28: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:input_type -> onebox.faas.githubd.v1.RetryWebhookDeliveryRequest
-	8,  // 29: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:input_type -> onebox.faas.githubd.v1.RetryCheckUpdateRequest
-	14, // 30: onebox.faas.githubd.v1.Githubd.RetryAppActivity:input_type -> onebox.faas.githubd.v1.RetryAppActivityRequest
-	48, // 31: onebox.faas.githubd.v1.Githubd.UpsertIssueComment:input_type -> onebox.faas.githubd.v1.UpsertIssueCommentRequest
-	50, // 32: onebox.faas.githubd.v1.Githubd.PublishGitHubEvent:input_type -> onebox.faas.githubd.v1.PublishGitHubEventRequest
-	19, // 33: onebox.faas.githubd.v1.Githubd.GetInstallState:output_type -> onebox.faas.githubd.v1.GetInstallStateResponse
-	21, // 34: onebox.faas.githubd.v1.Githubd.ExchangeOAuthCode:output_type -> onebox.faas.githubd.v1.ExchangeOAuthCodeResponse
-	24, // 35: onebox.faas.githubd.v1.Githubd.ListInstallableRepos:output_type -> onebox.faas.githubd.v1.ListInstallableReposResponse
-	26, // 36: onebox.faas.githubd.v1.Githubd.BindAppRepo:output_type -> onebox.faas.githubd.v1.BindAppRepoResponse
-	28, // 37: onebox.faas.githubd.v1.Githubd.UnbindAppRepo:output_type -> onebox.faas.githubd.v1.UnbindAppRepoResponse
-	30, // 38: onebox.faas.githubd.v1.Githubd.GetAppBinding:output_type -> onebox.faas.githubd.v1.GetAppBindingResponse
-	13, // 39: onebox.faas.githubd.v1.Githubd.GetAppActivity:output_type -> onebox.faas.githubd.v1.GetAppActivityResponse
-	32, // 40: onebox.faas.githubd.v1.Githubd.CreateDeploymentFromPush:output_type -> onebox.faas.githubd.v1.CreateDeploymentFromPushResponse
-	36, // 41: onebox.faas.githubd.v1.Githubd.EnqueueBuild:output_type -> onebox.faas.githubd.v1.EnqueueBuildResponse
-	34, // 42: onebox.faas.githubd.v1.Githubd.WriteCheck:output_type -> onebox.faas.githubd.v1.WriteCheckResponse
-	17, // 43: onebox.faas.githubd.v1.Githubd.VerifyInstallation:output_type -> onebox.faas.githubd.v1.VerifyInstallationResponse
-	38, // 44: onebox.faas.githubd.v1.Githubd.MintInstallationToken:output_type -> onebox.faas.githubd.v1.MintInstallationTokenResponse
-	40, // 45: onebox.faas.githubd.v1.Githubd.StreamSourceRef:output_type -> onebox.faas.githubd.v1.StreamSourceRefChunk
-	42, // 46: onebox.faas.githubd.v1.Githubd.GetBranchHead:output_type -> onebox.faas.githubd.v1.GetBranchHeadResponse
-	44, // 47: onebox.faas.githubd.v1.Githubd.GetCIPullRequest:output_type -> onebox.faas.githubd.v1.GetCIPullRequestResponse
-	47, // 48: onebox.faas.githubd.v1.Githubd.GetCIChangedFiles:output_type -> onebox.faas.githubd.v1.GetCIChangedFilesResponse
-	53, // 49: onebox.faas.githubd.v1.Githubd.GetProtectedBranchEvidence:output_type -> onebox.faas.githubd.v1.GetProtectedBranchEvidenceResponse
-	54, // 50: onebox.faas.githubd.v1.Githubd.GetReviewedMergeEvidence:output_type -> onebox.faas.githubd.v1.GetReviewedMergeEvidenceResponse
-	6,  // 51: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:output_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse
-	9,  // 52: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
-	9,  // 53: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
-	15, // 54: onebox.faas.githubd.v1.Githubd.RetryAppActivity:output_type -> onebox.faas.githubd.v1.RetryAppActivityResponse
-	49, // 55: onebox.faas.githubd.v1.Githubd.UpsertIssueComment:output_type -> onebox.faas.githubd.v1.UpsertIssueCommentResponse
-	51, // 56: onebox.faas.githubd.v1.Githubd.PublishGitHubEvent:output_type -> onebox.faas.githubd.v1.PublishGitHubEventResponse
-	33, // [33:57] is the sub-list for method output_type
-	9,  // [9:33] is the sub-list for method input_type
+	43, // 23: onebox.faas.githubd.v1.Githubd.GetInstallationRepository:input_type -> onebox.faas.githubd.v1.GetInstallationRepositoryRequest
+	45, // 24: onebox.faas.githubd.v1.Githubd.GetCIPullRequest:input_type -> onebox.faas.githubd.v1.GetCIPullRequestRequest
+	47, // 25: onebox.faas.githubd.v1.Githubd.GetCIChangedFiles:input_type -> onebox.faas.githubd.v1.GetCIChangedFilesRequest
+	54, // 26: onebox.faas.githubd.v1.Githubd.GetProtectedBranchEvidence:input_type -> onebox.faas.githubd.v1.GetProtectedBranchEvidenceRequest
+	54, // 27: onebox.faas.githubd.v1.Githubd.GetReviewedMergeEvidence:input_type -> onebox.faas.githubd.v1.GetProtectedBranchEvidenceRequest
+	3,  // 28: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:input_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsRequest
+	7,  // 29: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:input_type -> onebox.faas.githubd.v1.RetryWebhookDeliveryRequest
+	8,  // 30: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:input_type -> onebox.faas.githubd.v1.RetryCheckUpdateRequest
+	14, // 31: onebox.faas.githubd.v1.Githubd.RetryAppActivity:input_type -> onebox.faas.githubd.v1.RetryAppActivityRequest
+	50, // 32: onebox.faas.githubd.v1.Githubd.UpsertIssueComment:input_type -> onebox.faas.githubd.v1.UpsertIssueCommentRequest
+	52, // 33: onebox.faas.githubd.v1.Githubd.PublishGitHubEvent:input_type -> onebox.faas.githubd.v1.PublishGitHubEventRequest
+	19, // 34: onebox.faas.githubd.v1.Githubd.GetInstallState:output_type -> onebox.faas.githubd.v1.GetInstallStateResponse
+	21, // 35: onebox.faas.githubd.v1.Githubd.ExchangeOAuthCode:output_type -> onebox.faas.githubd.v1.ExchangeOAuthCodeResponse
+	24, // 36: onebox.faas.githubd.v1.Githubd.ListInstallableRepos:output_type -> onebox.faas.githubd.v1.ListInstallableReposResponse
+	26, // 37: onebox.faas.githubd.v1.Githubd.BindAppRepo:output_type -> onebox.faas.githubd.v1.BindAppRepoResponse
+	28, // 38: onebox.faas.githubd.v1.Githubd.UnbindAppRepo:output_type -> onebox.faas.githubd.v1.UnbindAppRepoResponse
+	30, // 39: onebox.faas.githubd.v1.Githubd.GetAppBinding:output_type -> onebox.faas.githubd.v1.GetAppBindingResponse
+	13, // 40: onebox.faas.githubd.v1.Githubd.GetAppActivity:output_type -> onebox.faas.githubd.v1.GetAppActivityResponse
+	32, // 41: onebox.faas.githubd.v1.Githubd.CreateDeploymentFromPush:output_type -> onebox.faas.githubd.v1.CreateDeploymentFromPushResponse
+	36, // 42: onebox.faas.githubd.v1.Githubd.EnqueueBuild:output_type -> onebox.faas.githubd.v1.EnqueueBuildResponse
+	34, // 43: onebox.faas.githubd.v1.Githubd.WriteCheck:output_type -> onebox.faas.githubd.v1.WriteCheckResponse
+	17, // 44: onebox.faas.githubd.v1.Githubd.VerifyInstallation:output_type -> onebox.faas.githubd.v1.VerifyInstallationResponse
+	38, // 45: onebox.faas.githubd.v1.Githubd.MintInstallationToken:output_type -> onebox.faas.githubd.v1.MintInstallationTokenResponse
+	40, // 46: onebox.faas.githubd.v1.Githubd.StreamSourceRef:output_type -> onebox.faas.githubd.v1.StreamSourceRefChunk
+	42, // 47: onebox.faas.githubd.v1.Githubd.GetBranchHead:output_type -> onebox.faas.githubd.v1.GetBranchHeadResponse
+	44, // 48: onebox.faas.githubd.v1.Githubd.GetInstallationRepository:output_type -> onebox.faas.githubd.v1.GetInstallationRepositoryResponse
+	46, // 49: onebox.faas.githubd.v1.Githubd.GetCIPullRequest:output_type -> onebox.faas.githubd.v1.GetCIPullRequestResponse
+	49, // 50: onebox.faas.githubd.v1.Githubd.GetCIChangedFiles:output_type -> onebox.faas.githubd.v1.GetCIChangedFilesResponse
+	55, // 51: onebox.faas.githubd.v1.Githubd.GetProtectedBranchEvidence:output_type -> onebox.faas.githubd.v1.GetProtectedBranchEvidenceResponse
+	56, // 52: onebox.faas.githubd.v1.Githubd.GetReviewedMergeEvidence:output_type -> onebox.faas.githubd.v1.GetReviewedMergeEvidenceResponse
+	6,  // 53: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:output_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse
+	9,  // 54: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
+	9,  // 55: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
+	15, // 56: onebox.faas.githubd.v1.Githubd.RetryAppActivity:output_type -> onebox.faas.githubd.v1.RetryAppActivityResponse
+	51, // 57: onebox.faas.githubd.v1.Githubd.UpsertIssueComment:output_type -> onebox.faas.githubd.v1.UpsertIssueCommentResponse
+	53, // 58: onebox.faas.githubd.v1.Githubd.PublishGitHubEvent:output_type -> onebox.faas.githubd.v1.PublishGitHubEventResponse
+	34, // [34:59] is the sub-list for method output_type
+	9,  // [9:34] is the sub-list for method input_type
 	9,  // [9:9] is the sub-list for extension type_name
 	9,  // [9:9] is the sub-list for extension extendee
 	0,  // [0:9] is the sub-list for field type_name
@@ -4256,14 +4402,14 @@ func file_onebox_faas_githubd_v1_githubd_proto_init() {
 	if File_onebox_faas_githubd_v1_githubd_proto != nil {
 		return
 	}
-	file_onebox_faas_githubd_v1_githubd_proto_msgTypes[41].OneofWrappers = []any{}
+	file_onebox_faas_githubd_v1_githubd_proto_msgTypes[43].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_githubd_v1_githubd_proto_rawDesc), len(file_onebox_faas_githubd_v1_githubd_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   52,
+			NumMessages:   54,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

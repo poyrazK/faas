@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -153,6 +154,10 @@ type presenceMember struct {
 	state         json.RawMessage
 	updatedAt     time.Time
 	announced     bool
+	// fleetWrittenAt and fleetFlushPending coalesce fleet presence writes
+	// (fleetPresenceWriteInterval).
+	fleetWrittenAt    time.Time
+	fleetFlushPending bool
 }
 
 type resumeSignalRate struct {
@@ -203,6 +208,10 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 		var frame resumeClientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {
 			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "invalid_frame"})
+			continue
+		}
+		if !c.allowResumeCommand(frame.Type) {
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "command_rate_limited"})
 			continue
 		}
 		if c.ticketToken != "" && ((frame.Type != "subscribe" && frame.Type != "unsubscribe" && frame.Type != "ack") || frame.Subscription != "" || frame.PresenceScope != "" || frame.State != nil || frame.Data != nil || frame.DirectMessages || frame.ReadReceipts) {
@@ -711,6 +720,22 @@ func (m *Manager) queuePresenceSnapshot(ctx context.Context, c *connection, chan
 	return nil
 }
 
+// allowResumeCommand spends one of the connection's command tokens on a
+// frame that can reach control-plane Postgres (api.RealtimeResumeCommandsPerSecond).
+// Acks, presence and signals are bounded elsewhere and pass free.
+func (c *connection) allowResumeCommand(kind string) bool {
+	switch kind {
+	case "ack", "direct_message_ack", "inbox_ack", "presence", "signal":
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.commands == nil {
+		c.commands = rate.NewLimiter(rate.Limit(api.RealtimeResumeCommandsPerSecond), api.RealtimeResumeCommandBurst)
+	}
+	return c.commands.Allow()
+}
+
 func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame resumeClientFrame) {
 	state, valid := normalizeResumePresenceState(frame.State)
 	if !valid || !validChannel(frame.Channel) || frame.Data != nil || frame.After != 0 || frame.Sequence != 0 || frame.Subscription != "" || frame.PresenceScope != "" || frame.DirectMessages {
@@ -761,7 +786,11 @@ func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame
 	c.presenceCount++
 	c.mu.Unlock()
 	var fleetMember PresenceMember
-	if m.cfg.FleetClient != nil {
+	writeFleet, flushAfter := m.cfg.FleetClient != nil, time.Duration(0)
+	if writeFleet {
+		writeFleet, flushAfter = m.claimFleetPresenceWrite(key, c.info.ID, now)
+	}
+	if writeFleet {
 		var err error
 		principal := ""
 		if presenceScope == "principal" {
@@ -773,7 +802,7 @@ func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame
 			return
 		}
 	} else {
-		fleetMember = PresenceMember{MemberID: memberID, State: append(json.RawMessage(nil), state...), ConnectionCount: 1, UpdatedAt: now.UTC()}
+		fleetMember = PresenceMember{MemberID: memberID, State: append(json.RawMessage(nil), state...), ConnectionCount: m.knownPresenceConnections(key, memberID), UpdatedAt: now.UTC()}
 	}
 	m.mu.Lock()
 	if m.conns[c.info.ID] != c {
@@ -794,6 +823,10 @@ func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame
 		m.mu.Unlock()
 		return
 	}
+	scheduleFlush := flushAfter > 0 && !member.fleetFlushPending
+	if scheduleFlush {
+		member.fleetFlushPending = true
+	}
 	m.setFleetPresenceLocked(key, fleetMember)
 	fullQueues := m.queueEphemeralToSubscribersLocked(ctx, key, c.info.ID, resumeServerFrame{
 		Type: "presence", Channel: frame.Channel, Event: "updated", MemberID: fleetMember.MemberID,
@@ -801,6 +834,9 @@ func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame
 	})
 	c.mu.Unlock()
 	m.mu.Unlock()
+	if scheduleFlush {
+		time.AfterFunc(flushAfter, func() { m.flushFleetPresence(c, frame.Channel, memberID) })
+	}
 	for _, slow := range fullQueues {
 		m.closeResumeOnQueueFull(slow, ErrOutboundQueueFull)
 	}

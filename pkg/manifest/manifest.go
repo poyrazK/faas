@@ -212,6 +212,11 @@ type ObjectStorage struct {
 	// Compute nodes get it instead of ProviderEnvSrc, so they never hold the
 	// bucket-admin credential.
 	GatewayProviderEnvSrc string `yaml:"gateway_provider_env_src,omitempty"`
+	// ComputePublicReads has each compute node's app edge serve public
+	// bucket reads itself, with the gateway credential and a part of the
+	// node's port share, instead of forwarding them to the control plane
+	// (ADR-20261031122757 step 7). It needs ComputeNodes.
+	ComputePublicReads bool `yaml:"compute_public_reads,omitempty"`
 }
 
 // Managed reports whether the playbooks own s3-gatewayd.
@@ -241,6 +246,9 @@ func (o ObjectStorage) validate() Errors {
 	}
 	if !o.ComputeNodes && o.GatewayProviderEnvSrc != "" {
 		errs = append(errs, Error{"object_storage.gateway_provider_env_src", "is used only with compute_nodes"})
+	}
+	if o.ComputePublicReads && !o.ComputeNodes {
+		errs = append(errs, Error{"object_storage.compute_public_reads", "needs compute_nodes: the app edge reads with the gateway credential and port share the compute gateway gets"})
 	}
 	return errs
 }
@@ -528,6 +536,10 @@ type Host struct {
 	// host that runs the object gateway gets its share of it
 	// (ADR-20261031122757 §3); required there, unused elsewhere.
 	PortMbps int `yaml:"port_mbps,omitempty"`
+	// PublicIPv4 is the address Cloudflare connects to for a compute host's
+	// edge under direct entry (ADR-20261102081618): its own on bare metal,
+	// an inbound-only forwarding rule on GCP. Unused elsewhere.
+	PublicIPv4 string `yaml:"public_ipv4,omitempty"`
 }
 
 // Daemons is the per-daemon configuration. Keys are daemon names;
@@ -744,12 +756,75 @@ type PublicEdge struct {
 	// there, while the platform hosts and custom domains stay on the control
 	// plane. Off by default.
 	ComputeNodes bool `yaml:"compute_nodes,omitempty"`
+	// PlacementRouting makes each compute edge send an app host to the
+	// gatewayd-internal of the node that last served it, instead of its own
+	// (ADR-20261031105055). Needs compute_nodes. Off by default.
+	PlacementRouting bool `yaml:"placement_routing,omitempty"`
+	// PlacementNodeSet makes each compute edge spread an app host's requests
+	// over every node the app runs on, by ready instances
+	// (ADR-20261102081618 §5b). Needs placement_routing.
+	PlacementNodeSet bool `yaml:"placement_node_set,omitempty"`
+	// LocalFirst makes each compute node's gatewayd-internal serve the
+	// requests an edge forwarded from its own node's instances first, and
+	// name every node of the app for the edges (§5a, §5c, §5d). Needs
+	// placement_node_set: without the spread the edges would settle on one
+	// node.
+	LocalFirst bool `yaml:"local_first,omitempty"`
+	// Entry is how Cloudflare reaches the compute edges
+	// (ADR-20261102081618): "tunnel", the default, through the cell's
+	// Cloudflare Tunnel; "both" also opens each edge's TLS listener on port
+	// 443 for proxied address records, for the move off the tunnel and its
+	// rollback. Needs compute_nodes.
+	Entry string `yaml:"entry,omitempty"`
+	// DNS turns on edgednsd (ADR-20261102081618 §3), which points the names
+	// at the compute hosts whose edges are ready. Needs entry both.
+	DNS *PublicEdgeDNS `yaml:"dns,omitempty"`
+}
+
+// PublicEdgeDNS is the Cloudflare zone and the names edgednsd manages.
+type PublicEdgeDNS struct {
+	ZoneID string   `yaml:"zone_id"`
+	Names  []string `yaml:"names"`
+	// Live makes edgednsd write records; until then it only logs and
+	// counts the changes it would make.
+	Live bool `yaml:"live,omitempty"`
+}
+
+// Public edge entries (ADR-20261102081618).
+const (
+	PublicEdgeEntryTunnel = "tunnel"
+	PublicEdgeEntryBoth   = "both"
+)
+
+// DirectEntry reports whether the compute edges take Cloudflare's direct
+// connections on port 443.
+func (e PublicEdge) DirectEntry() bool {
+	return e.ComputeNodes && e.Entry == PublicEdgeEntryBoth
 }
 
 // validate checks the compute-node edge against the fleet: it needs a control
 // plane to forward credential-bound routes to and compute nodes to run on.
 func (e PublicEdge) validate(hosts []Host) Errors {
+	switch e.Entry {
+	case "", PublicEdgeEntryTunnel, PublicEdgeEntryBoth:
+	case "direct":
+		return Errors{{"public_edge.entry", "direct comes one release after the move off the tunnel (ADR-20261102081618 step 6); use both"}}
+	default:
+		return Errors{{"public_edge.entry", fmt.Sprintf("%q is not tunnel or both", e.Entry)}}
+	}
+	if e.PlacementNodeSet && !e.PlacementRouting {
+		return Errors{{"public_edge.placement_node_set", "needs public_edge.placement_routing: it spreads the routed requests"}}
+	}
+	if e.LocalFirst && !e.PlacementNodeSet {
+		return Errors{{"public_edge.local_first", "needs public_edge.placement_node_set: without the spread the edges would settle on one node"}}
+	}
 	if !e.ComputeNodes {
+		if e.PlacementRouting {
+			return Errors{{"public_edge.placement_routing", "needs public_edge.compute_nodes: it routes the compute edges' requests"}}
+		}
+		if e.Entry == PublicEdgeEntryBoth {
+			return Errors{{"public_edge.entry", "needs public_edge.compute_nodes: it opens the compute edges' TLS listener"}}
+		}
 		return nil
 	}
 	var controlPlanes, computeNodes int
@@ -767,6 +842,39 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 	}
 	if computeNodes == 0 {
 		errs = append(errs, Error{"public_edge.compute_nodes", "needs at least one compute-only host to run the edge"})
+	}
+	return append(errs, e.validateDNS(hosts)...)
+}
+
+// validateDNS checks public_edge.dns: edgednsd sends Cloudflare to the TLS
+// listeners entry both opens, at the compute hosts' public addresses.
+func (e PublicEdge) validateDNS(hosts []Host) Errors {
+	if e.DNS == nil {
+		return nil
+	}
+	var errs Errors
+	if !e.DirectEntry() {
+		errs = append(errs, Error{"public_edge.dns", "needs public_edge.entry: both, whose TLS listeners the records point at"})
+	}
+	if strings.TrimSpace(e.DNS.ZoneID) == "" {
+		errs = append(errs, Error{"public_edge.dns.zone_id", "is required"})
+	}
+	if len(e.DNS.Names) == 0 {
+		errs = append(errs, Error{"public_edge.dns.names", "needs at least one host name"})
+	}
+	addressed := 0
+	for i, h := range hosts {
+		if h.PublicIPv4 == "" {
+			continue
+		}
+		if addr, err := netip.ParseAddr(h.PublicIPv4); err != nil || !addr.Is4() {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].public_ipv4", i), fmt.Sprintf("%q is not an IPv4 address", h.PublicIPv4)})
+		} else if h.Role == "compute-only" {
+			addressed++
+		}
+	}
+	if addressed == 0 {
+		errs = append(errs, Error{"public_edge.dns", "needs a compute-only host with public_ipv4"})
 	}
 	return errs
 }

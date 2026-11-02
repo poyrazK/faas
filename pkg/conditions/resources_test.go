@@ -99,29 +99,36 @@ func TestCronConditions(t *testing.T) {
 	}
 	enabled := api.CronResponse{Enabled: true, Schedule: "*/5 * * * *"}
 	tests := []struct {
-		name  string
-		cron  api.CronResponse
-		last  *api.CronRun
-		wants map[string]want
-		since string
+		name   string
+		cron   api.CronResponse
+		last   *api.CronRun
+		wants  map[string]want
+		since  string
+		paused string
 	}{
 		{"never run", enabled, nil, map[string]want{
-			"Ready": {"True", "scheduled", false}, "LastRunSucceeded": {"Unknown", "never_run", false}}, ""},
+			"Ready": {"True", "scheduled", false}, "LastRunSucceeded": {"Unknown", "never_run", false}}, "", ""},
 		{"running", enabled, run(api.CronRunRunning), map[string]want{
-			"LastRunSucceeded": {"Unknown", "running", false}}, "2026-10-30T14:58:00Z"},
+			"LastRunSucceeded": {"Unknown", "running", false}}, "2026-10-30T14:58:00Z", ""},
 		{"succeeded", enabled, run(api.CronRunSuccess), map[string]want{
-			"LastRunSucceeded": {"True", "success", false}}, "2026-10-30T14:59:00Z"},
+			"LastRunSucceeded": {"True", "success", false}}, "2026-10-30T14:59:00Z", ""},
 		{"timed out", enabled, run(api.CronRunTimeout), map[string]want{
-			"LastRunSucceeded": {"False", "timeout", false}}, "2026-10-30T14:59:00Z"},
+			"LastRunSucceeded": {"False", "timeout", false}}, "2026-10-30T14:59:00Z", ""},
 		{"disabled", api.CronResponse{Schedule: "@daily"}, nil, map[string]want{
-			"Ready": {"False", "disabled", true}}, ""},
+			"Ready": {"False", "disabled", true}}, "", ""},
 		{"suspended", api.CronResponse{Enabled: true, SuspendedReason: "no_live_deployment"}, nil, map[string]want{
-			"Ready": {"False", "no_live_deployment", false}}, ""},
+			"Ready": {"False", "no_live_deployment", false}}, "", ""},
+		// An enabled cron the scheduler skips is not Ready (crons audit
+		// 2026-11-01): it used to read "fires on schedule".
+		{"over the plan's limits", enabled, nil, map[string]want{
+			"Ready": {"False", "plan_limit", false}}, "", "plan_limit"},
+		{"owner suspended", enabled, nil, map[string]want{
+			"Ready": {"False", "account_suspended", false}}, "", "account_suspended"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.cron.ID = "c1"
-			got := conditions.Cron(tc.cron, tc.last, observed)
+			got := conditions.Cron(tc.cron, tc.last, observed, tc.paused)
 			if got.Kind != "cron" || got.Name != "c1" {
 				t.Errorf("header = %+v", got)
 			}

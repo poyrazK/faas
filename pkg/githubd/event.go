@@ -183,7 +183,7 @@ func (ev *PullRequestEvent) IsForkOfMissingBase() bool {
 type PushEvent struct {
 	Ref          string              `json:"ref"`        // "refs/heads/main"
 	Before       string              `json:"before"`     // commit SHA the branch was at before the push; empty for the first push on a branch (0000...0000)
-	After        string              `json:"after"`      // commit SHA the head now points at
+	After        string              `json:"after"`      // commit SHA the head now points at; DecodePush peels an annotated tag to the commit it tags
 	Created      bool                `json:"created"`    // true when this push created the ref
 	Deleted      bool                `json:"deleted"`    // true when GitHub deletes a branch or tag
 	Forced       bool                `json:"forced"`     // true when the ref was force-updated
@@ -194,8 +194,10 @@ type PushEvent struct {
 	Commits      []PushCommit        `json:"commits"`
 }
 
-// PushCommit is the commit-message subset used by deploy trigger policy.
+// PushCommit is the commit subset used by deploy trigger policy. For a tag
+// push, head_commit is the commit the tag points at.
 type PushCommit struct {
+	ID      string `json:"id"`
 	Message string `json:"message"`
 }
 
@@ -254,6 +256,13 @@ func DecodePush(body []byte) (PushEvent, error) {
 	}
 	if ev.Ref == "" || ev.After == "" || ev.Repository.FullName == "" {
 		return ev, errors.New("githubd: push missing required fields (ref/after/repository.full_name)")
+	}
+	// An annotated tag's push names the tag object in `after`, and its
+	// head_commit is the commit the tag points at. A release deploys that
+	// commit: the source fetch, the Check Runs and the branch-head match that
+	// picks an app-bound tag's branch all need it.
+	if strings.HasPrefix(ev.Ref, "refs/tags/") && !ev.Deleted && isCanonicalCommitSHA(ev.HeadCommit.ID) {
+		ev.After = ev.HeadCommit.ID
 	}
 	return ev, nil
 }
@@ -334,6 +343,40 @@ func DecodeInstallation(body []byte) (InstallationEvent, error) {
 	}
 	if ev.Action == "" {
 		return ev, errors.New("githubd: installation missing action")
+	}
+	return ev, nil
+}
+
+// InstallationTargetEvent reports a change to the user or organization an
+// installation belongs to. GitHub sends it without a subscription; the only
+// action is "renamed", with the old login in changes.login.from.
+type InstallationTargetEvent struct {
+	Action       string              `json:"action"`
+	Installation InstallationPayload `json:"installation"`
+	Account      struct {
+		Login string `json:"login"`
+	} `json:"account"`
+	Changes struct {
+		Login struct {
+			From string `json:"from"`
+		} `json:"login"`
+	} `json:"changes"`
+	TargetType string `json:"target_type"`
+}
+
+func DecodeInstallationTarget(body []byte) (InstallationTargetEvent, error) {
+	var ev InstallationTargetEvent
+	if len(body) == 0 {
+		return ev, errors.New("githubd: empty installation_target body")
+	}
+	if err := json.Unmarshal(body, &ev); err != nil {
+		return ev, err
+	}
+	if ev.Installation.ID <= 0 {
+		return ev, errors.New("githubd: installation_target missing installation.id")
+	}
+	if ev.Action == "" {
+		return ev, errors.New("githubd: installation_target missing action")
 	}
 	return ev, nil
 }

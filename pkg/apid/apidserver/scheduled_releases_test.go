@@ -214,7 +214,7 @@ func TestScheduleValidationFreezePreviewAndCancel(t *testing.T) {
 func TestApprovalPolicyKeepsParkedReleasesBehindACanary(t *testing.T) {
 	f := newScheduleFixture(t, "sched-approved")
 	e := f.e
-	if rec := e.Do(t, http.MethodPut, "/v1/apps/sched-approved/release-approval-policy", api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, http.MethodPut, "/v1/apps/sched-approved/release-approval-policy", withApprovers(context.Background(), t, e, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}), nil); rec.Code != http.StatusOK {
 		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
 	}
 	parked := f.parked(t, 'f')

@@ -23,10 +23,13 @@ const memoryPressureEmitType byte = 0x0A
 var memoryPressurePollInterval = api.ProfileMemoryPressurePollInterval
 
 // memoryPressureWire mirrors the host-side memoryPressureWire envelope.
+// Profiling says whether a profile collector is active, so schedd queues a
+// heap capture only then (ADR-20261102124306).
 type memoryPressureWire struct {
-	AvailableMB int `json:"available_mb"`
-	TotalMB     int `json:"total_mb"`
-	AnonMB      int `json:"anon_mb"`
+	AvailableMB int  `json:"available_mb"`
+	TotalMB     int  `json:"total_mb"`
+	AnonMB      int  `json:"anon_mb"`
+	Profiling   bool `json:"profiling"`
 }
 
 // memoryPressureState decides when a sample is a new pressure episode:
@@ -55,9 +58,9 @@ func (s *memoryPressureState) observe(stats guestmemproto.Stats) bool {
 }
 
 // WatchMemoryPressure samples /proc/meminfo while the main workload runs
-// and reports pressure episodes so the control plane can capture the heap
-// before an OOM kill (ADR-1155). It only reports while a profile collector
-// is registered: without one a capture has nothing to collect.
+// and reports each pressure episode, so app health can warn before an OOM
+// kill (ADR-20261102124306) and, while a profile collector is registered,
+// the control plane can capture the heap (ADR-1155).
 func WatchMemoryPressure(ctx context.Context, meminfo string, collectorsActive func() bool, emit func(memoryPressureWire) error, log *slog.Logger) {
 	state := memoryPressureState{armed: true}
 	ticker := time.NewTicker(memoryPressurePollInterval)
@@ -69,10 +72,11 @@ func WatchMemoryPressure(ctx context.Context, meminfo string, collectorsActive f
 		case <-ticker.C:
 		}
 		stats, err := readMeminfo(meminfo)
-		if err != nil || !state.observe(stats) || !collectorsActive() {
+		if err != nil || !state.observe(stats) {
 			continue
 		}
-		report := memoryPressureWire{AvailableMB: int(stats.MemAvailable >> 20), TotalMB: int(stats.MemTotal >> 20), AnonMB: int(stats.AnonPages >> 20)}
+		report := memoryPressureWire{AvailableMB: int(stats.MemAvailable >> 20), TotalMB: int(stats.MemTotal >> 20),
+			AnonMB: int(stats.AnonPages >> 20), Profiling: collectorsActive()}
 		if err := emit(report); err != nil {
 			log.Warn("memory pressure report failed", "err", err)
 		}

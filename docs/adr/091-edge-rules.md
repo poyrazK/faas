@@ -1537,6 +1537,56 @@ Checked and unchanged: the response cache key already varies on the request
 host (ADR-122, `computeVaryHash`), so one host's cached body is not served on
 another host of the same app.
 
+## Amendment (2026-10-31, later): review round 7 — organization permissions, covering rules in traces, authoritative-policy parity
+
+An end-to-end review found one gap that kept organizations from running edge
+rules and two places that did not show or enforce what the cached gateway
+path does. None changes the rule format.
+
+1. **Edge rules have a reviewed organization permission.** The edge-rule
+   routes were not in the app-access route table, so they fell back to the
+   creator alone: no other owner or admin could change a company app's rules
+   or switch on attack mode under attack, and once the creator left the
+   company nobody could, not even to disable a broken rule. Reads (rules,
+   history, stats, suggestions, events, WAF review, edge protection, attack
+   mode status, the dashboard trace) take `org.read_app`; writes (create,
+   change, delete, WAF exclusions, rollback, attack mode, and the dashboard
+   forms, the app page's list forms included) take
+   `org.manage_app_security`, as the app's security settings do; purging
+   cached responses takes `org.deploy_app`. A request acts on the app's
+   resource account, so rules keep the account the app's rules belong to.
+   Lists and CORS presets stay account objects (assumed; no data-model
+   change): rules on a company app reference the lists of that account, the
+   app page's list forms manage them for owners and admins, a list edit still
+   passes the check of every app whose rules use the list (amendment
+   2026-10-30), and the account-wide `/v1/edge-rule-lists` and
+   `/v1/cors-presets` keep acting on the caller's own account.
+2. **Traces include the rules that cover an app from its siblings.** The
+   gateway applies to an app's hosts the `*`, glob and exact-host rules of the
+   account's other apps in the same owner scope, but the CLI and dashboard
+   traces, and the app's rule list, read the app's own rules only, so a
+   sibling's rule that refused a request never appeared. `GET
+   /v1/apps/{slug}/edge-rules?covering=true` adds those rules (not `@app` ones,
+   not another scope's or a deleted app's, and only of apps the caller may
+   read), each with its own `app_id`; the ETag stays the app's rule set. Both
+   traces use it; an apid that predates the parameter returns the app's own
+   rules, so a newer CLI degrades to the previous trace.
+3. **The authoritative host policy applies the cached path's filters.** With
+   `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` on (ADR-570), a host's rules are
+   read in a Postgres snapshot and compiled without `hostStoreRules`, which
+   had none of the later filters: another owner scope's rules (round 6), rules
+   of deleted apps (amendment 2026-10-28) and a preview's inherited production
+   rules (amendment 2026-10-30). The snapshot's rule query
+   (`ReadPublicHostEdgeRules`) now leaves out the first two in the same read,
+   because the snapshot runs under a short budget and a read per rule's app
+   timed out under load; the owner policy adds the third from the resolved
+   app's `ProductionAppID`, reading only for a preview. The snapshot's app
+   projection now carries `OrgID` for a company organization (a personal one
+   reads as none, so a personal app costs no organization read), so the
+   gateway's route-target scope check and the app's resource account work in
+   this mode too; before, every app read as personal there, and a company
+   app's plan and limits came from its creator's account.
+
 ## Amendment (2026-10-31, later): app-bound credentials write rules for their app only
 
 An edge-security review found that a per-app deploy token, which the docs
@@ -1562,3 +1612,38 @@ the source host, so deploying with a deploy token a manifest that routes
 another app's host to this app is refused too; deploy such a project with an
 account key. Account keys, organization keys and dashboard sessions are not
 limited.
+
+## Amendment (2026-11-02): shared caches and rules that name one host
+
+A further edge-security review found two ways an access rule did not hold.
+
+1. **Cloudflare served gated responses to everyone.** Cloudflare caches
+   responses in front of the public edge by URL alone: static file types by
+   default, and anything the app marks public (a live request to an app host
+   returned `cf-cache-status: HIT` on the second fetch). The gates run at the
+   origin, so once a client a rule admitted fetched a cacheable URL, every
+   other client got the same response from Cloudflare: an address an `ip`
+   rule or the ingress allowlist denies, a country a `geo` rule refuses, a
+   caller without the JWT or key a gate verified. The gateway now marks the
+   response of every request such a control decided with both targeted cache
+   headers, `Cloudflare-CDN-Cache-Control: private` and `CDN-Cache-Control:
+   private` (RFC 9213), replacing any value the app or a `headers` rule set.
+   Browser caching is unchanged. The marked requests are those an `ip`,
+   `geo` or `jwt` rule covered (whatever it decided), those on an app in
+   `ip_allowlist` public-auth mode, and those that carried a credential a
+   gate verified. A challenge or attack mode does not mark: they keep bots
+   off an app, and a cached public file served to a bot costs the app
+   nothing. The gateway's own response cache already ran after these gates.
+   The 404 for a host no app serves is `no-store`, so Cloudflare does not
+   keep serving it after the app is created.
+2. **A rule naming one host left the app's other hosts open.** Every app is
+   served at its platform hostname and any companion hostnames as well as its
+   custom domains, and an exact `match_host` covers only the host it names.
+   The security docs' own WAF and challenge examples named a custom domain,
+   so the same app stayed unprotected at `<slug>.gregale.dev`. Aliases of the
+   apps domain were already folded into their canonical host (ADR-20261026100000
+   section 3); hosts of one app are not. The examples now use `@app`, and
+   `gregale edge rule create` warns when a gate (jwt, ip, geo, limit,
+   throttle, validate, maintenance, waf, challenge) names one exact host. A
+   setting that serves an app only on its custom domains is a separate
+   decision.

@@ -516,6 +516,7 @@ func (s *PgStore) AuthenticateOIDCBearer(ctx context.Context, hash []byte) (Acco
 		Audience:  row.Audience,
 		JTI:       row.Jti,
 		CreatedAt: timeFromPgtype(row.CreatedAt),
+		AppID:     row.AppID,
 	}
 	return acct, token.ToAPIKey(), nil
 }
@@ -696,11 +697,21 @@ func (s *PgStore) InsertOIDCExchangedToken(ctx context.Context, t *OIDCExchanged
 		Subject:   t.Subject,
 		Audience:  t.Audience,
 		Jti:       pgtype.Text{String: t.JTI, Valid: t.JTI != ""},
+		AppID:     oidcBearerAppID(t.AppID),
 	})
 	if err != nil {
 		return "", err
 	}
 	return uuidFromPgtype(row.ID).String(), nil
+}
+
+// oidcBearerAppID is the nullable app binding of an exchanged token.
+func oidcBearerAppID(appID string) pgtype.UUID {
+	id, err := uuid.Parse(appID)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return pgtypeFromUUID(id)
 }
 
 // GetOIDCExchangedTokenByHash returns the row whose TokenHash
@@ -3344,17 +3355,33 @@ func (s *PgStore) ListInstancesForLifecycleReconciliation(ctx context.Context, n
 	}
 	args = append(args, limit)
 
-	sel := fmt.Sprintf(`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
-		   from instances i
-		   join apps a on a.id = i.app_id
-		   join app_resource_accounts ac ON ac.app_id = a.id
-		  where (
-		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen'))
-		     or (ac.status = 'deleted_pending' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','evicting_account_deleting'))
-		  )%s
-		  order by i.started_at asc, i.id asc
-		  limit $%d`, nodeClause, limitArg)
+	// One branch per cause, unioned, rather than one OR across the app and
+	// account joins: an OR spanning two relations cannot use an index, so it
+	// scanned every instance ever recorded (tens of thousands of terminal
+	// rows) to find the handful that are live. The deleted-app branch walks
+	// the live-state partial index; the deleting-account branch starts from
+	// the few apps whose owner is deleted_pending and probes (app_id, state).
+	// UNION drops an instance that matches both causes.
+	sel := fmt.Sprintf(`with targets as (
+		select i.id
+		  from instances i
+		  join apps a on a.id = i.app_id
+		 where a.status = 'deleted'
+		   and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')%[1]s
+		union
+		select i.id
+		  from app_resource_accounts ac
+		  join apps a on a.id = ac.app_id
+		  join instances i on i.app_id = a.id
+		 where ac.status = 'deleted_pending'
+		   and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','evicting_account_deleting')%[1]s
+		)
+		select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		       coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
+		  from instances i
+		  join targets t on t.id = i.id
+		 order by i.started_at asc, i.id asc
+		 limit $%[2]d`, nodeClause, limitArg)
 	rows, err := s.pool.Query(ctx, sel, args...)
 	if err != nil {
 		return nil, err
@@ -6508,7 +6535,12 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 	if b.LinkedAt.IsZero() {
 		b.LinkedAt = time.Now()
 	}
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub bind: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	tag, err := tx.Exec(ctx,
 		`update apps
 		 set github_install_id = $2,
 		     github_repo_full_name = $3,
@@ -6522,9 +6554,60 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 		b.AppID, b.InstallID, nullString(b.RepoFullName), nullableInt64(b.OwnerID), nullableInt64(b.RepoID),
 		nullString(b.ProductionBranch), b.BindingID, b.AccountID, b.LinkedAt,
 	)
-	if err == nil && tag.RowsAffected() == 0 {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	// A project left without an installation by a revoke or a repository
+	// removal takes the installation its app is reconnected through, for the
+	// same repository (ADR-20261102100000).
+	if _, err := tx.Exec(ctx, `
+		update projects p set install_id = $2, updated_at = now()
+		  from apps a
+		 where a.id = $1 and a.account_id = $4 and p.id = a.project_id and p.account_id = a.account_id
+		   and p.install_id is null and lower(p.repo_full_name) = lower($3)`,
+		b.AppID, b.InstallID, b.RepoFullName, b.AccountID); err != nil {
+		return fmt.Errorf("state: restore project GitHub installation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub bind: %w", err)
+	}
+	return nil
+}
+
+// markInstallationPRPreviewsStaleTx retires the PR previews of the apps an
+// installation binds (only those of repos, when repos is non-nil): without the
+// installation, or the repository's access, no close event reaches them. A
+// preview belongs to the production app its PR environment's root previews,
+// so the previews of a project's other services go with the bound app's
+// (ADR-20261102100000); they kept serving PR code to the end of their lease.
+func markInstallationPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, installationID int64, repos []string) error {
+	_, err := tx.Exec(ctx, `
+		update apps set preview_pr_state = $2, preview_expires_at = now()
+		 where id in (
+		   select p.id
+		     from apps p
+		     left join lateral (
+		       select root.preview_of_slug as anchor
+		         from pr_preview_sets s
+		         join apps root on root.id = s.root_app_id
+		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
+		        order by s.updated_at desc
+		        limit 1
+		     ) env on true
+		     join apps parent on parent.account_id = p.account_id
+		                     and parent.slug = coalesce(env.anchor, p.preview_of_slug)
+		    where p.preview_of_slug is not null
+		      and coalesce(p.preview_pr_number, 0) > 0
+		      and p.status <> 'deleted'
+		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
+		      and parent.preview_of_slug is null
+		      and parent.status <> 'deleted'
+		      and parent.github_install_id = $1
+		      and ($5::text[] is null or parent.github_repo_full_name = any($5::text[])))`,
+		installationID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown, repos)
 	return err
 }
 
@@ -6580,7 +6663,9 @@ func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) 
 		     github_production_branch = null,
 		     github_install_binding_id = null,
 		     github_install_account_id = null,
-		     github_install_linked_at = null
+		     github_install_linked_at = null,
+		     github_production_trigger = null,
+		     github_preview_enabled = null
 		 where id = $1`,
 		appID,
 	)
@@ -6891,20 +6976,11 @@ func (s *PgStore) RevokeGitHubInstallation(ctx context.Context, installationID i
 		return fmt.Errorf("state: begin revoke GitHub installation: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, `
-		update apps p
-		   set preview_pr_state = $2,
-		       preview_expires_at = now()
-		 where p.preview_of_slug is not null
-		   and coalesce(p.preview_pr_state, '') <> $3
-		   and exists (
-			 select 1 from apps parent
-			  where parent.account_id = p.account_id
-				and parent.slug = p.preview_of_slug
-				and parent.github_install_id = $1
-				and parent.status <> 'deleted'
-		   )`, installationID, PreviewPrStateStale, PreviewPrStateTornDown); err != nil {
+	if err := markInstallationPRPreviewsStaleTx(ctx, tx, installationID, nil); err != nil {
 		return fmt.Errorf("state: mark GitHub previews stale: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `update projects set install_id = null, updated_at = now() where install_id = $1`, installationID); err != nil {
+		return fmt.Errorf("state: detach projects from GitHub installation: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		update apps
@@ -6915,7 +6991,9 @@ func (s *PgStore) RevokeGitHubInstallation(ctx context.Context, installationID i
 		       github_production_branch = null,
 		       github_install_binding_id = null,
 		       github_install_account_id = null,
-		       github_install_linked_at = null
+		       github_install_linked_at = null,
+		       github_production_trigger = null,
+		       github_preview_enabled = null
 		 where github_install_id = $1`, installationID); err != nil {
 		return fmt.Errorf("state: clear GitHub bindings: %w", err)
 	}
@@ -6942,21 +7020,13 @@ func (s *PgStore) RemoveGitHubRepositories(ctx context.Context, installationID i
 		return fmt.Errorf("state: begin remove GitHub repositories: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, `
-		update apps p
-		   set preview_pr_state = $2,
-		       preview_expires_at = now()
-		 where p.preview_of_slug is not null
-		   and coalesce(p.preview_pr_state, '') <> $3
-		   and exists (
-			 select 1 from apps parent
-			  where parent.account_id = p.account_id
-				and parent.slug = p.preview_of_slug
-				and parent.github_install_id = $1
-				and parent.github_repo_full_name = any($4::text[])
-				and parent.status <> 'deleted'
-		   )`, installationID, PreviewPrStateStale, PreviewPrStateTornDown, repoFullNames); err != nil {
+	if err := markInstallationPRPreviewsStaleTx(ctx, tx, installationID, repoFullNames); err != nil {
 		return fmt.Errorf("state: mark removed-repository previews stale: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update projects set install_id = null, updated_at = now()
+		 where install_id = $1 and repo_full_name = any($2::text[])`, installationID, repoFullNames); err != nil {
+		return fmt.Errorf("state: detach projects from removed GitHub repositories: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		update apps
@@ -6967,7 +7037,9 @@ func (s *PgStore) RemoveGitHubRepositories(ctx context.Context, installationID i
 		       github_production_branch = null,
 		       github_install_binding_id = null,
 		       github_install_account_id = null,
-		       github_install_linked_at = null
+		       github_install_linked_at = null,
+		       github_production_trigger = null,
+		       github_preview_enabled = null
 		 where github_install_id = $1
 		   and github_repo_full_name = any($2::text[])`, installationID, repoFullNames); err != nil {
 		return fmt.Errorf("state: clear removed GitHub repositories: %w", err)
@@ -6996,6 +7068,15 @@ func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int
 		   and github_repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName); err != nil {
 		return fmt.Errorf("state: rename GitHub repository binding: %w", err)
 	}
+	// A project bound to the repository is how a push finds its apps; left
+	// on the old name, every push after the rename was ignored.
+	if _, err := tx.Exec(ctx, `
+		update projects
+		   set repo_full_name = $3, updated_at = now()
+		 where install_id = $1
+		   and repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName); err != nil {
+		return fmt.Errorf("state: rename GitHub repository project: %w", err)
+	}
 	// PR preview environments are keyed by repository name. Left on the old
 	// name they never close, and they keep their members from being retired
 	// when the PR's next head (delivered under the new name) replaces them.
@@ -7021,6 +7102,103 @@ func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int
 	return nil
 }
 
+// RenameGitHubAccount moves every binding, project and PR preview environment
+// of an installation from oldLogin's repositories to newLogin's after GitHub
+// reports that the user or organization was renamed (installation_target).
+// GitHub sends no repository event for that rename, so without it every
+// binding kept the old owner and no push matched it (ADR-20261101160300).
+func (s *PgStore) RenameGitHubAccount(ctx context.Context, installationID int64, oldLogin, newLogin string) error {
+	if installationID <= 0 || oldLogin == "" || newLogin == "" || strings.Contains(oldLogin, "/") || strings.Contains(newLogin, "/") {
+		return ErrNotFound
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub account rename: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	if _, err := tx.Exec(ctx, `
+		update apps
+		   set github_repo_full_name = $3 || '/' || split_part(github_repo_full_name, '/', 2)
+		 where github_install_id = $1
+		   and lower(split_part(github_repo_full_name, '/', 1)) = lower($2)`, installationID, oldLogin, newLogin); err != nil {
+		return fmt.Errorf("state: rename GitHub account bindings: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update projects
+		   set repo_full_name = $3 || '/' || split_part(repo_full_name, '/', 2), updated_at = now()
+		 where install_id = $1
+		   and lower(split_part(repo_full_name, '/', 1)) = lower($2)`, installationID, oldLogin, newLogin); err != nil {
+		return fmt.Errorf("state: rename GitHub account projects: %w", err)
+	}
+	// As for a repository rename: a PR already recorded under the new name
+	// keeps that row and its old-name row is dropped.
+	if _, err := tx.Exec(ctx, `
+		update pr_preview_sets old_set
+		   set repo_full_name = $3 || '/' || split_part(old_set.repo_full_name, '/', 2), updated_at = now()
+		 where old_set.installation_id = $1
+		   and lower(split_part(old_set.repo_full_name, '/', 1)) = lower($2)
+		   and not exists (select 1 from pr_preview_sets renamed
+		     where renamed.installation_id = $1
+		       and renamed.repo_full_name = $3 || '/' || split_part(old_set.repo_full_name, '/', 2)
+		       and renamed.pr_number = old_set.pr_number)`, installationID, oldLogin, newLogin); err != nil {
+		return fmt.Errorf("state: rename GitHub account PR preview environments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from pr_preview_sets
+		 where installation_id = $1
+		   and lower(split_part(repo_full_name, '/', 1)) = lower($2)
+		   and split_part(repo_full_name, '/', 1) <> $3`, installationID, oldLogin, newLogin); err != nil {
+		return fmt.Errorf("state: drop superseded PR preview environments: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub account rename: %w", err)
+	}
+	return nil
+}
+
+// SetGitHubAppProductionTrigger records which of the App webhook or GitHub
+// Actions deploys a bound app's production branch (ADR-20261101160300). An
+// empty trigger restores the webhook. ErrNotFound when the app is not bound
+// to GitHub under accountID.
+func (s *PgStore) SetGitHubAppProductionTrigger(ctx context.Context, appID, accountID string, trigger ProductionTrigger) error {
+	return s.UpdateGitHubAppPolicy(ctx, appID, accountID, GitHubAppPolicyPatch{ProductionTrigger: &trigger})
+}
+
+// UpdateGitHubAppPolicy applies patch to the GitHub policy of an app bound
+// without a project (ADR-20261101160300), in one statement. ErrNotFound when
+// the app is not bound to GitHub under accountID.
+func (s *PgStore) UpdateGitHubAppPolicy(ctx context.Context, appID, accountID string, patch GitHubAppPolicyPatch) error {
+	if appID == "" || accountID == "" {
+		return ErrNotFound
+	}
+	if err := patch.Validate(); err != nil {
+		return err
+	}
+	trigger, previews := "", true
+	if patch.ProductionTrigger != nil {
+		trigger = string(*patch.ProductionTrigger)
+	}
+	if patch.PreviewEnabled != nil {
+		previews = *patch.PreviewEnabled
+	}
+	// NULL keeps each default: the webhook, and previews on.
+	tag, err := s.pool.Exec(ctx, `
+		update apps
+		   set github_production_trigger = case when $3 then nullif($4, '') else github_production_trigger end,
+		       github_preview_enabled = case when $5 then nullif($6::boolean, true) else github_preview_enabled end
+		 where id = $1
+		   and account_id = $2
+		   and github_install_id is not null`,
+		appID, accountID, patch.ProductionTrigger != nil, trigger, patch.PreviewEnabled != nil, previews)
+	if err != nil {
+		return fmt.Errorf("state: update GitHub app policy: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // GetGithubInstallBindingForApp returns the (appID, accountID)
 // bind row. accountID scopes the lookup so a forged session cannot
 // read another tenant's binding — when the app is bound but to a
@@ -7040,12 +7218,13 @@ func (s *PgStore) GetGithubInstallBindingForApp(ctx context.Context, appID, acco
 	err := s.pool.QueryRow(ctx,
 		`select id, github_install_id, github_repo_full_name, github_owner_id,
 		        github_repo_id, github_production_branch,
-		        github_install_binding_id, github_install_account_id, github_install_linked_at
+		        github_install_binding_id, github_install_account_id, github_install_linked_at,
+		        coalesce(github_production_trigger, ''), coalesce(github_preview_enabled, true) = false
 		 from apps
 		 where id = $1
 		   and account_id = $2
 		   and github_install_id is not null`, appID, accountID,
-	).Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &b.AccountID, &linkedAt)
+	).Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &b.AccountID, &linkedAt, &b.ProductionTrigger, &b.PreviewsOff)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubBinding{}, ErrNotFound
@@ -7106,15 +7285,15 @@ func (s *PgStore) githubInstallBindingForRepoBranch(ctx context.Context, repoFul
 	err := s.pool.QueryRow(ctx,
 		`select id, github_install_account_id, github_install_binding_id, github_install_linked_at,
 		        github_install_id, github_repo_full_name, github_owner_id, github_repo_id,
-		        github_production_branch
+		        github_production_branch, coalesce(github_production_trigger, ''), coalesce(github_preview_enabled, true) = false
 		 from apps
 		 where github_repo_full_name = $1
 		   and github_production_branch = $2
 		   and github_install_id is not null
 		   and ($3::bigint = 0 or github_install_id = $3)
-		 order by id
+		 order by (status = 'deleted'), id
 		 limit 1`, repoFullName, productionBranch, installationID,
-	).Scan(&b.AppID, &accountID, &bindingID, &linkedAt, &installID, &b.RepoFullName, &ownerID, &repoID, &branch)
+	).Scan(&b.AppID, &accountID, &bindingID, &linkedAt, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &b.ProductionTrigger, &b.PreviewsOff)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubBinding{}, ErrNotFound
@@ -7158,7 +7337,8 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 	rows, err := s.pool.Query(ctx,
 		`select id, github_install_id, github_repo_full_name, github_owner_id,
 		        github_repo_id, github_production_branch,
-		        github_install_binding_id, github_install_linked_at
+		        github_install_binding_id, github_install_linked_at,
+		        coalesce(github_production_trigger, ''), coalesce(github_preview_enabled, true) = false
 		 from apps
 		 where github_install_account_id = $1
 		   and github_install_id is not null`, accountID,
@@ -7175,7 +7355,7 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 		var branch *string
 		var bindingID *string
 		var linkedAt *time.Time
-		if err := rows.Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &linkedAt); err != nil {
+		if err := rows.Scan(&b.AppID, &installID, &b.RepoFullName, &ownerID, &repoID, &branch, &bindingID, &linkedAt, &b.ProductionTrigger, &b.PreviewsOff); err != nil {
 			return nil, err
 		}
 		if installID != nil {
@@ -8536,8 +8716,15 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		helperSiblings[i].ID = s.ID
 		helperSiblings[i].Prior = s.Prior
 	}
-	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool { return rows[i].AbortedCanary }, 100-newPercent)
+	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool { return rows[i].AbortedCanary || rows[i].NeverServed }, 100-newPercent)
 	if err != nil {
+		return Deployment{}, err
+	}
+	priorWeights := make([]int, len(siblings))
+	for i, sibling := range siblings {
+		priorWeights[i] = sibling.Prior
+	}
+	if err := checkTrafficSplitReleaseLimit(ctx, currentTrafficPercent, newPercent, priorWeights, newWeights); err != nil {
 		return Deployment{}, err
 	}
 	for i, sibling := range siblings {
@@ -8568,7 +8755,8 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		if _, err := tx.Exec(ctx,
 			`update deployments
 			    set traffic_percent = $2,
-			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end
+			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end,
+			        promoted_at = case when $2 = 100 and traffic_percent < 100 then clock_timestamp() else promoted_at end
 			  where id = $1`,
 			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false), manualTrafficKeepsExplicit(stamp.prior, stamp.next)); err != nil {
 			if stamp.target {
@@ -9038,10 +9226,13 @@ func RedistributeTraffic(siblings []struct {
 // change. An aborted canary candidate at 0% (abortedCanaryCandidate) keeps 0%:
 // it stays live after the abort, and lowering the only serving release used to
 // hand it an even share of the residual, serving the regression that the
-// canary gate had just rolled back (PulseWatch F1). It receives traffic only
-// when an operator names it. When every sibling is such a candidate and
-// residual remains, the change is refused with ErrTrafficResidualUnassigned.
-// heldAtZero(i) reports whether siblings[i] is an aborted canary candidate.
+// canary gate had just rolled back (PulseWatch F1). A live 0% release that has
+// never served (one staged with no traffic) keeps 0% too: lowering the serving
+// release used to spread the residual evenly over every staged release, none
+// of them named or verified. Either receives traffic only when an operator
+// names it. When every sibling is held and residual remains, the change is
+// refused with ErrTrafficResidualUnassigned. heldAtZero(i) reports whether
+// siblings[i] is held.
 func RedistributeManualTraffic(siblings []struct {
 	ID    string
 	Prior int
@@ -10373,7 +10564,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 				return fmt.Errorf("state: check newer deployment revision: %w", err)
 			}
 			if newer {
-				if _, err := tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1`, id); err != nil {
+				if err := supersedeOutpacedDeploymentTx(ctx, tx, id); err != nil {
 					return fmt.Errorf("state: supersede stale deployment: %w", err)
 				}
 				if err := tx.Commit(ctx); err != nil {
@@ -13411,11 +13602,11 @@ func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error
 	row := s.pool.QueryRow(ctx,
 		`update builds
 		   set status = 'running', started_at = now()
-		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
+		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
 		   and not (kind = 'preview' and exists (
 		     select 1 from builds o
 		      where o.status = 'queued' and o.kind <> 'preview'
-		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=o.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))))
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
 		           started_at, finished_at, enqueued_at,
@@ -13446,15 +13637,18 @@ func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, node
 		   set status = 'running', started_at = now()
 		  from deployments d
 		 where b.id = $1
-		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
+		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=b.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
 		   and not (b.kind = 'preview' and exists (
 		     select 1 from builds o
 		      where o.status = 'queued' and o.kind <> 'preview'
-		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=o.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))))
 		   and d.id = b.deployment_id
 		   and (
-		     b.enqueued_at <= now() - $3::interval
-		     or coalesce((
+		     (b.coalesced_with is not null and (
+		       coalesce((select w.finished_at from builds w where w.id = b.coalesced_with), '-infinity'::timestamptz) <= now() - $3::interval
+		       or coalesce((select nullif(bp.builder_node_id, '') from build_provenance bp where bp.build_id = b.coalesced_with), $2) = $2))
+		     or b.coalesced_with is null and b.enqueued_at <= now() - $3::interval
+		     or b.coalesced_with is null and coalesce((
 		       select nullif(bp.builder_node_id, '')
 		         from deployments prior_d
 		         join builds prior_b on prior_b.deployment_id = prior_d.id
@@ -13498,7 +13692,7 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		   set status = 'running', started_at = now()
 		 where id = (
 		   select id from builds
-		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
+		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
 		    order by (kind = 'preview'), enqueued_at asc
 		    limit 1
 		    for update skip locked
@@ -13527,12 +13721,12 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairnessWindow time.Duration) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`update builds set status='running', started_at = now()
-    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and id = (
+    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes'))) and id = (
       select b.id
         from builds b
         join deployments d on d.id = b.deployment_id
         join apps a on a.id = d.app_id
-       where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
+       where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=b.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
        order by (b.kind = 'preview'), exists (
          select 1 from recent_build_claims r
           where r.account_id = a.account_id
@@ -13570,15 +13764,18 @@ func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, node
 	}
 	row := s.pool.QueryRow(ctx,
 		`update builds set status = 'running', started_at = now()
-		 where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and id = (
+		 where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes'))) and id = (
 		   select b.id
 		     from builds b
 		     join deployments d on d.id = b.deployment_id
 		     join apps a on a.id = d.app_id
-		    where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
+		    where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=b.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
 		      and (
-		        b.enqueued_at <= now() - $2::interval
-		        or coalesce((
+		        (b.coalesced_with is not null and (
+		          coalesce((select w.finished_at from builds w where w.id = b.coalesced_with), '-infinity'::timestamptz) <= now() - $2::interval
+		          or coalesce((select nullif(bp.builder_node_id, '') from build_provenance bp where bp.build_id = b.coalesced_with), $1) = $1))
+		        or b.coalesced_with is null and b.enqueued_at <= now() - $2::interval
+		        or b.coalesced_with is null and coalesce((
 		          select nullif(bp.builder_node_id, '')
 		            from deployments prior_d
 		            join builds prior_b on prior_b.deployment_id = prior_d.id
@@ -18155,7 +18352,7 @@ func (s *PgStore) ListBillingWindowInstances(ctx context.Context, since, end tim
 		         or id in (select instance_id
 		                     from instance_billing_intervals
 		                    where started_at < $3
-		                      and coalesce(ended_at, $3) > $2))
+		                      and (ended_at > $2 or (ended_at is null and $3::timestamptz > $2::timestamptz))))
 		  order by app_id, started_at desc`,
 		LiveStates(), since.UTC(), end.UTC())
 	if err != nil {
@@ -18220,7 +18417,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where state in ('running','waking','cold_booting','draining','snapshotting','warm','frozen')
+		 where state in ('running','waking','cold_booting','draining','snapshotting','warm','frozen','migrating')
 		 order by started_at desc`)
 	if err != nil {
 		return nil, err
@@ -22062,7 +22259,9 @@ func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Ti
 		                - greatest(started_at, $1::timestamptz))))::bigint) as resident_seconds
 		   from instance_billing_intervals
 		  where started_at < $2
-		    and coalesce(ended_at, $2) > $1
+		    -- coalesce(ended_at, $2) > $1 (start < end is checked above),
+		    -- spelled so instance_billing_intervals_ended_idx serves it.
+		    and (ended_at > $1 or ended_at is null)
 		  group by instance_id`, start.UTC(), end.UTC())
 	if err != nil {
 		return nil, err
@@ -27906,10 +28105,12 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	}
 	// Per-request telemetry and logs of the personal apps, as the app purge
 	// removes them: the apps' rows go below, and request_telemetry has no FK
-	// to them, so it outlived the account (bug hunt 2026-10-28 B11).
+	// to them, so it outlived the account (bug hunt 2026-10-28 B11). Company
+	// apps the account created stay with their organization, and so do their
+	// logs and telemetry (bug hunt 35).
 	for _, step := range []struct{ name, sql string }{
-		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1)`},
-		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1)`},
+		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
+		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 		// No FK either: the app purge deletes it, account erasure did not.
 		{"debug_regression_observations", `delete from debug_regression_observations where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 	} {
@@ -28930,8 +29131,14 @@ func (s *PgStore) ListSessions(ctx context.Context, accountID string) ([]Session
 // the supplied sid (the calling session). Returns the count via
 // pgx.RowsAffected.
 func (s *PgStore) RevokeAllSessions(ctx context.Context, accountID, exceptID string) (int, error) {
+	// Signing out everywhere also ends outstanding legacy MFA-disable email
+	// requests (bug hunt 2026-10-28 H98).
 	tag, err := s.pool.Exec(ctx,
-		`update sessions set revoked_at = now()
+		`with legacy as (
+		   update mfa_disable_requests set consumed_at = clock_timestamp()
+		    where account_id = $1 and consumed_at is null
+		 )
+		 update sessions set revoked_at = now()
 		   where account_id = $1 and id <> $2 and revoked_at is null`,
 		accountID, exceptID)
 	if err != nil {
@@ -30572,6 +30779,7 @@ func oidcExchangedTokenFromRow(row sqlc.GetOIDCExchangedTokenByHashRow) *OIDCExc
 		Audience:  row.Audience,
 		JTI:       row.Jti,
 		CreatedAt: timeFromPgtype(row.CreatedAt),
+		AppID:     row.AppID,
 	}
 }
 
@@ -30834,13 +31042,18 @@ func (s *PgStore) InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertReq
 // sqlc names the third positional arg `Column3` because the
 // predicate is `account_id = $3::uuid` with no `RETURNING`
 // or named-arg convention. Mirror what `make sqlc-generate`
-// produces so the drift gate stays green.
-func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error {
+// produces so the drift gate stays green. Column5..7 are the
+// target's optional app, organization and customer-credential
+// narrowings; the zero UUID binds NULL, which leaves them off.
+func (s *PgStore) UpdateSpansSummary(ctx context.Context, target SpansSummaryTarget, summary []byte, maxSpans int) error {
 	affected, err := s.appErrorsQueries().UpdateSpansSummary(ctx, s.pool, sqlc.UpdateSpansSummaryParams{
-		TraceID: pgtype.Text{String: traceID, Valid: traceID != ""},
+		TraceID: pgtype.Text{String: target.TraceID, Valid: target.TraceID != ""},
 		Column2: summary,
-		Column3: pgtype.UUID{Bytes: accountID, Valid: true},
+		Column3: pgtype.UUID{Bytes: target.AccountID, Valid: true},
 		Column4: int32(min(max(maxSpans, 1), 1000)),
+		Column5: pgtype.UUID{Bytes: target.AppID, Valid: target.AppID != uuid.Nil},
+		Column6: pgtype.UUID{Bytes: target.OrgID, Valid: target.OrgID != uuid.Nil},
+		Column7: target.CustomerCredential,
 	})
 	if err != nil {
 		return err

@@ -17,7 +17,25 @@ import (
 const (
 	vmmdLogArchiveQueueSize  = 4096
 	vmmdLogArchiveQueueBytes = 64 << 20
+	// vmmdLogArchiveRetireWait bounds how long a teardown waits for queue
+	// room for its retired ring before it writes the lines to the spool
+	// itself.
+	vmmdLogArchiveRetireWait = 2 * time.Second
 )
+
+// vmmdLogArchiveDroppedLines is the §12-style counter of log lines that
+// never reached the archive spool: a full eviction queue, a full spool, a
+// failed spool write, or a ring retired after the archive closed. Each drop
+// also counts in vmmd_log_archive_failures_total{reason}, which
+// FaasLogArchiveShipperDegraded alerts on; this counter gives the volume.
+const vmmdLogArchiveDroppedLines = "vmmd_log_archive_lines_dropped_total"
+
+func newVMMDLogArchiveDroppedCounter() prometheus.Counter {
+	return prometheus.NewCounter(prometheus.CounterOpts{
+		Name: vmmdLogArchiveDroppedLines,
+		Help: "Log lines vmmd dropped before they reached the log archive spool (queue full, spool full, spool write failure, or archive closed).",
+	})
+}
 
 type archivedLine struct {
 	instance string
@@ -37,10 +55,21 @@ type vmmdLogArchiveSink struct {
 	log     *slog.Logger
 	queue   chan archivedLine
 	done    chan struct{}
+	dropped prometheus.Counter
+
+	maxQueuedBytes int64
+	retireWait     time.Duration
 
 	mu          sync.RWMutex
 	closed      bool
 	queuedBytes int64
+	// space is closed by the worker when it frees queue room while a
+	// Retire waits for it (waiters > 0); a waiter makes a new one.
+	space   chan struct{}
+	waiters int
+	// spills counts Retire calls writing to the spool themselves; Close
+	// waits for them before closing the spool's files.
+	spills sync.WaitGroup
 }
 
 func newVMMDLogArchiveSink(spool *logarchive.Spool, metrics logarchive.Metrics, log *slog.Logger) *vmmdLogArchiveSink {
@@ -51,11 +80,14 @@ func newVMMDLogArchiveSink(spool *logarchive.Spool, metrics logarchive.Metrics, 
 		metrics = logarchive.NewMetrics(nil)
 	}
 	s := &vmmdLogArchiveSink{
-		spool:   spool,
-		metrics: metrics,
-		log:     log,
-		queue:   make(chan archivedLine, vmmdLogArchiveQueueSize),
-		done:    make(chan struct{}),
+		spool:          spool,
+		metrics:        metrics,
+		log:            log,
+		queue:          make(chan archivedLine, vmmdLogArchiveQueueSize),
+		done:           make(chan struct{}),
+		dropped:        newVMMDLogArchiveDroppedCounter(),
+		maxQueuedBytes: vmmdLogArchiveQueueBytes,
+		retireWait:     vmmdLogArchiveRetireWait,
 	}
 	go s.run()
 	return s
@@ -72,46 +104,101 @@ func (s *vmmdLogArchiveSink) Enqueue(instance string, line logbuf.Line) {
 	if s.closed {
 		return
 	}
-	lineBytes := int64(len(line.Line))
-	if lineBytes > vmmdLogArchiveQueueBytes || s.queuedBytes+lineBytes > vmmdLogArchiveQueueBytes {
+	if !s.tryEnqueueLocked(archivedLine{instance: instance, line: line}, int64(len(line.Line))) {
 		s.metrics.IncFailure(logarchive.FailureReasonQueueFull)
-		return
+		s.dropped.Inc()
 	}
-	select {
-	case s.queue <- archivedLine{instance: instance, line: line}:
-		s.queuedBytes += lineBytes
-	default:
-		s.metrics.IncFailure(logarchive.FailureReasonQueueFull)
+}
+
+// tryEnqueueLocked queues item when the queue has room for it. The send
+// cannot block: every sender holds s.mu and only the worker receives.
+func (s *vmmdLogArchiveSink) tryEnqueueLocked(item archivedLine, size int64) bool {
+	if s.queuedBytes+size > s.maxQueuedBytes || len(s.queue) >= cap(s.queue) {
+		return false
 	}
+	s.queue <- item
+	s.queuedBytes += size
+	return true
 }
 
 // Retire hands over the lines a torn-down VM's ring still held. Lines under
 // the ring budget are never evicted, so without this a parked instance had
-// nothing in the archive. Like Enqueue it never blocks: the batch is one
-// queue item, and a full queue is counted and dropped.
+// nothing in the archive. It runs on the teardown path outside the ring
+// lock, so unlike Enqueue it may wait: the batch is one queue item, queued
+// after the evictions before it once the worker frees room. A mass teardown
+// used to drop whole batches when the queue was full (logs/traces audit
+// 2026-10-31 A12). After retireWait the lines go straight to the spool
+// instead, possibly ahead of evictions still queued; only lines the spool
+// refuses, or that arrive after Close, are dropped and counted.
 func (s *vmmdLogArchiveSink) Retire(instance string, lines []logbuf.Line) {
 	if s == nil || len(lines) == 0 {
 		return
 	}
+	size := linesBytes(lines)
+	item := archivedLine{instance: instance, batch: lines}
+	timer := time.NewTimer(s.retireWait)
+	defer timer.Stop()
+	s.mu.Lock()
+	for {
+		if s.closed {
+			s.mu.Unlock()
+			s.dropped.Add(float64(len(lines)))
+			return
+		}
+		if s.tryEnqueueLocked(item, size) {
+			s.mu.Unlock()
+			return
+		}
+		if size > s.maxQueuedBytes {
+			break // larger than the whole queue: it can never be queued
+		}
+		if s.space == nil {
+			s.space = make(chan struct{})
+		}
+		space := s.space
+		s.waiters++
+		s.mu.Unlock()
+		timedOut := false
+		select {
+		case <-space:
+		case <-timer.C:
+			timedOut = true
+		}
+		s.mu.Lock()
+		s.waiters--
+		if timedOut && !s.closed {
+			break
+		}
+	}
+	// Close waits for the spill before it closes the spool's files.
+	s.spills.Add(1)
+	s.mu.Unlock()
+	defer s.spills.Done()
+	s.spill(instance, lines)
+}
+
+// spill writes a retired batch the queue could not take straight to the
+// spool from the caller's goroutine. The spool serialises writers.
+func (s *vmmdLogArchiveSink) spill(instance string, lines []logbuf.Line) {
+	s.metrics.IncFailure(logarchive.FailureReasonQueueFull)
+	failed := 0
+	var lastErr error
+	for _, line := range lines {
+		if err := s.writeLine(instance, line); err != nil {
+			failed++
+			lastErr = err
+		}
+	}
+	s.log.Warn("logarchive.retire_spilled",
+		"instance", instance, "lines", len(lines), "dropped", failed, "err", lastErr)
+}
+
+func linesBytes(lines []logbuf.Line) int64 {
 	var size int64
 	for _, line := range lines {
 		size += int64(len(line.Line))
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return
-	}
-	if size > vmmdLogArchiveQueueBytes || s.queuedBytes+size > vmmdLogArchiveQueueBytes {
-		s.metrics.IncFailure(logarchive.FailureReasonQueueFull)
-		return
-	}
-	select {
-	case s.queue <- archivedLine{instance: instance, batch: lines}:
-		s.queuedBytes += size
-	default:
-		s.metrics.IncFailure(logarchive.FailureReasonQueueFull)
-	}
+	return size
 }
 
 func (s *vmmdLogArchiveSink) run() {
@@ -121,29 +208,41 @@ func (s *vmmdLogArchiveSink) run() {
 		if lines == nil {
 			lines = []logbuf.Line{item.line}
 		}
-		var size int64
+		s.release(linesBytes(lines))
 		for _, line := range lines {
-			size += int64(len(line.Line))
-		}
-		s.mu.Lock()
-		s.queuedBytes -= size
-		s.mu.Unlock()
-		for _, line := range lines {
-			s.write(item.instance, line)
+			if err := s.writeLine(item.instance, line); err != nil {
+				s.log.Warn("logarchive.spool_write_failed",
+					"instance", item.instance, "seq", line.Seq, "err", err)
+			}
 		}
 	}
 }
 
-func (s *vmmdLogArchiveSink) write(instance string, line logbuf.Line) {
-	if _, err := s.spool.WriteWithLevel(instance, line.Seq, line.Stream, line.WrittenAt, line.Line, line.Level); err != nil {
-		if errors.Is(err, logarchive.ErrSpoolFull) {
-			s.metrics.IncFailure(logarchive.FailureReasonSpoolFull)
-		} else {
-			s.metrics.IncFailure(logarchive.FailureReasonSpoolWrite)
-		}
-		s.log.Warn("logarchive.spool_write_failed",
-			"instance", instance, "seq", line.Seq, "err", err)
+// release frees the queue room a dequeued item held and wakes a waiting
+// Retire.
+func (s *vmmdLogArchiveSink) release(size int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queuedBytes -= size
+	if s.waiters > 0 && s.space != nil {
+		close(s.space)
+		s.space = nil
 	}
+}
+
+// writeLine spools one line, counting a refusal as a failure and a drop.
+func (s *vmmdLogArchiveSink) writeLine(instance string, line logbuf.Line) error {
+	_, err := s.spool.WriteWithLevel(instance, line.Seq, line.Stream, line.WrittenAt, line.Line, line.Level)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, logarchive.ErrSpoolFull) {
+		s.metrics.IncFailure(logarchive.FailureReasonSpoolFull)
+	} else {
+		s.metrics.IncFailure(logarchive.FailureReasonSpoolWrite)
+	}
+	s.dropped.Inc()
+	return err
 }
 
 // Close stops accepting new evictions, drains the bounded queue, and flushes
@@ -160,12 +259,19 @@ func (s *vmmdLogArchiveSink) Close(ctx context.Context) error {
 		close(s.queue)
 	}
 	s.mu.Unlock()
-	select {
-	case <-s.done:
-		return s.spool.CloseAll()
-	case <-ctx.Done():
-		return ctx.Err()
+	spilled := make(chan struct{})
+	go func() {
+		s.spills.Wait()
+		close(spilled)
+	}()
+	for _, done := range []<-chan struct{}{s.done, spilled} {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	return s.spool.CloseAll()
 }
 
 // startVMMDLogArchive wires the compute-side producer and shipper. Archive
@@ -220,6 +326,9 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		return nil, nil
 	}
 	sink := newVMMDLogArchiveSink(spool, metrics, log)
+	if reg != nil {
+		reg.MustRegister(sink.dropped)
+	}
 	archiveCtx, archiveCancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {

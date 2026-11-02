@@ -56,6 +56,15 @@ type PrewarmStore interface {
 	CancelPrewarmIntent(ctx context.Context, id, accountID string) error
 }
 
+// PrewarmFloorsReader reads the active prewarm floor of many apps in one query
+// (ADR 20261102160622): the reaper reads every owned app's floor each tick,
+// and one ActivePrewarmFloor per app grew its tick with the app count. An app
+// without an active intent is absent from the map (floor 0). Callers fall
+// back to ActivePrewarmFloor when the store does not implement it.
+type PrewarmFloorsReader interface {
+	ActivePrewarmFloors(ctx context.Context, appIDs []string, now time.Time) (map[string]int, error)
+}
+
 // PrewarmExpiryStore is an optional scheduler capability. Expired pending
 // intents are terminalized as failed rows with outcome "expired" so API
 // clients do not see a stale pending intent forever. It is separate from

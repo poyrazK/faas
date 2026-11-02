@@ -93,6 +93,9 @@ func (s *Service) AppendManagedRealtimeRetainedMessage(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrRealtimeInvalid("ttl_seconds must be between zero and 86400"))
 		return
 	}
+	if !s.allowRealtimeWrites(w, acct, 1) {
+		return
+	}
 	if request.TTLSeconds > 0 {
 		if expiring, ok := s.Host.Store().(state.ManagedRealtimeExpiringStore); ok {
 			message, err = expiring.AppendManagedRealtimeChannelExpiring(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey, request.Metadata, request.ExpectedSequence, request.TTLSeconds)

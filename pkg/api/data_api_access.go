@@ -3,7 +3,8 @@ package api
 import (
 	"encoding/hex"
 	"errors"
-	"regexp"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // DataAPIAccessConfig is what a Data API runtime reports about access
@@ -56,9 +57,9 @@ type DataAPIServerKeyPermissionSet struct {
 }
 
 var (
-	dataAPIAccessSchema   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
-	dataAPIAccessRelation = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$`)
-	dataAPIAccessFunction = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}\.[a-z][a-z0-9_]{0,62}$`)
+	dataAPIAccessSchema   = lazyregexp.New(`^[a-z][a-z0-9_]{0,62}$`)
+	dataAPIAccessRelation = lazyregexp.New(`^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$`)
+	dataAPIAccessFunction = lazyregexp.New(`^[a-z][a-z0-9_]{0,62}\.[a-z][a-z0-9_]{0,62}$`)
 )
 
 // Validate bounds a reported access config.
@@ -98,7 +99,7 @@ func (c DataAPIAccessConfig) Validate() error {
 	return nil
 }
 
-func uniqueMatching(values []string, pattern *regexp.Regexp) bool {
+func uniqueMatching(values []string, pattern *lazyregexp.Regexp) bool {
 	seen := map[string]bool{}
 	for _, v := range values {
 		if !pattern.MatchString(v) || seen[v] {

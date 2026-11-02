@@ -589,6 +589,9 @@ jobs:
             deploy/ansible/roles/agentd_service/files/faas-agentd.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-agentd.service"
           install -m 0644 \
+            deploy/ansible/roles/edgednsd_service/files/faas-edgednsd.service \
+            "${BUNDLE_ROOT}/optional-systemd/faas-edgednsd.service"
+          install -m 0644 \
             deploy/ansible/roles/control_plane_service/files/faas-mcp-bridge.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-mcp-bridge.service"
           # Files required before deployctl can activate outboundd. Keep the

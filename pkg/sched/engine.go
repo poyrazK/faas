@@ -661,7 +661,7 @@ type Engine struct {
 	brokerLag BrokerLagReader
 
 	mu    sync.Mutex
-	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	appMu map[string]*appLock // app_id -> serialisation lock, while held or awaited
 	// frozenTier (ADR-1151, schedd `frozen_tier`) freezes idle eligible
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
@@ -826,6 +826,11 @@ type Engine struct {
 	// frozenYieldOne replaces parking a frozen VM for admission in tests
 	// (ADR 20261031190030, frozen_yield.go); it reports whether it parked.
 	frozenYieldOne func(ctx context.Context, instanceID, reason string) bool
+	// nodeMemoryLocal measures this scheduler's node for its peers, and
+	// nodeMemoryReports caches every node's report (ADR 20261101091815,
+	// node_memory_reports.go).
+	nodeMemoryLocal   NodeMemorySource
+	nodeMemoryReports atomic.Pointer[map[string]state.NodeMemoryReport]
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -1026,7 +1031,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		fcVer:                    fcVer,
 		log:                      log,
 		jobContext:               ctx,
-		appMu:                    map[string]*sync.Mutex{},
+		appMu:                    map[string]*appLock{},
 		restorePlacementInFlight: map[string]int{},
 		restartInFlight:          map[string]*restartCall{},
 		restartCompleted:         map[string]string{},
@@ -5008,10 +5013,26 @@ func (e *Engine) nodeUsageForNodes(ctx context.Context, nodes []state.ComputeNod
 			missing = append(missing, node)
 		}
 	}
-	for nodeID, value := range e.fallbackNodeUsage(ctx, missing) {
-		used[nodeID] = value
+	fallback := e.fallbackNodeUsage(ctx, missing)
+	for _, node := range missing {
+		used[node.ID] = e.unreportedNodeUsedMB(node, fallback[node.ID])
 	}
 	return used
+}
+
+// unreportedNodeUsedMB is placement's used_mb for a node without a fresh vmmd
+// report: a peer node, whose stream reaches only its own scheduler, or this
+// node during a stream gap. With a measured basis in the ledger (this node's
+// held measurement or the peer's published report, ADR 20261101091815) it is
+// the figure Admit uses, but never below what the node's bookings, every
+// owner's (bookedMB, frozen excluded), leave under the durable guard's
+// overcommit cap; otherwise it is the bookings, as before.
+func (e *Engine) unreportedNodeUsedMB(node state.ComputeNode, bookedMB int64) int64 {
+	if _, ok := e.ledger.MeasuredAsOf(node.ID); !ok || node.AdmissionCeilingMB <= 0 {
+		return bookedMB
+	}
+	overcommit := int64(node.AdmissionCeilingMB) * int64(api.MeasuredAdmissionMaxOvercommitPercent-100) / 100
+	return max(int64(e.ledger.AdmissionUsedMB(node.ID)), bookedMB-overcommit)
 }
 
 // nodeCPUUsageForNodes merges the durable fleet-wide instance aggregate with
@@ -8392,30 +8413,25 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			"instance", ins.ID,
 			"instance_ram_mb", ins.RAMMB,
 			"app_ram_mb", app.RAMMB)
-		destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
-		if destroyErr != nil {
-			e.log.Warn("sched: park: destroy RAM-incompatible instance", "instance", ins.ID, "err", destroyErr)
+		// An uncertain destroy keeps the row and its reservation: the VM may
+		// still hold its memory, and the next park retries (ADR
+		// 20261101091815), as the ephemeral-secret discard below does.
+		if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, ins.ID, DestroyTimeout); err != nil {
+			return fmt.Errorf("sched: park: destroy RAM-incompatible instance %s: %w", ins.ID, err)
 		}
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_resource_mismatch", "ram_changed")
-		if destroyErr != nil {
-			return fmt.Errorf("sched: park: destroy RAM-incompatible instance %s: %w", ins.ID, destroyErr)
-		}
 		return nil
 	}
 	// Issue #3360: the same retire-instead-of-capture rule applies when the
 	// app's secrets or environment changed after this process started.
 	if e.runtimeConfigStale(ctx, ins) {
 		e.log.Info("sched: park: discard instance after runtime config change", "instance", ins.ID, "app", ins.AppID)
-		destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
-		if destroyErr != nil {
-			e.log.Warn("sched: park: destroy runtime-config-stale instance", "instance", ins.ID, "err", destroyErr)
+		if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, ins.ID, DestroyTimeout); err != nil {
+			return fmt.Errorf("sched: park: destroy runtime-config-stale instance %s: %w", ins.ID, err)
 		}
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_runtime_config_changed", "runtime_config_changed")
-		if destroyErr != nil {
-			return fmt.Errorf("sched: park: destroy runtime-config-stale instance %s: %w", ins.ID, destroyErr)
-		}
 		return nil
 	}
 	ephemeral, err := e.hasEphemeralSecretForInstance(ctx, ins, app)
@@ -10874,26 +10890,68 @@ func cooldownSRemaining(app *state.App, now time.Time) int {
 	return int(remaining.Seconds())
 }
 
+// appLock is one app's serialisation lock. refs counts its holder and its
+// waiters, under Engine.mu; the entry leaves Engine.appMu when it reaches
+// zero, so the map holds only apps someone is working on (ADR
+// 20261102160622). Every lock and unlock goes through lockApp, tryLockApp
+// and unlockApp: a caller that kept the *appLock past its unlock could lock
+// a mutex another caller no longer shares.
+type appLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
 func (e *Engine) lockApp(appID string) func() {
-	e.appMutex(appID).Lock()
+	e.appLockRef(appID).mu.Lock()
 	return func() { e.unlockApp(appID) }
 }
 
-func (e *Engine) unlockApp(appID string) {
-	e.appMutex(appID).Unlock()
+// tryLockApp locks appID's lock when it is free and reports whether it did.
+func (e *Engine) tryLockApp(appID string) (func(), bool) {
+	l := e.appLockRef(appID)
+	if l.mu.TryLock() {
+		return func() { e.unlockApp(appID) }, true
+	}
+	e.mu.Lock()
+	e.dropAppLockRefLocked(appID, l)
+	e.mu.Unlock()
+	return nil, false
 }
 
-// appMutex returns the stable per-app serialisation mutex, creating it on first
-// use. Never GC'd (one-box scale, single-digit apps).
-func (e *Engine) appMutex(appID string) *sync.Mutex {
+func (e *Engine) unlockApp(appID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	mu, ok := e.appMu[appID]
-	if !ok {
-		mu = &sync.Mutex{}
-		e.appMu[appID] = mu
+	l := e.appMu[appID]
+	if l == nil {
+		panic("sched: unlock of an app lock nobody holds: " + appID)
 	}
-	return mu
+	l.mu.Unlock()
+	e.dropAppLockRefLocked(appID, l)
+}
+
+// appLockRef returns appID's lock with a reference taken for the caller,
+// creating it on first use.
+func (e *Engine) appLockRef(appID string) *appLock {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.appMu == nil {
+		e.appMu = map[string]*appLock{}
+	}
+	l := e.appMu[appID]
+	if l == nil {
+		l = &appLock{}
+		e.appMu[appID] = l
+	}
+	l.refs++
+	return l
+}
+
+// dropAppLockRefLocked releases a reference; the caller holds e.mu.
+func (e *Engine) dropAppLockRefLocked(appID string, l *appLock) {
+	l.refs--
+	if l.refs <= 0 && e.appMu[appID] == l {
+		delete(e.appMu, appID)
+	}
 }
 
 // Ledger exposes the engine's admission ledger for the reaper's resident-RAM

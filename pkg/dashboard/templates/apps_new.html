@@ -41,20 +41,20 @@
     {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
     <section class="card">
-      <p>Connect GitHub, choose the installation that owns your repository, then create an app bound to it. The next push to the selected repository will start a deployment.</p>
+      {{if .Data.ExistingApp}}
+      <p>Choose the installation that owns your repository, then bind <code>{{.Data.ExistingApp}}</code> to it. The next push to the production branch will start a deployment.</p>
+      {{else}}
+      <p>Connect GitHub, choose the installation that owns your repository, then create an app bound to it. The next push to the production branch will start a deployment.</p>
+      {{end}}
 
-      {{if or .Data.NeedsGithubConnect .Data.NeedsGithubInstall}}
+      {{if .Data.NeedsGithubConnect}}
         <div class="empty">
           <h2>1. Connect GitHub</h2>
-          {{if .Data.NeedsGithubConnect}}
-            <p>The dashboard is the install-token trust root. Connect GitHub so Gregale can verify which repositories you can use.</p>
-          {{else}}
-            <p>Your GitHub identity is connected, but the Gregale GitHub App is not installed yet. Install it, then return here to choose a repository.</p>
-          {{end}}
+          <p>Connect GitHub so Gregale can verify which repositories you can use. If the Gregale GitHub App is not installed on your account or organization yet, GitHub asks you to install it.</p>
           <form method="POST" action="/dashboard/install/connect">
             <input type="hidden" name="csrf_token" value="{{.Data.ConnectGithubConfirmToken}}">
             <input type="hidden" name="return_to" value="{{.Data.ReturnTo}}">
-            <button type="submit" class="btn-cta">{{if .Data.NeedsGithubConnect}}Connect GitHub{{else}}Install GitHub App{{end}}</button>
+            <button type="submit" class="btn-cta">Connect GitHub</button>
           </form>
         </div>
       {{else if .Data.GitHubDegraded}}
@@ -77,6 +77,7 @@
           <input type="hidden" name="repo" value="{{.Data.PreFilledRepo}}">
           <input type="hidden" name="default_branch" value="{{.Data.PreFilledBranch}}">
           <input type="hidden" name="slug" value="{{.Data.PreFilledSlug}}">
+          {{if .Data.ExistingApp}}<input type="hidden" name="app" value="{{.Data.ExistingApp}}">{{end}}
           <button type="submit" class="btn">Load repositories</button>
         </form>
 
@@ -100,9 +101,14 @@
 
           <label>
             Production branch
-            <input type="text" name="production_branch" value="{{.Data.PreFilledBranch}}" placeholder="main">
+            <input type="text" name="production_branch" value="{{.Data.PreFilledBranch}}" placeholder="the repository's default branch">
           </label>
 
+          {{if .Data.ExistingApp}}
+          <input type="hidden" name="existing_app" value="{{.Data.ExistingApp}}">
+          <p>App: <code>{{.Data.ExistingApp}}</code></p>
+          <button type="submit" class="btn-cta">Connect repository</button>
+          {{else}}
           <label>
             App slug
             <input type="text" name="slug" value="{{.Data.PreFilledSlug}}" placeholder="my-app" pattern="[a-z0-9-]+" required>
@@ -110,6 +116,7 @@
           </label>
 
           <button type="submit" class="btn-cta">Create app and connect repository</button>
+          {{end}}
         </form>
       {{end}}
 

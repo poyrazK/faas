@@ -90,6 +90,9 @@ func (h *managedPostgresHooks) notifyCap() func(context.Context, managedpostgres
 }
 
 func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
+	// An invalid value fails startup in loadManagedPostgresCapEnforcer; here
+	// it reads as not "on", which refuses Free databases.
+	capMode, _ := managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
 	registry, err := managedpostgres.Load(getenv, managedPostgresFactories(pool))
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -191,7 +194,8 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			return nil
 		},
 		Admit: func(ctx context.Context, accountID string) error {
-			if !registry.UsagePolicy().Enabled {
+			usagePolicy := registry.UsagePolicy().Enabled
+			if !usagePolicy && capMode == managedpostgres.CapEnforcementOn {
 				return nil
 			}
 			account, lookupErr := state.BillingResourceAccount(ctx, accountStore, accountID)
@@ -200,6 +204,18 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 					metrics.ObserveAdmission(lookupErr)
 				}
 				return lookupErr
+			}
+			// Every create and restore path admits here, so the Free-plan
+			// refusal the create route makes also covers Compose, dev,
+			// pipeline mirrors and restores (bug hunt 33 H1).
+			if managedPostgresFreeClosed(api.Plan(account.Plan), capMode) {
+				if metrics != nil {
+					metrics.ObserveAdmission(managedpostgres.ErrNotInPlan)
+				}
+				return managedpostgres.ErrNotInPlan
+			}
+			if !usagePolicy {
+				return nil
 			}
 			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
 			if !ok || limits.DatabasesMax <= 0 {
@@ -335,12 +351,17 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	if err != nil {
 		return nil, err
 	}
+	planExcessMode, err := managedpostgres.ParsePlanExcessEnforcementMode(getenv(managedpostgres.PlanExcessEnforcementEnv))
+	if err != nil {
+		return nil, err
+	}
 	options := managedpostgres.CapEnforcerOptions{
-		Mode:        mode,
-		StorageMode: storageMode,
-		Logger:      log,
-		Notify:      hooks.notifyCap(),
-		Ceiling:     managedPostgresCapLimits(store, accountStore, hooks.overage()),
+		Mode:           mode,
+		StorageMode:    storageMode,
+		PlanExcessMode: planExcessMode,
+		Logger:         log,
+		Notify:         hooks.notifyCap(),
+		Ceiling:        managedPostgresCapLimits(store, accountStore, hooks.overage()),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
@@ -385,7 +406,8 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 		}
 		return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
 			Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
-			StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
+			StoragePool: managedPostgresStoragePool(limits, overageOn), StorageAllowance: limits.StorageLimitBytes,
+			Entitlement: limits}, nil
 	}
 }
 
@@ -418,9 +440,41 @@ func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.Us
 }
 
 // configureManagedPostgresCapMode records the compute cap enforcement mode for
-// the usage views. loadManagedPostgres already refused an invalid value.
+// the usage views, and whether databases past their plan are suspended
+// (ADR-20261102125208). loadManagedPostgres already refused an invalid value.
 func (s *server) configureManagedPostgresCapMode(getenv func(string) string) {
 	s.managedPostgresCapMode, _ = managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
+	planExcess, _ := managedpostgres.ParsePlanExcessEnforcementMode(getenv(managedpostgres.PlanExcessEnforcementEnv))
+	s.managedPostgresPlanExcessOn = s.managedPostgresCapMode == managedpostgres.CapEnforcementOn && planExcess == managedpostgres.CapEnforcementOn
+}
+
+// managedPostgresPlanExcess maps the databases the caller's plan no longer
+// includes to the reason, while the cap sweep suspends them; otherwise it is
+// empty, because nothing is suspended.
+func (s *server) managedPostgresPlanExcess(databases []managedpostgres.Database, plan api.Plan) map[string]string {
+	if !s.managedPostgresPlanExcessOn {
+		return nil
+	}
+	limits, ok := api.ManagedPostgresLimitsFor(plan)
+	if !ok {
+		return nil
+	}
+	return managedpostgres.PlanExcess(databases, limits)
+}
+
+// managedPostgresPlanExcessOf is one database's plan excess reason. Ranking
+// needs the caller's other databases; a failed read shows none rather than
+// failing the read of the database.
+func (s *server) managedPostgresPlanExcessOf(ctx context.Context, acct state.Account, databaseID string) string {
+	if !s.managedPostgresPlanExcessOn {
+		return ""
+	}
+	databases, err := s.managedPostgres.List(ctx, acct.ID)
+	if err != nil {
+		s.log.Warn("managed postgres plan excess: list databases", "account", acct.ID, "err", err)
+		return ""
+	}
+	return s.managedPostgresPlanExcess(databases, acct.Plan)[databaseID]
 }
 
 // managedPostgresStoredOverage reads a subject's overage choice when the

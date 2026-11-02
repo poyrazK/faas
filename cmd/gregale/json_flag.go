@@ -297,6 +297,7 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 		if hint := globalFlagPlacementHint(diagnostic, path); hint != "" {
 			diagnostic += "\n  " + hint
 		}
+		path = strings.TrimPrefix(spellUsageForTree("gregale "+path), "gregale ")
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
 			diagnostic, cliTreeSpellPath(path))
 		return len(p), err

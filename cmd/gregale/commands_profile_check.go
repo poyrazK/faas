@@ -65,6 +65,9 @@ func cmdProfileCheck(args []string) int {
 	if _, err := validateConfigAPIBase(apiBase()); err != nil {
 		return printErr("Invalid API endpoint", errors.New("set api-base to an http(s) URL without credentials, query parameters, or fragments; FAAS_API overrides profile settings"))
 	}
+	if err := checkAPIBaseTransport(apiBase()); err != nil {
+		return printErr("Insecure API connection", err)
+	}
 	connection := effectiveConnectionContext()
 	previousProfile := profileOverride
 	profileOverride = connection.Profile
