@@ -122,9 +122,9 @@ other than its metrics port.
   flowing; only failover stops.
 - **Off the request path.** The daemon reads `compute_nodes` and calls the
   Cloudflare API only when a node's state changes.
-- **Metrics:** `edge_dns_records{zone}`,
-  `edge_dns_changes_total{zone,action}` and
-  `edge_dns_probe_failures_total{node}`.
+- **Metrics:** `edge_dns_records{name}`,
+  `edge_dns_changes_total{name,action,dry_run}`,
+  `edge_dns_probe_failures_total{node}` and `edge_dns_node_in{node}`.
 
 ### 4. Drain and restart
 
