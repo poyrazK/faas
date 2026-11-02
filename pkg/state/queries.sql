@@ -11106,7 +11106,8 @@ WHERE s.id = sqlc.arg(source_id)::uuid;
 -- Approving the same revision again keeps its row. A person's approval
 -- replaces a key's ("api_key:<id>"), never the reverse, so a person can stand
 -- in for the apps' release approvals after CI approved the revision
--- (ADR-20261020085706 amendment 8).
+-- (ADR-20261020085706 amendment 8). A protected-branch source's revisions are
+-- immutable (their approval is the merge provenance), so they keep theirs.
 INSERT INTO environment_desired_revisions
     (source_id, commit_sha, definition_digest, definition, approved_by)
 VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(commit_sha)::text,
@@ -11115,9 +11116,15 @@ ON CONFLICT (source_id, commit_sha, definition_digest) DO UPDATE
     SET source_id = excluded.source_id,
         approved_by = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
                             AND excluded.approved_by <> environment_desired_revisions.approved_by
+                            AND NOT EXISTS (SELECT 1 FROM environment_git_sources g
+                                             WHERE g.id = environment_desired_revisions.source_id
+                                               AND g.approval_policy = 'protected_branch')
                            THEN excluded.approved_by ELSE environment_desired_revisions.approved_by END,
         approved_at = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
                             AND excluded.approved_by <> environment_desired_revisions.approved_by
+                            AND NOT EXISTS (SELECT 1 FROM environment_git_sources g
+                                             WHERE g.id = environment_desired_revisions.source_id
+                                               AND g.approval_policy = 'protected_branch')
                            THEN now() ELSE environment_desired_revisions.approved_at END
 RETURNING *;
 
