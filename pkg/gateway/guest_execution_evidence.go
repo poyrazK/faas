@@ -257,7 +257,7 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 	}
 	// Only gatewayd-internal names the instance's node; a guest's copy would
 	// steer the edge's routing (ADR-20261031105055).
-	if strings.EqualFold(strings.TrimSpace(name), InstanceNodeHeader) {
+	if strings.EqualFold(strings.TrimSpace(name), InstanceNodeHeader) || strings.EqualFold(strings.TrimSpace(name), InstanceNodesHeader) {
 		return
 	}
 	// Response headers cross the internal bridge before they reach the
@@ -344,6 +344,7 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 	resp.Header.Del(apihostingreceipt.ServedResponseHeader)
 	resp.Header.Del(api.ErrorCodeHeader)
 	resp.Header.Del(InstanceNodeHeader)
+	resp.Header.Del(InstanceNodesHeader)
 	for name := range resp.Header {
 		if isTrafficResponseControlHeader(name) {
 			resp.Header.Del(name)

@@ -51,6 +51,7 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"operator_alert_triage_and_retention_are_durable", testOperatorAlertTriageRetention},
 		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
+		{"operator_actions_reach_the_audit_log_under_the_operator", testOperatorActionsReachAuditLog},
 		{"operator_queue_count_excludes_running_and_terminal_builds", testOperatorQueuedBuildsCount},
 		{"operator_queue_snapshot_preserves_wait_across_requeue", testOperatorBuildQueueSnapshot},
 		{"operator_build_recovery_snapshot_preserves_cleanup_age", testOperatorBuildRecoverySnapshot},

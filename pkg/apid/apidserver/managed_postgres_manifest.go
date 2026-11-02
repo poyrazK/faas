@@ -64,9 +64,6 @@ func (s *server) loadAndResolveProjectManifest(
 	if _, shared := projectaccess.From(ctx); shared && manifest.AsyncRoutes != nil {
 		return resolvedProjectManifest{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization async bindings unavailable", "deploy application workloads with environment configuration; async-route bindings require separate organization ownership support")
 	}
-	if _, shared := projectaccess.From(ctx); shared && manifest.Routes != nil {
-		return resolvedProjectManifest{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization routes unavailable", "manifest routes are not yet supported for organization-owned projects; create them with `gregale edge-rules create --kind route`")
-	}
 	_, sharedProject := projectaccess.From(ctx)
 	_, sharedApp := appaccess.FromContext(ctx)
 	if len(manifest.Databases) > 0 && (sharedProject || sharedApp) {

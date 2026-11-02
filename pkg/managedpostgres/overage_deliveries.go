@@ -56,29 +56,15 @@ func (s *PostgresStore) OverageDelivered(ctx context.Context, provider, subjectI
 	return delivery, nil
 }
 
-// validOverageAdvance reports whether delivery may follow previous: a higher
-// charge in the same mode, or a live delivery over a shadow row.
-func validOverageAdvance(delivery, previous OverageDelivery) bool {
-	switch {
-	case previous.Millicents < 0:
-		return false
-	case previous.Millicents == 0 || delivery.Live == previous.Live:
-		return delivery.Millicents > previous.Millicents
-	default:
-		return delivery.Live
-	}
-}
-
-func (s *PostgresStore) RecordOverageDelivery(ctx context.Context, delivery OverageDelivery, previous OverageDelivery) (bool, error) {
+func (s *PostgresStore) RecordOverageDelivery(ctx context.Context, delivery OverageDelivery, previousMillicents int64) (bool, error) {
 	subject, err := postgresUUID(delivery.SubjectID)
-	if err != nil || !validOverageDelivery(delivery) || !validOverageAdvance(delivery, previous) {
+	if err != nil || !validOverageDelivery(delivery) || previousMillicents < 0 || delivery.Millicents <= previousMillicents {
 		return false, ErrInvalid
 	}
 	_, err = sqlc.New().RecordManagedPostgresOverageDelivery(ctx, s.catalog, sqlc.RecordManagedPostgresOverageDeliveryParams{
 		Provider: delivery.Provider, SubjectID: subject, PeriodStart: pgtype.Timestamptz{Time: delivery.PeriodStart.UTC(), Valid: true},
 		Live: delivery.Live, BilledUnitSeconds: delivery.BilledUnitSeconds, DeliveredMillicents: delivery.Millicents,
-		UpdatedAt: pgtype.Timestamptz{Time: delivery.UpdatedAt.UTC(), Valid: true}, PreviousMillicents: previous.Millicents,
-		PreviousLive: previous.Live,
+		UpdatedAt: pgtype.Timestamptz{Time: delivery.UpdatedAt.UTC(), Valid: true}, PreviousMillicents: previousMillicents,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -124,15 +110,14 @@ func (s *MemoryStore) OverageDelivered(_ context.Context, provider, subjectID st
 	return OverageDelivery{Provider: provider, SubjectID: subjectID, PeriodStart: month}, nil
 }
 
-func (s *MemoryStore) RecordOverageDelivery(_ context.Context, delivery OverageDelivery, previous OverageDelivery) (bool, error) {
-	if delivery.SubjectID == "" || !validOverageDelivery(delivery) || !validOverageAdvance(delivery, previous) {
+func (s *MemoryStore) RecordOverageDelivery(_ context.Context, delivery OverageDelivery, previousMillicents int64) (bool, error) {
+	if delivery.SubjectID == "" || !validOverageDelivery(delivery) || previousMillicents < 0 || delivery.Millicents <= previousMillicents {
 		return false, ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := memoryOverageKey{delivery.Provider, delivery.SubjectID, delivery.PeriodStart.UTC()}
-	current := s.overageDeliveries[key]
-	if current.Millicents != previous.Millicents || current.Millicents > 0 && current.Live != previous.Live {
+	if s.overageDeliveries[key].Millicents != previousMillicents {
 		return false, nil
 	}
 	delivery.PeriodStart, delivery.UpdatedAt = delivery.PeriodStart.UTC(), delivery.UpdatedAt.UTC()

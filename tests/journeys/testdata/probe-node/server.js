@@ -262,7 +262,9 @@ const server = http.createServer((req, res) => {
     case "/.well-known/jwks.json": {
       // The realtime journey signs its clients' tokens and publishes the
       // public key here, so this app is the endpoint's OIDC issuer.
-      const jwks = process.env.E2E_REALTIME_JWKS_B64;
+      // The fallback keeps `gregale deploy check` (TestCLITools/doctor_source)
+      // from reporting these realtime-only variables as required (Hunt 31).
+      const jwks = process.env.E2E_REALTIME_JWKS_B64 || "";
       if (!jwks) {
         return json(res, 404, { error: "no realtime JWKS configured" });
       }
@@ -283,7 +285,7 @@ const server = http.createServer((req, res) => {
 // they carry the endpoint's callback token. It grants every channel except
 // those named denied-*, so the realtime journey can see a refusal.
 function realtimeCallback(req, res, path) {
-  const token = process.env.E2E_REALTIME_CALLBACK_TOKEN;
+  const token = process.env.E2E_REALTIME_CALLBACK_TOKEN || "";
   if (req.method !== "POST" || !token || req.headers.authorization !== `Bearer ${token}`) {
     req.resume();
     return json(res, 401, { error: "bad realtime callback token" });

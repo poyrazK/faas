@@ -524,6 +524,16 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
 | `data_api` | Pooled, with direct fallback | `api`-schema DML only for the [Data API](data-api.md); RLS enforced |
 
+The pooled connection is a transaction pool: each transaction may run on a
+different server session, and a session goes back to the pool between
+transactions without being reset. Keep session state inside a transaction:
+use `SET LOCAL` rather than `SET`, transaction-level advisory locks
+(`pg_advisory_xact_lock`) rather than session ones, and protocol-level
+prepared statements (drivers' defaults) rather than SQL `PREPARE`. `LISTEN`
+needs the direct connection. Settings, roles and locks a session sets outside
+a transaction stay on that server session, and other connections of the same
+credential may pick them up.
+
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing
 public tables/sequences and future objects created by the schema owner.

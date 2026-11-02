@@ -5518,6 +5518,9 @@ type Querier interface {
 	ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	ReadDeploymentPolicySnapshot(ctx context.Context, db DBTX, arg ReadDeploymentPolicySnapshotParams) (ReadDeploymentPolicySnapshotRow, error)
 	ReadDeploymentPolicyState(ctx context.Context, db DBTX, appID string) (ReadDeploymentPolicyStateRow, error)
+	// ADR-20261028110044 amendment 4: when a traffic change last took the
+	// deployment to 100%, which anchors the monitor's rollback window.
+	ReadDeploymentPromotedAt(ctx context.Context, db DBTX, deploymentID string) (pgtype.Timestamptz, error)
 	ReadDeploymentReleaseAddition(ctx context.Context, db DBTX, appID string) (ReadDeploymentReleaseAdditionRow, error)
 	ReadDeploymentReleaseSecrets(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadDeploymentSubmission(ctx context.Context, db DBTX, arg ReadDeploymentSubmissionParams) (ReadDeploymentSubmissionRow, error)
@@ -6099,10 +6102,8 @@ type Querier interface {
 	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, db DBTX, arg RecordManagedPostgresDatabaseEndpointParams) error
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
-	// Advances the cumulative charge only from the row as read (previous_millicents
-	// and previous_live; zero: no row yet), so a replica that lost the race records
-	// nothing. A live delivery may replace a shadow row, which charged nothing; a
-	// shadow delivery never replaces a live one (bug hunt 33).
+	// Advances the cumulative charge only from previous_millicents (zero: no row
+	// yet), so a replica that lost the race records nothing.
 	RecordManagedPostgresOverageDelivery(ctx context.Context, db DBTX, arg RecordManagedPostgresOverageDeliveryParams) (bool, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
 	// ADR-20261031123259: one notice per copy and kind; the first sweep to reach
@@ -6595,6 +6596,11 @@ type Querier interface {
 	// first, for the route_insights_detected alert metric. total counts every
 	// match, not only the rows returned.
 	RouteInsightsDetectedSince(ctx context.Context, db DBTX, arg RouteInsightsDetectedSinceParams) ([]RouteInsightsDetectedSinceRow, error)
+	// ADR-20261028110044 amendment 4: the route labels ("METHOD /path") an app's
+	// route health guard or production monitor selects. The gateway keeps their
+	// telemetry labels in a full route set so their evidence never folds into
+	// __route_other__.
+	RouteLabelPins(ctx context.Context, db DBTX, appID string) ([]string, error)
 	// Evaluate the full request-time identity population in bounded route windows.
 	// Only five cohorts and one hundred recovery identities per route are returned;
 	// full verdict and distinct counts are computed before either output cap.
