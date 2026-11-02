@@ -614,11 +614,19 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 // PostgreSQL databases before the cap suspends them (ADR-20261025094915).
 const ManagedPostgresOverageCeilingMultiplier = 2
 
+// ManagedPostgresNeonScaleMillicentsPerComputeUnitHour is what Neon's Scale
+// plan charges Gregale per CU-hour ($0.222, neon.com/pricing on 2026-11-02),
+// and ManagedPostgresOverageMarkupPercent what Gregale adds to the
+// provider's price for managed PostgreSQL overage (ADR-20261102072425).
+const ManagedPostgresNeonScaleMillicentsPerComputeUnitHour = 22_200
+const ManagedPostgresOverageMarkupPercent = 5
+
 // ManagedPostgresOverageMillicentsPerComputeUnitHour prices managed
-// PostgreSQL compute above the plan allowance: $0.20 per CU-h, the October
-// 2026 COGS report's figure (ADR-20261031110037). Only accounts that turned
-// overage on are charged, at most up to the overage ceiling.
-const ManagedPostgresOverageMillicentsPerComputeUnitHour = 20_000
+// PostgreSQL compute above the plan allowance: Neon Scale's price plus the
+// markup, $0.2331 per CU-h (ADR-20261102072425, amending ADR-20261031110037).
+// Only accounts that turned overage on are charged, at most up to the
+// overage ceiling.
+const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonScaleMillicentsPerComputeUnitHour * (100 + ManagedPostgresOverageMarkupPercent) / 100
 
 // ManagedPostgresOverageCloseWindow is how long after a UTC month ends apid
 // keeps delivering that month's overage while late provider usage windows
