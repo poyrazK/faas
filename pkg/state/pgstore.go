@@ -6535,42 +6535,7 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 	if b.LinkedAt.IsZero() {
 		b.LinkedAt = time.Now()
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("state: begin GitHub bind: %w", err)
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
-	var previous GitHubBinding
-	var installID, repoID *int64
-	var repoName *string
-	if err := tx.QueryRow(ctx,
-		`select github_install_id, github_repo_id, github_repo_full_name
-		   from apps where id = $1 and account_id = $2 for update`,
-		b.AppID, b.AccountID).Scan(&installID, &repoID, &repoName); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("state: read GitHub binding: %w", err)
-	}
-	if installID != nil {
-		previous.InstallID = *installID
-	}
-	if repoID != nil {
-		previous.RepoID = *repoID
-	}
-	if repoName != nil {
-		previous.RepoFullName = *repoName
-	}
-	// Rebinding to another repository or installation retires the previews
-	// of the old one, as an unbind does: its close events no longer reach
-	// them, and a PR with the same number in the new repository would take
-	// the old preview's row (bug hunt 33).
-	if githubBindingRepoChanged(previous, b) {
-		if err := markAppPRPreviewsStaleTx(ctx, tx, b.AppID); err != nil {
-			return fmt.Errorf("state: mark rebound app's PR previews stale: %w", err)
-		}
-	}
-	tag, err := tx.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`update apps
 		 set github_install_id = $2,
 		     github_repo_full_name = $3,
@@ -6584,59 +6549,9 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 		b.AppID, b.InstallID, nullString(b.RepoFullName), nullableInt64(b.OwnerID), nullableInt64(b.RepoID),
 		nullString(b.ProductionBranch), b.BindingID, b.AccountID, b.LinkedAt,
 	)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
+	if err == nil && tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: commit GitHub bind: %w", err)
-	}
-	return nil
-}
-
-// githubBindingRepoChanged reports whether next binds the app to another
-// installation or repository than previous. An app with no binding has
-// nothing to retire.
-func githubBindingRepoChanged(previous, next GitHubBinding) bool {
-	if previous.InstallID == 0 {
-		return false
-	}
-	if previous.InstallID != next.InstallID {
-		return true
-	}
-	if previous.RepoID > 0 && next.RepoID > 0 {
-		return previous.RepoID != next.RepoID
-	}
-	return !strings.EqualFold(previous.RepoFullName, next.RepoFullName)
-}
-
-// markAppPRPreviewsStaleTx marks the PR preview environments of the app's
-// repository stale, for the janitor to tear down. An environment belongs to
-// its root's production app, the anchor the orphan sweep uses
-// (MarkOrphanedPRPreviewsForTeardown).
-func markAppPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, appID string) error {
-	_, err := tx.Exec(ctx, `
-		update apps set preview_pr_state = $2, preview_expires_at = now()
-		 where id in (
-		   select p.id
-		     from apps p
-		     join apps parent on parent.id = $1 and parent.account_id = p.account_id
-		     left join lateral (
-		       select root.preview_of_slug as anchor
-		         from pr_preview_sets s
-		         join apps root on root.id = s.root_app_id
-		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
-		        order by s.updated_at desc
-		        limit 1
-		     ) env on true
-		    where p.preview_of_slug is not null
-		      and coalesce(p.preview_pr_number, 0) > 0
-		      and p.status <> 'deleted'
-		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
-		      and coalesce(env.anchor, p.preview_of_slug) = parent.slug)`,
-		appID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown)
 	return err
 }
 
@@ -6659,7 +6574,28 @@ func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) 
 		return fmt.Errorf("state: begin GitHub unbind: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
-	if err := markAppPRPreviewsStaleTx(ctx, tx, appID); err != nil {
+	// An environment belongs to its root's production app, the anchor the
+	// orphan sweep uses (MarkOrphanedPRPreviewsForTeardown).
+	if _, err := tx.Exec(ctx, `
+		update apps set preview_pr_state = $2, preview_expires_at = now()
+		 where id in (
+		   select p.id
+		     from apps p
+		     join apps parent on parent.id = $1 and parent.account_id = p.account_id
+		     left join lateral (
+		       select root.preview_of_slug as anchor
+		         from pr_preview_sets s
+		         join apps root on root.id = s.root_app_id
+		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
+		        order by s.updated_at desc
+		        limit 1
+		     ) env on true
+		    where p.preview_of_slug is not null
+		      and coalesce(p.preview_pr_number, 0) > 0
+		      and p.status <> 'deleted'
+		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
+		      and coalesce(env.anchor, p.preview_of_slug) = parent.slug)`,
+		appID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown); err != nil {
 		return fmt.Errorf("state: mark unbound app's PR previews stale: %w", err)
 	}
 	tag, err := tx.Exec(ctx,
@@ -8741,8 +8677,15 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		helperSiblings[i].ID = s.ID
 		helperSiblings[i].Prior = s.Prior
 	}
-	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool { return rows[i].AbortedCanary }, 100-newPercent)
+	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool { return rows[i].AbortedCanary || rows[i].NeverServed }, 100-newPercent)
 	if err != nil {
+		return Deployment{}, err
+	}
+	priorWeights := make([]int, len(siblings))
+	for i, sibling := range siblings {
+		priorWeights[i] = sibling.Prior
+	}
+	if err := checkTrafficSplitReleaseLimit(ctx, currentTrafficPercent, newPercent, priorWeights, newWeights); err != nil {
 		return Deployment{}, err
 	}
 	for i, sibling := range siblings {
@@ -8773,7 +8716,8 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		if _, err := tx.Exec(ctx,
 			`update deployments
 			    set traffic_percent = $2,
-			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end
+			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end,
+			        promoted_at = case when $2 = 100 and traffic_percent < 100 then clock_timestamp() else promoted_at end
 			  where id = $1`,
 			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false), manualTrafficKeepsExplicit(stamp.prior, stamp.next)); err != nil {
 			if stamp.target {
@@ -9243,10 +9187,13 @@ func RedistributeTraffic(siblings []struct {
 // change. An aborted canary candidate at 0% (abortedCanaryCandidate) keeps 0%:
 // it stays live after the abort, and lowering the only serving release used to
 // hand it an even share of the residual, serving the regression that the
-// canary gate had just rolled back (PulseWatch F1). It receives traffic only
-// when an operator names it. When every sibling is such a candidate and
-// residual remains, the change is refused with ErrTrafficResidualUnassigned.
-// heldAtZero(i) reports whether siblings[i] is an aborted canary candidate.
+// canary gate had just rolled back (PulseWatch F1). A live 0% release that has
+// never served (one staged with no traffic) keeps 0% too: lowering the serving
+// release used to spread the residual evenly over every staged release, none
+// of them named or verified. Either receives traffic only when an operator
+// names it. When every sibling is held and residual remains, the change is
+// refused with ErrTrafficResidualUnassigned. heldAtZero(i) reports whether
+// siblings[i] is held.
 func RedistributeManualTraffic(siblings []struct {
 	ID    string
 	Prior int
@@ -31042,13 +30989,18 @@ func (s *PgStore) InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertReq
 // sqlc names the third positional arg `Column3` because the
 // predicate is `account_id = $3::uuid` with no `RETURNING`
 // or named-arg convention. Mirror what `make sqlc-generate`
-// produces so the drift gate stays green.
-func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error {
+// produces so the drift gate stays green. Column5..7 are the
+// target's optional app, organization and customer-credential
+// narrowings; the zero UUID binds NULL, which leaves them off.
+func (s *PgStore) UpdateSpansSummary(ctx context.Context, target SpansSummaryTarget, summary []byte, maxSpans int) error {
 	affected, err := s.appErrorsQueries().UpdateSpansSummary(ctx, s.pool, sqlc.UpdateSpansSummaryParams{
-		TraceID: pgtype.Text{String: traceID, Valid: traceID != ""},
+		TraceID: pgtype.Text{String: target.TraceID, Valid: target.TraceID != ""},
 		Column2: summary,
-		Column3: pgtype.UUID{Bytes: accountID, Valid: true},
+		Column3: pgtype.UUID{Bytes: target.AccountID, Valid: true},
 		Column4: int32(min(max(maxSpans, 1), 1000)),
+		Column5: pgtype.UUID{Bytes: target.AppID, Valid: target.AppID != uuid.Nil},
+		Column6: pgtype.UUID{Bytes: target.OrgID, Valid: target.OrgID != uuid.Nil},
+		Column7: target.CustomerCredential,
 	})
 	if err != nil {
 		return err

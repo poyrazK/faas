@@ -207,7 +207,7 @@ func pgRouteMonitorReportScope(ctx context.Context, db sqlc.DBTX, owner RoutePol
 				candidateBaseline = routeMonitorDeploymentBaseline(d)
 				r.DeploymentID, r.CommitSHA = d.ID, d.CommitSha.String
 				anchor := d.CreatedAt.Time
-				anchors := []time.Time{d.CanaryStepStartedAt.Time, d.RolloutCompletedAt.Time}
+				anchors := []time.Time{d.CanaryStepStartedAt.Time, d.RolloutCompletedAt.Time, d.PromotedAt.Time}
 				if c.UpdatedAt != nil {
 					anchors = append(anchors, c.UpdatedAt.UTC())
 				}

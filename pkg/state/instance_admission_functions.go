@@ -89,6 +89,26 @@ func reserveNodeDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramM
 	return admissionFunctionError(err, nodeID)
 }
 
+// reserveThawDB runs the durable node reservation for a frozen VM going back
+// into service, inside the caller's transaction, before its row leaves the
+// frozen state: a frozen row is outside the node's bookings, so a thaw adds
+// its plan RAM, vCPU and CPU back like an admission (ADR 20261102072403). It
+// uses ctx's thaw binding (WithThawAdmission) and no placement generation;
+// the node must still admit. A database without the admission functions
+// keeps the previous unchecked thaw.
+func (s *PgStore) reserveThawDB(ctx context.Context, tx pgx.Tx, instanceID, nodeID string) error {
+	if !validUUID(instanceID) || !validUUID(nodeID) || !s.admissionFunctionsUsable(ctx) {
+		return nil
+	}
+	percent, c := thawAdmission(ctx, nodeID)
+	_, err := tx.Exec(ctx, `select admission_reserve_node(i.node_id, NULL::bigint, i.ram_mb, true, $3::integer, $4::integer,
+		$5::integer, $6::integer, $7::integer, $8::integer, $9::integer, $10::integer)
+		  from instances i where i.id = $1::uuid and i.node_id = $2::uuid`,
+		instanceID, nodeID, api.PerVMOverheadMB, percent,
+		c.VCPU, c.QuietVCPU, c.CPUMillicores, c.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit)
+	return admissionFunctionError(err, nodeID)
+}
+
 // fenceParams is ctx's app owner fence as nullable function arguments.
 func fenceParams(ctx context.Context) (appID, ownerNodeID *string) {
 	app, owner, ok := fencedApp(ctx)

@@ -780,10 +780,13 @@ type AppLogDrainsData struct {
 }
 
 type LogDrainPageItem struct {
-	ID                      string
-	Kind                    string
-	TargetURL               string
-	Enabled                 bool
+	ID        string
+	Kind      string
+	TargetURL string
+	Enabled   bool
+	// PlanPaused marks an enabled drain the app owner's plan does not cover,
+	// which delivery leaves out until the plan covers it again.
+	PlanPaused              bool
 	Status                  string
 	Active                  bool
 	QueueDepth              int

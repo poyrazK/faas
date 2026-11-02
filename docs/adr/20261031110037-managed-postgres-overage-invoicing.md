@@ -1,7 +1,7 @@
 # ADR: Managed PostgreSQL overage invoicing
 
 Date: 2026-10-31
-Status: Accepted
+Status: Accepted; price amended by [ADR-20261102072425](20261102072425-managed-postgres-overage-at-provider-price-plus-5.md) ($0.2331 per CU-hour, Neon Scale's price plus 5%)
 Amends: [ADR 20261025094915](20261025094915-managed-postgres-compute-caps-on-running-databases.md) (decision 2: overage was unbilled until invoicing)
 Related: [ADR-1430](1430-plan-entitlements-from-october-2026-cogs-report.md) (plan entitlements, COGS report), [ADR 20261027093220](20261027093220-object-storage-billed-daily.md) (object-storage charge steps), [ADR-1320](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) (spend cap)
 
@@ -79,21 +79,3 @@ overage setting all live in apid.
   meters.
 - The dashboard and `gregale postgres usage` do not show the charge yet. The
   usage response can add it later as an `omitempty` field.
-
-## Amendment 1: idempotent on the starting point; shadow and live apart (2026-11-02)
-
-Bug hunt 33 found two ways decision 4 could charge the wrong amount.
-
-- **Double charge after an ambiguous response.** The external ID named the
-  cumulative target. Usage keeps growing between sweeps, so after a publish
-  Polar accepted but whose response was lost (a timeout, apid restarting),
-  the next sweep's step had a new target, a new external ID, and charged
-  from the same delivered amount again. The external ID now names the step's
-  starting point: `faas-managed-postgres-step-<subject>-<month>-from-<delivered>`.
-  A retry starts from the same point, so Polar keeps one event. The cost is
-  a possible undercharge of the usage between the two attempts, which only
-  happens after an ambiguous response; an overcharge cannot happen.
-- **Shadow rows counted as charged.** Shadow and live share the month's row.
-  A live step now starts from zero over a shadow row and replaces it; a
-  shadow step never rewrites a live row. The record compares both the
-  amount and the mode it read.

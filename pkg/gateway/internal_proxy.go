@@ -279,6 +279,12 @@ type EdgePlacement interface {
 	Learn(r *http.Request, nodeID string)
 }
 
+// EdgePlacementSet is an EdgePlacement that also takes every node of the app,
+// InstanceNodesHeader's "<node id>=<count>,..." (ADR-20261102081618 §5b).
+type EdgePlacementSet interface {
+	LearnSet(r *http.Request, nodes string)
+}
+
 // WithEdgePlacement makes the proxy ask gatewayd-internal for the node of
 // the instance behind each response, remember it in placement, and hand the
 // host's preferred node to the dialer through the request context. Every
@@ -313,7 +319,18 @@ func (p *InternalReverseProxy) markPlacement(h http.Header) {
 func (p *InternalReverseProxy) takeInstanceNode(r *http.Request, h http.Header) {
 	node := strings.TrimSpace(h.Get(InstanceNodeHeader))
 	h.Del(InstanceNodeHeader)
-	if node != "" && p.placement != nil {
+	// ADR-20261102081618 §5a: a gatewayd-internal with local-first on also
+	// names every node of the app; no client sees it.
+	nodes := strings.TrimSpace(h.Get(InstanceNodesHeader))
+	h.Del(InstanceNodesHeader)
+	if p.placement == nil {
+		return
+	}
+	if set, ok := p.placement.(EdgePlacementSet); ok && nodes != "" {
+		set.LearnSet(r, nodes)
+		return
+	}
+	if node != "" {
 		p.placement.Learn(r, node)
 	}
 }
@@ -1191,7 +1208,7 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 	if r.TLS != nil {
 		proto = "https"
 	}
-	if !trustsIngressPeer(peer, trustedIngressCIDRs) {
+	if !trustsIngressPeer(peer, trustedIngressCIDRs) && !verifiedIngress(r) {
 		return peerText, proto
 	}
 
@@ -1216,7 +1233,25 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 // peer, the same test CanonicalForwardingContext applies before it reads any
 // forwarded header.
 func TrustedIngressPeer(r *http.Request, trustedIngressCIDRs []netip.Prefix) bool {
-	return trustsIngressPeer(remoteAddrIP(r.RemoteAddr), trustedIngressCIDRs)
+	return verifiedIngress(r) || trustsIngressPeer(remoteAddrIP(r.RemoteAddr), trustedIngressCIDRs)
+}
+
+type verifiedIngressKey struct{}
+
+// WithVerifiedIngress marks ctx as a connection whose peer proves it is the
+// ingress with a client certificate the listener verified. Cloudflare reaches
+// a compute edge from addresses we do not list, so the certificate stands in
+// for FAAS_TRUSTED_INGRESS_CIDRS there (ADR-20261102081618 §2).
+func WithVerifiedIngress(ctx context.Context) context.Context {
+	return context.WithValue(ctx, verifiedIngressKey{}, true)
+}
+
+// verifiedIngress reports whether r came over a marked connection and its
+// client certificate was verified. Both are required, so a mark on a
+// connection without a verified certificate trusts nothing.
+func verifiedIngress(r *http.Request) bool {
+	marked, _ := r.Context().Value(verifiedIngressKey{}).(bool)
+	return marked && r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 }
 
 func trustsIngressPeer(peer netip.Addr, trustedIngressCIDRs []netip.Prefix) bool {

@@ -1,15 +1,17 @@
-// adr: 1138
+// adr: 1138, 20261102082606
 package vmmdgrpc
 
 import (
 	"context"
 	"net/netip"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
 )
@@ -78,7 +80,7 @@ func TestInflightRequestTrace(t *testing.T) {
 	}
 	// One traced HTTP forward.
 	s.activity.Begin("i-1")
-	endFirst := s.inflightTraces.begin("i-1", testTraceparent)
+	endFirst := s.inflightTraces.begin("i-1", inflightForward{traceparent: testTraceparent})
 	if got := ask("10.100.0.7"); got != testTraceparent {
 		t.Fatalf("one traced request: %q", got)
 	}
@@ -93,7 +95,7 @@ func TestInflightRequestTrace(t *testing.T) {
 	s.activity.End("i-1")
 	// A second HTTP forward without trace context is ambiguous too.
 	s.activity.Begin("i-1")
-	endSecond := s.inflightTraces.begin("i-1", "")
+	endSecond := s.inflightTraces.begin("i-1", inflightForward{})
 	if got := ask("10.100.0.7"); got != "" {
 		t.Fatalf("two requests in flight still linked: %q", got)
 	}
@@ -109,7 +111,7 @@ func TestInflightRequestTrace(t *testing.T) {
 	}
 	// One untraced request answers nothing.
 	s.activity.Begin("i-1")
-	endUntraced := s.inflightTraces.begin("i-1", "")
+	endUntraced := s.inflightTraces.begin("i-1", inflightForward{})
 	if got := ask("10.100.0.7"); got != "" {
 		t.Fatalf("an untraced request linked: %q", got)
 	}
@@ -121,7 +123,7 @@ func TestInflightRequestTrace(t *testing.T) {
 	// App and Job tasks serve no requests, even with a forward recorded.
 	for _, tc := range []struct{ ip, instance string }{{"10.100.0.8", "task"}, {"10.100.0.9", "job"}} {
 		s.activity.Begin(tc.instance)
-		end := s.inflightTraces.begin(tc.instance, testTraceparent)
+		end := s.inflightTraces.begin(tc.instance, inflightForward{traceparent: testTraceparent})
 		if got := ask(tc.ip); got != "" {
 			t.Fatalf("%s linked: %q", tc.instance, got)
 		}
@@ -136,4 +138,75 @@ func TestInflightRequestTrace(t *testing.T) {
 	if resp, err := (&Server{vmm: struct{ VmmdAPI }{}}).InflightRequestTrace(ctx, &vmmdpb.InflightRequestTraceRequest{SourceIp: "10.100.0.7"}); err != nil || resp.GetTraceparent() != "" {
 		t.Fatalf("a runtime without live caller identity = %v, %v", resp, err)
 	}
+}
+
+func TestForwardDeadline(t *testing.T) {
+	now := time.Date(2026, 11, 2, 8, 0, 0, 0, time.UTC)
+	header := func(values ...string) *vmmdpb.ForwardHTTPRequestInit {
+		req := &vmmdpb.ForwardHTTPRequestInit{}
+		for _, v := range values {
+			req.Headers = append(req.Headers, &vmmdpb.Header{Name: "x-faas-deadline-ms", Value: v})
+		}
+		return req
+	}
+	for _, tc := range []struct {
+		name string
+		req  *vmmdpb.ForwardHTTPRequestInit
+		want time.Time
+	}{
+		{"budget", header("1500"), now.Add(1500 * time.Millisecond)},
+		{"absent", header(), time.Time{}},
+		{"repeated", header("1500", "1500"), time.Time{}},
+		{"not a number", header("soon"), time.Time{}},
+		{"zero", header("0"), time.Time{}},
+		{"past the longest plan budget", header("999999999"), time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := forwardDeadline(tc.req, now); !got.Equal(tc.want) {
+				t.Fatalf("forwardDeadline = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The deadline of the instance's one request is answered under the same
+// one-forward rule as the traceparent, with or without trace context
+// (ADR-20261102082606).
+func TestInflightRequestDeadline(t *testing.T) {
+	ctx := context.Background()
+	s := &Server{activity: activity.New(nil), vmm: &tracingCallerVMM{callers: map[string]fcvm.ServiceCallerIdentity{
+		"10.100.0.7": {InstanceID: "i-1", AppID: "caller"},
+	}}}
+	ask := func() *vmmdpb.InflightRequestTraceResponse {
+		t.Helper()
+		resp, err := s.InflightRequestTrace(ctx, &vmmdpb.InflightRequestTraceRequest{SourceIp: "10.100.0.7"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	deadline := time.UnixMilli(1_793_000_000_000)
+	s.activity.Begin("i-1")
+	end := s.inflightTraces.begin("i-1", forwardOf(&vmmdpb.ForwardHTTPRequestInit{Headers: []*vmmdpb.Header{
+		{Name: api.DeadlineHeader, Value: "2000"},
+	}}, deadline.Add(-2*time.Second)))
+	if resp := ask(); resp.GetDeadlineUnixMs() != deadline.UnixMilli() || resp.GetTraceparent() != "" {
+		t.Fatalf("one untraced request with a budget = %+v", resp)
+	}
+	s.activity.Begin("i-1")
+	endSecond := s.inflightTraces.begin("i-1", inflightForward{deadline: deadline.Add(time.Minute)})
+	if resp := ask(); resp.GetDeadlineUnixMs() != 0 {
+		t.Fatalf("two requests in flight answered a deadline: %+v", resp)
+	}
+	endSecond()
+	s.activity.End("i-1")
+	end()
+	s.activity.End("i-1")
+	s.activity.Begin("i-1")
+	endNone := s.inflightTraces.begin("i-1", inflightForward{traceparent: testTraceparent})
+	if resp := ask(); resp.GetDeadlineUnixMs() != 0 || resp.GetTraceparent() != testTraceparent {
+		t.Fatalf("a request without a budget = %+v", resp)
+	}
+	endNone()
+	s.activity.End("i-1")
 }

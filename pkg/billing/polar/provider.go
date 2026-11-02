@@ -925,10 +925,8 @@ func (p *Provider) PublishObjectStorageCharge(ctx context.Context, step billing.
 
 // PublishManagedPostgresCharge emits one managed PostgreSQL overage step
 // (ADR-20261031110037) as an event on the charge meter. The external ID names
-// the subject, the month and the step's starting point (the cumulative charge
-// already delivered), not its target: usage keeps growing between sweeps, so
-// a retry after an ambiguous response has a new target but the same start,
-// and the provider keeps one event, never a second charge (bug hunt 33).
+// the subject, the month and the cumulative target, so a retry after an
+// ambiguous response is a duplicate, never a second charge.
 func (p *Provider) PublishManagedPostgresCharge(ctx context.Context, step billing.ManagedPostgresChargeStep) error {
 	if p == nil || p.postgresMode != ManagedPostgresBillingLive || !p.Capabilities().Has(billing.CapManagedPostgresUsage) {
 		return errors.New("polar: managed postgres usage delivery is not live")
@@ -939,7 +937,7 @@ func (p *Provider) PublishManagedPostgresCharge(ctx context.Context, step billin
 		return errors.New("polar: invalid managed postgres charge step")
 	}
 	month := period.Format("2006-01")
-	externalID := "faas-managed-postgres-step-" + step.SubjectID + "-" + month + "-from-" + strconv.FormatInt(step.DeliveredMillicents, 10)
+	externalID := "faas-managed-postgres-" + step.SubjectID + "-" + month + "-" + strconv.FormatInt(step.TargetMillicents, 10)
 	body := ingestRequest{Events: []usageEvent{{
 		ExternalID:         externalID,
 		Name:               p.postgresEvent,
