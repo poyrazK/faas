@@ -2082,6 +2082,7 @@ var WaitForTestOutputs = waitForTestOutputs
 var WaitMCPAccessConvergence = waitMCPAccessConvergence
 var WakeRecommendationTier = wakeRecommendationTier
 var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
+var WarnSingleHostProtectiveRule = warnSingleHostProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
 var WithBindingProgress = withBindingProgress
