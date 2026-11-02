@@ -130,7 +130,10 @@ type Metrics struct {
 	// requestTelemetry* are gateway-side data-plane health counters. They
 	// deliberately have no app/route labels: per-tenant detail belongs to
 	// apid's ingest outcome metric.
-	requestTelemetryDropped     prometheus.Counter
+	requestTelemetryDropped prometheus.Counter
+	// requestIDJournalEvicted counts node-local journal records removed to fit
+	// the disk budget before they expired (ADR-20261101085552).
+	requestIDJournalEvicted     prometheus.Counter
 	requestTelemetryShipped     prometheus.Counter
 	requestTelemetryOverwritten prometheus.Counter
 	requestIDJournalWrites      *prometheus.CounterVec
@@ -299,8 +302,9 @@ type Metrics struct {
 	// edgeRuleLoadedGeneration is the latest durable policy generation this
 	// gateway acknowledged. Prometheus's scrape target identifies the node.
 	edgeRuleLoadedGeneration prometheus.Gauge
-	// edgeRuleConvergingHosts is the number of hostnames temporarily fenced
-	// while a two-phase policy mutation crosses the serving fleet.
+	// edgeRuleConvergingHosts is the number of hostnames with a prepared,
+	// not yet applied, two-phase policy mutation (ADR-20261101141123: they
+	// keep serving their current rules meanwhile).
 	edgeRuleConvergingHosts prometheus.Gauge
 	// edgeRuleGenerationLag is the distance from the newest prepared policy
 	// generation to the last applied generation on this gateway.
@@ -1040,6 +1044,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_log_drain_last_failure_timestamp_seconds",
 			Help: "Unix timestamp of the most recent terminal customer log-drain delivery failure.",
 		}, []string{"app", "kind"}),
+		requestIDJournalEvicted: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_request_id_journal_evicted_total",
+			Help: "Node-local request-ID journal records removed to fit the per-node disk budget before their retention ended (ADR-20261101085552). Their request IDs no longer resolve.",
+		}),
 		requestTelemetryDropped: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gateway_request_telemetry_dropped_total",
 			Help: "Original requests represented by telemetry rows dropped after publisher retries or an unavailable apid client.",
@@ -1081,7 +1089,7 @@ func NewMetrics() *Metrics {
 		}),
 		edgeRuleConvergingHosts: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_edge_rule_converging_hosts",
-			Help: "Hostnames temporarily fail-closed while an edge-rule generation converges.",
+			Help: "Hostnames with a prepared edge-rule change this gateway has not applied yet.",
 		}),
 		edgeRuleGenerationLag: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_edge_rule_generation_lag",
@@ -1468,7 +1476,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "outcome"}),
 		edgeChallenge: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_challenge_total",
-			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired).",
+			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired), preflight (CORS preflight answered at the edge, ADR-831 amendment 18).",
 		}, []string{"app", "outcome"}),
 		aiCrawlerRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ai_crawler_requests_total",
@@ -2200,7 +2208,7 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
@@ -3435,7 +3443,7 @@ func (m *Metrics) SetEdgeRuleLoadedGeneration(generation int64) {
 	m.edgeRuleLoadedGeneration.Set(float64(generation))
 }
 
-// SetEdgeRuleConvergingHosts exposes the size of the local fail-closed fence.
+// SetEdgeRuleConvergingHosts exposes how many hostnames have a pending change.
 func (m *Metrics) SetEdgeRuleConvergingHosts(count int) {
 	if m == nil || m.edgeRuleConvergingHosts == nil {
 		return
@@ -4397,6 +4405,14 @@ func (m *Metrics) IncRequestTelemetryOverwritten() {
 
 // AddRequestTelemetryDropped records original requests lost after a drained
 // batch could not be handed to apid. Unlabelled by design.
+// AddRequestIDJournalEvicted counts journal records evicted for disk.
+func (m *Metrics) AddRequestIDJournalEvicted(n int64) {
+	if m == nil || m.requestIDJournalEvicted == nil || n <= 0 {
+		return
+	}
+	m.requestIDJournalEvicted.Add(float64(n))
+}
+
 func (m *Metrics) AddRequestTelemetryDropped(n int64) {
 	if m == nil || m.requestTelemetryDropped == nil || n <= 0 {
 		return

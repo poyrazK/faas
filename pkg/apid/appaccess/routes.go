@@ -14,11 +14,17 @@ import (
 var routeActions = map[string]authz.OrgAction{
 	// The resumable upload routes name their app in the request body or the
 	// stored session, so the handlers call Authorize once they resolve it.
+	// The agent callback routes name a realtime endpoint in the body and
+	// authorize its app (ADR-20261030125501 §3). A callback URL keeps working
+	// after the member who asked for it leaves, so issuing and revoking take
+	// the permission of the app's other credentials.
 	"POST /v1/uploads":                      authz.OrgActionDeployApp,
 	"GET /v1/uploads/{id}":                  authz.OrgActionDeployApp,
 	"PATCH /v1/uploads/{id}":                authz.OrgActionDeployApp,
 	"POST /v1/uploads/{id}/commit":          authz.OrgActionDeployApp,
 	"DELETE /v1/uploads/{id}":               authz.OrgActionDeployApp,
+	"POST /v1/agent-callbacks":              authz.OrgActionManageAppSecurity,
+	"POST /v1/agent-callbacks/revocations":  authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}":                   authz.OrgActionReadApp,
 	"PATCH /v1/apps/{slug}":                 authz.OrgActionConfigureApp,
 	"DELETE /v1/apps/{slug}":                authz.OrgActionDeleteApp,
@@ -283,6 +289,47 @@ var routeActions = map[string]authz.OrgAction{
 	// the handlers require the deploy-write scope.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/triage":                              authz.OrgActionDeployApp,
 	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": authz.OrgActionDeployApp,
+	// Edge rules (ADR-091 amendment 2026-10-31, round 7). Unreviewed, they
+	// fell back to the creator alone: no other owner or admin could change a
+	// company app's rules or switch on attack mode, and once the creator left
+	// nobody could. Members who can read the app read its rules, history,
+	// events and trace; owners and admins change them, as they do the app's
+	// security settings. Purging cached responses is a deploy-level action.
+	"GET /v1/apps/{slug}/edge-rules":                             authz.OrgActionReadApp,
+	"GET /v1/edge-rules/{id}":                                    authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/edge-rules/versions":                    authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/edge-rules/versions/{version}":          authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/edge-rules/stats":                       authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/edge-rules/suggestions":                 authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/edge-rules/events":                      authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/edge-rules/waf-review":                  authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/edge-protection":                        authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/edge-protection/attack-mode":            authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/edge-rules":                            authz.OrgActionManageAppSecurity,
+	"PATCH /v1/edge-rules/{id}":                                  authz.OrgActionManageAppSecurity,
+	"DELETE /v1/edge-rules/{id}":                                 authz.OrgActionManageAppSecurity,
+	"POST /v1/edge-rules/{id}/waf-exclusions":                    authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/edge-rules/rollback":                   authz.OrgActionManageAppSecurity,
+	"PUT /v1/apps/{slug}/edge-protection/attack-mode":            authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/edge-protection/attack-mode":         authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/cache":                               authz.OrgActionDeployApp,
+	"POST /dashboard/apps/{slug}/edge-rules/trace":               authz.OrgActionReadApp,
+	"POST /dashboard/apps/{slug}/edge-rules":                     authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":         authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/mode":           authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/edit":           authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/waf-exclusions": authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rules/rollback":            authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rules/recipes":             authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-protection/attack-mode":    authz.OrgActionManageAppSecurity,
+	// The app page's list forms act on the lists of the account the app's
+	// rules belong to; a list edit also passes the check of every app whose
+	// rules use the list (ADR-091 amendment 2026-10-30).
+	"POST /dashboard/apps/{slug}/edge-rule-lists":               authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/update": authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/delete": authz.OrgActionManageAppSecurity,
 }
 
 // dashboardRead reports a read of a session-only dashboard app page, which

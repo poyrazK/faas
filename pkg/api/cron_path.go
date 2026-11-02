@@ -3,13 +3,14 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"regexp"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // cronPathPattern accepts an origin-relative request path on the cron's own
 // app: "/" or "/x…", never "//host", and no whitespace, control characters,
 // backslashes or fragment. A query string is allowed.
-var cronPathPattern = regexp.MustCompile(`^/([^/\s\\#\x00-\x1f\x7f][^\s\\#\x00-\x1f\x7f]*)?$`)
+var cronPathPattern = lazyregexp.New(`^/([^/\s\\#\x00-\x1f\x7f][^\s\\#\x00-\x1f\x7f]*)?$`)
 
 // ErrCronNotATrigger is the 400 for GET /v1/triggers?kind=cron. Cron
 // schedules are listed and edited through /v1/crons, never as triggers

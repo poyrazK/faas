@@ -826,6 +826,11 @@ type Engine struct {
 	// frozenYieldOne replaces parking a frozen VM for admission in tests
 	// (ADR 20261031190030, frozen_yield.go); it reports whether it parked.
 	frozenYieldOne func(ctx context.Context, instanceID, reason string) bool
+	// nodeMemoryLocal measures this scheduler's node for its peers, and
+	// nodeMemoryReports caches every node's report (ADR 20261101091815,
+	// node_memory_reports.go).
+	nodeMemoryLocal   NodeMemorySource
+	nodeMemoryReports atomic.Pointer[map[string]state.NodeMemoryReport]
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -1978,31 +1983,8 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 			release()
 			return WakeResult{}, fmt.Errorf("sched: wake: instance deployment: %w", depErr)
 		}
-		port := deploymentRuntimePort(dep)
 		release()
-		// Surface the existing row's wake_id so a Phase-1 fast-path
-		// response carries x-faas-wake-id just like a cold-wake
-		// response would. The correlation handle is the wake that
-		// brought the instance up; an operator tailing a warm request
-		// can still pin it back to the schedd slog line that stamped
-		// it (gaps analysis 2026-07-23 review finding #1).
-		identity := api.PlatformIdentity{
-			AppID:         appID,
-			DeploymentID:  resolvedDeploymentID,
-			InstanceID:    ins.ID,
-			NodeID:        ins.NodeID,
-			CommitSHA:     dep.CommitSHA,
-			DeploymentTag: dep.Tag,
-			ImageDigest:   dep.ImageDigest,
-		}
-		if !dep.CreatedAt.IsZero() {
-			identity.DeploymentCreatedAt = dep.CreatedAt.UTC().Format(time.RFC3339Nano)
-		}
-		identity.TenantID = app.AccountID
-		if node, nodeErr := e.store.ComputeNodeByID(ctx, ins.NodeID); nodeErr == nil {
-			identity.Region = stringValue(node.Region)
-		}
-		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID, Port: port, DeploymentID: resolvedDeploymentID, RequestCount: ins.RequestCount, Identity: identity}, nil
+		return e.runningWakeResult(ctx, appID, app.AccountID, ins, dep), nil
 	} else if err != nil && !errors.Is(err, state.ErrNotFound) {
 		// A fenced app reports the barrier, as it did before the lookup.
 		if barrierErr := e.checkManagedPostgresAdmission(ctx, appID); barrierErr != nil {
@@ -2024,10 +2006,17 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// as *api.Problem{Code: CodePlanLimitConcur}. The ledger's
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
 	// rather than lift into the typed AtCapacity result.
+	var res WakeResult
+	var err error
 	if deploymentID != "" {
-		return e.admitAndDispatchWithOptions(ctx, appID, deploymentID, string(state.InstanceModeNormal), trigger, false, false)
+		res, err = e.admitAndDispatchWithOptions(ctx, appID, deploymentID, string(state.InstanceModeNormal), trigger, false, false)
+	} else {
+		res, err = e.admitAndDispatch(ctx, appID, trigger, false)
 	}
-	return e.admitAndDispatch(ctx, appID, trigger, false)
+	if booted, ok := e.awaitBootingInstanceForWake(ctx, app.AccountID, appID, deploymentID, scope, err); ok {
+		return booted, nil
+	}
+	return res, err
 }
 
 // A wake can reuse only its selected deployment's running instance. Unscoped
@@ -5024,10 +5013,26 @@ func (e *Engine) nodeUsageForNodes(ctx context.Context, nodes []state.ComputeNod
 			missing = append(missing, node)
 		}
 	}
-	for nodeID, value := range e.fallbackNodeUsage(ctx, missing) {
-		used[nodeID] = value
+	fallback := e.fallbackNodeUsage(ctx, missing)
+	for _, node := range missing {
+		used[node.ID] = e.unreportedNodeUsedMB(node, fallback[node.ID])
 	}
 	return used
+}
+
+// unreportedNodeUsedMB is placement's used_mb for a node without a fresh vmmd
+// report: a peer node, whose stream reaches only its own scheduler, or this
+// node during a stream gap. With a measured basis in the ledger (this node's
+// held measurement or the peer's published report, ADR 20261101091815) it is
+// the figure Admit uses, but never below what the node's bookings, every
+// owner's (bookedMB, frozen excluded), leave under the durable guard's
+// overcommit cap; otherwise it is the bookings, as before.
+func (e *Engine) unreportedNodeUsedMB(node state.ComputeNode, bookedMB int64) int64 {
+	if _, ok := e.ledger.MeasuredAsOf(node.ID); !ok || node.AdmissionCeilingMB <= 0 {
+		return bookedMB
+	}
+	overcommit := int64(node.AdmissionCeilingMB) * int64(api.MeasuredAdmissionMaxOvercommitPercent-100) / 100
+	return max(int64(e.ledger.AdmissionUsedMB(node.ID)), bookedMB-overcommit)
 }
 
 // nodeCPUUsageForNodes merges the durable fleet-wide instance aggregate with
@@ -8408,30 +8413,25 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			"instance", ins.ID,
 			"instance_ram_mb", ins.RAMMB,
 			"app_ram_mb", app.RAMMB)
-		destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
-		if destroyErr != nil {
-			e.log.Warn("sched: park: destroy RAM-incompatible instance", "instance", ins.ID, "err", destroyErr)
+		// An uncertain destroy keeps the row and its reservation: the VM may
+		// still hold its memory, and the next park retries (ADR
+		// 20261101091815), as the ephemeral-secret discard below does.
+		if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, ins.ID, DestroyTimeout); err != nil {
+			return fmt.Errorf("sched: park: destroy RAM-incompatible instance %s: %w", ins.ID, err)
 		}
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_resource_mismatch", "ram_changed")
-		if destroyErr != nil {
-			return fmt.Errorf("sched: park: destroy RAM-incompatible instance %s: %w", ins.ID, destroyErr)
-		}
 		return nil
 	}
 	// Issue #3360: the same retire-instead-of-capture rule applies when the
 	// app's secrets or environment changed after this process started.
 	if e.runtimeConfigStale(ctx, ins) {
 		e.log.Info("sched: park: discard instance after runtime config change", "instance", ins.ID, "app", ins.AppID)
-		destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
-		if destroyErr != nil {
-			e.log.Warn("sched: park: destroy runtime-config-stale instance", "instance", ins.ID, "err", destroyErr)
+		if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, ins.ID, DestroyTimeout); err != nil {
+			return fmt.Errorf("sched: park: destroy runtime-config-stale instance %s: %w", ins.ID, err)
 		}
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_runtime_config_changed", "runtime_config_changed")
-		if destroyErr != nil {
-			return fmt.Errorf("sched: park: destroy runtime-config-stale instance %s: %w", ins.ID, destroyErr)
-		}
 		return nil
 	}
 	ephemeral, err := e.hasEphemeralSecretForInstance(ctx, ins, app)

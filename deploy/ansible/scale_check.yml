@@ -13,7 +13,10 @@
   vars:
     control_plane_hosts: "{{ groups['control_plane'] | default([]) }}"
     compute_hosts: "{{ groups['compute_nodes'] | default([]) }}"
-    fleet_hosts: "{{ (control_plane_hosts + compute_hosts) | unique }}"
+    # ADR-1027 database nodes are fleet hosts too: every host's private peer
+    # map lists them.
+    database_hosts: "{{ groups['database_nodes'] | default([]) }}"
+    fleet_hosts: "{{ (control_plane_hosts + compute_hosts + database_hosts) | unique }}"
   vars_files:
     - roles/postgres_capacity/defaults/main.yml
   tasks:
@@ -54,7 +57,7 @@
       ansible.builtin.assert:
         that:
           - >-
-            (hostvars[item].group_names | intersect(['control_plane', 'compute_nodes']) | length) == 1
+            (hostvars[item].group_names | intersect(['control_plane', 'compute_nodes', 'database_nodes']) | length) == 1
           - hostvars[item].faas_box_role is defined
           - hostvars[item].ansible_host is defined
           - hostvars[item].faas_node_name is defined
@@ -64,6 +67,19 @@
           Generated host_vars for {{ item }} does not describe exactly one
           production role and a complete private peer map.
       loop: "{{ fleet_hosts }}"
+
+    - name: Require database host_vars to match their inventory group
+      ansible.builtin.assert:
+        that:
+          - hostvars[item].faas_box_role == 'database'
+          - hostvars[item].database_vmmd_overlay_ip is defined
+          - hostvars[item].pgproxyd_instance_id is defined
+          - hostvars[item].database_node_metrics_cidrs is defined
+        fail_msg: >-
+          {{ item }} is in database_nodes but its generated host_vars lack the
+          database role, its overlay address, pgproxyd's instance id or the
+          metrics sources.
+      loop: "{{ database_hosts }}"
 
     - name: Require control-plane host_vars to match its inventory group
       ansible.builtin.assert:

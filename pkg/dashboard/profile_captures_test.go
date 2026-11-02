@@ -69,6 +69,41 @@ func TestProfileCapturePanelAndPageRender(t *testing.T) {
 	}
 }
 
+// The captures page carries the capture form and list on its own, and a
+// capture page carries a delete form only when armed with a token.
+func TestProfileCapturesPageAndDeleteRender(t *testing.T) {
+	capture := api.ProfileCapture{ID: "11111111-1111-1111-1111-111111111111", Status: api.ProfileCaptureReady, Kinds: []string{"cpu"}, DurationSeconds: 10, CreatedAt: time.Now()}
+	view := &ProfileCapturesView{AppSlug: "profile-app", CSRF: "tok", MaxDuration: 60, Captures: []api.ProfileCapture{capture}}
+	rec := httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "app_profile_captures", Data: view}); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"<h1>Profile captures</h1>", `action="/dashboard/apps/profile-app/profiles/captures"`, `value="tok"`, `href="/dashboard/apps/profile-app/profiles/captures/` + capture.ID + `"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("captures page missing %q", want)
+		}
+	}
+
+	deleteAction := `action="/dashboard/apps/profile-app/profiles/captures/` + capture.ID + `/delete"`
+	page := ProfileCapturePage{AppSlug: "profile-app", Capture: capture, CSRF: "del-tok"}
+	rec = httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "app_profile_capture", Data: page}); err != nil {
+		t.Fatal(err)
+	}
+	body = rec.Body.String()
+	for _, want := range []string{deleteAction, `value="del-tok"`, `href="/dashboard/apps/profile-app/profiles/captures">Captures</a>`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("capture page missing %q", want)
+		}
+	}
+	page.CSRF = ""
+	rec = httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "app_profile_capture", Data: page}); err != nil || strings.Contains(rec.Body.String(), deleteAction) {
+		t.Fatalf("capture page without a token shows the delete form: %v", err)
+	}
+}
+
 func TestFormatProfileAmount(t *testing.T) {
 	for _, tt := range []struct {
 		v    int64

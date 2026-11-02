@@ -24,7 +24,7 @@ const Capability = labels.Capability
 // SelectorParam is the list query parameter a selector arrives in.
 const SelectorParam = "selector"
 
-const docsURL = "https://gregale.dev/docs/apps#labels"
+const docsURL = "https://gregale.dev/docs/labels"
 
 // Problem turns a *labels.Error into a 400 that keeps its stable code and
 // names the key or selector requirement at fault. Any other error is not a

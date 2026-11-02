@@ -2,8 +2,9 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // CodeProductBillingDetailsUnavailable reports that the product team does
@@ -44,7 +45,7 @@ type PutProductBillingDetailsRequest struct {
 	Business *ProductBillingBusiness `json:"business,omitempty"`
 }
 
-var countryCodeRE = regexp.MustCompile(`^[A-Z]{2}$`)
+var countryCodeRE = lazyregexp.New(`^[A-Z]{2}$`)
 
 // Validate checks field sizes and the country code.
 func (r PutProductBillingDetailsRequest) Validate() error {

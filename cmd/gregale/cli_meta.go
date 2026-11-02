@@ -1917,7 +1917,7 @@ var cliCommands = []cliCommand{
 		Short:   "Make production releases wait in their canary for approval",
 		Examples: []string{
 			"gregale release approval require --app my-api --approvals 2 --notify releases",
-			"gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h",
+			"gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h --notify releases",
 			"gregale release approval pending --app my-api",
 			"gregale release approval status v42 --app my-api",
 			"gregale release reject v42 --app my-api --reason \"checkout latency is up\"",
@@ -1930,7 +1930,7 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "abort a release that waits longer (default 24h)", Value: "DURATION"},
 				{Name: "approvers", Short: "who may approve (default admin: owners and admins)", Value: "ROLE", ClosedSet: []string{"admin", "developer"}},
 				{Name: "allow-self-approval", Short: "count the deployer's own approval", Bool: true},
-				{Name: "notify", Short: "Slack or email channels told when a release waits, is decided or times out", Value: "CHANNEL,..."},
+				{Name: "notify", Short: "Slack or email channels told when a release waits, is decided or times out", Value: "CHANNEL,...", Req: true},
 			}},
 			{Name: "policy", Short: "Show an app's approval policy", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
@@ -2124,16 +2124,19 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "status", Short: "Show an app's GitHub connection health", Examples: []string{"gregale github status my-api"}, Positionals: []string{"<slug>"}},
 			{Name: "sync", Short: "Reconcile repository access with GitHub", Examples: []string{"gregale github sync my-api"}, Positionals: []string{"<slug>"}},
-			{Name: "repos", Short: "List repositories the connected GitHub installation can see", Examples: []string{"gregale github repos my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "repos", Short: "List repositories the connected GitHub installation can see", Examples: []string{"gregale github repos my-api", "gregale github repos my-api --installation-id 12345"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "installation-id", Short: "GitHub App installation id (defaults to the app's, or the account's only one)", Value: "ID"},
+			}},
 			{Name: "bind", Short: "Bind an app to a visible GitHub repository", Examples: []string{"gregale github link my-api --repo acme/my-api --branch main"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
-				{Name: "installation-id", Short: "GitHub App installation id (auto-resolved when omitted)", Value: "ID"},
+				{Name: "installation-id", Short: "GitHub App installation id (the app's, or the account's only one, when omitted)", Value: "ID"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Value: "OWNER/NAME", Req: true},
-				{Name: "branch", Short: "production branch", Value: "BRANCH"},
+				{Name: "branch", Short: "production branch (defaults to the repository's default branch)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
 			}},
-			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72", "gregale github setup my-api --repo acme/my-api --wait-for CI"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
-				{Name: "production-branch", Short: "production branch (default: current binding or main)", Value: "BRANCH"},
+				{Name: "production-branch", Short: "production branch (default: current binding or the repository's default branch)", Value: "BRANCH"},
+				{Name: "installation-id", Short: "GitHub App installation id (the app's, or the account's only one, when omitted)", Value: "ID"},
 				{Name: "deploy-branches", Short: "comma-separated branch=environment mappings (default or registered environment)", Value: "MAPPINGS"},
 				{Name: "pinned-sha", Short: "pin the generated deploy Action to this full 40-character commit SHA (default: immutable SHA embedded in the CLI release)", Value: "SHA"},
 				{Name: "pin-action", Short: "resolve the current v0 deploy Action tag to its commit SHA"},
@@ -2150,6 +2153,7 @@ var cliCommands = []cliCommand{
 				{Name: "root-dir", Short: "repository-relative source root for the root workload", Value: "DIR"},
 				{Name: "ignore", Short: "comma-separated ignored change paths", Value: "PATHS"},
 				{Name: "rollout", Short: "production rollout mode: standard|safe", Value: "MODE", ClosedSet: []string{"standard", "safe"}},
+				{Name: "wait-for", Short: "deploy a branch push only after this GitHub Actions workflow (its name: field) succeeds for the commit", Value: "WORKFLOW"},
 				{Name: "dry-run", Short: "show generated files without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},
@@ -2181,7 +2185,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
 			{Name: "next", Short: "Show upcoming expression times across app tasks", Notes: []string{"Includes state and policy caveats."}, Examples: []string{"gregale cron next --app my-api", "gregale cron next --app my-api --json"}, Flags: []cliFlag{{Name: "app", Short: "app slug (linked app or picker by default)", Value: "SLUG"}}},
-			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "one-off", Short: "list one-off requests (--at or --in) instead of cron rules", Bool: true, Capability: "delayed-execution"}}},
+			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug (required without -l)", Value: "slug"}, {Name: "selector", ShortName: "l", Short: "only crons whose labels match (preview)", Value: "SELECTOR"}, {Name: "one-off", Short: "list one-off requests (--at or --in) instead of cron rules", Bool: true, Capability: "delayed-execution"}}},
 			{Name: "add", Short: "Schedule a POST to an app path, or a deployment command", Examples: []string{"gregale cron create --app my-api --interactive", "gregale cron create --app my-api --at 2030-01-01T09:00:00Z --path /report", "gregale cron create --app my-api --in 30m --path /reminders"}, Notes: []string{"With --at or --in, add schedules one request instead of a recurring cron and takes the flags of `gregale delayed-task add` (--payload, --method, --header, retries); --schedule and the command flags belong to recurring crons."}, Flags: []cliFlag{
 				{Name: "at", Short: "send one request at this RFC3339 time instead of on a schedule", Value: "RFC3339", Capability: "delayed-execution"},
 				{Name: "in", Short: "send one request after this delay (such as 30m) instead of on a schedule", Value: "DURATION", Capability: "delayed-execution"},
@@ -2208,6 +2212,11 @@ var cliCommands = []cliCommand{
 				{Name: "for", Short: "Ready or LastRunSucceeded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
 				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
+			{Name: subLabel, Short: "List, set or unset a cron's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select crons with -l on cron list.", "Labels are not secret."}, Examples: []string{"gregale cron label set CRON_ID team=billing", "gregale cron label list CRON_ID"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show a cron's labels", Positionals: []string{"<id>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<id>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<id>", "KEY..."}},
 			}},
 			{Name: "info", Short: "Show one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "one-off", Short: "show a one-off request (--at or --in) instead of a cron rule", Bool: true, Capability: "delayed-execution"},
@@ -2351,6 +2360,12 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "page size (1..200, default 50)", Value: "N"},
 				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
 				{Name: "all", Short: "walk every page using --limit and --offset"},
+				{Name: "selector", ShortName: "l", Short: "only jobs whose labels match (preview)", Value: "SELECTOR"},
+			}},
+			{Name: subLabel, Short: "List, set or unset a job's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select jobs with -l on job list.", "Labels are not secret."}, Examples: []string{"gregale job label set nightly-report team=billing", "gregale job label list nightly-report"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show a job's labels", Positionals: []string{"<job>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<job>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<job>", "KEY..."}},
 			}},
 			{Name: "next", Short: "Show upcoming recurring Job expression times and readiness", Examples: []string{"gregale job next", "gregale job next --json"}},
 			{Name: "add", Short: "Create a new job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale job create --interactive"}, Flags: []cliFlag{
@@ -5763,7 +5778,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "postgres",
 		Short:   "Create, attach and restore managed PostgreSQL databases",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List managed PostgreSQL databases"},
+			{Name: "list", Short: "List managed PostgreSQL databases", Flags: []cliFlag{{Name: "selector", ShortName: "l", Short: "only databases whose labels match (preview)", Value: "SELECTOR"}}},
 			{Name: "capabilities", Short: "Show plan and region PostgreSQL feature support", Flags: []cliFlag{
 				{Name: "region", Short: "region (defaults to configured region)", Value: "REGION"},
 			}, Examples: []string{"gregale postgres capabilities --json"}},
@@ -5798,6 +5813,11 @@ var cliCommands = []cliCommand{
 				{Name: "for", Short: "Ready, Progressing or Degraded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
 				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
+			{Name: subLabel, Short: "List, set or unset a database's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select databases with -l on postgres list.", "Labels are not secret."}, Examples: []string{"gregale postgres label set orders team=billing", "gregale postgres label list orders"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show a database's labels", Positionals: []string{"<database>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<database>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<database>", "KEY..."}},
 			}},
 			{Name: "delete", Short: "Delete a managed PostgreSQL database; it can be undone for 7 days", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "purge", Short: "delete at once with its restore history; cannot be undone"},

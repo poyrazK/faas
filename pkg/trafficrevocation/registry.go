@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -80,6 +82,8 @@ type Registry struct {
 	refreshMu   sync.Mutex
 	wake        chan struct{}
 	closed      bool
+	// reads coalesces admission store reads of one scope set (sharedRead).
+	reads singleflight.Group
 }
 
 func New(store Store) *Registry {
@@ -138,7 +142,13 @@ func (r *Registry) admit(ctx context.Context, scopes []Scope, expected map[Scope
 	}
 	states, fromStore := r.cached(scopes, expected), false
 	if states == nil {
-		if states, err = r.read(ctx, scopes); err != nil {
+		// A preceding hop's baseline may be newer than a read already in
+		// flight, so only a first admission shares one.
+		read := r.sharedRead
+		if expected != nil {
+			read = r.read
+		}
+		if states, err = read(ctx, scopes); err != nil {
 			return nil, nil, err
 		}
 		fromStore = true
@@ -315,6 +325,43 @@ func (r *Registry) read(ctx context.Context, scopes []Scope) (map[Scope]State, e
 		verified[scope] = state
 	}
 	return verified, nil
+}
+
+// sharedRead reads scopes once for concurrent admissions of the same set. A
+// burst whose scopes were not cached read them per request through the
+// gateway's small pool, and reads past api.TrafficSecurityStoreTimeout refused
+// the requests as traffic_revocation_unavailable (PulseWatch F13). A shared
+// read started no earlier than the cached generations admission otherwise
+// trusts, and admitted leases still see later revokes at the next refresh.
+// The read keeps the first caller's deadline but not its cancellation; every
+// caller still stops waiting at its own deadline.
+func (r *Registry) sharedRead(ctx context.Context, scopes []Scope) (map[Scope]State, error) {
+	var key strings.Builder
+	for _, scope := range scopes {
+		key.WriteString(scope.Kind)
+		key.WriteByte(0)
+		key.WriteString(scope.ID)
+		key.WriteByte(0)
+	}
+	ch := r.reads.DoChan(key.String(), func() (any, error) {
+		readCtx := context.WithoutCancel(ctx)
+		if deadline, bounded := ctx.Deadline(); bounded {
+			var cancel context.CancelFunc
+			readCtx, cancel = context.WithDeadline(readCtx, deadline)
+			defer cancel()
+		}
+		return r.read(readCtx, scopes)
+	})
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, ctx.Err())
+	case result := <-ch:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		states, _ := result.Val.(map[Scope]State)
+		return maps.Clone(states), nil
+	}
 }
 
 // release unregisters the exchange. Its scopes stay tracked as warm scopes,

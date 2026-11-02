@@ -67,3 +67,37 @@ so that day reads out of order; no lines are lost.
   writer kept ages out through the existing purge.
 - Not in this change: a per-instance share of the spool, so one noisy instance
   cannot fill it for every other instance on the node.
+
+## Amendment (2026-11-01): the whole-day writer merges with the bucket
+
+Part objects are still off in production, so the whole-day writer still
+ships every day. A live migration keeps the instance ID on both nodes, so two
+nodes rebuild the same day object, each from its own local history: the
+source's final flush (its retired ring) wiped the destination's lines, and
+the destination's next flush wiped the source's final lines (2026-10-31
+logs/traces audit, A4).
+
+Every whole-day rebuild now starts from what the bucket holds:
+
+- The local history is copied as before, and the GET of the day object is
+  conditional on the history's MD5 (`If-None-Match`). When this node wrote
+  the object last, the store answers 304 and nothing is downloaded. A store
+  whose ETag is not the MD5 of a single PUT answers with the body; the merge
+  below then runs on every flush, which is correct but downloads the day.
+- Otherwise the base is the bucket's object, copied byte for byte, followed by
+  each member of the local history it lacks. Members compare by the SHA-256 of
+  their decompressed bytes: a member is one flush's fragment and every rebuild
+  copies it verbatim. Sequence numbers cannot identify lines here, because
+  the destination's ring numbers from 1 again.
+- An object whose last member is a prefix of the upload being flushed ends
+  with this node's own earlier attempt (a PUT the store accepted while this
+  node saw an error, or crashed before committing it). That member is dropped
+  and the grown upload appended once, as the history-only rebuild did.
+- An object that is not a readable gzip stream is replaced from the local
+  history, as before, instead of stopping the day from shipping.
+
+Two nodes flushing the same day within the same GET-to-PUT window can still
+overwrite each other; the loser's lines come back on its next flush, which a
+node that has torn the instance down does not have. Closing that window needs
+conditional PUTs (`If-Match`), which not every S3-compatible store supports,
+or part objects.

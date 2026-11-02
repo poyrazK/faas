@@ -453,6 +453,14 @@ type ObservedRouteResolver interface {
 	ResolveObservedRoute(ctx context.Context, app App, path, method string) (string, bool, error)
 }
 
+// RouteLabelPins reports whether an app's route health guard or production
+// monitor selects a route label ("METHOD /path"), so the label survives a
+// full route set and that route's evidence never folds into __route_other__
+// (ADR-20261028110044 amendment 4). It never changes request handling.
+type RouteLabelPins interface {
+	RouteLabelPinned(ctx context.Context, app App, label string) bool
+}
+
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
 // per-app public-URL auth mode bundle plumbed onto App. Mode is
 // the canonical text from apps.public_auth_mode CHECK enum
@@ -967,6 +975,7 @@ type Handler struct {
 	devBridgeForward         func(http.ResponseWriter, *http.Request, App) bool
 	backend                  Backend
 	declaredRoutes           DeclaredRouteMatcher
+	routeLabelPins           RouteLabelPins
 	limiter                  *Limiter
 	preAuthLimiter           *preAuthSourceLimiter
 	preAuthCentral           CentralBackend
@@ -1043,6 +1052,10 @@ type Handler struct {
 	// queue-depth budget remains fleet-wide. The guest listener stays runtime-
 	// agnostic while the edge accounts for streams and upgrades.
 	vmConcurrency *vmConcurrencyManager
+	// edgeLocalFirst, when set, makes requests a compute edge forwarded use
+	// this node's instances first (ADR-20261102081618 §5); nil keeps the
+	// global rotation.
+	edgeLocalFirst *edgeLocalFirst
 	// vmConcurrencyAudit emits vm.inflight_threshold_reached when a request
 	// observes a full instance slot set. It shares the gateway audit sink so
 	// operators can correlate saturation with wake and reaper events.
@@ -2074,6 +2087,13 @@ func (h *Handler) WithDeclaredRouteMatcher(matcher DeclaredRouteMatcher) *Handle
 	return h
 }
 
+// WithRouteLabelPins wires the selected-route lookup (ADR-20261028110044
+// amendment 4). Nil keeps every label evictable, as before.
+func (h *Handler) WithRouteLabelPins(pins RouteLabelPins) *Handler {
+	h.routeLabelPins = pins
+	return h
+}
+
 // enforceDeclaredRoute applies the app's declared-route contract. It runs
 // after gateway-owned CORS preflight handling (which may answer OPTIONS
 // without an application) but before authentication, rate limiting, and the
@@ -2421,6 +2441,10 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 	h.requireAuthnAudit.Emit(r.Context(), kind, subject, data)
 }
 
+// errRouteTargetChangePending refuses a route whose target did not resolve
+// while an edge-rule change to the source host is pending.
+var errRouteTargetChangePending = errors.New("route target unresolved while an edge-rule change is pending")
+
 // matchAndSubstituteRoute (ADR-089 / issue #561 PR 3) consults
 // the per-host edge-rule matcher BEFORE Backend.Lookup. On a
 // `kind=route` hit, *app is overwritten with the target App
@@ -2448,7 +2472,9 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 //     is advisory; a stale read only widens the hit window.
 //     We do NOT emit audit/metric for a transient miss —
 //     the next request will hit the loader and the rule
-//     is naturally dropped once its app row is gone.
+//     is naturally dropped once its app row is gone. While an
+//     edge-rule change to the source host is pending, the miss
+//     refuses instead (errRouteTargetChangePending).
 //
 // Nil-safe: h.edgeRules == nil OR h.resolveTargetApp == nil
 // returns false and ServeHTTP proceeds with the legacy
@@ -2474,6 +2500,13 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	if !ok {
 		// Authoritative loaders retain a failure in the request context so the
 		// fallback lookup refuses. Legacy fixture loaders preserve a clean miss.
+		// While a change to this host's rules is pending, the cached rule may
+		// name a target the change renamed or removed (an app rename commits
+		// before the retargeted rules apply): refuse rather than serve the
+		// routed path from the source app (ADR-20261101141123).
+		if h.edgeRules.Converging(hostname(r.Host), hostApp.AccountID, hostApp.ID) {
+			*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, errRouteTargetChangePending))
+		}
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "miss")
 		}
@@ -6077,7 +6110,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// hold an application request slot or wake/parking lease for its lifetime.
 	if h.managedRealtime != nil && strings.HasPrefix(r.URL.Path, realtime.ManagedPathPrefix) {
 		w.Header().Set(trafficSecurityHeader, trafficSecurityRealtime)
-		h.managedRealtime.ServeHTTP(w, r)
+		if h.stampRealtimeHostAccount(w, r) {
+			h.managedRealtime.ServeHTTP(w, r)
+		}
 		return
 	}
 
@@ -6246,27 +6281,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A two-phase edge-rule mutation fences this hostname before apid commits
-	// the new policy. Fail closed for the bounded convergence window so a
-	// request cannot slip through a gateway that still has the old generation.
-	// The fence is scoped to the host's owner (resolved above, before any
-	// route substitution or edge rule runs): another account's mutation,
-	// even on match_host "*", cannot change this host's policy.
-	var fenceAccount, fenceApp, fenceProductionApp string
-	if ok {
-		fenceAccount, fenceApp, fenceProductionApp = lookedApp.AccountID, lookedApp.ID, lookedApp.ProductionAppID
-	}
-	// A preview applies its production app's "@app" rules, so a mutation of
-	// those fences the preview's hosts too.
-	if h.edgeRules != nil && (h.edgeRules.Converging(host, fenceAccount, fenceApp) ||
-		fenceProductionApp != "" && h.edgeRules.Converging(host, fenceAccount, fenceProductionApp)) {
-		w.Header().Set("Retry-After", "1")
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
-			api.CodeCapacity, "Edge policy update in progress",
-			"The serving fleet is converging on a new edge-rule generation; retry shortly."))
-		h.observe(r, rec.status, "", "", false, Target{})
-		return
-	}
+	// A pending edge-rule change does not hold this host (ADR-20261101141123):
+	// the request runs under the rules this gateway has until its apply, which
+	// apid waits for before the change returns.
+
 	// A source host under preparation cannot escape its readiness gate through
 	// a route rewrite to another workload or through an edge answer.
 	if ok && lookedApp.EnvironmentNotReady {
@@ -6501,10 +6519,12 @@ haveApp:
 	// bucket. The label is empty when the app is not opted in
 	// (route metrics are disabled) — Handler.observe short-circuits
 	// the per-route emission on "". Request telemetry uses the same bounded
-	// route set for entitled apps even when the operator disables those series.
+	// route set whether or not the app opted into those series: route health,
+	// production monitoring and route removal read it (ADR-20261028110044
+	// amendment 4).
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
-	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
+	telemetryRouteSet := h.routeSetFor(app.ID, h.requestTelemetry != nil)
 	// Consumer- and tenant-surface-attributed traffic always carries a
 	// bounded billing route so rate cards can weight routes (ADR-952,
 	// ADR-1310); consumer and surface attribution ran above. A JWT rule can
@@ -6539,6 +6559,13 @@ haveApp:
 		if !routeLabelMethodAllowed(r.Method) {
 			labelRoute = otherRouteLabel
 		}
+		pinned := !declared && labelRoute != otherRouteLabel && h.routeLabelPins != nil && h.routeLabelPins.RouteLabelPinned(r.Context(), app, labelRoute)
+		labelFor := func(s *routeLabelSet) string {
+			if pinned {
+				return s.admitPinned(labelRoute)
+			}
+			return s.labelBeforeResponse(labelRoute, declared)
+		}
 		pendingSet := set
 		if pendingSet == nil {
 			pendingSet = telemetryRouteSet
@@ -6546,7 +6573,7 @@ haveApp:
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
 			if telemetryRouteSet != nil {
-				telemetryRoute = telemetryRouteSet.labelBeforeResponse(labelRoute, declared)
+				telemetryRoute = labelFor(telemetryRouteSet)
 			}
 			r = withRequestTelemetryRoute(r, telemetryRoute)
 		}
@@ -6554,7 +6581,7 @@ haveApp:
 			// The histogram classes are pre-instantiated when
 			// Handler.observe first emits the route under the
 			// gateway's series budget (ADR-20261024154324).
-			routeLabel = set.labelBeforeResponse(labelRoute, declared)
+			routeLabel = labelFor(set)
 			r = withRouteLabel(r, routeLabel)
 		}
 		if pendingSet != nil {
@@ -7697,6 +7724,10 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
+	if preferredInstanceID == "" {
+		// An instance-affinity pick stays where the session is.
+		capacityCtx = h.localFirstContext(capacityCtx)
+	}
 	pick, vmRelease, vmWaited, err = h.acquireVMTarget(withRoutePriorityRequest(capacityCtx, r), app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
@@ -7812,7 +7843,7 @@ haveApp:
 		attribute.Bool("cold", cold),
 	)
 	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward", forwardAttrs...)
-	r = r.WithContext(forwardCtx)
+	r = r.WithContext(h.instanceNodesContext(forwardCtx, app.ID))
 	defer func() {
 		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		forwardSpan.End()
@@ -8448,7 +8479,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// the time.Since(startTime(r)) call here would yield the same result
 	// but recomputes; `elapsed` was already measured above.
 	requestLog := h.log
-	if decision := trafficDecisionEvidence(r.Context(), status, false); decision.path != "" && requestLog != nil {
+	decision := trafficDecisionEvidence(r.Context(), status, false)
+	if decision.path != "" && requestLog != nil {
 		requestLog = requestLog.With(decision.logAttribute())
 	}
 	if revision := TrafficPolicyRevision(r.Context()); revision != "" && requestLog != nil {
@@ -8561,6 +8593,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
+				PlatformRefusal:                      decision.platformRefusal(status),
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {

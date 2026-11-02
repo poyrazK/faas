@@ -3,20 +3,21 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"math"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/textproto"
 	"net/url"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 
 	"github.com/google/uuid"
 	"golang.org/x/net/http/httpguts"
@@ -2949,7 +2950,7 @@ const SecretRefPrefix = "secret:"
 // identifier grammar as env keys / secret keys (ADR-045 §Decision 1 mirror).
 // Exported so pkg/sched/engine.go::loadSealedEnvFor (PR-B) reuses it at
 // wake time — one regex, no drift between apid and schedd rejection logic.
-var SecretRefNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+var SecretRefNameRe = lazyregexp.New(`^[A-Z][A-Z0-9_]*$`)
 
 // Validate enforces every override field's constraint from
 // ADR-053 §Decision 1. Returns nil on success or a *Problem with
@@ -3689,9 +3690,12 @@ type DeploymentResponse struct {
 	// is the wall-clock anchor for the current step's Duration
 	// gate. omitempty keeps pre-PR rows byte-identical to the
 	// old wire shape (every column defaulted to 'none'/0/NULL
-	// at the schema layer via PG11+ fast-default).
+	// at the schema layer via PG11+ fast-default). CanaryStep is
+	// always sent: step 0 is a real ladder position, and omitting
+	// it left `canary advance --expected-step` guessing
+	// (PulseWatch F17).
 	CanaryPreset        string     `json:"canary_preset,omitempty"`
-	CanaryStep          int        `json:"canary_step,omitempty"`
+	CanaryStep          int        `json:"canary_step"`
 	CanaryTotalSteps    int        `json:"canary_total_steps,omitempty"`
 	CanaryStepStartedAt *time.Time `json:"canary_step_started_at,omitempty"`
 	// Rollout state machine echo (issue #976 / ADR-122 /
@@ -4689,6 +4693,10 @@ type CronResponse struct {
 	SkipIfRunning       bool                       `json:"skip_if_running"`
 	CreatedAt           string                     `json:"created_at"`
 	LastFiredAt         string                     `json:"last_fired_at,omitempty"`
+	// Labels are the cron's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -5239,6 +5247,12 @@ type UsageSummaryResponse struct {
 	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
 	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
 	OverageCents    int64   `json:"overage_cents"`     // compute plus live egress overage, in integer cents
+	// QuietPausedGBHours is the month's quiet-paused time that was not
+	// billed: Σ usage_minutes.paused_mb_seconds / 1024 / 3600, in the same
+	// plan RAM + 8 MB unit as UsedGBHours and not part of it
+	// (ADR-20261023171905). Omitted while it is zero, which it stays until
+	// unbilled quiet pause is released to the account.
+	QuietPausedGBHours float64 `json:"quiet_paused_gb_hours,omitempty"`
 	// UsedCPUHours is the per-month CPU-hours Σ CPUUsageUsec /
 	// 3.6e9. Informational only — billing is on UsedGBHours.
 	// Issue #279 / PR-B. The customer dashboard renders this
@@ -8156,7 +8170,7 @@ const (
 // 1..63 chars, starts with [a-z0-9]. Mirrors the `apps.slug` regex
 // shape so the dashboard and CLI can use the same identifier
 // grammar for app-sidecar and app-slug paths. Anchored.
-var sidecarNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var sidecarNameRe = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // sidecarImageRe is the digest-pinning predicate for a sidecar
 // image reference. Mirrors the canonical pattern at
@@ -8166,7 +8180,7 @@ var sidecarNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // effect may promote this to a single shared helper in pkg/oci
 // if imaged's pull path also wants the API gate inline; for
 // PR-A the two-call-site duplication is acceptable.
-var sidecarImageRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
+var sidecarImageRe = lazyregexp.New(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
 
 // ValidCompanionImageReference reports whether ref is an immutable OCI digest
 // accepted for a custom or platform-managed companion.
@@ -9116,12 +9130,12 @@ type EdgeRuleCORSAction struct {
 // "https://*.example.com" expands to a concrete origin at
 // request time, so browsers permit credentials for it; the
 // guard is intentionally narrow.
-var CorsOriginPattern = regexp.MustCompile(`^(?:\*|https?://(?:\*\.[a-zA-Z0-9.\-]+|localhost)(?::\*|\:[0-9]+)?|https?://[a-zA-Z0-9.\-]+(?::\*|\:[0-9]+)?)$`)
+var CorsOriginPattern = lazyregexp.New(`^(?:\*|https?://(?:\*\.[a-zA-Z0-9.\-]+|localhost)(?::\*|\:[0-9]+)?|https?://[a-zA-Z0-9.\-]+(?::\*|\:[0-9]+)?)$`)
 
 // CorsHeaderNamePattern accepts an HTTP field-name token or the CORS wildcard.
 // The wildcard is valid only when credentials are disabled; callers enforce
 // that cross-field rule separately.
-var CorsHeaderNamePattern = regexp.MustCompile("^(?:\\*|[!#$%&'*+\\-.^_`|~0-9A-Za-z]+)$")
+var CorsHeaderNamePattern = lazyregexp.New("^(?:\\*|[!#$%&'*+\\-.^_`|~0-9A-Za-z]+)$")
 
 func validateCORSAllowHeaders(subject string, headers []string, allowCredentials bool) *Problem {
 	for _, header := range headers {
@@ -9369,7 +9383,7 @@ func (a *EdgeRuleIPAction) Validate() *Problem {
 // or "$id"), followed by an optional-whitespace colon, followed by
 // a URL-shaped value. Verified against 10 cases in this PR-C
 // harness (see plan-file regression-proof walkthrough).
-var edgeRuleValidateRefURLPattern = regexp.MustCompile(`"\s*(\$ref|\$id)\s*"\s*:\s*"(https?://|//)[^"]+"`)
+var edgeRuleValidateRefURLPattern = lazyregexp.New(`"\s*(\$ref|\$id)\s*"\s*:\s*"(https?://|//)[^"]+"`)
 
 // EdgeRuleValidateAction is the wire shape for a kind=validate edge
 // rule. Schema is a JSON Schema 2020-12 document (Draft 2020-12;
@@ -10135,7 +10149,7 @@ const (
 	ThrottleCountStatusesMax = 16
 )
 
-var throttleHeaderNameRegex = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
+var throttleHeaderNameRegex = lazyregexp.New("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
 
 // ThrottleKeyFieldName parses a composite key field: one of the single
 // key_by dimensions, "method", "path", or "header:<name>". It returns the
@@ -10218,7 +10232,7 @@ type ThrottleValidationContext struct {
 // identifiers landing in metric labels and log fields — anything looser
 // risks a label-cardinality explosion or a CodeQL finding on a future
 // refactor.
-var jwtClaimNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`)
+var jwtClaimNameRegex = lazyregexp.New(`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`)
 
 func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Problem {
 	if a == nil {
@@ -12950,6 +12964,10 @@ type JobResponse struct {
 	Status                     string            `json:"status"`
 	CreatedAt                  string            `json:"created_at"`
 	UpdatedAt                  string            `json:"updated_at"`
+	// Labels are the job's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // JobRunResponse is the wire projection of state.JobRun.

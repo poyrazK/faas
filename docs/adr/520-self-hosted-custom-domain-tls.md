@@ -197,3 +197,10 @@ the names below it that may hold certificates.
   domain doctor's probe host (`state.WildcardProbeHost`) is always allowed,
   so verification and drift checks keep working.
 - Routing is unchanged: the list governs certificates only.
+- The list belongs to the claim, not the name. Rows cascade when the
+  wildcard row is deleted. A claim that passes to someone else reuses the
+  row: a reclaim after the 7-day deadline, or a takeover by DNS proof. That
+  claim starts with no list and no known hosts, as a new row would. Otherwise
+  whoever squatted an unverified wildcard could set a list, and after the
+  zone's owner took the claim over, only the squatter's names would get
+  certificates. The admission ledger stays, as it does on delete.
