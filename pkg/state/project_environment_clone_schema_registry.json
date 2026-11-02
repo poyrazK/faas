@@ -1969,6 +1969,16 @@
     }
   },
   {
+    "table": "app_slug_holds",
+    "columns": [
+      "account_id",
+      "held_until",
+      "reason",
+      "slug"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_task_attach_sessions",
     "columns": [
       "attach_token_sha256",
@@ -3075,6 +3085,7 @@
       "cache_status",
       "cancelled_at",
       "cancelled_by_deployment_cascade",
+      "coalesced_with",
       "deployment_id",
       "enqueued_at",
       "failure_class",
@@ -5383,6 +5394,7 @@
       "parked_reason",
       "pr_number",
       "priority",
+      "promoted_at",
       "pusher_login",
       "reason",
       "release_command",
@@ -7568,6 +7580,7 @@
       "processed_at",
       "received_at",
       "repo_full_name",
+      "skip_reason",
       "status",
       "updated_at"
     ],
@@ -9728,6 +9741,7 @@
   {
     "table": "managed_postgres_overage_deliveries",
     "columns": [
+      "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
       "live",
@@ -19616,6 +19630,21 @@
       "endpoint_id",
       "revoked_at",
       "thread_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_callbacks",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "issued_at",
+      "provider_call_id",
+      "run_id",
+      "thread_id",
+      "tool_call_id"
     ],
     "kind": "operational"
   },

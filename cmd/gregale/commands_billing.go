@@ -87,6 +87,9 @@ func cmdBilling(args []string) int {
 		printBillingUsage(osStdout)
 		return 0
 	default:
+		if jsonOutput {
+			return printUnknownSubcommand(os.Stderr, "billing", parent, args[0])
+		}
 		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale billing: unknown subcommand %q\n\n", args[0])
 		printBillingUsage(os.Stderr)

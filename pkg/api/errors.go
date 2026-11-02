@@ -3997,7 +3997,22 @@ const (
 	// account is at its plan's concurrent-connection allowance, or holds the
 	// most one account may on a single realtime node (ADR-1323 fair use).
 	CodeRealtimeConnectionLimit = "realtime_connection_limit"
+	// CodeRealtimeWriteRateLimited is the 429 for a retained realtime write
+	// past the account's plan rate (RealtimeLimits.RetainedWritesPerSecond).
+	CodeRealtimeWriteRateLimited = "realtime_write_rate_limited"
 )
+
+// ErrRealtimeWriteRateLimited refuses retained realtime writes past the
+// account's plan rate; nothing was written.
+func ErrRealtimeWriteRateLimited(perSecond, writes int, retryAfter time.Duration) *Problem {
+	retryAfterS := max(int(math.Ceil(retryAfter.Seconds())), 1)
+	return NewProblem(http.StatusTooManyRequests, CodeRealtimeWriteRateLimited,
+		"Realtime write rate limited",
+		fmt.Sprintf("This account's realtime endpoints write retained messages, inbox messages, edits and snapshots at most %d times per second; this request needed %d. Nothing was written; retry after the indicated back-off.", perSecond, writes)).
+		WithLimit(int64(perSecond), int64(writes)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/realtime#fair-use-limits")
+}
 
 // Realtime connection limit scopes (ADR-1323).
 const (
@@ -4436,6 +4451,25 @@ func ErrPlanEventSubscriptionQuota(plan Plan, scope string, limit, observed int)
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/events#subscription-limits")
+}
+
+// ErrCronConflict is the 409 for a cron another cron of the same app already
+// has the schedule and path (or command) of: an app has one cron per schedule
+// and path, which is how gregale.yaml matches its declared crons.
+func ErrCronConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron already exists",
+		"this app already has a cron with this schedule and path; change that cron instead, or give this one a distinct path, for example by adding a query string such as ?tz=europe").
+		WithDocs(docsBase + "/crons#create-a-cron")
+}
+
+// ErrCronSuspendedRun is the 409 for a manual run of a suspended cron.
+func ErrCronSuspendedRun(reason string) *Problem {
+	detail := "this cron is suspended (" + reason + ") and does not run until it is resumed"
+	if reason == "no_live_deployment" {
+		detail = "this cron is suspended because the app has no live deployment; deploy the app to resume its crons"
+	}
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron suspended", detail).
+		WithDocs(docsBase + "/crons#suspension")
 }
 
 // ErrCronFireNowBusy is the 429 for a manual run of a cron that already
@@ -5911,7 +5945,7 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry. `gregale release traffic status` shows the canary's current step.").
+		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale rollouts recover <app> --action abort`.").
 		WithDocs(docsBase + "/deployments#canary")
 }
 

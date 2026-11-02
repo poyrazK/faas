@@ -89,11 +89,11 @@ func cmdDevSetup(args []string) int {
 	ttl := fs.String("ttl", "", "keep the environment this long after the latest sync, e.g. 72h (default 24h; plan maximum applies)")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, devSetupUsage, "dev")
-		return 2
+		return 1
 	}
 	if fs.NArg() != 0 {
 		PrintUsage(osStderr, devSetupUsage, "dev")
-		return 2
+		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
 	if *dryRun && (!*save || *start) {

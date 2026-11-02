@@ -145,3 +145,131 @@ the installation listing, renames by ID and `installation_target`, and the App
 settings check. The acceptance test for `github-deploys` is the app-bound push
 test. The journey's `push_to_deploy` known failure is removed once the suite
 passes against a release with this change.
+
+## Amendment 1 (2026-11-02): deploys that wait for CI, and Actions sign-in for project repositories
+
+### Context
+
+13. A push deploys as soon as GitHub delivers it, beside the repository's
+    own CI. The production trigger is `webhook` or `actions`; githubd ignores
+    `check_suite` and `workflow_run`, and the workflow `gregale github setup`
+    writes runs on `push`. A commit whose tests fail still reaches
+    production. A separate workflow cannot `needs:` another workflow.
+14. The first-use OIDC exchange finds an account through an app binding
+    (`apps.github_*`). A repository connected only through a project (an
+    import, `gregale deploy --repo … --project`) records its name and
+    installation on `projects`, so the deploy Action's exchange is refused
+    unless the customer writes a trust policy.
+15. `gregale deploy --github` prints a workflow for branch `main` and leaves
+    the App's push trigger alone, so on an App-connected repository each
+    push deploys twice and a repository whose default branch is not `main`
+    never deploys.
+16. The deploy Action's metadata says safe rollout is Pro/Scale only;
+    traffic splitting is allowed on every plan (`pkg/api/limits.go`).
+
+### Decision
+
+12. **`gregale github setup --wait-for WORKFLOW`.** The generated workflow
+    runs on `workflow_run` completions of the named workflow for the deploy
+    branches and deploys only a successful run for a push to this repository
+    (never a pull request or fork run), at the run's `head_sha` and branch.
+    Release tags and manual dispatches deploy directly, as before. The deploy
+    Action treats such a run like a branch push: it skips a commit that is no
+    longer the branch head and carries the branch to apid, so a CI run that
+    finishes after a newer commit's cannot roll production back; its Check
+    Run reports on the tested commit. Without `--wait-for` the workflow no
+    longer passes `ref:`, so the Action's existing superseded-push guard
+    applies to it. No App permission, event subscription, durable state or
+    githubd change is needed. A webhook-side "wait for checks" trigger was
+    rejected for now: it needs the App to read check suites, a durable
+    pending-deploy record and a timeout policy.
+13. **Project repositories sign in from Actions.** When no trust policy or
+    app binding matches, apid lists the projects bound to the subject's
+    repository through an installation their account connected, and asks
+    githubd for each installation's repositories. A binding counts only while
+    its installation sees a repository of that name; exactly one confirmed
+    account resolves, and the exchange requires the token's `repository_id`
+    claim to equal the repository ID githubd reported. A project records no
+    repository ID, so trusting the name alone would reopen H68 (a repository
+    re-created under a freed owner name). The same confirmed ID is required
+    of an explicit trust policy for a repository bound only through a
+    project; githubd being unavailable then fails the exchange, as the deploy
+    it authorizes would fail its source fetch.
+14. **`gregale deploy --github`** stays network-free: its workflow runs on
+    every push and its job only for the repository's default branch, and its
+    header says that the App may deploy the same push and that
+    `gregale github setup` hands production deploys to a workflow.
+15. The Action documents safe rollout as available on every plan.
+
+### Compatibility
+
+No migration. A new apid beside an older githubd uses the existing
+`ListInstallableRepos` RPC. Workflows generated before this change keep
+working; `--wait-for` needs a deploy Action from this release for the branch
+freshness check (an older pinned Action deploys the tested commit without
+it).
+
+### Validation
+
+Render tests cover the `--wait-for` triggers, condition, ref and branch
+environments; `scripts/ci/test_deploy_action_head.sh` covers successful,
+failed, pull-request, fork and superseded `workflow_run` events; a
+conformance case covers the project binding listing; `pkg/apid/oidcrepo`
+covers confirmation, re-created repositories, ambiguity and githubd
+failures; an apid test covers the exchange for a project-only repository.
+
+## Amendment 2 (2026-11-02): one-repository lookup, `--wait-for` check, skip reasons
+
+### Context
+
+17. Amendment 1 confirmed a project's repository by listing every repository
+    of the installation, up to 20 pages one after another, as many as three
+    times per OIDC exchange, inside apid's 5 s request budget. An
+    installation that sees more than 2,000 repositories always failed.
+18. `gregale github setup --wait-for` accepted any name. GitHub never starts a
+    `workflow_run` for a workflow that does not exist or does not run on a
+    push to the branch, so a typo, or a CI that runs only on pull requests,
+    stopped production deploys without an error.
+19. A delivery githubd completes without deploying (an app deploying from
+    Actions, a branch nothing deploys, a superseded commit) recorded no
+    reason, and GitHub's delivery log called an Actions skip
+    `feature_branch`. The CLI's status type also dropped the `activity` the
+    API returns, so `gregale github status` never listed recent events.
+
+### Decision
+
+16. **githubd `GetInstallationRepository`.** One `GET /repos/{owner}/{name}`
+    with the installation token returns the repository's immutable IDs, or
+    NOT_FOUND when the installation sees no repository of that name (404, or
+    a name that now leads to another repository). apid uses it to confirm
+    project repositories and falls back to listing when an older githubd
+    answers UNIMPLEMENTED.
+17. **`--wait-for` is checked locally.** Setup runs in the repository, so it
+    reads `.github/workflows/*.y(a)ml` and refuses, before any remote change,
+    unless a workflow other than the generated one has that `name:` (or that
+    path, for a workflow without one) and its `on.push` runs for every deploy
+    branch, honouring `branches`, `branches-ignore`, `tags` and `!` patterns.
+18. **Skip reasons.** `github_webhook_deliveries.skip_reason` (expand
+    migration, CHECK `^[a-z_]{0,64}$`) records why a completed delivery
+    deployed nothing: `actions_trigger`, `branch_not_deployed`, `superseded`,
+    `not_enabled`, `tag_not_branch_head`, `no_binding`, `skip_marker`, the
+    release-tag reasons, or `ignored`. The activity RPC, the API's
+    `skip_reason` and the dashboard carry it, and `gregale github status`
+    lists recent events with a sentence for each reason. The webhook reply
+    names the reason for a typed skip and keeps `feature_branch` for the
+    bare sentinel.
+
+### Compatibility
+
+The migration is expand-only and runs before githubd. An older githubd leaves
+`skip_reason` empty; an older apid ignores the new proto field and RPC. The
+API field is optional and omitted when empty.
+
+### Validation
+
+`pkg/githubdgrpc` covers the RPC (found, not found, provider failure, older
+githubd); `pkg/githubd` covers the 404 and rename cases, the skip reasons and
+their descriptions, and recording a reason on completion; `pkg/apid/oidcrepo`
+and the apid lookup test use the single-repository seam; CLI tests cover the
+`--wait-for` check (names, paths, branch filters, negation, tags, the
+generated workflow) and the status events with a reason.

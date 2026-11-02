@@ -633,6 +633,11 @@ const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonSc
 // arrive (ADR-20261031110037).
 const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 
+// ManagedPostgresStorageOverageMillicentsPerGiBMonth prices storage a subject
+// with overage on holds past its plan's pool: $0.50 per GiB-month, averaged
+// over the UTC month (ADR-20261102072425; ADR-20261031110037 amendment 2).
+const ManagedPostgresStorageOverageMillicentsPerGiBMonth = 50_000
+
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.
@@ -1483,6 +1488,18 @@ const (
 const (
 	CronPlatformAttempts   = 3
 	CronPlatformRetryDelay = 5 * time.Second
+)
+
+// WorkflowStepPlatformRetries is how many attempts beyond its max_attempts a
+// workflow step may make when Gregale refused an attempt before the app
+// received it (a 5xx from the gateway's dispatch endpoint: a failed wake, an
+// unavailable traffic-security check). Such an attempt never ends the step
+// within that bound; an attempt the app answered keeps the step's own policy.
+// A refused attempt retries no sooner than WorkflowStepPlatformRetryDelay
+// (ADR-081 amendment 2026-11-02).
+const (
+	WorkflowStepPlatformRetries    = 2
+	WorkflowStepPlatformRetryDelay = 5 * time.Second
 )
 
 // CronCatchUpRecordedMax bounds the due occurrences a schedule-policy or
@@ -2506,6 +2523,12 @@ const (
 	// App metadata and deployment artifacts remain available during this
 	// period, after which the grace sweeper permanently removes the app.
 	AppDeleteGraceDays = 7
+	// AppSlugHoldDuration is how long a renamed or purged app's slug stays
+	// held for its account: other accounts cannot create or rename an app to
+	// it, so they cannot take over links, webhooks and OAuth redirects still
+	// pointing at the old host (bug hunt 2026-10-28 H80, ADR-20261101091049).
+	// The app_slug_holds triggers spell it "interval '90 days'".
+	AppSlugHoldDuration = 90 * 24 * time.Hour
 	// Bounds for operator-specified object-storage safety policies; no customer
 	// allowance or price is inferred when the policy is missing.
 	MaxObjectStoragePolicyValue         int64 = 1 << 60
@@ -3238,13 +3261,25 @@ type RealtimeLimits struct {
 	// setting a user's preferences back to the defaults frees its slot
 	// (ADR-1323, amendment of 2026-10-31).
 	NotificationPreferencesPerAccount int
+	// RetainedWritesPerSecond and RetainedWriteBurst bound the writes an
+	// account's endpoints make to control-plane Postgres through apid:
+	// retained publishes and batches (each message counts), publisher
+	// credential publishes, inbox messages, message edits and deletes,
+	// snapshots and scheduled publishes. Publisher credentials and schedules
+	// do not pass the account's API request budget, so without this an
+	// account's endpoints could write without bound. A refused request gets a
+	// 429 with Retry-After; a scheduled publish waits for the bucket instead.
+	// The burst is at least ManagedRealtimeBatchMaxMessages (32), so a full
+	// batch always fits (ADR-1323, amendment of 2026-11-02).
+	RetainedWritesPerSecond int
+	RetainedWriteBurst      int
 }
 
 var realtimeLimits = map[Plan]RealtimeLimits{
 	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32, NotificationPreferencesPerAccount: 1_000},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256, NotificationPreferencesPerAccount: 10_000},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024, NotificationPreferencesPerAccount: 50_000},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32, NotificationPreferencesPerAccount: 1_000, RetainedWritesPerSecond: 10, RetainedWriteBurst: 32},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256, NotificationPreferencesPerAccount: 10_000, RetainedWritesPerSecond: 50, RetainedWriteBurst: 100},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024, NotificationPreferencesPerAccount: 50_000, RetainedWritesPerSecond: 200, RetainedWriteBurst: 400},
 }
 
 // Managed realtime per-user state and schemas (ADR-1323, amendment of
@@ -7843,6 +7878,16 @@ const (
 	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
 	EdgeWAFInlineMsPerAppPerSecond = 500
 	EdgeWAFInlineMsPerAppBurst     = 1000
+	// EdgeWAFMaxInspectHeaderBytes and EdgeWAFMaxInspectHeaderValueBytes
+	// bound the request headers a WAF check scores. A check's cost grows
+	// faster than its input (a 32 KiB cookie measured about 1,000 times an
+	// empty request's), a check cannot be stopped once it holds a slot, and
+	// the edge accepts 1 MiB of headers, so one client sending large headers
+	// could hold every slot and leave other apps' checks to fail open. A
+	// longer value is cut, and headers past the total are not scored
+	// (ADR-831 amendment 19).
+	EdgeWAFMaxInspectHeaderBytes      = 16 << 10
+	EdgeWAFMaxInspectHeaderValueBytes = 4 << 10
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
@@ -7937,6 +7982,13 @@ const (
 	EdgePenaltyBoxMaxPerApp  = 10000
 	EdgePenaltyBoxMaxEntries = 200000
 	EdgePenaltyHitsMaxPerApp = 10000
+	// EdgePenaltyCrossSiteMaxSeconds caps a box every counted rejection of
+	// which said it came from a page on another site (Sec-Fetch-Site:
+	// cross-site). A browser sends that for requests another site's page
+	// makes it send, which must not box a real visitor for long; any other
+	// client can send it too, so it shortens the box instead of preventing
+	// it (ADR-20261022105846 amendment 3).
+	EdgePenaltyCrossSiteMaxSeconds = 60
 
 	// --- ADR-20261021220456: attack mode ------------------------------
 
@@ -13426,6 +13478,10 @@ const (
 	// the local vmmd to name the trace of the one request a calling instance
 	// is serving (ADR-1138); past it the call starts its own trace.
 	ServiceTraceInferenceTimeout = 25 * time.Millisecond
+	// ServiceCallDeadlineHopOverhead is kept back from the calling request's
+	// remaining budget when a service call inherits it, so the caller still
+	// has time to read the answer (ADR-20261102082606).
+	ServiceCallDeadlineHopOverhead = 10 * time.Millisecond
 	// Private guest DNS reads the scenario DNS chaos policy for every
 	// *.svc.gregale question, rehearsing or not (ADR-20261024230731). A read
 	// gets ServiceDNSChaosLookupTimeout; after a failed read the node answers
@@ -14278,6 +14334,13 @@ const (
 	AppHealthWarningErrorRatePct    = 5.0
 	AppHealthUnhealthyErrorRatePct  = 25.0
 	AppHealthCollectorInterval      = 30 * time.Second
+	// A worker's queue evidence is the newest AppHealthWorkerRecordScan
+	// records of each attached trigger (ADR-20261102091500). A message that
+	// has waited AppHealthWorkerBacklogAgeWarn degrades the worker; a dead
+	// letter written within AppHealthWorkerDeadLetterWindow does too.
+	AppHealthWorkerRecordScan       = 1000
+	AppHealthWorkerBacklogAgeWarn   = 10 * time.Minute
+	AppHealthWorkerDeadLetterWindow = time.Hour
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
@@ -14489,6 +14552,17 @@ const (
 	DataAPIStorageTransfers          = 4
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
+	// Change hooks (ADR-20261022121642), mirrored in the runtime's limits:
+	// events and body bytes per runtime publication, the largest event data
+	// before its rows are dropped, the relay's claim lease, how long one
+	// publication may take, and the relay's idle poll range.
+	DataAPIChangeEventsBatchMaxEvents = 100
+	DataAPIChangeEventsBatchMaxBytes  = 1 << 20
+	DataAPIChangeEventDataMaxBytes    = 64 << 10
+	DataAPIChangeEventsLease          = 60 * time.Second
+	DataAPIChangeEventsPublishTimeout = 10 * time.Second
+	DataAPIChangeEventsIdleMin        = time.Second
+	DataAPIChangeEventsIdleMax        = 30 * time.Second
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour

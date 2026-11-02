@@ -312,6 +312,8 @@ func notFound(r *http.Request) *api.Problem {
 		what = "no such cron run"
 	case strings.HasPrefix(path, "/v1/crons/"):
 		what = "no such cron"
+	case strings.HasPrefix(path, "/v1/cron-fire-now-requests/"):
+		what = "no such fire-now request"
 	case strings.HasPrefix(path, "/v1/deployments/"):
 		what = "no such deployment"
 	case strings.HasPrefix(path, "/v1/domains/"):

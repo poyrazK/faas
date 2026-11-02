@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -72,13 +73,30 @@ func TestCliAuthExchangeNeedsTheDeviceCode(t *testing.T) {
 		t.Fatalf("second exchange: %d, want 410", rec.Code)
 	}
 
-	// A CLI that predates device codes keeps the code-only exchange.
+	// A CLI that predates device codes keeps the code-only exchange, with a
+	// code long enough to stand alone: 64 bits, not the typed 32.
 	rec = post("/v1/cli-auth/code", struct{}{})
 	var legacy api.CliAuthCodeResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &legacy); err != nil || legacy.DeviceCode != "" {
 		t.Fatalf("legacy mint = %+v, %v; want no device code", legacy, err)
 	}
+	if raw, err := hex.DecodeString(strings.ReplaceAll(legacy.Code, "-", "")); err != nil || len(raw) != 8 {
+		t.Fatalf("legacy code = %q, want 16 hex characters", legacy.Code)
+	}
 	if rec := post("/v1/cli-auth/exchange", api.CliAuthExchangeRequest{Code: legacy.Code}); rec.Code != http.StatusNotFound {
 		t.Fatalf("legacy pending exchange: %d, want 404 cli_auth_pending", rec.Code)
+	}
+
+	// An approved short code with no device code (minted before this
+	// change) still yields nothing alone: short codes never exchange.
+	unbound := []byte{0xde, 0xad, 0xbe, 0xef}
+	if err := store.IssueCliAuthCode(ctx, api.HashToken(unbound), time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimCliAuthCode(ctx, api.HashToken(unbound), acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := post("/v1/cli-auth/exchange", api.CliAuthExchangeRequest{Code: "DEAD-BEEF"}); rec.Code != http.StatusGone {
+		t.Fatalf("code-only exchange of a short code: %d %s, want 410 and no key", rec.Code, rec.Body)
 	}
 }

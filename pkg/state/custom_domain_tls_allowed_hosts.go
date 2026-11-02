@@ -3,13 +3,13 @@ package state
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // CustomDomainTLSAllowedHostReader is the public edge's read of a wildcard
@@ -37,7 +37,7 @@ type CustomDomainTLSAllowedHostStore interface {
 	SetCustomDomainTLSAllowedHosts(ctx context.Context, wildcardDomain string, names []string) error
 }
 
-var wildcardHostNameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+var wildcardHostNameRE = lazyregexp.New(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 // WildcardHostName returns the part of host before wildcardDomain's suffix
 // ("eu.shop" for eu.shop.example.com under *.example.com), the form the

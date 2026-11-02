@@ -55,6 +55,9 @@ const (
 	RealtimeAccess     = "realtime_access"
 	RealtimeOccupancy  = "realtime_occupancy"
 	StrictBudgets      = "strict_budgets"
+	// AppHealthWorkers assesses worker pools in app health
+	// (ADR-20261102091500) for the accounts it releases.
+	AppHealthWorkers = "app_health_workers"
 
 	// QuietPauseUnbilled releases unbilled quiet pause (ADR-20261023171905)
 	// to accounts where meterd's quiet_pause_unbilled mode is on.
@@ -324,6 +327,15 @@ var catalog = []Spec{
 			"its routes answer an unregistered route to accounts outside the flag after authentication.",
 		ADR:       "ADR-20261020170649",
 		Consumers: []string{"apid", "gatewayd-internal"},
+	},
+	{
+		Key:         AppHealthWorkers,
+		Label:       "Worker health",
+		Description: "Assess worker pools in app health (running replicas against the pool minimum, backlog age, recent dead letters) for the accounts it releases. Off, a worker's health reads unsupported, as before.",
+		ADR:         "ADR-20261102091500",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-03-31",
 	},
 	{
 		Key:         StrictBudgets,

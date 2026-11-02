@@ -237,7 +237,7 @@ func cmdDLQPurge(args []string) int {
 		return 1
 	}
 	if *all {
-		if code := requireAutomationConfirmation(*yes || *quiet, "--yes"); code != 0 {
+		if code := requireConfirmationFlag(*yes || *quiet, "--yes", "purging every dead letter"); code != 0 {
 			return code
 		}
 	}

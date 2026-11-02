@@ -39,11 +39,13 @@ func TestOverageChargeIsBoundedByTheCeiling(t *testing.T) {
 
 type overageUsageStore struct {
 	*MemoryStore
-	used map[string]int64
+	used   map[string]int64
+	stored map[string]int64 // storage byte-seconds
 }
 
 func (s *overageUsageStore) UsageSnapshot(_ context.Context, subjectID string, at time.Time) (UsageSnapshot, error) {
-	return UsageSnapshot{PeriodStart: monthStart(at), ComputeUnitSeconds: s.used[subjectID+monthStart(at).Format("2006-01")]}, nil
+	key := subjectID + monthStart(at).Format("2006-01")
+	return UsageSnapshot{PeriodStart: monthStart(at), ComputeUnitSeconds: s.used[key], StorageByteSeconds: s.stored[key]}, nil
 }
 
 type overageFixture struct {
@@ -59,7 +61,7 @@ type overageFixture struct {
 
 func newOverageFixture(t *testing.T, now time.Time) *overageFixture {
 	t.Helper()
-	return &overageFixture{store: &overageUsageStore{MemoryStore: NewMemoryStore(), used: map[string]int64{}}, now: now,
+	return &overageFixture{store: &overageUsageStore{MemoryStore: NewMemoryStore(), used: map[string]int64{}, stored: map[string]int64{}}, now: now,
 		limits: CapLimits{Allowance: testAllowance, Ceiling: 2 * testAllowance, Overage: true}}
 }
 
@@ -197,10 +199,10 @@ func TestOverageBillerRetryAfterALostResponseKeepsItsStartingPoint(t *testing.T)
 		t.Fatal(err)
 	}
 	if len(f.published) != 2 || f.published[0].DeliveredMillicents != 0 || f.published[1].DeliveredMillicents != 0 ||
-		f.published[1].TargetMillicents != 40_000 {
+		f.published[1].TargetMillicents != 2*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("published %+v; want both steps to start from 0, so the provider keeps one", f.published)
 	}
-	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 40_000 {
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 2*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("recorded %+v", delivery)
 	}
 }
@@ -218,17 +220,17 @@ func TestOverageBillerKeepsShadowAndLiveApart(t *testing.T) {
 		t.Fatalf("shadow = %+v, %v", summary, err)
 	}
 	f.store.used["acct2026-11"] = testAllowance + 3*3600
-	if summary, err := f.biller(t, true, november).Deliver(ctx); err != nil || summary.Delivered != 1 || summary.Millicents != 60_000 {
+	if summary, err := f.biller(t, true, november).Deliver(ctx); err != nil || summary.Delivered != 1 || summary.Millicents != 3*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("live after shadow = %+v, %v; want the whole month charged", summary, err)
 	}
-	if len(f.published) != 1 || f.published[0].DeliveredMillicents != 0 || f.published[0].TargetMillicents != 60_000 {
+	if len(f.published) != 1 || f.published[0].DeliveredMillicents != 0 || f.published[0].TargetMillicents != 3*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("published %+v; want a step from 0, not from the shadow amount", f.published)
 	}
 	f.store.used["acct2026-11"] = testAllowance + 4*3600
 	if summary, err := f.biller(t, false, november).Deliver(ctx); err != nil || summary.Shadowed != 0 {
 		t.Fatalf("shadow after live = %+v, %v; want nothing recorded", summary, err)
 	}
-	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 60_000 {
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 3*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("recorded %+v; want the live charge kept", delivery)
 	}
 }
@@ -277,5 +279,81 @@ func TestOverageDeliveryAdvancesOnlyFromThePreviousCharge(t *testing.T) {
 	delivery.Millicents = 30_000
 	if _, err := store.RecordOverageDelivery(ctx, delivery, OverageDelivery{Live: true, Millicents: 20_000}); err == nil {
 		t.Fatal("a mid-month period was accepted")
+	}
+}
+
+const (
+	testGiB          = int64(1 << 30)
+	testNovemberSecs = int64(30 * 24 * 3600)
+)
+
+// Storage is charged on the month's average past the pool, at most one more
+// pool (ADR-20261031110037 amendment 2).
+func TestStorageOverageCharge(t *testing.T) {
+	november := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	price := int64(api.ManagedPostgresStorageOverageMillicentsPerGiBMonth)
+	for _, tc := range []struct {
+		name                   string
+		used, pool             int64
+		billed, wantMillicents int64
+	}{
+		{"inside the pool on average", 2*testGiB*testNovemberSecs - 1, 2 * testGiB, 0, 0},
+		{"one GiB past the pool all month", 3 * testGiB * testNovemberSecs, 2 * testGiB, testGiB * testNovemberSecs, price},
+		{"past the doubled pool is charged one pool", 10 * testGiB * testNovemberSecs, 2 * testGiB, 2 * testGiB * testNovemberSecs, 2 * price},
+		{"a fraction of a millicent is not charged", 2*testGiB*testNovemberSecs + 1, 2 * testGiB, 1, 0},
+		{"no pool", testGiB * testNovemberSecs, 0, 0, 0},
+	} {
+		billed, millicents := StorageOverageCharge(tc.used, tc.pool, november)
+		if billed != tc.billed || millicents != tc.wantMillicents {
+			t.Errorf("%s: StorageOverageCharge = %d byte-s, %d millicents; want %d, %d", tc.name, billed, millicents, tc.billed, tc.wantMillicents)
+		}
+	}
+	// A GiB-month is priced over the month's own seconds.
+	december := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	if _, millicents := StorageOverageCharge(3*testGiB*31*24*3600, 2*testGiB, december); millicents != price {
+		t.Fatalf("a GiB past the pool through December = %d millicents, want %d", millicents, price)
+	}
+}
+
+// With overage on, storage past the plan's pool is charged on the step even
+// while compute stays inside the allowance. Turning overage off keeps a
+// month's storage charge, so the cumulative charge never drops; without
+// overage, storage is never charged.
+func TestOverageBillerChargesStoragePastThePool(t *testing.T) {
+	ctx := context.Background()
+	november := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	price := int64(api.ManagedPostgresStorageOverageMillicentsPerGiBMonth)
+	f := newOverageFixture(t, november.Add(10*24*time.Hour))
+	f.limits.StorageAllowance = testGiB
+	if err := f.store.SetOverage(ctx, "acct", true, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.store.used["acct2026-11"] = testAllowance / 2
+	f.store.stored["acct2026-11"] = 2 * testGiB * testNovemberSecs
+	if summary, err := f.biller(t, true, november).Deliver(ctx); err != nil || summary.Delivered != 1 || len(f.published) != 1 {
+		t.Fatalf("storage step = %+v, %v, published %+v", summary, err, f.published)
+	}
+	if step := f.published[0]; step.BilledUnitSeconds != 0 || step.BilledStorageByteSeconds != testGiB*testNovemberSecs ||
+		step.StoragePoolBytes != testGiB || step.TargetMillicents != price {
+		t.Fatalf("storage step %+v", step)
+	}
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); delivery.BilledStorageByteSeconds != testGiB*testNovemberSecs {
+		t.Fatalf("delivery %+v", delivery)
+	}
+
+	f.limits.Overage = false
+	f.store.used["acct2026-11"] = testAllowance + 3600
+	if _, err := f.biller(t, true, november).Deliver(ctx); err != nil || len(f.published) != 2 ||
+		f.published[1].TargetMillicents != price+api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
+		t.Fatalf("after overage off: %+v, %v", f.published, err)
+	}
+
+	off := newOverageFixture(t, november.Add(10*24*time.Hour))
+	off.limits.Overage, off.limits.StorageAllowance = false, testGiB
+	off.reachAllowance(t, "acct", november, false)
+	off.store.used["acct2026-11"] = testAllowance
+	off.store.stored["acct2026-11"] = 2 * testGiB * testNovemberSecs
+	if summary, err := off.biller(t, true, november).Deliver(ctx); err != nil || summary.Delivered != 0 || len(off.published) != 0 {
+		t.Fatalf("storage charged without overage: %+v, %v, %+v", summary, err, off.published)
 	}
 }

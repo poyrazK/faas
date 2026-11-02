@@ -87,11 +87,13 @@ else
       --stats=0 \
       --quiet || fail "off-host WAL copy failed; local WAL left intact"
   fi
+  # Each checker hashes local segments from the disk PostgreSQL runs on, and
+  # the unit caps that disk's reads; more checkers only queue behind the cap.
   "$rclone_bin" check "$archive_root" "$rclone_remote:$wal_path" \
     --config="$rclone_config" \
     --files-from="$candidate_names" \
     --one-way \
-    --checkers=16 \
+    --checkers=2 \
     --quiet || fail "off-host verification failed; local WAL left intact"
 
   bytes=0

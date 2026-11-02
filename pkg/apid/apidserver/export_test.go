@@ -31,6 +31,7 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
+	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
@@ -46,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/oidcrepo"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
@@ -58,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -1989,6 +1992,17 @@ var ProjectReadinessOverrides = projectReadinessOverrides
 // SetEventPublishClock pins the event publish rate limiter's clock.
 func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }
 
+// XPrepareDeliveryCrons runs the GitHub bridge's cron staging for one push
+// against store; staged marks a release staged without traffic.
+func XPrepareDeliveryCrons(ctx context.Context, store *state.MemStore, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, m *gregalemanifest.Manifest, kind state.DeploymentKind, staged bool) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
+	g := &githubdBridge{store: store, log: slog.Default()}
+	params := apidsource.EnqueueParams{}
+	if staged {
+		params.TrafficPercentExplicit = true
+	}
+	return g.prepareDeliveryCrons(ctx, req, resource, app, m, kind, params)
+}
+
 // GitHub connector bearer handlers (ADR-20261101160300).
 func (r *server) ListGitHubRepositoriesForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
 	r.listGitHubRepositories(w, req, acct)
@@ -2015,4 +2029,14 @@ func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func
 	p := newAppErrorsPurger(store, nil, nil, slog.New(slog.DiscardHandler), true)
 	p.now = now
 	p.purgeAll(ctx)
+}
+
+// LoadOrGenerateAuditHMACKey exposes the boot-time audit HMAC key loader.
+var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
+
+// OIDCAccountLookup is the OIDC exchange's account lookup with project
+// repository bindings confirmed through repos (ADR-20261101160300,
+// amendment 1).
+func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
+	return newOIDCAccountLookup(store, repos)
 }

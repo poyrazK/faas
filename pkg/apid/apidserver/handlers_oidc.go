@@ -26,7 +26,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
+	"github.com/onebox-faas/faas/pkg/apid/oidcrepo"
+	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -79,7 +82,7 @@ func (s *server) buildOIDCHandler() *oidcHandler {
 		Verifier: oidc.NewVerifier(s.log),
 		Policies: storeAsOIDCTrustPolicyStore(s.store),
 		Tokens:   storeAsTokenExchangeStore(s.store),
-		Lookups:  storeAsAccountLookupAdapter(s.store),
+		Lookups:  s.oidcAccountLookup(),
 		Audit:    auditorAsOIDCEmitter(s.audit),
 		Log:      s.log,
 		// nil Clock = time.Now. The handler stamps ExpiresAt
@@ -169,18 +172,43 @@ func (a tokenExchangeStoreAdapter) Delete(ctx context.Context, id string) error 
 	return a.store.DeleteOIDCExchangedToken(ctx, id)
 }
 
-// storeAsAccountLookupAdapter wraps state.Store as the narrow
-// pkg/oidc.AccountLookup interface. The pkg/oidc handler only
-// needs AccountByOIDCSubject; the auth chain's other lookups
-// (AccountByKeyHash, AccountByID) are not on the OIDC path.
-func storeAsAccountLookupAdapter(s state.Store) oidc.AccountLookup {
-	return accountLookupAdapter{store: s}
+// oidcAccountLookup wraps state.Store as the narrow pkg/oidc.AccountLookup
+// interface. The pkg/oidc handler only needs AccountByOIDCSubject; the auth
+// chain's other lookups (AccountByKeyHash, AccountByID) are not on the OIDC
+// path. It adds the project repository bindings githubd confirms to the
+// store's lookups (ADR-20261101160300, amendment 1).
+func (s *server) oidcAccountLookup() oidc.AccountLookup {
+	if _, stub := s.githubd.(stubGithubdClient); stub || s.githubd == nil {
+		return newOIDCAccountLookup(s.store, nil)
+	}
+	return newOIDCAccountLookup(s.store, githubdRepoLookup{s.githubd})
 }
 
-type accountLookupAdapter struct{ store state.Store }
+// newOIDCAccountLookup confirms project repository bindings through repos;
+// nil repos confirms none.
+func newOIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) accountLookupAdapter {
+	adapter := accountLookupAdapter{store: store}
+	if projects, ok := store.(state.OIDCProjectRepositoryResolver); ok && repos != nil {
+		adapter.projects = oidcrepo.Resolver{Store: projects, Repos: repos}
+	}
+	return adapter
+}
 
+type accountLookupAdapter struct {
+	store state.Store
+	// projects confirms repositories bound only through a project; the zero
+	// value confirms none.
+	projects oidcrepo.Resolver
+}
+
+// AccountByOIDCSubject resolves a trust policy or app binding through the
+// store, then a project binding githubd confirms.
 func (a accountLookupAdapter) AccountByOIDCSubject(ctx context.Context, issuerURL, subject string) (state.Account, error) {
-	return a.store.AccountByOIDCSubject(ctx, issuerURL, subject)
+	acct, err := a.store.AccountByOIDCSubject(ctx, issuerURL, subject)
+	if errors.Is(err, state.ErrNotFound) {
+		return a.projectAccount(ctx, issuerURL, subject)
+	}
+	return acct, err
 }
 
 // AccountByOIDCRepositoryBinding satisfies oidc.RepositoryBindingLookup when
@@ -188,19 +216,77 @@ func (a accountLookupAdapter) AccountByOIDCSubject(ctx context.Context, issuerUR
 func (a accountLookupAdapter) AccountByOIDCRepositoryBinding(ctx context.Context, issuerURL, subject string) (state.Account, error) {
 	resolver, ok := a.store.(state.OIDCRepositoryBindingResolver)
 	if !ok {
-		return state.Account{}, state.ErrNotFound
+		return a.projectAccount(ctx, issuerURL, subject)
 	}
-	return resolver.AccountByOIDCRepositoryBinding(ctx, issuerURL, subject)
+	acct, err := resolver.AccountByOIDCRepositoryBinding(ctx, issuerURL, subject)
+	if errors.Is(err, state.ErrNotFound) {
+		return a.projectAccount(ctx, issuerURL, subject)
+	}
+	return acct, err
+}
+
+func (a accountLookupAdapter) projectAccount(ctx context.Context, issuerURL, subject string) (state.Account, error) {
+	accountID, err := a.projects.AccountID(ctx, issuerURL, subject)
+	if err != nil {
+		return state.Account{}, err
+	}
+	return a.store.AccountByID(ctx, accountID)
 }
 
 // GitHubRepositoryIDsForOIDCSubject satisfies oidc.RepositoryIDLookup when the
-// store records the immutable IDs of a GitHub repository binding.
+// store records the immutable IDs of a GitHub repository binding. A
+// repository bound only through a project takes the ID githubd confirms, so
+// the token's repository_id claim must name that repository.
 func (a accountLookupAdapter) GitHubRepositoryIDsForOIDCSubject(ctx context.Context, accountID, issuerURL, subject string) (int64, int64, error) {
-	resolver, ok := a.store.(state.OIDCRepositoryIDResolver)
-	if !ok {
-		return 0, 0, nil
+	var ownerID, repoID int64
+	if resolver, ok := a.store.(state.OIDCRepositoryIDResolver); ok {
+		var err error
+		if ownerID, repoID, err = resolver.GitHubRepositoryIDsForOIDCSubject(ctx, accountID, issuerURL, subject); err != nil {
+			return 0, 0, err
+		}
 	}
-	return resolver.GitHubRepositoryIDsForOIDCSubject(ctx, accountID, issuerURL, subject)
+	if ownerID != 0 || repoID != 0 {
+		return ownerID, repoID, nil
+	}
+	repoID, err := a.projects.RepositoryID(ctx, accountID, issuerURL, subject)
+	return 0, repoID, err
+}
+
+// githubdRepositoryClient is the single-repository lookup a githubd from
+// ADR-20261101160300 amendment 2 answers; it is kept off GithubdClient so
+// existing fakes need not implement it.
+type githubdRepositoryClient interface {
+	GetInstallationRepository(ctx context.Context, accountID string, installationID int64, repoFullName string) (githubdgrpc.InstallationRepository, bool, error)
+}
+
+// githubdRepoLookup finds a repository an installation sees through githubd:
+// one GitHub request, so the OIDC exchange stays inside apid's request
+// budget. An older githubd lists the installation's repositories instead.
+type githubdRepoLookup struct{ client GithubdClient }
+
+func (l githubdRepoLookup) InstallationRepositoryID(ctx context.Context, accountID string, installationID int64, fullName string) (int64, error) {
+	if lookup, ok := l.client.(githubdRepositoryClient); ok {
+		repo, found, err := lookup.GetInstallationRepository(ctx, accountID, installationID, fullName)
+		switch {
+		case errors.Is(err, githubdgrpc.ErrInstallationRepositoryUnsupported):
+		case err != nil:
+			return 0, err
+		case !found:
+			return 0, nil
+		default:
+			return repo.ID, nil
+		}
+	}
+	repos, err := l.client.ListInstallableRepos(ctx, accountID, installationID)
+	if err != nil {
+		return 0, err
+	}
+	for _, repo := range repos {
+		if repo.ID > 0 && strings.EqualFold(repo.FullName, fullName) {
+			return repo.ID, nil
+		}
+	}
+	return 0, nil
 }
 
 // OIDCDeployTargetForSubject satisfies oidc.DeployTargetLookup. A store that

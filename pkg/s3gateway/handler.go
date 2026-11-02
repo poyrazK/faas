@@ -447,12 +447,6 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestConte
 	}
 	if !hasBucket {
 		if r.Method == http.MethodGet && len(query) == 0 && h.can(req.credential, state.ObjectBucketPermissionRead) {
-			// Bucket-level reads are admitted like listings: over the monthly
-			// limits, or behind a revoked organization fence, they are refused
-			// as every other non-delete request is (bug hunt 33).
-			if !h.admit(w, r, req, "__list__", 0, false) {
-				return
-			}
 			writeS3XML(w, http.StatusOK, req.requestID, listAllMyBucketsResult{XMLNS: s3XMLNamespace, Buckets: listBucketsBody{Buckets: []listBucket{{Name: req.bucket.Name, CreationDate: req.bucket.CreatedAt.UTC().Format(time.RFC3339)}}}})
 			return
 		}
@@ -531,14 +525,14 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 		return
 	}
 	if r.Method == http.MethodHead && len(query) == 0 {
-		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, "__list__", 0, false) {
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	if r.Method == http.MethodGet && query.Has("location") {
-		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, "__list__", 0, false) {
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
 			return
 		}
 		writeS3XML(w, http.StatusOK, req.requestID, struct {

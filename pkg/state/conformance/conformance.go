@@ -51,6 +51,7 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"operator_alert_triage_and_retention_are_durable", testOperatorAlertTriageRetention},
 		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
+		{"operator_actions_reach_the_audit_log_under_the_operator", testOperatorActionsReachAuditLog},
 		{"operator_queue_count_excludes_running_and_terminal_builds", testOperatorQueuedBuildsCount},
 		{"operator_queue_snapshot_preserves_wait_across_requeue", testOperatorBuildQueueSnapshot},
 		{"operator_build_recovery_snapshot_preserves_cleanup_age", testOperatorBuildRecoverySnapshot},
@@ -174,6 +175,7 @@ func Run(t *testing.T, open Open) {
 		{"oidc_empty_subject_pattern_binds_nothing", testOIDCEmptySubjectPatternBindsNothing},
 		{"oidc_repository_binding_resolution", testOIDCRepositoryBindingResolution},
 		{"oidc_repository_ids_for_subject", testOIDCRepositoryIDsForSubject},
+		{"oidc_project_repository_bindings", testOIDCProjectRepositoryBindings},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},

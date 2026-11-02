@@ -477,7 +477,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, tagErr
 		}
 		if !ok {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonTagNotBranchHead)
 		}
 		branch = tagged
 	}
@@ -492,7 +492,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	}
 	if !projectBound {
 		if actionsOnly {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonActionsTrigger)
 		}
 		if len(boundApps) == 0 {
 			return reconcile.Result{}, ErrNoBinding
@@ -530,14 +530,14 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// project's apps; app-bound apps build either way.
 	deployProject := projectBound && policy.ProductionTrigger != state.ProductionTriggerActions
 	if !deployProject && len(boundApps) == 0 {
-		return reconcile.Result{WasIgnored: true}, ErrIgnored
+		return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonActionsTrigger)
 	}
 	if !s.capabilityAllowed(CapabilityGitHubDeploys, binding.AccountID) {
 		s.Ops.ObserveGithubdPushSkipped(wire.PushSkippedReasonCapability)
 		s.Log.Info("githubd: push ignored; capability off",
 			"capability", CapabilityGitHubDeploys, "account_id", binding.AccountID,
 			"repo", ev.Repository.FullName)
-		return reconcile.Result{WasIgnored: true}, ErrIgnored
+		return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonNotEnabled)
 	}
 
 	// An explicit commit marker is a customer-controlled no-op. Resolve the
@@ -564,7 +564,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 		if err != nil {
 			if errors.Is(err, ErrIgnored) {
-				return reconcile.Result{}, ErrIgnored
+				return reconcile.Result{}, pushSkip(SkipReasonBranchNotDeployed)
 			}
 			return reconcile.Result{}, err
 		}
@@ -575,7 +575,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, fmt.Errorf("githubd: verify push branch head: %w", headErr)
 		}
 		if !current {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonSuperseded)
 		}
 	}
 
@@ -616,7 +616,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, fmt.Errorf("githubd: recheck push branch head: %w", headErr)
 		}
 		if !current {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonSuperseded)
 		}
 	}
 	var result reconcile.Result
@@ -632,7 +632,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 				// future guard that errors out with ErrIgnored
 				// gets the same translation.
 				result.WasIgnored = true
-				return result, ErrIgnored
+				return result, pushSkip(SkipReasonBranchNotDeployed)
 			}
 			return result, err
 		}
@@ -641,7 +641,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// the 200-ignored body. Translate to ErrIgnored so the HTTP
 		// handler can branch on the typed sentinel.
 		if result.WasIgnored {
-			return result, ErrIgnored
+			return result, pushSkip(SkipReasonBranchNotDeployed)
 		}
 	}
 
@@ -1714,22 +1714,6 @@ func (s *Service) plainPreviewApps(ctx context.Context, binding state.GitHubBind
 // retired too: GitHub's later events for the PR are skipped as well, so it
 // would serve that head to the end of its lease while the PR's check said
 // the preview was skipped.
-// pullRequestTargetStillCurrent re-resolves the PR's binding and preview
-// policy and reports whether they still allow the preview target resolved at
-// the start of the event. A lookup error counts as not current: the event is
-// ignored and the next one retries.
-func (s *Service) pullRequestTargetStillCurrent(ctx context.Context, ev PullRequestEvent, target pullRequestTarget) bool {
-	fresh, err := s.resolvePullRequestTarget(ctx, ev)
-	if err != nil {
-		if !errors.Is(err, ErrNoBinding) && s.Log != nil {
-			s.Log.Warn("githubd: recheck PR preview target failed; ignoring the event", "repo", ev.Repository.FullName, "pr", ev.Number, "err", err)
-		}
-		return false
-	}
-	return fresh.previewsOff == "" && fresh.parent.ID == target.parent.ID &&
-		fresh.binding.InstallID == target.binding.InstallID && strings.EqualFold(fresh.binding.RepoFullName, target.binding.RepoFullName)
-}
-
 func (s *Service) skipPullRequestPreview(ctx context.Context, ev PullRequestEvent, target pullRequestTarget, reason string) (reconcile.Result, error) {
 	retired, err := s.retirePullRequestPreviews(ctx, ev, target)
 	if err != nil {
@@ -1916,11 +1900,8 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	}
 	previewApp = withParentAccessGates(applyGitHubRootPolicy(previewApp, policy), parentApp)
 	// Resolve the account server-side so the separate, bounded PR-preview
-	// allowance comes from the plan table, including dependency previews. It
-	// is the account that owns the project's resources, as for a project
-	// deploy: an organization's plan for its apps, not the binding creator's
-	// personal plan (bug hunt 33).
-	account, err := state.AppResourceAccount(ctx, s.Reconcile.Store, parentApp)
+	// allowance comes from the plan table, including dependency previews.
+	account, err := s.Reconcile.Store.AccountByID(ctx, binding.AccountID)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve preview account limits: %w", err)
 	}
@@ -1997,14 +1978,6 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 		if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, &ev); currentErr != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: recheck current PR state: %w", currentErr)
 		} else if !current {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
-		}
-		// Previews turned off, or the app unbound or rebound, while the
-		// source was fetched and scanned: that retire marked this PR's
-		// preview stale, and reserving now would reopen it with a fresh
-		// lease (bug hunt 33). The next event for the PR acts on the
-		// current target.
-		if !s.pullRequestTargetStillCurrent(ctx, ev, target) {
 			return reconcile.Result{WasIgnored: true}, ErrIgnored
 		}
 	}
@@ -2294,6 +2267,48 @@ func (errIgnored) Error() string { return "githubd: push to non-production branc
 // IsIgnored reports whether err is the ignored sentinel.
 func IsIgnored(err error) bool {
 	return errors.As(err, new(errIgnored))
+}
+
+// Why a delivery githubd completes deployed nothing (ADR-20261101160300,
+// amendment 2). The delivery records it and `gregale github status` shows
+// it; release-tag refusals add their own reasons.
+const (
+	SkipReasonActionsTrigger    = "actions_trigger"
+	SkipReasonBranchNotDeployed = "branch_not_deployed"
+	SkipReasonSuperseded        = "superseded"
+	SkipReasonNotEnabled        = "not_enabled"
+	SkipReasonTagNotBranchHead  = "tag_not_branch_head"
+	SkipReasonNoBinding         = "no_binding"
+	SkipReasonSkipMarker        = "skip_marker"
+	SkipReasonIgnored           = "ignored"
+)
+
+// pushSkip is an ignored push that says why; IsIgnored holds for it.
+type pushSkip string
+
+func (s pushSkip) Error() string { return "githubd: push skipped: " + string(s) }
+
+func (pushSkip) Unwrap() error { return ErrIgnored }
+
+// SkipReason names why a delivery completed without deploying, or "" when
+// err is nil or not a skip.
+func SkipReason(err error) string {
+	var reason pushSkip
+	switch {
+	case err == nil:
+		return ""
+	case errors.As(err, &reason):
+		return string(reason)
+	case IsNoBinding(err):
+		return SkipReasonNoBinding
+	case IsSkipDeploy(err):
+		return SkipReasonSkipMarker
+	case isReleaseTagRejected(err):
+		return releaseTagRejectReason(err)
+	case IsIgnored(err):
+		return SkipReasonIgnored
+	}
+	return ""
 }
 
 // refToBranch converts "refs/heads/main" → "main". Returns "" for

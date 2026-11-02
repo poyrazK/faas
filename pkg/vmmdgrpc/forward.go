@@ -232,7 +232,7 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// lock contention for marginal signal value.
 	finishActivity := s.beginDispatchActivity(reqInit)
 	defer finishActivity()
-	finishTrace := s.inflightTraces.begin(reqInit.GetInstance(), forwardTraceparent(reqInit))
+	finishTrace := s.inflightTraces.begin(reqInit.GetInstance(), forwardOf(reqInit, time.Now()))
 	defer finishTrace()
 	if err := s.prepareGuest(stream.Context(), reqInit.GetInstance()); err != nil {
 		return err

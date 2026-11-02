@@ -226,6 +226,9 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		}
 		body += databases.hostVars(host, hostScheddTarget)
 		body += renderComputeEdgeVars(m.PublicEdge, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		if host.Role == roleControlPlane {
+			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts)
+		}
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
 		body += renderLogArchiveVars(m.LogArchive)
 		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
@@ -772,7 +775,46 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, role, controlPlaneAddress s
 		if edge.PlacementRouting {
 			b.WriteString("faas_edge_placement_routing: true\n")
 		}
+		// ADR-20261102081618 §5: spread an app over its nodes, and serve from
+		// this node's instances first.
+		if edge.PlacementNodeSet {
+			b.WriteString("faas_edge_placement_node_set: true\n")
+		}
+		if edge.LocalFirst {
+			b.WriteString("faas_gateway_edge_local_first: true\n")
+		}
+		// ADR-20261102081618: Cloudflare also connects to the edge directly on
+		// 443, so the node's firewall admits 80/443 from Cloudflare only.
+		if edge.DirectEntry() {
+			fmt.Fprintf(&b, "faas_edge_entry: %q\n", edge.Entry)
+			b.WriteString("faas_cloudflare_origin_only: true\n")
+		}
 	}
+	return b.String()
+}
+
+// renderEdgeDNSVars turns on edgednsd on the control plane
+// (ADR-20261102081618 §3) with the managed names and each compute host's
+// public address under the name it registers with.
+func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
+	if edge.DNS == nil || !edge.DirectEntry() {
+		return ""
+	}
+	names := make([]string, 0, len(edge.DNS.Names))
+	for _, name := range edge.DNS.Names {
+		names = append(names, edge.DNS.ZoneID+":"+name)
+	}
+	var addresses []string
+	for _, h := range hosts {
+		if h.Role == roleComputeOnly && h.PublicIPv4 != "" {
+			addresses = append(addresses, canonicalComputeNodeName(h.Name, roleTemplating.Role(h.Role))+"="+h.PublicIPv4)
+		}
+	}
+	var b strings.Builder
+	b.WriteString("faas_edgednsd_managed: true\n")
+	fmt.Fprintf(&b, "faas_edgednsd_names: [%s]\n", quotedYAMLList(names))
+	fmt.Fprintf(&b, "faas_edgednsd_node_addresses: [%s]\n", quotedYAMLList(addresses))
+	fmt.Fprintf(&b, "faas_edgednsd_dry_run: %t\n", !edge.DNS.Live)
 	return b.String()
 }
 

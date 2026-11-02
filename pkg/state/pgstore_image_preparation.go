@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -141,6 +144,15 @@ func (s *PgStore) ListResumableImagePreparations(ctx context.Context, node strin
 	return out, nil
 }
 
+// imagePreparationTransitionAttempts bounds how often a transition that
+// Postgres picked as a deadlock victim is retried. Its status update locks
+// the deployment row, then the owning account row (the lifecycle successor
+// trigger), while a wake admission can hold the account row and wait on the
+// deployment row. Two deploys of one app at once lost a deployment to that
+// cycle (Hunt 31 H31-2); the transition is short and claim-guarded, so a
+// fresh attempt is safe.
+const imagePreparationTransitionAttempts = 3
+
 func (s *PgStore) TransitionImagePreparation(ctx context.Context, id, token string, status DeploymentStatus) error {
 	deploymentID, err := parsePgUUID(id)
 	if err != nil {
@@ -150,6 +162,27 @@ func (s *PgStore) TransitionImagePreparation(ctx context.Context, id, token stri
 	if err != nil {
 		return err
 	}
+	for attempt := 1; ; attempt++ {
+		err = s.transitionImagePreparationOnce(ctx, deploymentID, claimToken, status)
+		if !transientLockConflict(err) || attempt == imagePreparationTransitionAttempts {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt) * 50 * time.Millisecond):
+		}
+	}
+}
+
+// transientLockConflict reports a transaction Postgres aborted to break a
+// deadlock or a serialization conflict; retrying it from the start is safe.
+func transientLockConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
+}
+
+func (s *PgStore) transitionImagePreparationOnce(ctx context.Context, deploymentID, claimToken pgtype.UUID, status DeploymentStatus) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
