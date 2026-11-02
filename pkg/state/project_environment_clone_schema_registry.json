@@ -7593,6 +7593,7 @@
       "processed_at",
       "received_at",
       "repo_full_name",
+      "skip_reason",
       "status",
       "updated_at"
     ],

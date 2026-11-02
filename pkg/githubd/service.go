@@ -477,7 +477,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, tagErr
 		}
 		if !ok {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonTagNotBranchHead)
 		}
 		branch = tagged
 	}
@@ -492,7 +492,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	}
 	if !projectBound {
 		if actionsOnly {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonActionsTrigger)
 		}
 		if len(boundApps) == 0 {
 			return reconcile.Result{}, ErrNoBinding
@@ -530,14 +530,14 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// project's apps; app-bound apps build either way.
 	deployProject := projectBound && policy.ProductionTrigger != state.ProductionTriggerActions
 	if !deployProject && len(boundApps) == 0 {
-		return reconcile.Result{WasIgnored: true}, ErrIgnored
+		return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonActionsTrigger)
 	}
 	if !s.capabilityAllowed(CapabilityGitHubDeploys, binding.AccountID) {
 		s.Ops.ObserveGithubdPushSkipped(wire.PushSkippedReasonCapability)
 		s.Log.Info("githubd: push ignored; capability off",
 			"capability", CapabilityGitHubDeploys, "account_id", binding.AccountID,
 			"repo", ev.Repository.FullName)
-		return reconcile.Result{WasIgnored: true}, ErrIgnored
+		return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonNotEnabled)
 	}
 
 	// An explicit commit marker is a customer-controlled no-op. Resolve the
@@ -564,7 +564,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 		if err != nil {
 			if errors.Is(err, ErrIgnored) {
-				return reconcile.Result{}, ErrIgnored
+				return reconcile.Result{}, pushSkip(SkipReasonBranchNotDeployed)
 			}
 			return reconcile.Result{}, err
 		}
@@ -575,7 +575,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, fmt.Errorf("githubd: verify push branch head: %w", headErr)
 		}
 		if !current {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonSuperseded)
 		}
 	}
 
@@ -616,7 +616,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, fmt.Errorf("githubd: recheck push branch head: %w", headErr)
 		}
 		if !current {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonSuperseded)
 		}
 	}
 	var result reconcile.Result
@@ -632,7 +632,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 				// future guard that errors out with ErrIgnored
 				// gets the same translation.
 				result.WasIgnored = true
-				return result, ErrIgnored
+				return result, pushSkip(SkipReasonBranchNotDeployed)
 			}
 			return result, err
 		}
@@ -641,7 +641,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// the 200-ignored body. Translate to ErrIgnored so the HTTP
 		// handler can branch on the typed sentinel.
 		if result.WasIgnored {
-			return result, ErrIgnored
+			return result, pushSkip(SkipReasonBranchNotDeployed)
 		}
 	}
 
@@ -2267,6 +2267,48 @@ func (errIgnored) Error() string { return "githubd: push to non-production branc
 // IsIgnored reports whether err is the ignored sentinel.
 func IsIgnored(err error) bool {
 	return errors.As(err, new(errIgnored))
+}
+
+// Why a delivery githubd completes deployed nothing (ADR-20261101160300,
+// amendment 2). The delivery records it and `gregale github status` shows
+// it; release-tag refusals add their own reasons.
+const (
+	SkipReasonActionsTrigger    = "actions_trigger"
+	SkipReasonBranchNotDeployed = "branch_not_deployed"
+	SkipReasonSuperseded        = "superseded"
+	SkipReasonNotEnabled        = "not_enabled"
+	SkipReasonTagNotBranchHead  = "tag_not_branch_head"
+	SkipReasonNoBinding         = "no_binding"
+	SkipReasonSkipMarker        = "skip_marker"
+	SkipReasonIgnored           = "ignored"
+)
+
+// pushSkip is an ignored push that says why; IsIgnored holds for it.
+type pushSkip string
+
+func (s pushSkip) Error() string { return "githubd: push skipped: " + string(s) }
+
+func (pushSkip) Unwrap() error { return ErrIgnored }
+
+// SkipReason names why a delivery completed without deploying, or "" when
+// err is nil or not a skip.
+func SkipReason(err error) string {
+	var reason pushSkip
+	switch {
+	case err == nil:
+		return ""
+	case errors.As(err, &reason):
+		return string(reason)
+	case IsNoBinding(err):
+		return SkipReasonNoBinding
+	case IsSkipDeploy(err):
+		return SkipReasonSkipMarker
+	case isReleaseTagRejected(err):
+		return releaseTagRejectReason(err)
+	case IsIgnored(err):
+		return SkipReasonIgnored
+	}
+	return ""
 }
 
 // refToBranch converts "refs/heads/main" → "main". Returns "" for
