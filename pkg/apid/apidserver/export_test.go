@@ -2040,3 +2040,14 @@ var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
 func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLister) oidc.AccountLookup {
 	return newOIDCAccountLookup(store, repos)
 }
+
+// Inline security alerts (bug hunt H99).
+func (r *server) AlertPasswordChangedInline(ctx context.Context, acct state.Account, method string) {
+	r.alertPasswordChangedInline(ctx, acct, method)
+}
+func (r *server) AlertMFAEnabledInline(ctx context.Context, acct state.Account) {
+	r.alertMFAEnabledInline(ctx, acct)
+}
+func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account, method string) {
+	r.alertMFADisabledInline(ctx, acct, method)
+}
