@@ -1951,6 +1951,13 @@ func (r *server) SetManagedPostgresCapModeForTest(mode managedpostgres.CapEnforc
 	r.managedPostgresCapMode = mode
 }
 
+// SetManagedPostgresPlanExcessForTest sets whether the views report databases
+// past their plan, as configureManagedPostgresCapMode would with
+// FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT and the compute cap both on.
+func (r *server) SetManagedPostgresPlanExcessForTest(on bool) {
+	r.managedPostgresPlanExcessOn = on
+}
+
 // EnsureDevPostgresForTest provisions a developer environment's database as
 // `gregale dev --postgres` does.
 func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Account, app state.App) (*api.DevPostgresResponse, error) {

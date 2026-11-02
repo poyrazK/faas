@@ -2592,8 +2592,11 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// table source of truth on every reaper tick so a restart or missed
 	// lifecycle notification cannot leave unbillable VMs live. This runs
 	// before the normal idle snapshot.
+	// ADR 20261102160622: one bulk read of the strict compute sweep's inputs
+	// for the tick, not a live listing and a lease read per instance per app.
+	budgetPreload := l.engine.loadStrictComputePreload(ctx, apps)
 	for _, app := range apps {
-		if err := l.engine.ReconcileFinancialBudgetStops(ctx, app.ID); err != nil {
+		if err := l.engine.reconcileFinancialBudgetStops(ctx, app.ID, budgetPreload); err != nil {
 			l.log.Warn("reaper: preview budget stop", "app", app.ID, "err", err)
 		}
 		mustPark := app.Status == state.AppEvictedCold
@@ -2696,8 +2699,25 @@ func (l *Loop) runReaper(ctx context.Context) {
 	if candidate, ok := store.(state.PrewarmStore); ok {
 		prewarmStore = candidate
 	}
+	// ADR 20261102160622: every owned app's floor in one query when the store
+	// can; a failed or missing bulk read reads per app as before.
+	bulkFloors := false
+	if reader, ok := store.(state.PrewarmFloorsReader); ok && prewarmStore != nil && len(apps) > 0 {
+		ids := make([]string, 0, len(apps))
+		for _, a := range apps {
+			ids = append(ids, a.ID)
+		}
+		if floors, floorErr := reader.ActivePrewarmFloors(ctx, ids, now); floorErr != nil {
+			l.log.Warn("reaper: bulk prewarm floor lookup; reading per app", "err", floorErr)
+		} else {
+			for id, floor := range floors {
+				appPrewarmFloor[id] = max(floor, 0)
+			}
+			bulkFloors = true
+		}
+	}
 	for _, a := range apps {
-		if prewarmStore != nil {
+		if prewarmStore != nil && !bulkFloors {
 			if temporary, floorErr := prewarmStore.ActivePrewarmFloor(ctx, a.ID, now); floorErr != nil {
 				l.log.Warn("reaper: prewarm floor lookup", "app", a.ID, "err", floorErr)
 			} else {

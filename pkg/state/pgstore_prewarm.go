@@ -95,6 +95,39 @@ func (s *PgStore) ActivePrewarmFloor(ctx context.Context, appID string, now time
 	return floor, nil
 }
 
+// ActivePrewarmFloors is ActivePrewarmFloor for many apps in one query,
+// through prewarm_intents_app_idx.
+func (s *PgStore) ActivePrewarmFloors(ctx context.Context, appIDs []string, now time.Time) (map[string]int, error) {
+	ids := make([]string, 0, len(appIDs))
+	for _, id := range appIDs {
+		if validUUID(id) {
+			ids = append(ids, id)
+		}
+	}
+	floors := make(map[string]int)
+	if len(ids) == 0 {
+		return floors, nil
+	}
+	rows, err := s.pool.Query(ctx, `select app_id::text, coalesce(max(case when status = 'succeeded' then admitted_count else count end), 0) from prewarm_intents
+		where app_id = any($1::uuid[]) and expires_at > $2 and status in ('running', 'succeeded')
+		group by app_id`, ids, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var app string
+		var floor int
+		if err := rows.Scan(&app, &floor); err != nil {
+			return nil, err
+		}
+		if floor > 0 {
+			floors[app] = floor
+		}
+	}
+	return floors, rows.Err()
+}
+
 func (s *PgStore) ClaimPrewarmIntent(ctx context.Context, id string, claimedAt time.Time) (PrewarmIntent, bool, error) {
 	intent, err := scanPrewarmRow(s.pool.QueryRow(ctx, `update prewarm_intents
 		set status = 'running', claimed_at = $2
