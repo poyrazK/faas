@@ -50,10 +50,10 @@ hard-links it into each published cache that contains it.
 1. **Platform layers.** These are the layer blobs of public images that
    every Railpack build pulls by itself, independent of the app: today the
    Railpack builder image's amd64 layers. They are listed by digest in
-   builderd, next to the Railpack version they belong to. A CI check
-   resolves the image for the pinned `RAILPACK_VERSION` and fails when the
-   list is stale. A stale list only means no sharing, never a wrong
-   build.
+   builderd, next to the Railpack version they belong to. A unit test fails
+   when `RAILPACK_VERSION` changes without the list, and
+   `scripts/railpack-platform-layers.sh` prints the list for an image. A
+   stale list only means no sharing, never a wrong build.
 2. **Store.** Shared copies live in
    `<drive dir>/dev-dependency-cache/.platform-blobs/sha256/<hex>`. They
    are mode 0444 and owned by builderd. Nothing writes to a cache file in
@@ -88,7 +88,7 @@ hard-links it into each published cache that contains it.
 
 ## Rollout
 
-1. Land with the switch off: the list, its CI check, publication linking,
+1. Land with the switch off: the list, its version check, publication linking,
    inode-aware accounting and the sweep, with tests for:
    - a mismatched or renamed blob staying private;
    - a stored copy outliving the cache that created it;
@@ -111,5 +111,5 @@ hard-links it into each published cache that contains it.
 - Each build still copies its whole staged cache into its drive. This ADR
   saves disk, not per-build I/O. The seed drive (ADR-20261030122204) is
   what would make the builder image's bytes unnecessary inside a build.
-- A Railpack version bump needs the list updated in the same change. CI
-  enforces this.
+- A Railpack version bump needs the list updated in the same change. A
+  unit test enforces this.

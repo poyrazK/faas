@@ -229,6 +229,7 @@
         · Lifecycle: <strong>{{.Data.App.Status}}</strong>
         · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a>
       </p>
+      {{with .Data.App.Labels}}<p aria-label="Labels">Labels: {{template "resource-labels" .}}</p>{{end}}
       {{if .Data.Operational}}{{template "app-operational-summary" .Data}}{{end}}
       {{with .Data.AnnouncedCaptures}}
       <section class="announced-captures" aria-label="Profile captures to review" role="status">
@@ -1117,6 +1118,7 @@
               · <code>{{.Path}}</code>
               · {{if .Enabled}}<span class="enabled-true">enabled</span>{{else}}<span class="enabled-false">disabled</span>{{end}}
               · last fired <strong>{{if .LastFiredAt}}{{.LastFiredAt}}{{else}}<span style="color:#888">never</span>{{end}}</strong>
+              {{with .Labels}}· {{template "resource-labels" .}}{{end}}
             </header>
             <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/crons/{{.ID}}/fire-now" style="margin-top:0.4rem; display:inline-block">
               <input type="hidden" name="csrf_token" value="{{.FireNowConfirmToken}}">

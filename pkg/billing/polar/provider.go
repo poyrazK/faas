@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +65,10 @@ type Provider struct {
 	objectStorageFrom    time.Time
 	objectStorageEvent   string
 	objectStorageMeterID string
+	postgresMode         string
+	postgresFrom         time.Time
+	postgresEvent        string
+	postgresMeterID      string
 	products             map[api.Plan]string
 	successURL           string
 	returnURL            string
@@ -81,6 +86,8 @@ var _ billing.Classifier = (*Provider)(nil)
 var _ billing.MeterUsageProvider = (*Provider)(nil)
 var _ billing.MeterUsagePolicyProvider = (*Provider)(nil)
 var _ billing.ObjectStorageLineItemSink = (*Provider)(nil)
+var _ billing.CustomerBillingInfoProvider = (*Provider)(nil)
+var _ billing.ManagedPostgresChargeSink = (*Provider)(nil)
 
 // PolarCapabilities returns the static capabilities of this provider.
 func PolarCapabilities() billing.CapabilitySet {
@@ -116,8 +123,12 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 	if err := validateObjectStorageConfig(cfg); err != nil {
 		return nil, err
 	}
+	if err := validateManagedPostgresConfig(cfg); err != nil {
+		return nil, err
+	}
 	egressFrom, _ := time.Parse(time.RFC3339, cfg.EgressBillingFrom)
 	objectStorageFrom, _ := time.Parse(time.RFC3339, cfg.ObjectStorageBillingFrom)
+	postgresFrom, _ := time.Parse(time.RFC3339, cfg.ManagedPostgresBillingFrom)
 	if log == nil {
 		log = slog.Default()
 	}
@@ -148,6 +159,10 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		objectStorageFrom:    objectStorageFrom.UTC(),
 		objectStorageEvent:   cfg.ObjectStorageUsageEventName,
 		objectStorageMeterID: cfg.ObjectStorageMeterID,
+		postgresMode:         cfg.ManagedPostgresBillingMode,
+		postgresFrom:         postgresFrom.UTC(),
+		postgresEvent:        cfg.ManagedPostgresUsageEventName,
+		postgresMeterID:      cfg.ManagedPostgresMeterID,
 		products: map[api.Plan]string{
 			api.PlanHobby: cfg.HobbyProductID,
 			api.PlanPro:   cfg.ProProductID,
@@ -187,6 +202,34 @@ func validateObjectStorageConfig(cfg Config) error {
 	}
 	if cfg.ObjectStorageUsageEventName == cfg.UsageEventName || cfg.ObjectStorageUsageEventName == cfg.EgressUsageEventName {
 		return errors.New("polar: object storage usage event must be separate from compute and egress usage events")
+	}
+	return nil
+}
+
+func validateManagedPostgresConfig(cfg Config) error {
+	switch cfg.ManagedPostgresBillingMode {
+	case ManagedPostgresBillingOff:
+		return nil
+	case ManagedPostgresBillingShadow, ManagedPostgresBillingLive:
+	default:
+		return fmt.Errorf("polar: invalid managed postgres billing mode %q (want off, shadow, or live)", cfg.ManagedPostgresBillingMode)
+	}
+	effectiveFrom, err := time.Parse(time.RFC3339, cfg.ManagedPostgresBillingFrom)
+	_, utcOffset := effectiveFrom.Zone()
+	if err != nil || utcOffset != 0 || !effectiveFrom.Equal(state.ObjectStoragePeriod(effectiveFrom)) {
+		return errors.New("polar: managed postgres billing from must be an RFC3339 UTC-month boundary")
+	}
+	if strings.TrimSpace(cfg.ManagedPostgresMeterID) == "" {
+		return errors.New("polar: managed postgres meter id missing")
+	}
+	if slices.Contains([]string{cfg.MeterID, cfg.EgressMeterID, cfg.ObjectStorageMeterID}, cfg.ManagedPostgresMeterID) {
+		return errors.New("polar: managed postgres meter must be separate from the compute, egress and object storage meters")
+	}
+	if strings.TrimSpace(cfg.ManagedPostgresUsageEventName) == "" {
+		return errors.New("polar: managed postgres usage event name is empty")
+	}
+	if slices.Contains([]string{cfg.UsageEventName, cfg.EgressUsageEventName, cfg.ObjectStorageUsageEventName}, cfg.ManagedPostgresUsageEventName) {
+		return errors.New("polar: managed postgres usage event must be separate from the other usage events")
 	}
 	return nil
 }
@@ -262,7 +305,19 @@ func (p *Provider) Capabilities() billing.CapabilitySet {
 	if p != nil && p.objectStorageMode == ObjectStorageBillingLive {
 		caps |= billing.CapabilitySet(billing.CapObjectStorageUsage)
 	}
+	if p != nil && p.postgresMode == ManagedPostgresBillingLive {
+		caps |= billing.CapabilitySet(billing.CapManagedPostgresUsage)
+	}
 	return caps
+}
+
+// ManagedPostgresChargePolicy exposes the managed PostgreSQL overage rollout
+// boundary to apid (ADR-20261031110037). Off returns ok=false.
+func (p *Provider) ManagedPostgresChargePolicy() (billing.ManagedPostgresChargePolicy, bool) {
+	if p == nil || p.postgresMode == ManagedPostgresBillingOff || p.postgresMode == "" {
+		return billing.ManagedPostgresChargePolicy{}, false
+	}
+	return billing.ManagedPostgresChargePolicy{Provider: "polar", Live: p.postgresMode == ManagedPostgresBillingLive, EffectiveFrom: p.postgresFrom}, true
 }
 
 // ObjectStorageLineItemPolicy exposes the object-storage rollout boundary to
@@ -363,12 +418,21 @@ func (p *Provider) EnsurePlanProducts(ctx context.Context) error {
 type catalogOrganization struct {
 	ID                   string `json:"id"`
 	SubscriptionSettings struct {
-		AllowMultipleSubscriptions *bool `json:"allow_multiple_subscriptions"`
+		AllowMultipleSubscriptions *bool  `json:"allow_multiple_subscriptions"`
+		ProrationBehavior          string `json:"proration_behavior"`
 	} `json:"subscription_settings"`
 }
 
+// prorationInvoice is the organization proration that charges a plan change
+// made in the customer portal when it is made (ADR-20261031090658). With
+// "prorate" the portal grants the larger plan at once and leaves the charge
+// for the next renewal, which a cancellation may never reach. apid's own
+// plan changes set their proration per request.
+const prorationInvoice = "invoice"
+
 // validateOrganization refuses an organization that lets one customer hold
-// several subscriptions, so a second checkout can never bill a customer twice.
+// several subscriptions, so a second checkout can never bill a customer twice,
+// or that defers the charge for a portal upgrade to the next renewal.
 func (p *Provider) validateOrganization(ctx context.Context) error {
 	var page struct {
 		Items []catalogOrganization `json:"items"`
@@ -382,6 +446,9 @@ func (p *Provider) validateOrganization(ctx context.Context) error {
 	org := page.Items[0]
 	if allow := org.SubscriptionSettings.AllowMultipleSubscriptions; allow == nil || *allow {
 		return fmt.Errorf("polar: organization %s allows multiple subscriptions per customer; turn it off in the Polar dashboard (Settings, Subscriptions) before billing starts", org.ID)
+	}
+	if got := org.SubscriptionSettings.ProrationBehavior; got != prorationInvoice {
+		return fmt.Errorf("polar: organization %s prorates plan changes as %q; set proration to %q (invoice immediately) in the Polar dashboard (Settings, Subscriptions) before billing starts", org.ID, got, prorationInvoice)
 	}
 	return nil
 }
@@ -436,6 +503,7 @@ type catalogAggregation struct {
 func (p *Provider) validateCatalog(ctx context.Context) error {
 	validateEgressMeter := false
 	validateObjectStorageMeter := false
+	validatePostgresMeter := false
 	for plan, productID := range p.products {
 		var product catalogProduct
 		path := "/v1/products/" + url.PathEscape(productID)
@@ -452,7 +520,7 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 			return fmt.Errorf("polar: validate %s product %q requires an active monthly recurring product", plan, productID)
 		}
 
-		fixed, computeMetered, egressMetered, objectStorageMetered := 0, 0, 0, 0
+		fixed, computeMetered, egressMetered, objectStorageMetered, postgresMetered := 0, 0, 0, 0, 0
 		expectedFixedCents := billing.PlanMonthlyMillicents(plan) / api.MillicentsPerCent
 		for _, price := range product.Prices {
 			if price.IsArchived {
@@ -490,6 +558,12 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 					if price.PriceCurrency != api.BillingCurrencyLower || !decimalEqualsRatio(price.UnitAmount, 1, api.MillicentsPerCent) {
 						return fmt.Errorf("polar: validate %s product %q object storage price must be %s 0.001 cents per charge millicent on meter %q", plan, productID, api.BillingCurrency, p.objectStorageMeterID)
 					}
+				case p.postgresMeterID:
+					postgresMetered++
+					validatePostgresMeter = true
+					if price.PriceCurrency != api.BillingCurrencyLower || !decimalEqualsRatio(price.UnitAmount, 1, api.MillicentsPerCent) {
+						return fmt.Errorf("polar: validate %s product %q managed postgres price must be %s 0.001 cents per charge millicent on meter %q", plan, productID, api.BillingCurrency, p.postgresMeterID)
+					}
 				default:
 					return fmt.Errorf("polar: validate %s product %q has an unexpected metered price on meter %q", plan, productID, price.MeterID)
 				}
@@ -505,7 +579,11 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 		if p.objectStorageMode == ObjectStorageBillingOff {
 			validObjectStorageCount = objectStorageMetered <= 1
 		}
-		if fixed != 1 || computeMetered != 1 || !validEgressCount || !validObjectStorageCount {
+		validPostgresCount := postgresMetered == 1
+		if p.postgresMode == ManagedPostgresBillingOff || p.postgresMode == "" {
+			validPostgresCount = postgresMetered <= 1
+		}
+		if fixed != 1 || computeMetered != 1 || !validEgressCount || !validObjectStorageCount || !validPostgresCount {
 			return fmt.Errorf("polar: validate %s product %q requires one fixed price, one compute price, and one price for each enabled secondary meter", plan, productID)
 		}
 		for _, benefit := range product.Benefits {
@@ -524,6 +602,11 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 	}
 	if validateObjectStorageMeter {
 		if err := p.validateMeter(ctx, p.objectStorageMeterID, p.objectStorageEvent, "charge_millicents"); err != nil {
+			return err
+		}
+	}
+	if validatePostgresMeter {
+		if err := p.validateMeter(ctx, p.postgresMeterID, p.postgresEvent, "charge_millicents"); err != nil {
 			return err
 		}
 	}
@@ -608,6 +691,9 @@ func (p *Provider) CreateCustomer(ctx context.Context, acct state.Account) (stri
 			"faas_account_id": acct.ID,
 		},
 	}
+	if name := strings.TrimSpace(acct.BusinessName); name != "" {
+		body["name"] = name
+	}
 	var created customerResponse
 	if err := p.doJSON(ctx, http.MethodPost, "/v1/customers", body, &created, "faas-customer-"+acct.ID); err != nil {
 		// A concurrent creator can win between GET and POST. Re-read the
@@ -622,6 +708,27 @@ func (p *Provider) CreateCustomer(ctx context.Context, acct state.Account) (stri
 	}
 	p.log.Info("polar: customer created", "account", acct.ID, "customer_id", created.ID)
 	return created.ID, nil
+}
+
+// SyncCustomerBillingInfo gives the account's Polar customer its business
+// name, which Polar prints on invoices (ADR-20261031090658). Polar keeps a
+// structured billing address with a country and validates a tax ID against
+// that country, so Gregale's free-form address and tax ID are not sent: the
+// customer enters them at checkout or in the customer portal. An empty
+// business name leaves the customer's name as it is.
+func (p *Provider) SyncCustomerBillingInfo(ctx context.Context, acct state.Account) error {
+	if acct.ProviderCustomerID == "" {
+		return fmt.Errorf("polar: account %s has no provider customer", acct.ID)
+	}
+	name := strings.TrimSpace(acct.BusinessName)
+	if name == "" {
+		return nil
+	}
+	path := "/v1/customers/" + url.PathEscape(acct.ProviderCustomerID)
+	if err := p.doJSON(ctx, http.MethodPatch, path, map[string]any{"name": name}, nil, "faas-customer-name-"+acct.ID); err != nil {
+		return fmt.Errorf("polar: update customer name account=%s: %w", acct.ID, err)
+	}
+	return nil
 }
 
 type usageEvent struct {
@@ -698,6 +805,11 @@ func (p *Provider) PushUsageRecord(ctx context.Context, acct state.Account, hour
 	}
 	return nil
 }
+
+// StampsUsageAtDelivery reports that Polar totals usage by delivery time
+// (billing.DeliveryTimeStamper), which the billing reconciler compares with
+// meterd's delivery ledger.
+func (p *Provider) StampsUsageAtDelivery() bool { return true }
 
 // deliveryTimestamp stamps a usage event with the time it is sent, so Polar
 // bills it in the subscription cycle that is open when it arrives
@@ -807,6 +919,49 @@ func (p *Provider) PublishObjectStorageCharge(ctx context.Context, step billing.
 	}
 	if result.Inserted == 0 && result.Duplicates == 0 {
 		return fmt.Errorf("polar: ingest object storage account=%s period=%s returned no inserted or duplicate events", step.AccountID, month)
+	}
+	return nil
+}
+
+// PublishManagedPostgresCharge emits one managed PostgreSQL overage step
+// (ADR-20261031110037) as an event on the charge meter. The external ID names
+// the subject, the month and the cumulative target, so a retry after an
+// ambiguous response is a duplicate, never a second charge.
+func (p *Provider) PublishManagedPostgresCharge(ctx context.Context, step billing.ManagedPostgresChargeStep) error {
+	if p == nil || p.postgresMode != ManagedPostgresBillingLive || !p.Capabilities().Has(billing.CapManagedPostgresUsage) {
+		return errors.New("polar: managed postgres usage delivery is not live")
+	}
+	period := step.PeriodStart.UTC()
+	if step.SubjectID == "" || period.IsZero() || !period.Equal(state.ObjectStoragePeriod(period)) || step.At.IsZero() ||
+		step.DeliveredMillicents < 0 || step.TargetMillicents <= step.DeliveredMillicents || step.BilledUnitSeconds < 0 {
+		return errors.New("polar: invalid managed postgres charge step")
+	}
+	month := period.Format("2006-01")
+	externalID := "faas-managed-postgres-" + step.SubjectID + "-" + month + "-" + strconv.FormatInt(step.TargetMillicents, 10)
+	body := ingestRequest{Events: []usageEvent{{
+		ExternalID:         externalID,
+		Name:               p.postgresEvent,
+		ExternalCustomerID: step.SubjectID,
+		Metadata: map[string]any{
+			"faas_account_id":          step.SubjectID,
+			"period_start":             period.Format(time.RFC3339),
+			"period_end":               period.AddDate(0, 1, 0).Format(time.RFC3339),
+			"used_unit_seconds":        step.UsedUnitSeconds,
+			"allowance_unit_seconds":   step.AllowanceSeconds,
+			"billed_unit_seconds":      step.BilledUnitSeconds,
+			"millicents_per_unit_hour": api.ManagedPostgresOverageMillicentsPerComputeUnitHour,
+			"previous_millicents":      step.DeliveredMillicents,
+			"cumulative_millicents":    step.TargetMillicents,
+			"charge_millicents":        step.TargetMillicents - step.DeliveredMillicents,
+		},
+		Timestamp: step.At.UTC().Format(time.RFC3339),
+	}}}
+	var result ingestResponse
+	if err := p.doJSON(ctx, http.MethodPost, "/v1/events/ingest", body, &result, externalID); err != nil {
+		return fmt.Errorf("polar: ingest managed postgres subject=%s period=%s: %w", step.SubjectID, month, err)
+	}
+	if result.Inserted == 0 && result.Duplicates == 0 {
+		return fmt.Errorf("polar: ingest managed postgres subject=%s period=%s returned no inserted or duplicate events", step.SubjectID, month)
 	}
 	return nil
 }

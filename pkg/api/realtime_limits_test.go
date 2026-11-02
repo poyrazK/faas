@@ -30,3 +30,22 @@ func TestRealtimeLimits(t *testing.T) {
 		}
 	}
 }
+
+// A plan has realtime exactly when it has endpoints and a connection cap:
+// every realtime limit of a plan without it is zero, which reads as no cap.
+func TestRealtimeAllowedFor(t *testing.T) {
+	allowed := map[string]bool{}
+	for _, p := range RealtimePlans() {
+		allowed[p] = true
+	}
+	for _, plan := range Plans {
+		l, _ := RealtimeLimitsFor(plan)
+		want := l.EndpointsPerApp > 0 && l.ConnectionsPerAccount > 0
+		if got := RealtimeAllowedFor(plan); got != want || allowed[string(plan)] != want {
+			t.Errorf("%s: RealtimeAllowedFor = %v, in RealtimePlans = %v, want %v", plan, got, allowed[string(plan)], want)
+		}
+	}
+	if RealtimeAllowedFor(PlanFree) || RealtimeAllowedFor(Plan("unknown")) {
+		t.Error("Free or an unknown plan includes realtime")
+	}
+}

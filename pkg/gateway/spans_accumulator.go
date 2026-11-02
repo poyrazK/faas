@@ -24,7 +24,6 @@
 package gateway
 
 import (
-	"errors"
 	"sync"
 	"time"
 
@@ -38,6 +37,13 @@ type spansAccumulator struct {
 	mu        sync.Mutex
 	traceID   string
 	accountID uuid.UUID
+	// plan is the account's plan as the producer resolved it, so the flush
+	// bounds the trace to that plan's spans-per-trace cap ("" = unknown).
+	plan string
+	// retired is set, under mu, when the flush loop removes an empty bucket
+	// from the map. An Add that loaded the bucket just before retries
+	// against the map instead of writing into a bucket nobody will flush.
+	retired bool
 	// seenSpans is the within-window dedupe set, keyed by
 	// (span_id, end_time_unix_nano) — the same span carried
 	// across two POSTs at the same instant is dropped.
@@ -87,10 +93,6 @@ type summarizedSpan struct {
 // within-window dedupe set drops any span seen before (keyed by
 // (span_id, end_time_unix_nano)). Returns the post-dedupe span
 // count (for the metric counter).
-func (a *spansAccumulator) add(spans []summarizedSpan) int {
-	return a.addLocked(spans)
-}
-
 // addSpansForTest is the same as add but wrapped so unit tests
 // can call it without leaking the production method signature.
 // Not exported; only the test file references it.
@@ -102,6 +104,11 @@ func (a *spansAccumulator) addSpansForTest(spans []summarizedSpan) error {
 func (a *spansAccumulator) addLocked(spans []summarizedSpan) int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.appendLocked(spans)
+}
+
+// appendLocked adds spans with mu held, deduplicating by span identity.
+func (a *spansAccumulator) appendLocked(spans []summarizedSpan) int {
 	if a.firstSeenAt.IsZero() {
 		a.firstSeenAt = time.Now()
 	}
@@ -165,98 +172,20 @@ func (a *spansAccumulator) snapshot() ([]summarizedSpan, uuid.UUID) {
 // handler's Add reads bucket.spans (which is now nil),
 // appends to a fresh slice, and the next tick picks it up.
 func (a *spansAccumulator) swapAndClear() ([]summarizedSpan, uuid.UUID) {
+	out, accountID, _ := a.swapAndClearWithPlan()
+	return out, accountID
+}
+
+// swapAndClearWithPlan is swapAndClear plus the plan the producer gave.
+func (a *spansAccumulator) swapAndClearWithPlan() ([]summarizedSpan, uuid.UUID, string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	out := a.spans
 	if out == nil {
-		return nil, a.accountID
+		return nil, a.accountID, a.plan
 	}
 	a.spans = nil
 	a.seenSpans = nil
 	a.firstSeenAt = time.Time{}
-	return out, a.accountID
-}
-
-// SpansAccumulator is the public-facing accumulator wrapper. The
-// sync.Map keyed by trace_id gives lock-free handler hot path;
-// the per-bucket mutex is internal to spansAccumulator.
-type SpansAccumulator struct {
-	buckets sync.Map // traceID -> *spansAccumulator
-}
-
-// NewSpansAccumulator returns an empty accumulator.
-func NewSpansAccumulator() *SpansAccumulator {
-	return &SpansAccumulator{}
-}
-
-// Add merges a batch into the per-trace bucket. The traceID is
-// the W3C trace-id hex from the customer's OTLP POST. The
-// accountID is resolved at the handler from the apid
-// AuthenticateKey RPC. Returns the post-dedupe span count.
-//
-// PR-D code-review #4: every Add re-validates that the bucket's
-// account_id matches the caller's account_id. The previous
-// LoadOrStore implementation silently kept the first POST's
-// account_id — a second POST for the same trace_id but a
-// rotated / different API key would silently write the NEW
-// account's spans_summary to the OLD account's
-// request_telemetry row (the SQL UPDATE doesn't bind
-// account_id, see code-review #1). On mismatch this Add
-// returns ErrAccountMismatch without touching the bucket;
-// the handler rejects those spans. The OLD account's
-// legitimate spans already buffered in the bucket are
-// preserved — they'll flush normally on the next tick.
-func (s *SpansAccumulator) Add(traceID string, accountID uuid.UUID, spans []summarizedSpan) (int, error) {
-	v, loaded := s.buckets.LoadOrStore(traceID, &spansAccumulator{
-		traceID:   traceID,
-		accountID: accountID,
-	})
-	if !loaded {
-		// First POST for this trace_id: ours is the canonical
-		// bucket. Add spans; cap-freeze is the handler's job
-		// (the truncation in #5 lives in flush, see below).
-		return v.(*spansAccumulator).add(spans), nil
-	}
-	bucket := v.(*spansAccumulator)
-	bucket.mu.Lock()
-	match := bucket.accountID == accountID
-	bucket.mu.Unlock()
-	if match {
-		return bucket.add(spans), nil
-	}
-	return 0, ErrAccountMismatch
-}
-
-// ErrAccountMismatch is returned by Add when a trace_id is
-// being contended across accounts (rotated API key, replay,
-// multi-key account on the same trace). The handler should map
-// this to 401 / 400 — the request can't be safely coalesced
-// into the bucket.
-var ErrAccountMismatch = errors.New("spans accumulator: trace_id claimed by another account")
-
-// DrainAndRemove atomically extracts the accumulated spans for
-// one trace_id and deletes the bucket from the map. Returns
-// nil + zero uuid when the bucket is absent or empty. Used by
-// the flush loop in Stage 4.
-func (s *SpansAccumulator) DrainAndRemove(traceID string) ([]summarizedSpan, uuid.UUID) {
-	v, ok := s.buckets.LoadAndDelete(traceID)
-	if !ok {
-		return nil, uuid.Nil
-	}
-	bucket, ok := v.(*spansAccumulator)
-	if !ok {
-		return nil, uuid.Nil
-	}
-	return bucket.snapshot()
-}
-
-// Len returns the current bucket count. Useful for the §12
-// dashboard panel "in-process OTel spans batches in flight".
-func (s *SpansAccumulator) Len() int {
-	n := 0
-	s.buckets.Range(func(_, _ any) bool {
-		n++
-		return true
-	})
-	return n
+	return out, a.accountID, a.plan
 }

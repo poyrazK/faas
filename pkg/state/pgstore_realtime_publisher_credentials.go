@@ -159,7 +159,7 @@ func (s *PgStore) authenticateRealtimePublisherCredential(ctx context.Context, e
 	c, stored, err := firstCredentialMatch(ctx, credentialLookups(credTagRealtimePublisher, hash), func(ctx context.Context, value []byte) (RealtimePublisherCredential, error) {
 		return scanRealtimePublisherCredential(s.pool.QueryRow(ctx, `select c.id,c.endpoint_id,c.name,c.channels,c.event_types,c.publishes_per_minute,c.max_payload_bytes,c.generation::text,c.issued_at,c.expires_at,c.revoked_at,c.accepted_count::text,c.replay_count::text,c.last_used_at,c.last_channel,c.last_sequence::text,c.max_message_ttl_seconds
  from managed_realtime_publisher_credentials c join managed_realtime_endpoints e on e.id=c.endpoint_id join accounts a on a.id=e.account_id join apps app on app.id=e.app_id
- where c.token_hash=$1 and e.id=$2 and c.revoked_at is null and c.expires_at>clock_timestamp() and e.enabled and a.status in ('active','past_due') and app.status<>'deleted'`, value, ep))
+ where c.token_hash=$1 and e.id=$2 and c.revoked_at is null and c.expires_at>clock_timestamp() and e.enabled and a.status in ('active','past_due') and a.plan=any($3::text[]) and app.status<>'deleted'`, value, ep, api.RealtimePlans()))
 	})
 	if errors.Is(err, ErrNotFound) {
 		err = ErrRealtimePublisherCredentialDenied
@@ -236,7 +236,7 @@ func lockRealtimePublisherAppend(ctx context.Context, tx pgx.Tx, input *realtime
  from managed_realtime_publisher_credentials c join managed_realtime_endpoints e on e.id=c.endpoint_id join accounts a on a.id=e.account_id join apps app on app.id=e.app_id
  where c.id=$1 and c.endpoint_id=$2 and c.token_hash=$3 and c.revoked_at is null and c.expires_at>clock_timestamp() and a.status in ('active','past_due') and app.status<>'deleted'
  for update of c`, input.credentialID, ep, input.tokenHash, ch, input.eventType).Scan(&maxPayload, &rate, &count, &plan, &channelAllowed, &eventAllowed, &endpointMax)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && !api.RealtimeAllowedFor(plan) {
 		return message, false, ErrRealtimePublisherCredentialDenied
 	}
 	if err != nil {

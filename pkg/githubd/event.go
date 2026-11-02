@@ -16,7 +16,7 @@ import (
 // act on (labeled, edited, review_requested, ...). GitHub sends every action
 // to an App subscribed to pull_request, so this is an ignored delivery, not a
 // malformed one.
-var ErrPullRequestActionIgnored = errors.New("githubd: pull_request action not in {opened,synchronize,reopened,ready_for_review,closed}")
+var ErrPullRequestActionIgnored = errors.New("githubd: pull_request action not in {opened,synchronize,reopened,ready_for_review,converted_to_draft,closed}")
 
 // PullRequestAction enumerates the GitHub `pull_request` webhook
 // actions githubd reacts to. Anything not in this set is logged
@@ -32,6 +32,10 @@ const (
 	// PullRequestActionReadyForReview marks a draft ready. A project that
 	// does not preview drafts gets the preview here (ADR-20261030070000).
 	PullRequestActionReadyForReview PullRequestAction = "ready_for_review"
+	// PullRequestActionConvertedToDraft turns a PR back into a draft. A
+	// project that does not preview drafts retires its preview here
+	// (ADR-20261031120000); otherwise it changes nothing.
+	PullRequestActionConvertedToDraft PullRequestAction = "converted_to_draft"
 )
 
 // IsPreviewAction reports whether the action is one of the four
@@ -43,6 +47,7 @@ func (a PullRequestAction) IsPreviewAction() bool {
 		PullRequestActionSynchronize,
 		PullRequestActionReopened,
 		PullRequestActionReadyForReview,
+		PullRequestActionConvertedToDraft,
 		PullRequestActionClosed:
 		return true
 	default:

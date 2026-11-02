@@ -799,7 +799,7 @@ func TestCmdEdgeRulesTraceReportsEffectiveBudgetOverride(t *testing.T) {
 		case "/v1/apps/demo/edge-rules":
 			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
 				ID: "budget", Enabled: true, Kind: "budget", MatchHost: "example.com", MatchPath: "/payments",
-				Action: json.RawMessage(`{"budget":{"budget_ms":2000}}`),
+				Action: json.RawMessage(`{"budget":{"budget_ms":2000,"allow_override_header":"x-faas-budget-ms"}}`),
 			}})
 		default:
 			t.Errorf("unexpected API path %s", r.URL.Path)

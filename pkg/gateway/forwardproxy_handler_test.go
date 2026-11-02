@@ -128,6 +128,67 @@ func (s *stubVmmdClient) ForwardTCPStream(context.Context, ...grpc.CallOption) (
 	return nil, status.Error(codes.Unimplemented, "ForwardTCPStream is not used by HTTP gateway tests")
 }
 
+// Database VM RPCs (ADR-1027) run on database nodes, never behind the gateway.
+func (s *stubVmmdClient) CreateDatabaseVolume(context.Context, *vmmdpb.CreateDatabaseVolumeRequest, ...grpc.CallOption) (*vmmdpb.CreateDatabaseVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) DeleteDatabaseVolume(context.Context, *vmmdpb.DeleteDatabaseVolumeRequest, ...grpc.CallOption) (*vmmdpb.DeleteDatabaseVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) ListDatabaseVolumes(context.Context, *vmmdpb.ListDatabaseVolumesRequest, ...grpc.CallOption) (*vmmdpb.ListDatabaseVolumesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) PruneDatabaseArchive(context.Context, *vmmdpb.PruneDatabaseArchiveRequest, ...grpc.CallOption) (*vmmdpb.PruneDatabaseArchiveResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) ExportDatabaseVolume(context.Context, *vmmdpb.ExportDatabaseVolumeRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.DatabaseVolumeChunk], error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) ImportDatabaseVolume(context.Context, ...grpc.CallOption) (grpc.ClientStreamingClient[vmmdpb.DatabaseVolumeChunk, vmmdpb.ImportDatabaseVolumeResponse], error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) SyncDatabaseArchive(context.Context, *vmmdpb.SyncDatabaseArchiveRequest, ...grpc.CallOption) (*vmmdpb.SyncDatabaseArchiveResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) DatabaseArchiveHold(context.Context, *vmmdpb.DatabaseArchiveHoldRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveHoldResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) DatabaseArchiveBytes(context.Context, *vmmdpb.DatabaseArchiveBytesRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveBytesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) GrowDatabaseVolume(context.Context, *vmmdpb.GrowDatabaseVolumeRequest, ...grpc.CallOption) (*vmmdpb.GrowDatabaseVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) StartDatabase(context.Context, *vmmdpb.StartDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StartDatabaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) StopDatabase(context.Context, *vmmdpb.StopDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StopDatabaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) DatabaseControl(context.Context, *vmmdpb.DatabaseControlRequest, ...grpc.CallOption) (*vmmdpb.DatabaseControlResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) DatabaseSession(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseSessionFrame, vmmdpb.DatabaseSessionFrame], error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) DatabaseReplication(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseSessionFrame, vmmdpb.DatabaseSessionFrame], error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
 func (s *stubVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed in handler integration test")
 }

@@ -32,6 +32,14 @@ func TestRenderUsesEveryPlanAndCanonicalValues(t *testing.T) {
 			t.Errorf("plan %q missing developer lease row %q", plan, leaseRow)
 		}
 	}
+	for plan, row := range map[api.Plan]string{
+		api.PlanFree:  "| **Free** | 1 GiB | stops at 1 GiB | 10 GiB |",
+		api.PlanScale: "| **Scale** | 200 GiB | $0.03 per GiB-month | 2,000 GiB |",
+	} {
+		if !strings.Contains(out, row) {
+			t.Errorf("plan %q missing object-storage row %q", plan, row)
+		}
+	}
 	// ErrPlanLimitDeveloperApps/Lease link to this anchor.
 	if !strings.Contains(out, "## Developer environments") {
 		t.Errorf("render missing the developer-environments section")

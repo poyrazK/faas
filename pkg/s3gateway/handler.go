@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -80,6 +81,10 @@ type Config struct {
 	OrgAccess      *objectstorage.OrgAccessCache
 	AccountLimiter *objectstorage.AccountRequestLimiter
 	Credentials    *CredentialCache
+	// Transfers paces request and object response bodies to the gateway's
+	// share of its node's port; nil leaves them unpaced
+	// (ADR-20261031122757 §3).
+	Transfers *objectstorage.TransferLimiter
 }
 
 type Handler struct {
@@ -91,6 +96,7 @@ type Handler struct {
 	orgAccess       *objectstorage.OrgAccessCache
 	credentials     *CredentialCache
 	accountLimiter  *objectstorage.AccountRequestLimiter
+	transfers       *objectstorage.TransferLimiter
 	openSecret      func([]byte) (string, error)
 	client          *http.Client
 	enabled         func() bool
@@ -102,6 +108,7 @@ type Handler struct {
 	putSlots        chan struct{}
 	slotMu          sync.Mutex
 	accountSlots    map[string]int
+	slotFreed       chan struct{}
 	maxSpoolBytes   int64
 	minSpoolFree    int64
 	transferTimeout time.Duration
@@ -190,7 +197,7 @@ func New(c Config) (*Handler, error) {
 		c.Log = slog.Default()
 	}
 	return &Handler{
-		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, openSecret: c.OpenSecret, client: c.HTTPClient,
+		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, transfers: c.Transfers, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
 		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
@@ -272,11 +279,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.setTransferDeadlines(w, ctx)
 	if r.Body != nil && r.Body != http.NoBody {
 		deadline, _ := ctx.Deadline()
-		r.Body = newProgressBody(w, r.Body, deadline)
+		r.Body = newProgressBody(w, h.transfers.ReadCloser(ctx, r.Body, objectstorage.TransferUpload), deadline)
 	}
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
 	w.Header().Set("x-amz-request-id", requestID)
+	// Every answer here is per credential or per signed URL. Cloudflare reads
+	// this header and clients do not, so an object's own Cache-Control still
+	// reaches the client while the edge never keeps a private response past
+	// its URL's expiry or the object's deletion.
+	w.Header().Set("Cloudflare-CDN-Cache-Control", "no-store")
 	if strings.ToLower(r.Host) != h.host {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Use the configured Gregale S3 endpoint with path-style addressing.", r.URL.Path, requestID)
 		return
@@ -386,6 +398,10 @@ func (h *Handler) touchCredential(ctx context.Context, credentialID string) {
 	}
 	h.lastTouch[credentialID] = now
 	h.touchMu.Unlock()
+	// The request's own deadline is the whole transfer budget; a stalled
+	// database must not hold the request that long for a last-used stamp.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectCredentialTouchTimeout)
+	defer cancel()
 	if err := h.store.TouchObjectS3Credential(ctx, credentialID, now); err != nil {
 		h.log.Warn("S3 credential last-used update failed", "credential_id", credentialID)
 	}
@@ -735,7 +751,7 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 		if errors.Is(err, state.ErrOrgAccessRevoked) {
 			status, code, message = http.StatusForbidden, "AccessDenied", "The storage credential is no longer authorized."
 		} else if errors.Is(err, state.ErrObjectBudget) {
-			status, code, message = http.StatusPaymentRequired, "AccountProblem", "The object storage safety budget has been reached."
+			status, code, message = http.StatusPaymentRequired, "AccountProblem", objectBudgetMessage(err)
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
 		} else if errors.Is(err, state.ErrConflict) {
@@ -745,6 +761,16 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 		return false
 	}
 	return true
+}
+
+// objectBudgetMessage names the monthly limit an account reached, its value
+// and the usage that reached it, as every limit error must.
+func objectBudgetMessage(err error) string {
+	var limit *state.ObjectStorageLimitError
+	if !errors.As(err, &limit) {
+		return "The object storage safety budget has been reached."
+	}
+	return fmt.Sprintf("The account reached its object storage %s limit for the month: limit %d, observed %d. See %s.", limit.Kind, limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 }
 
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
@@ -1000,16 +1026,27 @@ func hasUnsupportedS3Semantics(r *http.Request) bool {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) && !supportedMultipartChecksumHeader(r, name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) && !supportedMultipartChecksumHeader(r, name) && !privateCannedACL(r, name, r.Header.Values(name)) {
 			return true
 		}
 	}
-	for name := range r.URL.Query() {
-		if unsupportedS3SemanticName(name) {
+	for name, values := range r.URL.Query() {
+		if unsupportedS3SemanticName(name) && !privateCannedACL(r, name, values) {
 			return true
 		}
 	}
 	return false
+}
+
+// privateCannedACL reports an x-amz-acl on a write that asks for what every
+// Gregale object already is: readable only through its bucket's own
+// credentials. Upload libraries send it by default, so it is accepted and
+// ignored; any other canned ACL, and grants, still answer NotImplemented.
+func privateCannedACL(r *http.Request, name string, values []string) bool {
+	if !strings.EqualFold(name, "x-amz-acl") || r.Method != http.MethodPut && r.Method != http.MethodPost || len(values) != 1 {
+		return false
+	}
+	return values[0] == "private" || values[0] == "bucket-owner-full-control"
 }
 
 func unsupportedS3SemanticName(name string) bool {
@@ -1259,7 +1296,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {
-		body := io.Reader(response.Body)
+		body := h.transfers.Reader(r.Context(), response.Body, objectstorage.TransferDownload)
 		if h.registry.Accounting.GatewaySafety() {
 			body = io.LimitReader(body, response.ContentLength)
 		}

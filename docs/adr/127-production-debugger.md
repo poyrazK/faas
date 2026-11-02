@@ -364,7 +364,9 @@ labels carry their method.
    own row: the gateway's collapse ships the first five such requests per
    bucket per drained batch (at most 60 a minute per bucket with the 5 s
    flush) with their own trace ID, time and exact latency; later ones fold
-   into the bucket as before. Count totals are unchanged, and the receiver's
+   into the bucket as before. With minute collapse on (ADR-20261101085552)
+   the bound is five per bucket per minute, and the samples ship at once
+   rather than when the minute closes. Count totals are unchanged, and the receiver's
    per-account row budget (`DebugTelemetryRequestsPerMinute`) still bounds the
    total. The gateway learns `tracing.enabled` from the app row it already
    loads.
@@ -372,7 +374,9 @@ labels carry their method.
    request-ID journal first, and among the rows of its trace the request is
    the one whose start (received_at minus latency) is nearest the journaled
    start (`GetRequestTelemetryByAppTraceNearest`). Otherwise the identifier is
-   a row ID or a trace ID, as before. Get, evidence, replay and the dashboard
+   a row ID or a trace ID, as before; the gateways' node-local journals
+   (ADR-20261101085552) are asked only when both miss, since that fan-out can
+   take a second. Get, evidence, replay and the dashboard
    share this resolver, and all accept one minute of gateway clock skew.
 3. **Replay** accepts the public request ID and refuses a route label that is
    a template (`{param}`, `:param`, `*`): the request's own path is not

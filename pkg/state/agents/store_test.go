@@ -43,7 +43,8 @@ func open(t *testing.T) *pgxpool.Pool {
 		CREATE TABLE object_buckets (id uuid PRIMARY KEY, account_id uuid NOT NULL, app_id uuid NOT NULL, state text NOT NULL DEFAULT 'ready');
 		CREATE TABLE platform_mail_agent_run_observations (delivery_id uuid PRIMARY KEY, account_id uuid NOT NULL, disposition text NOT NULL);
 		CREATE TABLE workflow_runs (id uuid PRIMARY KEY, status text NOT NULL);
-		CREATE TABLE workflow_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL, event_name text NOT NULL);`); err != nil {
+		CREATE TABLE workflow_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL, event_name text NOT NULL);
+		CREATE TABLE managed_realtime_endpoints (id uuid PRIMARY KEY);`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range agentMigrations {
@@ -69,7 +70,8 @@ func open(t *testing.T) *pgxpool.Pool {
 // agentMigrations are the agent migrations, in order.
 var agentMigrations = []string{"20261029093503390_agent_runs.sql", "20261029093510563_agent_run_execution.sql",
 	"20261029093517736_agent_run_model_access.sql", "20261029093524909_agent_run_checkout.sql", "20261029093538256_agent_deliveries.sql", "20261029093545429_agent_delivery_destinations.sql", "20261029093606948_agent_run_workflow_steps.sql",
-	"20261030205907043_agent_version_pause_during_model_calls.sql"}
+	"20261030205907043_agent_version_pause_during_model_calls.sql",
+	"20261031122245453_agent_run_usage.sql", "20261031215544747_agent_callback_revocations.sql"}
 
 func spec() agents.VersionSpec {
 	return agents.VersionSpec{Harness: agents.Harness{Preset: "codex"}, PromptTemplate: "Triage {{event.title}}", TimeoutSec: 300}

@@ -1215,7 +1215,8 @@ Decision:
   change only when the fence set changes. The fence TTL drops from 30 s to
   10 s: a live mutation acknowledges prepare within 3 s and publishes apply
   right after its commit, so the TTL only bounds how long a crashed apid can
-  hold a host.
+  hold a host. (ADR-20261101141123: a fence no longer refuses requests; the
+  host serves its current rules until apply.)
 4. **Header ops are HTTP fields with case-insensitive reserved names.** apid
   compares names in canonical form, requires a valid HTTP token name and
   rejects control characters in values (`httpguts`), for header ops and
@@ -1493,3 +1494,71 @@ API.
 6. Documentation: calls between your apps over the internal service network
    skip the target's edge rules; the service policy and
    `x-gregale-allow-callers` decide who may call.
+
+## Amendment (2026-10-31): review round 6 — owner scope, rule cookies, shared lists
+
+A further review found that the personal/company line, which rounds 4 and 5
+drew for named apps, lists and presets, did not hold for host patterns and
+route targets; that rule headers bypassed the cross-tenant cookie scoping;
+and that lists were compiled once per host. None changes the rule format or
+the API.
+
+1. **Rules stay inside their app's owner scope.** A company app keeps its
+   creator's account, and the gateway kept a host's rules to the host owner's
+   account, so a `*`, glob or exact-host rule on the creator's personal app
+   applied to the company app's hosts (redirect, respond, headers, CORS with
+   credentials, IP deny), and a company admin's `*` rule to the creator's
+   personal apps. An offboarded creator kept that reach: the rule sits on a
+   personal app, out of the company's sight. Each app now has an edge-rule
+   scope: the organization owning a company app, or none for a personal app
+   (no organization, or the account's personal one). gatewayd-internal keeps a
+   host's rules to those whose app shares the serving app's scope; the serving
+   app's own and inherited preview rules are unaffected. A `route` target must
+   share the host app's scope: apid refuses another scope's target when a rule
+   is written or restored, and the gateway refuses one at match time (a rule
+   written before this amendment). Lists and presets remain account objects;
+   editing them checks the apps whose rules use them (rounds 4 and 5).
+2. **Rule headers cannot set a cookie for the shared domain.** The app's own
+   `Set-Cookie` with `Domain=<apps or platform domain>` is made host-only, but a
+   `headers` rule's response operations and a `redirect` rule's headers were
+   written as they stood, so any tenant could set a cookie every other
+   tenant's app receives. Both now go through the same scoping; a custom
+   domain's `Domain` is kept.
+3. **Lists are compiled once per account.** Each host load read and compiled
+   every list its rules reference, so one 10,000-item list under a `*` rule
+   was held once per cached host (up to 10,000 hosts) and read from Postgres
+   on every host's load. gatewayd-internal now shares one compiled list per
+   account and name, with the owner rule set's TTL, dropped by the same
+   invalidations, and kept only if the cache generation did not move during
+   the load. An IP list's CIDRs are looked up by prefix length (one map lookup
+   per distinct length) instead of a scan of every CIDR.
+
+Checked and unchanged: the response cache key already varies on the request
+host (ADR-122, `computeVaryHash`), so one host's cached body is not served on
+another host of the same app.
+
+## Amendment (2026-10-31, later): app-bound credentials write rules for their app only
+
+An edge-security review found that a per-app deploy token, which the docs
+describe as able to deploy one app, could take over the traffic of every app
+in its owner scope. The token may call every `/v1/apps/{slug}/...` route of
+its app, including `POST /v1/apps/{slug}/edge-rules`, and a bearer skips the
+MFA gate. `match_host` is checked for syntax only, and the gateway applies a
+rule to every host it covers whichever of the scope's apps owns it (round 6).
+A leaked CI token could therefore write a `redirect`, `respond`, `ip` or
+`headers` rule with `match_host: "*"`, another app's host or a custom domain,
+and the rule would show only under the token's own app.
+
+A principal bound to one app (a deploy token; `APIKey.AppID` is set for no
+other credential) may now write rules whose `match_host` is `@app`, the
+app's own host under each apps domain, or one of the app's custom domains.
+Anything wider (`*`, a glob, another app's host) is refused with 403
+`forbidden`, and needs an account credential. The check
+(`edgerules.AppBoundHostProblem`) runs on every path such a credential can
+reach that writes a rule: create, update, rollback (each restored rule),
+OpenAPI policy apply, and the `routes` and `async_routes` of a deployed
+`gregale.yaml`. A manifest route is stored on its target app but matches
+the source host, so deploying with a deploy token a manifest that routes
+another app's host to this app is refused too; deploy such a project with an
+account key. Account keys, organization keys and dashboard sessions are not
+limited.

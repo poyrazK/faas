@@ -59,6 +59,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		healthcheck         *api.ComposeHealthcheck
 		readinessCheck      *api.DeploymentHealthcheck
 		ingressSettings     []IngressSetting
+		labels              map[string]string
 		imageProcess        *api.ComposeProcess
 		secretFiles         []api.SecretFile
 		resources           *api.ComposeResources
@@ -163,6 +164,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		}
 		if b.ingressSettings == nil && s.ingressSettings != nil {
 			b.ingressSettings = slices.Clone(s.ingressSettings)
+		}
+		if b.labels == nil && s.labels != nil {
+			b.labels = maps.Clone(s.labels)
 		}
 		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
@@ -283,6 +287,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			ImageHealthcheck:    b.healthcheck.Clone(),
 			ReadinessCheck:      b.readinessCheck.Clone(),
 			IngressSettings:     slices.Clone(b.ingressSettings),
+			Labels:              maps.Clone(b.labels),
 			ImageProcess:        b.imageProcess.Clone(),
 			SecretFiles:         api.CloneSecretFiles(b.secretFiles),
 			Resources:           b.resources.Clone(),

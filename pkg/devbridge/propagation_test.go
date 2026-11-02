@@ -1,6 +1,7 @@
 package devbridge
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,7 @@ func TestContextPropagationBoundaries(t *testing.T) {
 	}
 	c := RequestContext{s.Scope.AccountID, s.ID, creds.RequestToken}
 	for _, app := range []string{"payments", "frontend"} {
-		if s.AuthorizeContextRoute(time.Now(), c, "dev", app) != nil {
+		if s.AuthorizeContextRoute(context.Background(), time.Now(), c, "dev", app) != nil {
 			t.Fatal("selected graph rejected")
 		}
 	}
@@ -25,7 +26,7 @@ func TestContextPropagationBoundaries(t *testing.T) {
 	} {
 		bad := c
 		bad.Token = test.token
-		if s.AuthorizeContextRoute(time.Now(), bad, test.environment, test.app) == nil {
+		if s.AuthorizeContextRoute(context.Background(), time.Now(), bad, test.environment, test.app) == nil {
 			t.Fatal("unscoped context accepted")
 		}
 	}

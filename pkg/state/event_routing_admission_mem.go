@@ -75,6 +75,9 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 	if !eventRoutingClaimValidLocked(receipt, r, claim) {
 		return PublishedEventRoutingResult{}, ErrConflict
 	}
+	if eventAdmissionChecksSubscription(p) && !m.eventSubscriptionEnabledLocked(p.recipient) {
+		p.unsubscribe()
+	}
 
 	var scope string
 	slot := eventDeliverySlot{p.recipient.AccountID, p.recipient.AppID, p.recipient.ID}
@@ -206,4 +209,15 @@ func (m *MemStore) performEventAdmissionLocked(receipt *PublishedEventWork, p ev
 	}
 	_, err := m.enqueueInvocationLocked(p.invocation)
 	return err == nil, err
+}
+
+// eventSubscriptionEnabledLocked reports whether the recipient's subscription
+// still exists and is enabled (ADR-20261031130000).
+func (m *MemStore) eventSubscriptionEnabledLocked(r PublishedEventRecipient) bool {
+	for _, subscription := range m.eventSubscriptions {
+		if sameMemUUID(subscription.ID, r.ID) {
+			return subscription.Enabled && sameMemUUID(subscription.AccountID, r.AccountID) && sameMemUUID(subscription.AppID, r.AppID)
+		}
+	}
+	return false
 }

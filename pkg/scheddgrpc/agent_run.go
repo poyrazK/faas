@@ -79,6 +79,9 @@ func (s *Server) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 		Output: func(_ context.Context, name string, chunk []byte) error {
 			return send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Output{Output: &scheddpb.AgentRunOutput{Stream: name, Chunk: append([]byte(nil), chunk...)}}})
 		},
+		Usage: func(_ context.Context, u sched.AgentRunUsage) error {
+			return send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Usage{Usage: agentRunUsageToProto(u)}})
+		},
 	}
 	result, err := s.agentRuns.Run(ctx, admission, run, placed, hooks, frames.cancel)
 	if err != nil {
@@ -92,6 +95,13 @@ func (s *Server) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 	}
 	opErr = send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Result{Result: &scheddpb.AgentRunResult{Result: body}}})
 	return opErr
+}
+
+func agentRunUsageToProto(u sched.AgentRunUsage) *scheddpb.AgentRunUsage {
+	return &scheddpb.AgentRunUsage{Method: int32(u.Method), Samples: int32(u.Samples), ExpectedSamples: int32(u.ExpectedSamples),
+		MeasuredMs: u.MeasuredMillis, PausedMs: u.PausedMillis, PrivateMbMs: u.PrivateMBMillis,
+		UnpausedPrivateMbMs: u.UnpausedPrivateMBMillis, BillableMbMs: u.BillableMBMillis, PeakPrivateMb: u.PeakPrivateMB,
+		ColdBoot: u.ColdBoot}
 }
 
 func agentRunStartFromProto(start *scheddpb.AgentRunStart) (sched.AgentRunAdmission, agentrunproto.Request, error) {

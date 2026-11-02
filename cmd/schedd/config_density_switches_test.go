@@ -7,18 +7,19 @@ import (
 	"testing"
 )
 
-// adr: 1151, 20261029151111, 20261030100950 — quiet pause admission,
-// measured CPU admission and the CPU pressure backstop are on by default
-// (amendments of 2026-10-31); schedd.toml can turn each one off, and its
+// adr: 1151, 20261029151111, 20261030100950, 20261031143521 — quiet pause
+// admission, measured CPU admission, the CPU pressure backstop (amendments
+// of 2026-10-31) and proactive frozen compression are on by default;
+// schedd.toml can turn each one off, and its
 // FAAS_* variable overrides the file either way.
 func TestLoadConfig_DensitySwitches(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.QuietPauseAdmission || !cfg.MeasuredCPUAdmission || !cfg.CPUPressureBackstop {
-		t.Fatalf("defaults: quiet_pause_admission=%t measured_cpu_admission=%t cpu_pressure_backstop=%t; want all on",
-			cfg.QuietPauseAdmission, cfg.MeasuredCPUAdmission, cfg.CPUPressureBackstop)
+	if !cfg.QuietPauseAdmission || !cfg.MeasuredCPUAdmission || !cfg.CPUPressureBackstop || !cfg.FrozenProactiveCompress {
+		t.Fatalf("defaults: quiet_pause_admission=%t measured_cpu_admission=%t cpu_pressure_backstop=%t frozen_proactive_compress=%t; want all on",
+			cfg.QuietPauseAdmission, cfg.MeasuredCPUAdmission, cfg.CPUPressureBackstop, cfg.FrozenProactiveCompress)
 	}
 	for _, tc := range []struct {
 		key, env string
@@ -27,6 +28,7 @@ func TestLoadConfig_DensitySwitches(t *testing.T) {
 		{"quiet_pause_admission", "FAAS_QUIET_PAUSE_ADMISSION", func(c *Config) bool { return c.QuietPauseAdmission }},
 		{"measured_cpu_admission", "FAAS_MEASURED_CPU_ADMISSION", func(c *Config) bool { return c.MeasuredCPUAdmission }},
 		{"cpu_pressure_backstop", "FAAS_CPU_PRESSURE_BACKSTOP", func(c *Config) bool { return c.CPUPressureBackstop }},
+		{"frozen_proactive_compress", "FAAS_FROZEN_PROACTIVE_COMPRESS", func(c *Config) bool { return c.FrozenProactiveCompress }},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
 			tomlPath := filepath.Join(t.TempDir(), "schedd.toml")

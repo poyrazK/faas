@@ -59,6 +59,8 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchObs":              "obs",           // Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side meta-obs health snapshot
 		"dispatchDebug":            "debug",         // ADR-127 PR-D — operator-side OTel spans writer smoke harness
 		"dispatchGithub":           "github",        // durable webhook + Check Run recovery
+
+		"dispatchDatabaseNodes": "database-nodes", // ADR-1027 native database moves, restarts and switchovers
 	}
 	caseNames, err := extractMainCaseArms(dispatchConsts)
 	if err != nil {

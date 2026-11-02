@@ -56,7 +56,7 @@ func (s *PgStore) CreateDevBridge(ctx context.Context, session devbridge.Session
 	}
 	affected, err := q.CreateDevBridge(ctx, tx, sqlc.CreateDevBridgeParams{
 		ID: session.ID, AccountID: account, TargetAppID: app, EnvironmentID: env, Scope: scope,
-		AttachmentDigest: session.AttachmentDigest[:], RequestDigest: session.RequestDigest[:],
+		AttachmentDigest: session.AttachmentDigest, RequestDigest: session.RequestDigest,
 		ExpiresAt: pgtype.Timestamptz{Time: session.ExpiresAt, Valid: true}, MaxSessions: int32(limit),
 	})
 	if err != nil {
@@ -93,14 +93,14 @@ func decodeDevBridge(row sqlc.DevBridgeByIDRow) (devbridge.Session, error) {
 		v := row.RevokedAt.Time
 		out.RevokedAt = &v
 	}
-	if len(row.AttachmentDigest) != 32 || len(row.RequestDigest) != 32 {
+	if !storedCredentialShape(row.AttachmentDigest) || !storedCredentialShape(row.RequestDigest) {
 		return out, ErrInvalidArgument
 	}
 	if err := json.Unmarshal(row.Scope, &out.Scope); err != nil {
 		return out, err
 	}
-	copy(out.AttachmentDigest[:], row.AttachmentDigest)
-	copy(out.RequestDigest[:], row.RequestDigest)
+	out.AttachmentDigest = append([]byte(nil), row.AttachmentDigest...)
+	out.RequestDigest = append([]byte(nil), row.RequestDigest...)
 	return out, nil
 }
 

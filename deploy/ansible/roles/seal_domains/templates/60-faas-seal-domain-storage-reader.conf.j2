@@ -2,6 +2,9 @@
 # Gregale S3 secret access keys with the storage seal-domain identity, and
 # its startup rekey leaves the credentials that identity opens alone. The
 # fleet identity stays in the base unit until the domain re-seal completes.
+# The compute gateway (faas-s3-gatewayd-compute, ADR-20261031122757) gets this
+# drop-in only once the domain is contracted; its base unit loads no fleet or
+# host identity, and it refuses to start with one.
 [Service]
 {% if faas_seal_domain_storage_contracted | bool %}
 # Contracted: an empty LoadCredential= drops every credential loaded before

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 const EventAcknowledgmentTokenHeader = "x-gregale-event-acknowledgment-token"
@@ -34,7 +34,7 @@ type eventAcknowledgment struct {
 	rejectionStatus  json.RawMessage
 	completionDigest []byte
 	claim            InvocationClaim
-	digest           [32]byte
+	digest           []byte // stored token hash: plain or keyed (ADR 20261029202403 amendment 1)
 	phase            string
 	seconds          int
 	deadline         time.Time
@@ -83,13 +83,28 @@ func WithEventAcknowledgmentToken(inv Invocation, token string) (Invocation, err
 	inv.Headers = encoded
 	return inv, err
 }
-func acknowledgmentToken() (string, [32]byte, error) {
+
+// credTagEventAcknowledgment binds event acknowledgement token digests, a
+// scheduler-family credential: schedd offers them and schedd and apid check
+// them.
+const credTagEventAcknowledgment credhash.Tag = "event_delivery_acknowledgments.token_digest"
+
+// acknowledgmentToken returns a new token and the value its digest is stored
+// as.
+func acknowledgmentToken() (string, []byte, error) {
 	var token [32]byte
 	if _, err := rand.Read(token[:]); err != nil {
-		return "", [32]byte{}, err
+		return "", nil, err
 	}
 	raw := hex.EncodeToString(token[:])
-	return raw, sha256.Sum256([]byte(raw)), nil
+	sum := sha256.Sum256([]byte(raw))
+	return raw, familyStoredCredential(credhash.FamilyScheduler, credTagEventAcknowledgment, sum[:]), nil
+}
+
+// acknowledgmentMatches reports whether token is the one a stored digest
+// was offered for.
+func acknowledgmentMatches(ctx context.Context, digest [32]byte, stored []byte) bool {
+	return FamilyCredentialMatches(ctx, credhash.FamilyScheduler, credTagEventAcknowledgment, digest[:], stored)
 }
 func acknowledgmentDigest(token string) ([32]byte, error) {
 	raw, err := hex.DecodeString(token)
@@ -231,7 +246,7 @@ func (m *MemStore) EventAcknowledgment(ctx context.Context, account, app, id, to
 	if err != nil {
 		return api.EventAcknowledgmentStatus{}, err
 	}
-	if subtle.ConstantTimeCompare(digest[:], ack.digest[:]) != 1 || ack.claim.Attempt != inv.Attempts || ack.claim.ReplayGeneration != inv.ReplayGeneration {
+	if !acknowledgmentMatches(ctx, digest, ack.digest) || ack.claim.Attempt != inv.Attempts || ack.claim.ReplayGeneration != inv.ReplayGeneration {
 		return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
 	}
 	if ack.phase == "rejected" {
@@ -331,7 +346,7 @@ func (m *MemStore) ExpireEventAcknowledgments(ctx context.Context, limit int) (i
 		}
 		m.setInvocationLocked(id, inv)
 		if reserved {
-			m.decrementAccountAsyncInflightLocked(inv.AccountID)
+			m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 		}
 		count++
 		if count >= limit {

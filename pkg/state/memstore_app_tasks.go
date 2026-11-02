@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -124,7 +125,7 @@ func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, e
 		}
 		m.appTaskAttach[task.ID] = AppTaskAttach{
 			TaskID: task.ID, TTY: resolved.Interactive.TTY,
-			TokenSHA256: append([]byte(nil), resolved.Interactive.TokenSHA256...), CreatedAt: now,
+			TokenSHA256: familyStoredCredential(credhash.FamilyAttach, credTagInteractiveAttach, resolved.Interactive.TokenSHA256), CreatedAt: now,
 		}
 	}
 	return cloneAppTask(task), nil

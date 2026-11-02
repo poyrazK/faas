@@ -1347,6 +1347,9 @@ type Manager struct {
 	agentWaitMetrics *AgentWaitMetrics
 	agentWaitMu      sync.Mutex
 	agentWaits       map[string]*agentWaitState
+	// agentUsageTick is the agent run usage sample interval
+	// (agent_run_usage.go); zero is api.AgentRunUsageSampleMillis.
+	agentUsageTick time.Duration
 
 	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
 	// activity tracker; without it Freeze cannot see forwards in flight.
@@ -1382,6 +1385,10 @@ type HostRenderer interface {
 	// rules.
 	SetStaticEgressRules(rules []netns.StaticEgressRule)
 }
+
+// JailLeases is the host's jail-identity allocator. Database VMs (ADR-1027)
+// take their jail uid from it so they never share one with an app VM.
+func (m *Manager) JailLeases() *Allocator { return m.alloc }
 
 // NewManager wires a Manager. fcVersion is the running Firecracker version (used
 // to decide snapshot usability, ADR-005). log may be nil (a discard logger).

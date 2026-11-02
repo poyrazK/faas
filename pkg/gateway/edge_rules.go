@@ -442,6 +442,48 @@ type EdgeRuleCache struct {
 	cap  int
 	ll   *list.List               // front = most recently used
 	byID map[string]*list.Element // host → element (element.Value is *HostEntry)
+	// invalidations logs the most recent generations' scopes, oldest first,
+	// so a request's pins are refused only for a change that can reach them
+	// (UnchangedSince), not for another tenant's.
+	invalidations []edgeRuleInvalidation
+}
+
+// edgeRuleInvalidationLog bounds the invalidation history. A request whose
+// pins span more invalidations than this fails closed, as before the log.
+const edgeRuleInvalidationLog = 512
+
+// edgeRuleInvalidation is one generation's invalidation: every set, or the
+// sets its patterns cover, holding accountID's rules when accountID is set.
+type edgeRuleInvalidation struct {
+	generation       uint64
+	all              bool
+	accountID, appID string
+	patterns         []string
+}
+
+// covers reports whether the invalidation drops (or would drop) the set held
+// under key whose owner and inherited app are given. It is the one predicate
+// InvalidateHosts, InvalidateAccountHosts and UnchangedSince share.
+func (inv edgeRuleInvalidation) covers(key, owner, inheritedApp string) bool {
+	if inv.all {
+		return true
+	}
+	if inv.accountID != "" && owner != "" && owner != inv.accountID {
+		return false
+	}
+	host, entryApp := EdgeRuleCacheKeyHost(key), edgeRuleCacheKeyApp(key)
+	for _, pattern := range inv.patterns {
+		covered := EdgeRuleHostPatternMatches(pattern, host)
+		if inv.accountID != "" && api.IsEdgeRuleAppHosts(pattern) {
+			// A set read without an app holds no app-wide rules: every loader
+			// merges them only for a known app (ADR-1191).
+			covered = entryApp != "" && (inv.appID == "" || entryApp == inv.appID || inheritedApp == inv.appID)
+		}
+		if covered {
+			return true
+		}
+	}
+	return false
 }
 
 // HostEntry is the per-host compiled-rule set the EdgeRuleCache
@@ -1122,9 +1164,67 @@ func (c *EdgeRuleCache) putLocked(host string, entry *HostEntry) {
 func (c *EdgeRuleCache) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.generation++
+	c.logInvalidationLocked(edgeRuleInvalidation{all: true})
 	c.ll.Init()
 	c.byID = map[string]*list.Element{}
+}
+
+// invalidateLocked advances the generation, logs inv and drops the sets it
+// covers.
+func (c *EdgeRuleCache) invalidateLocked(inv edgeRuleInvalidation) {
+	c.logInvalidationLocked(inv)
+	for key, el := range c.byID {
+		entry := el.Value.(*HostEntry)
+		if inv.covers(key, entry.owner, entry.inheritedApp) {
+			c.removeElement(el)
+		}
+	}
+}
+
+func (c *EdgeRuleCache) logInvalidationLocked(inv edgeRuleInvalidation) {
+	c.generation++
+	inv.generation = c.generation
+	if len(c.invalidations) == edgeRuleInvalidationLog {
+		c.invalidations = append(c.invalidations[:0], c.invalidations[1:]...)
+	}
+	c.invalidations = append(c.invalidations, inv)
+}
+
+// UnchangedSince reports the current generation and whether no invalidation
+// after since can have changed a set the request has pinned, or entry, about
+// to be pinned under key (entry may be nil). A Reset, or a history older than
+// the log, counts as a change. Another host's or another account's rule
+// change leaves the request's sets as they were, so it does not refuse the
+// request's next pin (ADR-570's snapshot, scoped like the invalidation).
+func (c *EdgeRuleCache) UnchangedSince(ctx context.Context, since uint64, key string, entry *HostEntry) (uint64, bool) {
+	type scope struct{ key, owner, inheritedApp string }
+	pinned, _ := ctx.Value(pinnedEdgePoliciesKey{}).(map[string]*edgePolicySnapshot)
+	scopes := make([]scope, 0, len(pinned)+1)
+	for pinnedKey, snapshot := range pinned {
+		scopes = append(scopes, scope{pinnedKey, snapshot.owner, snapshot.inheritedApp})
+	}
+	if entry != nil {
+		scopes = append(scopes, scope{key, entry.owner, entry.inheritedApp})
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if since == c.generation {
+		return c.generation, true
+	}
+	if since > c.generation || len(c.invalidations) == 0 || c.invalidations[0].generation > since+1 {
+		return c.generation, false
+	}
+	for _, inv := range c.invalidations {
+		if inv.generation <= since {
+			continue
+		}
+		for _, s := range scopes {
+			if inv.covers(s.key, s.owner, s.inheritedApp) {
+				return c.generation, false
+			}
+		}
+	}
+	return c.generation, true
 }
 
 // InvalidateHosts drops the cached entries (current and last-known) for every
@@ -1142,16 +1242,7 @@ func (c *EdgeRuleCache) InvalidateHosts(patterns []string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.generation++
-	for key, el := range c.byID {
-		host := EdgeRuleCacheKeyHost(key)
-		for _, pattern := range patterns {
-			if EdgeRuleHostPatternMatches(pattern, host) {
-				c.removeElement(el)
-				break
-			}
-		}
-	}
+	c.invalidateLocked(edgeRuleInvalidation{patterns: slices.Clone(patterns)})
 }
 
 // EdgeRuleHostPatternMatches reports whether a rule's match_host pattern
@@ -1194,24 +1285,7 @@ func (c *EdgeRuleCache) InvalidateAccountHosts(accountID, appID string, patterns
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.generation++
-	for key, el := range c.byID {
-		entry := el.Value.(*HostEntry)
-		if entry.owner != "" && entry.owner != accountID {
-			continue
-		}
-		host, entryApp := EdgeRuleCacheKeyHost(key), edgeRuleCacheKeyApp(key)
-		for _, pattern := range patterns {
-			covered := EdgeRuleHostPatternMatches(pattern, host)
-			if api.IsEdgeRuleAppHosts(pattern) {
-				covered = appID == "" || entryApp == "" || entryApp == appID || entry.inheritedApp == appID
-			}
-			if covered {
-				c.removeElement(el)
-				break
-			}
-		}
-	}
+	c.invalidateLocked(edgeRuleInvalidation{accountID: accountID, appID: appID, patterns: slices.Clone(patterns)})
 }
 
 // Len returns the number of cached host entries.
@@ -1262,11 +1336,14 @@ func (c *EdgeRuleCache) removeElement(el *list.Element) {
 // Reset drops every cached entry. Called by the gatewayd notify
 // loop on `db.NotifyEdgeRuleChanged`.
 type EdgeRuleMatcher interface {
-	// Converging reports whether the hostname is inside the short fail-closed
-	// window of a two-phase fleet policy mutation by ownerAccountID (the
-	// account owning the app the host resolves to; "" when none claims it).
-	// Another account's mutation never fences an owned host, and an app-wide
-	// (@app) mutation fences only ownerAppID's hosts.
+	// Converging reports whether a two-phase fleet policy mutation by
+	// ownerAccountID (the account owning the app the host resolves to; ""
+	// when none claims it) is pending on the hostname: prepared, not yet
+	// applied here. Another account's mutation never covers an owned host,
+	// and an app-wide (@app) mutation covers only ownerAppID's hosts. The
+	// host keeps serving its current rules meanwhile
+	// (ADR-20261101141123); only a route rule whose target stopped
+	// resolving fails closed instead of falling back to the source app.
 	Converging(host, ownerAccountID, ownerAppID string) bool
 	MatchRoute(ctx context.Context, host, path, method string) *EdgeRuleResolved
 	MatchRewrite(ctx context.Context, host, path, method string) *EdgeRuleRewriteResolved

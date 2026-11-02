@@ -85,6 +85,20 @@ type VMMDriver struct {
 	// reclaimDriveSpace frees space on the drive filesystem before a build
 	// would be refused for it (ADR-20261027173012); nil reclaims nothing.
 	reclaimDriveSpace BuildDriveSpaceReclaimer
+
+	// platformLayers, when set, are shared between published dependency
+	// caches (ADR-20261031103801); nil keeps every blob per cache.
+	platformLayers map[string]struct{}
+}
+
+// WithSharedPlatformBlobs makes published dependency caches share one copy of
+// each platform image layer (SharedPlatformBlobsEnv). Call before serving.
+func (d *VMMDriver) WithSharedPlatformBlobs(on bool) *VMMDriver {
+	d.platformLayers = nil
+	if on {
+		d.platformLayers = platformLayers
+	}
+	return d
 }
 
 // WithDriveSpaceReclaimer sets how Spawn frees space for a build drive on a
@@ -785,7 +799,8 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 				}
 			default:
 				d.dependencyCacheMu.Lock()
-				cacheErr := publishDependencyCache(cacheSource, cachePath, dependencyCacheMaxBytes)
+				shared, cacheErr := publishDependencyCache(cacheSource, cachePath, dependencyCacheMaxBytes, d.platformLayers)
+				res.DependencyCacheSharedBytes = shared
 				if cacheErr == nil {
 					cacheErr = sweepDependencyCaches(d.driveDir, time.Now())
 				}

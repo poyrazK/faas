@@ -187,3 +187,36 @@ about 32 GiB for Scale).
   read-progress and schedule rows that name a channel considered first; that
   is a follow-up, not a limit.
 
+
+## Amendment (2026-10-31): per-user state counts live rows
+
+Three per-user stores capped each endpoint by counting every row it had ever
+created, and nothing deleted those rows, so each cap was used up for good: an
+endpoint could send inbox messages to 256 distinct users in its lifetime, keep
+notification preferences for 256 users and read markers for 1,024
+user-stream pairs. Event schemas allowed 64 immutable versions per endpoint
+across all its channels and event types, with no way to delete one.
+
+- **Inbox:** an inbox counts while it holds unexpired messages
+  (`oldest_sequence < next_sequence`, which
+  `PruneExpiredManagedRealtimeInboxMessages` advances), as retained channels
+  do since 2026-10-27. An endpoint holds at most 256 such inboxes at a time
+  (`api.RealtimeInboxesHeldPerEndpoint`). Inbox heads stay so sequences never
+  restart; `managed_realtime_inbox_heads_held_idx` keeps the count
+  proportional to held inboxes.
+- **Read markers:** a marker counts for 30 days after its last update and the
+  history reaper deletes it after that, like a named cursor. Messages are
+  retained for at most 24 hours, so an older marker sits below every retained
+  message and deleting it leaves the unread count unchanged. An endpoint keeps
+  at most 1,024 live markers (`api.RealtimeReadMarkersPerEndpoint`).
+- **Notification preferences:** settings with no expiry, so they are capped
+  per account by plan (`RealtimeLimits.NotificationPreferencesPerAccount`):
+  Hobby 1,000, Pro 10,000, Scale 50,000 users. A document is at most 32
+  categories and 16 devices, a few KB, so Scale stays near 100 MB. Writing the
+  defaults deletes the user's row and frees the slot, since the defaults need
+  none.
+- **Event schemas:** 64 versions per channel and event type
+  (`api.RealtimeEventSchemaVersionsPerEventType`) and 1,024 per endpoint
+  (`api.RealtimeEventSchemasPerEndpoint`). At 16 KiB a schema that bounds an
+  endpoint's schemas to 16 MiB. Versions stay immutable and undeletable.
+- The constants moved from `pkg/state` to `pkg/api/limits.go`.

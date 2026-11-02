@@ -17,6 +17,13 @@ The site must use durable routing, and the account must remain an internal
 allowlisted operator. Existing account/MFA/scope checks apply; an automation
 bearer does not perform interactive MFA on each job.
 
+Issuing or revoking a credential is a provider-admin write. It needs an
+MFA-completed operator session with a TOTP step-up from the last five minutes,
+sent from the API host or the operations origin. An API key, an operator's
+included, is refused with `step_up_required`. `gregale` signs in with an API
+key, so `sites tokens create` and `sites tokens revoke` are refused until the
+CLI can present an operator session; `sites tokens list` still works.
+
 From an operator workstation with its existing login:
 
 ```bash

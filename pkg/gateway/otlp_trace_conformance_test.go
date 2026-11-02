@@ -54,7 +54,8 @@ func TestOTLPHTTPConformance(t *testing.T) {
 				if compressed {
 					body = gzipOTLP(t, body)
 				}
-				h := otlpConformanceHandler(uuid.New())
+				accountID := uuid.New()
+				h := otlpConformanceHandler(accountID)
 				req := httptest.NewRequest(http.MethodPost, "/v1/otel/v1/traces", bytes.NewReader(body))
 				req.Header.Set("Authorization", "Bearer test")
 				req.Header.Set("Content-Type", encoding)
@@ -79,7 +80,7 @@ func TestOTLPHTTPConformance(t *testing.T) {
 				if h.cfg.Acc.Len() != 2 {
 					t.Fatalf("trace buckets = %d, want 2", h.cfg.Acc.Len())
 				}
-				bucket, ok := h.cfg.Acc.buckets.Load("0123456789abcdef0123456789abcdef")
+				bucket, ok := h.cfg.Acc.buckets.Load(spanBucketKey{accountID: accountID, traceID: "0123456789abcdef0123456789abcdef"})
 				if !ok {
 					t.Fatal("hexadecimal trace ID changed at ingestion")
 				}
@@ -92,11 +93,19 @@ func TestOTLPHTTPConformance(t *testing.T) {
 	}
 }
 
+// A trace the buffer cannot take is rejected in an OTLP partial success; the
+// other traces in the export are still accepted, and another account's spans
+// for the same trace ID are untouched.
 func TestOTLPHTTPConformancePartialSuccess(t *testing.T) {
 	accountID := uuid.New()
-	h := otlpConformanceHandler(accountID)
+	h := NewOTelSpansHandler(OTelSpansHandlerConfig{
+		AuthClient: &fakeAuthClient{accountID: accountID.String(), plan: "scale"},
+		Limiter:    peraccount.NewLimiter(),
+		Acc:        NewSpansAccumulatorWithBounds(0, 1),
+	})
 	contested := "0123456789abcdef0123456789abcdef"
-	if _, err := h.cfg.Acc.Add(contested, uuid.New(), []summarizedSpan{{SpanID: "original"}}); err != nil {
+	other := uuid.New()
+	if _, err := h.cfg.Acc.Add(contested, other, []summarizedSpan{{SpanID: "original"}}); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/otel/v1/traces", strings.NewReader(otlpConformanceJSON))
@@ -111,10 +120,10 @@ func TestOTLPHTTPConformancePartialSuccess(t *testing.T) {
 	if rr.Code != http.StatusOK || response.PartialSuccess().RejectedSpans() != 1 || h.cfg.Acc.Len() != 2 {
 		t.Fatalf("partial response = %d %s, buckets = %d", rr.Code, rr.Body.String(), h.cfg.Acc.Len())
 	}
-	bucket, _ := h.cfg.Acc.buckets.Load(contested)
+	bucket, _ := h.cfg.Acc.buckets.Load(spanBucketKey{accountID: other, traceID: contested})
 	spans, _ := bucket.(*spansAccumulator).snapshot()
 	if len(spans) != 1 || spans[0].SpanID != "original" {
-		t.Fatalf("cross-account trace modified: %+v", spans)
+		t.Fatalf("another account's trace modified: %+v", spans)
 	}
 }
 

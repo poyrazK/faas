@@ -285,7 +285,7 @@ func TestPushMeterUsageRecordRequiresLiveAndUsesDistinctEvent(t *testing.T) {
 func withOrganization(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/organizations/" {
-			_, _ = io.WriteString(w, `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false}}],"pagination":{"total_count":1,"max_page":1}}`)
+			_, _ = io.WriteString(w, `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"invoice"}}],"pagination":{"total_count":1,"max_page":1}}`)
 			return
 		}
 		next(w, r)
@@ -293,13 +293,15 @@ func withOrganization(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // The preflight refuses an organization that lets a customer hold several
-// subscriptions, or a token that does not name exactly one organization.
-// adr: 20261029180000
+// subscriptions, that charges a portal upgrade only at the next renewal, or a
+// token that does not name exactly one organization.
+// adr: 20261029180000, 20261031090658
 func TestEnsurePlanProductsRequiresSingleSubscriptionOrganization(t *testing.T) {
 	for name, body := range map[string]string{
-		"multiple allowed": `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":true}}]}`,
-		"setting missing":  `{"items":[{"id":"org-1","subscription_settings":{}}]}`,
-		"no organization":  `{"items":[]}`,
+		"multiple allowed":     `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":true,"proration_behavior":"invoice"}}]}`,
+		"setting missing":      `{"items":[{"id":"org-1","subscription_settings":{}}]}`,
+		"upgrade charge later": `{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false,"proration_behavior":"prorate"}}]}`,
+		"no organization":      `{"items":[]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			var catalogReads int

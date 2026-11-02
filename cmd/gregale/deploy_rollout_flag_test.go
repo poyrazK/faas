@@ -44,6 +44,12 @@ func TestApplyRolloutFlag(t *testing.T) {
 	if err := main.ApplyRolloutFlag("fast", map[string]bool{"rollout": true, "no-traffic": true}, &safe, &preset); err != nil {
 		t.Fatalf("--rollout with --no-traffic is left to deploy's own check, got %v", err)
 	}
+	// --rollback-on-5xx adds the 5xx rollback to any rollout (#6121).
+	for _, rollout := range []string{"immediate", "fast", "safe"} {
+		if err := main.ApplyRolloutFlag(rollout, map[string]bool{"rollout": true, "rollback-on-5xx": true}, &safe, &preset); err != nil {
+			t.Fatalf("--rollout %s with --rollback-on-5xx = %v, want it accepted", rollout, err)
+		}
+	}
 }
 
 // TestFollowRolloutOnlyForAPersonAtATerminal: JSON and non-interactive runs

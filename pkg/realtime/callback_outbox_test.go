@@ -957,6 +957,42 @@ func TestCallbackOutboxLimitsEachEndpointToItsShare(t *testing.T) {
 	}
 }
 
+// An account cannot fill the spool by spreading slow callbacks over many
+// endpoints: together they hold the account's share.
+func TestCallbackOutboxLimitsEachAccountToItsShare(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxBytes: 64 << 10, MaxEndpointBytes: 4 << 10, MaxAccountBytes: 8 << 10})
+	event := func(account, endpoint string, n int) Event {
+		e := testCallbackEvent()
+		e.ID = fmt.Sprintf("evt_%s_%s_%d", account, endpoint, n)
+		// Endpoint IDs are UUIDs, unique across accounts.
+		e.AccountID, e.EndpointID = account, account+"-"+endpoint
+		e.ConnectionID = fmt.Sprintf("conn_%s_%s_%d", account, endpoint, n)
+		return e
+	}
+	refused := 0
+	for ep := range 8 {
+		for n := 0; ; n++ {
+			_, err := queue.EnqueueAndClaim(event("noisy", fmt.Sprintf("ep%d", ep), n))
+			if errors.Is(err, ErrCallbackOutboxFull) {
+				refused++
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n > 1000 {
+				t.Fatal("the account share never filled")
+			}
+		}
+	}
+	if stats := queue.Stats(); stats.PendingBytes > 8<<10 || refused != 8 {
+		t.Fatalf("noisy account holds %d bytes across 8 endpoints (%d refusals), want at most its 8 KiB share", stats.PendingBytes, refused)
+	}
+	if _, err := queue.EnqueueAndClaim(event("quiet", "ep0", 0)); err != nil {
+		t.Fatalf("another account's callback refused: %v", err)
+	}
+}
+
 func TestCallbackOutboxSupportsDisconnectEvents(t *testing.T) {
 	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
 	event := testCallbackEvent()
