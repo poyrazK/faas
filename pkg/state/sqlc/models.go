@@ -2391,6 +2391,7 @@ type Build struct {
 	CancelledByDeploymentCascade bool
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
+	CoalescedWith                pgtype.UUID
 }
 
 type BuildExportPublication struct {
