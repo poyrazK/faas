@@ -560,10 +560,12 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 		yaml      string
 		enabled   bool
 		placement bool
+		direct    bool
 	}{
 		{name: "off", yaml: base},
 		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
 		{name: "placement routing", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n", enabled: true, placement: true},
+		{name: "direct entry", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: both\n", enabled: true, direct: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := manifest.Parse([]byte(tc.yaml))
@@ -611,6 +613,16 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			}
 			if strings.Contains(controlVars, "faas_edge_placement_routing") {
 				t.Errorf("placement routing rendered on the control plane:\n%s", controlVars)
+			}
+			// ADR-20261102081618: direct entry opens the compute edges' TLS
+			// listener and keeps their 80/443 Cloudflare-only.
+			for _, line := range []string{"faas_edge_entry: \"both\"\n", "faas_cloudflare_origin_only: true\n"} {
+				if got := strings.Contains(computeVars, line); got != tc.direct {
+					t.Errorf("compute host has %q = %v, want %v:\n%s", line, got, tc.direct, computeVars)
+				}
+			}
+			if strings.Contains(controlVars, "faas_edge_entry") {
+				t.Errorf("direct entry rendered on the control plane:\n%s", controlVars)
 			}
 		})
 	}

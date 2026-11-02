@@ -756,14 +756,42 @@ type PublicEdge struct {
 	// gatewayd-internal of the node that last served it, instead of its own
 	// (ADR-20261031105055). Needs compute_nodes. Off by default.
 	PlacementRouting bool `yaml:"placement_routing,omitempty"`
+	// Entry is how Cloudflare reaches the compute edges
+	// (ADR-20261102081618): "tunnel", the default, through the cell's
+	// Cloudflare Tunnel; "both" also opens each edge's TLS listener on port
+	// 443 for proxied address records, for the move off the tunnel and its
+	// rollback. Needs compute_nodes.
+	Entry string `yaml:"entry,omitempty"`
+}
+
+// Public edge entries (ADR-20261102081618).
+const (
+	PublicEdgeEntryTunnel = "tunnel"
+	PublicEdgeEntryBoth   = "both"
+)
+
+// DirectEntry reports whether the compute edges take Cloudflare's direct
+// connections on port 443.
+func (e PublicEdge) DirectEntry() bool {
+	return e.ComputeNodes && e.Entry == PublicEdgeEntryBoth
 }
 
 // validate checks the compute-node edge against the fleet: it needs a control
 // plane to forward credential-bound routes to and compute nodes to run on.
 func (e PublicEdge) validate(hosts []Host) Errors {
+	switch e.Entry {
+	case "", PublicEdgeEntryTunnel, PublicEdgeEntryBoth:
+	case "direct":
+		return Errors{{"public_edge.entry", "direct comes one release after the move off the tunnel (ADR-20261102081618 step 6); use both"}}
+	default:
+		return Errors{{"public_edge.entry", fmt.Sprintf("%q is not tunnel or both", e.Entry)}}
+	}
 	if !e.ComputeNodes {
 		if e.PlacementRouting {
 			return Errors{{"public_edge.placement_routing", "needs public_edge.compute_nodes: it routes the compute edges' requests"}}
+		}
+		if e.Entry == PublicEdgeEntryBoth {
+			return Errors{{"public_edge.entry", "needs public_edge.compute_nodes: it opens the compute edges' TLS listener"}}
 		}
 		return nil
 	}
