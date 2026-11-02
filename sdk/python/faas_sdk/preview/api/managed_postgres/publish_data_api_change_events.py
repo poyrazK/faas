@@ -82,13 +82,12 @@ def sync_detailed(
 ) -> Response[DataAPIChangeEventBatchResponse | Problem]:
     """Publish recorded Data API row changes
 
-     Private runtime surface for change hooks (ADR-20261022121642). Requires a short-lived gregale:data-
-    api:events workload assertion from a live instance of an active app; account and app come from it,
-    never from the body. Each event publishes as an app-scoped producer-key event under the app's own
-    source with key data-api.change.ID, so a republished change deduplicates while its receipt is
-    retained. Events publish in order; publication stops at the first event that may succeed later, and
-    later events are reported as retryable without being attempted. Owner API keys and application JWTs
-    are not accepted.
+     Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload
+    assertion from a live instance of an active app; account and app come from it, never from the body.
+    Each event publishes as an app-scoped producer-key event under the app's own source with key data-
+    api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in
+    order; publication stops at the first event that may succeed later, and later events are reported as
+    retryable without being attempted. Owner API keys and application JWTs are not accepted.
 
     Args:
         body (DataAPIChangeEventBatch): A runtime's private publication of recorded changes, in
@@ -120,13 +119,12 @@ def sync(
 ) -> DataAPIChangeEventBatchResponse | Problem | None:
     """Publish recorded Data API row changes
 
-     Private runtime surface for change hooks (ADR-20261022121642). Requires a short-lived gregale:data-
-    api:events workload assertion from a live instance of an active app; account and app come from it,
-    never from the body. Each event publishes as an app-scoped producer-key event under the app's own
-    source with key data-api.change.ID, so a republished change deduplicates while its receipt is
-    retained. Events publish in order; publication stops at the first event that may succeed later, and
-    later events are reported as retryable without being attempted. Owner API keys and application JWTs
-    are not accepted.
+     Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload
+    assertion from a live instance of an active app; account and app come from it, never from the body.
+    Each event publishes as an app-scoped producer-key event under the app's own source with key data-
+    api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in
+    order; publication stops at the first event that may succeed later, and later events are reported as
+    retryable without being attempted. Owner API keys and application JWTs are not accepted.
 
     Args:
         body (DataAPIChangeEventBatch): A runtime's private publication of recorded changes, in
@@ -153,13 +151,12 @@ async def asyncio_detailed(
 ) -> Response[DataAPIChangeEventBatchResponse | Problem]:
     """Publish recorded Data API row changes
 
-     Private runtime surface for change hooks (ADR-20261022121642). Requires a short-lived gregale:data-
-    api:events workload assertion from a live instance of an active app; account and app come from it,
-    never from the body. Each event publishes as an app-scoped producer-key event under the app's own
-    source with key data-api.change.ID, so a republished change deduplicates while its receipt is
-    retained. Events publish in order; publication stops at the first event that may succeed later, and
-    later events are reported as retryable without being attempted. Owner API keys and application JWTs
-    are not accepted.
+     Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload
+    assertion from a live instance of an active app; account and app come from it, never from the body.
+    Each event publishes as an app-scoped producer-key event under the app's own source with key data-
+    api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in
+    order; publication stops at the first event that may succeed later, and later events are reported as
+    retryable without being attempted. Owner API keys and application JWTs are not accepted.
 
     Args:
         body (DataAPIChangeEventBatch): A runtime's private publication of recorded changes, in
@@ -189,13 +186,12 @@ async def asyncio(
 ) -> DataAPIChangeEventBatchResponse | Problem | None:
     """Publish recorded Data API row changes
 
-     Private runtime surface for change hooks (ADR-20261022121642). Requires a short-lived gregale:data-
-    api:events workload assertion from a live instance of an active app; account and app come from it,
-    never from the body. Each event publishes as an app-scoped producer-key event under the app's own
-    source with key data-api.change.ID, so a republished change deduplicates while its receipt is
-    retained. Events publish in order; publication stops at the first event that may succeed later, and
-    later events are reported as retryable without being attempted. Owner API keys and application JWTs
-    are not accepted.
+     Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload
+    assertion from a live instance of an active app; account and app come from it, never from the body.
+    Each event publishes as an app-scoped producer-key event under the app's own source with key data-
+    api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in
+    order; publication stops at the first event that may succeed later, and later events are reported as
+    retryable without being attempted. Owner API keys and application JWTs are not accepted.
 
     Args:
         body (DataAPIChangeEventBatch): A runtime's private publication of recorded changes, in
