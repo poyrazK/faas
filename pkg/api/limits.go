@@ -15608,6 +15608,17 @@ const (
 	LogReadSlotWait            = 2 * time.Second
 )
 
+// BuildLogRetainedDeployments is how many of an app's newest deployments (by
+// created_at, whatever their status) keep their build log past the build log
+// retention window (ADR-20261102182856). meterd deletes a deployment's
+// deployment_logs rows once the build's last line is older than
+// meter.BuildLogRetentionDays, unless the deployment is live (every serving,
+// canary or staged release) or among these newest deployments, so rollback
+// targets and `gregale logs --latest-failure` keep their build output. It is
+// wider than SnapshotRollbackRetentionDeployments, which counts only live and
+// superseded releases of one scope.
+const BuildLogRetainedDeployments = 10
+
 // Alert log context (ADR-20261022172052): a firing app alert reads the log
 // ledger over its window (capped at the text search bound) and the deploys
 // of the hour before it.

@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/buildlog"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
@@ -7565,6 +7566,9 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	for i := len(page) - 1; i >= 0; i-- {
 		writeLogEvent(w, flusher, page[i])
 	}
+	if len(page) == 0 && beforeSeq == 0 {
+		s.writeBuildLogExpired(ctx, w, flusher, d)
+	}
 
 	if !follow {
 		_, _ = fmt.Fprint(w, "event: end\ndata: {}\n\n")
@@ -7783,6 +7787,29 @@ func emitStageFrame(w http.ResponseWriter, flusher http.Flusher, item state.Stag
 	}
 	encoded, _ := json.Marshal(payload)
 	_, _ = fmt.Fprintf(w, "event: stage\ndata: %s\n\n", encoded)
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+// writeBuildLogExpired sends `event: expired` when build log retention
+// deleted d's build log (ADR-20261102182856), so a reader can say the log
+// expired rather than that it was never written. A failed check sends
+// nothing: the stream is the same empty log it was before.
+func (s *server) writeBuildLogExpired(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, d state.Deployment) {
+	expired, err := buildlog.Expired(ctx, s.store, d, time.Now())
+	if err != nil {
+		s.log.Warn("apid: build log retention check", "deployment", d.ID, "err", err)
+		return
+	}
+	if !expired {
+		return
+	}
+	payload, err := json.Marshal(buildlog.Notice())
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", api.DeploymentLogExpiredEvent, payload)
 	if flusher != nil {
 		flusher.Flush()
 	}

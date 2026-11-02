@@ -7218,6 +7218,18 @@ type LogEntry struct {
 	WrittenAt    time.Time
 }
 
+// DeploymentLogStreamSystem tags a deployment_logs row the platform writes
+// about a build log rather than build output. builderd writes one: the marker
+// that records a build reached its byte cap (ADR-20261102182856).
+const DeploymentLogStreamSystem = "system"
+
+// DeploymentLogUsage is what a deployment's build log holds: the bytes of
+// every stored line and whether its truncation marker is among them.
+type DeploymentLogUsage struct {
+	Bytes     int64
+	Truncated bool
+}
+
 // Session is one server-side record of a dashboard login (IAM-3,
 // issue #187 + #244 merged). The cookie envelope carries the row's
 // ID as `sid`; every authenticated dashboard request re-validates

@@ -25,7 +25,9 @@ The dashboard shows the same stream on the app's **Logs** tab.
   its most recent instance, and `--since 3h` shows every instance that ran in
   those three hours.
 - **Build and deploy output** is kept separately: `gregale logs my-api
-  --latest-failure` shows the latest failed deployment's build log.
+  --latest-failure` shows the latest failed deployment's build log, and
+  `gregale release logs v12` shows any deployment's. See
+  [Build logs](#build-logs) for how long they are kept.
 
 When part of a window can't be shown, for example because an instance wrote
 faster than its buffer could hold before the lines were archived, the output
@@ -45,6 +47,26 @@ and deletes all of them when your account is deleted. Lines still in a
 running instance's memory are lost if the node
 running it fails before they are archived; use a [log drain](#log-drains) when
 every line matters.
+
+### Build logs
+
+A deployment's build log is kept for 90 days after its last line, on every
+plan. Two kinds of deployment keep theirs for longer:
+
+- every live deployment of the app, including a canary, a traffic split and a
+  release staged with `--no-traffic`;
+- the app's 10 most recent deployments, whatever their status, so the
+  releases you can roll back to and `gregale logs my-api --latest-failure` still
+  have their build output.
+
+Once a deployment is neither, its build log is deleted within a day of
+passing 90 days; the deployment itself, its status and its error stay. Reading
+it afterwards says the build log has expired. Build logs are also deleted with
+their app or account.
+
+Each deployment stores at most 8 MiB of build output. A build that writes more
+keeps its output up to that limit and ends with a line saying the log was
+truncated; later output is not stored.
 
 ## Filtering
 

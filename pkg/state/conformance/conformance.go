@@ -104,6 +104,7 @@ func Run(t *testing.T, open Open) {
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
+		{"deployment_log_usage_counts_bytes_and_the_marker", testDeploymentLogUsage},
 		{"observed_workload_class_without_a_proof", testObservedWorkloadClass},
 		{"source_runtime_profile_records_a_healthcheck_verdict", testSourceRuntimeProfileHealthcheck},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},

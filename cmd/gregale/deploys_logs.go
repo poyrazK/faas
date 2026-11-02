@@ -53,9 +53,14 @@ func cmdDeploysLogs(args []string) int {
 	dec.SetCloseFn(body.Close)
 	defer func() { _ = dec.Close() }()
 	printed := 0
+	expired := ""
 	for e := range dec.Events() {
 		if e.Event == "end" {
 			break
+		}
+		if message, ok := buildLogExpiredMessage(e); ok {
+			expired = message
+			continue
 		}
 		var entry struct {
 			Line string `json:"line"`
@@ -65,7 +70,10 @@ func cmdDeploysLogs(args []string) int {
 			printed++
 		}
 	}
-	if printed == 0 {
+	switch {
+	case printed == 0 && expired != "":
+		_, _ = fmt.Fprintln(osStderr, terminalSafe(expired))
+	case printed == 0:
 		_, _ = fmt.Fprintf(osStderr, "deployment %s has no retained build or deploy log lines\n", id)
 	}
 	return 0

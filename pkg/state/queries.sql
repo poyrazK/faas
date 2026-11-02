@@ -18136,6 +18136,16 @@ UPDATE deployments d SET status=CASE WHEN
 WHERE d.id=sqlc.arg(deployment_id)::uuid RETURNING status::text;
 
 
+-- name: DeploymentLogUsage :one
+-- Bytes of a deployment's stored build log and whether its truncation marker
+-- (a 'system' row) is among them (ADR-20261102182856). One range scan of
+-- deployment_logs_pkey; builderd reads it once per build, not per line.
+SELECT coalesce(sum(octet_length(line)), 0)::bigint AS bytes,
+       coalesce(bool_or(stream = 'system'), false)::boolean AS truncated
+  FROM deployment_logs
+ WHERE deployment_id = sqlc.arg(deployment_id)::uuid;
+
+
 -- name: LatestRetainedRollbackDeployment :one
 -- Most recently serving first (serving_ended_at, migration
 -- 20261004234807528); rows superseded before it fall back to created_at.

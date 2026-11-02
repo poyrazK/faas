@@ -763,6 +763,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("meterd")
 	requestTelemetryPartitions := newRequestTelemetryPartitionMetrics(ops.Registry(), deps.now)
 	logEventMaintenance := newLogEventMaintenanceMetrics(ops.Registry(), deps.now)
+	buildLogRetention := newBuildLogRetentionMetrics(ops.Registry(), deps.now)
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "meterd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("meterd: init tracing: %w", traceErr)
@@ -1352,6 +1353,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go meter.RetentionLoopRequestAudit(ctx, partitionDB, time.Hour, log)
 	go meter.LogEventPartitionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observePartition)
 	go meter.LogEventRetentionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observeRetention)
+	// ADR-20261102182856: build logs (deployment_logs) are deleted
+	// meter.BuildLogRetentionDays after a build's last line, except for live
+	// deployments and each app's api.BuildLogRetainedDeployments newest.
+	go meter.BuildLogRetentionLoop(ctx, partitionDB, meter.BuildLogRetentionInterval, deps.now, log, buildLogRetention.observe)
 
 	// SAFE-RELEASES production-leveling Stream D (issue #976 /
 	// ADR-122 post-merge audit): deployment_audit GC cron.
