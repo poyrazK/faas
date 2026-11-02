@@ -8677,8 +8677,15 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		helperSiblings[i].ID = s.ID
 		helperSiblings[i].Prior = s.Prior
 	}
-	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool { return rows[i].AbortedCanary }, 100-newPercent)
+	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool { return rows[i].AbortedCanary || rows[i].NeverServed }, 100-newPercent)
 	if err != nil {
+		return Deployment{}, err
+	}
+	priorWeights := make([]int, len(siblings))
+	for i, sibling := range siblings {
+		priorWeights[i] = sibling.Prior
+	}
+	if err := checkTrafficSplitReleaseLimit(ctx, currentTrafficPercent, newPercent, priorWeights, newWeights); err != nil {
 		return Deployment{}, err
 	}
 	for i, sibling := range siblings {
@@ -8709,7 +8716,8 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		if _, err := tx.Exec(ctx,
 			`update deployments
 			    set traffic_percent = $2,
-			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end
+			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end,
+			        promoted_at = case when $2 = 100 and traffic_percent < 100 then clock_timestamp() else promoted_at end
 			  where id = $1`,
 			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false), manualTrafficKeepsExplicit(stamp.prior, stamp.next)); err != nil {
 			if stamp.target {
@@ -9179,10 +9187,13 @@ func RedistributeTraffic(siblings []struct {
 // change. An aborted canary candidate at 0% (abortedCanaryCandidate) keeps 0%:
 // it stays live after the abort, and lowering the only serving release used to
 // hand it an even share of the residual, serving the regression that the
-// canary gate had just rolled back (PulseWatch F1). It receives traffic only
-// when an operator names it. When every sibling is such a candidate and
-// residual remains, the change is refused with ErrTrafficResidualUnassigned.
-// heldAtZero(i) reports whether siblings[i] is an aborted canary candidate.
+// canary gate had just rolled back (PulseWatch F1). A live 0% release that has
+// never served (one staged with no traffic) keeps 0% too: lowering the serving
+// release used to spread the residual evenly over every staged release, none
+// of them named or verified. Either receives traffic only when an operator
+// names it. When every sibling is held and residual remains, the change is
+// refused with ErrTrafficResidualUnassigned. heldAtZero(i) reports whether
+// siblings[i] is held.
 func RedistributeManualTraffic(siblings []struct {
 	ID    string
 	Prior int
@@ -30978,13 +30989,18 @@ func (s *PgStore) InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertReq
 // sqlc names the third positional arg `Column3` because the
 // predicate is `account_id = $3::uuid` with no `RETURNING`
 // or named-arg convention. Mirror what `make sqlc-generate`
-// produces so the drift gate stays green.
-func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error {
+// produces so the drift gate stays green. Column5..7 are the
+// target's optional app, organization and customer-credential
+// narrowings; the zero UUID binds NULL, which leaves them off.
+func (s *PgStore) UpdateSpansSummary(ctx context.Context, target SpansSummaryTarget, summary []byte, maxSpans int) error {
 	affected, err := s.appErrorsQueries().UpdateSpansSummary(ctx, s.pool, sqlc.UpdateSpansSummaryParams{
-		TraceID: pgtype.Text{String: traceID, Valid: traceID != ""},
+		TraceID: pgtype.Text{String: target.TraceID, Valid: target.TraceID != ""},
 		Column2: summary,
-		Column3: pgtype.UUID{Bytes: accountID, Valid: true},
+		Column3: pgtype.UUID{Bytes: target.AccountID, Valid: true},
 		Column4: int32(min(max(maxSpans, 1), 1000)),
+		Column5: pgtype.UUID{Bytes: target.AppID, Valid: target.AppID != uuid.Nil},
+		Column6: pgtype.UUID{Bytes: target.OrgID, Valid: target.OrgID != uuid.Nil},
+		Column7: target.CustomerCredential,
 	})
 	if err != nil {
 		return err

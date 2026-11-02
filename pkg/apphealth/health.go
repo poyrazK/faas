@@ -40,7 +40,12 @@ type Evidence struct {
 	Nodes            map[string]state.ComputeNode
 	Metrics          appmetrics.RequestHealth
 	MetricsAllowed   bool
-	Now              time.Time
+	// AssessWorkers releases worker assessment (the app_health_workers
+	// platform flag); Worker is a worker-mode app's queue evidence
+	// (ADR-20261102091500).
+	AssessWorkers bool
+	Worker        WorkerQueue
+	Now           time.Time
 }
 
 func Evaluate(e Evidence) api.AppHealthResponse {
@@ -51,6 +56,10 @@ func Evaluate(e Evidence) api.AppHealthResponse {
 		ServingDeploymentIDs: []string{}, Checks: []api.AppHealthCheck{},
 	}
 	mode := e.App.Manifest.ExecutionMode
+	if mode == api.ExecutionModeWorker && e.AssessWorkers {
+		evaluateWorker(&out, e)
+		return finish(out)
+	}
 	if mode != "" && mode != "request" && mode != "service" {
 		out.Phase = "unsupported"
 		add(&out, "workload", Unknown, "HTTP serving health does not assess worker or job execution.", "configuration", "")

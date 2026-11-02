@@ -3,9 +3,10 @@ package api
 import (
 	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Secretbox namespaces of managed realtime credentials, account seal-domain
@@ -252,7 +253,7 @@ type RealtimeChannelRule struct {
 
 // realtimeEndpointSlug matches the migration's CHECK on
 // managed_realtime_endpoints.slug.
-var realtimeEndpointSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+var realtimeEndpointSlug = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,47}$`)
 
 // ValidateRealtimeEndpointSlug checks an endpoint slug (ADR-20261019102657).
 func ValidateRealtimeEndpointSlug(slug string) error {

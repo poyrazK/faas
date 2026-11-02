@@ -3,9 +3,11 @@ package agents
 // Gregale's RAP toolset (ADR-20261030125501 §4). A stateless agent loads it
 // like any RAP tool server: GET /v1/agent-tools/.well-known/rap-toolset
 // describes the tools, and the runtime posts each invocation to
-// /v1/agent-tools/invoke. The invocation's callback_url is its credential: it
+// /v1/agent-tools/invoke. The invocation's callback_url names its thread: it
 // must be a callback URL apid issued for the invocation's own thread
-// (callbacks.go), so a tool can only answer the thread that called it.
+// (callbacks.go), so a tool can only answer the thread that called it. An
+// invocation may also carry the app's credential, which must then own the
+// callback's endpoint; gregale_run requires it (run_tool.go).
 //
 // gregale_sleep wakes the thread later. The wake-up is the call's tool result,
 // held as a realtime schedule on the endpoint's agent inbox until it is due,
@@ -118,7 +120,7 @@ func (h *Handler) Toolset(w http.ResponseWriter, _ *http.Request) {
 				"additionalProperties": false,
 			},
 			DisplayScript: `if args.until != () { "Sleeping until " + args.until } else { "Sleeping " + args.seconds + "s" }`,
-		}},
+		}, runTool()},
 	})
 }
 
@@ -126,8 +128,9 @@ func (h *Handler) Toolset(w http.ResponseWriter, _ *http.Request) {
 // acknowledges an invocation with 200 and delivers every outcome, errors
 // included, as the call's tool result. An invocation whose callback URL apid
 // did not issue for its thread, or that no longer works, cannot be answered,
-// so it is refused like an unknown route.
-func (h *Handler) InvokeTool(w http.ResponseWriter, r *http.Request) {
+// so it is refused like an unknown route. caller is the app's credential when
+// the invocation carries one; gregale_run needs it (run_tool.go).
+func (h *Handler) InvokeTool(w http.ResponseWriter, r *http.Request, caller *CallbackCaller) {
 	if !h.toolsConfigured() {
 		api.WriteProblem(w, api.ErrCapacity("agent tools are unavailable on this control-plane host"))
 		return
@@ -151,8 +154,11 @@ func (h *Handler) InvokeTool(w http.ResponseWriter, r *http.Request) {
 	if problem == nil {
 		problem = h.admit(r.Context(), grant)
 	}
+	if problem == nil && caller != nil {
+		_, problem = caller.endpoint(r.Context(), h.Inbox, grant.EndpointID)
+	}
 	if problem == nil {
-		problem = h.runTool(r.Context(), grant, inv)
+		problem = h.runTool(r.Context(), grant, inv, caller)
 	}
 	if problem != nil {
 		writeCallbackProblem(w, r, problem)
@@ -187,11 +193,14 @@ func checkInvocation(grant CallbackToken, inv rapInvocation) *api.Problem {
 	return nil
 }
 
-func (h *Handler) runTool(ctx context.Context, grant CallbackToken, inv rapInvocation) *api.Problem {
-	if inv.Operation != toolSleep {
-		return h.answerTool(ctx, grant, inv, fmt.Sprintf("unknown operation %q; the gregale toolset has %s", inv.Operation, toolSleep))
+func (h *Handler) runTool(ctx context.Context, grant CallbackToken, inv rapInvocation, caller *CallbackCaller) *api.Problem {
+	switch inv.Operation {
+	case toolSleep:
+		return h.sleep(ctx, grant, inv)
+	case toolRun:
+		return h.startRun(ctx, grant, inv, caller)
 	}
-	return h.sleep(ctx, grant, inv)
+	return h.answerTool(ctx, grant, inv, fmt.Sprintf("unknown operation %q; the gregale toolset has %s and %s", inv.Operation, toolSleep, toolRun))
 }
 
 // answerTool publishes the call's tool result now.

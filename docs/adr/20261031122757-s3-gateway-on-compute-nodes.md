@@ -203,7 +203,8 @@ egress ceiling".
    control-plane gateway stays as a fallback for one release, then leaves
    the route. The provider usage exports run in apid, so the route is all
    it serves.
-7. The compute edge serves public object routes locally.
+7. The compute edge serves public object routes locally: public reads
+   first (amendment 2026-11-02), uploads later.
 
 ## Consequences
 
@@ -242,6 +243,35 @@ egress ceiling".
   can only delete until the month ends. Letting writes continue would need
   admission to skip the egress check for requests that send no body; that
   changes the operator ceiling too and is left to a later decision.
+
+## Amendment 2026-11-02: step 7 starts with public reads
+
+**Public reads.** The manifest's `object_storage.compute_public_reads`
+(off by default, needs `compute_nodes`) makes each compute node's
+gatewayd-public serve public bucket reads itself. It uses the node's
+registry and the gateway-only credential, the ones `s3-gatewayd` has there
+(§4), with the same cached read admission and restore fence as the control
+plane's edge. Turning the switch on moves every public read in the cell off
+the control plane at once, so it gets its own rollout. Without it, the edge
+forwards public reads to the control plane, as before.
+
+**The port share is split.** gatewayd-public and s3-gatewayd are separate
+processes and cannot draw on one rate limiter. With public reads on, the
+manifest gives the edge's public reads
+`api.ObjectGatewayPublicReadSharePercent` (33) of the node's gateway share
+(§3). s3-gatewayd keeps the rest, and the node stays within 30% of its
+port.
+- The edge's part reaches it as `FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND`.
+  Its metrics are `gatewayd_public_object_transfer_*`.
+- `FaasS3GatewayPortShareSaturated` covers both parts.
+- A part that sits idle is not lent to the other. 33% is a starting value:
+  revisit it with the step 5 load test and production traffic.
+
+**Uploads stay on the control plane.** Upload keys are hashed with a secret
+that only apid holds (ADR 20261029202403), and a compute node has no apid
+socket. Serving uploads on the node needs a way to check those keys there
+without the control-plane database on the request path. That needs its own
+decision.
 
 ## Alternatives considered
 

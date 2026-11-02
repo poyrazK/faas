@@ -23,6 +23,12 @@ const (
 	// retains its completion. The guest never sees the exchange ID, so it
 	// cannot forge the echo.
 	RetainedHeader = "X-Faas-Bridge-Exchange-Retained"
+	// RefusedHeader echoes the exchange ID on the 503 the bridge answers when
+	// it refuses an exchange: TrafficBridgeCompletionMaxEntries exchanges are
+	// already open, or the ID is invalid or in use. A refused exchange never
+	// reached the guest and has no completion to wait for, so the caller
+	// fails only that request instead of fencing the bridge.
+	RefusedHeader = "X-Faas-Bridge-Exchange-Refused"
 )
 
 // exchange is one tracked exchange; done closes when the handler returns.
@@ -68,6 +74,7 @@ func Wrap(next http.Handler) http.Handler {
 		}
 		ex, ok := t.begin(id)
 		if !ok {
+			w.Header().Set(RefusedHeader, id)
 			http.Error(w, "invalid bridge exchange", http.StatusServiceUnavailable)
 			return
 		}
