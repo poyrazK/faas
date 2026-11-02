@@ -128,7 +128,7 @@ Each step is one PR behind the `agents` capability.
    - **Publish.** `data` (JSON, at most `AgentCallbackPayloadMaxBytes`, the realtime message limit) is appended to the endpoint's `agent-inbox` channel with metadata `thread_id`, `kind` and `message_id`, and idempotency key `callback:{thread}:{message_id}`, where each `:` in the thread becomes `~` (fix, 2026-11-02: both IDs may carry `:`, so thread `a:b` with message `c` and thread `a` with message `b:c` shared a key and the second result was refused with a 409; `~` is in neither ID, and a thread without `:` keeps its key). A retried post lands once and gets the first sequence; the same `message_id` with other data is a 409.
    - **Tests.** Unit and property tests in `pkg/apid/agents` cover the thread scope against tampered tokens, issue and post rules, refusal after issue, and landing once.
    **Built, part two (2026-11-01).**
-   - **Revocation.** `POST /v1/agent-callbacks/revocations` with `{endpoint_id, thread_id}` closes a thread to every URL issued for it until then. apid records the time in `agent_callback_revocations`, one row per endpoint and thread. A post is refused like an unknown route when its token was issued at or before that time. A URL issued later works, so a thread can reopen.
+   - **Revocation.** `POST /v1/agent-callbacks/revocations` with `{endpoint_id, thread_id}` closes a thread to every URL issued for it until then. apid records the time in `agent_callback_revocations`, one row per endpoint and thread. A post is refused like an unknown route when its token was issued at or before that time. A URL issued later works, so a thread can reopen. The database's clock dates both the revocation and a token's issue, so they compare on one clock (fix, 2026-11-02: tokens took apid's clock and revocations the database's, so with apid behind, a URL issued after a revocation never worked, and with apid ahead, one issued before a revocation outlived it).
    - **Rate limit.** Each apid counts one thread's posts in fixed one-minute windows. Past `AgentCallbacksPerMinutePerThread` (600) it answers `429 agent_callback_rate_limited` with the limit and the count. Each replica counts alone, so N replicas accept at most N × 600: the limit stops a runaway tool, and a post needs a valid token anyway.
    - **Tests.** `TestPropertyRevokedCallbackNeverPublishes`: over random issues, revocations and posts, a URL publishes exactly when it was issued after its thread's latest revocation. Tests also cover the revoke and rate-limit rules and the store's revocation record.
 4. The Infinity Postgres store adapter and the template app, and a journey in `tests/journeys`: a two-turn stateless agent that sleeps, wakes on its callback and answers.
@@ -140,6 +140,7 @@ Each step is one PR behind the `agents` capability.
        - These routes name an endpoint, not an app, so apid looks up the endpoint's app and runs the check every app route runs (appaccess).
        - On a company app, a callback URL counts as one of the app's credentials: issuing or revoking one needs owner or admin. A key bound to another organization reaches nothing, and neither does a creator who has been removed from the organization or whose organization is suspended.
        - Test: `TestAgentCallbacksFollowCompanyAppAccess`.
+       - A URL already issued follows the same rule (bug hunt 34, 2026-11-02). A company app's URL carries its issuer's organization membership version, and every post checks it again together with the app owner's standing. A removed or re-roled issuer's URLs, and every URL of a suspended owner, answer like an unknown route from then on, instead of working to their 24-hour expiry. Test: `TestCallbackStopsWhenItsIssuerLosesAccess`.
      - A JWT-shaped bearer takes the workload path. No API key, OIDC or hosting token is JWT-shaped, so no key is misrouted.
    - **The inbox in `gregale.yaml`.** A manifest consumer group takes `ordering_metadata_key`, `deduplication_metadata_key` and `dead_letter_policy`, so the app declares §2's `slices` group itself. A deploy still creates a missing group and never changes an existing one.
    - **Tests.** `TestWorkloadCaller` covers the audience, environment, account, app, instance and deployment checks. `TestCallbackAppCallerOwnsOnlyItsEndpoints` covers the app scope. The manifest tests cover the new fields' loading, validation and reconcile.
@@ -200,6 +201,21 @@ Each step is one PR behind the `agents` capability.
    - **`agent-stateless-node` stays on `lookup`.** It is the hand-written loop, without a RAP client.
    - **Fix: schema creation takes an advisory lock.** A new database's first slices run in parallel, and concurrent `CREATE TABLE IF NOT EXISTS` of one table collide in Postgres's catalog. The store tests hit it; the failed slice was retried, so it healed, but it failed once. Store errors now keep the server's code and message.
    - **Prerequisite.** The wake-up is a realtime schedule, so it needs `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` on apid, as realtime triggers already do (ADR-1322).
+
+   **Step 5, part three (2026-11-02): `gregale_run`.**
+   - **The app's credential.** A callback URL names a thread, and tool servers hold callback URLs, so one alone cannot start a run.
+     - A `gregale_run` invocation also carries the app's `gregale:agents` workload token, or an API key with `deploy:write`. It goes through the same check as issuing a callback URL, and the caller must own the callback's endpoint.
+     - Without a credential the invocation gets a 401, which Infinity's RAP client turns into the call's error result. Any invocation that carries a credential is checked the same way.
+   - **Admission.** The arguments are those of `POST /v1/agents/{agent}/runs` without a checkout, GitHub target or deliveries: `agent`, `version`, `prompt`, `inputs` and `tenant`.
+     - The run is admitted under the account's plan limits, with trigger `api`.
+     - Its dedupe key derives from the endpoint, thread and call ID, so a retried invocation finds its run.
+     - Refusals the agent can act on, such as an unknown agent, a plan limit or bad arguments, are the call's tool result.
+   - **The link.** `agent_run_callbacks` (a new table, expand) records the run's endpoint, thread, call IDs and the callback URL's issue time, in the admitting transaction.
+   - **Delivery.** Every apid polls finished linked runs every 5 seconds and publishes each run's end into its thread as the call's RAP tool result.
+     - The result is JSON text with `run_id`, `state`, `outcome` and, for a run that succeeded, `result`. A result too large for one inbox message is left out, with `result_omitted`.
+     - The publish is idempotent and the link is marked after it, so a run's end lands once.
+     - A thread that can no longer receive it gets nothing: revoked since the call, its endpoint deleted, or its account without `agents`. The run itself still finishes; revoking a thread does not cancel its runs.
+   - **Next.** The template sends the app's workload token with platform tool invocations, and its scripted model learns to call `gregale_run`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 
 ## Open questions

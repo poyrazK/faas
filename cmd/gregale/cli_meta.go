@@ -494,6 +494,9 @@ var (
 	platformTenantIDFlag = cliFlag{Name: "id", Short: "platform tenant UUID", Value: "UUID", Req: true}
 	// platformTenantStatementIDFlag addresses one cross-app statement revision.
 	platformTenantStatementIDFlag = cliFlag{Name: "statement-id", Short: "statement revision UUID", Value: "UUID", Req: true}
+	// usageMonthFlag and usageDayFlag select the period billing usage views read.
+	usageMonthFlag = cliFlag{Name: "month", Short: "month (YYYY-MM); default: current month", Value: "YYYY-MM"}
+	usageDayFlag   = cliFlag{Name: "day", Short: "day (YYYY-MM-DD); default: today UTC", Value: "YYYY-MM-DD"}
 )
 
 var templateNames13 = []string{
@@ -2133,7 +2136,7 @@ var cliCommands = []cliCommand{
 				{Name: "branch", Short: "production branch (defaults to the repository's default branch)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
 			}},
-			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72", "gregale github setup my-api --repo acme/my-api --wait-for CI"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
 				{Name: "production-branch", Short: "production branch (default: current binding or the repository's default branch)", Value: "BRANCH"},
 				{Name: "installation-id", Short: "GitHub App installation id (the app's, or the account's only one, when omitted)", Value: "ID"},
@@ -2153,6 +2156,7 @@ var cliCommands = []cliCommand{
 				{Name: "root-dir", Short: "repository-relative source root for the root workload", Value: "DIR"},
 				{Name: "ignore", Short: "comma-separated ignored change paths", Value: "PATHS"},
 				{Name: "rollout", Short: "production rollout mode: standard|safe", Value: "MODE", ClosedSet: []string{"standard", "safe"}},
+				{Name: "wait-for", Short: "deploy a branch push only after this GitHub Actions workflow (its name: field) succeeds for the commit", Value: "WORKFLOW"},
 				{Name: "dry-run", Short: "show generated files without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},
@@ -3562,7 +3566,7 @@ var cliCommands = []cliCommand{
 			{Name: "rate-cards", Short: "List an app's per-request price versions", Positionals: []string{"<slug>"}},
 			{Name: "rate-card-create", Short: "Add an immutable per-request price version", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE", Req: true},
-				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "price-millicents", Short: "price per request; 100000 = 1.00; required unless --tier", Value: "N"},
 				{Name: "included-units", Short: "free requests per consumer per UTC calendar month", Value: "N"},
 				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
 				{Name: "weight", Short: "count each request on a route as N units; unlisted routes count 1", Value: "METHOD /template=N", Repeatable: true},
@@ -3573,7 +3577,7 @@ var cliCommands = []cliCommand{
 				{Name: "base-fee-millicents", Short: "fixed charge per consumer per UTC month, billed by the month's statement", Value: "N"},
 				{Name: "minimum-millicents", Short: "minimum usage charge per consumer per UTC month; the statement tops up the difference", Value: "N"},
 				{Name: "prorate-monthly-fees", Short: "scale the fee and minimum in a consumer's first month to the share of it left after the consumer was created"},
-			}, Examples: []string{"gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 1 --unit app:output_tokens"}},
+			}, Examples: []string{"gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale api consumer rate-card create my-api --currency EUR --tier 1000:100 --tier inf:60 --tier-mode volume", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000", "gregale api consumer rate-card create my-api --currency EUR --price-millicents 1 --unit app:output_tokens"}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
@@ -3826,7 +3830,7 @@ var cliCommands = []cliCommand{
 			{Name: subCreate, Short: "Create a list", Positionals: []string{"<name>"}, Examples: []string{
 				"gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1",
 				"gregale edge rule-list create blocked --kind country --items-file countries.txt",
-				`gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'`,
+				`gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --throttle-burst 10 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'`,
 			}, Flags: []cliFlag{
 				{Name: "kind", Short: "list kind", Value: "KIND", Req: true, ClosedSet: []string{"ip", "country", "host", "string", "asn"}},
 				{Name: "item", Short: "list item (repeat)", Value: "VALUE"},
@@ -5683,6 +5687,22 @@ var cliCommands = []cliCommand{
 					{Name: "no-restart", Short: "store settings without a fresh restart"},
 				}},
 			}},
+			{Name: "hooks", Short: "Change hooks: publish committed row changes as events", Subcommands: []cliSub{
+				{Name: "sql", Short: "Print the change hooks migration", Notes: []string{"Creates the change event table, its trigger and the enable and disable helpers."}, Flags: []cliFlag{
+					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
+				}, Examples: []string{"gregale data-api hooks export > migrations/0006_change_hooks.sql"}},
+				{Name: "enable", Short: "Publish recorded changes as events from the Data API app's source", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}, Examples: []string{"gregale data-api hooks enable shop-data"}},
+				{Name: "status", Short: "Show whether change hooks are on and their event source", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				}},
+				{Name: "disable", Short: "Stop publishing; recorded changes stay in the table", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}},
+			}},
 			{Name: "live", Short: "Live reads: results that stay current over a realtime connection", Subcommands: []cliSub{
 				{Name: "enable", Short: "Enable live queries, usage reporting and a live-only endpoint", Notes: []string{"Creates a live-only realtime endpoint."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "scope", Value: "SCOPE", Short: "environment scope of the Data API's database binding"},
@@ -6550,15 +6570,13 @@ var cliCommands = []cliCommand{
 		DocSlug: "usage",
 		Short:   "Show this month's usage, or daily, storage and summary views",
 		Subcommands: []cliSub{
-			{Name: "daily", Short: "Per-day breakdown"},
-			{Name: "storage", Short: "Per-app storage bytes"},
+			{Name: "daily", Short: "Per-day breakdown", Flags: []cliFlag{usageDayFlag}},
+			{Name: "storage", Short: "Per-app storage bytes", Flags: []cliFlag{usageDayFlag}},
 			{Name: "object-storage", Short: "Account object storage observations, safety policy and billing state"},
-			{Name: "summary", Short: "Account roll-up"},
+			{Name: "summary", Short: "Account roll-up", Flags: []cliFlag{usageMonthFlag}},
 		},
-		Flags: []cliFlag{
-			{Name: "month", Short: "month (YYYY-MM)", Value: "YYYY-MM"},
-			{Name: "day", Short: "day (YYYY-MM-DD)", Value: "YYYY-MM-DD"},
-		},
+		// --day belongs to daily and storage; usage itself reads only --month.
+		Flags: []cliFlag{usageMonthFlag},
 	},
 	{
 		Name:    "version",

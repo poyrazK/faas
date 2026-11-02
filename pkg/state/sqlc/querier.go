@@ -881,6 +881,9 @@ type Querier interface {
 	// tail_count > 0 early-out. Returns ErrNotFound when the instance
 	// row is missing.
 	DecrementInstanceTailCount(ctx context.Context, db DBTX, arg DecrementInstanceTailCountParams) error
+	// Requeues a running claim to wait for an identical build. Fenced like
+	// RequeueBuildIfClaim: a stale worker cannot defer a newer claim.
+	DeferBuildBehind(ctx context.Context, db DBTX, arg DeferBuildBehindParams) (int64, error)
 	DeferBuildDependencyClaim(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeferNotificationClaim(ctx context.Context, db DBTX, arg DeferNotificationClaimParams) (int64, error)
 	// Fence a failed attempt against a configuration edit or another worker's success.
@@ -2180,6 +2183,11 @@ type Querier interface {
 	// Replay reads and locks one retained occurrence inside the app admission lock.
 	// The replay run identity is separate from the original skipped outcome.
 	GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg GetWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
+	// Projects bound to a repository name through an installation their account
+	// connected. A project records no immutable repository ID, so the OIDC
+	// exchange confirms each binding's repository with GitHub before trusting it
+	// (ADR-20261101160300, amendment 1).
+	GitHubProjectBindingsForRepository(ctx context.Context, db DBTX, repoFullName string) ([]GitHubProjectBindingsForRepositoryRow, error)
 	// The immutable owner and repository IDs an account's app binding recorded
 	// for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
 	// requires a token's repository_owner_id and repository_id claims to match
@@ -2941,6 +2949,7 @@ type Querier interface {
 	IssueSlackChallengeCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueSlackChallengeGet(ctx context.Context, db DBTX, arg IssueSlackChallengeGetParams) (IssueSlackLinkChallenge, error)
 	IssueSlackChallengePut(ctx context.Context, db DBTX, arg IssueSlackChallengePutParams) error
+	IssueSlackChallengeRotate(ctx context.Context, db DBTX, arg IssueSlackChallengeRotateParams) error
 	IssueSlackChallengesExpire(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueSlackClaim(ctx context.Context, db DBTX, arg IssueSlackClaimParams) error
 	IssueSlackDeliveryList(ctx context.Context, db DBTX, arg IssueSlackDeliveryListParams) ([]IssueSlackDeliveryListRow, error)
@@ -4315,6 +4324,10 @@ type Querier interface {
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	// ADR-20261031110037: managed PostgreSQL overage charges delivered per
 	// billing provider, usage subject and UTC month.
+	// Subjects that may owe overage for the month: those that reached the
+	// compute allowance (as the cap sweep recorded it), those with overage on,
+	// whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
+	// those already charged.
 	ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, periodStart pgtype.Timestamptz) ([]ManagedPostgresOverageSubjectsRow, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
 	ManagedPostgresPersonalDatabaseReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalDatabaseReferenceParams) (bool, error)
@@ -5516,6 +5529,9 @@ type Querier interface {
 	ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	ReadDeploymentPolicySnapshot(ctx context.Context, db DBTX, arg ReadDeploymentPolicySnapshotParams) (ReadDeploymentPolicySnapshotRow, error)
 	ReadDeploymentPolicyState(ctx context.Context, db DBTX, appID string) (ReadDeploymentPolicyStateRow, error)
+	// ADR-20261028110044 amendment 4: when a traffic change last took the
+	// deployment to 100%, which anchors the monitor's rollback window.
+	ReadDeploymentPromotedAt(ctx context.Context, db DBTX, deploymentID string) (pgtype.Timestamptz, error)
 	ReadDeploymentReleaseAddition(ctx context.Context, db DBTX, appID string) (ReadDeploymentReleaseAdditionRow, error)
 	ReadDeploymentReleaseSecrets(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadDeploymentSubmission(ctx context.Context, db DBTX, arg ReadDeploymentSubmissionParams) (ReadDeploymentSubmissionRow, error)
@@ -6593,6 +6609,11 @@ type Querier interface {
 	// first, for the route_insights_detected alert metric. total counts every
 	// match, not only the rows returned.
 	RouteInsightsDetectedSince(ctx context.Context, db DBTX, arg RouteInsightsDetectedSinceParams) ([]RouteInsightsDetectedSinceRow, error)
+	// ADR-20261028110044 amendment 4: the route labels ("METHOD /path") an app's
+	// route health guard or production monitor selects. The gateway keeps their
+	// telemetry labels in a full route set so their evidence never folds into
+	// __route_other__.
+	RouteLabelPins(ctx context.Context, db DBTX, appID string) ([]string, error)
 	// Evaluate the full request-time identity population in bounded route windows.
 	// Only five cohorts and one hundred recovery identities per route are returned;
 	// full verdict and distinct counts are computed before either output cap.
@@ -6628,6 +6649,11 @@ type Querier interface {
 	// Filter history and deployment ownership before choosing its newest resident;
 	// snapshotting candidates remain outside ordinary customer placement discovery.
 	RunningDeploymentSmokeTarget(ctx context.Context, db DBTX, arg RunningDeploymentSmokeTargetParams) (RunningDeploymentSmokeTargetRow, error)
+	// ADR-20261102100000: build coalescing.
+	// The earliest-claimed other build that is building the same cache key now:
+	// it missed the cache, is running, is not stale, and was claimed before the
+	// asking build, so two identical builds never wait for each other.
+	RunningIdenticalBuild(ctx context.Context, db DBTX, arg RunningIdenticalBuildParams) (pgtype.UUID, error)
 	// One statement snapshot, including an explicit empty result for every requested
 	// app. A per-app sentinel row detects truncation; incomplete apps cannot evict.
 	// Project routing identity, durable provenance and canonical runtime-port inputs.
@@ -7192,6 +7218,20 @@ type Querier interface {
 	// lookup still hits request_telemetry_trace_idx for the trace_id
 	// selectivity; the residual account_id check is a post-fetch
 	// row-level filter (one row, microseconds).
+	//
+	// Tracing tenancy (2026-10-31 logs/traces audit, T4/T5). account_id is
+	// the app creator's storage namespace, not the tenant, so the pin alone
+	// let one trace id merge spans into every app that creator ever made,
+	// company apps included. Three optional narrowings, all off (null/false)
+	// for an older producer:
+	//   $5 app_id: only the producing app's rows (the in-guest bridge, a
+	//      service binding's or outbound call's caller, an app-bound key).
+	//   $6 org_id: a key bound to a company merges into that company's apps,
+	//      whoever created them, instead of rows carrying $3.
+	//   $7 customer_credential: $3 holds a customer key. A company app's rows
+	//      are merged only while $3 may still deploy there (owner, admin or
+	//      developer, as event publishing requires), so a creator who left
+	//      the company cannot write its evidence.
 	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error)
 	UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateTenantWorkflowScheduleLastAdmittedAtParams) (int64, error)
 	// Keep cancelled terminal while allowing an eligible target to revive an alias.

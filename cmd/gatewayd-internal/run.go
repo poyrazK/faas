@@ -1375,6 +1375,9 @@ type runDeps struct {
 	// declaredRoutesMatcher enforces the opt-in OpenAPI/explicit route
 	// contract before the handler reaches authentication or wake admission.
 	declaredRoutesMatcher *declaredRoutesMatcher
+	// routeLabelPins keeps route labels the route health guard or production
+	// monitor selects in a full route set (ADR-20261028110044 amendment 4).
+	routeLabelPins *routeLabelPins
 	// edgeJWKSAdapter (ADR-091 PR 5) is the JWT verifier handle
 	// consulted by applyEdgeRuleJWT. nil = JWT kind disabled
 	// (pre-PR-5 + dev posture; matches edgeRulesAudit nil
@@ -2412,6 +2415,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// single-consumer queue.
 	go watchDurableControlPlaneChanges(ctx, repairStore, backend, log, cfg.NodeName)
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
+	deps.routeLabelPins = newRouteLabelPins(pgStore, log)
 	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(requestPathAudit, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
 	// DB-IP Lite .mmdb file at FAAS_GEOIP_DB_PATH. The Reader
@@ -2758,8 +2762,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			defer close(flushDone)
 			err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
 				Interval: flushInterval,
-				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				// The target names the calling app, so a service binding's
+				// span lands in its caller's rows only (tracing tenancy T4).
+				WriteTargetFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+					return retainedSpansWriter.WriteSummary(writeCtx, target.Request(traceID, summaryJSON))
 				},
 				Log: log,
 				MaxSpansPerTrace: func(string) int {
@@ -2869,6 +2875,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pool != nil {
 		handler.WithConcurrencyQueueAdmission(state.NewPGConcurrencyQueueAdmission(deps.pool))
 	}
+	// ADR-20261102081618 §5: requests a compute edge forwarded use this node's
+	// instances first, responses name every node of the app, and scale-out
+	// reads demand from this gateway's share. Turn it on after the edges
+	// spread by node set (FAAS_EDGE_PLACEMENT_NODE_SET).
+	if osGetenv("FAAS_GATEWAY_EDGE_LOCAL_FIRST") == "1" && deps.pgStore != nil && cfg.NodeName != "" {
+		handler.WithEdgeLocalFirst(newLocalNodeID(deps.pgStore, cfg.NodeName).Get)
+		log.Info("gatewayd-internal: edge local first on", "node_name", cfg.NodeName)
+	}
 	var realtimeControlProxy http.Handler
 	// Managed realtime is an opt-in data plane. When the local realtimed
 	// daemon socket is configured, reserve its namespace before ordinary
@@ -2889,6 +2903,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.declaredRoutesMatcher != nil {
 		// A nil pointer in the interface would defeat the handler's nil checks.
 		handler.WithDeclaredRouteMatcher(deps.declaredRoutesMatcher)
+	}
+	if deps.routeLabelPins != nil {
+		handler.WithRouteLabelPins(deps.routeLabelPins)
 	}
 	if deps.pool != nil {
 		routingStore := deps.pgStore
@@ -4262,8 +4279,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				localNode := newLocalNodeID(pgStore, cfg.NodeName)
 				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, localNode)
 				// ADR-1138: guest calls without trace context join the trace of
-				// the one request their instance is serving.
-				serviceProxyConfig.InferCallerTrace = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
+				// the one request their instance is serving. ADR-20261102082606:
+				// with the switch on, the call also inherits that request's
+				// deadline.
+				serviceProxyConfig.InferCallerRequest = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
+				serviceProxyConfig.CallerDeadlines = osGetenv("FAAS_SERVICE_CALL_DEADLINES") == "1"
 			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {

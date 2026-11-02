@@ -18,7 +18,7 @@ import (
 
 func validOverageDelivery(d OverageDelivery) bool {
 	return d.Provider != "" && !d.PeriodStart.IsZero() && d.PeriodStart.Equal(monthStart(d.PeriodStart)) &&
-		d.BilledUnitSeconds >= 0 && d.Millicents > 0 && !d.UpdatedAt.Before(d.PeriodStart)
+		d.BilledUnitSeconds >= 0 && d.BilledStorageByteSeconds >= 0 && d.Millicents > 0 && !d.UpdatedAt.Before(d.PeriodStart)
 }
 
 func (s *PostgresStore) OverageSubjects(ctx context.Context, periodStart time.Time) ([]OverageSubject, error) {
@@ -53,6 +53,7 @@ func (s *PostgresStore) OverageDelivered(ctx context.Context, provider, subjectI
 		return OverageDelivery{}, mapPostgresError(err)
 	}
 	delivery.Live, delivery.BilledUnitSeconds, delivery.Millicents, delivery.UpdatedAt = row.Live, row.BilledUnitSeconds, row.DeliveredMillicents, row.UpdatedAt.Time.UTC()
+	delivery.BilledStorageByteSeconds = row.BilledStorageByteSeconds
 	return delivery, nil
 }
 
@@ -78,7 +79,7 @@ func (s *PostgresStore) RecordOverageDelivery(ctx context.Context, delivery Over
 		Provider: delivery.Provider, SubjectID: subject, PeriodStart: pgtype.Timestamptz{Time: delivery.PeriodStart.UTC(), Valid: true},
 		Live: delivery.Live, BilledUnitSeconds: delivery.BilledUnitSeconds, DeliveredMillicents: delivery.Millicents,
 		UpdatedAt: pgtype.Timestamptz{Time: delivery.UpdatedAt.UTC(), Valid: true}, PreviousMillicents: previous.Millicents,
-		PreviousLive: previous.Live,
+		PreviousLive: previous.Live, BilledStorageByteSeconds: delivery.BilledStorageByteSeconds,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -101,11 +102,30 @@ func (s *MemoryStore) OverageSubjects(_ context.Context, periodStart time.Time) 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []OverageSubject
+	month := monthStart(periodStart)
+	subjects := map[string]OverageSubject{}
+	merge := func(subject OverageSubject) {
+		known := subjects[subject.SubjectID]
+		subjects[subject.SubjectID] = OverageSubject{SubjectID: subject.SubjectID, Allowance: max(known.Allowance, subject.Allowance), Overage: known.Overage || subject.Overage}
+	}
 	for key, event := range s.capEvents {
-		if key.period.Equal(monthStart(periodStart)) && key.threshold == CapThresholdAllowance {
-			out = append(out, OverageSubject{SubjectID: key.subject, Allowance: event.Allowance, Overage: event.Overage})
+		if key.period.Equal(month) && key.threshold == CapThresholdAllowance {
+			merge(OverageSubject{SubjectID: key.subject, Allowance: event.Allowance, Overage: event.Overage})
 		}
+	}
+	for subject, enabled := range s.overage {
+		if enabled {
+			merge(OverageSubject{SubjectID: subject, Overage: true})
+		}
+	}
+	for key := range s.overageDeliveries {
+		if key.period.Equal(month) {
+			merge(OverageSubject{SubjectID: key.subject})
+		}
+	}
+	out := make([]OverageSubject, 0, len(subjects))
+	for _, subject := range subjects {
+		out = append(out, subject)
 	}
 	slices.SortFunc(out, func(a, b OverageSubject) int { return strings.Compare(a.SubjectID, b.SubjectID) })
 	return out, nil

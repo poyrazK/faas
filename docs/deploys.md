@@ -223,7 +223,8 @@ with `{"preview_enabled": false}`.
 
 **Release tags.** A tag push deploys the apps bound to the branch whose head
 the tag points at; a tag on an older commit deploys nothing. A project's tags
-deploy its production branch.
+deploy its production branch. Annotated tags (`git tag -a`) and lightweight
+tags both deploy the commit they point at.
 
 **Several installations.** If your GitHub user can connect more than one
 installation (your personal account and an organization, say), Connect GitHub
@@ -240,6 +241,15 @@ deploys to the workflow (`production_trigger: actions`), so a push deploys
 once. Preview lifetime, bot and draft pull requests, a root directory,
 ignored paths and branch mappings are project settings: they need an app that
 belongs to a project.
+
+**Deploy only after CI passes.** A push the GitHub App deploys does not wait
+for your tests. To deploy only commits your CI passed, name your CI
+workflow (its `name:` field): `gregale github setup my-api --repo acme/my-api
+--wait-for CI`. The workflow then deploys a branch push once that
+workflow's run for the commit succeeds; a failed run, a pull request run and
+a run from a fork deploy nothing. If runs finish out of order, a commit that
+is no longer the branch head is skipped, so production never goes back to an
+older commit. Release tags and manual runs still deploy directly.
 
 **Renames.** Renaming or transferring the repository, or renaming the user or
 organization, keeps the binding.
@@ -266,6 +276,11 @@ Print a workflow starter with:
 gregale deploy --github
 ```
 
+The starter deploys pushes to the repository's default branch. If the
+Gregale GitHub App also deploys the repository's pushes, each push deploys
+twice; use `gregale github setup` instead, which writes a workflow and hands
+production deploys to it.
+
 The generated workflow uses an immutable deploy Action SHA from the CLI
 release, and Dependabot can update it from the accompanying `# v0` comment.
 Pass `--pin-action` to resolve the current `v0` tag during generation. Connect
@@ -278,6 +293,11 @@ check and the workflow uses GitHub's immutable subject format, rebind the
 repository through the GitHub installation before deploying. A transfer to a
 different owner also requires a rebind; a repository rename keeps the same
 identity.
+
+A repository connected through a project works the same way. Gregale asks
+GitHub for the repository's ID through the project's installation each time
+the workflow signs in, so the installation must still have access to the
+repository.
 
 ### Deploy tokens
 
@@ -984,8 +1004,12 @@ The first window opens when Gregale first sees traffic for the completed
 release and lasts 5 minutes. If at least 5 of the release's responses are 5xx,
 and those are at least half its requests, Gregale rolls back to the release it
 replaced. The check runs every 15 seconds, and the release keeps serving until
-the previous one is ready again. If a rollout wedges,
-`gregale rollouts recover my-api` is the manual escape hatch.
+the previous one is ready again. While a rollout runs, a plain
+`gregale rollback my-api` is refused because traffic is split; to stop the
+rollout and return its traffic to the release it replaced, run
+`gregale rollouts recover my-api --action abort`. If a rollout wedges,
+`gregale rollouts recover my-api --action advance|promote|abort` is the manual
+escape hatch.
 
 A new release that goes live while an earlier canary is still rolling out
 replaces it ([ADR-20261030102813](adr/20261030102813-a-newer-canary-supersedes-an-in-flight-one.md)).
@@ -1168,7 +1192,8 @@ manual stage advances remain immediate.
 
 While a canary is pending or rolling out, the generic traffic-split endpoint
 returns `409 traffic_change_during_canary`. Advance or recover the rollout
-before applying a separate traffic split.
+before applying a separate traffic split; `gregale rollouts recover <app>
+--action abort` stops it and returns its traffic to the release it replaced.
 
 A saved `gregale deploy` attempt can recover a lost acceptance reply with
 `gregale release resume SESSION_ID`. Image, multipart and source-ref submissions

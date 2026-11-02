@@ -93,11 +93,29 @@ func (e *RetainedServiceSpansExporter) ExportSpans(_ context.Context, spans []sd
 			Attributes:        attrs,
 			DBStatement:       extractDBStatement(attrs),
 		}
-		if _, err := e.acc.Add(summary.TraceID, accountID, []summarizedSpan{summary}); err != nil {
+		// The calling app merges the span into its own request rows only,
+		// not every app of the account that carries the trace (tracing
+		// tenancy T4).
+		target := SpanTarget{AccountID: accountID, AppID: retainedSpanCallerApp(attrs)}
+		if _, err := e.acc.AddForTarget(summary.TraceID, target, "", []summarizedSpan{summary}); err != nil {
 			exportErrors = append(exportErrors, err)
 		}
 	}
 	return errors.Join(exportErrors...)
+}
+
+// retainedSpanCallerApp is the app that made a retained dependency call:
+// the service proxy stamps the caller its tenant authorizer confirmed, and
+// outboundd the caller it resolved from the source instance. Both are set
+// by platform code only. A span without one (an older daemon) returns the
+// zero UUID, which keeps the account-wide merge.
+func retainedSpanCallerApp(attrs map[string]string) uuid.UUID {
+	for _, key := range []string{"gregale.service.caller_app_id", "gregale.outbound.app_id"} {
+		if id, err := uuid.Parse(strings.TrimSpace(attrs[key])); err == nil {
+			return id
+		}
+	}
+	return uuid.Nil
 }
 
 func retainedPlatformDependency(attrs []attribute.KeyValue) bool {

@@ -3303,6 +3303,20 @@ where a.account_id = sqlc.arg(account_id)::uuid
   and lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
   and a.deleted_at is null;
 
+-- name: GitHubProjectBindingsForRepository :many
+-- Projects bound to a repository name through an installation their account
+-- connected. A project records no immutable repository ID, so the OIDC
+-- exchange confirms each binding's repository with GitHub before trusting it
+-- (ADR-20261101160300, amendment 1).
+select p.account_id::text as account_id,
+       p.install_id::bigint as installation_id
+from projects p
+join github_installations gi
+  on gi.account_id = p.account_id
+ and gi.installation_id = p.install_id
+where lower(p.repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
+order by p.account_id, p.install_id;
+
 -- name: InsertOIDCExchangedToken :one
 -- Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 -- Returns the full row (with created_at server-stamped).
@@ -4650,6 +4664,20 @@ WHERE received_at > now() - $1::interval;
 -- lookup still hits request_telemetry_trace_idx for the trace_id
 -- selectivity; the residual account_id check is a post-fetch
 -- row-level filter (one row, microseconds).
+--
+-- Tracing tenancy (2026-10-31 logs/traces audit, T4/T5). account_id is
+-- the app creator's storage namespace, not the tenant, so the pin alone
+-- let one trace id merge spans into every app that creator ever made,
+-- company apps included. Three optional narrowings, all off (null/false)
+-- for an older producer:
+--   $5 app_id: only the producing app's rows (the in-guest bridge, a
+--      service binding's or outbound call's caller, an app-bound key).
+--   $6 org_id: a key bound to a company merges into that company's apps,
+--      whoever created them, instead of rows carrying $3.
+--   $7 customer_credential: $3 holds a customer key. A company app's rows
+--      are merged only while $3 may still deploy there (owner, admin or
+--      developer, as event publishing requires), so a creator who left
+--      the company cannot write its evidence.
 update request_telemetry as target
    set spans_summary = (
        select coalesce(jsonb_agg(bounded.span order by bounded.duration_nanos desc, bounded.span_id), '[]'::jsonb)
@@ -4680,8 +4708,22 @@ update request_telemetry as target
          ) bounded
    )
  where target.trace_id = $1
-   and target.account_id = $3::uuid
-   and target.received_at >= now() - interval '24 hours';
+   and target.received_at >= now() - interval '24 hours'
+   and ($5::uuid is null or target.app_id = $5::uuid)
+   and (case when $6::uuid is null then target.account_id = $3::uuid
+             else exists (select 1 from apps a where a.id = target.app_id and a.org_id = $6::uuid)
+        end)
+   and (not $7::boolean or not exists (
+         select 1
+           from apps a
+           join orgs o on o.id = a.org_id and not o.personal_org
+          where a.id = target.app_id
+            and not exists (
+                  select 1 from org_memberships m
+                   where m.org_id = o.id
+                     and m.account_id = $3::uuid
+                     and m.removed_at is null
+                     and m.role in ('owner', 'admin', 'developer'))));
 
 -- ---------------------------------------------------------------------------
 -- Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
@@ -17026,7 +17068,7 @@ UPDATE route_monitors SET next_check_at=sqlc.arg(next_check_at),last_deployment_
 -- legacy default lane is dark; otherwise the default scope
 -- (ADR-20261028110044 amendment 1).
 WITH lanes AS (
- SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,
+ SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,promoted_at,
   CASE WHEN scope='production' THEN 'production' ELSE 'default' END AS lane
  FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' AND deleted_at IS NULL
   AND coalesce(nullif(scope,''),'default') IN ('default','production')
@@ -17035,7 +17077,7 @@ WITH lanes AS (
   OR (NOT EXISTS (SELECT 1 FROM lanes WHERE lane='default' AND traffic_percent>0) AND EXISTS (SELECT 1 FROM lanes WHERE lane='production'))
   THEN 'production' ELSE 'default' END AS lane
 )
-SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps
+SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps,l.promoted_at
 FROM lanes l JOIN chosen c ON c.lane=l.lane WHERE l.traffic_percent>0 ORDER BY l.id LIMIT 2;
 
 -- name: ReadRouteMonitorIncident :one

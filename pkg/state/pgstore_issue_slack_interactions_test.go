@@ -149,10 +149,20 @@ func TestPg_NativeSlackActionsAndAccountLinks(t *testing.T) {
 	if err != nil || result.Status != "link_required" || len(result.LinkToken) != 64 {
 		t.Fatal(result, err)
 	}
+	// Only a token's SHA-256 is stored, so a retried click gets a new link
+	// and the one it replaces stops working.
 	retry, err := s.ApplyIssueSlackInteraction(ctx, app.ID, in)
-	if err != nil || retry.LinkToken != result.LinkToken {
+	if err != nil || retry.Status != "link_required" || len(retry.LinkToken) != 64 || retry.LinkToken == result.LinkToken {
 		t.Fatal("link retry", retry, err)
 	}
+	var plaintext int
+	if err = pool.QueryRow(ctx, "SELECT count(*) FROM issue_slack_link_challenges WHERE token = ANY($1)", []string{result.LinkToken, retry.LinkToken}).Scan(&plaintext); err != nil || plaintext != 0 {
+		t.Fatal("link token stored in plaintext", plaintext, err)
+	}
+	if _, err = s.GetIssueSlackAccountLink(ctx, app.ID, owner.ID, member.ID, issue, result.LinkToken); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("replaced link still resolves", err)
+	}
+	result = retry
 	if get(issue).AcknowledgedAt != nil {
 		t.Fatal("unlinked click mutated response")
 	}

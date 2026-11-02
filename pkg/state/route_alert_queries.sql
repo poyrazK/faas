@@ -85,3 +85,22 @@ UPDATE route_health_notification_state s
 SET status = 'aborted', blocked_decision_id = NULL, updated_at = sqlc.arg(aborted_at)
 FROM held WHERE s.deployment_id = held.deployment_id
 RETURNING coalesce(held.blocked_decision_id::text, '')::text AS blocked_decision_id;
+
+-- name: RouteLabelPins :many
+-- ADR-20261028110044 amendment 4: the route labels ("METHOD /path") an app's
+-- route health guard or production monitor selects. The gateway keeps their
+-- telemetry labels in a full route set so their evidence never folds into
+-- __route_other__.
+SELECT DISTINCT ((r->>'method') || ' ' || (r->>'path'))::text AS label
+FROM (
+  SELECT jsonb_array_elements(g.routes) AS r FROM route_health_gates g WHERE g.app_id = sqlc.arg(app_id)::text::uuid
+  UNION ALL
+  SELECT jsonb_array_elements(m.routes) AS r FROM route_monitors m WHERE m.app_id = sqlc.arg(app_id)::text::uuid
+) selected
+WHERE coalesce(r->>'method', '') <> '' AND coalesce(r->>'path', '') <> ''
+ORDER BY label;
+
+-- name: ReadDeploymentPromotedAt :one
+-- ADR-20261028110044 amendment 4: when a traffic change last took the
+-- deployment to 100%, which anchors the monitor's rollback window.
+SELECT promoted_at FROM deployments WHERE id = sqlc.arg(deployment_id)::text::uuid;

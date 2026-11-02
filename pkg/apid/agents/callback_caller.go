@@ -30,6 +30,10 @@ type CallbackCaller struct {
 	// app's organization, or a key bound to another organization, issues and
 	// revokes nothing in a company app's inbox.
 	Authorize func(state.ManagedRealtimeEndpoint) *api.Problem
+	// Issuer, when set, names the organization membership the caller
+	// issues under for an endpoint of a company app; a zero issuer pins
+	// nothing. Receiving a callback checks the membership again.
+	Issuer func(state.ManagedRealtimeEndpoint) (CallbackIssuer, *api.Problem)
 }
 
 // owns reports whether endpoint is the caller's.

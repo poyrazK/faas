@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -786,12 +787,10 @@ func cmdApp(args []string) int {
 		req.OverflowNode = &v
 	}
 
-	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.RequestTimeoutS == nil && req.FunctionConcurrency == nil && req.RevisionPinTTLSeconds == nil && req.MinInstances == nil &&
-		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
-		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
-		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil && req.PlatformTenantRequired == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.PreAuthRateLimit == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
+	// Any update flag sets a field of req; none means a read. Listing fields
+	// by hand here missed --release-policy and --release-probe-paths, which
+	// then printed the settings and changed nothing.
+	if reflect.ValueOf(req).IsZero() {
 		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -2474,10 +2473,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *safeDeploy {
 		if explicit["canary-preset"] || explicit["canary-stages"] || explicit["traffic-percent"] {
-			return printErr("Invalid rollout policy", fmt.Errorf("--safe cannot be combined with --canary-preset, --canary-stages, or --traffic-percent"))
+			return printErr("Invalid rollout policy", fmt.Errorf("%s cannot be combined with --canary-preset, --canary-stages, or --traffic-percent", safeFlagName(explicit)))
 		}
 		if (explicit["wait"] && !*waitDeploy) || (explicit["no-wait"] && *noWaitDeploy) {
-			return printErr("Invalid flags", fmt.Errorf("--safe cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete"))
+			return printErr("Invalid flags", fmt.Errorf("%s cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete (a deploy without --rollout follows the app's release policy and returns at 1%% with --no-wait)", safeFlagName(explicit)))
 		}
 		*canaryPreset = api.DefaultReleaseCanaryPreset
 		if !explicit["timeout"] {
@@ -2485,7 +2484,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 	if *safeDeploy && projectRequested {
-		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
+		return printErr("Invalid flags", fmt.Errorf("%s currently supports single-app deploys only; use --canary-preset with a project deploy", safeFlagName(explicit)))
 	}
 	releaseAt, releaseNotify, releaseAtErr := resolveDeployReleaseAt(*releaseAtFlag, *releaseNotifyFlag, explicit, *noTraffic,
 		projectRequested || *githubSnippet || *simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil)
@@ -3950,6 +3949,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		return renderProjectDeployReceipt(plan, apply, projectSession, projectWaitTimedOut, nil)
+	}
+
+	// A template or gregale.yaml that turns on a capability the account does
+	// not have stops here, before the app or an upload exists (#5756).
+	if err := refuseHiddenManifestCapabilities(ctx, *templateName, sourceDir); err != nil {
+		return printErr("Capability not enabled", err)
 	}
 
 	var workflowDefs []api.WorkflowSpec

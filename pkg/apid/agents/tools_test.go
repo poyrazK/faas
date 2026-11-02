@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -122,9 +123,16 @@ func invocation(token, thread, id string, args any) map[string]any {
 
 func (f *callbackFixture) invoke(t *testing.T, inv map[string]any) int {
 	t.Helper()
+	return f.invokeAs(t, inv, nil)
+}
+
+// invokeAs sends an invocation that carries caller's credential; nil sends
+// the callback URL alone.
+func (f *callbackFixture) invokeAs(t *testing.T, inv map[string]any, caller *agents.CallbackCaller) int {
+	t.Helper()
 	body, _ := json.Marshal(inv)
 	w := httptest.NewRecorder()
-	f.h.InvokeTool(w, httptest.NewRequest(http.MethodPost, "/v1/agent-tools/invoke", bytes.NewReader(body)))
+	f.h.InvokeTool(w, httptest.NewRequest(http.MethodPost, "/v1/agent-tools/invoke", bytes.NewReader(body)), caller)
 	return w.Code
 }
 
@@ -155,8 +163,8 @@ func TestToolsetDescribesGregaleSleep(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &toolset); err != nil || w.Code != http.StatusOK {
 		t.Fatalf("toolset = %d %s", w.Code, w.Body)
 	}
-	if toolset.Name != "gregale" || toolset.Endpoint != "https://api.example.test/v1/agent-tools/invoke" || len(toolset.Tools) != 1 ||
-		toolset.Tools[0].Name != "gregale_sleep" || toolset.Tools[0].InputSchema["type"] != "object" {
+	if toolset.Name != "gregale" || toolset.Endpoint != "https://api.example.test/v1/agent-tools/invoke" || len(toolset.Tools) != 2 ||
+		toolset.Tools[0].Name != "gregale_sleep" || toolset.Tools[1].Name != "gregale_run" || toolset.Tools[0].InputSchema["type"] != "object" {
 		t.Fatalf("toolset %+v", toolset)
 	}
 
@@ -306,7 +314,7 @@ func TestSleepInvocationRefusals(t *testing.T) {
 		}
 	}
 	w := httptest.NewRecorder()
-	f.h.InvokeTool(w, httptest.NewRequest(http.MethodPost, "/v1/agent-tools/invoke", strings.NewReader("not json")))
+	f.h.InvokeTool(w, httptest.NewRequest(http.MethodPost, "/v1/agent-tools/invoke", strings.NewReader("not json")), nil)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("not JSON: invoke = %d", w.Code)
 	}
