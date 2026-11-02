@@ -42,6 +42,9 @@ import (
 //	FAAS_OPEN_REQUEST_COST_STEPS         open-request counts to sample, e.g. 1,100,500,1000,2000
 //	FAAS_OPEN_REQUEST_COST_BRIDGE        a built cmd/vmmd-stream-bridge
 //	FAAS_OPEN_REQUEST_COST_PER_INSTANCE  open requests per instance (default 100)
+//	FAAS_OPEN_REQUEST_COST_BRIDGE_GOMAXPROCS, FAAS_OPEN_REQUEST_COST_BRIDGE_GOGC
+//	                                     the bridges' Go runtime, as vmmd's
+//	                                     stream_bridge_gomaxprocs and _gogc set it
 //
 // A bridge tracks at most api.TrafficBridgeCompletionMaxEntries open
 // exchanges, so requests are spread over instances, one bridge each.
@@ -53,6 +56,8 @@ const (
 	openCostRoleEnv    = "FAAS_OPEN_REQUEST_COST_ROLE"
 	openCostSocketEnv  = "FAAS_OPEN_REQUEST_COST_SOCKET"
 	openCostPerInstEnv = "FAAS_OPEN_REQUEST_COST_PER_INSTANCE"
+	openCostProcsEnv   = "FAAS_OPEN_REQUEST_COST_BRIDGE_GOMAXPROCS"
+	openCostGOGCEnv    = "FAAS_OPEN_REQUEST_COST_BRIDGE_GOGC"
 	openCostInstance   = "open-cost"
 	openCostOpenPath   = "/__open"
 )
@@ -114,7 +119,9 @@ func runOpenCostVmmd(t *testing.T) {
 	streamBridgeSpawn = func(ctx context.Context, bridgePath, _ string, id bridgeIdentity, sockPath, _ string, port uint32, deadline string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
 		return streamBridgeSpawnReal(ctx, bridgePath, "", id, sockPath, "127.0.0.1", port, deadline, env)
 	}
-	server := New(openCostVMM{}, nil, "open-cost", nil).WithBridgeStreamHeadroom(true)
+	procs, _ := strconv.Atoi(os.Getenv(openCostProcsEnv))
+	gogc, _ := strconv.Atoi(os.Getenv(openCostGOGCEnv))
+	server := New(openCostVMM{}, nil, "open-cost", nil).WithBridgeStreamHeadroom(true).WithStreamBridgeGoRuntime(procs, gogc)
 	g := grpc.NewServer()
 	server.Register(g)
 	ln, err := net.Listen("unix", os.Getenv(openCostSocketEnv))
@@ -336,7 +343,7 @@ func waitGuestOpen(port, want int, limit time.Duration) error {
 }
 
 type openCostProc struct {
-	RSSKB, Threads, FDs int
+	RSSKB, PssKB, PrivateKB, Threads, FDs int
 }
 
 type openCostRow struct {
@@ -364,6 +371,8 @@ func sampleOpenCost(t *testing.T, open, vmmdPID, guestPID int, bridge string) op
 		p := readOpenCostProc(pid)
 		row.Bridges++
 		row.Bridge.RSSKB += p.RSSKB
+		row.Bridge.PssKB += p.PssKB
+		row.Bridge.PrivateKB += p.PrivateKB
 		row.Bridge.Threads += p.Threads
 		row.Bridge.FDs += p.FDs
 	}
@@ -387,6 +396,23 @@ func readOpenCostProc(pid int) openCostProc {
 			p.RSSKB, _ = strconv.Atoi(fields[1])
 		case "Threads:":
 			p.Threads, _ = strconv.Atoi(fields[1])
+		}
+	}
+	// Pss splits shared pages (the binary's text) between the processes
+	// that map them; Private is what this process alone holds.
+	if rollup, err := os.ReadFile(fmt.Sprintf("/proc/%d/smaps_rollup", pid)); err == nil {
+		for _, line := range strings.Split(string(rollup), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			v, _ := strconv.Atoi(fields[1])
+			switch fields[0] {
+			case "Pss:":
+				p.PssKB = v
+			case "Private_Clean:", "Private_Dirty:":
+				p.PrivateKB += v
+			}
 		}
 	}
 	if fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid)); err == nil {
@@ -454,6 +480,13 @@ func logOpenCost(t *testing.T, rows []openCostRow, perInstance int) {
 			mb(r.ClientHeapStackKB), r.ClientGoroutines,
 			mb(r.Guest.RSSKB),
 			r.TCPInUse, r.TCPMemPage)
+	}
+	for _, r := range rows {
+		if r.Bridges > 0 {
+			t.Logf("%6d open, %d bridges: per bridge rss %.1f MB, pss %.1f MB, private %.1f MB, threads %.1f",
+				r.Open, r.Bridges, mb(r.Bridge.RSSKB/r.Bridges), mb(r.Bridge.PssKB/r.Bridges), mb(r.Bridge.PrivateKB/r.Bridges),
+				float64(r.Bridge.Threads)/float64(r.Bridges))
+		}
 	}
 	if len(rows) < 2 {
 		return
