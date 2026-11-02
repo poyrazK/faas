@@ -1375,6 +1375,9 @@ type runDeps struct {
 	// declaredRoutesMatcher enforces the opt-in OpenAPI/explicit route
 	// contract before the handler reaches authentication or wake admission.
 	declaredRoutesMatcher *declaredRoutesMatcher
+	// routeLabelPins keeps route labels the route health guard or production
+	// monitor selects in a full route set (ADR-20261028110044 amendment 4).
+	routeLabelPins *routeLabelPins
 	// edgeJWKSAdapter (ADR-091 PR 5) is the JWT verifier handle
 	// consulted by applyEdgeRuleJWT. nil = JWT kind disabled
 	// (pre-PR-5 + dev posture; matches edgeRulesAudit nil
@@ -2412,6 +2415,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// single-consumer queue.
 	go watchDurableControlPlaneChanges(ctx, repairStore, backend, log, cfg.NodeName)
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
+	deps.routeLabelPins = newRouteLabelPins(pgStore, log)
 	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(requestPathAudit, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
 	// DB-IP Lite .mmdb file at FAAS_GEOIP_DB_PATH. The Reader
@@ -2899,6 +2903,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.declaredRoutesMatcher != nil {
 		// A nil pointer in the interface would defeat the handler's nil checks.
 		handler.WithDeclaredRouteMatcher(deps.declaredRoutesMatcher)
+	}
+	if deps.routeLabelPins != nil {
+		handler.WithRouteLabelPins(deps.routeLabelPins)
 	}
 	if deps.pool != nil {
 		routingStore := deps.pgStore

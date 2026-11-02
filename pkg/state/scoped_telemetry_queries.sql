@@ -61,7 +61,7 @@ SELECT c.id::text AS deployment_id,c.scope,c.status,
 FROM candidate c;
 
 -- name: ScopedRouteMonitorServingDeployments :many
-SELECT d.id::text AS id,d.commit_sha,d.source_url,d.source_root,d.created_at,d.canary_step_started_at,d.rollout_completed_at,d.traffic_percent,d.canary_step,d.canary_total_steps
+SELECT d.id::text AS id,d.commit_sha,d.source_url,d.source_root,d.created_at,d.canary_step_started_at,d.rollout_completed_at,d.traffic_percent,d.canary_step,d.canary_total_steps,d.promoted_at
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted'
 AND d.status='live' AND d.deleted_at IS NULL AND d.traffic_percent>0

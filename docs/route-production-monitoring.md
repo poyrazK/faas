@@ -261,8 +261,9 @@ budgets keep reporting but never trigger a rollback. Gregale decides once per
 incident, using its saved opening evidence:
 
 - **Requested** when an error budget is violated and the incident opens within
-  30 minutes of the deployment's last traffic change (rollout completion or
-  promotion). Gregale requests a checked rollback to the incident's saved
+  30 minutes of the deployment's last traffic change (rollout completion, or a
+  promotion to 100%, including a release staged with `--no-traffic`). Gregale
+  requests a checked rollback to the incident's saved
   healthy baseline, the same operation as `gregale rollback --to ... --expected-current ...`, so the
   artifact check, production contract gate and binding checks still apply.
 - **Skipped** when only latency was violated (`latency_only_violation`), the
