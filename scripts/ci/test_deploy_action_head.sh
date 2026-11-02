@@ -165,4 +165,56 @@ if (verify_release_tag_push) >/dev/null 2>&1; then
 fi
 unset MOCK_CURL_FAIL
 
+# workflow_run (`gregale github setup --wait-for`): a successful run for a push
+# of INPUT_REF to this repository is branch-bound, so a CI run that finishes
+# after a newer commit's is skipped. GITHUB_SHA is then the default branch's
+# latest commit, not the tested one.
+export GITHUB_EVENT_NAME=workflow_run GITHUB_REF=refs/heads/main
+export GITHUB_SHA=ffffffffffffffffffffffffffffffffffffffff
+export INPUT_REPO=acme/api INPUT_REF=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa INPUT_REF_EXPLICIT=true
+workflow_run_event() { # event conclusion head_sha head_repository head_branch
+    printf '{"workflow_run":{"event":"%s","conclusion":"%s","head_sha":"%s","head_repository":{"full_name":"%s"},"head_branch":"%s"}}' \
+        "$1" "$2" "$3" "$4" "$5" > "$GITHUB_EVENT_PATH"
+}
+workflow_run_event push success "$INPUT_REF" acme/api release/canary
+if [ "$(current_run_source_branch)" != "release/canary" ]; then
+    echo 'successful workflow_run push run was not branch-bound' >&2
+    exit 1
+fi
+if [ "$(check_run_commit)" != "$INPUT_REF" ]; then
+    echo 'workflow_run Check Run does not report the tested commit' >&2
+    exit 1
+fi
+export MOCK_HEAD_SHA="$INPUT_REF"
+: > "$GITHUB_OUTPUT"
+: > "$MOCK_CURL_URL_FILE"
+verify_current_push_head
+if [ -s "$GITHUB_OUTPUT" ] || ! grep -q '/repos/acme/api/branches/release%2Fcanary' "$MOCK_CURL_URL_FILE"; then
+    echo 'current workflow_run commit was not accepted' >&2
+    exit 1
+fi
+export MOCK_HEAD_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+if verify_current_push_head; then
+    echo 'workflow_run for a superseded commit was accepted' >&2
+    exit 1
+fi
+grep -qx 'status=skipped' "$GITHUB_OUTPUT"
+for bad in \
+    "pull_request success $INPUT_REF acme/api release/canary" \
+    "push failure $INPUT_REF acme/api release/canary" \
+    "push success bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb acme/api release/canary" \
+    "push success $INPUT_REF fork/api release/canary"; do
+    # shellcheck disable=SC2086 # split the case into its five fields
+    workflow_run_event $bad
+    if [ -n "$(current_run_source_branch)" ]; then
+        echo "workflow_run was unexpectedly branch-bound: $bad" >&2
+        exit 1
+    fi
+done
+export GITHUB_EVENT_NAME=push
+if [ "$(check_run_commit)" != "$GITHUB_SHA" ]; then
+    echo 'push Check Run does not report the workflow commit' >&2
+    exit 1
+fi
+
 echo 'deploy-action-ref-checks: OK'

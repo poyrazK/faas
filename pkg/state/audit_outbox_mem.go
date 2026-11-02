@@ -122,7 +122,7 @@ func (m *MemStore) DeliverAuditEvent(_ context.Context, id int64) (bool, error) 
 	if isOTelHex32(envelope.TraceID) {
 		traceID = &envelope.TraceID
 	}
-	m.events = append(m.events, Event{
+	event := Event{
 		ID:      int64(len(m.events) + 1),
 		At:      time.Now().UTC(),
 		Actor:   row.Actor,
@@ -130,7 +130,9 @@ func (m *MemStore) DeliverAuditEvent(_ context.Context, id int64) (bool, error) 
 		Subject: subject,
 		Data:    append([]byte(nil), row.Data...),
 		TraceID: traceID,
-	})
+	}
+	m.events = append(m.events, event)
+	m.copyOperatorActionToAuditLogLocked(event)
 	now := time.Now().UTC()
 	row.state = auditEventOutboxStateDelivered
 	row.deliveredAt = now

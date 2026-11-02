@@ -28,6 +28,8 @@ func TestObjectStorageComputeNodesValidate(t *testing.T) {
 		{name: "gateway credential without compute nodes", storage: ObjectStorage{Gateway: "managed", ConfigSrc: "/operator/object-storage.json", GatewayProviderEnvSrc: "/operator/gateway-provider.env"}, hosts: []Host{control}, wantErr: "used only with compute_nodes"},
 		{name: "no app edge", storage: onCompute, hosts: []Host{control, compute}, wantErr: "needs public_edge.compute_nodes"},
 		{name: "no port speed", storage: onCompute, edge: edge, hosts: []Host{control, compute, slow}, wantErr: "fleet.hosts[2].port_mbps"},
+		{name: "public reads on compute", storage: func() ObjectStorage { o := onCompute; o.ComputePublicReads = true; return o }(), edge: edge, hosts: []Host{control, compute}},
+		{name: "public reads without compute nodes", storage: ObjectStorage{Gateway: "managed", ConfigSrc: "/operator/object-storage.json", ComputePublicReads: true}, hosts: []Host{control}, wantErr: "object_storage.compute_public_reads: needs compute_nodes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			errs := append(tc.storage.validate(), tc.storage.validateOnCompute(tc.edge, tc.hosts)...)

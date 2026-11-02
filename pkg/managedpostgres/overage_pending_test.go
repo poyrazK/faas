@@ -7,7 +7,12 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// hour is one compute unit-hour of overage.
+const hour = int64(api.ManagedPostgresOverageMillicentsPerComputeUnitHour)
 
 // completeFailingStore fails CompleteOverage while fail is set: the provider
 // accepted the step, recording it did not.
@@ -44,27 +49,27 @@ func TestOverageBillerResendsAStepThatWasSentButNotRecorded(t *testing.T) {
 		}
 		return biller
 	}
-	if _, err := newBiller().Deliver(ctx); err == nil || len(published) != 1 || published[0].TargetMillicents != 20_000 {
+	if _, err := newBiller().Deliver(ctx); err == nil || len(published) != 1 || published[0].TargetMillicents != hour {
 		t.Fatalf("first pass published %+v, %v", published, err)
 	}
 	// Usage grows before the next pass. Before reservations, the next pass
-	// sent a new step from 0 to 40,000 on top of the 0 to 20,000 the
-	// provider already had: 60,000 charged for 40,000 of usage.
+	// sent a new step from 0 to two hours on top of the 0 to one hour the
+	// provider already had: three hours charged for two hours of usage.
 	f.store.used["acct2026-11"] = testAllowance + 2*3600
 	f.now = f.now.Add(time.Hour)
 	store.fail = nil
 	if _, err := newBiller().Deliver(ctx); err != nil || len(published) != 2 || published[1] != published[0] {
 		t.Fatalf("second pass published %+v, %v; want the reserved step again, unchanged", published, err)
 	}
-	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); delivery.Millicents != 20_000 {
-		t.Fatalf("recorded %+v, want the resent step's 20,000", delivery)
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); delivery.Millicents != hour {
+		t.Fatalf("recorded %+v, want the resent step's hour", delivery)
 	}
 	if _, found, _ := f.store.OveragePending(ctx, "polar", "acct", november); found {
 		t.Fatal("the completed step is still reserved")
 	}
 	// The growth is charged from what was recorded.
 	if _, err := newBiller().Deliver(ctx); err != nil || len(published) != 3 ||
-		published[2].DeliveredMillicents != 20_000 || published[2].TargetMillicents != 40_000 {
+		published[2].DeliveredMillicents != hour || published[2].TargetMillicents != 2*hour {
 		t.Fatalf("third pass published %+v, %v", published, err)
 	}
 }
@@ -76,7 +81,7 @@ func TestOverageBillerLeavesAReservedStepToItsReplica(t *testing.T) {
 	f.reachAllowance(t, "acct", november, true)
 	f.store.used["acct2026-11"] = testAllowance + 3600
 	held := OveragePendingStep{Provider: "polar", Live: true, Step: OverageChargeStep{SubjectID: "acct", PeriodStart: november,
-		At: f.now, UsedUnitSeconds: testAllowance + 3600, AllowanceSeconds: testAllowance, BilledUnitSeconds: 3600, TargetMillicents: 20_000}}
+		At: f.now, UsedUnitSeconds: testAllowance + 3600, AllowanceSeconds: testAllowance, BilledUnitSeconds: 3600, TargetMillicents: hour}}
 	if reserved, err := f.store.ReserveOverage(ctx, held); err != nil || !reserved {
 		t.Fatalf("reserve = %v, %v", reserved, err)
 	}

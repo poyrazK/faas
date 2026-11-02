@@ -186,8 +186,11 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/s3_gateway_compute_service/files", skip: only("s3-gatewayd-compute")},
 	{dir: "deploy/ansible/roles/internal_mail_service/files", skip: only("maild")},
 	{dir: "deploy/ansible/roles/profiled_service/files", skip: only("profiled")},
+	{dir: "deploy/ansible/roles/pgproxyd_service/files", skip: only("pgproxyd")},
+	{dir: "deploy/ansible/roles/dbbackupd_service/files", skip: only("dbbackupd")},
 	{dir: "deploy/ansible/roles/livequeryd_service/files", skip: only("livequeryd")},
 	{dir: "deploy/ansible/roles/agentd_service/files", skip: only("agentd")},
+	{dir: "deploy/ansible/roles/edgednsd_service/files", skip: only("edgednsd")},
 }
 
 // ansibleRoleSkips: the control_plane_service role ships apid, meterd
@@ -208,7 +211,10 @@ func ansibleRoleSkips() map[string]bool {
 		"realtimed":            true,
 		"profiled":             true,
 		"livequeryd":           true,
+		"pgproxyd":             true, // database nodes only (ADR-1027)
+		"dbbackupd":            true, // database nodes only (ADR-1027)
 		"agentd":               true,
+		"edgednsd":             true,
 	}
 }
 
@@ -238,8 +244,11 @@ func legacySkips() map[string]bool {
 		"s3-gatewayd-compute":  true,
 		"gatewayd-public-edge": true,
 		"livequeryd":           true,
+		"pgproxyd":             true,
+		"dbbackupd":            true,
 		"mcp-bridge":           true,
 		"agentd":               true,
+		"edgednsd":             true,
 	}
 }
 

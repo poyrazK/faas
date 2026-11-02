@@ -100,6 +100,9 @@ func (c *Client) ExchangeOAuthCode(ctx context.Context, accountID, code, state s
 		State:     state,
 	})
 	if err != nil {
+		if choice, ok := liftInstallationChoice(err); ok {
+			return "", "", choice
+		}
 		return "", "", liftErr(err)
 	}
 	return resp.GetInstallationId(), resp.GetDefaultBranch(), nil
@@ -200,7 +203,7 @@ func (c *Client) GetAppActivity(ctx context.Context, accountID, appID string, li
 		}
 		out.Webhooks = append(out.Webhooks, WebhookActivity{
 			EventType: item.GetEventType(), Status: item.GetStatus(), CommitSHA: item.GetCommitSha(),
-			ReceivedAt: received, ProcessedAt: processed, UpdatedAt: updated,
+			ReceivedAt: received, ProcessedAt: processed, UpdatedAt: updated, SkipReason: item.GetSkipReason(),
 		})
 	}
 	for _, item := range resp.GetChecks() {

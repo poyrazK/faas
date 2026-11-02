@@ -79,10 +79,10 @@ func (g *gatewaydEdgeRules) pinPublicRouteGraph(ctx context.Context, host string
 	if err != nil {
 		return nil, err
 	}
-	// The claim names the host's owner, so another account's fence on an
-	// overlapping pattern cannot refuse this host (unclaimed hosts keep the
-	// fleet-wide hold).
-	if generation != g.cache.Generation() || g.Converging(host, claim.AccountID, claim.AppID) {
+	// The graph is one snapshot read, so a pending edge-rule change does not
+	// refuse it (ADR-20261101141123): the read sees the change entirely or
+	// not at all.
+	if generation != g.cache.Generation() {
 		return nil, errors.New("public route graph changed during resolution")
 	}
 	if err := entry.SealPolicy(); err != nil {
@@ -144,7 +144,7 @@ func resolvePublicCompiledPolicy(ctx context.Context, reader state.PublicHostPol
 	}
 	app.PublicCompiledPolicies = make(map[string]*gateway.HostEntry, len(hosts))
 	for _, host := range hosts {
-		entry, err := graphs.owner.compilePublicOwnerPolicy(ctx, reader, host, app.AccountID, app.ID, graphs.claims[host].Source)
+		entry, err := graphs.owner.compilePublicOwnerPolicy(ctx, reader, host, app.AccountID, app.ID, app.ProductionAppID, graphs.claims[host].Source)
 		if err != nil {
 			return err
 		}
@@ -222,11 +222,16 @@ func verifyPublicRouteGraph(prior, fresh *gateway.HostEntry, account string) err
 
 // All reads happen before the compiled cache lookup, inside the app resolver's
 // transaction. Cache entries can save compilation, never replace a fresh read.
-func (g *gatewaydEdgeRules) compilePublicOwnerPolicy(ctx context.Context, reader state.PublicHostPolicyReader, host, account, appID string, source *gateway.PublicAppPolicySource) (*gateway.HostEntry, error) {
+func (g *gatewaydEdgeRules) compilePublicOwnerPolicy(ctx context.Context, reader state.PublicHostPolicyReader, host, account, appID, productionAppID string, source *gateway.PublicAppPolicySource) (*gateway.HostEntry, error) {
 	rules, err := publicHostAppEdgeRules(ctx, reader, host, account, appID, false)
 	if err != nil {
 		return nil, err
 	}
+	inherited, err := publicPreviewInheritedRules(ctx, reader, host, account, productionAppID)
+	if err != nil {
+		return nil, err
+	}
+	rules = state.MergeEdgeRulesInOrder(rules, inherited)
 	bundle := &publicEdgeCompileStore{PublicHostPolicyReader: reader, rules: rules, presets: make(map[string]state.CorsPreset)}
 	compiler := &gatewaydEdgeRules{store: bundle, validate: g.validate, metrics: g.metrics}
 	rules, err = publicEnvironmentEdgeRules(ctx, reader, compiler, host, source, rules)

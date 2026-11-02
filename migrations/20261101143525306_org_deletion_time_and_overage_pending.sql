@@ -72,6 +72,15 @@ CREATE TABLE IF NOT EXISTS managed_postgres_overage_pending (
     billed_unit_seconds bigint NOT NULL CHECK (billed_unit_seconds >= 0),
     from_millicents bigint NOT NULL CHECK (from_millicents >= 0),
     target_millicents bigint NOT NULL,
+    used_storage_byte_seconds bigint NOT NULL
+        CONSTRAINT managed_postgres_overage_pending_used_storage_check CHECK (used_storage_byte_seconds >= 0),
+    storage_pool_bytes bigint NOT NULL
+        CONSTRAINT managed_postgres_overage_pending_storage_pool_check CHECK (storage_pool_bytes >= 0),
+    billed_storage_byte_seconds bigint NOT NULL
+        CONSTRAINT managed_postgres_overage_pending_billed_storage_check CHECK (billed_storage_byte_seconds >= 0),
+    previous_millicents bigint NOT NULL
+        CONSTRAINT managed_postgres_overage_pending_previous_check CHECK (previous_millicents >= 0),
+    previous_live boolean NOT NULL,
     CONSTRAINT managed_postgres_overage_pending_target_check CHECK (target_millicents > from_millicents),
     PRIMARY KEY (provider, subject_id, period_start)
 );

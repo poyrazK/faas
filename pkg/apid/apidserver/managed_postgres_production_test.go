@@ -1,5 +1,6 @@
 // adr: 20261028103115 — production managed PostgreSQL provisioning follows the
 // managed-postgres capability flag; a paused fleet answers its own code.
+// adr: 20261031091607 — while the caps are not on, only a flag rule releases.
 package apidserver_test
 
 import (
@@ -14,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 func TestManagedPostgresProductionReleaseFollowsTheCapabilityFlag(t *testing.T) {
@@ -47,6 +49,31 @@ func TestManagedPostgresProductionReleaseFollowsTheCapabilityFlag(t *testing.T) 
 	srv.SeedPlatformFlag(capabilityFlag(t, "managed-postgres"), dataAPITestHidden)
 	if srv.ManagedPostgresReleased(ctx, account) {
 		t.Fatal("the kill switch must close the account again")
+	}
+}
+
+func TestManagedPostgresUncappedReleaseNeedsAFlagRule(t *testing.T) {
+	ctx := context.Background()
+	e := apidserver.Setup(t, api.PlanPro)
+	srv := *e.S()
+	account := (*e.Acct()).ID
+	if err := srv.InstallCapabilityGate(); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetManagedPostgresUncapped(true)
+	if srv.ManagedPostgresReleased(ctx, account) {
+		t.Fatal("while the caps are not on, the GA default must not release an account")
+	}
+	on := true
+	srv.SeedPlatformFlag(capabilityFlag(t, "managed-postgres"), platformflags.Definition{Enabled: true, Default: true,
+		Rules: []platformflags.Rule{{ID: "owner", Accounts: []string{account}, Value: &on}}})
+	if !srv.ManagedPostgresReleased(ctx, account) {
+		t.Fatal("an account a flag rule names is released while the caps are not on")
+	}
+	srv.SetManagedPostgresUncapped(false)
+	srv.SeedPlatformFlag(capabilityFlag(t, "managed-postgres"), dataAPITestReleased)
+	if !srv.ManagedPostgresReleased(ctx, account) {
+		t.Fatal("with the caps on, the default releases the account")
 	}
 }
 

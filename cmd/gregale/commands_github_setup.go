@@ -34,6 +34,7 @@ type githubSetupReceipt struct {
 	ProductionBranch     string                           `json:"production_branch"`
 	WorkflowPath         string                           `json:"workflow_path"`
 	Rollout              string                           `json:"rollout"`
+	WaitFor              string                           `json:"wait_for,omitempty"`
 	WorkflowChanged      bool                             `json:"workflow_changed"`
 	WorkflowWritten      bool                             `json:"workflow_written"`
 	DryRun               bool                             `json:"dry_run,omitempty"`
@@ -54,7 +55,8 @@ type githubSetupReceipt struct {
 func cmdGithubSetup(args []string) int {
 	fs := newFlagSet("github setup", flag.ContinueOnError)
 	repo := fs.String("repo", "", "GitHub repository OWNER/NAME (required for a dry run; otherwise defaults to the current binding)")
-	productionBranch := fs.String("production-branch", "", "production branch (defaults to the current binding or main)")
+	productionBranch := fs.String("production-branch", "", "production branch (defaults to the current binding or the repository's default branch)")
+	installationID := fs.Int64("installation-id", 0, "GitHub App installation id (the app's, or the account's only one, when omitted)")
 	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=environment mappings (default or a registered project environment)")
 	pinnedSHA := fs.String("pinned-sha", "", "pin the generated deploy Action to this full 40-character commit SHA (default: immutable SHA embedded in the CLI release)")
 	pinAction := fs.Bool("pin-action", false, "resolve the current v0 deploy Action tag to its commit SHA")
@@ -71,6 +73,7 @@ func cmdGithubSetup(args []string) int {
 	rootDir := fs.String("root-dir", "", "repository-relative source root for the root workload")
 	ignore := fs.String("ignore", "", "comma-separated ignored change paths")
 	rollout := fs.String("rollout", githubSetupRolloutStandard, "production rollout mode: standard|safe")
+	waitFor := fs.String("wait-for", "", "deploy a branch push only after this GitHub Actions workflow (its name: field) succeeds for the commit")
 	dryRun := fs.Bool("dry-run", false, "show generated files without writing or changing remote state")
 	force := fs.Bool("force", false, "overwrite an existing workflow file")
 
@@ -100,6 +103,10 @@ func cmdGithubSetup(args []string) int {
 	}
 	if !validGithubSetupRollout(*rollout) {
 		return printErr("Invalid --rollout", errors.New("must be standard or safe"))
+	}
+	*waitFor = strings.TrimSpace(*waitFor)
+	if *waitFor != "" && !validGithubSetupWorkflowName(*waitFor) {
+		return printErr("Invalid --wait-for", errors.New("name a workflow by its name: field, up to 255 printable characters"))
 	}
 	if *pinnedSHA != "" {
 		sha, err := normalizeGithubActionSHA(*pinnedSHA)
@@ -171,7 +178,12 @@ func cmdGithubSetup(args []string) int {
 		if branch == "" {
 			branch = "main"
 		}
-		desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, parsedBranches, *pinnedSHA, false)
+		if *waitFor != "" {
+			if err := githubSetupCheckWaitFor(root, workflowPath, *waitFor, githubSetupWorkflowBranches(branch, parsedBranches)); err != nil {
+				return printErr("Invalid --wait-for", err)
+			}
+		}
+		desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, parsedBranches, *pinnedSHA, false, *waitFor)
 		existing, exists, err := readGithubSetupFile(workflowFile)
 		if err != nil {
 			return printErr("Could not inspect the workflow file", err)
@@ -186,6 +198,7 @@ func cmdGithubSetup(args []string) int {
 			ProductionBranch: branch,
 			WorkflowPath:     workflowPath,
 			Rollout:          *rollout,
+			WaitFor:          *waitFor,
 			WorkflowChanged:  changed,
 			DryRun:           true,
 			PolicyPatch:      policyPatch,
@@ -218,10 +231,35 @@ func cmdGithubSetup(args []string) int {
 			return printErr("GitHub setup found an invalid repository binding", errors.New("rerun with --repo OWNER/NAME"))
 		}
 	}
-	if branch == "" {
+	// An app without a project keeps only its production trigger and
+	// whether it gets previews; every other setting belongs to a project
+	// (ADR-20261101160300). Refuse those flags before anything changes.
+	projectBacked, err := githubSetupProjectBacked(ctx, client, positional[0])
+	if err != nil {
+		return printErr("GitHub deployment policy failed", err)
+	}
+	if !projectBacked {
+		if flag := githubSetupProjectOnlyFlag(fs); flag != "" {
+			return printErr("--"+flag+" needs a project-backed app", errors.New("an app without a project can bind a repository, hand production deploys to GitHub Actions and turn previews on or off; preview tuning, root directory, ignored paths and branch mappings are project settings"))
+		}
+		policyPatch = &api.GitHubDeploymentPolicyPatch{ProductionTrigger: policyPatch.ProductionTrigger, PreviewEnabled: policyPatch.PreviewEnabled}
+	}
+	bindInstallation := *installationID
+	if bindInstallation == 0 {
+		bindInstallation, err = githubBindInstallation(status)
+	}
+	if branch == "" && status.Connected && strings.EqualFold(strings.TrimSpace(status.RepoFullName), repoName) {
 		branch = strings.TrimSpace(status.ProductionBranch)
-		if branch == "" {
-			branch = "main"
+	}
+	if branch == "" {
+		// The workflow names the branch before the bind happens, so read
+		// the repository's default branch the bind would take.
+		if err != nil {
+			return printErr("GitHub setup needs an installation", err)
+		}
+		branch, err = githubRepositoryDefaultBranch(ctx, client, bindInstallation, repoName)
+		if err != nil {
+			return printErr("Could not read the repository's default branch", err)
 		}
 	}
 	if !validGithubSetupBranch(branch) {
@@ -234,6 +272,11 @@ func cmdGithubSetup(args []string) int {
 	if err := validateGithubSetupDeployBranches(workflowBranches); err != nil {
 		return printErr("Invalid saved deploy branch mappings", err)
 	}
+	if *waitFor != "" {
+		if err := githubSetupCheckWaitFor(root, workflowPath, *waitFor, githubSetupWorkflowBranches(branch, workflowBranches)); err != nil {
+			return printErr("Invalid --wait-for", err)
+		}
+	}
 	actionSHA := *pinnedSHA
 	if *pinAction {
 		actionSHA, err = resolveGithubActionSHA(ctx)
@@ -241,7 +284,7 @@ func cmdGithubSetup(args []string) int {
 			return printErr("Could not pin the deploy Action", err)
 		}
 	}
-	desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, workflowBranches, actionSHA, *pinAction)
+	desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, workflowBranches, actionSHA, *pinAction, *waitFor)
 	existing, exists, err := readGithubSetupFile(workflowFile)
 	if err != nil {
 		return printErr("Could not inspect the workflow file", err)
@@ -256,6 +299,7 @@ func cmdGithubSetup(args []string) int {
 		ProductionBranch: branch,
 		WorkflowPath:     workflowPath,
 		Rollout:          *rollout,
+		WaitFor:          *waitFor,
 		WorkflowChanged:  changed,
 		PolicyPatch:      policyPatch,
 	}
@@ -266,11 +310,13 @@ func cmdGithubSetup(args []string) int {
 
 	bindingMutation := strings.TrimSpace(*repo) != "" || strings.TrimSpace(*productionBranch) != "" || strings.TrimSpace(*deployBranches) != ""
 	if bindingMutation {
-		if status.InstallationID <= 0 {
-			return printErr("GitHub bind failed", errors.New("no GitHub App installation is connected; run `gregale github connect` first"))
+		if bindInstallation <= 0 {
+			if _, err := githubBindInstallation(status); err != nil {
+				return printErr("GitHub bind failed", err)
+			}
 		}
 		bound, err := client.BindGitHubConnection(ctx, positional[0], api.InstallBindRequest{
-			InstallationID:   status.InstallationID,
+			InstallationID:   bindInstallation,
 			RepoFullName:     repoName,
 			ProductionBranch: branch,
 			DeployBranches:   parsedBranches,
@@ -316,6 +362,56 @@ func cmdGithubSetup(args []string) int {
 	}
 
 	return renderGithubSetupReceipt(receipt, existing, exists)
+}
+
+// githubSetupProjectBacked reports whether the app keeps its GitHub
+// deployment policy in a project. An apid from before ADR-20261101160300
+// answers project_required for an app without one.
+func githubSetupProjectBacked(ctx context.Context, client *Client, slug string) (bool, error) {
+	policy, err := client.GetGitHubDeploymentPolicy(ctx, slug)
+	if p := api.AsProblem(err); p != nil && p.Code == "project_required" {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return policy.ProjectID != "", nil
+}
+
+// githubSetupProjectOnlyFlag names the first flag set that only a
+// project-backed app supports, or "".
+func githubSetupProjectOnlyFlag(fs *flag.FlagSet) string {
+	projectOnly := map[string]bool{"preview-ttl-hours": true, "preview-bots": true,
+		"no-preview-bots": true, "preview-drafts": true, "no-preview-drafts": true, "preview-service-policy": true,
+		"root-dir": true, "ignore": true, "deploy-branches": true}
+	found := ""
+	fs.Visit(func(f *flag.Flag) {
+		if found == "" && projectOnly[f.Name] {
+			found = f.Name
+		}
+	})
+	return found
+}
+
+// githubRepositoryDefaultBranch reads repo's default branch from the
+// repositories installationID can see.
+func githubRepositoryDefaultBranch(ctx context.Context, client *Client, installationID int64, repo string) (string, error) {
+	repos, err := client.ListGitHubRepositoriesForInstallation(ctx, installationID)
+	if err != nil {
+		return "", err
+	}
+	for _, candidate := range repos {
+		if strings.EqualFold(candidate.FullName, repo) {
+			if candidate.DefaultBranch == "" {
+				break
+			}
+			if !validGithubSetupBranch(candidate.DefaultBranch) {
+				return "", fmt.Errorf("the default branch of %s contains an unsupported character; pass --production-branch", repo)
+			}
+			return candidate.DefaultBranch, nil
+		}
+	}
+	return "", fmt.Errorf("the GitHub installation cannot see %s, or it has no default branch; pass --production-branch", repo)
 }
 
 const githubActionPinResolveTimeout = 20 * time.Second
@@ -523,6 +619,20 @@ func validGithubSetupBranch(branch string) bool {
 	return !strings.ContainsAny(branch, "~^:?*[\\")
 }
 
+// validGithubSetupWorkflowName accepts a workflow's name: field as the
+// generated workflow_run trigger quotes it.
+func validGithubSetupWorkflowName(name string) bool {
+	if len(name) > 255 {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return name != ""
+}
+
 func validGithubSetupRollout(rollout string) bool {
 	return rollout == githubSetupRolloutStandard || rollout == githubSetupRolloutSafe
 }
@@ -531,7 +641,11 @@ func validGithubSetupPreviewServicePolicy(policy string) bool {
 	return policy == githubSetupPreviewServicesDeny || policy == githubSetupPreviewServicesAllowMarked
 }
 
-func renderGithubSetupWorkflow(app, repo, branch, rollout string, deployBranches map[string]string, pinnedSHA string, actionVersionComment bool) string {
+// renderGithubSetupWorkflow writes the deploy workflow. With waitFor naming a
+// workflow of the repository, a push deploys only once that workflow's run
+// for the pushed commit succeeds (ADR-20261101160300, amendment 1); release
+// tags and manual dispatches still deploy directly.
+func renderGithubSetupWorkflow(app, repo, branch, rollout string, deployBranches map[string]string, pinnedSHA string, actionVersionComment bool, waitFor string) string {
 	if branch == "" {
 		branch = "main"
 	}
@@ -562,21 +676,33 @@ func renderGithubSetupWorkflow(app, repo, branch, rollout string, deployBranches
 		branchFilters.WriteByte('\n')
 		dispatchConditions = append(dispatchConditions, "github.ref == "+githubSetupExpressionString("refs/heads/"+deployBranch))
 	}
-	workflowDispatchCondition := "github.event_name != 'workflow_dispatch' || " + strings.Join(dispatchConditions, " || ")
-	githubEnvironment := githubSetupBranchEnvironmentExpression(deployBranches, "production")
-	deploymentEnvironment := githubSetupBranchEnvironmentExpression(deployBranches, "")
-	deploymentConcurrencyScope := githubSetupBranchEnvironmentExpression(deployBranches, state.DefaultEnvScope)
+	triggers := "  push:\n    branches:\n" + branchFilters.String() + "    tags:\n      - \"v*\"\n"
+	jobCondition := "github.event_name != 'workflow_dispatch' || " + strings.Join(dispatchConditions, " || ")
+	// A push deploys the pushed commit, the Action's default ref, so the
+	// Action skips a superseded run or a rerun of an older commit.
+	refExpr, refInput, waitNote := "github.ref", "", ""
+	if waitFor != "" {
+		// A workflow_run event runs on the default branch's latest commit;
+		// the commit and branch the CI run tested are in its payload. Only a
+		// successful run for a push to this repository deploys, never one
+		// for a pull request or a fork.
+		triggers = "  workflow_run:\n    workflows:\n      - " + strconv.Quote(waitFor) + "\n    types:\n      - completed\n    branches:\n" +
+			branchFilters.String() + "  push:\n    tags:\n      - \"v*\"\n"
+		jobCondition = "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository) || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (" + strings.Join(dispatchConditions, " || ") + "))"
+		refExpr = "(github.event_name == 'workflow_run' && format('refs/heads/{0}', github.event.workflow_run.head_branch) || github.ref)"
+		refInput = "          ref: ${{ github.event.workflow_run.head_sha || github.sha }}\n"
+		waitNote = "# Branch pushes deploy once the " + strconv.Quote(waitFor) + " workflow succeeds for the pushed commit.\n"
+	}
+	githubEnvironment := githubSetupBranchEnvironmentExpression(deployBranches, "production", refExpr)
+	deploymentEnvironment := githubSetupBranchEnvironmentExpression(deployBranches, "", refExpr)
+	deploymentConcurrencyScope := githubSetupBranchEnvironmentExpression(deployBranches, state.DefaultEnvScope, refExpr)
 	return fmt.Sprintf(`# Gregale deploy · generated by `+"`gregale github setup`"+`
 # App: %s · Repo: %s · Production branch: %s
 # Action: %s/%s@%s
 # PR previews are managed by the connected GitHub integration.
-name: Gregale deploy
+%sname: Gregale deploy
 on:
-  push:
-    branches:
-%s    tags:
-      - "v*"
-  workflow_dispatch:
+%s  workflow_dispatch:
 
 concurrency:
   group: gregale-${{ github.repository }}-%s-%s
@@ -598,11 +724,10 @@ jobs:
           api-base: %s
           app: %s
           repo: ${{ github.repository }}
-          ref: ${{ github.sha }}
-          environment: %s
+%s          environment: %s
           wait: "true"
           wait-timeout: "1200"
-%s`, app, repo, branch, githubActionRepo, githubActionPath, actionRef, branchFilters.String(), app, deploymentConcurrencyScope, workflowDispatchCondition, githubEnvironment, githubActionRepo, githubActionPath, actionRef, versionComment, defaultAPIBase, app, deploymentEnvironment, rolloutInput)
+%s`, app, repo, branch, githubActionRepo, githubActionPath, actionRef, waitNote, triggers, app, deploymentConcurrencyScope, jobCondition, githubEnvironment, githubActionRepo, githubActionPath, actionRef, versionComment, defaultAPIBase, app, refInput, deploymentEnvironment, rolloutInput)
 }
 
 func githubSetupWorkflowBranches(productionBranch string, deployBranches map[string]string) []string {
@@ -618,7 +743,9 @@ func githubSetupWorkflowBranches(productionBranch string, deployBranches map[str
 	return append(branches, mapped...)
 }
 
-func githubSetupBranchEnvironmentExpression(deployBranches map[string]string, fallback string) string {
+// githubSetupBranchEnvironmentExpression maps the branch refExpr names to its
+// environment, or fallback.
+func githubSetupBranchEnvironmentExpression(deployBranches map[string]string, fallback, refExpr string) string {
 	branches := make([]string, 0, len(deployBranches))
 	for branch, scope := range deployBranches {
 		if scope != state.DefaultEnvScope {
@@ -628,7 +755,7 @@ func githubSetupBranchEnvironmentExpression(deployBranches map[string]string, fa
 	sort.Strings(branches)
 	terms := make([]string, 0, len(branches)+1)
 	for _, branch := range branches {
-		terms = append(terms, "github.ref == "+githubSetupExpressionString("refs/heads/"+branch)+" && "+githubSetupExpressionString(deployBranches[branch]))
+		terms = append(terms, refExpr+" == "+githubSetupExpressionString("refs/heads/"+branch)+" && "+githubSetupExpressionString(deployBranches[branch]))
 	}
 	terms = append(terms, githubSetupExpressionString(fallback))
 	return "${{ " + strings.Join(terms, " || ") + " }}"
@@ -663,6 +790,9 @@ func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exist
 	}
 	_, _ = fmt.Fprintf(osStdout, "GitHub setup %s for %s.\n", status, receipt.App)
 	_, _ = fmt.Fprintf(osStdout, "  repository:        %s\n  production_branch: %s\n  rollout:            %s\n  workflow:          %s\n", receipt.Repo, receipt.ProductionBranch, receipt.Rollout, receipt.WorkflowPath)
+	if receipt.WaitFor != "" {
+		_, _ = fmt.Fprintf(osStdout, "  wait_for:          %s\n", receipt.WaitFor)
+	}
 	switch {
 	case receipt.DryRun && receipt.WorkflowChanged:
 		_, _ = fmt.Fprintln(osStdout, "  file:              would be written")

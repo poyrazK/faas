@@ -15,6 +15,8 @@ package api
 import (
 	"fmt"
 	"regexp"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // MaxRegistryHostLen mirrors the SQL CHECK constraint
@@ -44,7 +46,7 @@ const MaxRegistryPasswordBytes = 4 * 1024
 // the user-facing UX is "registry hostname". A customer who genuinely
 // needs an IPv6 literal can pin via a hostname alias. This is the
 // conservative gate; loosening requires an ADR.
-var registryHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$`)
+var registryHostRe = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$`)
 
 // RegistryHostRe exposes the compiled regex so the CLI (cmd/gregale)
 // can mirror the same gate locally before round-tripping. Returns the
@@ -52,7 +54,7 @@ var registryHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[
 // zero allocation, same underlying object. Mirrors the api.Plans
 // export pattern from pkg/api/limits.go:34.
 func RegistryHostRe() *regexp.Regexp {
-	return registryHostRe
+	return registryHostRe.Regexp()
 }
 
 // PutAppRegistryCredentialRequest is the PUT body. Registry MUST be

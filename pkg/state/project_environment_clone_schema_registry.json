@@ -909,6 +909,17 @@
     }
   },
   {
+    "table": "api_key_agent_clients",
+    "columns": [
+      "account_id",
+      "client_name",
+      "client_site",
+      "created_at",
+      "key_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "api_keys",
     "columns": [
       "account_id",
@@ -1958,6 +1969,16 @@
     }
   },
   {
+    "table": "app_slug_holds",
+    "columns": [
+      "account_id",
+      "held_until",
+      "reason",
+      "slug"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_task_attach_sessions",
     "columns": [
       "attach_token_sha256",
@@ -2563,7 +2584,9 @@
       "github_install_id",
       "github_install_linked_at",
       "github_owner_id",
+      "github_preview_enabled",
       "github_production_branch",
+      "github_production_trigger",
       "github_repo_full_name",
       "github_repo_id",
       "id",
@@ -3062,6 +3085,7 @@
       "cache_status",
       "cancelled_at",
       "cancelled_by_deployment_cascade",
+      "coalesced_with",
       "deployment_id",
       "enqueued_at",
       "failure_class",
@@ -5370,6 +5394,7 @@
       "parked_reason",
       "pr_number",
       "priority",
+      "promoted_at",
       "pusher_login",
       "reason",
       "release_command",
@@ -7555,6 +7580,7 @@
       "processed_at",
       "received_at",
       "repo_full_name",
+      "skip_reason",
       "status",
       "updated_at"
     ],
@@ -9715,6 +9741,7 @@
   {
     "table": "managed_postgres_overage_deliveries",
     "columns": [
+      "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
       "live",
@@ -9729,14 +9756,19 @@
     "table": "managed_postgres_overage_pending",
     "columns": [
       "allowance_unit_seconds",
+      "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "from_millicents",
       "live",
       "period_start",
+      "previous_live",
+      "previous_millicents",
       "provider",
       "step_at",
+      "storage_pool_bytes",
       "subject_id",
       "target_millicents",
+      "used_storage_byte_seconds",
       "used_unit_seconds"
     ],
     "kind": "account_identity"
@@ -10123,13 +10155,16 @@
       "created_at",
       "data_resource_id",
       "database_id",
+      "error_code",
       "generation",
       "id",
       "provider_resource_id",
       "source_spec",
       "state",
       "target_class",
-      "target_scale_to_zero"
+      "target_postgres_major",
+      "target_scale_to_zero",
+      "target_storage_limit_bytes"
     ],
     "kind": "operational"
   },
@@ -11951,6 +11986,18 @@
     "kind": "operational"
   },
   {
+    "table": "node_memory_reports",
+    "columns": [
+      "frozen_instances",
+      "measured_at",
+      "measured_mb",
+      "node_id",
+      "reported_at",
+      "used_mb"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "notification_channels",
     "columns": [
       "account_id",
@@ -12882,6 +12929,7 @@
     "table": "oidc_exchanged_tokens",
     "columns": [
       "account_id",
+      "app_id",
       "audience",
       "created_at",
       "expires_at",
@@ -17025,6 +17073,7 @@
       "latency_ms",
       "method",
       "node_id",
+      "platform_refusal",
       "platform_tenant_id",
       "received_at",
       "referrer_host",
@@ -18626,6 +18675,7 @@
       "net_rx_bytes",
       "net_tx_bytes",
       "org_id",
+      "paused_mb_seconds",
       "requests",
       "tail_seconds",
       "tx_bytes"
@@ -19606,6 +19656,21 @@
     "kind": "operational"
   },
   {
+    "table": "agent_run_callbacks",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "issued_at",
+      "provider_call_id",
+      "run_id",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_run_ai_spend",
     "columns": [
       "account_id",
@@ -19689,5 +19754,96 @@
       "signature"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "database_nodes",
+    "columns": [
+      "admission_ceiling_mb",
+      "boot_slots",
+      "created_at",
+      "id",
+      "lifecycle",
+      "postgres_majors",
+      "target_url",
+      "updated_at",
+      "volume_capacity_bytes"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "database_restore_drills",
+    "columns": [
+      "drill_id",
+      "error_code",
+      "finished_at",
+      "node_id",
+      "recovered_to",
+      "result",
+      "source_id",
+      "started_at",
+      "target_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_role_verifiers",
+    "columns": [
+      "database_id",
+      "role_name",
+      "updated_at",
+      "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_usage",
+    "columns": [
+      "database_id",
+      "ended_at",
+      "meter",
+      "rate",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_vms",
+    "columns": [
+      "always_on",
+      "bootstrapped",
+      "created_at",
+      "database_id",
+      "drop_standby_slot",
+      "last_active_at",
+      "last_backup_at",
+      "last_error",
+      "major_history",
+      "mem_mib",
+      "move_lease_until",
+      "move_node",
+      "node_id",
+      "postgres_major",
+      "promote_pending",
+      "replicated",
+      "resize_pending",
+      "restore_lease_until",
+      "restore_recovered_to",
+      "restore_source",
+      "restore_target",
+      "restore_window_seconds",
+      "standby_node",
+      "standby_running",
+      "standby_synced",
+      "state",
+      "state_changed_at",
+      "upgrade_from",
+      "upgrade_lease_until",
+      "upgrade_major",
+      "upgrade_operation",
+      "upgrade_result",
+      "vcpu_count",
+      "volume_bytes"
+    ],
+    "kind": "operational"
   }
 ]

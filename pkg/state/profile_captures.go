@@ -54,6 +54,25 @@ func checkProfileCaptureStorage(storedBytes, active, limit int64) error {
 	return nil
 }
 
+// ProfileCaptureLimits are the account-wide bounds a new capture is checked
+// against (ADR-1155): the plan's capture storage, and the pool the hourly
+// quotas, storage and lock are counted in. The pool is the app's resource
+// owner (state.Account.ResourceOwnerID): an organization's apps share one
+// pool under the organization's plan, whoever created them. An empty Pool
+// counts the capture's own account.
+type ProfileCaptureLimits struct {
+	StorageBytes int64
+	Pool         string
+}
+
+// pool returns the pool a capture of accountID counts in.
+func (l ProfileCaptureLimits) pool(accountID string) string {
+	if l.Pool != "" {
+		return l.Pool
+	}
+	return accountID
+}
+
 // profileCaptureUsage is an account's capture storage: stored bytes of
 // unexpired captures and captures still queued or running, in total and for
 // automatic captures alone.
@@ -137,10 +156,10 @@ type ClaimedProfileCapture struct {
 }
 
 type ProfileCaptureStore interface {
-	// CreateProfileCapture queues a manual capture. storageLimit is the
-	// account plan's ProfilingLimits.CaptureStorageBytes; a capture that might
-	// not fit returns a *ProfileCaptureStorageError.
-	CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, storageLimit int64) error
+	// CreateProfileCapture queues a manual capture under limits: the resource
+	// owner's plan storage and pool. A capture that might not fit returns a
+	// *ProfileCaptureStorageError.
+	CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, limits ProfileCaptureLimits) error
 	GetProfileCapture(ctx context.Context, accountID, appID, id string) (api.ProfileCapture, error)
 	// DeleteProfileCapture deletes one of the app's captures and its
 	// profiles, in any status, or returns ErrNotFound. A capture still
@@ -170,15 +189,17 @@ type ProfileCaptureQueue interface {
 	// an OOM kill during the window can find it.
 	StartProfileCapture(ctx context.Context, id, instanceID, deploymentID string) error
 	// StampProfileCaptureOOM links an OOM kill to the newest heap capture
-	// started on that instance since `since`, returning its id or
-	// ErrNotFound. Re-stamping the same kill is idempotent. The first kill
-	// linked to an already ready capture enqueues profile.capture_oom_linked;
-	// a capture still running announces it when it finishes.
+	// started on that instance since `since` that is still capturing or
+	// ready, returning its id or ErrNotFound: a failed capture has no heap
+	// profile to explain the kill. Re-stamping the same kill is idempotent.
+	// The first kill linked to an already ready capture enqueues
+	// profile.capture_oom_linked; a capture still running announces it when
+	// it finishes.
 	StampProfileCaptureOOM(ctx context.Context, appID, instanceID string, oom ProfileCaptureOOM, since time.Time) (string, error)
 	// QueueAutomaticProfileCapture queues a platform-triggered capture under
 	// the same quota, storage and single-active rules as CreateProfileCapture,
 	// plus a per-app minimum interval for c.Trigger.
-	QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration, storageLimit int64) error
+	QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration, limits ProfileCaptureLimits) error
 }
 
 var (
@@ -193,20 +214,21 @@ var (
 const ProfileCaptureInterruptedAfter = api.ProfileCaptureMaxDuration + api.ProfileCaptureGrace + time.Minute
 
 // ProfileCaptureQueuedTimeout fails captures no schedd claimed.
-const ProfileCaptureQueuedTimeout = 10 * time.Minute
+const ProfileCaptureQueuedTimeout = api.ProfileCaptureQueuedTimeout
 
 const profileCaptureInterruptedReason = "capture was interrupted before it completed"
 
 // profileCaptureRequestDoc is the stored request; lifecycle columns are
-// merged on read.
-func profileCaptureRequestDoc(c api.ProfileCapture) ([]byte, error) {
+// merged on read. pool is the quota and storage pool it counts in; reads
+// decode into api.ProfileCapture, which has no such field.
+func profileCaptureRequestDoc(c api.ProfileCapture, pool string) ([]byte, error) {
 	trigger := c.Trigger
 	if trigger == "" {
 		trigger = api.ProfileCaptureTriggerManual
 	}
 	doc := map[string]any{"kinds": c.Kinds, "duration_seconds": c.DurationSeconds,
 		"requested_instance_id": c.RequestedInstanceID, "trigger": trigger, "trigger_detail": c.TriggerDetail,
-		"processes": 0, "profiles": []api.ProfileCaptureProfile{}}
+		"processes": 0, "profiles": []api.ProfileCaptureProfile{}, "pool": pool}
 	if c.RequestID != "" {
 		doc["request_id"] = c.RequestID
 	}

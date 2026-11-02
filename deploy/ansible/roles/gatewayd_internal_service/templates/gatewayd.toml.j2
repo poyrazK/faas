@@ -28,6 +28,14 @@ service_proxy_tls_ca_path = "{{ gatewayd_service_proxy_tls_ca_path }}"
 service_tcp_listen = "{{ gatewayd_service_tcp_listen }}"
 service_tcp_dns = {{ gatewayd_service_tcp_dns | default(false) | bool | lower }}
 {% endif %}
+{% if gatewayd_database_route_listen | default('') | length > 0 %}
+# ADR-1027: the app route to managed databases; the host DNATs 198.18.0.1:5432 here.
+database_route_listen = "{{ gatewayd_database_route_listen }}"
+database_route_upstreams = ["{{ gatewayd_database_route_upstreams | join('", "') }}"]
+{% if gatewayd_database_route_host_suffix | default('') | length > 0 %}
+database_route_host_suffix = "{{ gatewayd_database_route_host_suffix }}"
+{% endif %}
+{% endif %}
 
 # ADR-093 operator kill-switch. Default-on (true) so the rollout
 # reaches Hobby/Pro/Scale customers who didn't flip the per-app

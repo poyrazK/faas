@@ -52,12 +52,18 @@ A fourth billing audit of `main` (2026-11-01) found:
    before the request, as it does for accounts.
 3. **Managed PostgreSQL overage steps are reserved before they are sent.**
    `managed_postgres_overage_pending` (same migration) holds at most one step
-   per provider, subject and month. A pass finishes a reserved step before
-   computing a new one, sending it unchanged; the provider deduplicates it on
-   its target. Recording the delivery and clearing the reservation happen in
-   one transaction. A replica that finds a reservation leaves it to its
-   holder. A step reserved in live mode is not completed while delivery is in
-   shadow mode.
+   per provider, subject and month, with the delivery row it was computed
+   from and its storage charge. A pass finishes a reserved step before
+   computing a new one, sending it unchanged; the provider deduplicates it.
+   Recording the delivery (by the same rules as any delivery: a live step may
+   replace a shadow row) and clearing the reservation happen in one
+   transaction. A replica that finds a reservation leaves it to its holder.
+   A step reserved in live mode is not completed while delivery is in shadow
+   mode. Main meanwhile keyed the provider's deduplication on a step's
+   starting point (bug hunt 33), which alone avoids the double charge but
+   records a retry's larger target while the provider keeps the first step's
+   smaller one; with the step reserved, the retry is identical, so what is
+   recorded is what the provider holds and the growth is charged next.
 4. **A refund for an unknown order is acknowledged.** apid records it in the
    audit log (`invoice_known: false`), logs it and answers 200; no refund row
    is written, because there is no invoice to attach it to.

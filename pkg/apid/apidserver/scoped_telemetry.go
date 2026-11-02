@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/workerrecovery"
 	"github.com/onebox-faas/faas/pkg/apphealth"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -80,7 +81,10 @@ func (s *server) scopedOperationalSummary(ctx context.Context, acct state.Accoun
 	defer cancel()
 	out := api.AppOperationalSummary{Version: 1, AppID: app.ID, Scope: scope, ProjectID: env.ProjectID, EnvironmentID: env.ID, CheckedAt: time.Now().UTC(), Monitoring: api.AppOperationalMonitoring{Status: "unknown", Reason: "environment_monitor_unavailable", Coverage: "deployment_attributed_only"}}
 	out.Monitoring = s.scopedRouteMonitoring(ctx, acct, app, env, scope)
-	health := apphealth.CollectScope(ctx, s.store, s.promqlClient, app, acct.Plan.PerAppMetricsAllowed(), scope)
+	health := apphealth.CollectScopeWith(ctx, s.store, s.promqlClient, app, scope, apphealth.Options{
+		MetricsAllowed: acct.Plan.PerAppMetricsAllowed(),
+		AssessWorkers:  s.platformFlagEnabled(platformflags.AppHealthWorkers, acct),
+	})
 	health.ProjectID, health.EnvironmentID = env.ProjectID, env.ID
 	out.Health = &health
 	out.Recovery = s.scopedOperationalRecovery(ctx, acct, app, scope)

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/rehearsalcold"
 	"github.com/onebox-faas/faas/pkg/rehearsalresume"
 	"github.com/onebox-faas/faas/pkg/rehearsalwork"
@@ -46,12 +46,12 @@ type ScenarioTestDNSChaosPolicy struct {
 	Lease       chaos.Lease
 }
 
-var scenarioTestRunPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
-var scenarioTestWorkloadPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+var scenarioTestRunPattern = lazyregexp.New(`^[0-9a-f]{32}$`)
+var scenarioTestWorkloadPattern = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 
 // scenarioTestServiceNamePattern is a service DNS label, the name the
 // gateway resolves inside a run (ADR-20261026105459).
-var scenarioTestServiceNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+var scenarioTestServiceNamePattern = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // validScenarioTestMemberName accepts any service name for a plain member,
 // such as a `gregale dev --all` app. A member enrolled in rehearsal capture,
@@ -65,7 +65,7 @@ func validScenarioTestMemberName(member ScenarioTestMember) bool {
 	return scenarioTestWorkloadPattern.MatchString(member.Workload)
 }
 
-var scenarioChaosRuleIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var scenarioChaosRuleIDPattern = lazyregexp.New(`^[0-9a-f]{64}$`)
 
 func validScenarioTestMembers(accountID, runID string, members []ScenarioTestMember) error {
 	if accountID == "" || !scenarioTestRunPattern.MatchString(runID) || len(members) == 0 || len(members) > 16 {

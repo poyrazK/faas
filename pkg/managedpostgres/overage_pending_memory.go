@@ -33,7 +33,8 @@ func (s *MemoryStore) ReserveOverage(_ context.Context, pending OveragePendingSt
 }
 
 func (s *MemoryStore) CompleteOverage(_ context.Context, pending OveragePendingStep) (bool, error) {
-	if !validOveragePending(pending) {
+	delivery := pendingDelivery(pending)
+	if !validOveragePending(pending) || !validOverageDelivery(delivery) || !validOverageAdvance(delivery, pending.Previous) {
 		return false, ErrInvalid
 	}
 	step := pending.Step
@@ -41,9 +42,11 @@ func (s *MemoryStore) CompleteOverage(_ context.Context, pending OveragePendingS
 	defer s.mu.Unlock()
 	key := memoryOverageKey{pending.Provider, step.SubjectID, step.PeriodStart.UTC()}
 	recorded := false
-	if s.overageDeliveries[key].Millicents == step.DeliveredMillicents {
-		s.overageDeliveries[key] = OverageDelivery{Provider: pending.Provider, SubjectID: step.SubjectID, PeriodStart: step.PeriodStart.UTC(),
-			Live: pending.Live, BilledUnitSeconds: step.BilledUnitSeconds, Millicents: step.TargetMillicents, UpdatedAt: step.At.UTC()}
+	// The row must still be the one the step was computed from, as
+	// RecordOverageDelivery requires.
+	if current := s.overageDeliveries[key]; current.Millicents == pending.Previous.Millicents &&
+		(current.Millicents == 0 || current.Live == pending.Previous.Live) {
+		s.overageDeliveries[key] = delivery
 		recorded = true
 	}
 	if held, ok := s.overagePending[key]; ok && held.Step.TargetMillicents == step.TargetMillicents {
