@@ -13532,6 +13532,9 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 			Observed: accountCount,
 		}
 	}
+	if m.cronIdentityTakenLocked("", appID, schedule, path, opts.Command) {
+		return Cron{}, ErrConflict
+	}
 	c := Cron{
 		ID:                    newCronID(),
 		AppID:                 appID,
@@ -13556,6 +13559,17 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 	}
 	m.crons[c.ID] = c
 	return c, nil
+}
+
+// cronIdentityTakenLocked mirrors crons_app_schedule_path_command_unique:
+// another cron of appID already has this schedule, path and command.
+func (m *MemStore) cronIdentityTakenLocked(id, appID, schedule, path string, command []string) bool {
+	for otherID, other := range m.crons {
+		if otherID != id && other.AppID == appID && other.Schedule == schedule && other.Path == path && sameCronCommand(other.Command, command) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *MemStore) CronByID(_ context.Context, id string) (Cron, error) {
@@ -13590,6 +13604,9 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	}
 	if path != nil {
 		c.Path = *path
+	}
+	if (schedule != nil || path != nil) && m.cronIdentityTakenLocked(c.ID, c.AppID, c.Schedule, c.Path, c.Command) {
+		return Cron{}, ErrConflict
 	}
 	if enabled != nil {
 		c.Enabled = *enabled

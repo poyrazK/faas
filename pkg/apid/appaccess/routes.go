@@ -251,16 +251,21 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/crons":                            authz.OrgActionReadApp,
 	"POST /v1/crons":                           authz.OrgActionConfigureApp,
 	"GET /v1/crons/{id}":                       authz.OrgActionReadApp,
+	"GET /v1/crons/{id}/status":                authz.OrgActionReadApp,
 	"PATCH /v1/crons/{id}":                     authz.OrgActionConfigureApp,
+	"PATCH /v1/crons/{id}/labels":              authz.OrgActionConfigureApp,
 	"DELETE /v1/crons/{id}":                    authz.OrgActionConfigureApp,
 	"GET /v1/crons/{id}/occurrences":           authz.OrgActionReadApp,
 	"GET /v1/crons/{id}/runs":                  authz.OrgActionReadApp,
 	"GET /v1/crons/{id}/runs/{run_id}":         authz.OrgActionReadAppLogs,
 	"POST /v1/crons/{id}/run":                  authz.OrgActionDeployApp,
 	"POST /v1/crons/{id}/runs/{run_id}/cancel": authz.OrgActionDeployApp,
-	"GET /v1/invocations/{id}":                 authz.OrgActionReadAppLogs,
-	"POST /v1/invocations/{id}/replay":         authz.OrgActionDeployApp,
-	"POST /v1/invocations/{id}/replay-keyed":   authz.OrgActionDeployApp,
+	// A manual run's request is read by whoever may read its cron: a member
+	// who ran a company cron polls it under the company's account.
+	"GET /v1/cron-fire-now-requests/{request_id}": authz.OrgActionReadApp,
+	"GET /v1/invocations/{id}":                    authz.OrgActionReadAppLogs,
+	"POST /v1/invocations/{id}/replay":            authz.OrgActionDeployApp,
+	"POST /v1/invocations/{id}/replay-keyed":      authz.OrgActionDeployApp,
 
 	// Session-only dashboard and GitHub install routes (Authorize, called
 	// from the dashboard session gate). Their reads take OrgActionReadApp

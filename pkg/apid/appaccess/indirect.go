@@ -1,6 +1,7 @@
 package appaccess
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -27,6 +28,8 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 		var cron state.Cron
 		cron, err = store.CronByID(r.Context(), id)
 		appID = cron.AppID
+	case strings.HasPrefix(path, "/v1/cron-fire-now-requests/") && validID(r.PathValue("request_id")):
+		appID, err = fireNowRequestApp(r, store)
 	case strings.HasPrefix(path, "/v1/edge-rules/") && id != "":
 		var rule state.EdgeRule
 		rule, err = store.GetEdgeRuleByID(r.Context(), id)
@@ -49,6 +52,29 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 	}
 	app, err := store.AppByID(r.Context(), appID)
 	return app, true, err
+}
+
+// fireNowRequestApp resolves the app behind a manual cron run's request. A
+// missing request or cron is left to the handler, which answers its own 404.
+func fireNowRequestApp(r *http.Request, store Store) (string, error) {
+	requests, ok := store.(interface {
+		GetFireNowRequest(context.Context, string) (state.FireNowRequest, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	request, err := requests.GetFireNowRequest(r.Context(), r.PathValue("request_id"))
+	if errors.Is(err, state.ErrFireNowRequestNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	cron, err := store.CronByID(r.Context(), request.CronID)
+	if err != nil {
+		return "", missing(err)
+	}
+	return cron.AppID, nil
 }
 
 // ownedResourceApp resolves the app behind resource URLs whose handlers check
