@@ -1184,11 +1184,11 @@ func (s *server) listTriggerDeadLetter(w http.ResponseWriter, r *http.Request, a
 
 // getTriggerMetrics handles GET /v1/triggers/{id}/metrics.
 //
-// Walks trigger_records for the trigger and counts by state. The
-// store layer is the future home of a CountTriggerRecordsByState
-// helper; this handler-side aggregation covers the dashboard until
-// then. A 1000-row ceiling keeps the cost bounded; the Prometheus
-// surface (`/v1/metrics`) is the authoritative counters path.
+// Counts the trigger's records by state, each count stopping at
+// api.TriggerMetricsCountLimit, and reports the scheduler's last
+// observation of its broker consumer: liveness, the last error and the
+// broker's lag (ADR-20261101104512). The Prometheus surface
+// (`/v1/metrics`) is the authoritative counters path.
 func (s *server) getTriggerMetrics(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, ok := parseTriggerID(w, r)
 	if !ok {
@@ -1203,7 +1203,36 @@ func (s *server) getTriggerMetrics(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	metrics.TriggerID = id
+	if metrics.Consumer, err = s.triggerConsumerStatus(r.Context(), id); err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not load trigger consumer health"))
+		return
+	}
 	writeJSON(w, http.StatusOK, metrics)
+}
+
+// triggerConsumerStatus is the scheduler's last observation of the
+// trigger's consumer, nil before its first poll.
+func (s *server) triggerConsumerStatus(ctx context.Context, id string) (*api.TriggerConsumerStatus, error) {
+	healthStore, ok := s.store.(state.TriggerConsumerHealthStore)
+	if !ok {
+		return nil, nil
+	}
+	health, err := healthStore.TriggerConsumerHealth(ctx, id)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("trigger consumer health: %w", err)
+	}
+	return &api.TriggerConsumerStatus{
+		Liveness:      queueBindingConsumerLiveness(time.Now().UTC(), health),
+		LastPollAt:    health.LastPollAt,
+		LastSuccessAt: health.LastSuccessAt,
+		LastErrorAt:   health.LastErrorAt,
+		LastError:     health.LastError,
+		LagMessages:   health.LagMessages,
+		LagAgeSeconds: health.LagAgeSeconds,
+	}, nil
 }
 
 // batchCreateTrigger handles POST /v1/triggers:batch_create.
@@ -1623,10 +1652,21 @@ func kafkaSkipVerifyRequested(kind api.TriggerKind, raw json.RawMessage) (bool, 
 	return cfg.TLS.SkipVerify, nil
 }
 
-// aggregateTriggerMetrics walks trigger_records for the trigger
-// and counts by state. A 1000-row ceiling keeps the cost bounded
-// (the dispatcher owns the authoritative counters via Prometheus).
+// aggregateTriggerMetrics counts the trigger's records by state, each
+// count stopping at api.TriggerMetricsCountLimit. A store without the
+// counter (narrow test stores) counts the newest 1000 rows instead.
 func (s *server) aggregateTriggerMetrics(ctx context.Context, id string) (api.TriggerMetricsResponse, error) {
+	if counter, ok := s.store.(state.TriggerRecordStateCounter); ok {
+		counts, err := counter.CountTriggerRecordsByState(ctx, id, api.TriggerMetricsCountLimit)
+		if err != nil {
+			return api.TriggerMetricsResponse{}, err
+		}
+		return api.TriggerMetricsResponse{
+			PendingCount: int(counts.Pending), ClaimedCount: int(counts.Claimed),
+			SucceededCount: int(counts.Succeeded), RetryCount: int(counts.Retry),
+			DeadLetterCount: int(counts.DeadLetter), CountLimit: api.TriggerMetricsCountLimit,
+		}, nil
+	}
 	rows, err := s.store.ListTriggerRecordsForTrigger(ctx, id, int32(1000))
 	if err != nil {
 		return api.TriggerMetricsResponse{}, err

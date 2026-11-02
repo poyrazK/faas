@@ -182,10 +182,14 @@ type NATSBroker = natsBroker
 // NewNATSBrokerPool is a broker pool that dials with dial instead of
 // connecting to NATS.
 func NewNATSBrokerPool(dial func(rawURL string) (*NATSBroker, error)) *natsBrokerPool {
-	return &natsBrokerPool{dial: dial, brokers: map[string]*natsBroker{}}
+	return newNATSBrokerPool(dial, time.Hour)
 }
 
-func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) { return p.forURL(rawURL) }
+// ForURL acquires rawURL's broker and keeps the reference.
+func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) {
+	broker, _, err := p.acquire(rawURL)
+	return broker, err
+}
 
 // NewRedisStreamPoller wraps an already connected client, as newRedisPoller
 // does after its ping and group creation; the egress dialer refuses the

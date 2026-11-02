@@ -269,7 +269,7 @@ func cmdTriggersCreate(args []string) int {
 	enabled := fs.Bool("enabled", false, "enable the trigger")
 	disabled := fs.Bool("disabled", false, "disable the trigger")
 	batchSize := fs.Int("batch-size", 0, "maximum records per dispatch batch")
-	batchWindow := fs.Int("batch-window-ms", 0, "maximum batch dwell time in milliseconds")
+	batchWindow := fs.Int("batch-window-ms", 0, "accepted but not applied: a batch is what one poll returns")
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
 	payloadMaxBytes := fs.Int("payload-max-bytes", 0, "maximum broker payload size in bytes")
 	poisonStrategy := fs.String("broker-poison-strategy", "", "kafka poison strategy (commit|seek-to-offset)")
@@ -376,7 +376,7 @@ func cmdTriggersUpdate(args []string) int {
 	disabled := fs.Bool("disabled", false, "disable the trigger")
 	config := fs.String("config", "", "replace JSON config (inline | @file | - for stdin)")
 	batchSize := fs.Int("batch-size", 0, "maximum records per dispatch batch")
-	batchWindow := fs.Int("batch-window-ms", 0, "maximum batch dwell time in milliseconds")
+	batchWindow := fs.Int("batch-window-ms", 0, "accepted but not applied: a batch is what one poll returns")
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
 	payloadMaxBytes := fs.Int("payload-max-bytes", 0, "maximum broker payload size in bytes")
 	poisonStrategy := fs.String("broker-poison-strategy", "", "kafka poison strategy (commit|seek-to-offset)")
@@ -648,6 +648,15 @@ func cmdTriggersMetrics(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "succeeded:  %d\n", metrics.SucceededCount)
 	_, _ = fmt.Fprintf(osStdout, "retry:      %d\n", metrics.RetryCount)
 	_, _ = fmt.Fprintf(osStdout, "dead-letter: %d\n", metrics.DeadLetterCount)
+	if c := metrics.Consumer; c != nil {
+		_, _ = fmt.Fprintf(osStdout, "consumer:   %s\n", c.Liveness)
+		if c.LagMessages != nil {
+			_, _ = fmt.Fprintf(osStdout, "lag:        %d messages\n", *c.LagMessages)
+		}
+		if c.LastError != "" && c.Liveness == "degraded" {
+			_, _ = fmt.Fprintf(osStdout, "last error: %s\n", oneLine(c.LastError))
+		}
+	}
 	return 0
 }
 

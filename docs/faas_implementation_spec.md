@@ -687,6 +687,7 @@ Every non-cron kind shares the same envelope:
 - 6MB payload cap (Lambda's hard cap; fixed)
 
 A batch closes on ANY of: `len == batch_size_max`, `now >= window_deadline`, `Σ(payload_bytes) >= 6MB`.
+(ADR-20261101104512: `batch_window_ms` is stored but not applied to external broker triggers; a batch is what one poll returns.)
 
 #### Wire envelope
 
