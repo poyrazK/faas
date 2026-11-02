@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -21,12 +22,9 @@ import (
 // stored hashes are keyed by a secret only apid holds.
 func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.UploadAuthenticator, registry *objectstorage.Registry, reads *objectstorage.ReadAdmitter,
 	enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
-	publicHandler, err := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
-		Store: store, Registry: registry, RequestMetrics: store, Accounting: store, ReadAdmitter: reads,
-		Enabled: enabled, AppsDomain: domains.Apps, Next: next, Log: log,
-	})
+	publicHandler, err := publicObjectReads(store, registry, reads, nil, enabled, domains, next, log)
 	if err != nil {
-		return nil, fmt.Errorf("gatewayd-public: public object storage handler: %w", err)
+		return nil, err
 	}
 	upload, err := objectstorage.NewUploadHandler(objectstorage.UploadConfig{
 		Store: store, Routes: store, Buckets: store, Authenticator: credentials,
@@ -39,6 +37,32 @@ func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.U
 	log.Info("gatewayd-public: policy-controlled object uploads enabled")
 	log.Info("gatewayd-public: public object storage reads enabled")
 	return upload, nil
+}
+
+// publicObjectReads serves public bucket reads on app hostnames in front of
+// next. transfers paces their bodies; nil leaves them unpaced.
+func publicObjectReads(store *state.EdgeStore, registry *objectstorage.Registry, reads *objectstorage.ReadAdmitter, transfers *objectstorage.TransferLimiter,
+	enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
+	h, err := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
+		Store: store, Registry: registry, RequestMetrics: store, Accounting: store, ReadAdmitter: reads,
+		Transfers: transfers, Enabled: enabled, AppsDomain: domains.Apps, Next: next, Log: log,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gatewayd-public: public object storage handler: %w", err)
+	}
+	return h, nil
+}
+
+// startObjectStorageFence keeps public object routes closed while a restore
+// fence is (ADR-20261025111015 amendment), as the S3 gateway does. The
+// returned func reports whether the fence is open.
+func startObjectStorageFence(ctx context.Context, store *state.EdgeStore, log *slog.Logger) func() bool {
+	fence := runtimeconfig.NewObjectStorageFence(store, log)
+	if err := fence.Check(ctx); err != nil {
+		log.Warn("gatewayd-public: initial object storage fence read failed", "err", err)
+	}
+	go fence.Run(ctx)
+	return fence.Open
 }
 
 // startPublicReadAdmitter admits public bucket reads from cached decisions

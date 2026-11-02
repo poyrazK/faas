@@ -1,0 +1,45 @@
+# ADR-20261031122757 §3/§7: the port-share alert, on its own so the week-long
+# window evaluates hourly instead of every 30 s.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1h
+
+tests:
+  # ADR-20261031122757 §7: a gateway at its port share for more than 10% of
+  # the week warns, and so do the app edge's public reads at their part.
+  - name: the s3 gateway or the edge's public reads at their share for 10% of the week warns
+    interval: 1h
+    input_series:
+      # rate() divides by the whole 7-day window, so these counters grow
+      # faster than wall-clock time to reach 20% of a week within hours:
+      # 4 h × 30,240 s / 604,800 s = 0.2.
+      - series: s3_gateway_transfer_throttled_seconds_total{direction="download",instance="cn-1:9096"}
+        values: 0+30240x10
+      - series: gatewayd_public_object_transfer_throttled_seconds_total{direction="download",instance="cn-2:9109"}
+        values: 0+30240x10
+      # 2% of the week stays quiet.
+      - series: s3_gateway_transfer_throttled_seconds_total{direction="download",instance="cn-3:9096"}
+        values: 0+3024x10
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: FaasS3GatewayPortShareSaturated
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: s3-gatewayd
+              family: object_storage
+              instance: cn-1:9096
+            exp_annotations:
+              summary: "An object gateway spends more than 10% of the week at its port share"
+              description: "Transfers through cn-1:9096 waited for its part of the node's port share 20% of the last 7 days. Customers see slower transfers, not errors. Plan the cell's move to dedicated gateway machines (ADR-20261031122757 §7)."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          - exp_labels:
+              severity: warn
+              component: s3-gatewayd
+              family: object_storage
+              instance: cn-2:9109
+            exp_annotations:
+              summary: "An object gateway spends more than 10% of the week at its port share"
+              description: "Transfers through cn-2:9109 waited for its part of the node's port share 20% of the last 7 days. Customers see slower transfers, not errors. Plan the cell's move to dedicated gateway machines (ADR-20261031122757 §7)."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
