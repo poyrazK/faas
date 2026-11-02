@@ -198,9 +198,13 @@ demand.
 
 ## Rollout
 
-0. **Live test, before any code.** Two throwaway VMs with public addresses
-   and a test name, `rr-probe.<apps domain>`, with two proxied A records.
-   The operator applies the records with their own token. It answers:
+0. **Live test, on the pilot.** The GCP project has no room for throwaway
+   VMs, so the test runs at step 4 on the real nodes. Until step 5 only the
+   pilot hostname takes the direct path; everything else still enters
+   through the tunnel. So refusing or silencing one node's port 443 there
+   affects only the pilot's traffic. The operator applies the records with
+   their own token, and reads the zone's plan from the dashboard first. The
+   test answers:
    - whether our zone's plan gets the retry;
    - how evenly Cloudflare spreads requests, seen from two client locations;
    - what a refused, a silent and a hanging origin each cost a client;
@@ -217,8 +221,9 @@ demand.
 2. **Ansible and the manifest** (§6): addresses, nftables, certificate
    sealing, `entry: both`.
 3. **`edgednsd`** in dry run, then live for the pilot name only.
-4. **Pilot.** One app hostname gets explicit records to every node,
-   measured as in step 0.
+4. **Pilot.** One app hostname gets explicit records to every node, and
+   step 0 runs against it. Each failure injected there is removed as soon as
+   it is measured.
 5. **Wildcard.** The script swaps `*.<apps domain>` from the tunnel CNAME
    to the managed records. Rollback is the CNAME again; the tunnel is still
    running under `both`.
@@ -276,7 +281,7 @@ demand.
 
 ## Open questions
 
-- The zone's plan and SSL mode. Step 0 reads both.
+- The zone's plan and SSL mode, read from the dashboard before step 2.
 - Whether Cloudflare's per-hostname client certificates are needed, or the
   zone-level certificate is enough while the apps zones hold only app
   hosts.
