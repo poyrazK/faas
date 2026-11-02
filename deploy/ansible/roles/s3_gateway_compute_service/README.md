@@ -46,7 +46,8 @@ Prometheus discovers both per node from apid
 (`/v1/internal/metrics/s3-gatewayd-compute-targets`,
 `/v1/internal/metrics/cloudflared-s3-targets`) while the manifest runs the
 gateway on compute nodes; `FaasComputeObjectGatewayDown`,
-`FaasComputeObjectGatewayConnectorDisconnected` and
+`FaasComputeObjectGatewayConnectorDisconnected`,
+`FaasComputeObjectGatewayUnavailable` (after the cutover) and
 `FaasS3GatewayPortShareSaturated` cover them
 (`docs/runbooks/FaasObjectStorage.md`).
 
@@ -91,6 +92,17 @@ compute variables. The role then writes the pilot host as the registry's
 `deploy/scripts/cloudflare-s3-tunnel.sh` creates the s3 tunnel and the pilot
 record and stages the token on the pilot node alone. Set the variable back to
 `''` before the cutover.
+
+## Cutover
+
+When `s3.<domain>` moves to the s3 tunnel (ADR step 6), set
+`faas_object_gateway_endpoint_on_tunnel: true` in the control plane's
+variables (`CP_ANSIBLE_VARS_B64`). Prometheus then labels the compute
+gateways `s3_endpoint_route="tunnel"`, and
+`FaasComputeObjectGatewayUnavailable` pages when no node has both its
+gateway answering and its connector connected. Before the cutover the page
+stays silent, since the tunnel carries at most the pilot host. Set it back to
+false if `s3.<domain>` returns to the control-plane origin.
 
 ## Checks
 
