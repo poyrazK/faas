@@ -311,17 +311,30 @@ export class EdgeRulesService {
    */
   public static listEdgeRulesForApp({
     slug,
+    covering = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * When true, also return the rules written on the account's other
+     * apps with the same owner whose host pattern (anything but `@app`)
+     * can cover this app's hosts. The gateway applies those to this
+     * app's hosts too. Each rule carries its own `app_id`; the ETag
+     * stays this app's rule set.
+     *
+     */
+    covering?: boolean,
   }): CancelablePromise<Array<EdgeRuleResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-rules',
       path: {
         'slug': slug,
+      },
+      query: {
+        'covering': covering,
       },
       errors: {
         401: `code: unauthorized`,
