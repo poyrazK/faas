@@ -322,6 +322,7 @@ var cliTreeAliases = []cliTreeAlias{
 	// Account.
 	{"account mfa", "mfa"},
 	{"account", "account"},
+	{"org agent policy", "orgs agent-policy"},
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},

@@ -135,9 +135,9 @@ Owners and admins decide whether agents may act in their organization, and
 with which capabilities beyond inspection:
 
 ```sh
-gregale org agent-policy get --org acme
-gregale org agent-policy set --org acme --agents allow --capabilities deploy:write,secrets:request
-gregale org agent-policy set --org acme --agents deny
+gregale org agent policy get --org acme
+gregale org agent policy set --org acme --agents allow --capabilities deploy:write,secrets:request
+gregale org agent policy set --org acme --agents deny
 ```
 
 The capabilities are `deploy:write`, `secrets:request`, `storage:manage` and

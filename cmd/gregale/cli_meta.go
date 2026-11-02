@@ -5219,9 +5219,9 @@ var cliCommands = []cliCommand{
 					{Name: "label", Short: "new label (empty keeps the current one)", Value: "TEXT"},
 				}},
 			}},
-			{Name: "agent-policy", Short: "Show or set whether agents may act in the org, and with which capabilities", Subcommands: []cliSub{
+			{Name: "agent-policy", Short: "Show or set whether agents may act in the org", Notes: []string{"The policy also caps the capabilities agents may hold beyond inspection."}, Subcommands: []cliSub{
 				{Name: "get", Short: "Show the org's agent policy", Flags: []cliFlag{orgSlugFlag}},
-				{Name: "set", Short: "Allow or deny agents and cap their capabilities; revokes connections the new policy doesn't allow", Notes: []string{"Owners and admins only. Without --capabilities, an allowed policy keeps its current capabilities."}, Examples: []string{"gregale org agent-policy set --org acme --agents allow --capabilities deploy:write,secrets:request", "gregale org agent-policy set --org acme --agents deny"}, Flags: []cliFlag{
+				{Name: "set", Short: "Allow or deny agents and cap their capabilities", Notes: []string{"Owners and admins only. Without --capabilities, an allowed policy keeps its current capabilities.", "Revokes, at once, the agent connections the new policy no longer allows."}, Examples: []string{"gregale org agent policy set --org acme --agents allow --capabilities deploy:write,secrets:request", "gregale org agent policy set --org acme --agents deny"}, Flags: []cliFlag{
 					orgSlugFlag,
 					{Name: "agents", Short: "allow or deny agents in the org", Value: "allow|deny", Req: true},
 					{Name: "capabilities", Short: "comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only", Value: "LIST"},

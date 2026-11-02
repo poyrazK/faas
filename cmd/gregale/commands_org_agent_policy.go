@@ -13,7 +13,7 @@ import (
 // cmdOrgsAgentPolicy shows or sets whether agents may act in an
 // organization, and with which capabilities (ADR-20261101225122).
 func cmdOrgsAgentPolicy(args []string) int {
-	const usage = "usage: gregale org agent-policy get --org <slug> | set --org <slug> --agents allow|deny [--capabilities LIST]"
+	const usage = "usage: gregale org agent policy get --org <slug> | set --org <slug> --agents allow|deny [--capabilities LIST]"
 	if len(args) == 0 || (args[0] != "get" && args[0] != "set") {
 		PrintUsage(os.Stderr, usage, "orgs")
 		return 1

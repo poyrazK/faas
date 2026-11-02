@@ -84,7 +84,7 @@ revokes their own agents with `/v1/agent-connections`, which now names the
 organization each acts in.
 
 CLI: `gregale mcp connection list|revoke --org <slug>` and
-`gregale org agent-policy get|set`.
+`gregale org agent policy get|set`.
 
 ## Consequences
 

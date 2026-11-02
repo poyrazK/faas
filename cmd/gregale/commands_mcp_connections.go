@@ -39,7 +39,7 @@ func cmdMCPConnections(args []string) int {
 		return 1
 	}
 	if *socket == "" {
-		return cmdAgentConnections(args[0], positional, all, *org)
+		return cmdMCPAgentConnections(args[0], positional, all, *org)
 	}
 	if len(positional) != 0 || all || *org != "" || limit < 1 || limit > 100 || offset < 0 || (args[0] == "revoke" && grant == "") {
 		return printErr("MCP connections", errors.New("with --socket, provide valid page bounds, and --grant-id for revocation"))
@@ -77,9 +77,9 @@ func connectionCalls(client *Client, org string) agentConnectionCalls {
 	}
 }
 
-// cmdAgentConnections lists or revokes the account's connected agents, or
+// cmdMCPAgentConnections lists or revokes the account's connected agents, or
 // an organization's.
-func cmdAgentConnections(verb string, ids []string, all bool, org string) int {
+func cmdMCPAgentConnections(verb string, ids []string, all bool, org string) int {
 	if len(ids) > 1 || (verb == "list" && len(ids) != 0) || (verb == "revoke" && all == (len(ids) == 1)) {
 		return printErr("MCP connections", errors.New("use connection list, or connection revoke <id> | --all"))
 	}
