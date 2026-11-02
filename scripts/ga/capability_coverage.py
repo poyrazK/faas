@@ -137,6 +137,9 @@ RULES = [
     # Keyed credential hashes (ADR 20261029202403): storage plumbing under
     # every credential, no capability of its own.
     (r"^credhash$", "INFRA"),
+    # Compile-on-first-use regexps for package-level patterns
+    # (ADR-20261101215228 measurement); no capability of its own.
+    (r"^lazyregexp$", "INFRA"),
     # Each family's ring and rollout switches (amendment 1).
     (r"^credential-(scheduler|outbound|uploads|attach|dev-bridge|data-api)-(keys-file|writes|plain-lookup)$", "INFRA"),
     # vmmd's instance bridge switches (connection-survival ADR): data-path plumbing.
@@ -341,7 +344,7 @@ RULES = [
     (r"oci|image|container", "Container / OCI image"),
     (r"build|railpack|buildkit", "Builds in builder"),
     (r"upload|tarball|source|deploy", "Source deploys:"),
-    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|apps-list|apps-new|app-detail", "Apps: create"),
+    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|apps-list|apps-new|app-detail", "Apps: create"),
 ]
 
 # Checked before everything else, for every source: names a broad rule or the
@@ -382,6 +385,10 @@ INFRA_RULES = [
     r"^platform-error-status$",
     # ADR-20261031105055: the compute edge's host-to-node routing and its switch.
     r"^edge-placement(-routing)?$",
+    # ADR-20261102081618 §5: local first for an app on several nodes.
+    r"^edge-local-first$",
+    # ADR-20261102081618: the records that send Cloudflare to the compute edges.
+    r"^edgednsd?(-.*)?$",
 ]
 
 

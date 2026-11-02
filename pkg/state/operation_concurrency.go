@@ -4,12 +4,12 @@ package state
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // operationQueueHold is the due time of a queued Operation's invocation or
@@ -21,7 +21,7 @@ const (
 	operationQueueUsageGroups = 200
 )
 
-var operationConcurrencyName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+var operationConcurrencyName = lazyregexp.New(`^[a-z][a-z0-9-]{0,63}$`)
 
 // OperationConcurrencyPolicyInput sets one policy on an app.
 type OperationConcurrencyPolicyInput struct {

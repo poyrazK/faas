@@ -201,3 +201,46 @@ func TestDeployCredentials_ReadTheirAppAndDeployments(t *testing.T) {
 		t.Fatalf("deploy:write PATCH = %d (body=%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// A deploy of a gregale.yaml lists the app's queue bindings, and a
+// function-set deploy its crons, before writing them, which deploy:write
+// already may (ADR-20261031162858 amendment 1). The account-wide cron list
+// keeps apps:read.
+func TestDeployCredentials_ReadWhatAManifestDeployReconciles(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "ci-manifest-a")
+	apidserver.MustSeedApp(t, e, "ci-manifest-b")
+	createdRec := e.Do(t, http.MethodPost, "/v1/apps/ci-manifest-a/deploy-tokens", api.CreateDeployTokenRequest{Label: "ci"}, nil)
+	if createdRec.Code != http.StatusCreated {
+		t.Fatalf("create: code=%d body=%s", createdRec.Code, createdRec.Body.String())
+	}
+	var token api.DeployTokenResponse
+	if err := json.Unmarshal(createdRec.Body.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+	deployKey, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "ci-deploy-only", []string{api.ScopeDeployWrite}); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, bearer, path string
+		want               int
+	}{
+		{"deploy:write key lists the app's queue bindings", deployKey, "/v1/apps/ci-manifest-a/queue-bindings", http.StatusOK},
+		{"token lists its app's queue bindings", token.Plaintext, "/v1/apps/ci-manifest-a/queue-bindings", http.StatusOK},
+		{"token cannot list another app's queue bindings", token.Plaintext, "/v1/apps/ci-manifest-b/queue-bindings", http.StatusNotFound},
+		{"deploy:write key lists one app's crons", deployKey, "/v1/crons?slug=ci-manifest-a", http.StatusOK},
+		{"deploy:write key cannot list every app's crons", deployKey, "/v1/crons", http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := e.Do(t, http.MethodGet, tc.path, nil, map[string]string{"Authorization": "Bearer " + tc.bearer})
+			if rec.Code != tc.want {
+				t.Fatalf("GET %s = %d, want %d (body=%s)", tc.path, rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}

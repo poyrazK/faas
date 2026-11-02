@@ -196,7 +196,7 @@ func (s *Service) IdempotentManagedRealtimePublish(next httpkit.AccountHandler) 
 
 		cap := &publishCaptureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
-		if managedRealtimePublishReplayable(cap.status) {
+		if managedRealtimePublishReplayable(cap.status) && !cap.unwritten {
 			if err := s.Host.Store().PutIdempotent(context.WithoutCancel(r.Context()), acct.ID, scopedKey, cap.status, cap.body.Bytes()); err != nil {
 				// Keep the reservation in-flight: a repeat must not Publish again
 				// when the first outcome could not be durably recorded.
@@ -1203,6 +1203,9 @@ func (s *Service) PublishManagedRealtimeChannel(w http.ResponseWriter, r *http.R
 		}
 		if row.MaxMessageBytes > 0 && int64(len(message.Data)) > row.MaxMessageBytes {
 			api.WriteProblem(w, api.ErrRealtimeInvalid("message exceeds this endpoint's max_message_bytes"))
+			return
+		}
+		if !s.allowRealtimeWrites(w, acct, 1) {
 			return
 		}
 		store, ok := s.managedRealtimeHistoryStore(w)

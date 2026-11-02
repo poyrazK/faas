@@ -2704,7 +2704,7 @@ func (t Trigger) validateKindConfig(idx int) error {
 			return fmt.Errorf("trigger[%d]: invalid path %q: %s", idx, t.Path, problem.Detail)
 		}
 		if t.Timezone != "" {
-			if _, err := time.LoadLocation(t.Timezone); err != nil {
+			if _, err := cronexpr.NormalizeCustomerTimezone(t.Timezone); err != nil {
 				return fmt.Errorf("trigger[%d]: timezone %q is not a valid IANA location", idx, t.Timezone)
 			}
 		}

@@ -1,9 +1,7 @@
 package s3gateway
 
 import (
-	"bytes"
 	"encoding/xml"
-	"io"
 	"net/http"
 	"sort"
 	"time"
@@ -231,34 +229,6 @@ func listObjectsResult(bucket, prefix string, limit int32, page objectstorage.Ob
 		result.CommonPrefixes = append(result.CommonPrefixes, commonPrefix{Prefix: value})
 	}
 	return result
-}
-
-// writeListingXML sends a listing as egress, like an object body: its bytes
-// count against the account's monthly egress (reserved before sending under
-// gateway safety, recorded after it otherwise) and are paced by the node's
-// transfer share (ADR-20261031122757). Listings wrote straight to the client,
-// so a page of long keys bypassed both (bug hunt 33).
-func (h *Handler) writeListingXML(w http.ResponseWriter, r *http.Request, req requestContext, value any) {
-	var body bytes.Buffer
-	body.WriteString(xml.Header)
-	if err := xml.NewEncoder(&body).Encode(value); err != nil {
-		writeS3Error(w, http.StatusInternalServerError, "InternalError", "The listing could not be encoded.", r.URL.Path, req.requestID)
-		return
-	}
-	now := h.now().UTC()
-	safety := h.registry.Accounting.GatewaySafety()
-	if safety && !h.writeAdmissionError(w, r, req, objectstorage.ReserveGatewayBytes(r.Context(), h.requestMetrics, req.bucket.ID, int64(body.Len()), h.registry.Accounting, now)) {
-		return
-	}
-	w.Header().Set("Content-Type", "application/xml")
-	w.Header().Set("x-amz-request-id", req.requestID)
-	w.WriteHeader(http.StatusOK)
-	n, _ := io.Copy(w, h.transfers.Reader(r.Context(), &body, objectstorage.TransferDownload))
-	if !safety {
-		if err := objectstorage.RecordDeliveredEgress(r.Context(), h.requestMetrics, req.bucket.ID, n, now); err != nil {
-			h.log.Warn("S3 egress metric write failed", "request_id", req.requestID)
-		}
-	}
 }
 
 func writeS3XML(w http.ResponseWriter, status int, requestID string, value any) {

@@ -4,22 +4,27 @@ package apidserver_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
-	"github.com/onebox-faas/faas/pkg/apid/oidcrepo"
 	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// installationRepos answers githubd's repository listing for one
-// installation.
-type installationRepos map[int64][]oidcrepo.Repo
+// installationRepos answers githubd's repository lookup: installation ID →
+// repository name → ID.
+type installationRepos map[int64]map[string]int64
 
-func (r installationRepos) ListInstallableRepos(_ context.Context, _ string, installationID int64) ([]oidcrepo.Repo, error) {
-	return r[installationID], nil
+func (r installationRepos) InstallationRepositoryID(_ context.Context, _ string, installationID int64, fullName string) (int64, error) {
+	for name, id := range r[installationID] {
+		if strings.EqualFold(name, fullName) {
+			return id, nil
+		}
+	}
+	return 0, nil
 }
 
 // A GitHub Actions workflow of a repository connected only through a project
@@ -47,7 +52,7 @@ func TestOIDCAccountLookupConfirmsProjectRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lookup := apidserver.OIDCAccountLookup(store, installationRepos{77: {{ID: 4242, FullName: "Acme/Shop"}}})
+	lookup := apidserver.OIDCAccountLookup(store, installationRepos{77: {"Acme/Shop": 4242}})
 	got, err := lookup.AccountByOIDCSubject(ctx, issuer, subject)
 	if err != nil || got.ID != acct.ID {
 		t.Fatalf("AccountByOIDCSubject = %q, %v; want the project's account", got.ID, err)
@@ -62,7 +67,7 @@ func TestOIDCAccountLookupConfirmsProjectRepository(t *testing.T) {
 
 	// The installation no longer sees the repository: the name proves
 	// nothing.
-	gone := apidserver.OIDCAccountLookup(store, installationRepos{77: {{ID: 9, FullName: "acme/web"}}})
+	gone := apidserver.OIDCAccountLookup(store, installationRepos{77: {"acme/web": 9}})
 	if got, err := gone.AccountByOIDCSubject(ctx, issuer, subject); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("AccountByOIDCSubject without the repository = %q, %v; want ErrNotFound", got.ID, err)
 	}

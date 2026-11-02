@@ -165,6 +165,10 @@ type CapLimits struct {
 	Overage     bool
 	StoragePool int64
 
+	// StorageAllowance is the plan's pool in bytes, before overage doubles
+	// it: storage past it is charged (ADR-20261031110037 amendment 2).
+	StorageAllowance int64
+
 	// Entitlement is the subject's plan: databases it no longer includes
 	// are suspended (ADR-20261102125208). A zero database limit means the
 	// plan is unknown, and nothing is suspended for it.

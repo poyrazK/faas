@@ -20,7 +20,7 @@ The step 1 and step 2a PRs (#6211, #6216) were closed unmerged.
 
 Still open from this ADR:
 
-- storage past the pool, to be added on the deliveries ledger by an amendment to ADR-20261031110037. Its price is now $0.50 per GB-month ([ADR-20261102072425](20261102072425-managed-postgres-overage-at-provider-price-plus-5.md)), not $0.60;
+- ~~storage past the pool~~: delivered by [ADR-20261031110037](20261031110037-managed-postgres-overage-invoicing.md) amendment 2, at $0.50 per GiB-month ([ADR-20261102072425](20261102072425-managed-postgres-overage-at-provider-price-plus-5.md)), not $0.60;
 - the always-on add-on, which has no price yet.
 
 ## Context
