@@ -361,6 +361,12 @@ message IncrementRequestTelemetryRequest {
   // ADR-20261028110044 amendment 3: a 5xx the gateway returned because a
   // Gregale dependency could not admit the request. Route evidence skips it.
   bool platform_refusal = 39;
+  // ADR-20261028110044 amendment 5: the request named its deployment (a
+  // deployment preview or alias URL, or a revision pin); route evidence skips it.
+  bool deployment_pinned = 40;
+  // The response stayed open past its request budget (a WebSocket or declared
+  // stream); route evidence leaves its duration out of latency.
+  bool long_lived = 41;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

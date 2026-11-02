@@ -7348,6 +7348,13 @@ haveApp:
 	if !deploymentSmoke && exactDeploymentScope != workloadAdmissionScope && !h.workloadAdmissionOpen(w, r, app.ID, exactDeploymentScope) {
 		return
 	}
+	// A deployment preview or alias URL, or a revision pin, names the
+	// deployment itself; an environment URL, a project release and production
+	// routing do not (ADR-20261028110044 amendment 5).
+	if !deploymentSmoke && !routeProbe && projectReleaseDeploymentID == "" &&
+		(clientRevisionID != "" || app.PinnedDeploymentID != "" && app.PublicEnvironmentID == "") {
+		recordTrafficDeploymentPinned(r.Context())
+	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
 	if exactDeployment {
@@ -8594,6 +8601,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ImageDigest:                          target.ImageDigest,
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 				PlatformRefusal:                      decision.platformRefusal(status),
+				DeploymentPinned:                     decision.deploymentPinned,
+				LongLived:                            decision.streamDetached,
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {

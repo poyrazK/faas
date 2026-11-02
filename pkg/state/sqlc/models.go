@@ -13671,6 +13671,8 @@ type RequestTelemetry struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202611 struct {
@@ -13711,6 +13713,8 @@ type RequestTelemetry202611 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202612 struct {
@@ -13751,6 +13755,8 @@ type RequestTelemetry202612 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202701 struct {
@@ -13791,6 +13797,8 @@ type RequestTelemetry202701 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -13856,6 +13864,8 @@ type RequestTelemetryDefault struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type ReservedIpInventory struct {

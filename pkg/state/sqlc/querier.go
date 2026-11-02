@@ -6554,7 +6554,8 @@ type Querier interface {
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.
-	// Like the guard, skip platform refusals and rank only warm latency.
+	// Like the guard, skip platform refusals and requests that named their
+	// deployment, and rank only warm, bounded latency.
 	RouteCustomerHealthObservation(ctx context.Context, db DBTX, arg RouteCustomerHealthObservationParams) ([]byte, error)
 	// Live advisory reads only. Each code has its own weighted numerator and the
 	// entire deployment/route/window request count as denominator. No request expansion.
@@ -6579,9 +6580,11 @@ type Querier interface {
 	// Exact selected labels and shared windows. Aggregate publisher weights without
 	// expanding requests. Percentile ranks interpolate bucket representatives, like
 	// RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
-	// Platform refusals never count. warm_latency (the canary guard) ranks only
-	// requests that did not cold boot and reports how many it ranked
-	// (ADR-20261028110044 amendment 3); the production monitor stays end to end.
+	// Platform refusals and requests that named their deployment never count.
+	// warm_latency (the canary guard) ranks only requests that did not cold boot;
+	// no reader ranks a long-lived response's duration. A side reports how many
+	// requests it ranked when that differs from its requests, and always for the
+	// guard (ADR-20261028110044 amendments 3 and 5).
 	RouteHealthObservation(ctx context.Context, db DBTX, arg RouteHealthObservationParams) ([]byte, error)
 	RouteHealthStableIDs(ctx context.Context, db DBTX, arg RouteHealthStableIDsParams) ([]string, error)
 	// Route insights (ADR-1198): findings apid's evaluator derives from the

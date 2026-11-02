@@ -1014,8 +1014,14 @@ type IncrementRequestTelemetryRequest struct {
 	// ADR-20261028110044 amendment 3: a 5xx the gateway returned because a
 	// Gregale dependency could not admit the request. Route evidence skips it.
 	PlatformRefusal bool `protobuf:"varint,39,opt,name=platform_refusal,json=platformRefusal,proto3" json:"platform_refusal,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// ADR-20261028110044 amendment 5: the request named its deployment (a
+	// deployment preview or alias URL, or a revision pin); route evidence skips it.
+	DeploymentPinned bool `protobuf:"varint,40,opt,name=deployment_pinned,json=deploymentPinned,proto3" json:"deployment_pinned,omitempty"`
+	// The response stayed open past its request budget (a WebSocket or declared
+	// stream); route evidence leaves its duration out of latency.
+	LongLived     bool `protobuf:"varint,41,opt,name=long_lived,json=longLived,proto3" json:"long_lived,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -1317,6 +1323,20 @@ func (x *IncrementRequestTelemetryRequest) GetTraceInferred() bool {
 func (x *IncrementRequestTelemetryRequest) GetPlatformRefusal() bool {
 	if x != nil {
 		return x.PlatformRefusal
+	}
+	return false
+}
+
+func (x *IncrementRequestTelemetryRequest) GetDeploymentPinned() bool {
+	if x != nil {
+		return x.DeploymentPinned
+	}
+	return false
+}
+
+func (x *IncrementRequestTelemetryRequest) GetLongLived() bool {
+	if x != nil {
+		return x.LongLived
 	}
 	return false
 }
@@ -1709,7 +1729,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\t \x01(\tR\trequestId\x12\x1b\n" +
 	"\tsource_ip\x18\n" +
-	" \x01(\tR\bsourceIp\"\xea\v\n" +
+	" \x01(\tR\bsourceIp\"\xb6\f\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -1756,7 +1776,10 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x12flag_evidence_json\x18$ \x01(\tR\x10flagEvidenceJson\x12'\n" +
 	"\x0fcontent_outcome\x18% \x01(\tR\x0econtentOutcome\x12%\n" +
 	"\x0etrace_inferred\x18& \x01(\bR\rtraceInferred\x12)\n" +
-	"\x10platform_refusal\x18' \x01(\bR\x0fplatformRefusal\"c\n" +
+	"\x10platform_refusal\x18' \x01(\bR\x0fplatformRefusal\x12+\n" +
+	"\x11deployment_pinned\x18( \x01(\bR\x10deploymentPinned\x12\x1d\n" +
+	"\n" +
+	"long_lived\x18) \x01(\bR\tlongLived\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\xc6\x03\n" +

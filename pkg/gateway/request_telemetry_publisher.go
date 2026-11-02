@@ -522,6 +522,8 @@ func requestTelemetryBucketed(row RequestTelemetryRow) (RequestTelemetryRow, str
 		WakeID:                               row.WakeID,
 		TraceInferred:                        row.TraceInferred,
 		PlatformRefusal:                      row.PlatformRefusal,
+		DeploymentPinned:                     row.DeploymentPinned,
+		LongLived:                            row.LongLived,
 		GuestRuntime:                         row.GuestRuntime,
 		GuestOutcome:                         row.GuestOutcome,
 		GuestErrorClass:                      row.GuestErrorClass,
@@ -581,6 +583,8 @@ type bucketKey struct {
 	WakeID                               string
 	TraceInferred                        bool
 	PlatformRefusal                      bool
+	DeploymentPinned                     bool
+	LongLived                            bool
 	GuestRuntime                         string
 	GuestOutcome                         string
 	GuestErrorClass                      string
