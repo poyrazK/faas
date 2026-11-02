@@ -6,9 +6,9 @@
 # .github/actions/deploy/bin/gregale.gz (GitHub refuses files over 100 MB;
 # the Action unpacks it, see .github/actions/deploy/src/cli.sh),
 # updates src/version.txt, generates SHA256SUMS, commits everything back
-# to a release branch, force-updates the MAJOR moving tag so customers
-# pinned at @vN always resolve to the latest vendored binary, and
-# creates a GitHub Release via softprops/action-gh-release. Assets are then
+# to a release branch, moves the MAJOR moving tag forward for a stable tag
+# so customers pinned at @vN resolve to the newest stable vendored binary,
+# and creates a GitHub Release via softprops/action-gh-release. Assets are then
 # uploaded one at a time with digest verification so a slow canonical bundle
 # cannot strand concurrent uploads or delete already-verified retry state.
 #
@@ -19,11 +19,13 @@
 # independent builds run concurrently; the final publication job waits for
 # both so a failed CLI build cannot leave a canonical bundle attached alone.
 #
-# Tag strategy: every release commits to a `release/v<tag>` branch AND
-# force-updates the MAJOR moving tag (vN from vN.M.P) so that
+# Tag strategy: every release commits to a `release/v<tag>` branch. A stable
+# tag (no "-") also moves the MAJOR moving tag (vN from vN.M.P), only forward
+# by semver precedence (scripts/ci/advance-action-major-tag.sh), so that
 # `uses: poyrazK/faas/.github/actions/deploy@v0` consumers resolve to the
-# latest vendored binary. CLI-generated workflows use the immutable SHA of
-# the latest published v0 target resolved once for every CLI platform build.
+# newest stable vendored binary; prereleases and re-runs of older tags leave
+# it alone. CLI-generated workflows use the immutable SHA of the published
+# v0 target resolved once for every CLI platform build.
 # Without the moving-tag step, customers pinned at @v0 would resolve to the
 # pre-workflow commit that has no bin/gregale, and `run.sh` would exit 1 with
 # "vendored binary not found" on day one.
@@ -101,6 +103,7 @@ jobs:
       - name: Build and archive target
         env:
           VERSION: ${{ github.ref_name }}
+          GIT_SHA: ${{ github.sha }}
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           ACTION_SHA: ${{ needs.resolve-action-pin.outputs.sha }}
@@ -110,13 +113,19 @@ jobs:
           archive="/tmp/gregale-build/archives/gregale_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz"
           mkdir -p "$stage" "$(dirname "$archive")"
           action_sha="${ACTION_SHA:?missing resolved deploy Action pin}"
+          # `gregale version --json` reports git_sha and build_time, stamped
+          # like the Makefile stamps GitSHA. The build time is the commit's,
+          # not the runner clock's, so the archives stay reproducible.
+          commit_time="$(git log -1 --format=%ct)"
+          build_time="$(date -u -d "@${commit_time}" +%Y-%m-%dT%H:%M:%SZ)"
+          wire=github.com/onebox-faas/faas/pkg/wire
           CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION} -X main.githubActionDefaultSHA=${action_sha}" \
+            -ldflags "-s -w -X ${wire}.Version=${VERSION} -X ${wire}.GitSHA=${GIT_SHA} -X ${wire}.BuildTime=${build_time} -X main.githubActionDefaultSHA=${action_sha}" \
             -o "$stage/gregale" ./cmd/gregale
           bash scripts/archive-cli-binary.sh \
             --binary "$stage/gregale" \
             --output "$archive" \
-            --mtime "@$(git log -1 --format=%ct)"
+            --mtime "@${commit_time}"
 
       - name: Upload target
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -320,24 +329,16 @@ jobs:
           git commit -m "release: bundle gregale ${TAG}"
           git push -u origin "$BRANCH"
 
-      - name: Force-update MAJOR moving tag (vN -> vN.M.P)
+      # Customers deploy with `uses: poyrazK/faas/.github/actions/deploy@vN`,
+      # so the moving major tag names the newest STABLE release: a
+      # prerelease (rc tags ship about twice a day) leaves it alone, and a
+      # re-run of an older tag cannot move it backwards. This checkout is the
+      # release branch HEAD containing the vendored binary; the script points
+      # vN at that commit, not at the source tag that triggered this workflow.
+      - name: Move MAJOR moving tag forward for a stable release (vN -> vN.M.P)
         env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          # Extract the MAJOR version (the "vN" from "vN.M.P") so
-          # customers pinned at @vN always resolve to the latest
-          # vendored binary. Local-only: never push the moving tag
-          # to the release branch (it stays on the SHA we just
-          # committed). The `git push --force` updates the moving
-          # tag in refs/tags/vN to point at this commit, so
-          # `uses: .../deploy@vN` resolves to the vendored binary.
-          MAJOR="$(echo "$TAG" | cut -d. -f1)"
-          # This checkout is now the release branch HEAD containing the
-          # vendored binary. Point the moving major tag at that commit, not
-          # at the original source tag that triggered this workflow.
-          git tag -f "$MAJOR" HEAD
-          git push origin "refs/tags/${MAJOR}" --force
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/ci/advance-action-major-tag.sh
 
       - name: Verify generated immutable Action ref through GitHub Contents API
         env:
@@ -359,10 +360,23 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/deploy-from-github"
-          # The pinned ref is the previous release's commit (it may still
-          # vendor the bare bin/gregale); the moving major tag must expose
-          # this release's compressed CLI for direct Action users.
+          # The pinned ref is the commit the moving tag named when this
+          # release started (it may still vendor the bare bin/gregale); the
+          # moving major tag, moved above only for a newer stable release,
+          # must expose a compressed CLI for direct Action users.
           bash scripts/ci/verify-action-ref-contents.sh "$ACTION_SHA" "$MAJOR"
+
+      # Rendered by a shell step: action-gh-release's `body` input is never
+      # shell-expanded, so a `$(cat CLI-SHA256SUMS)` written there reached
+      # the release page as literal text instead of the checksums.
+      - name: Render release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/render-release-notes.sh "$TAG" /tmp/gregale-build/CLI-SHA256SUMS \
+            > "$RUNNER_TEMP/release-notes.md"
+          cat "$RUNNER_TEMP/release-notes.md"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -371,62 +385,7 @@ jobs:
           # presented as stable releases. Keep the tag convention and the
           # GitHub release classification in lockstep.
           prerelease: ${{ contains(github.ref_name, '-') }}
-          body: |
-            ## Gregale ${{ github.ref_name }}
-
-            Bundled CLI: **gregale ${{ github.ref_name }}**
-            Compatible server API: see `poyrazK/faas` release notes for ${{ github.ref_name }}.
-
-            ### Install the CLI
-
-            ```sh
-            curl -fsSL https://get.gregale.dev | sh
-            ```
-
-            The npm package is available after the `publish-npm` release job
-            succeeds. See `docs/cli-install.md` for its current status.
-
-            Pin this exact release:
-
-            ```sh
-            curl -fsSL https://get.gregale.dev | sh -s -- --version ${{ github.ref_name }}
-            ```
-
-            macOS and Linux, amd64 and arm64. Windows is not supported yet
-            (ADR-172).
-
-            ### Checksums
-
-            ```
-            $(cat /tmp/gregale-build/CLI-SHA256SUMS)
-            ```
-
-            ### Verify
-
-            ```sh
-            sha256sum -c CLI-SHA256SUMS
-            ```
-
-            ### Pin
-
-            Workflows generated by the Gregale CLI use an immutable Action SHA
-            by default. Pass `--pin-action` to resolve the current `v0` tag at
-            setup time.
-
-            To follow the latest public-beta Action directly, use its moving tag:
-
-            ```yaml
-            - uses: poyrazK/faas/.github/actions/deploy@v0
-              with:
-                app: my-app
-            ```
-
-            For a direct Action reference with hard reproducibility, pin its
-            40-character release commit SHA:
-
-            ```yaml
-            - uses: poyrazK/faas/.github/actions/deploy@<40-character-commit-sha>
-            ```
+          body_path: ${{ runner.temp }}/release-notes.md
 
       # softprops uploads every configured file concurrently. A transient
       # failure while publishing rc.173 left one request hung for twenty
@@ -467,10 +426,14 @@ jobs:
   # reads them through releases/download, which GitHub does not count
   # against the anonymous API limit. A separate job, so a failure here cannot
   # hold up publish-npm; the pointers then stay on the previous release,
-  # which still installs and verifies.
+  # which still installs and verifies. A stable tag also waits for
+  # publish-npm: when npm fails, neither channel promotes the release, so the
+  # curl installer's stable pointer and npm's `latest` cannot drift apart
+  # (CLI audit 2026-10-31). A prerelease moves CLI-LATEST either way.
   advance-cli-channel:
     name: Advance the curl installer channel
-    needs: [build]
+    needs: [build, publish-npm]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (contains(github.ref_name, '-') || needs.publish-npm.result == 'success') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     concurrency:

@@ -26,6 +26,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capflags"
+	core "github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -1078,6 +1079,26 @@ func (e *Engine) MarkRestartInFlight(appID string) func() {
 	}
 }
 
+// WithCronSweepSlice sets how long one pass of the cron sweep may dispatch.
+func (r *Loop) WithCronSweepSlice(d time.Duration) *Loop { r.cronSweepSlice = d; return r }
+
+// RunCronSweep runs one continuation pass of the minute's cron sweep.
+func (r *Loop) RunCronSweep(ctx context.Context) { r.runCronSweep(ctx) }
+
+// TakeCronSweepResume reports, and consumes, a pending request to continue
+// the cron sweep.
+func (r *Loop) TakeCronSweepResume() bool {
+	select {
+	case <-r.cronResume:
+		return true
+	default:
+		return false
+	}
+}
+
+// XFireNowRefusal is the requester-facing reason for a refused manual run.
+var XFireNowRefusal = fireNowRefusal
+
 // CoalesceInvocationDue exposes the drain's notification burst collapse.
 var CoalesceInvocationDue = coalesceInvocationDue
 
@@ -1121,4 +1142,24 @@ func (r *Engine) AppLocks() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.appMu)
+}
+
+// OpenWorkflowDueGate is one dispatch tick's workflow due gate over read.
+func OpenWorkflowDueGate(read state.WorkflowRunDueReader) func(context.Context) bool {
+	g := &workflowDueGate{read: read}
+	return g.open
+}
+
+// DataRepairRecoveryDue replays nows through one rehearsal coordinator's
+// recovery spacing; pending keeps a claim pending throughout.
+func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
+	c := &DataRepairRehearsalCoordinator{pendingClaims: map[string]core.RehearsalFrame{}}
+	if pending {
+		c.pendingClaims["claim"] = core.RehearsalFrame{}
+	}
+	due := make([]bool, len(nows))
+	for i, now := range nows {
+		due[i] = c.recoveryDue(now)
+	}
+	return due
 }

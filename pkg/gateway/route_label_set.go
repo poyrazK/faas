@@ -149,16 +149,26 @@ func newRouteLabelSetWithCap(capacity int) *routeLabelSet {
 // The Prometheus increment at the call site happens AFTER admit
 // returns, so it is outside the critical section.
 func (s *routeLabelSet) admit(route string) string {
-	return s.admitEntry(route, false)
+	return s.admitEntry(route, false, false)
 }
 
 // admitDeclared admits a declared route (OpenAPI, gregale.yaml), which a
 // full set never replaces.
 func (s *routeLabelSet) admitDeclared(route string) string {
-	return s.admitEntry(route, true)
+	return s.admitEntry(route, true, false)
 }
 
-func (s *routeLabelSet) admitEntry(route string, declared bool) string {
+// admitPinned admits a route the app's route health guard or production
+// monitor selects (ADR-20261028110044 amendment 4). Like a declared route it
+// is never replaced, and an already admitted label becomes permanent. A full
+// set with no idle label gives up its least recently seen undeclared label:
+// the customer chose this route's evidence over an unselected route's.
+// Selections are bounded (twice api.RouteHealthMaxRoutes) below the cap.
+func (s *routeLabelSet) admitPinned(route string) string {
+	return s.admitEntry(route, true, true)
+}
+
+func (s *routeLabelSet) admitEntry(route string, declared, displace bool) string {
 	// Reserved values (empty + otherRouteLabel) are always admitted
 	// without consuming capacity. The empty case is folded into the
 	// multi-value branch because reservedRouteLabelEmpty == "" —
@@ -188,6 +198,9 @@ func (s *routeLabelSet) admitEntry(route string, declared bool) string {
 	evicted := ""
 	if len(s.admitted)-reservedCount >= s.cap {
 		evicted = s.idlestLocked(now)
+		if evicted == "" && displace {
+			evicted = s.stalestUndeclaredLocked()
+		}
 		if evicted == "" {
 			s.mu.Unlock()
 			return otherRouteLabel
@@ -219,6 +232,21 @@ func (s *routeLabelSet) idlestLocked(now int64) string {
 		}
 	}
 	return idlest
+}
+
+// stalestUndeclaredLocked returns the least recently seen undeclared label,
+// idle or not, or "" when every label is declared. Caller holds mu.
+func (s *routeLabelSet) stalestUndeclaredLocked() string {
+	stalest, oldest := "", int64(0)
+	for route, entry := range s.admitted {
+		if entry.declared {
+			continue
+		}
+		if stalest == "" || entry.lastSeen < oldest || entry.lastSeen == oldest && route < stalest {
+			stalest, oldest = route, entry.lastSeen
+		}
+	}
+	return stalest
 }
 
 // AdmitForTest is the test-only seam that inserts a route

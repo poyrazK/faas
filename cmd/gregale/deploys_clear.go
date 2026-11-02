@@ -16,13 +16,14 @@ import (
 	"os"
 )
 
-const deploysClearUsage = "usage: gregale release hide <id> [--app <slug>] [--dry-run] [--force] [--json]"
+const deploysClearUsage = "usage: gregale release hide <id> [--app <slug>] [--dry-run] [--yes] [--json]"
 
 func cmdDeploysClear(args []string) int {
 	fs := newFlagSet("deploys clear", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug (defaults to the linked project, or the deployment's own app)")
 	dryRun := fs.Bool("dry-run", false, "preview deletion without changing resources")
-	force := fs.Bool("force", false, "skip the confirmation prompt")
+	force := fs.Bool("yes", false, "skip the confirmation prompt")
+	fs.BoolVar(force, "force", false, "alias of --yes")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -35,7 +36,7 @@ func cmdDeploysClear(args []string) int {
 		PrintUsage(os.Stderr, deploysClearUsage+"   (id is 32 hex chars)", "deploys")
 		return 1
 	}
-	if code := requireAutomationConfirmation(*force || *dryRun, "--force"); code != 0 {
+	if code := requireAutomationConfirmation(*force || *dryRun, "--yes"); code != 0 {
 		return code
 	}
 	client, err := authedClient()
@@ -55,7 +56,7 @@ func cmdDeploysClear(args []string) int {
 			return writeDestructivePreview(preview)
 		}
 		if jsonOutput {
-			return printErr("Confirmation required", fmt.Errorf("deployment cleanup requires --force in JSON mode; inspect --dry-run first"))
+			return printErr("Confirmation required", fmt.Errorf("deployment cleanup requires --yes in JSON mode; inspect --dry-run first"))
 		}
 		renderDestructivePreview(osStderr, preview)
 		if _, err := fmt.Fprint(osStderr, "Clear this deployment? [y/N] "); err != nil {

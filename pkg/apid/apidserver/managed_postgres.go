@@ -351,12 +351,17 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	if err != nil {
 		return nil, err
 	}
+	planExcessMode, err := managedpostgres.ParsePlanExcessEnforcementMode(getenv(managedpostgres.PlanExcessEnforcementEnv))
+	if err != nil {
+		return nil, err
+	}
 	options := managedpostgres.CapEnforcerOptions{
-		Mode:        mode,
-		StorageMode: storageMode,
-		Logger:      log,
-		Notify:      hooks.notifyCap(),
-		Ceiling:     managedPostgresCapLimits(store, accountStore, hooks.overage()),
+		Mode:           mode,
+		StorageMode:    storageMode,
+		PlanExcessMode: planExcessMode,
+		Logger:         log,
+		Notify:         hooks.notifyCap(),
+		Ceiling:        managedPostgresCapLimits(store, accountStore, hooks.overage()),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
@@ -401,7 +406,8 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 		}
 		return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
 			Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
-			StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
+			StoragePool: managedPostgresStoragePool(limits, overageOn), StorageAllowance: limits.StorageLimitBytes,
+			Entitlement: limits}, nil
 	}
 }
 

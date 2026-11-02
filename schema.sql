@@ -1008,6 +1008,49 @@ $$;
 
 
 --
+-- Name: app_slug_hold_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_slug_hold_check() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM app_slug_holds
+        WHERE slug = NEW.slug AND account_id <> NEW.account_id AND held_until > now()
+    ) THEN
+        RAISE EXCEPTION 'app slug % is held for its previous owner', NEW.slug
+            USING ERRCODE = 'unique_violation', CONSTRAINT = 'apps_slug_key';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+
+--
+-- Name: app_slug_hold_record(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_slug_hold_record() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.slug IS NOT DISTINCT FROM NEW.slug THEN
+        RETURN NULL;
+    END IF;
+    INSERT INTO app_slug_holds (slug, account_id, held_until, reason)
+    VALUES (OLD.slug, OLD.account_id, now() + interval '90 days',
+            CASE TG_OP WHEN 'DELETE' THEN 'purged' ELSE 'renamed' END)
+    ON CONFLICT (slug) DO UPDATE
+        SET account_id = EXCLUDED.account_id,
+            held_until = EXCLUDED.held_until,
+            reason = EXCLUDED.reason;
+    RETURN NULL;
+END
+$$;
+
+
+--
 -- Name: app_traffic_security_epoch_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4136,6 +4179,7 @@ CREATE TABLE public.deployments (
     mail_failure_account_revision bigint,
     mail_failure_app_revision bigint,
     mail_failure_success_revision bigint,
+    promoted_at timestamp with time zone,
     CONSTRAINT deployments_canary_preset_chk CHECK (((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text])) OR (canary_preset = 'adaptive'::text))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -31260,6 +31304,19 @@ CREATE TABLE public.app_slos (
 
 
 --
+-- Name: app_slug_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_slug_holds (
+    slug text NOT NULL,
+    account_id uuid NOT NULL,
+    held_until timestamp with time zone NOT NULL,
+    reason text NOT NULL,
+    CONSTRAINT app_slug_holds_reason_check CHECK ((reason = ANY (ARRAY['renamed'::text, 'purged'::text])))
+);
+
+
+--
 -- Name: app_task_attach_sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32691,6 +32748,7 @@ CREATE TABLE public.builds (
     cancelled_by_deployment_cascade boolean DEFAULT false NOT NULL,
     cache_status text,
     cache_key_sha256 text,
+    coalesced_with uuid,
     CONSTRAINT builds_cache_key_sha256_check CHECK (((cache_key_sha256 IS NULL) OR (cache_key_sha256 ~ '^[a-f0-9]{64}$'::text))),
     CONSTRAINT builds_cache_status_check CHECK (((cache_status IS NULL) OR (cache_status = ANY (ARRAY['hit'::text, 'miss'::text, 'invalidated'::text])))),
     CONSTRAINT builds_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['oom'::text, 'timeout'::text, 'user_error'::text, 'infra'::text])))),
@@ -43914,6 +43972,7 @@ CREATE TABLE public.managed_postgres_overage_deliveries (
     billed_unit_seconds bigint NOT NULL,
     delivered_millicents bigint NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    billed_storage_byte_seconds bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_deliveries_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_deliveries_check CHECK ((isfinite(updated_at) AND (updated_at >= period_start))),
     CONSTRAINT managed_postgres_overage_deliveries_delivered_millicents_check CHECK ((delivered_millicents > 0)),
@@ -58259,6 +58318,14 @@ ALTER TABLE ONLY public.app_slos
 
 
 --
+-- Name: app_slug_holds app_slug_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slug_holds
+    ADD CONSTRAINT app_slug_holds_pkey PRIMARY KEY (slug);
+
+
+--
 -- Name: app_task_attach_sessions app_task_attach_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -58968,6 +59035,14 @@ ALTER TABLE ONLY public.builder_usage
 
 ALTER TABLE ONLY public.builder_vm_cleanup
     ADD CONSTRAINT builder_vm_cleanup_pkey PRIMARY KEY (build_id);
+
+
+--
+-- Name: builds builds_coalesced_with_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.builds
+    ADD CONSTRAINT builds_coalesced_with_check CHECK (((coalesced_with IS NULL) OR (coalesced_with <> id))) NOT VALID;
 
 
 --
@@ -64008,6 +64083,14 @@ ALTER TABLE ONLY public.managed_postgres_live_keys
 
 ALTER TABLE ONLY public.managed_postgres_live_logins
     ADD CONSTRAINT managed_postgres_live_logins_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_storage_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_deliveries
+    ADD CONSTRAINT managed_postgres_overage_deliveries_billed_storage_check CHECK ((billed_storage_byte_seconds >= 0)) NOT VALID;
 
 
 --
@@ -81512,6 +81595,20 @@ CREATE TRIGGER apps_record_control_plane_change_trg AFTER INSERT OR DELETE OR UP
 --
 
 CREATE TRIGGER apps_reserved_slug_allocation_guard BEFORE INSERT OR UPDATE OF slug ON public.apps FOR EACH ROW EXECUTE FUNCTION public.reject_reserved_app_slug_allocation();
+
+
+--
+-- Name: apps apps_slug_hold_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_slug_hold_check BEFORE INSERT OR UPDATE OF slug ON public.apps FOR EACH ROW EXECUTE FUNCTION public.app_slug_hold_check();
+
+
+--
+-- Name: apps apps_slug_hold_record; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_slug_hold_record AFTER DELETE OR UPDATE OF slug ON public.apps FOR EACH ROW EXECUTE FUNCTION public.app_slug_hold_record();
 
 
 --

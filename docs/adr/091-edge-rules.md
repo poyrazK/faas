@@ -1612,3 +1612,38 @@ the source host, so deploying with a deploy token a manifest that routes
 another app's host to this app is refused too; deploy such a project with an
 account key. Account keys, organization keys and dashboard sessions are not
 limited.
+
+## Amendment (2026-11-02): shared caches and rules that name one host
+
+A further edge-security review found two ways an access rule did not hold.
+
+1. **Cloudflare served gated responses to everyone.** Cloudflare caches
+   responses in front of the public edge by URL alone: static file types by
+   default, and anything the app marks public (a live request to an app host
+   returned `cf-cache-status: HIT` on the second fetch). The gates run at the
+   origin, so once a client a rule admitted fetched a cacheable URL, every
+   other client got the same response from Cloudflare: an address an `ip`
+   rule or the ingress allowlist denies, a country a `geo` rule refuses, a
+   caller without the JWT or key a gate verified. The gateway now marks the
+   response of every request such a control decided with both targeted cache
+   headers, `Cloudflare-CDN-Cache-Control: private` and `CDN-Cache-Control:
+   private` (RFC 9213), replacing any value the app or a `headers` rule set.
+   Browser caching is unchanged. The marked requests are those an `ip`,
+   `geo` or `jwt` rule covered (whatever it decided), those on an app in
+   `ip_allowlist` public-auth mode, and those that carried a credential a
+   gate verified. A challenge or attack mode does not mark: they keep bots
+   off an app, and a cached public file served to a bot costs the app
+   nothing. The gateway's own response cache already ran after these gates.
+   The 404 for a host no app serves is `no-store`, so Cloudflare does not
+   keep serving it after the app is created.
+2. **A rule naming one host left the app's other hosts open.** Every app is
+   served at its platform hostname and any companion hostnames as well as its
+   custom domains, and an exact `match_host` covers only the host it names.
+   The security docs' own WAF and challenge examples named a custom domain,
+   so the same app stayed unprotected at `<slug>.gregale.dev`. Aliases of the
+   apps domain were already folded into their canonical host (ADR-20261026100000
+   section 3); hosts of one app are not. The examples now use `@app`, and
+   `gregale edge rule create` warns when a gate (jwt, ip, geo, limit,
+   throttle, validate, maintenance, waf, challenge) names one exact host. A
+   setting that serves an app only on its custom domains is a separate
+   decision.

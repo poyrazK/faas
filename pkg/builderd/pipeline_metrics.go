@@ -13,6 +13,9 @@ const (
 	requeueSource       = "source_unavailable"
 	requeueCancellation = "context_canceled"
 	requeueLookup       = "lookup_failure"
+	// requeueIdenticalBuild defers a build behind an identical one that is
+	// already building (ADR-20261102100000).
+	requeueIdenticalBuild = "identical_build"
 )
 
 // PipelineMetrics observes admission without owning it. Slot gauges read the
@@ -42,7 +45,7 @@ func (b *Builderd) WithPipelineMetrics(reg prometheus.Registerer) *Builderd {
 	for _, outcome := range []string{"granted", "limit", "policy"} {
 		m.admission.WithLabelValues(outcome)
 	}
-	for _, reason := range []string{requeueNoSlot, requeueSource, requeueCancellation, requeueLookup} {
+	for _, reason := range []string{requeueNoSlot, requeueSource, requeueCancellation, requeueLookup, requeueIdenticalBuild} {
 		for _, outcome := range []string{"accepted", "not_requeued", "error", "canceled"} {
 			m.requeues.WithLabelValues(reason, outcome)
 		}

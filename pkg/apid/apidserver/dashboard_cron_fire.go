@@ -182,6 +182,9 @@ func (s *server) fireCronFromDashboard(ctx context.Context, acct state.Account, 
 	if !ok || limits.CronLimitPerApp == 0 {
 		return ErrDashboardCronPlanBlocked
 	}
+	if c.SuspendedReason != "" {
+		return ErrDashboardCronSuspended
+	}
 	if s.cronRunOverPlan(ctx, app, c) != nil {
 		return ErrDashboardCronPlanBlocked
 	}
@@ -227,6 +230,9 @@ var (
 	// ErrPlanCronsNotAllowed 402. Split so we can lift the
 	// message later.
 	ErrDashboardCronPlanBlocked = errors.New("dashboard: cron not allowed on this plan")
+	// ErrDashboardCronSuspended covers a cron suspended until the app is
+	// deployed again; the v1 endpoint answers 409.
+	ErrDashboardCronSuspended = errors.New("dashboard: cron suspended")
 )
 
 // projectCronRunRow collapses the CronRun projection down to the

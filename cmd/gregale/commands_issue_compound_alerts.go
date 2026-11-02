@@ -17,11 +17,11 @@ import (
 func cmdIssueCompoundAlerts(args []string) int {
 	usage := "usage: gregale debug issue compound-alerts <get|save|remove|preview> --app SLUG [--key KEY --environment NAME --minimum-events N --minimum-customers N --window-seconds N --cooldown-seconds N --enabled=true|false --expected-revision N --issue UUID]"
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		_, _ = fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 0
 	}
 	action := args[0]
@@ -44,7 +44,7 @@ func cmdIssueCompoundAlerts(args []string) int {
 		return 1
 	}
 	if *app == "" || len(positionals) != 0 || action != "get" && action != "save" && action != "remove" && action != "preview" {
-		_, _ = fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	invalid := ""
