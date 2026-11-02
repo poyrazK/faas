@@ -3948,6 +3948,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return renderProjectDeployReceipt(plan, apply, projectSession, projectWaitTimedOut, nil)
 	}
 
+	// A template or gregale.yaml that turns on a capability the account does
+	// not have stops here, before the app or an upload exists (#5756).
+	if err := refuseHiddenManifestCapabilities(*templateName, sourceDir); err != nil {
+		return printErr("Capability not enabled", err)
+	}
+
 	var workflowDefs []api.WorkflowSpec
 	var sidecarDefs api.Sidecars
 	if !*createOnly {
