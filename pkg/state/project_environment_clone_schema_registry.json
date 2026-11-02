@@ -1969,6 +1969,16 @@
     }
   },
   {
+    "table": "app_slug_holds",
+    "columns": [
+      "account_id",
+      "held_until",
+      "reason",
+      "slug"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_task_attach_sessions",
     "columns": [
       "attach_token_sha256",
