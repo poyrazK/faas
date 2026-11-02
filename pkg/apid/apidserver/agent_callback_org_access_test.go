@@ -35,6 +35,10 @@ func (m *memCallbackRevocations) CallbacksRevokedAt(_ context.Context, endpointI
 	return at, ok, nil
 }
 
+func (m *memCallbackRevocations) CallbackClock(context.Context) (time.Time, error) {
+	return time.Now(), nil
+}
+
 // adr: 20261030125501 §3 — an API key issues and revokes callback URLs only
 // for the realtime endpoints whose app the organization check lets it act
 // on, as the app's other credentials: the routes name an endpoint, not an
