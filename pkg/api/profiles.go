@@ -69,6 +69,18 @@ func (c *ProfilingConfig) Equal(o *ProfilingConfig) bool {
 		c.PprofPort == o.PprofPort && c.AutomaticCapturesEnabled() == o.AutomaticCapturesEnabled()
 }
 
+// ProfileBridgePort is the port of guest-init's local profile bridge
+// (ProfileLocalEndpoint). An app listening on it gets no profile collectors:
+// the bridge binds before the app starts and would take its port (ADR-1155).
+func ProfileBridgePort() int {
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(ProfileLocalEndpoint, "http://"))
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(port)
+	return n
+}
+
 // ProfilePprofReservedPorts are guest-init's own loopback listeners. A pprof
 // port naming one would make guest-init profile itself.
 func ProfilePprofReservedPorts() []int {

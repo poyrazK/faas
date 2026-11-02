@@ -131,7 +131,9 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
         else { capture = null; try { pprof.time.stop(); } catch (_) {} if (heapRunning) { pprof.heap.stop(); heapRunning = false; } }
       }
       if ((running || heapRunning) && !capture && (config.suspended || config.epoch !== epoch || !config.enabled || config.capture)) {
-        await stopContinuous(!config.suspended && config.epoch === epoch);
+        // A capture cutting the continuous window short flushes it under its
+        // own epoch; any other new epoch is a checkpoint or restore: discard.
+        await stopContinuous(!config.suspended && (config.epoch === epoch || !!config.capture));
       }
       if (config.suspended) {
         await request('/control/ack?pid=' + process.pid + '&epoch=' + config.epoch, 'POST');

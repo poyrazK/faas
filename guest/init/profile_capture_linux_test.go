@@ -122,6 +122,37 @@ func TestContinuousBridgeForwardsCaptureCPUOnly(t *testing.T) {
 	}
 }
 
+// A capture cuts the continuous window short: collectors send it under the
+// continuous epoch, which the bridge forwards until the capture ends.
+func TestCaptureAcceptsTheContinuousWindowItCutShort(t *testing.T) {
+	var forwarded []profileproto.Upload
+	b := newProfileBridge(&api.ProfilingConfig{Enabled: true}, func(_ context.Context, u profileproto.Upload) error {
+		forwarded = append(forwarded, u)
+		return nil
+	})
+	h := b.handler()
+	continuous := pollControl(t, h, "9").Epoch
+	result, _ := b.runCapture(captureRequest("cpu"), func(time.Duration) {
+		if code := ingest(h, continuous, "9", "", "cut short"); code != http.StatusNoContent {
+			t.Errorf("continuous window cut short by the capture = %d", code)
+		}
+	})
+	if len(forwarded) != 1 || string(forwarded[0].Profile) != "cut short" || len(result.Profiles) != 0 {
+		t.Fatalf("forwarded %+v, captured %+v; want the cut-short window forwarded, not captured", forwarded, result.Profiles)
+	}
+	if code := ingest(h, continuous, "9", "", "late"); code != http.StatusConflict {
+		t.Fatalf("the replaced epoch still accepted after the capture = %d", code)
+	}
+	dormant := newProfileBridge(nil, func(context.Context, profileproto.Upload) error { return nil })
+	dh := dormant.handler()
+	old := pollControl(t, dh, "9").Epoch
+	_, _ = dormant.runCapture(captureRequest("cpu"), func(time.Duration) {
+		if code := ingest(dh, old, "9", "", "x"); code != http.StatusConflict {
+			t.Errorf("dormant bridge accepted a stale epoch during a capture = %d", code)
+		}
+	})
+}
+
 func TestCaptureRefusalsAndBounds(t *testing.T) {
 	b := newProfileBridge(nil, func(context.Context, profileproto.Upload) error { return nil })
 	b.capture = &profileCapture{}
@@ -335,7 +366,7 @@ func TestCaptureWaitStopsEarly(t *testing.T) {
 func TestOnDemandProfileEnvStampsDormantCollectors(t *testing.T) {
 	out := profileEnvAtPaths([]string{"A=1"}, nil, true, "/managed/node.cjs", "/managed/python", func(string) bool { return true })
 	text := strings.Join(out, "\n")
-	for _, want := range []string{"FAAS_PROFILING_ENABLED=1", "--require=/managed/node.cjs", "PYTHONPATH=/managed/python:"} {
+	for _, want := range []string{"FAAS_PROFILING_ENABLED=1", "--require=/managed/node.cjs", "PYTHONPATH=/managed/python"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("on-demand env missing %q: %s", want, text)
 		}
