@@ -245,6 +245,21 @@ func TestReleaseTagDeploysAppsBoundToTaggedBranch(t *testing.T) {
 			t.Fatalf("enqueued %v, want the app bound to release", got)
 		}
 	})
+	t.Run("an annotated tag", func(t *testing.T) {
+		// The push names the tag object; head_commit is the commit it tags,
+		// the branch head the tag deploys.
+		const tagObject, commit = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
+		svc, rec, rig := appBoundRig(t)
+		web := rig.bindApp(t, "web", "", "octo/api", "main")
+		svc.BranchHeads = branchHeadsByName{"main": commit}
+		tag := strings.Replace(appBoundTag, `"after":"head456"`, `"after":"`+tagObject+`","head_commit":{"id":"`+commit+`"}`, 1)
+		if _, err := svc.HandlePushRequest(context.Background(), []byte(tag)); err != nil {
+			t.Fatalf("HandlePushRequest: %v", err)
+		}
+		if len(rec.calls) != 1 || rec.calls[0].appID != web.ID || rec.calls[0].commitSHA != commit {
+			t.Fatalf("enqueued %+v, want %s at the tagged commit %s", rec.calls, web.ID, commit)
+		}
+	})
 	t.Run("a commit at no bound branch head", func(t *testing.T) {
 		svc, rec, rig := appBoundRig(t)
 		rig.bindApp(t, "web", "", "octo/api", "main")
