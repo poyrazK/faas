@@ -3291,9 +3291,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)
 	}
 	s.notifyAppRenamed(r.Context(), acct, updated, oldSlug, req.NewSlug)
-	// A rename moves the app's public hostname and frees the old one for any
-	// tenant; it belongs in the account's audit trail, not only the daemon
-	// log (production-us hunt #9: four renames left no audit event).
+	// A rename moves the app's public hostname; the old slug stays held for
+	// this account for api.AppSlugHoldDuration (app_slug_holds, bug hunt
+	// 2026-10-28 H80). It belongs in the account's audit trail, not only the
+	// daemon log (production-us hunt #9: four renames left no audit event).
 	s.audit.Emit(r.Context(), "app.renamed", &acct.ID, map[string]any{"app_id": updated.ID, "from": oldSlug, "to": req.NewSlug})
 	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
@@ -4174,15 +4175,10 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 const defaultCronTimezone = "UTC"
 
 func normalizeCronTimezone(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if strings.TrimSpace(raw) == "" {
 		return defaultCronTimezone, nil
 	}
-	loc, err := time.LoadLocation(raw)
-	if err != nil {
-		return "", err
-	}
-	return loc.String(), nil
+	return cronexpr.NormalizeCustomerTimezone(raw)
 }
 
 func validCronRetryPolicy(retryMax, backoffSeconds int) bool {
@@ -4310,6 +4306,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, api.ErrPlanCronQuota(acct.Plan, string(qe.Scope), qe.Limit, qe.Observed))
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such app")
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.ErrCronConflict())
 		default:
 			api.WriteProblem(w, api.ErrCapacity("could not create cron"))
 		}
@@ -4500,6 +4498,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		timezonePatch = &timezone
 	}
 	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.ErrCronConflict())
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return

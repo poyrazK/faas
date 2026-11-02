@@ -64,7 +64,7 @@ func cmdTrustedPublishers(args []string) int {
 		return cmdTrustedPublishersList(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale registry key: unknown subcommand %q (known: add, remove, list)\n", args[0])
+		printCommandValidation(os.Stderr, "gregale registry key: unknown subcommand %q (known: add, remove, list)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}

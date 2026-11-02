@@ -14,6 +14,10 @@ import (
 const (
 	webhookMaxAttempts = 8
 	webhookPollEvery   = 500 * time.Millisecond
+	// webhookIdlePoll is the worker's poll when its store wakes it on every
+	// enqueue: it only catches retries coming due, stale claims and other
+	// processes' writes. Polling every 500 ms was two empty claims a second.
+	webhookIdlePoll = 5 * time.Second
 )
 
 var ErrNoWebhookDelivery = errors.New("githubd: no webhook delivery due")
@@ -84,10 +88,25 @@ type WebhookActivityRecoveryStore interface {
 	RetryWebhookDeliveriesForApp(ctx context.Context, accountID, appID string, limit int) (int, error)
 }
 
-type PGWebhookStore struct{ pool *pgxpool.Pool }
+type PGWebhookStore struct {
+	pool *pgxpool.Pool
+	// queued wakes this process's delivery worker when the store enqueues or
+	// requeues a delivery.
+	queued chan struct{}
+}
 
 func NewPGWebhookDeliveryStore(pool *pgxpool.Pool) *PGWebhookStore {
-	return &PGWebhookStore{pool: pool}
+	return &PGWebhookStore{pool: pool, queued: make(chan struct{}, 1)}
+}
+
+// Queued fires after this store enqueues or requeues a delivery.
+func (s *PGWebhookStore) Queued() <-chan struct{} { return s.queued }
+
+func (s *PGWebhookStore) signalQueued() {
+	select {
+	case s.queued <- struct{}{}:
+	default:
+	}
 }
 
 func (s *PGWebhookStore) Enqueue(ctx context.Context, delivery WebhookDelivery) (bool, error) {
@@ -100,6 +119,9 @@ func (s *PGWebhookStore) Enqueue(ctx context.Context, delivery WebhookDelivery) 
 		delivery.InstallationID, nullableText(delivery.RepoFullName), nullableText(delivery.CommitSHA))
 	if err != nil {
 		return false, fmt.Errorf("githubd: enqueue webhook delivery: %w", err)
+	}
+	if tag.RowsAffected() == 1 {
+		s.signalQueued()
 	}
 	return tag.RowsAffected() == 1, nil
 }
@@ -257,6 +279,9 @@ func (s *PGWebhookStore) RetryWebhookDelivery(ctx context.Context, deliveryID st
 	if err != nil {
 		return false, fmt.Errorf("githubd: retry webhook delivery: %w", err)
 	}
+	if tag.RowsAffected() == 1 {
+		s.signalQueued()
+	}
 	return tag.RowsAffected() == 1, nil
 }
 
@@ -286,6 +311,9 @@ func (s *PGWebhookStore) RetryWebhookDeliveriesForApp(ctx context.Context, accou
 		where d.delivery_id = targets.delivery_id`, accountID, appID, limit)
 	if err != nil {
 		return 0, fmt.Errorf("githubd: retry app webhook deliveries: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		s.signalQueued()
 	}
 	return int(tag.RowsAffected()), nil
 }
@@ -359,7 +387,13 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 	if log == nil {
 		log = slog.Default()
 	}
-	ticker := time.NewTicker(webhookPollEvery)
+	// A store that wakes the worker on enqueue needs only a slow poll.
+	var queued <-chan struct{}
+	poll := webhookPollEvery
+	if waker, ok := store.(interface{ Queued() <-chan struct{} }); ok {
+		queued, poll = waker.Queued(), webhookIdlePoll
+	}
+	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	prune := time.NewTicker(6 * time.Hour)
 	defer prune.Stop()
@@ -401,6 +435,7 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 		select {
 		case <-ctx.Done():
 			return
+		case <-queued:
 		case <-ticker.C:
 		case <-prune.C:
 			if err := store.Prune(ctx, time.Now().Add(-7*24*time.Hour)); err != nil {
