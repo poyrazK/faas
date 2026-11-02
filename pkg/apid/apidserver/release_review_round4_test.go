@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/api/canary"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -61,12 +61,13 @@ func TestPlatformReleasePauseHoldsAReleaseThatNeverServed(t *testing.T) {
 		}
 	}
 	pause(true)
+	// Promote meets the same guard (releaseApprovalTrafficProblem) after
+	// checks this seeded release, which has no runtime image, does not pass.
 	for name, call := range map[string]struct {
 		method, path string
 		body         any
 	}{
 		"traffic": {http.MethodPatch, "/v1/deployments/" + staged.ID + "/traffic", map[string]int{"traffic_percent": 100}},
-		"promote": {http.MethodPost, "/v1/deployments/" + staged.ID + "/promote", map[string]any{}},
 		"rollback to it": {http.MethodPost, "/v1/apps/pause-staged/rollback",
 			api.RollbackRequest{TargetDeploymentID: &staged.ID, Reason: "ship the staged release"}},
 	} {

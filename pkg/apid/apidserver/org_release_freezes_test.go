@@ -341,8 +341,10 @@ func TestCompanyFreezeScheduledOverrideNeedsTheRightToLiftIt(t *testing.T) {
 		api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "release train"}, nil); code != http.StatusCreated {
 		t.Fatalf("admin freezes the company = %d %s", code, body)
 	}
+	// Two minutes from now, inside the open-ended freeze: the worker would
+	// start it then, carrying the override.
 	deploy := api.CreateDeploymentRequest{Image: imageRef('d'), OverrideFreeze: "hotfix 4711",
-		ReleaseAt: time.Now().UTC().Format(time.RFC3339)}
+		ReleaseAt: time.Now().Add(2 * time.Minute).UTC().Format(time.RFC3339)}
 	code, body := orgFreezeDo(t, e, ci, "POST", "/v1/apps/frz-sched/deployments", deploy, nil)
 	if code != http.StatusForbidden || !strings.Contains(body, api.CodeReleaseFreezeOverrideNotAllowed) {
 		t.Fatalf("deploy key schedules past the company freeze = %d %s, want 403 %s", code, body, api.CodeReleaseFreezeOverrideNotAllowed)
