@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use infinity_agent_core::message::InputMessage;
 use infinity_agent_core::traits::InputSender;
+use rap_protocol::ToolsetManifest;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -17,6 +18,8 @@ const AUDIENCE: &str = "gregale:agents";
 const TOKEN_REUSE: Duration = Duration::from_secs(240);
 /// The callback endpoint's message_id limit (AgentCallbackMessageIDMaxBytes).
 const MESSAGE_ID_MAX: usize = 54;
+/// Gregale's RAP toolset (ADR-20261030125501 §4), such as gregale_sleep.
+const TOOLSET_PATH: &str = "/v1/agent-tools";
 
 #[derive(Debug)]
 pub struct PlatformError(pub String);
@@ -40,6 +43,7 @@ pub struct Platform {
     api_url: String,
     identity_url: Option<String>,
     token: Mutex<Option<(String, Instant)>>,
+    toolset: Mutex<Option<ToolsetManifest>>,
 }
 
 #[derive(Deserialize)]
@@ -66,6 +70,7 @@ impl Platform {
                 .ok()
                 .filter(|u| !u.is_empty()),
             token: Mutex::new(None),
+            toolset: Mutex::new(None),
         })
     }
 
@@ -118,6 +123,33 @@ impl Platform {
             return Err(PlatformError(format!("{path}: HTTP {}", res.status())));
         }
         Ok(res)
+    }
+
+    /// Gregale's toolset, loaded from its RAP discovery endpoint once per
+    /// process. The manifest names no account, so it needs no token.
+    pub async fn toolset(&self) -> Result<ToolsetManifest, PlatformError> {
+        if let Some(manifest) = self
+            .toolset
+            .lock()
+            .expect("bug: toolset mutex poisoned")
+            .clone()
+        {
+            return Ok(manifest);
+        }
+        let res = self
+            .http
+            .get(format!(
+                "{}{TOOLSET_PATH}/.well-known/rap-toolset",
+                self.api_url
+            ))
+            .send()
+            .await?;
+        if !res.status().is_success() {
+            return Err(PlatformError(format!("toolset: HTTP {}", res.status())));
+        }
+        let manifest = res.json::<ToolsetManifest>().await?;
+        *self.toolset.lock().expect("bug: toolset mutex poisoned") = Some(manifest.clone());
+        Ok(manifest)
     }
 
     /// A callback URL for one thread of the inbox. Tool results and

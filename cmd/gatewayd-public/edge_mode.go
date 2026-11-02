@@ -9,10 +9,12 @@ package main
 //	gatewayd-internal socket (the compute pool only while it is unhealthy)
 //
 // Platform hosts and custom domains stay on the control plane. Requests that
-// need control-plane credentials or sockets — public object-storage reads,
-// uploads and the customer OTLP endpoint — are forwarded to the control
-// plane's gatewayd-public, so a compute node holds no storage credentials and
-// no apid sockets. The mode is off by default.
+// need control-plane credentials or sockets — object uploads and the
+// customer OTLP endpoint — are forwarded to the control plane's
+// gatewayd-public, so a compute node holds no apid sockets. Public bucket
+// reads are forwarded too, unless the node holds the S3 gateway's provider
+// credential (ADR-20261031122757 step 7): then the edge serves them itself,
+// within its part of the node's port share. The mode is off by default.
 
 import (
 	"context"
@@ -25,6 +27,7 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -498,14 +501,19 @@ func newControlPlaneForwarder(target string, trusted []netip.Prefix, log *slog.L
 }
 
 // computeEdgeRoot puts the credential-bound object-storage routes in front of
-// next: upload routes and their receipts, then public bucket reads, are
-// forwarded; everything else goes to next.
-func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
-	publicRead, err := objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
-		Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
-	})
-	if err != nil {
-		return nil, err
+// next: upload routes and their receipts are forwarded; public bucket reads
+// go to localReads when the edge serves them itself and are forwarded
+// otherwise; everything else goes to next.
+func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
+	publicRead := localReads
+	if publicRead == nil {
+		var err error
+		publicRead, err = objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
+			Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if objectstorage.IsUploadPath(r.URL.Path) {
@@ -514,6 +522,32 @@ func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadS
 		}
 		publicRead.ServeHTTP(w, r)
 	}), nil
+}
+
+// publicReadBudgetEnv is the compute edge's part of its node's gateway port
+// share for public bucket reads, in bytes per second. s3_gateway_compute_service
+// sets it beside the provider registry and the gateway credential when the
+// manifest's object_storage.compute_public_reads is on.
+const publicReadBudgetEnv = "FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND"
+
+// computePublicReadBudget checks what a compute edge must hold to serve
+// public reads itself (ADR-20261031122757 §4 and step 7): the gateway
+// credential for every backend, never the bucket-admin one, and its part of
+// the node's port share (api.ObjectGatewayPublicReadSharePercent), which it
+// returns.
+func computePublicReadBudget(getenv func(string) string, registry *objectstorage.Registry) (int64, error) {
+	for _, b := range registry.Backends() {
+		if !b.GatewayCredential {
+			return 0, fmt.Errorf("compute edge public reads: backend %s names no gateway credential; a compute node never holds the bucket-admin one", b.ID)
+		}
+	}
+	raw := strings.TrimSpace(getenv(publicReadBudgetEnv))
+	budget, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || budget < api.MinObjectGatewayTransferBytesPerSecond || budget > api.MaxObjectGatewayTransferBytesPerSecond {
+		return 0, fmt.Errorf("compute edge public reads: %s must be the edge's part of the node's port share, %d–%d bytes/s, got %q",
+			publicReadBudgetEnv, api.MinObjectGatewayTransferBytesPerSecond, api.MaxObjectGatewayTransferBytesPerSecond, raw)
+	}
+	return budget, nil
 }
 
 // requireComputeEdgeConfig checks what a compute edge cannot run without.

@@ -2758,8 +2758,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			defer close(flushDone)
 			err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
 				Interval: flushInterval,
-				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				// The target names the calling app, so a service binding's
+				// span lands in its caller's rows only (tracing tenancy T4).
+				WriteTargetFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+					return retainedSpansWriter.WriteSummary(writeCtx, target.Request(traceID, summaryJSON))
 				},
 				Log: log,
 				MaxSpansPerTrace: func(string) int {
@@ -3669,6 +3671,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// params don't appear in r.URL.Path, so the mux still
 		// routes to the dispatcher regardless of whether
 		// ?archive=1 is present.
+		logStreams := newLogStreamSlots()
 		logsMux.Handle("GET /v1/apps/{slug}/logs", &appLogsDispatcher{
 			live: &AppLogsHandler{
 				Auth: deps.authMw,
@@ -3683,6 +3686,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Ops:               nil,
 				Traffic:           deps.trafficRevocations,
 				CapabilityAllowed: deps.capabilityAllowed,
+				Streams:           logStreams,
 			},
 			archive: &ArchiveLogsHandler{
 				Auth:              deps.authMw,
@@ -3694,6 +3698,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Ops:               nil,
 				Traffic:           deps.trafficRevocations,
 				CapabilityAllowed: deps.capabilityAllowed,
+				Streams:           logStreams,
 			},
 		})
 		logsHandler = logsMux

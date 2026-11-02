@@ -694,20 +694,36 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	rootHandler := http.Handler(controlPlaneHandler)
 	if edgeMode == edgeModeCompute {
-		// No storage credentials here: upload routes and public bucket
-		// reads go to the control plane's edge.
-		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, pgStore, domains, log)
+		// Upload routes go to the control plane's edge: only apid resolves
+		// their keys. Public bucket reads are served here once the node holds
+		// the gateway credential (ADR-20261031122757 step 7), and forwarded
+		// to the control plane's edge otherwise.
+		var localReads http.Handler
+		if publicStorageRegistry != nil {
+			budget, err := computePublicReadBudget(os.Getenv, publicStorageRegistry)
+			if err != nil {
+				return fmt.Errorf("gatewayd-public: %w", err)
+			}
+			transfers := objectstorage.NewTransferLimiter(budget, "gatewayd_public_object")
+			opsMetrics.Registry().MustRegister(transfers.Collectors()...)
+			fenceOpen := startObjectStorageFence(runtimeCtx, pgStore, log)
+			reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
+			defer stopReads()
+			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, func() bool { return s3Flag.Load() && fenceOpen() },
+				domains, controlPlaneHandler, log)
+			if err != nil {
+				return err
+			}
+			log.Info("gatewayd-public: public object reads served on this node", "max_bytes_per_second", budget)
+		}
+		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, localReads, pgStore, domains, log)
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
 	} else if publicStorageRegistry != nil {
 		// Public reads wait out the same restore fence as the S3 gateway
 		// (ADR-20261025111015 amendment).
-		fence := runtimeconfig.NewObjectStorageFence(pgStore, log)
-		if err := fence.Check(runtimeCtx); err != nil {
-			log.Warn("gatewayd-public: initial object storage fence read failed", "err", err)
-		}
-		go fence.Run(runtimeCtx)
+		fenceOpen := startObjectStorageFence(runtimeCtx, pgStore, log)
 		// Upload keys are resolved by apid on its local auth socket (ADR
 		// 20261029202403); this edge runs on the control plane.
 		uploadAuth, dialErr := apidgrpc.DialAuth(ctx, envOr("FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock"), nil)
@@ -720,7 +736,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// flush runs before the pool closes.
 		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 		defer stopReads()
-		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, func() bool { return s3Flag.Load() && fence.Open() },
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, func() bool { return s3Flag.Load() && fenceOpen() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
