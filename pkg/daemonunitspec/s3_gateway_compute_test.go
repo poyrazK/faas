@@ -169,6 +169,17 @@ func TestComputeObjectGatewayScrapeAndFirewallFollowTheSwitch(t *testing.T) {
 			t.Errorf("%s is not inside the compute gateway switch", job)
 		}
 	}
+	// FaasComputeObjectGatewayUnavailable pages only on targets the cutover
+	// switch labels s3_endpoint_route="tunnel".
+	gatewayJob := tmpl[strings.Index(tmpl, `job_name: "s3-gatewayd-compute"`):strings.Index(tmpl, `job_name: "cloudflared-s3"`)]
+	if !strings.Contains(gatewayJob, "target_label: s3_endpoint_route") ||
+		!strings.Contains(gatewayJob, `'tunnel' if faas_object_gateway_endpoint_on_tunnel | default(false) | bool else 'control_plane'`) {
+		t.Error(`the s3-gatewayd-compute job does not set s3_endpoint_route from faas_object_gateway_endpoint_on_tunnel`)
+	}
+	rules := read("prometheus", "files", "faas.rules.yml")
+	if !strings.Contains(rules, `count(up{job="s3-gatewayd-compute",s3_endpoint_route="tunnel"})`) {
+		t.Error(`FaasComputeObjectGatewayUnavailable no longer reads the s3_endpoint_route="tunnel" label the scrape job sets`)
+	}
 	defaults := read("prometheus", "defaults", "main.yml")
 	for _, want := range []string{"/v1/internal/metrics/s3-gatewayd-compute-targets", "/v1/internal/metrics/cloudflared-s3-targets"} {
 		if !strings.Contains(defaults, want) {

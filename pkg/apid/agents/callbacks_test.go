@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -256,6 +257,58 @@ func TestCallbackMessageLandsOnce(t *testing.T) {
 	}
 	if code, _ := f.post(t, token, toolResult("call-1", `{"n":2}`)); code != http.StatusConflict {
 		t.Fatalf("other data under the same message_id = %d, want 409", code)
+	}
+}
+
+// Both IDs may carry ':'. Over random thread and message IDs made of 'a',
+// 'b' and ':', starting with thread "a:b" message "c" and thread "a" message
+// "b:c", every distinct pair lands as its own message, a repeated pair gets
+// its first sequence, and a thread without ':' keeps the key
+// "callback:{thread}:{message_id}".
+func TestPropertyCallbackThreadsNeverShareAKey(t *testing.T) {
+	r := rand.New(rand.NewPCG(20261102, 125501))
+	f := newCallbackFixture(t)
+	id := func() string {
+		b := make([]byte, 1+r.IntN(4))
+		for i := range b {
+			b[i] = "ab:"[r.IntN(3)]
+		}
+		return string(b)
+	}
+	pairs := [][2]string{{"a:b", "c"}, {"a", "b:c"}}
+	for i := 0; i < 300; i++ {
+		pairs = append(pairs, [2]string{id(), id()})
+	}
+	tokens, sequences := map[string]string{}, map[[2]string]string{}
+	for _, p := range pairs {
+		thread, message := p[0], p[1]
+		if _, ok := tokens[thread]; !ok {
+			token, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: thread})
+			if code != http.StatusCreated {
+				t.Fatalf("issue for thread %q = %d", thread, code)
+			}
+			tokens[thread] = token
+		}
+		code, receipt := f.post(t, tokens[thread], toolResult(message, `{"ok":true}`))
+		if code != http.StatusAccepted {
+			t.Fatalf("thread %q message %q = %d", thread, message, code)
+		}
+		if first, seen := sequences[p]; seen && receipt.Sequence != first {
+			t.Fatalf("retry of thread %q message %q = sequence %s, want %s", thread, message, receipt.Sequence, first)
+		}
+		sequences[p] = receipt.Sequence
+	}
+	if len(f.inbox.messages) != len(sequences) {
+		t.Fatalf("%d distinct posts made %d messages", len(sequences), len(f.inbox.messages))
+	}
+	for _, m := range f.inbox.messages {
+		thread, message := m.Metadata["thread_id"], m.Metadata["message_id"]
+		if sequences[[2]string{thread, message}] != strconv.FormatInt(m.Sequence, 10) {
+			t.Fatalf("message %d belongs to thread %q message %q, which got sequence %s", m.Sequence, thread, message, sequences[[2]string{thread, message}])
+		}
+		if !strings.Contains(thread, ":") && m.IdempotencyKey != "callback:"+thread+":"+message {
+			t.Fatalf("thread %q message %q has key %q", thread, message, m.IdempotencyKey)
+		}
 	}
 }
 

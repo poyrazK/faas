@@ -225,7 +225,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 		}
 		body += databases.hostVars(host, hostScheddTarget)
-		body += renderComputeEdgeVars(m.PublicEdge.ComputeNodes, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		body += renderComputeEdgeVars(m.PublicEdge, host.Role, postgresListenAddress, computeAllowedCIDRs)
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
 		body += renderLogArchiveVars(m.LogArchive)
 		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
@@ -743,8 +743,8 @@ func renderWorkloadIdentityVars(w manifest.WorkloadIdentity) string {
 	return fmt.Sprintf("faas_workload_identity_source_dir: %q\n", w.SourceDir)
 }
 
-func renderComputeEdgeVars(enabled bool, role, controlPlaneAddress string, computeCIDRs []string) string {
-	if !enabled || controlPlaneAddress == "" {
+func renderComputeEdgeVars(edge manifest.PublicEdge, role, controlPlaneAddress string, computeCIDRs []string) string {
+	if !edge.ComputeNodes || controlPlaneAddress == "" {
 		return ""
 	}
 	listen := net.JoinHostPort(controlPlaneAddress, computeEdgePrivatePort)
@@ -757,6 +757,10 @@ func renderComputeEdgeVars(enabled bool, role, controlPlaneAddress string, compu
 		fmt.Fprintf(&b, "faas_edge_control_plane_target: %q\n", "http://"+listen)
 		if len(computeCIDRs) > 0 {
 			fmt.Fprintf(&b, "faas_edge_peer_cidrs: [%s]\n", quotedYAMLList(computeCIDRs))
+		}
+		// ADR-20261031105055: route each host to the node that last served it.
+		if edge.PlacementRouting {
+			b.WriteString("faas_edge_placement_routing: true\n")
 		}
 	}
 	return b.String()

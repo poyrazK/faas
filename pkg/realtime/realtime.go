@@ -27,6 +27,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -568,6 +569,7 @@ type connection struct {
 	signalCount             int
 	presenceWindow          time.Time
 	presenceCount           int
+	commands                *rate.Limiter
 }
 
 type callbackAuthSnapshot struct {

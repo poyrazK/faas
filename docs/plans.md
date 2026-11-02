@@ -49,16 +49,16 @@ The connection limit counts open WebSocket and SSE connections across all of an 
 
 ## Object storage
 
-Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs $0.03 per GiB-month. Requests and egress are not charged. Free stops at its included storage. Each plan limits the data you read out of your buckets each month to 10 times its included storage.
+Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs $0.03 per GiB-month. Requests and egress are not charged. Free stops at its included storage; a paid plan stores its included storage plus what your spend cap buys. Each plan limits the data you read out of your buckets each month to 10 times its included storage.
 
-| Plan | Included storage | Beyond the included storage | Egress each month |
-|---|---:|---|---:|
-| **Free** | 1 GiB | stops at 1 GiB | 10 GiB |
-| **Hobby** | 10 GiB | $0.03 per GiB-month | 100 GiB |
-| **Pro** | 50 GiB | $0.03 per GiB-month | 500 GiB |
-| **Scale** | 200 GiB | $0.03 per GiB-month | 2,000 GiB |
+| Plan | Included storage | Beyond the included storage | Most stored with the default spend cap | Egress each month |
+|---|---:|---|---:|---:|
+| **Free** | 1 GiB | stops at 1 GiB | 1 GiB | 10 GiB |
+| **Hobby** | 10 GiB | $0.03 per GiB-month | 76 GiB | 100 GiB |
+| **Pro** | 50 GiB | $0.03 per GiB-month | 383 GiB | 500 GiB |
+| **Scale** | 200 GiB | $0.03 per GiB-month | 1,200 GiB | 2,000 GiB |
 
-Included storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends. See [object storage](object-storage.md#limits).
+Included storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. Raising your spend cap raises how much a paid plan stores. Above that, uploads are refused and downloads stop until you delete objects, raise the cap or upgrade, and a downgrade waits until your data fits. Every plan stores up to 1,000,000 objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends. See [object storage](object-storage.md#limits).
 
 ## Choose a plan
 

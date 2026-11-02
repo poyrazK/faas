@@ -173,7 +173,7 @@ func latencyWindow(w *api.RouteHealthWindowEvidence, budget int64, checkRelative
 	if reason := windowUnavailable(*w, anchor, unavailable); reason != "" {
 		return "unknown", reason
 	}
-	if w.Candidate.Requests < api.RouteHealthMinLatencyRequests || w.Stable.Requests < api.RouteHealthMinLatencyRequests {
+	if LatencySamples(w.Candidate) < api.RouteHealthMinLatencyRequests || LatencySamples(w.Stable) < api.RouteHealthMinLatencyRequests {
 		return "unknown", "insufficient_latency_requests"
 	}
 	if !validP95(w.Candidate.P95LatencyMS) || !validP95(w.Stable.P95LatencyMS) {
@@ -239,7 +239,16 @@ func combine(a, ar, b, br string) (string, string) {
 	return a, ar
 }
 func valid(c api.RouteHealthCounts) bool {
-	return c.Requests >= 0 && c.ServerErrors >= 0 && c.ServerErrors <= c.Requests
+	return c.Requests >= 0 && c.ServerErrors >= 0 && c.ServerErrors <= c.Requests && (c.LatencyRequests == nil || *c.LatencyRequests >= 0 && *c.LatencyRequests <= c.Requests)
+}
+
+// LatencySamples is how many requests a p95 ranked: the warm requests the
+// canary guard reports, or every request when it reports none.
+func LatencySamples(c api.RouteHealthCounts) int64 {
+	if c.LatencyRequests != nil {
+		return *c.LatencyRequests
+	}
+	return c.Requests
 }
 func rate(c *api.RouteHealthCounts) {
 	c.ErrorRate = 0

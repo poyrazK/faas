@@ -1982,8 +1982,15 @@ groups:
   # ────────────────────────────────────────────────────────────────────
   - name: faas_compute_edge
     rules:
+      # A node serves only while its edge answers and its connector holds a
+      # tunnel connection. A connector that is down exports no connection
+      # series at all, so the expression counts serving nodes instead of
+      # summing connections, which is empty, not 0, once every connector stops.
       - alert: FaasComputeEdgeUnavailable
-        expr: (sum(up{job="gatewayd-public-edge"}) == 0) or (sum(cloudflared_tunnel_ha_connections{job="cloudflared"}) == 0)
+        expr: |
+          count(up{job="gatewayd-public-edge"})
+            unless on()
+          (count((up{job="gatewayd-public-edge"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared"} > 0)) > 0)
         for: 2m
         labels:
           severity: page
@@ -1992,7 +1999,7 @@ groups:
           public_status: internal
         annotations:
           summary: "No compute-node app edge is serving"
-          description: "Every compute edge is down or every Cloudflare Tunnel connector has lost its connections for 2 minutes. App requests routed through the tunnel are failing."
+          description: "For 2 minutes no compute node has both its edge answering and its Cloudflare Tunnel connector connected. App requests routed through the tunnel are failing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
       - alert: FaasComputeEdgeDown
@@ -2052,10 +2059,33 @@ groups:
   # in compute mode and its s3 tunnel connector). Prometheus scrapes the two
   # jobs only while the cell runs the gateway on its compute nodes, so these
   # stay silent on fleets without it. One node down is lost capacity;
-  # Cloudflare sends its share to the other connectors.
+  # Cloudflare sends its share to the other connectors. Once s3.<domain>
+  # resolves to the s3 tunnel (step 6), no node serving is an outage.
   # ────────────────────────────────────────────────────────────────────
   - name: faas_compute_object_gateway
     rules:
+      # Gated on the s3_endpoint_route target label, which Prometheus sets
+      # to "tunnel" only after the cutover: before it the tunnel carries at
+      # most the load test's pilot host. A node serves only while its
+      # gateway answers and its connector holds a connection; a connector
+      # that is down exports no connection series, so this counts serving
+      # nodes instead of summing connections.
+      - alert: FaasComputeObjectGatewayUnavailable
+        expr: |
+          count(up{job="s3-gatewayd-compute",s3_endpoint_route="tunnel"})
+            unless on()
+          (count((up{job="s3-gatewayd-compute"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared-s3"} > 0)) > 0)
+        for: 2m
+        labels:
+          severity: page
+          component: s3-gatewayd
+          family: object_storage
+          public_status: internal
+        annotations:
+          summary: "No compute node is serving the S3 endpoint"
+          description: "s3.<domain> resolves to the s3 tunnel, and for 2 minutes no compute node has both its S3 gateway answering and its s3 tunnel connector connected. Every S3 request fails at Cloudflare."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
       - alert: FaasComputeObjectGatewayDown
         expr: up{job="s3-gatewayd-compute"} == 0
         for: 2m
@@ -4026,6 +4056,21 @@ groups:
         annotations:
           summary: "githubd cannot read GitHub's App webhook delivery log"
           description: "No successful poll of GET /app/hook/deliveries for over an hour, so a broken GitHub webhook would go unnoticed. Check the App private key and GitHub API reachability from the control plane."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubAppWebhook.md"
+
+      # The App's events and permissions live on GitHub (docs/ops/github-app.md).
+      # A missing repository event silently stops rename handling; a missing
+      # permission makes GitHub refuse githubd's writes.
+      - alert: FaasGithubAppConfigDrift
+        expr: max by (kind, name) (githubd_github_app_config_missing) == 1
+        for: 30m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "The GitHub App lacks a required {{ $labels.kind }}: {{ $labels.name }}"
+          description: "GET /app shows the Gregale GitHub App without the {{ $labels.kind }} {{ $labels.name }} that docs/ops/github-app.md requires. Subscribe the event or grant the permission in the App's settings on GitHub; a new permission also needs each installation's owner to accept it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubAppWebhook.md"
 
   # Billing drift detector (ADR-049 §B.1). The reconciler

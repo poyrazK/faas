@@ -2124,16 +2124,19 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "status", Short: "Show an app's GitHub connection health", Examples: []string{"gregale github status my-api"}, Positionals: []string{"<slug>"}},
 			{Name: "sync", Short: "Reconcile repository access with GitHub", Examples: []string{"gregale github sync my-api"}, Positionals: []string{"<slug>"}},
-			{Name: "repos", Short: "List repositories the connected GitHub installation can see", Examples: []string{"gregale github repos my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "repos", Short: "List repositories the connected GitHub installation can see", Examples: []string{"gregale github repos my-api", "gregale github repos my-api --installation-id 12345"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "installation-id", Short: "GitHub App installation id (defaults to the app's, or the account's only one)", Value: "ID"},
+			}},
 			{Name: "bind", Short: "Bind an app to a visible GitHub repository", Examples: []string{"gregale github link my-api --repo acme/my-api --branch main"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
-				{Name: "installation-id", Short: "GitHub App installation id (auto-resolved when omitted)", Value: "ID"},
+				{Name: "installation-id", Short: "GitHub App installation id (the app's, or the account's only one, when omitted)", Value: "ID"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Value: "OWNER/NAME", Req: true},
-				{Name: "branch", Short: "production branch", Value: "BRANCH"},
+				{Name: "branch", Short: "production branch (defaults to the repository's default branch)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
 			}},
 			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
-				{Name: "production-branch", Short: "production branch (default: current binding or main)", Value: "BRANCH"},
+				{Name: "production-branch", Short: "production branch (default: current binding or the repository's default branch)", Value: "BRANCH"},
+				{Name: "installation-id", Short: "GitHub App installation id (the app's, or the account's only one, when omitted)", Value: "ID"},
 				{Name: "deploy-branches", Short: "comma-separated branch=environment mappings (default or registered environment)", Value: "MAPPINGS"},
 				{Name: "pinned-sha", Short: "pin the generated deploy Action to this full 40-character commit SHA (default: immutable SHA embedded in the CLI release)", Value: "SHA"},
 				{Name: "pin-action", Short: "resolve the current v0 deploy Action tag to its commit SHA"},

@@ -338,6 +338,40 @@ func DecodeInstallation(body []byte) (InstallationEvent, error) {
 	return ev, nil
 }
 
+// InstallationTargetEvent reports a change to the user or organization an
+// installation belongs to. GitHub sends it without a subscription; the only
+// action is "renamed", with the old login in changes.login.from.
+type InstallationTargetEvent struct {
+	Action       string              `json:"action"`
+	Installation InstallationPayload `json:"installation"`
+	Account      struct {
+		Login string `json:"login"`
+	} `json:"account"`
+	Changes struct {
+		Login struct {
+			From string `json:"from"`
+		} `json:"login"`
+	} `json:"changes"`
+	TargetType string `json:"target_type"`
+}
+
+func DecodeInstallationTarget(body []byte) (InstallationTargetEvent, error) {
+	var ev InstallationTargetEvent
+	if len(body) == 0 {
+		return ev, errors.New("githubd: empty installation_target body")
+	}
+	if err := json.Unmarshal(body, &ev); err != nil {
+		return ev, err
+	}
+	if ev.Installation.ID <= 0 {
+		return ev, errors.New("githubd: installation_target missing installation.id")
+	}
+	if ev.Action == "" {
+		return ev, errors.New("githubd: installation_target missing action")
+	}
+	return ev, nil
+}
+
 // InstallationRepositoriesEvent reports repositories added to or removed
 // from an installation. Added repositories require no local mutation; removed
 // repositories must stop future deploys immediately.

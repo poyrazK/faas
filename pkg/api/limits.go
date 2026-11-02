@@ -808,6 +808,9 @@ const (
 	ProfileCaptureDefaultDuration = 10 * time.Second
 	// ProfileCaptureGrace covers the collectors' final flush after the window.
 	ProfileCaptureGrace = 3 * time.Second
+	// ProfileCaptureQueuedTimeout fails a capture no schedd claimed in time;
+	// `gregale debug capture` waits at least this long.
+	ProfileCaptureQueuedTimeout = 10 * time.Minute
 	// ProfileCaptureMaxProfiles bounds one reply; profiles are per process and kind.
 	ProfileCaptureMaxProfiles = 8
 	// ProfileCaptureMaxProfileBytes bounds the summed compressed profiles so each
@@ -2352,6 +2355,17 @@ const (
 	RealtimeAccessMaxDeniedChannels          = 64
 )
 
+// RealtimeResumeCommandsPerSecond and RealtimeResumeCommandBurst bound the
+// commands one resumable connection sends: subscribe, unsubscribe, reset, read
+// state and the inbox and preference frames. Each can read or write
+// control-plane Postgres through apid, and nothing else bounded a client
+// looping them. Acks, presence and signals have their own bounds and do not
+// count.
+const (
+	RealtimeResumeCommandsPerSecond = 20
+	RealtimeResumeCommandBurst      = 40
+)
+
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (
@@ -2510,6 +2524,11 @@ const (
 	ObjectStorageProgressSweepInterval = time.Hour
 	ObjectStorageProgressRetry         = 5 * time.Minute
 	ObjectStorageInventoryMaxPages     = 1000
+	// MaxObjectStorageAccountKeys is the most objects (with retained
+	// versions) one account may store on every plan: Gregale meters a bucket
+	// by listing it whole, at most ObjectStorageInventoryMaxPages pages of
+	// MaxObjectS3ListItems keys. Writes past it answer account_keys.
+	MaxObjectStorageAccountKeys = ObjectStorageInventoryMaxPages * MaxObjectS3ListItems
 	// MaxObjectStorageReconcileBuckets bounds one backend's bucket listing in
 	// operator reconciliation after a database restore (ADR-20261025111015).
 	MaxObjectStorageReconcileBuckets = 100_000
@@ -3487,6 +3506,25 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
+
+// WithSpendCap returns the limits with the storage ceiling a paid account's
+// spend cap pays for: the plan's included storage plus the GiB-months the cap
+// buys at ObjectStorageMillicentsPerGiBMonth (ADR-20261101214152). Hobby's
+// default $2 cap gives 76 GiB, Pro's $10 383 GiB, Scale's $30 1,200 GiB. A nil
+// cap (none, or a cleared one) keeps the limits; a plan ceiling that is
+// already tighter, as Free's, stays.
+func (l ObjectStoragePlanLimits) WithSpendCap(capCents *int64) ObjectStoragePlanLimits {
+	if capCents == nil || *capCents < 0 || l.IncludedBytes <= 0 {
+		return l
+	}
+	gib := min(*capCents, MaxObjectStoragePolicyValue/MillicentsPerCent) * MillicentsPerCent / ObjectStorageMillicentsPerGiBMonth
+	ceiling := MaxObjectStoragePolicyValue
+	if gib < (MaxObjectStoragePolicyValue-l.IncludedBytes)>>30 {
+		ceiling = l.IncludedBytes + gib<<30
+	}
+	l.MaxAccountBytes = tighterObjectStorageLimit(ceiling, l.MaxAccountBytes)
+	return l
+}
 
 // Policy returns the operator safety policy tightened by the plan's ceilings.
 // The tighter positive value wins; a zero plan ceiling keeps the operator's.
@@ -6990,10 +7028,12 @@ const (
 	// meterd rolls a minute 60-120 s after it ends, so the ledger is current
 	// long before billing reads it.
 	QuietPauseLedgerFlushSeconds = 2
-	// QuietPauseLedgerRetentionDays is how long meterd keeps pauses: past an
-	// invoiced month plus its dispute window, the subtraction they made is
-	// final.
-	QuietPauseLedgerRetentionDays = 45
+	// QuietPauseLedgerRetentionDays is how long meterd keeps ended pauses.
+	// meterd records what each rolled minute did not bill in
+	// usage_minutes.paused_mb_seconds, so the ledger only has to outlive
+	// meterd's 24 h catch-up window (MeterCatchUpWindow); 3 days leaves room
+	// for an outage. An open pause on a node that still reports is kept.
+	QuietPauseLedgerRetentionDays = 3
 	// FrozenTTLSeconds is how long a frozen instance (ADR-1151) stays paused
 	// in memory after its idle timeout before schedd parks it. 10 min gave
 	// the same capacity as 1 h in the ADR's simulation while holding fewer
@@ -9512,6 +9552,11 @@ const (
 	// AgentCallbacksPerMinutePerThread bounds the callbacks one apid accepts
 	// for one thread in a minute, so a runaway tool cannot flood the thread.
 	AgentCallbacksPerMinutePerThread = 600
+	// AgentSleepMaxSeconds bounds a gregale_sleep (ADR-20261030125501 §4):
+	// the wake-up is a realtime schedule on the inbox, and a schedule is due
+	// at most 30 days ahead. A sleep also counts against the endpoint's
+	// realtime schedules (state.ManagedRealtimeScheduleLimit).
+	AgentSleepMaxSeconds = 2_592_000
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).
@@ -13265,6 +13310,14 @@ func (p Plan) IssueLimits() IssueLimits {
 
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
+
+// IssueAttributionRetryWindow bounds how long after ingestion the issue
+// maintenance pass retries customer attribution for an occurrence whose
+// request evidence has not arrived (ADR-380). Telemetry evidence only matches
+// within IssueMaxClockSkew of the occurrence, so evidence later than this
+// never attributes it. An occurrence that names no request, trace or
+// invocation has no evidence to wait for and is checked once.
+const IssueAttributionRetryWindow = time.Hour
 const IssueMaxBatchEvents = 32
 
 // DeploymentTrafficPercentTotal is the complete serving traffic weight.

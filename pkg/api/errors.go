@@ -448,13 +448,16 @@ const (
 	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
 	CodePlanLimitDeveloperLease            = "plan_limit_developer_lease"
 	CodePlanLimitRAM                       = "plan_limit_ram"
-	CodePlanLimitConcur                    = "plan_limit_concurrency"
-	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
-	CodeInvalidAppRAM                      = "invalid_ram_mb"
-	CodeInvalidCPURAMPair                  = "invalid_cpu_ram_pair"
-	CodeInvalidResourceProfile             = "invalid_resource_profile"
-	CodeSourceTooLarge                     = "source_too_large"
-	CodeSourceInvalid                      = "source_invalid"
+	// CodePlanLimitObjectStorage refuses a downgrade while the account
+	// stores more than the target plan's storage ceiling (ADR-20261101214152).
+	CodePlanLimitObjectStorage = "plan_limit_object_storage"
+	CodePlanLimitConcur        = "plan_limit_concurrency"
+	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidAppRAM          = "invalid_ram_mb"
+	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
+	CodeInvalidResourceProfile = "invalid_resource_profile"
+	CodeSourceTooLarge         = "source_too_large"
+	CodeSourceInvalid          = "source_invalid"
 	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
 	// the node-local developer-source cache was absent, stale, or corrupt.
 	// The CLI responds by uploading a complete source snapshot.
@@ -2146,8 +2149,13 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
+	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict,
+		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired:
 		return http.StatusConflict
+	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
+		return http.StatusForbidden
+	case CodeGitHubAppNotInstalled:
+		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:

@@ -1537,6 +1537,56 @@ Checked and unchanged: the response cache key already varies on the request
 host (ADR-122, `computeVaryHash`), so one host's cached body is not served on
 another host of the same app.
 
+## Amendment (2026-10-31, later): review round 7 — organization permissions, covering rules in traces, authoritative-policy parity
+
+An end-to-end review found one gap that kept organizations from running edge
+rules and two places that did not show or enforce what the cached gateway
+path does. None changes the rule format.
+
+1. **Edge rules have a reviewed organization permission.** The edge-rule
+   routes were not in the app-access route table, so they fell back to the
+   creator alone: no other owner or admin could change a company app's rules
+   or switch on attack mode under attack, and once the creator left the
+   company nobody could, not even to disable a broken rule. Reads (rules,
+   history, stats, suggestions, events, WAF review, edge protection, attack
+   mode status, the dashboard trace) take `org.read_app`; writes (create,
+   change, delete, WAF exclusions, rollback, attack mode, and the dashboard
+   forms, the app page's list forms included) take
+   `org.manage_app_security`, as the app's security settings do; purging
+   cached responses takes `org.deploy_app`. A request acts on the app's
+   resource account, so rules keep the account the app's rules belong to.
+   Lists and CORS presets stay account objects (assumed; no data-model
+   change): rules on a company app reference the lists of that account, the
+   app page's list forms manage them for owners and admins, a list edit still
+   passes the check of every app whose rules use the list (amendment
+   2026-10-30), and the account-wide `/v1/edge-rule-lists` and
+   `/v1/cors-presets` keep acting on the caller's own account.
+2. **Traces include the rules that cover an app from its siblings.** The
+   gateway applies to an app's hosts the `*`, glob and exact-host rules of the
+   account's other apps in the same owner scope, but the CLI and dashboard
+   traces, and the app's rule list, read the app's own rules only, so a
+   sibling's rule that refused a request never appeared. `GET
+   /v1/apps/{slug}/edge-rules?covering=true` adds those rules (not `@app` ones,
+   not another scope's or a deleted app's, and only of apps the caller may
+   read), each with its own `app_id`; the ETag stays the app's rule set. Both
+   traces use it; an apid that predates the parameter returns the app's own
+   rules, so a newer CLI degrades to the previous trace.
+3. **The authoritative host policy applies the cached path's filters.** With
+   `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` on (ADR-570), a host's rules are
+   read in a Postgres snapshot and compiled without `hostStoreRules`, which
+   had none of the later filters: another owner scope's rules (round 6), rules
+   of deleted apps (amendment 2026-10-28) and a preview's inherited production
+   rules (amendment 2026-10-30). The snapshot's rule query
+   (`ReadPublicHostEdgeRules`) now leaves out the first two in the same read,
+   because the snapshot runs under a short budget and a read per rule's app
+   timed out under load; the owner policy adds the third from the resolved
+   app's `ProductionAppID`, reading only for a preview. The snapshot's app
+   projection now carries `OrgID` for a company organization (a personal one
+   reads as none, so a personal app costs no organization read), so the
+   gateway's route-target scope check and the app's resource account work in
+   this mode too; before, every app read as personal there, and a company
+   app's plan and limits came from its creator's account.
+
 ## Amendment (2026-10-31, later): app-bound credentials write rules for their app only
 
 An edge-security review found that a per-app deploy token, which the docs
