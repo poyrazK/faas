@@ -62,8 +62,9 @@ const (
 )
 
 // Request bodies one gateway holds at once. Uploads spooled to disk share
-// RequestBodySpoolNodeBytes and one client IP (an IPv6 /64) holds at most
-// RequestBodySpoolPerClient of them; validate-rule bodies read into the heap
+// RequestBodySpoolNodeBytes, one app owner holds at most a quarter of it, and
+// one client IP (an IPv6 /56) holds at most RequestBodySpoolPerClient of
+// them; validate-rule bodies read into the heap
 // share RequestBodyMemoryNodeBytes. A request that would pass a budget gets
 // 503 with Retry-After RequestBodyBudgetRetryAfter.
 // gatewayd-internal keeps verified and definitely-invalid API key lookups for
@@ -133,6 +134,15 @@ const InboundWebhookFailuresPerIPPerMinute = 30
 // one process computes at once; the rest wait for a slot.
 const PasswordHashConcurrency = 3
 
+// PasswordHashQueueMax caps the callers waiting for a hash slot: about half
+// a second of work at ~60 hashes a second. Past it a password attempt gets
+// 429 with Retry-After PasswordHashBusyRetryAfter instead of joining an
+// unbounded queue (H96).
+const (
+	PasswordHashQueueMax       = 32
+	PasswordHashBusyRetryAfter = 2 * time.Second
+)
+
 // GatewayRouteRecheckInterval is how long a warm custom-domain route trusts
 // its last registry recheck (domain verified, tenant surface binding) before
 // asking again; domain_changed and app_changed drop it sooner.
@@ -148,8 +158,14 @@ const (
 )
 
 const (
-	RequestBodySpoolNodeBytes   int64 = 2 << 30
+	RequestBodySpoolNodeBytes   int64 = 4 << 30
 	RequestBodySpoolPerClient         = 4
+	// One app owner holds at most 1/RequestBodySpoolOwnerShareDivisor of
+	// the node spool (1 GiB: four of Scale's 250 MiB bodies), and the
+	// per-client cap keys IPv6 clients by /RequestBodySpoolClientIPv6Prefix
+	// (H94).
+	RequestBodySpoolOwnerShareDivisor       = 4
+	RequestBodySpoolClientIPv6Prefix        = 56
 	RequestBodyMemoryNodeBytes  int64 = 96 << 20
 	RequestBodyBudgetRetryAfter       = 5 * time.Second
 )
