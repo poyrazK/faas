@@ -70351,13 +70351,6 @@ CREATE INDEX app_forks_claim_idx ON public.app_forks USING btree (created_at, id
 
 
 --
--- Name: app_health_collection_due_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX app_health_collection_due_idx ON public.app_health_collection_state USING btree (next_check_at, app_id);
-
-
---
 -- Name: app_health_history_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -70495,13 +70488,6 @@ CREATE INDEX app_release_gates_synthetic_check ON public.app_release_gates USING
 --
 
 CREATE INDEX app_route_priorities_account_idx ON public.app_route_priorities USING btree (account_id);
-
-
---
--- Name: app_scaling_policy_scheduler_status_observed_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX app_scaling_policy_scheduler_status_observed_idx ON public.app_scaling_policy_scheduler_status USING btree (observed_at);
 
 
 --
@@ -76694,13 +76680,6 @@ CREATE INDEX operator_alert_episodes_rule_idx ON public.operator_alert_episodes 
 --
 
 CREATE INDEX operator_alert_episodes_series_idx ON public.operator_alert_episodes USING btree (series_id, started_at DESC, first_seen_at DESC, id DESC);
-
-
---
--- Name: operator_alert_rule_observations_retention_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX operator_alert_rule_observations_retention_idx ON public.operator_alert_rule_observations USING btree (evaluated_at, rule_key);
 
 
 --
