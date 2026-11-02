@@ -17,8 +17,9 @@
 # No managed settings pin providers or disable sign-in methods (ADR-20261027090010 §2
 # and §7 set out the hosting terms).
 #
-# Node 22 on Alpine (musl), the same digest as runner-node22: every harness
-# ships a musl build, and the memory experiment measured this base.
+# Node 22 on Alpine (musl): every harness ships a musl build, and the memory
+# experiment measured this base. runner-node22 moved to Debian
+# (ADR-20261102133056); this image stays on Alpine.
 FROM mirror.gcr.io/library/node:22-alpine@sha256:025b8e975a61d94e33abeafaad1255ef44e4898cf1a1b6446860009c72e6d284
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
 

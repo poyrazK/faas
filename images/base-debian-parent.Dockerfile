@@ -3,5 +3,6 @@
 # layer is byte-identical to the Debian layer used by node24/python312/
 # python313. imaged composes those children by matching OCI diff IDs.
 #
-# Node22 is intentionally Alpine and does not use this parent.
+# Node22 is Debian too (ADR-20261102133056) but stays a full-chain base and
+# does not use this parent.
 FROM mirror.gcr.io/library/debian:13-slim@sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d
