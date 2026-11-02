@@ -156,9 +156,9 @@ customers out until the owner has tested production
    `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
    maild). Create the [SQL probe](#sql-availability-probe) canary databases.
-   Keep `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` at `shadow` until
-   [databases past a lowered plan](#databases-past-a-lowered-plan) are shown
-   to the customer, then set it `on`.
+   Set `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT=on` once the release
+   shows [databases past a lowered plan](#databases-past-a-lowered-plan) to
+   the customer.
 4. Approve the production backend ([Production](#production)) with fleet
    ceilings sized to the Neon plan.
 5. Run the customer journey with the owner's account:
@@ -1188,8 +1188,11 @@ sweep. The same sweep suspends the databases the plan no longer includes
   `on` too; it logs `managed postgres plan excess suspended` when it does.
 - `off` does nothing.
 
-Keep it at `shadow` in production until customers are told: the database view
-field and the owner's email are the ADR's step 2. Metrics:
+While it is `on`, `GET /v1/postgres/databases` and the read show
+`plan_excess` (`database_limit` or `service_class`) on each such database, as do
+`gregale postgres list` and `get` and the dashboard. Turn it `on` in the
+release that publishes this; the owner's email is still to come (the ADR's
+step 3). Metrics:
 
 - `apid_managed_postgres_plan_excess_databases`
 - `apid_managed_postgres_plan_excess_scopes{state}`, where `state` is
