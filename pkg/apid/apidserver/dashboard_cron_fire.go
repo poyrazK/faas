@@ -182,6 +182,9 @@ func (s *server) fireCronFromDashboard(ctx context.Context, acct state.Account, 
 	if !ok || limits.CronLimitPerApp == 0 {
 		return ErrDashboardCronPlanBlocked
 	}
+	if s.cronRunOverPlan(ctx, app, c) != nil {
+		return ErrDashboardCronPlanBlocked
+	}
 	requestID, err := s.insertCronFireNowRequest(ctx, c.ID, acct.ID)
 	if err != nil {
 		return fmt.Errorf("insert fire-now: %w", err)
@@ -218,7 +221,8 @@ var (
 	ErrDashboardCronNotFound = errors.New("dashboard: cron not found")
 	// ErrDashboardCronPlanBlocked covers a Free-plan customer
 	// trying to fire a cron (the rule still exists because it
-	// landed before a plan downgrade). The dashboard surfaces the
+	// landed before a plan downgrade), and a cron the current plan
+	// no longer lets fire (cronrun.OverPlan). The dashboard surfaces the
 	// same redirect-with-flash; the v1 endpoint surfaces the
 	// ErrPlanCronsNotAllowed 402. Split so we can lift the
 	// message later.

@@ -556,12 +556,16 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 		"    - name: fsn-1\n      role: control-plane\n",
 		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
 	for _, tc := range []struct {
-		name    string
-		yaml    string
-		enabled bool
+		name      string
+		yaml      string
+		enabled   bool
+		placement bool
+		direct    bool
 	}{
 		{name: "off", yaml: base},
 		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
+		{name: "placement routing", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n", enabled: true, placement: true},
+		{name: "direct entry", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: both\n", enabled: true, direct: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := manifest.Parse([]byte(tc.yaml))
@@ -602,6 +606,23 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			}
 			if strings.Contains(controlVars, "faas_edge_control_plane_target") || strings.Contains(computeVars, "faas_edge_private_listen_addr") {
 				t.Errorf("edge switches rendered on the wrong role:\n%s\n%s", controlVars, computeVars)
+			}
+			// ADR-20261031105055: placement routing is a compute edge switch.
+			if got := strings.Contains(computeVars, "faas_edge_placement_routing: true\n"); got != tc.placement {
+				t.Errorf("compute host placement routing = %v, want %v:\n%s", got, tc.placement, computeVars)
+			}
+			if strings.Contains(controlVars, "faas_edge_placement_routing") {
+				t.Errorf("placement routing rendered on the control plane:\n%s", controlVars)
+			}
+			// ADR-20261102081618: direct entry opens the compute edges' TLS
+			// listener and keeps their 80/443 Cloudflare-only.
+			for _, line := range []string{"faas_edge_entry: \"both\"\n", "faas_cloudflare_origin_only: true\n"} {
+				if got := strings.Contains(computeVars, line); got != tc.direct {
+					t.Errorf("compute host has %q = %v, want %v:\n%s", line, got, tc.direct, computeVars)
+				}
+			}
+			if strings.Contains(controlVars, "faas_edge_entry") {
+				t.Errorf("direct entry rendered on the control plane:\n%s", controlVars)
 			}
 		})
 	}
@@ -826,6 +847,94 @@ func TestRenderManifestAnsibleFiles_LogArchive(t *testing.T) {
 		for _, want := range []string{`faas_log_archive_region: "gra"`, `faas_log_archive_auth_mode: ""`, `faas_log_archive_credentials_src: "/operator/secrets/log-archive.json"`} {
 			if !strings.Contains(vars, want) {
 				t.Errorf("host vars missing %q:\n%s", want, vars)
+			}
+		}
+	}
+}
+
+// ADR-20261031122757: object_storage.compute_nodes runs the object gateway on
+// each compute node with the gateway-only credential and its port share,
+// rendered from the host's port speed; the control plane gets none of it.
+func TestRenderManifestAnsibleFiles_ComputeObjectGateway(t *testing.T) {
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      port_mbps: 1000\n", 1) +
+		"public_edge:\n  compute_nodes: true\n" +
+		"object_storage:\n  gateway: managed\n  config_src: /operator/object-storage.json\n  provider_env_src: /operator/provider.env\n  compute_nodes: true\n  gateway_provider_env_src: /operator/gateway-provider.env\n"
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var controlVars, computeVars string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			controlVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	// 1,000 Mbit/s is 125,000,000 bytes/s; 30% of it is 37,500,000.
+	for _, want := range []string{
+		"faas_object_gateway_on_compute_nodes: true",
+		`faas_object_storage_config_src: "/operator/object-storage.json"`,
+		`faas_object_storage_gateway_provider_env_src: "/operator/gateway-provider.env"`,
+		"faas_object_gateway_max_bytes_per_second: 37500000",
+	} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute host vars missing %q:\n%s", want, computeVars)
+		}
+	}
+	if strings.Contains(computeVars, "provider_env_src: \"/operator/provider.env\"") {
+		t.Errorf("compute host got the bucket-admin credential:\n%s", computeVars)
+	}
+	// The control plane scrapes the compute gateways, and holds nothing else
+	// of theirs.
+	if !strings.Contains(controlVars, "faas_object_gateway_on_compute_nodes: true\n") {
+		t.Errorf("control host vars miss the compute gateway switch:\n%s", controlVars)
+	}
+	if strings.Contains(controlVars, "faas_object_gateway_max_bytes_per_second") || strings.Contains(controlVars, "gateway_provider_env_src") {
+		t.Errorf("control host got compute gateway vars:\n%s", controlVars)
+	}
+	if strings.Contains(computeVars, "public_read") {
+		t.Errorf("compute host serves public reads without compute_public_reads:\n%s", computeVars)
+	}
+
+	// With compute_public_reads the edge's public reads take 33% of the
+	// share and s3-gatewayd the rest: 12,375,000 and 25,125,000 bytes/s.
+	m, err = manifest.Parse([]byte(yaml + "  compute_public_reads: true\n"))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	if files, err = renderManifestAnsibleFiles(m, t.TempDir()); err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	for _, file := range files {
+		body := string(file.Body)
+		switch {
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			if strings.Contains(body, "public_read") {
+				t.Errorf("control host got compute public read vars:\n%s", body)
+			}
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			for _, want := range []string{
+				"faas_object_gateway_max_bytes_per_second: 25125000\n",
+				"faas_object_public_reads_on_compute_nodes: true\n",
+				"faas_object_public_read_max_bytes_per_second: 12375000\n",
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("compute host vars missing %q:\n%s", want, body)
+				}
 			}
 		}
 	}

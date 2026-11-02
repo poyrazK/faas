@@ -173,6 +173,13 @@ func validatePerInstanceConcurrency(requested int, acct state.Account, app state
 }
 
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
+	// An explicit min_instances is the floor even beside a scaling policy,
+	// whose min_instances cannot say "not set". The store writes the policy's
+	// floor over min_instances, so a policy copied from the app kept the old
+	// floor: `app <slug> --min 0 --max-queue-depth 40` left 2 (PulseWatch F12).
+	if req.MinInstances != nil && req.ScalingPolicy != nil {
+		req.ScalingPolicy.MinInstances = *req.MinInstances
+	}
 	if req.RetryPolicy != nil {
 		if _, problem := marshalAppRetryPolicy(req.RetryPolicy); problem != nil {
 			return problem
@@ -1137,6 +1144,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.executionModeApprovalProblem(r.Context(), app, &req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -2272,8 +2283,12 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrValidation("reviewed promotion requires the exact named environment at 100% traffic and a serving guard"))
 		return
 	}
+	// Each serving release needs its own instance; refuse a split the app
+	// could not run whole.
+	releaseLimit := api.TrafficSplitMaxReleases(app.MaxConcurrency, acct.Plan)
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
+		ctx = state.WithTrafficSplitReleaseLimit(ctx, releaseLimit)
 		var writeErr error
 		if req.ExpectedReview != nil {
 			store, ok := s.store.(state.ReviewedTrafficStore)
@@ -2296,6 +2311,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		if writeReleaseReviewError(w, err) {
 			return
 		}
+		var limitErr *state.TrafficSplitReleaseLimitError
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such deployment")
@@ -2310,6 +2326,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 				status = string(current.Status)
 			}
 			api.WriteProblem(w, api.ErrDeploymentNotLive(status))
+		case errors.Is(err, state.ErrTrafficResidualUnassigned):
+			api.WriteProblem(w, api.ErrTrafficResidualUnassigned(100-req.TrafficPercent))
 		case errors.Is(err, state.ErrTrafficPercentSumInvalid):
 			// Defensive 409 — unreachable in the live-siblings case
 			// (largest-remainder redistribution is Σ=100 by
@@ -2323,6 +2341,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
 			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
+		case errors.As(err, &limitErr):
+			api.WriteProblem(w, api.ErrTrafficSplitReleaseLimit(limitErr.Limit, limitErr.Requested))
 		case errors.Is(err, state.ErrMCPTaskCompatibilityGate):
 			api.WriteProblem(w, api.ErrMCPTaskCompatibilityGate(err.Error()))
 		default:
@@ -4323,18 +4343,43 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not authorize cron inventory"))
 		return
 	}
-	out := make([]api.CronResponse, 0)
+	var crons []state.Cron
 	for _, app := range apps {
 		cs, err := s.store.ListCronsForApp(r.Context(), app.ID)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
 			return
 		}
-		for _, c := range cs {
-			out = append(out, cronResponse(c))
-		}
+		crons = append(crons, cs...)
+	}
+	out, problem := s.cronListResponse(r, acct, crons)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// cronListResponse applies ?selector= and labels to a cron list
+// (ADR-20261031100025).
+func (s *server) cronListResponse(r *http.Request, acct state.Account, crons []state.Cron) ([]api.CronResponse, *api.Problem) {
+	ids := make([]string, len(crons))
+	for i, c := range crons {
+		ids[i] = c.ID
+	}
+	filter, problem := s.listLabels(r, acct, state.LabelKindCron, ids)
+	if problem != nil {
+		return nil, problem
+	}
+	out := make([]api.CronResponse, 0, len(crons))
+	for _, c := range crons {
+		if filter.keep(c.ID) {
+			resp := cronResponse(c)
+			resp.Labels = filter.labelsOf(c.ID)
+			out = append(out, resp)
+		}
+	}
+	return out, nil
 }
 
 // ownedAppByRef resolves an app id or slug owned by accountID.
@@ -4531,7 +4576,9 @@ func (s *server) getCron(w http.ResponseWriter, r *http.Request, acct state.Acco
 		s.notFound(w, "no such cron")
 		return
 	}
-	writeJSON(w, http.StatusOK, cronResponse(c))
+	resp := cronResponse(c)
+	resp.Labels = s.resourceLabels(r, acct, state.LabelKindCron, c.ID)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // listCronRuns is the per-cron execution history (issue #791):
@@ -6904,6 +6951,14 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 		coldBoots += u.ColdBootCount
 	}
 	usedGB := meter.GBHours(mbSec)
+	// Quiet-paused time meterd did not bill (ADR-20261023171905); not part
+	// of usedGB.
+	var quietPausedMBSec int64
+	if paused, ok := s.store.(state.QuietPausedUsageStore); ok {
+		if quietPausedMBSec, err = paused.QuietPausedMBSecondsByMonth(ctx, acct.ID, month); err != nil {
+			return api.UsageSummaryResponse{}, err
+		}
+	}
 	// usedCPUHours is the per-month CPU-hours — informational only
 	// (issue #279 / PR-B). Billing math is on usedGB (plan RAM +
 	// 8 MB per running second). The conversion is the same shape
@@ -6953,6 +7008,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 		IncludedGBHours:       included,
 		OverageGBHours:        overage,
 		OverageCents:          overageCents,
+		QuietPausedGBHours:    meter.GBHours(quietPausedMBSec),
 		UsedCPUHours:          usedCPUHours,
 		UsedEgressGB:          float64(egressBytes) / (1024 * 1024 * 1024),
 		EgressBillingMode:     egressMode,
@@ -7089,7 +7145,7 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 			api.WriteProblem(w, api.ErrCapacity("could not calculate object storage usage"))
 			return
 		}
-		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges, acct.Plan)
+		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges, snapshot.PlanLimits)
 		out.ObjectStorage = &objectStorage
 	}
 

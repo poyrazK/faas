@@ -490,6 +490,10 @@ func cmdApp(args []string) int {
 		if explicit["per-instance-concurrency"] {
 			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
+		if explicit["min"] {
+			// The policy was copied from the app, so it holds the old floor.
+			policy.MinInstances = *min
+		}
 		req.ScalingPolicy = policy
 	}
 	if explicit["idle"] {
@@ -1908,11 +1912,11 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
-	case "function-rust":
+	case "function-rust", "agent-infinity-rust":
 		// ADR-987: built from the template's Dockerfile; the handler value
 		// is vestigial, but the deploy API requires it to be non-empty.
 		return runtimeBinary, "handler", true
-	case "cron-worker", "event-worker", "queue-worker":
+	case "cron-worker", "event-worker", "queue-worker", "agent-stateless-node":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
 		return "", "", false
@@ -3948,6 +3952,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return renderProjectDeployReceipt(plan, apply, projectSession, projectWaitTimedOut, nil)
 	}
 
+	// A template or gregale.yaml that turns on a capability the account does
+	// not have stops here, before the app or an upload exists (#5756).
+	if err := refuseHiddenManifestCapabilities(ctx, *templateName, sourceDir); err != nil {
+		return printErr("Capability not enabled", err)
+	}
+
 	var workflowDefs []api.WorkflowSpec
 	var sidecarDefs api.Sidecars
 	if !*createOnly {
@@ -5090,6 +5100,7 @@ func cmdTrafficStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
 		return 0
 	}
+	defer printCanaryProgress(live)
 	if len(byScope) > 1 {
 		printScopedTrafficStatus(live, byScope)
 		return 0
@@ -5108,6 +5119,19 @@ func cmdTrafficStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
+}
+
+// printCanaryProgress names each rolling canary's current step. Traffic
+// changes are refused while a canary runs, and advancing it needs that step;
+// it appeared only in the refusal of a wrong guess (PulseWatch F17).
+func printCanaryProgress(live []api.DeploymentResponse) {
+	for _, d := range live {
+		if d.CanaryTotalSteps <= 0 || d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+			continue
+		}
+		_, _ = fmt.Fprintf(osStdout, "Canary %s is rolling out at canary_step=%d (step %d of %d). Advance it with:\n  %s deployment advance %s --expected-step %d\n",
+			deploymentLabel(d), d.CanaryStep, d.CanaryStep+1, d.CanaryTotalSteps, recoveryCLI(), recoveryArgument(d.ID), d.CanaryStep)
+	}
 }
 
 // trafficScope names a deployment's traffic scope; an unscoped row is the
@@ -5311,6 +5335,8 @@ func cmdCrons(args []string) int {
 		return cronConditions.status(args[1:])
 	case subWait:
 		return cronConditions.wait(args[1:])
+	case subLabel:
+		return cmdCronLabel(args[1:])
 	case subList:
 		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
 			if delayedTasksHidden() {
@@ -5319,27 +5345,38 @@ func cmdCrons(args []string) int {
 			return cmdDelayedTaskList(rest)
 		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
-		slug := fs.String("app", "", "app slug (required)")
+		slug := fs.String("app", "", "app slug (required without -l)")
+		selector := addSelectorFlag(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
-		if *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug>", "crons")
+		if *slug == "" && *selector == "" {
+			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
 			return 1
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		out, err := client.ListCrons(context.Background(), *slug)
+		var out []api.CronResponse
+		if *selector != "" {
+			// -l without --app selects across every app (ADR-20261031100025).
+			out, err = selectedCrons(context.Background(), client, *slug, *selector)
+		} else {
+			out, err = client.ListCrons(context.Background(), *slug)
+		}
 		if err != nil {
 			return printErr("Could not list crons", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
+		}
+		if len(out) == 0 && *selector != "" {
+			_, _ = fmt.Fprintf(osStdout, "No cron matches %s\n", *selector)
+			return 0
 		}
 		// The ID leads because `crons info|update|rm|runs` all require it
 		// and nothing else printed it (issue #3362).
@@ -6217,6 +6254,11 @@ func renderUsageSummary(w io.Writer, s api.UsageSummaryResponse) {
 	_, _ = fmt.Fprintf(w, "  %-*s %d GB-hours\n", labelWidth, "Included:", s.IncludedGBHours)
 	_, _ = fmt.Fprintf(w, "  %-*s %.3f GB-hours\n", labelWidth, "Overage:", s.OverageGBHours)
 	_, _ = fmt.Fprintf(w, "  %-*s %d cents\n", labelWidth, "Overage cost:", s.OverageCents)
+	// ADR-20261023171905: quiet-paused time between requests that was not
+	// billed, beside Used rather than inside it. Shown once there is any.
+	if s.QuietPausedGBHours > 0 {
+		_, _ = fmt.Fprintf(w, "  %-*s %.3f GB-hours (not billed)\n", labelWidth, "Quiet paused:", s.QuietPausedGBHours)
+	}
 	// Issue #279 / PR-B: per-month CPU-hours is informational —
 	// not billed. Surfaced as a separate line so the customer
 	// sees the measurement next to the billing total without
@@ -7127,6 +7169,10 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	}
 	printedLines := retainedLines
 	parkedFallback := false
+	// reconnectAt is set when a follow stream ended on its idle timeout:
+	// `gregale logs -f` reconnects instead of exiting 0 after ten quiet
+	// minutes.
+	var reconnectAt time.Time
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
 		// when schedd's StreamAppLogs RPC isn't wired yet (the
@@ -7170,10 +7216,25 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 					return true, 3
 				}
 			}
+			if follow && archive == nil && appLogsArchiveEndReason(e.Data) == "timeout" {
+				reconnectAt = time.Now()
+				return true, 0
+			}
 			if collector != nil && !jsonOutput {
 				collector.flush(osStdout)
 			}
 			return true, 0
+		}
+		if e.Event == "error" {
+			// A rejected filter or plan gate: report it and fail, not
+			// print it as a log line and exit 0.
+			problem := appLogsStreamErrorProblem(e.Data)
+			if jsonOutput {
+				_ = writeJSONProblem(problem)
+			} else {
+				renderAPIError(os.Stderr, &APIError{Problem: problem})
+			}
+			return true, 1
 		}
 		if e.Data != "" {
 			if archive != nil && !retainedLineMatches(e.Data, filter.Grep) {
@@ -7196,6 +7257,12 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	}
 	if streamErr != nil {
 		return printErr("Stream closed", streamErr)
+	}
+	if !reconnectAt.IsZero() && ctx.Err() == nil {
+		_ = dec.Close()
+		_ = body.Close()
+		filter.Since = reconnectAt.UTC().Format(time.RFC3339Nano)
+		return runLogsExplainingMissingArchive(ctx, slug, deployment, filter, archive, follow, explain, archiveMissing)
 	}
 	if parkedFallback {
 		if retainedLines > 0 {

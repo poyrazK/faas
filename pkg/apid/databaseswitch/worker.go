@@ -254,6 +254,10 @@ const (
 	maxActivationAttempts     = 10
 	transientBackoffCeiling   = time.Minute
 	phaseUnfencedTimeoutLimit = api.DatabaseSwitchRestoreTimeout
+
+	// codeDatabaseLimit: the copy does not fit inside the plan's database
+	// limit, and a switch's copy never takes the restore slot.
+	codeDatabaseLimit = "database_limit"
 )
 
 // wait keeps the phase and checks again after the worker cadence.

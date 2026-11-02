@@ -697,6 +697,7 @@ var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
 var CmdReleaseGates = cmdReleaseGates
+var CmdApprovals = cmdApprovals
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
 var CmdAccountDelete = cmdAccountDelete
@@ -1724,6 +1725,7 @@ var RenderEnvDiffCell = renderEnvDiffCell
 var RenderEnvDiffTable = renderEnvDiffTable
 var RenderFireNowStatus = renderFireNowStatus
 var RenderFishCommand = renderFishCommand
+var RenderGithubSetupWorkflow = renderGithubSetupWorkflow
 var RenderGithubSnippet = renderGithubSnippet
 var RenderHTTPLogQueryPageWarnings = renderHTTPLogQueryPageWarnings
 var RenderInspectErrorsHuman = renderInspectErrorsHuman
@@ -1987,6 +1989,7 @@ var ValidDataAPIConnectionBudget = validDataAPIConnectionBudget
 var ValidDeploymentRef = validDeploymentRef
 var ValidDeveloperID = validDeveloperID
 var ValidGithubSetupBranch = validGithubSetupBranch
+var ValidGithubSetupWorkflowName = validGithubSetupWorkflowName
 var ValidLiveSuiteHash = validLiveSuiteHash
 var ValidSecretClass = validSecretClass
 var ValidTestCIEnvironment = validTestCIEnvironment
@@ -2613,3 +2616,7 @@ func TierDiscoverableFlags(names, capabilities []string) []string {
 var BindExclusiveLock = bindExclusiveLock
 
 type ExclusiveLock = exclusiveLock
+
+// GitHub connector commands (ADR-20261101160300).
+var CmdGithub = cmdGithub
+var CmdGithubSetup = cmdGithubSetup

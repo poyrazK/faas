@@ -68,6 +68,8 @@ type AdmittedRead struct {
 	bucket            string
 	period            time.Time
 	egress, maxEgress int64
+	// downloadErr refuses a body (ADR-20261101214152).
+	downloadErr error
 }
 
 // AdmitRead admits one GET or HEAD of b and counts its request and
@@ -94,7 +96,7 @@ func (a *ReadAdmitter) AdmitRead(ctx context.Context, b state.ObjectBucket) (Adm
 	}
 	p.Requests++
 	p.Authorizations++
-	return AdmittedRead{bucket: b.ID, period: d.Period, egress: d.EgressBytes, maxEgress: d.MaxEgressBytes}, nil
+	return AdmittedRead{bucket: b.ID, period: d.Period, egress: d.EgressBytes, maxEgress: d.MaxEgressBytes, downloadErr: d.DownloadErr}, nil
 }
 
 // ReserveEgress counts an admitted GET's body of bytes against its bucket's
@@ -102,6 +104,9 @@ func (a *ReadAdmitter) AdmitRead(ctx context.Context, b state.ObjectBucket) (Adm
 func (a *ReadAdmitter) ReserveEgress(r AdmittedRead, bytes int64) error {
 	if bytes < 0 || r.bucket == "" {
 		return state.ErrObjectUsageStale
+	}
+	if bytes > 0 && r.downloadErr != nil {
+		return r.downloadErr
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

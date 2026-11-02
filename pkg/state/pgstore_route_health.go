@@ -120,7 +120,7 @@ func pgRouteHealthReport(ctx context.Context, db sqlc.DBTX, snapshot RoutePolicy
 			}
 			if lost {
 				unavailable = routehealth.TelemetryIncomplete
-			} else if err := pgRouteHealthObservations(ctx, db, snapshot.Account.ID, g, &report); err != nil {
+			} else if err := pgRouteHealthObservations(ctx, db, snapshot.Account.ID, g, &report, true); err != nil {
 				return report, err
 			}
 		}
@@ -157,7 +157,7 @@ func pgPooledRouteHealth(ctx context.Context, db sqlc.DBTX, accountID string, g 
 	if len(targets) == 0 {
 		return nil
 	}
-	if err := pgRouteHealthObservationsInWindows(ctx, db, accountID, selected, &pooled, api.RouteHealthInvestigationSelection{}, windows); err != nil {
+	if err := pgRouteHealthObservationsInWindows(ctx, db, accountID, selected, &pooled, api.RouteHealthInvestigationSelection{}, windows, true); err != nil {
 		return err
 	}
 	for k, i := range targets {
@@ -171,15 +171,19 @@ func pgPooledRouteHealth(ctx context.Context, db sqlc.DBTX, accountID string, g 
 	routehealth.Evaluate(report, anchor, "")
 	return nil
 }
-func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport) error {
-	return pgRouteHealthObservationsForCustomer(ctx, db, accountID, g, report, api.RouteHealthInvestigationSelection{})
+
+// warm ranks latency over requests that did not cold boot: the canary guard
+// compares warm deployments, while the production monitor stays end to end
+// (ADR-20261028110044 amendment 3).
+func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, warm bool) error {
+	return pgRouteHealthObservationsInWindows(ctx, db, accountID, g, report, api.RouteHealthInvestigationSelection{}, routehealth.Windows(report.CheckedAt), warm)
 }
 
 func pgRouteHealthObservationsForCustomer(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, selection api.RouteHealthInvestigationSelection) error {
-	return pgRouteHealthObservationsInWindows(ctx, db, accountID, g, report, selection, routehealth.Windows(report.CheckedAt))
+	return pgRouteHealthObservationsInWindows(ctx, db, accountID, g, report, selection, routehealth.Windows(report.CheckedAt), true)
 }
 
-func pgRouteHealthObservationsInWindows(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, selection api.RouteHealthInvestigationSelection, windows []api.RouteHealthWindowEvidence) error {
+func pgRouteHealthObservationsInWindows(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, selection api.RouteHealthInvestigationSelection, windows []api.RouteHealthWindowEvidence, warm bool) error {
 	routesJSON, err := json.Marshal(g.Routes)
 	if err != nil {
 		return fmt.Errorf("encode selected routes: %w", err)
@@ -188,7 +192,7 @@ func pgRouteHealthObservationsInWindows(ctx context.Context, db sqlc.DBTX, accou
 	if err != nil {
 		return fmt.Errorf("encode observation windows: %w", err)
 	}
-	body, err := (&sqlc.Queries{}).RouteHealthObservation(ctx, db, sqlc.RouteHealthObservationParams{AppID: report.AppID, AccountID: accountID, CandidateID: report.DeploymentID, StableID: report.StableDeploymentID, Routes: routesJSON, Windows: windowsJSON, LatencyQuantile: api.RouteHealthLatencyQuantile, Since: NewPgtypeTime(windows[0].Start), Until: NewPgtypeTime(windows[len(windows)-1].End), CustomerID: selection.CustomerID, CustomerGroupBy: selection.CustomerGroupBy})
+	body, err := (&sqlc.Queries{}).RouteHealthObservation(ctx, db, sqlc.RouteHealthObservationParams{AppID: report.AppID, AccountID: accountID, CandidateID: report.DeploymentID, StableID: report.StableDeploymentID, Routes: routesJSON, Windows: windowsJSON, LatencyQuantile: api.RouteHealthLatencyQuantile, Since: NewPgtypeTime(windows[0].Start), Until: NewPgtypeTime(windows[len(windows)-1].End), CustomerID: selection.CustomerID, CustomerGroupBy: selection.CustomerGroupBy, WarmLatency: warm})
 	if err != nil {
 		return fmt.Errorf("read route health observations: %w", err)
 	}

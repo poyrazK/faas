@@ -2,6 +2,7 @@ package apidserver_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -108,5 +109,70 @@ func TestRollbackOn5xxSweepRollsBackAFailingRelease(t *testing.T) {
 	sweep()
 	if store.reads != reads {
 		t.Fatalf("a rolled-back release was evaluated again (%d -> %d telemetry reads)", reads, store.reads)
+	}
+}
+
+// adr: 1445 amendment 2 — a first-wake breach the guard cannot roll back,
+// because a release command ran after the predecessor last served, is
+// recorded once on the release, like the post-release watch's (release review
+// 2026-11-01); it used to be only logged, on every sweep.
+func TestRollbackOn5xxRecordsABreachItCannotRollBack(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := context.Background()
+	mem := *e.Store()
+	previous := apidserver.MustSeedDeployment(t, e, "r5-kept")
+	if err := mem.MarkDeploymentLive(ctx, previous.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, _ := mem.AppBySlug(ctx, "r5-kept")
+	release, err := mem.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + apidserver.Repeat("f", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployBuilding, CreatedAt: time.Now().UTC().Add(time.Second), RollbackOn5xx: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.MarkDeploymentLive(ctx, release.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.MarkDeploymentSuperseded(ctx, previous.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.SetDeploymentRootfs(ctx, release.ID, "/tmp/r.ext4", "apps/r5-kept/"+release.ID+".ext4", 4096); err != nil {
+		t.Fatal(err)
+	}
+	runRelease(ctx, t, mem, (*e.Acct()).ID, app.ID, release.ID)
+	store := &rollbackOn5xxTestStore{MemStore: mem, requests: 40, serverErrors: 38}
+	(*(*e.S()).Store()) = store
+	sweep := func() {
+		t.Helper()
+		if err := (*e.S()).RollbackOn5xxSweep(ctx, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sweep()
+	got, err := mem.DeploymentByID(ctx, release.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.DeployLive || got.LastAutoRollbackReason != "" {
+		t.Fatalf("release = %s %q, want it kept serving", got.Status, got.LastAutoRollbackReason)
+	}
+	if prev, _ := mem.DeploymentByID(ctx, previous.ID); prev.Status != state.DeploySuperseded {
+		t.Fatalf("predecessor status = %s, want no rollback to it", prev.Status)
+	}
+	var decision api.RolloutDecision
+	if err := json.Unmarshal(got.RolloutDecision, &decision); err != nil {
+		t.Fatalf("decode decision %s: %v", got.RolloutDecision, err)
+	}
+	if decision.Rule != api.RolloutRuleAbortPostRelease5xx || decision.RollbackSkipped != api.CodeRollbackCrossesRelease ||
+		decision.Candidate == nil || decision.Candidate.ServerErrors != 38 {
+		t.Fatalf("decision = %+v, want a 5xx breach whose rollback was skipped", decision)
+	}
+	reads := store.reads
+	sweep()
+	if store.reads != reads {
+		t.Fatal("a breach whose rollback was skipped was judged again")
 	}
 }

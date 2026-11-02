@@ -448,13 +448,16 @@ const (
 	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
 	CodePlanLimitDeveloperLease            = "plan_limit_developer_lease"
 	CodePlanLimitRAM                       = "plan_limit_ram"
-	CodePlanLimitConcur                    = "plan_limit_concurrency"
-	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
-	CodeInvalidAppRAM                      = "invalid_ram_mb"
-	CodeInvalidCPURAMPair                  = "invalid_cpu_ram_pair"
-	CodeInvalidResourceProfile             = "invalid_resource_profile"
-	CodeSourceTooLarge                     = "source_too_large"
-	CodeSourceInvalid                      = "source_invalid"
+	// CodePlanLimitObjectStorage refuses a downgrade while the account
+	// stores more than the target plan's storage ceiling (ADR-20261101214152).
+	CodePlanLimitObjectStorage = "plan_limit_object_storage"
+	CodePlanLimitConcur        = "plan_limit_concurrency"
+	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidAppRAM          = "invalid_ram_mb"
+	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
+	CodeInvalidResourceProfile = "invalid_resource_profile"
+	CodeSourceTooLarge         = "source_too_large"
+	CodeSourceInvalid          = "source_invalid"
 	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
 	// the node-local developer-source cache was absent, stale, or corrupt.
 	// The CLI responds by uploading a complete source snapshot.
@@ -973,6 +976,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodeReleaseFreezeOverrideNotAllowed means the caller may not override a
+	// company organization's freeze: only someone who may lift it, signed in
+	// or with an admin key, can (ADR-20261019071733 amendment 5).
+	CodeReleaseFreezeOverrideNotAllowed = "release_freeze_override_not_allowed"
 	// CodePlatformReleasePaused means an operator paused every release on the
 	// platform (ADR 20261022140000), for example while a security incident is
 	// contained. Nothing the caller sends overrides it; rollbacks still work.
@@ -1323,6 +1330,10 @@ const (
 	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
 	// would change the serving weights owned by an in-flight canary rollout.
 	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
+	// CodeTrafficSplitReleaseLimit is a 422 when a manual traffic change
+	// would give traffic to more releases than the app can run at once
+	// (TrafficSplitMaxReleases): the extra release could never wake.
+	CodeTrafficSplitReleaseLimit = "traffic_split_release_limit"
 	// CodeMCPTaskCompatibilityGate is a 409 when promotion would route away
 	// from the final workers for an outstanding MCP task handler version.
 	CodeMCPTaskCompatibilityGate = "mcp_task_compatibility_gate_blocked"
@@ -1956,7 +1967,8 @@ const (
 	// immutable-from-PR-1 invariants from the ADR.
 	//
 	// The 12 codes are a complete set: every org-scoped handler
-	// error returns exactly one of these.
+	// error returns exactly one of these. Organization creation adds
+	// org_free_limit_exceeded (ADR-20261031090658).
 	CodeOrgNotFound              = "org_not_found"
 	CodeOrgSlugInvalid           = "org_slug_invalid"
 	CodeOrgSlugTaken             = "org_slug_taken"
@@ -1969,6 +1981,9 @@ const (
 	CodeOrgLastOwner             = "org_last_owner"
 	CodeOrgPersonalImmutable     = "org_personal_immutable"
 	CodeOrgAPIKeyRequiresOrg     = "org_api_key_requires_org"
+	// CodeOrgFreeLimitExceeded: the caller already owns
+	// FreeOrganizationsOwnedMax Free organizations (ADR-20261031090658).
+	CodeOrgFreeLimitExceeded = "org_free_limit_exceeded"
 	// CodeTenantSurfacesNotAllowed marks POST /v1/apps/{slug}/tenant-surfaces
 	// when the account's plan does not enable surfaces (Free today, ADR-100
 	// / issue #879). Distinct from CodeTenantSurfaceQuota (the surface
@@ -2138,8 +2153,13 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
+	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict,
+		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired:
 		return http.StatusConflict
+	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
+		return http.StatusForbidden
+	case CodeGitHubAppNotInstalled:
+		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
@@ -2157,7 +2177,7 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy, CodeAgentCallbackRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -2580,7 +2600,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeOrgInvitationInvalid, CodeOrgInvitationExpired:
 		return http.StatusGone
-	case CodeOrgRoleForbidden, CodeOrgMemberCapExceeded, CodeOrgInvitationCapExceeded:
+	case CodeOrgRoleForbidden, CodeOrgMemberCapExceeded, CodeOrgInvitationCapExceeded, CodeOrgFreeLimitExceeded:
 		return http.StatusForbidden
 	case CodeBadRequest:
 		return http.StatusBadRequest
@@ -4378,6 +4398,18 @@ func ErrPlanCronQuota(plan Plan, scope string, limit, observed int) *Problem {
 		WithDocs(docsBase + "/plans#crons")
 }
 
+// ErrCronRunOverPlan is the 403 for a manual run of a cron that the owner's
+// current plan does not let fire: after a downgrade only the oldest crons
+// within the new limits keep running.
+func ErrCronRunOverPlan(plan Plan, scope string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanCronQuota,
+		"Cron over plan limit",
+		fmt.Sprintf("%s plan runs at most %d crons for %s; %d of your enabled crons count toward it and this cron is not among the oldest %d, so it does not run. Disable or delete a cron, or upgrade.",
+			plan, limit, PlanQuotaScopeDisplayName(scope), observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#crons")
+}
+
 // ErrPlanEventSubscriptionQuota refuses a deploy whose gregale.yaml would
 // leave more enabled event subscriptions than the plan allows for the app or
 // the account (ADR-20261031130000).
@@ -5826,6 +5858,29 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
+// ErrTrafficResidualUnassigned is the same 409 for a manual traffic change
+// whose remaining percent could only go to an aborted canary candidate or a
+// release that has never served, neither of which receives traffic unless
+// named.
+func ErrTrafficResidualUnassigned(remaining int) *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
+		"No deployment can take the remaining traffic",
+		fmt.Sprintf("the other live deployments in this environment are aborted canaries or releases that have not served yet (staged with no traffic), which receive traffic only when named; set the remaining %d%% on a deployment explicitly, or keep this one at 100%%.", remaining)).
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
+// ErrTrafficSplitReleaseLimit refuses a split that gives traffic to more
+// releases than the app can run at once: each serving release needs its own
+// instance, and the app runs at most its max_concurrency plus the one-instance
+// rollout overlap.
+func ErrTrafficSplitReleaseLimit(limit, requested int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeTrafficSplitReleaseLimit,
+		"Too many releases in the traffic split",
+		fmt.Sprintf("this change would send traffic to %d releases, but the app runs at most %d instances at once (max_concurrency plus one during a rollout), so one release could never start; take a release out of the split first, or raise max_concurrency with gregale app --max-concurrency.", requested, limit)).
+		WithLimit(int64(limit), int64(requested)).
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
 // ErrTrafficServingChanged makes a stale promotion actionable without
 // disclosing any deployment the caller has not already been authorized to
 // read through the target app.
@@ -5841,7 +5896,7 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
+		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry. `gregale release traffic status` shows the canary's current step.").
 		WithDocs(docsBase + "/deployments#canary")
 }
 
@@ -6876,6 +6931,18 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#member-cap")
+}
+
+// ErrOrgFreeLimitExceeded is the 403 returned when the caller already owns
+// FreeOrganizationsOwnedMax organizations on the Free plan
+// (ADR-20261031090658).
+func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgFreeLimitExceeded,
+		"Free organization limit reached",
+		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade or delete one to create another.",
+			limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/orgs#free-organizations")
 }
 
 // ErrOrgInvitationCapExceeded is the 403 returned when the

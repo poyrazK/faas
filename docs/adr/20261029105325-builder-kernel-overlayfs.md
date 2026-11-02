@@ -1,11 +1,12 @@
 # ADR-20261029105325 · Builder BuildKit may use kernel overlayfs
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-02, after the native measurement below)
 - **Date:** 2026-10-29
 - **Amends:** the builder guest's BuildKit worker settings
   (`guest/init`, introduced with the split-box builder in August 2026).
   ADR-003, under which builds run only inside builder microVMs, is unchanged.
-- **Switch:** builderd `FAAS_BUILD_KERNEL_OVERLAY`, default off.
+- **Switch:** builderd `FAAS_BUILD_KERNEL_OVERLAY`, on by default since
+  2026-11-02; `false` turns it off.
 
 ## Context
 
@@ -60,6 +61,22 @@ from a FUSE-built layer, and the dependency cache imports either.
    console names the snapshotter it chose.
 3. If it holds, make it the default in a follow-up; if overlayfs misbehaves,
    turn the switch off.
+
+## Measurement (2026-11-01)
+
+Step 2 ran on the native acceptance host with the e2e harness rather than a
+production drop-in: `TestSourceDeployWakeMetal/source-deployed-live`, one cold
+Node source build per run on the shared runtime base, a fresh BuildKit cache
+each time, builderd's phase log for the numbers.
+
+| `FAAS_BUILD_KERNEL_OVERLAY` | Build in the VM | Cache export | Image export | Deploy to live |
+|---|---|---|---|---|
+| off (fuse-overlayfs) | 351 s | 205 s | 22.5 s | 492 s |
+| on | 116 s | 28 s | 13.4 s | 213 s |
+
+Both builds passed and left no leaked resources. The dependency cache's
+`mode=max` export, which a FUSE snapshotter diffs by walking both trees, was
+most of the difference. Step 3 followed: the switch is on by default.
 
 ## Consequences
 

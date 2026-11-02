@@ -346,6 +346,10 @@ func (r *remoteServer) authenticate(next http.Handler) http.Handler {
 		verifyCtx, stopVerify := context.WithTimeout(leaseCtx, r.opts.Timeout)
 		account, err := g.client.Whoami(verifyCtx)
 		stopVerify()
+		if keyRevoked(err) {
+			// The customer revoked the connection (ADR-20261030133644).
+			r.dropRevoked(g)
+		}
 		if err != nil || account.ID != g.accountID || leaseCtx.Err() != nil {
 			r.challenge(w)
 			return

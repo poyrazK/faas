@@ -1423,7 +1423,7 @@ export class DeploymentsService {
   }
   /**
    * Lift a deploy freeze.
-   * Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.
+   * Stops the freeze from withholding releases. Needs the admin scope (a signed-in session or an admin key); a deploy:write key gets 403. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.
    * @returns ReleaseFreeze The lifted freeze.
    * @throws ApiError
    */
@@ -1555,7 +1555,7 @@ export class DeploymentsService {
   }
   /**
    * Lift a deploy freeze on an app.
-   * Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID.
+   * Lifts a freeze on this app. Needs the admin scope (a signed-in session or an admin key). Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID.
    * @returns ReleaseFreeze The lifted freeze on the app.
    * @throws ApiError
    */
@@ -1661,7 +1661,7 @@ export class DeploymentsService {
   }
   /**
    * Remove a release gate.
-   * 404 `release_gate_not_found` when the app has no gate with this name.
+   * Needs the admin scope (a signed-in session or an admin key); a deploy:write key cannot remove the gates it deploys past. 404 `release_gate_not_found` when the app has no gate with this name.
    * @returns ReleaseGate The removed release gate.
    * @throws ApiError
    */
@@ -1729,7 +1729,7 @@ export class DeploymentsService {
   }
   /**
    * Require approvals for an app's production releases.
-   * Creates or replaces the policy. Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval.
+   * Creates or replaces the policy. Needs the admin scope (a signed-in session or an admin key). Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval.
    * @returns ReleaseApprovalPolicy The saved policy.
    * @throws ApiError
    */
@@ -1767,7 +1767,7 @@ export class DeploymentsService {
   }
   /**
    * Stop requiring release approvals.
-   * Releases waiting for approval continue on the canary's next step.
+   * Needs the admin scope (a signed-in session or an admin key). Releases waiting for approval continue on the canary's next step.
    * @returns void
    * @throws ApiError
    */

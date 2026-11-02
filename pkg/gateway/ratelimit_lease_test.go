@@ -478,3 +478,86 @@ func TestLeaseAdmissionStaysWithinTheADRBounds(t *testing.T) {
 		})
 	}
 }
+
+// roundTripBucket gives every lease statement a short Postgres round trip and
+// holds the first one until open is closed, so a whole burst can queue on it.
+type roundTripBucket struct {
+	*sharedBucket
+	open chan struct{}
+}
+
+func (b *roundTripBucket) ConsumeTokens(ctx context.Context, scope, subjectID, plan string, rps, burst float64, n int) (int, int, error) {
+	select {
+	case <-b.open:
+	case <-ctx.Done():
+		return 0, 0, ctx.Err()
+	}
+	time.Sleep(2 * time.Millisecond)
+	return b.sharedBucket.ConsumeTokens(ctx, scope, subjectID, plan, rps, burst, n)
+}
+
+// adr: 20261027173012 amendment 3 — a request the shared counter answered is
+// decided by that answer. PulseWatch F16: eight parallel requests on a
+// 2 rps, burst 4 throttle rule got a 503 rate_limit_unavailable within 12 ms
+// on production-us, while every lease statement of the burst succeeded. The
+// request had waited for three statements whose grants its peers spent, and
+// the cap on lease waits refused it as unverified before reading that the
+// last grant emptied the bucket. Inside the outage grace the same request
+// fell back to the gateway's own bucket and could be admitted past the limit.
+func TestLeaseBurstPastTheCounterIsRateLimitedNotUnverified(t *testing.T) {
+	const rps, burst, requests = 2.0, 4.0, 8
+	for _, grace := range []struct {
+		name  string
+		armed bool
+	}{{"first answer on this gateway", false}, {"inside the outage grace", true}} {
+		t.Run(grace.name, func(t *testing.T) {
+			clock := newFakeClock(time.Unix(1_700_000_000, 0))
+			bucket := &roundTripBucket{sharedBucket: &sharedBucket{clock: clock}, open: make(chan struct{})}
+			l := NewLimiterWithCentralAndClock(bucket, clock.Now).EnableLeasing(LeaseConfig{}, nil)
+			if grace.armed {
+				l.centralVerifiedAt.Store(clock.Now().UnixNano())
+			}
+			var undecided atomic.Int64
+			l.centralErrorObserver = func(context.Context, string, error) { undecided.Add(1) }
+			l.centralFallbackObserver = func(context.Context, string, error) { undecided.Add(1) }
+
+			type answer struct{ admitted, unavailable bool }
+			answers := make(chan answer, requests)
+			for range requests {
+				go func() {
+					ctx := withRateAdmissionEvidence(t.Context())
+					admitted := l.AllowWithCentralParams(ctx, "lease-app", rps, burst, leaseTestKey)
+					unavailable, _ := ctx.Value(rateAdmissionKey{}).(*atomic.Bool)
+					answers <- answer{admitted: admitted, unavailable: unavailable.Load()}
+				}()
+			}
+			// A burst-4 counter has no local allowance, so the whole burst
+			// waits on the first lease statement.
+			key := centralBatchKey{scope: "app", subjectID: "lease-app", plan: "pro"}
+			eventually(t, func() bool {
+				l.lease.mu.Lock()
+				defer l.lease.mu.Unlock()
+				st := l.lease.states[key]
+				return st != nil && st.waiters == requests
+			})
+			close(bucket.open)
+			admitted := 0
+			for range requests {
+				a := <-answers
+				if a.unavailable {
+					t.Error("a request the counter answered was refused as unverified (503 rate_limit_unavailable)")
+				}
+				if a.admitted {
+					admitted++
+				}
+			}
+			l.lease.calls.Wait()
+			if admitted != int(burst) {
+				t.Errorf("admitted %d of %d against a burst of %v with the clock frozen, want exactly the burst", admitted, requests, burst)
+			}
+			if n := undecided.Load(); n != 0 {
+				t.Errorf("%d requests were decided without the counter's answer, want 0: every lease statement succeeded", n)
+			}
+		})
+	}
+}

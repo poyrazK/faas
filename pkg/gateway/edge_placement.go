@@ -48,6 +48,20 @@ func stampInstanceNode(ctx context.Context, h http.Header, nodeID string) {
 
 type preferredNodeKey struct{}
 
+type placementAskedKey struct{}
+
+// WithPlacementAsked marks ctx as a request the edge looked up a node for,
+// so a dialer counts a miss for it and not for its own health probes.
+func WithPlacementAsked(ctx context.Context) context.Context {
+	return context.WithValue(ctx, placementAskedKey{}, true)
+}
+
+// PlacementAsked reports whether WithPlacementAsked marked ctx.
+func PlacementAsked(ctx context.Context) bool {
+	asked, _ := ctx.Value(placementAskedKey{}).(bool)
+	return asked
+}
+
 // PreferredNode is the node a compute edge wants a request routed to, and the
 // host it learned that for.
 type PreferredNode struct {

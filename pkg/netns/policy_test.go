@@ -1046,3 +1046,31 @@ func TestHostPolicyInputAdmitsGuestsOnlyToBridgeServicesAndEdge(t *testing.T) {
 		at += i + len(rule)
 	}
 }
+
+// adr: 20261102081618 — with PublicInputSourceCIDRs the input chain admits 80
+// and 443 only from those sources, and leaves 22 to the provider firewall.
+func TestHostPolicyPublicInputSourceCIDRsReplaceTheOpenWebPorts(t *testing.T) {
+	p := DefaultHostPolicy
+	p.PublicInputSourceCIDRs = []netip.Prefix{netip.MustParsePrefix("173.245.48.0/20"), netip.MustParsePrefix("2400:cb00::/32")}
+	out := p.Render()
+	start, end := strings.Index(out, "chain input {"), strings.Index(out, "chain forward {")
+	if start < 0 || end < start {
+		t.Fatalf("input chain not found:\n%s", out)
+	}
+	input := out[start:end]
+	at := 0
+	for _, rule := range []string{
+		"tcp dport 22 accept",
+		`ip saddr 173.245.48.0/20 tcp dport { 80,443 } accept comment "gateway via Cloudflare"`,
+		`ip6 saddr 2400:cb00::/32 tcp dport { 80,443 } accept comment "gateway via Cloudflare"`,
+	} {
+		i := strings.Index(input[at:], rule)
+		if i < 0 {
+			t.Fatalf("input chain lacks %q after offset %d, in order:\n%s", rule, at, input)
+		}
+		at += i + len(rule)
+	}
+	if strings.Contains(input, "tcp dport { 22,80,443 } accept") {
+		t.Fatalf("input chain still admits 80/443 from anywhere:\n%s", input)
+	}
+}

@@ -19,6 +19,10 @@ export type { ActivityActorResponse } from './ActivityActorResponse.js';
 export type { ActivityResourceResponse } from './ActivityResourceResponse.js';
 export type { AdvanceCanaryRequest } from './AdvanceCanaryRequest.js';
 export type { AfterRestoreHook } from './AfterRestoreHook.js';
+export type { AgentClientRequest } from './AgentClientRequest.js';
+export type { AgentConnectionResponse } from './AgentConnectionResponse.js';
+export type { AgentConnectionsResponse } from './AgentConnectionsResponse.js';
+export type { AgentConnectionsRevokeAllResponse } from './AgentConnectionsRevokeAllResponse.js';
 export type { AlertDeliveryResponse } from './AlertDeliveryResponse.js';
 export type { AlertPresetResponse } from './AlertPresetResponse.js';
 export type { AlertRuleResponse } from './AlertRuleResponse.js';
@@ -385,6 +389,7 @@ export type { GitHubDeploymentPolicyPatch } from './GitHubDeploymentPolicyPatch.
 export type { GitHubInstallActivity } from './GitHubInstallActivity.js';
 export type { GitHubInstallMutationRequest } from './GitHubInstallMutationRequest.js';
 export type { GitHubInstallStatus } from './GitHubInstallStatus.js';
+export type { GitHubInstallationSummary } from './GitHubInstallationSummary.js';
 export type { GitHubWebhookActivity } from './GitHubWebhookActivity.js';
 export type { GraceWindowResponse } from './GraceWindowResponse.js';
 export type { GregaleRelease } from './GregaleRelease.js';
@@ -489,6 +494,7 @@ export type { ManagedPostgresDatabaseList } from './ManagedPostgresDatabaseList.
 export type { ManagedPostgresHealth } from './ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './ManagedPostgresID.js';
 export type { ManagedPostgresResize } from './ManagedPostgresResize.js';
+export type { ManagedPostgresRestoreRange } from './ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresUsageResponse } from './ManagedPostgresUsageResponse.js';
 export type { ManagedServiceProbeSpec } from './ManagedServiceProbeSpec.js';
 export type { MemberListResponse } from './MemberListResponse.js';
