@@ -28,15 +28,15 @@ func TestPostgresStoreOverageDeliveries(t *testing.T) {
 		t.Fatalf("delivered before any step: %+v, %v", empty, err)
 	}
 	delivery := OverageDelivery{Provider: "polar", SubjectID: accountID, PeriodStart: month, Live: true, BilledUnitSeconds: 3600, Millicents: 20_000, UpdatedAt: month.Add(2 * time.Hour)}
-	if recorded, err := store.RecordOverageDelivery(ctx, delivery, 0); err != nil || !recorded {
+	if recorded, err := store.RecordOverageDelivery(ctx, delivery, OverageDelivery{}); err != nil || !recorded {
 		t.Fatalf("first step: %v, %v", recorded, err)
 	}
-	if recorded, err := store.RecordOverageDelivery(ctx, delivery, 0); err != nil || recorded {
+	if recorded, err := store.RecordOverageDelivery(ctx, delivery, OverageDelivery{}); err != nil || recorded {
 		t.Fatalf("a replica that lost the race recorded: %v, %v", recorded, err)
 	}
 	next := delivery
 	next.BilledUnitSeconds, next.Millicents, next.UpdatedAt = 7200, 40_000, month.Add(3*time.Hour)
-	if recorded, err := store.RecordOverageDelivery(ctx, next, 20_000); err != nil || !recorded {
+	if recorded, err := store.RecordOverageDelivery(ctx, next, OverageDelivery{Live: true, Millicents: 20_000}); err != nil || !recorded {
 		t.Fatalf("second step: %v, %v", recorded, err)
 	}
 	got, err := store.OverageDelivered(ctx, "polar", accountID, month.Add(time.Hour))
@@ -48,13 +48,13 @@ func TestPostgresStoreOverageDeliveries(t *testing.T) {
 	}
 	stale := next
 	stale.Millicents = 60_000
-	if recorded, err := store.RecordOverageDelivery(ctx, stale, 20_000); err != nil || recorded {
+	if recorded, err := store.RecordOverageDelivery(ctx, stale, OverageDelivery{Live: true, Millicents: 20_000}); err != nil || recorded {
 		t.Fatalf("a step from a stale previous charge recorded: %v, %v", recorded, err)
 	}
 	bad := next
 	bad.PeriodStart = month.Add(time.Hour)
 	bad.Millicents = 80_000
-	if _, err := store.RecordOverageDelivery(ctx, bad, 40_000); err == nil {
+	if _, err := store.RecordOverageDelivery(ctx, bad, OverageDelivery{Live: true, Millicents: 40_000}); err == nil {
 		t.Fatal("a mid-month period was accepted")
 	}
 }

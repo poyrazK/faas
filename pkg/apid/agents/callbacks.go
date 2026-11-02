@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -32,10 +33,13 @@ type CallbackInbox interface {
 }
 
 // CallbackRevocations records a thread's latest revocation (ADR-20261030125501
-// §3); *agentstore.Store implements it.
+// §3); *agentstore.Store implements it. CallbackClock reads the clock a
+// revocation is recorded on: a token's issue time comes from it, so the two
+// compare on one clock, not apid's against the database's.
 type CallbackRevocations interface {
 	RevokeCallbacks(ctx context.Context, accountID, endpointID, threadID string) (time.Time, error)
 	CallbacksRevokedAt(ctx context.Context, endpointID, threadID string) (time.Time, bool, error)
+	CallbackClock(ctx context.Context) (time.Time, error)
 }
 
 // callbackRequestMaxBytes bounds an issue request; a post is bounded by its
@@ -92,8 +96,15 @@ func (h *Handler) callbackGrant(ctx context.Context, caller CallbackCaller, req 
 	if problem != nil {
 		return CallbackToken{}, problem
 	}
-	// Not truncated: a token issued just after a revocation must compare later.
-	now := h.now().UTC()
+	// The revocation clock, not apid's: with apid behind the database a URL
+	// issued after a revocation compared earlier and never worked, and ahead
+	// of it a URL issued before one compared later and outlived it. Not
+	// truncated: a token issued just after a revocation must compare later.
+	now, err := h.Revocations.CallbackClock(ctx)
+	if err != nil {
+		return CallbackToken{}, h.problem(caller.Account, "read callback clock", err)
+	}
+	now = now.UTC()
 	return CallbackToken{AccountID: caller.Account.ID, EndpointID: endpoint.ID, ThreadID: req.ThreadID, Kinds: kinds, IssuedAt: now,
 		ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, nil
 }
@@ -236,9 +247,13 @@ func checkCallbackPost(grant CallbackToken, post api.AgentCallbackPost) *api.Pro
 }
 
 // callbackIdempotencyKey makes a repeated post of one message land once in
-// the thread; the realtime limit on keys is 128 bytes.
+// the thread; the realtime limit on keys is 128 bytes. Both IDs may carry
+// ':', so the thread's ':' become '~', which no ID carries: the first ':'
+// after the prefix then ends the thread, and thread "a:b" with message "c"
+// never shares a key with thread "a" and message "b:c". A thread without
+// ':' keeps the key it always had, so a retry across the upgrade lands once.
 func callbackIdempotencyKey(threadID, messageID string) string {
-	return "callback:" + threadID + ":" + messageID
+	return "callback:" + strings.ReplaceAll(threadID, ":", "~") + ":" + messageID
 }
 
 // callbackMetadata is the inbox message's metadata: the thread, which the

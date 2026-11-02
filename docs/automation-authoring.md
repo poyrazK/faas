@@ -968,6 +968,11 @@ Content-Type: application/json
 }
 ```
 
+An attempt Gregale refuses before your app receives it (the gateway could not
+wake the app or check traffic security) does not end a step. The step retries
+after at least 5 seconds, up to two attempts beyond `retry.max_attempts`. The
+refused attempt still counts in `X-Faas-Workflow-Attempt`.
+
 Set `max_concurrent_runs` to cap active instances of one automation. Omit it or
 set it to `0` to use only the app plan limit; valid explicit caps are 1–200.
 Runs waiting in the queue have status `pending` and have not started. Started

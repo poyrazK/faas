@@ -132,19 +132,16 @@ func TestE2E_Streaming_Metal_TTFBUnder1s(t *testing.T) {
 
 	// Send the streamed SSE request. The query asks for 10 chunks
 	// of 1024 bytes each at 200 ms cadence — the default fixture
-	// pacing. The test reads the first chunk and asserts the
-	// TTFB-like ceiling of 1 s (the gateway's worst-case cold
-	// boot + first-flush round trip).
+	// pacing. assertFirstChunk reads the first chunk from parked
+	// (the gateway's worst-case cold boot + first-flush round trip)
+	// and then warm.
 	client := h.HTTPClient()
 	target := gatewayAppURL(h, slug) + "/sse?chunks=10&size=1024&interval=200"
 	if err := e2etest.WaitForHTTPReady(context.Background(), t, client, target, 10*time.Second); err != nil {
 		t.Fatalf("gateway not ready: %v", err)
 	}
 
-	ttfb := measureFirstChunk(t, client, target, slug+".apps.test.example", 30*time.Second)
-	if ttfb > 1*time.Second {
-		t.Errorf("TTFB = %v; want ≤ 1s (gateway TTFB ceiling from PR-B+PR-C)", ttfb)
-	}
+	assertFirstChunk(t, client, target, slug+".apps.test.example", "gateway TTFB ceiling from PR-B+PR-C")
 }
 
 // TestE2E_Streaming_Metal_TxBytesAccuracy covers AC #2: the
@@ -601,10 +598,7 @@ func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
 		t.Fatalf("gateway not ready: %v", err)
 	}
 
-	ttfb := measureFirstChunk(t, client, target, slug+".apps.test.example", 30*time.Second)
-	if ttfb > 1*time.Second {
-		t.Errorf("TTFB = %v; want ≤ 1s (gateway TTFB ceiling under v2 inner-leg bridge)", ttfb)
-	}
+	assertFirstChunk(t, client, target, slug+".apps.test.example", "gateway TTFB ceiling under v2 inner-leg bridge")
 
 	payload := drainStreamedSSE(t, client, target, slug+".apps.test.example", 30*time.Second)
 	if payload != chunks*size {
@@ -649,6 +643,28 @@ func measureFirstChunk(t *testing.T, c *http.Client, target, host string, timeou
 		t.Fatalf("read first chunk: %v", err)
 	}
 	return time.Since(start)
+}
+
+// assertFirstChunk times the first chunk of the fixture's 2 s stream twice:
+// once from parked, then warm. WaitForHTTPReady only proves the gateway
+// listens (any status below 500), so the first read includes the wake. Its
+// 1 s ceiling is enforced only on the reference SSD node, as the platform
+// wake p95 is (spec §6.3, FAAS_TEST_REFERENCE_SSD); elsewhere it is reported.
+// The warm read must beat 1 s on any host: a buffered stream would deliver
+// its first chunk with the last one, 2 s in.
+func assertFirstChunk(t *testing.T, c *http.Client, target, host, ceiling string) {
+	t.Helper()
+	cold := measureFirstChunk(t, c, target, host, 30*time.Second)
+	if os.Getenv("FAAS_TEST_REFERENCE_SSD") == "1" {
+		if cold > time.Second {
+			t.Errorf("cold TTFB = %v; want ≤ 1s (%s)", cold, ceiling)
+		}
+	} else {
+		t.Logf("cold TTFB = %v, wake included; its 1 s ceiling is enforced only on the reference SSD node (FAAS_TEST_REFERENCE_SSD=1)", cold)
+	}
+	if warm := measureFirstChunk(t, c, target, host, 30*time.Second); warm > time.Second {
+		t.Errorf("warm TTFB = %v; want ≤ 1s, the first chunk arrived with the end of the stream (%s)", warm, ceiling)
+	}
 }
 
 // drainStreamedSSE reads the full SSE body and returns the total

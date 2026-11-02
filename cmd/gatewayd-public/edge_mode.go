@@ -9,10 +9,12 @@ package main
 //	gatewayd-internal socket (the compute pool only while it is unhealthy)
 //
 // Platform hosts and custom domains stay on the control plane. Requests that
-// need control-plane credentials or sockets — public object-storage reads,
-// uploads and the customer OTLP endpoint — are forwarded to the control
-// plane's gatewayd-public, so a compute node holds no storage credentials and
-// no apid sockets. The mode is off by default.
+// need control-plane credentials or sockets — object uploads and the
+// customer OTLP endpoint — are forwarded to the control plane's
+// gatewayd-public, so a compute node holds no apid sockets. Public bucket
+// reads are forwarded too, unless the node holds the S3 gateway's provider
+// credential (ADR-20261031122757 step 7): then the edge serves them itself,
+// within its part of the node's port share. The mode is off by default.
 
 import (
 	"context"
@@ -25,6 +27,7 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -103,6 +106,9 @@ type edgeMetrics struct {
 	// placement counts how each dial attempt used placement routing
 	// (ADR-20261031105055).
 	placement *prometheus.CounterVec
+	// tlsHandshakeFailures counts connections the public TLS listener
+	// refused during the handshake (ADR-20261102081618).
+	tlsHandshakeFailures prometheus.Counter
 }
 
 func newEdgeMetrics() *edgeMetrics {
@@ -132,6 +138,10 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gatewayd_public_edge_placement_total",
 			Help: "Compute-edge dial attempts by placement result: remote (routed to the node that last served the host), self (that node is this one), miss (no node known), unusable (the node is not in the inventory, unready or excluded), failed (its dial failed) (ADR-20261031105055).",
 		}, []string{"result"}),
+		tlsHandshakeFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gatewayd_public_edge_tls_handshake_failures_total",
+			Help: "Connections a compute edge's public TLS listener refused during the handshake, such as a peer without the zone's Authenticated Origin Pulls certificate (ADR-20261102081618).",
+		}),
 	}
 	for _, result := range placementResults {
 		m.placement.WithLabelValues(result)
@@ -141,7 +151,7 @@ func newEdgeMetrics() *edgeMetrics {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures)
 	return m
 }
 
@@ -498,14 +508,19 @@ func newControlPlaneForwarder(target string, trusted []netip.Prefix, log *slog.L
 }
 
 // computeEdgeRoot puts the credential-bound object-storage routes in front of
-// next: upload routes and their receipts, then public bucket reads, are
-// forwarded; everything else goes to next.
-func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
-	publicRead, err := objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
-		Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
-	})
-	if err != nil {
-		return nil, err
+// next: upload routes and their receipts are forwarded; public bucket reads
+// go to localReads when the edge serves them itself and are forwarded
+// otherwise; everything else goes to next.
+func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
+	publicRead := localReads
+	if publicRead == nil {
+		var err error
+		publicRead, err = objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
+			Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if objectstorage.IsUploadPath(r.URL.Path) {
@@ -514,6 +529,32 @@ func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadS
 		}
 		publicRead.ServeHTTP(w, r)
 	}), nil
+}
+
+// publicReadBudgetEnv is the compute edge's part of its node's gateway port
+// share for public bucket reads, in bytes per second. s3_gateway_compute_service
+// sets it beside the provider registry and the gateway credential when the
+// manifest's object_storage.compute_public_reads is on.
+const publicReadBudgetEnv = "FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND"
+
+// computePublicReadBudget checks what a compute edge must hold to serve
+// public reads itself (ADR-20261031122757 §4 and step 7): the gateway
+// credential for every backend, never the bucket-admin one, and its part of
+// the node's port share (api.ObjectGatewayPublicReadSharePercent), which it
+// returns.
+func computePublicReadBudget(getenv func(string) string, registry *objectstorage.Registry) (int64, error) {
+	for _, b := range registry.Backends() {
+		if !b.GatewayCredential {
+			return 0, fmt.Errorf("compute edge public reads: backend %s names no gateway credential; a compute node never holds the bucket-admin one", b.ID)
+		}
+	}
+	raw := strings.TrimSpace(getenv(publicReadBudgetEnv))
+	budget, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || budget < api.MinObjectGatewayTransferBytesPerSecond || budget > api.MaxObjectGatewayTransferBytesPerSecond {
+		return 0, fmt.Errorf("compute edge public reads: %s must be the edge's part of the node's port share, %d–%d bytes/s, got %q",
+			publicReadBudgetEnv, api.MinObjectGatewayTransferBytesPerSecond, api.MaxObjectGatewayTransferBytesPerSecond, raw)
+	}
+	return budget, nil
 }
 
 // requireComputeEdgeConfig checks what a compute edge cannot run without.

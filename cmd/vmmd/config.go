@@ -445,6 +445,11 @@ type ComputeNodeConfig struct {
 	// rebuilds. Both are supplied by the vmmd systemd egress drop-in.
 	PrivateIngressCIDRs    []string `toml:"private_ingress_cidrs"`
 	PrivateIngressTCPPorts []int    `toml:"private_ingress_tcp_ports"`
+	// PublicIngressCIDRs, when set, restricts the public 80/443 accept to
+	// these sources, as the nftables role does for
+	// faas_cloudflare_origin_only. The vmmd egress drop-in supplies
+	// Cloudflare's pinned ranges (ADR-20261102081618 §2).
+	PublicIngressCIDRs []string `toml:"public_ingress_cidrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
 	// `tailscale ip -4` (Mega-PR-B Commit 3). Defaults to
@@ -828,6 +833,9 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PrivateIngressCIDRs = splitNonEmpty(v)
 	}
+	if v := os.Getenv("FAAS_PUBLIC_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PublicIngressCIDRs = splitNonEmpty(v)
+	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_TCP_PORTS"); v != "" {
 		ports, perr := parseTCPPorts(v)
 		if perr != nil {
@@ -1181,6 +1189,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: private_ingress_tcp_ports contains invalid TCP port %d", port)
 		}
 	}
+	for i, raw := range c.ComputeNode.PublicIngressCIDRs {
+		prefix, perr := netip.ParsePrefix(strings.TrimSpace(raw))
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: public_ingress_cidrs[%d] %q invalid: %w", i, raw, perr)
+		}
+		c.ComputeNode.PublicIngressCIDRs[i] = prefix.Masked().String()
+	}
 	return c, nil
 }
 
@@ -1299,6 +1314,11 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 			Source: prefix.Masked(),
 			Ports:  append([]int(nil), cfg.PrivateIngressTCPPorts...),
 		})
+	}
+	for _, raw := range cfg.PublicIngressCIDRs {
+		if prefix, err := netip.ParsePrefix(raw); err == nil {
+			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())
+		}
 	}
 	if cfg.ServiceTCPEnabled {
 		policy.ServiceTCP = netns.NewServiceTCPHostPolicy(api.ServiceAddressCIDR(), bridge.Masked().Addr().Next(), api.ServiceTCPProxyPort, serviceHTTPS)
