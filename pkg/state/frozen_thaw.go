@@ -97,12 +97,25 @@ func (s *PgStore) ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instanc
 			params.NotifyPayload = pgtype.Text{String: b.NotifyPayload, Valid: true}
 		}
 	}
-	row, err := sqlc.New().ThawFrozenInstance(ctx, s.pool, params)
+	// The durable node reservation and the guarded thaw commit together
+	// (ADR 20261102072403).
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Instance{}, fmt.Errorf("state: thaw frozen instance: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := s.reserveThawDB(ctx, tx, t.InstanceID, t.NodeID); err != nil {
+		return Instance{}, fmt.Errorf("state: thaw frozen instance: node admission: %w", err)
+	}
+	row, err := sqlc.New().ThawFrozenInstance(ctx, tx, params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Instance{}, ErrConflict
 	}
 	if err != nil {
 		return Instance{}, fmt.Errorf("state: thaw frozen instance: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Instance{}, fmt.Errorf("state: thaw frozen instance: commit: %w", err)
 	}
 	return instanceFromRuntimePublication(sqlc.PublishOwnedInstanceRuntimeRow{
 		ID: row.ID, AppID: row.AppID, DeploymentID: row.DeploymentID, State: row.State, Netns: row.Netns,
@@ -170,6 +183,9 @@ func (m *MemStore) ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instan
 	defer m.mu.Unlock()
 	if !m.frozenThawGuardsHoldLocked(t) {
 		return Instance{}, ErrConflict
+	}
+	if err := m.checkThawReservationLocked(ctx, t.InstanceID, t.NodeID); err != nil {
+		return Instance{}, err
 	}
 	instance := m.instances[t.InstanceID]
 	instance.State, instance.StartedAt = string(StateRunning), time.Now().UTC()

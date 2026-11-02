@@ -142,6 +142,54 @@ func TestAfterRollbackPolicyFreezesAnAppTheWatchRolledBack(t *testing.T) {
 	}
 }
 
+// adr: 1445 amendment 4 — when the watch's rollback does not restore the
+// previous release, the release that still serves says so on its timeline,
+// and the after-rollback freeze it started is lifted so a fix can ship
+// (release review 2026-11-01).
+func TestFailedAutomaticRollbackShowsTheReleaseStillServesAndLiftsItsFreeze(t *testing.T) {
+	ctx := context.Background()
+	f := newPostReleaseFixture(t, "frz-fail", true, time.Minute)
+	e := f.e
+	policy := api.CreateReleaseFreezeRequest{App: "frz-fail", Kind: "after_rollback", AfterRollbackMinutes: 60, Reason: "settle after automatic rollbacks"}
+	if rec := guardDo(t, e, http.MethodPost, "/v1/freezes", policy, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("policy = %d %s", rec.Code, rec.Body)
+	}
+	f.telemetry.windows[f.release.ID] = canary.HealthWindow{Requests: 300, ServerErrors: 1, P95LatencyMS: 700}
+	f.sweep(t)
+	var status api.ReleaseFreezeStatus
+	if rec := guardDo(t, e, http.MethodGet, "/v1/apps/frz-fail/freeze-status", nil, &status); rec.Code != http.StatusOK || !status.Frozen {
+		t.Fatalf("status after the rollback request = %d %+v, want frozen", rec.Code, status)
+	}
+
+	// The previous release does not come back.
+	if _, err := (*e.Store()).SetDeploymentFailed(ctx, f.previous.ID, "boot_failed", "the previous release did not boot"); err != nil {
+		t.Fatal(err)
+	}
+	if err := (*e.S()).RollbackOutcomeSweep(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	got := f.read(t, f.release.ID)
+	if got.Status != state.DeployLive {
+		t.Fatalf("release = %s, want it still serving", got.Status)
+	}
+	var decision api.RolloutDecision
+	if err := json.Unmarshal(got.RolloutDecision, &decision); err != nil || decision.RollbackSkipped != api.RollbackSkippedFailed ||
+		decision.Rule != api.RolloutRuleAbortPostReleaseP95 {
+		t.Fatalf("decision = %+v, %v; want the p95 regression with rollback_failed", decision, err)
+	}
+	if rec := guardDo(t, e, http.MethodGet, "/v1/apps/frz-fail/freeze-status", nil, &status); rec.Code != http.StatusOK || status.Frozen {
+		t.Fatalf("status after the failed rollback = %d %+v, want the after-rollback freeze lifted", rec.Code, status)
+	}
+	var timeline api.ReleaseTimeline
+	if rec := guardDo(t, e, http.MethodGet, "/v1/deployments/"+f.release.ID+"/timeline", nil, &timeline); rec.Code != http.StatusOK {
+		t.Fatalf("timeline = %d %s", rec.Code, rec.Body)
+	}
+	if timeline.Phase != api.ReleasePhaseReleased || !strings.Contains(timeline.Summary, "did not restore the previous release") {
+		t.Fatalf("timeline = %s %q, want the release still serving", timeline.Phase, timeline.Summary)
+	}
+}
+
 // gateEvidence stands in for Postgres release gate evidence.
 type gateEvidence struct {
 	groups map[string][]state.ReleaseGateErrorGroup

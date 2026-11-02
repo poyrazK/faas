@@ -147,7 +147,7 @@ func (s *server) composePostgresPlan(ctx context.Context, acct state.Account, pr
 		return notProvided(composePostgresUnavailable)
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(api.Plan(acct.Plan))
-	if !ok || limits.DatabasesMax == 0 || !limits.DevelopmentAllowed {
+	if !ok || limits.DatabasesMax == 0 || !limits.DevelopmentAllowed || managedPostgresFreeClosed(api.Plan(acct.Plan), s.managedPostgresCapMode) {
 		return notProvided(composePostgresPlan)
 	}
 	databases, err := s.managedPostgres.List(ctx, acct.ID)

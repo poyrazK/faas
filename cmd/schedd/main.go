@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -676,6 +677,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (in-memory resident accounting). The lv-fc percentage shells out to
 	// `lvs`; on dev boxes where lvs is missing, the closure returns 0 and
 	// the gauge degrades to "no data" (no error, no spike).
+	// residencyReader is the instance stats reader once it exists; a scrape
+	// before then keeps the gauge's previous value.
+	var residencyReader atomic.Pointer[instancestats.Reader]
 	dashGauges := fcvm.NewDashboardGauges(fcvm.DashboardMetrics{
 		ListSnapshotStats: func(ctx context.Context) ([]fcvm.SnapshotStat, error) {
 			rows, err := store.ListLiveSnapshotStats(ctx)
@@ -688,8 +692,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return out, nil
 		},
+		// ADR 20261102072403: on a multi-node fleet this scheduler reports
+		// its own node, every owner's instances over that node's ceiling;
+		// its ledger alone summed its own bookings across every node.
 		ResidentBytes: func(_ context.Context) (int64, error) {
-			return int64(ledger.ResidentRAM()) * 1024 * 1024, nil
+			if ownerNodeID == "" {
+				return int64(ledger.ResidentRAM()) * 1024 * 1024, nil
+			}
+			if r := residencyReader.Load(); r != nil {
+				if mb, ok := r.ReservedMB(ownerNodeID, time.Now()); ok {
+					return int64(mb) << 20, nil
+				}
+			}
+			return 0, errNodeResidencyUnmeasured
+		},
+		CeilingMB: func(_ context.Context) (int, error) {
+			for _, n := range nodeRegistry.Snapshot() {
+				if n.ID == ownerNodeID {
+					return n.AdmissionCeilingMB, nil
+				}
+			}
+			return 0, nil
 		},
 		LvFcUsedPct: fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
 	})
@@ -1743,6 +1766,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// counter is the provider-independent RPS fallback when the
 	// optional gateway metrics endpoint is unavailable.
 	reader := instancestats.NewReader()
+	residencyReader.Store(reader)
 	statsPoller := instancestats.NewPoller(
 		store,
 		instancestats.DialerFunc(deps.dialVMM),
@@ -3183,6 +3207,10 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 // pre-check). Concurrency + ResidentRAM are already exposed by
 // schedTargetsLedger; HeadroomMB is the new method the floor
 // trigger adds.
+// errNodeResidencyUnmeasured keeps fcvm_resident_ram_pct at its previous
+// value until this node has a fresh measurement (ADR 20261102072403).
+var errNodeResidencyUnmeasured = errors.New("schedd: this node's residency is not measured yet")
+
 type schedFloorLedger struct {
 	ledger *sched.NodeLedger
 	// headroom is Engine.FloorHeadroomMB; nil falls back to the ledger.

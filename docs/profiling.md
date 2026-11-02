@@ -278,7 +278,14 @@ gregale debug captures my-app CAPTURE_UUID --delete
 
 The command prints the hottest functions per kind. `--output` writes
 `profile-<id>-<kind>.pb.gz`, which opens in `go tool pprof -http=:`,
-speedscope or Grafana Pyroscope. Windows are 1–60 seconds (default 10 s).
+speedscope or Grafana Pyroscope. Windows are 1–60 seconds (default 10 s). The
+command waits up to 10 minutes for a busy queue to start the capture; with
+`--no-wait` it returns at once.
+
+In the dashboard, open the app and choose **Capture a profile from a running
+instance** (`/dashboard/apps/<slug>/profiles/captures`): it starts captures,
+lists recent ones, and each capture's page shows its profiles, compares it
+with an earlier capture and deletes it.
 
 Captures only run on a RUNNING instance; a parked app is not woken, because a
 fresh process would not show the state you are investigating. Send a request
@@ -287,7 +294,13 @@ idleness. One capture per app runs at a time, and an account can start 60 per
 hour. Automatic captures (below) have their own limit of 30 per hour across the
 account's apps, so they never use up the 60, and captures you start run before
 automatic ones waiting in the queue. Captures are kept for 7 days; delete one
-sooner with `--delete` or `DELETE /v1/apps/{slug}/profiles/captures/{id}`.
+sooner with `--delete`, the dashboard or
+`DELETE /v1/apps/{slug}/profiles/captures/{id}`.
+
+An organization's apps count as the organization's: the organization's plan
+decides whether its apps can be captured, the hourly limits and the storage
+limit below are shared by all its apps, and every member who can open an app
+sees and can delete its captures.
 
 An account also has a capture storage limit, set by its plan (table below). A
 new capture is queued only if the stored profiles of unexpired captures, plus

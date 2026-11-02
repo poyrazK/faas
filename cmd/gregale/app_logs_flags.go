@@ -27,6 +27,19 @@ func appLogsDegradedProblem(data string) api.Problem {
 		"App logs unavailable", appLogsDegradedMessage(data)).WithDocs(cliDocsURL)
 }
 
+// appLogsStreamErrorProblem is the problem an `event: error` frame carries:
+// a rejected filter or a plan gate, e.g. `--deployment` on Free.
+func appLogsStreamErrorProblem(data string) api.Problem {
+	var event struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(data), &event) != nil || event.Code == "" {
+		event.Code, event.Message = "invalid_request", "the log stream rejected the request"
+	}
+	return *api.NewProblem(http.StatusBadRequest, event.Code, "Logs request rejected", event.Message).WithDocs(cliDocsURL)
+}
+
 func appLogsDegradedMessage(data string) string {
 	var event struct {
 		Code string `json:"code"`

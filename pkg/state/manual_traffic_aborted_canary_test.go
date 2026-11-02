@@ -40,7 +40,7 @@ func manualTrafficAbortedCanarySuite(t *testing.T, s state.Store) {
 	})
 	t.Run("the residual skips the aborted canary", func(t *testing.T) {
 		app, stable := abortedCanaryTrafficApp(ctx, t, s)
-		previous := liveTrafficDeployment(ctx, t, s, app, 0)
+		previous := servedTrafficDeployment(ctx, t, s, app, stable)
 		candidate := abortCanaryBeside(ctx, t, s, app, stable)
 		if _, err := s.UpdateDeploymentTraffic(ctx, stable.ID, 50); err != nil {
 			t.Fatalf("UpdateDeploymentTraffic(stable, 50): %v", err)
@@ -83,6 +83,20 @@ func liveTrafficDeployment(ctx context.Context, t *testing.T, s state.Store, app
 		t.Fatal(err)
 	}
 	return dep
+}
+
+// servedTrafficDeployment is a release that served and was demoted to 0%, as
+// a promote of stable leaves its predecessor; only a release that has never
+// served is held at 0% when the residual is spread.
+func servedTrafficDeployment(ctx context.Context, t *testing.T, s state.Store, app state.App, stable state.Deployment) state.Deployment {
+	t.Helper()
+	previous := liveTrafficDeployment(ctx, t, s, app, 0)
+	for _, id := range []string{previous.ID, stable.ID} {
+		if _, err := s.UpdateDeploymentTraffic(ctx, id, 100); err != nil {
+			t.Fatalf("serve %s at 100%%: %v", id, err)
+		}
+	}
+	return previous
 }
 
 // abortCanaryBeside admits a canary candidate at its 25% step and aborts it,
