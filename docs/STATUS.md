@@ -86,6 +86,24 @@ Audit findings 2026-10-30 (branch `fix/crons-audit-findings`):
 - A manual run of a cron that a plan downgrade stopped gets
   `403 plan_cron_quota` (`pkg/apid/cronrun`), matching the scheduler's gate.
 
+Audit round 2, 2026-11-01 (branch `fix/crons-audit-round2`,
+ADR-20261026201726 amendment 2026-11-02, ADR-20261026151103 amendment 5):
+
+- A cron with a schedule policy but no failure rules is delivered once per
+  scheduled time; it took the plan's queue retry budget (up to 25 attempts).
+- A plain cron run that could not be queued is retried on the next sweep
+  instead of being lost; a schedule-policy cron on an app with no live
+  deployment is suspended.
+- The cron sweep yields schedd's main loop after 10 s and continues within the
+  minute, so many due crons cannot hold the heartbeat.
+- GitHub push deploys stage the crons `gregale.yaml` declares; source-declared
+  crons keep their timezone and `skip_if_running` (they were staged in UTC).
+- Company members can read a cron's status and poll a manual run's request.
+- `gregale cron status` reports `plan_limit` or `account_suspended` for a cron
+  that will not fire; a duplicate schedule and path is `409`; a suspended
+  cron's manual run is `409`; manual-run failures name their reason; timezone
+  `Local` is refused.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of

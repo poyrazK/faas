@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"time"
 
@@ -710,6 +711,7 @@ var CmdAdd = cmdAdd
 var CmdAddBucket = cmdAddBucket
 var CmdAddPostgres = cmdAddPostgres
 var CmdAdmin = cmdAdmin
+var CmdAppCopy = cmdAppCopy
 var CmdAlertActions = cmdAlertActions
 var CmdAlertAdd = cmdAlertAdd
 var CmdAlertInfo = cmdAlertInfo
@@ -826,6 +828,11 @@ var CmdDataAPIFixture = cmdDataAPIFixture
 var CmdDataAPIInstall = cmdDataAPIInstall
 var CmdDataAPILive = cmdDataAPILive
 var CmdDataAPIStorage = cmdDataAPIStorage
+var CmdDataAPIHooks = cmdDataAPIHooks
+var DataAPIHooksSQL = dataAPIHooksSQL
+var EnableDataAPIHooks = enableDataAPIHooks
+var DisableDataAPIHooks = disableDataAPIHooks
+var DataAPIHooksStatus = dataAPIHooksStatus
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
 var CmdDataAPIRefresh = cmdDataAPIRefresh
@@ -1344,6 +1351,7 @@ var FormatSuspectedDependency = formatSuspectedDependency
 var FreezeRequestFromFlags = freezeRequestFromFlags
 var FunctionConcurrencyDeployHint = functionConcurrencyDeployHint
 var GeneratedTestCICompareCommand = generatedTestCICompareCommand
+var GeneratedTestCIInstallCommand = generatedTestCIInstallCommand
 var GeneratedTestCIRunCommand = generatedTestCIRunCommand
 var GeneratedTestCIVMConfigCommand = generatedTestCIVMConfigCommand
 var GeneratedTestCIVMRunCommand = generatedTestCIVMRunCommand
@@ -1360,6 +1368,7 @@ var ImageRunExitCode = imageRunExitCode
 var IndexByte = indexByte
 var InitTestRepo = initTestRepo
 var InitZeroConfigRepo = initZeroConfigRepo
+var InspectArtifactOutputDirectory = inspectArtifactOutputDirectory
 var InspectCommitEvent = inspectCommitEvent
 var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
@@ -2146,6 +2155,24 @@ const ServedRuntimeVersion = servedRuntimeVersion
 
 // Members of appTaskStreamSession
 func (r *appTaskStreamSession) Stdout() **io.PipeReader { return &r.stdout }
+
+// Members of artifactOutputDirectory
+func (d *artifactOutputDirectory) Planned() []string                { return d.planned }
+func (d *artifactOutputDirectory) Root() *os.Root                   { return d.root }
+func (d *artifactOutputDirectory) Create(ctx context.Context) error { return d.create(ctx) }
+
+// OpenArtifactTaskDirectory opens a server-named task directory under parent.
+var OpenArtifactTaskDirectory = openArtifactTaskDirectory
+
+// CLIUserAgent is the User-Agent the CLI's API client sends.
+var CLIUserAgent = cliUserAgent
+
+// ResetServerNotices forgets the notices already printed this run.
+func ResetServerNotices() {
+	serverNotices.Lock()
+	defer serverNotices.Unlock()
+	serverNotices.seen = nil
+}
 
 // Members of authCreateOptions
 func (r *authCreateOptions) EmailAPIKey() *string   { return &r.emailAPIKey }

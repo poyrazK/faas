@@ -167,25 +167,39 @@ func domainCertificate(d api.CustomDomainResponse) api.Condition {
 
 // Cron returns a cron's status from its API response and its newest run,
 // which is nil when it has never run.
-func Cron(cron api.CronResponse, last *api.CronRun, observedAt time.Time) api.ResourceStatus {
+// Cron returns a cron's status. paused is why the scheduler skips the cron
+// although it is enabled and not suspended (pkg/apid/cronrun.Paused), or "".
+func Cron(cron api.CronResponse, last *api.CronRun, observedAt time.Time, paused string) api.ResourceStatus {
 	return api.ResourceStatus{
 		Kind: api.ResourceKindCron, Name: cron.ID, ObservedAt: observedAt.UTC().Format(time.RFC3339Nano),
-		Conditions: []api.Condition{cronReady(cron), cronLastRun(last)},
+		Conditions: []api.Condition{cronReady(cron, paused), cronLastRun(last)},
 	}
 }
 
-func cronReady(cron api.CronResponse) api.Condition {
+func cronReady(cron api.CronResponse, paused string) api.Condition {
 	c := api.Condition{Type: api.ConditionReady, Status: api.ConditionFalse}
 	switch {
 	case !cron.Enabled:
 		c.Reason, c.Terminal, c.Message = api.ConditionReasonDisabled, true, "The cron is disabled."
 	case cron.SuspendedReason != "":
 		c.Reason, c.Message = cron.SuspendedReason, "The cron is suspended: "+cron.SuspendedReason+"."
+	case paused != "":
+		c.Reason, c.Message = paused, "The cron does not fire: "+cronPausedText(paused)
 	default:
 		c.Status, c.Reason = api.ConditionTrue, api.ConditionReasonScheduled
 		c.Message = "The cron fires on schedule " + cron.Schedule + "."
 	}
 	return c
+}
+
+func cronPausedText(paused string) string {
+	switch paused {
+	case "plan_limit":
+		return "it is over the plan's cron limits, and only the oldest crons within them run."
+	case "account_suspended":
+		return "the account that owns the app is suspended."
+	}
+	return paused + "."
 }
 
 func cronLastRun(last *api.CronRun) api.Condition {
