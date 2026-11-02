@@ -372,6 +372,10 @@ type Querier interface {
 	// Marks a running replicated database's standby VM running; the caller
 	// checked the standby node's room under its lock.
 	ClaimDatabaseStandby(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
+	// ClaimDatabaseVMRestore for a provisioning database that is not a restore:
+	// the lease on its bootstrap, in the restore lease's column, since a
+	// database is never both.
+	ClaimDatabaseVMProvision(ctx context.Context, db DBTX, arg ClaimDatabaseVMProvisionParams) (pgtype.Timestamptz, error)
 	// Takes (held is NULL) or renews (held is the current lease) the lease on
 	// a provisioning restore. The lease is the database clock's, so replicas'
 	// clocks do not matter.
@@ -3132,6 +3136,8 @@ type Querier interface {
 	LinearOAuthRefreshFinish(ctx context.Context, db DBTX, arg LinearOAuthRefreshFinishParams) (IssueTrackerLinearConnection, error)
 	LinearOAuthSetStatus(ctx context.Context, db DBTX, arg LinearOAuthSetStatusParams) (IssueTrackerLinearConnection, error)
 	LinkProjectBindingVerificationMember(ctx context.Context, db DBTX, arg LinkProjectBindingVerificationMemberParams) (int64, error)
+	// The named agent clients of the account's usable keys.
+	ListAPIKeyAgentClients(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAPIKeyAgentClientsRow, error)
 	// scopes is the auth permission set surfaced to the dashboard and the
 	// /v1/keys listing. See ADR-034 rev2.
 	ListAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAPIKeysRow, error)
@@ -3577,6 +3583,10 @@ type Querier interface {
 	ListPendingAlertRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
 	ListPendingApplicationStandardEgress(ctx context.Context, db DBTX, arg ListPendingApplicationStandardEgressParams) ([][]byte, error)
 	ListPendingCheckedRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
+	// Runs of a cron that have not started: queued, or waiting to retry. Deleting
+	// the cron cancels them so a deleted cron never calls the app again. The app
+	// check keeps a delete addressed to the wrong app from touching these runs.
+	ListPendingCronInvocationIDs(ctx context.Context, db DBTX, arg ListPendingCronInvocationIDsParams) ([]string, error)
 	ListPendingManagedPostgresDrains(ctx context.Context, db DBTX, arg ListPendingManagedPostgresDrainsParams) ([]ManagedPostgresCutoverDrain, error)
 	ListPendingSafeProjectSubmissions(ctx context.Context, db DBTX) ([]ListPendingSafeProjectSubmissionsRow, error)
 	ListPlatformTenantCustomerOperationMilestones(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationMilestonesParams) ([][]byte, error)
@@ -4740,6 +4750,9 @@ type Querier interface {
 	ObjectUploadRouteUpsert(ctx context.Context, db DBTX, arg ObjectUploadRouteUpsertParams) (ObjectUploadRoute, error)
 	ObjectUploadRoutesList(ctx context.Context, db DBTX, arg ObjectUploadRoutesListParams) ([]ObjectUploadRoute, error)
 	ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
+	// The plan and spend cap that set an account's object-storage ceilings
+	// (ADR-1320, ADR-20261101214152). A null cap is no cap.
+	ObjectUsageAccountPlanCap(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectUsageAccountPlanCapRow, error)
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)
 	ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error
 	ObjectUsageAuthorizeBy(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeByParams) error
@@ -6504,6 +6517,7 @@ type Querier interface {
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.
+	// Like the guard, skip platform refusals and rank only warm latency.
 	RouteCustomerHealthObservation(ctx context.Context, db DBTX, arg RouteCustomerHealthObservationParams) ([]byte, error)
 	// Live advisory reads only. Each code has its own weighted numerator and the
 	// entire deployment/route/window request count as denominator. No request expansion.
@@ -6518,13 +6532,19 @@ type Querier interface {
 	// Metadata only. Count all matching rows/weights before independently bounding
 	// each deployment/window. Error rows prefer trace links; latency rows prefer
 	// slowest latency buckets. Both then use newest timestamps and UUID ties.
+	// Same population as the evidence it explains: no platform refusals, and
+	// warm latency only for the canary guard (warm_latency).
 	RouteHealthInvestigationExamples(ctx context.Context, db DBTX, arg RouteHealthInvestigationExamplesParams) ([]byte, error)
 	// Independently bound the newest rows in each exact deployment/window. Read
 	// rows without spans too, so missing coverage is not hidden by selection.
+	// warm_latency reads the warm population the canary guard ranked.
 	RouteHealthLatencyEvidence(ctx context.Context, db DBTX, arg RouteHealthLatencyEvidenceParams) ([]RouteHealthLatencyEvidenceRow, error)
 	// Exact selected labels and shared windows. Aggregate publisher weights without
 	// expanding requests. Percentile ranks interpolate bucket representatives, like
 	// RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
+	// Platform refusals never count. warm_latency (the canary guard) ranks only
+	// requests that did not cold boot and reports how many it ranked
+	// (ADR-20261028110044 amendment 3); the production monitor stays end to end.
 	RouteHealthObservation(ctx context.Context, db DBTX, arg RouteHealthObservationParams) ([]byte, error)
 	RouteHealthStableIDs(ctx context.Context, db DBTX, arg RouteHealthStableIDsParams) ([]string, error)
 	// Route insights (ADR-1198): findings apid's evaluator derives from the
@@ -6745,6 +6765,9 @@ type Querier interface {
 	ServiceWakeAheadEnabled(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	// Billable RAM of live instances against the active nodes' admission ceilings.
 	ServiceWakeAheadFleetResidency(ctx context.Context, db DBTX, overheadMb int32) (ServiceWakeAheadFleetResidencyRow, error)
+	// ADR-20261030133644: names the agent client of one of the account's keys.
+	// The first write wins; another account's key is left alone.
+	SetAPIKeyAgentClient(ctx context.Context, db DBTX, arg SetAPIKeyAgentClientParams) error
 	// Password writers lock/update the account before its credential row, matching
 	// reset redemption, producer handoff and account erasure. The revision survives
 	// password deletion, so restoring an old PHC never revives an older reset link.

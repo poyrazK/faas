@@ -909,6 +909,17 @@
     }
   },
   {
+    "table": "api_key_agent_clients",
+    "columns": [
+      "account_id",
+      "client_name",
+      "client_site",
+      "created_at",
+      "key_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "api_keys",
     "columns": [
       "account_id",
@@ -2563,7 +2574,9 @@
       "github_install_id",
       "github_install_linked_at",
       "github_owner_id",
+      "github_preview_enabled",
       "github_production_branch",
+      "github_production_trigger",
       "github_repo_full_name",
       "github_repo_id",
       "id",
@@ -11938,6 +11951,18 @@
     "kind": "operational"
   },
   {
+    "table": "node_memory_reports",
+    "columns": [
+      "frozen_instances",
+      "measured_at",
+      "measured_mb",
+      "node_id",
+      "reported_at",
+      "used_mb"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "notification_channels",
     "columns": [
       "account_id",
@@ -12869,6 +12894,7 @@
     "table": "oidc_exchanged_tokens",
     "columns": [
       "account_id",
+      "app_id",
       "audience",
       "created_at",
       "expires_at",
@@ -17011,6 +17037,7 @@
       "latency_ms",
       "method",
       "node_id",
+      "platform_refusal",
       "platform_tenant_id",
       "received_at",
       "referrer_host",

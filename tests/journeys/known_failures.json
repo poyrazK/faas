@@ -21,7 +21,7 @@
   },
   {
     "step": "TestGitHubDeploys/push_to_deploy",
-    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (three runs); github status reports the binding healthy",
+    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (three runs); github status reports the binding healthy. Root cause: githubd deployed only through a project bound to the repository, which an app bind never creates (ADR-20261101160300); known until that fix is released",
     "since": "2026-10-27"
   },
   {

@@ -34,9 +34,7 @@ func TestMetalSnapshotRestoreOutlivesRetention(t *testing.T) {
 	})
 	spec := devSpec()
 	spec.RestoreWindowSeconds = 3600
-	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: source, Spec: spec}); err != nil {
-		t.Fatal(err)
-	}
+	provisionReady(ctx, t, p, managedpostgres.ProvisionRequest{ResourceID: source, Spec: spec})
 	// query runs one statement, or with exec a batch, as the migration
 	// role.
 	run := func(id, sql string, exec bool) string {

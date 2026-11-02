@@ -415,6 +415,9 @@ var routeExclude = map[string]bool{
 	"POST /v1/agent-callbacks":                        true,
 	"POST /v1/agent-callbacks/{token}":                true,
 	"POST /v1/agent-callbacks/revocations":            true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
+	"POST /v1/agent-tools/invoke":                     true,
+	"POST /v1/agent-tools/close_thread":               true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -2009,7 +2012,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
-		filepath.Join(root, "pkg", "api", "debug_rollout.go"), // ADR-1447 amendment: rollout explanation + debug status
+		filepath.Join(root, "pkg", "api", "debug_rollout.go"),     // ADR-1447 amendment: rollout explanation + debug status
+		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

@@ -785,6 +785,15 @@ type ApiKey struct {
 	DisplayPrefix   pgtype.Text
 }
 
+// ADR-20261030133644 agent client names for hosted MCP keys; apid is the only writer.
+type ApiKeyAgentClient struct {
+	KeyID      pgtype.UUID
+	AccountID  pgtype.UUID
+	ClientName string
+	ClientSite string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type App struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -885,6 +894,8 @@ type App struct {
 	DeploymentCronBefore              []byte
 	DeploymentMailRevision            int64
 	Labels                            []byte
+	GithubProductionTrigger           pgtype.Text
+	GithubPreviewEnabled              pgtype.Bool
 }
 
 type AppApiRoute struct {
@@ -9554,6 +9565,16 @@ type NodeLifecycleCompletion struct {
 	AuditOutboxID    int64
 }
 
+// ADR 20261101091815 node-wide measured memory, published by each node's own scheduler for its peers.
+type NodeMemoryReport struct {
+	NodeID          pgtype.UUID
+	MeasuredMb      int32
+	UsedMb          pgtype.Int4
+	FrozenInstances int32
+	MeasuredAt      pgtype.Timestamptz
+	ReportedAt      pgtype.Timestamptz
+}
+
 type NotificationChannel struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -10235,6 +10256,7 @@ type OidcExchangedToken struct {
 	Jti       pgtype.Text
 	CreatedAt pgtype.Timestamptz
 	Scopes    []string
+	AppID     pgtype.UUID
 }
 
 type OidcTrustPolicy struct {
@@ -13634,6 +13656,7 @@ type RequestTelemetry struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202611 struct {
@@ -13673,6 +13696,7 @@ type RequestTelemetry202611 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202612 struct {
@@ -13712,6 +13736,7 @@ type RequestTelemetry202612 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202701 struct {
@@ -13751,6 +13776,7 @@ type RequestTelemetry202701 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -13815,6 +13841,7 @@ type RequestTelemetryDefault struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type ReservedIpInventory struct {

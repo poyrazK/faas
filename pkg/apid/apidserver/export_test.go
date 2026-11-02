@@ -1973,3 +1973,31 @@ var ProjectReadinessOverrides = projectReadinessOverrides
 
 // SetEventPublishClock pins the event publish rate limiter's clock.
 func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }
+
+// GitHub connector bearer handlers (ADR-20261101160300).
+func (r *server) ListGitHubRepositoriesForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.listGitHubRepositories(w, req, acct)
+}
+func (r *server) GetGitHubDeployPolicyForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.getGitHubDeployPolicy(w, req, acct)
+}
+func (r *server) PatchGitHubDeployPolicyForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.patchGitHubDeployPolicy(w, req, acct)
+}
+func (r *server) BindGitHubConnectionForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.bindGitHubConnection(w, req, acct)
+}
+func (r *server) GetGitHubConnectionForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.getGitHubConnection(w, req, acct)
+}
+
+// AppErrorsPurgeStore is the store the app_errors retention purge needs.
+type AppErrorsPurgeStore = appErrorsPurgeStore
+
+// PurgeAppErrorsOnce runs one app_errors retention pass at now over every
+// account the store lists.
+func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func() time.Time) {
+	p := newAppErrorsPurger(store, nil, nil, slog.New(slog.DiscardHandler), true)
+	p.now = now
+	p.purgeAll(ctx)
+}

@@ -1765,11 +1765,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("automatic CPU captures on CPU saturation enabled (ADR-1155)")
 	}
 	if cfg.MeasuredAdmission {
+		// ADR 20261101091815: this scheduler measures its own node; a peer
+		// node is admitted by the report its own scheduler publishes.
 		engine.Ledger().EnableMeasuredAdmission(func(nodeID string) (int, time.Time, bool) {
-			return reader.MeasuredMB(nodeID, time.Now())
+			now := time.Now()
+			if mb, asOf, ok := reader.MeasuredMB(nodeID, now); ok {
+				return mb, asOf, true
+			}
+			if report, ok := engine.PeerNodeMemory(nodeID, now); ok {
+				return report.MeasuredMB, report.MeasuredAt, true
+			}
+			return 0, time.Time{}, false
 		})
 		log.Info("measured admission enabled (ADR-909)",
 			"max_overcommit_percent", api.MeasuredAdmissionMaxOvercommitPercent)
+		if ownerNodeID != "" {
+			engine.EnableNodeMemoryReports(reader.MemoryReport)
+			go func() {
+				if err := engine.RunNodeMemoryReports(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					log.Warn("node memory reports exited", "err", err)
+				}
+			}()
+			log.Info("node memory reports enabled (ADR 20261101091815)",
+				"report_seconds", api.NodeMemoryReportSeconds, "peer_max_age_seconds", api.NodeMemoryPeerMaxAgeSeconds)
+		}
 	}
 	if cfg.QuietPauseLedger {
 		ledger := instancestats.NewPauseLedger(store,
