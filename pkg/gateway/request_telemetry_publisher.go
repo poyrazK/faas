@@ -728,9 +728,10 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 		gaps[row.AppID] = gap
 	}
 	if p.minutes != nil {
-		// Requests folded into open or waiting minutes are delivered later,
-		// not lost.
-		for app, n := range p.minutes.pendingByApp() {
+		// Requests in closed minutes still waiting to ship are pending; an
+		// open minute is read by no window yet (ADR-20261028110044
+		// amendment 4).
+		for app, n := range p.minutes.undeliveredByApp() {
 			coverage.PendingCount += n
 			if app == uuid.Nil {
 				continue

@@ -2945,6 +2945,7 @@ type Querier interface {
 	IssueSlackChallengeCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueSlackChallengeGet(ctx context.Context, db DBTX, arg IssueSlackChallengeGetParams) (IssueSlackLinkChallenge, error)
 	IssueSlackChallengePut(ctx context.Context, db DBTX, arg IssueSlackChallengePutParams) error
+	IssueSlackChallengeRotate(ctx context.Context, db DBTX, arg IssueSlackChallengeRotateParams) error
 	IssueSlackChallengesExpire(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueSlackClaim(ctx context.Context, db DBTX, arg IssueSlackClaimParams) error
 	IssueSlackDeliveryList(ctx context.Context, db DBTX, arg IssueSlackDeliveryListParams) ([]IssueSlackDeliveryListRow, error)
@@ -4319,6 +4320,10 @@ type Querier interface {
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	// ADR-20261031110037: managed PostgreSQL overage charges delivered per
 	// billing provider, usage subject and UTC month.
+	// Subjects that may owe overage for the month: those that reached the
+	// compute allowance (as the cap sweep recorded it), those with overage on,
+	// whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
+	// those already charged.
 	ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, periodStart pgtype.Timestamptz) ([]ManagedPostgresOverageSubjectsRow, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
 	ManagedPostgresPersonalDatabaseReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalDatabaseReferenceParams) (bool, error)
@@ -5518,6 +5523,9 @@ type Querier interface {
 	ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	ReadDeploymentPolicySnapshot(ctx context.Context, db DBTX, arg ReadDeploymentPolicySnapshotParams) (ReadDeploymentPolicySnapshotRow, error)
 	ReadDeploymentPolicyState(ctx context.Context, db DBTX, appID string) (ReadDeploymentPolicyStateRow, error)
+	// ADR-20261028110044 amendment 4: when a traffic change last took the
+	// deployment to 100%, which anchors the monitor's rollback window.
+	ReadDeploymentPromotedAt(ctx context.Context, db DBTX, deploymentID string) (pgtype.Timestamptz, error)
 	ReadDeploymentReleaseAddition(ctx context.Context, db DBTX, appID string) (ReadDeploymentReleaseAdditionRow, error)
 	ReadDeploymentReleaseSecrets(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadDeploymentSubmission(ctx context.Context, db DBTX, arg ReadDeploymentSubmissionParams) (ReadDeploymentSubmissionRow, error)
@@ -6595,6 +6603,11 @@ type Querier interface {
 	// first, for the route_insights_detected alert metric. total counts every
 	// match, not only the rows returned.
 	RouteInsightsDetectedSince(ctx context.Context, db DBTX, arg RouteInsightsDetectedSinceParams) ([]RouteInsightsDetectedSinceRow, error)
+	// ADR-20261028110044 amendment 4: the route labels ("METHOD /path") an app's
+	// route health guard or production monitor selects. The gateway keeps their
+	// telemetry labels in a full route set so their evidence never folds into
+	// __route_other__.
+	RouteLabelPins(ctx context.Context, db DBTX, appID string) ([]string, error)
 	// Evaluate the full request-time identity population in bounded route windows.
 	// Only five cohorts and one hundred recovery identities per route are returned;
 	// full verdict and distinct counts are computed before either output cap.

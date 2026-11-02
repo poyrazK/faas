@@ -4136,6 +4136,7 @@ CREATE TABLE public.deployments (
     mail_failure_account_revision bigint,
     mail_failure_app_revision bigint,
     mail_failure_success_revision bigint,
+    promoted_at timestamp with time zone,
     CONSTRAINT deployments_canary_preset_chk CHECK (((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text])) OR (canary_preset = 'adaptive'::text))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -11688,6 +11689,32 @@ SELECT coalesce((SELECT CASE WHEN c.paused THEN 'subscription_paused'
  LEFT JOIN event_subscription_circuit_breakers b ON b.subscription_id=c.subscription_id AND b.account_id=c.account_id AND b.app_id=c.app_id
  WHERE c.account_id=account AND c.app_id=app AND c.subscription_id::text=subscription),'');
 $$;
+
+
+--
+-- Name: events_copy_operator_action_to_audit_log(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.events_copy_operator_action_to_audit_log() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+    operator_id uuid := NEW.actor_account_id;
+    payload jsonb := coalesce(NEW.data, '{}'::jsonb);
+BEGIN
+    IF payload->>'actor' ~* '^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$' THEN
+        operator_id := (payload->>'actor')::uuid;
+    END IF;
+    IF NEW.trace_id IS NOT NULL AND jsonb_typeof(payload) = 'object' AND NOT payload ? 'trace_id' THEN
+        payload := payload || jsonb_build_object('trace_id', NEW.trace_id);
+    END IF;
+    INSERT INTO audit_log (id, kind, account_id, account_email, actor, received_at, data)
+    VALUES (gen_random_uuid(), NEW.kind, operator_id,
+            (SELECT a.email FROM accounts a WHERE a.id = operator_id),
+            coalesce(payload->>'actor', NEW.actor), NEW.at, payload);
+    RETURN NULL;
+END;
+$_$;
 
 
 --
@@ -28905,6 +28932,33 @@ COMMENT ON TABLE public.agent_run_ai_spend IS 'ADR-20261027090010 §7 per-run mo
 
 
 --
+-- Name: agent_run_callbacks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_callbacks (
+    run_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    endpoint_id uuid NOT NULL,
+    thread_id text NOT NULL,
+    tool_call_id text NOT NULL,
+    provider_call_id text,
+    issued_at timestamp with time zone NOT NULL,
+    delivered_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_run_callbacks_provider_call_id_check CHECK (((provider_call_id IS NULL) OR ((char_length(provider_call_id) >= 1) AND (char_length(provider_call_id) <= 512)))),
+    CONSTRAINT agent_run_callbacks_thread_id_check CHECK (((char_length(thread_id) >= 1) AND (char_length(thread_id) <= 64))),
+    CONSTRAINT agent_run_callbacks_tool_call_id_check CHECK (((char_length(tool_call_id) >= 1) AND (char_length(tool_call_id) <= 512)))
+);
+
+
+--
+-- Name: TABLE agent_run_callbacks; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_callbacks IS 'ADR-20261030125501 gregale_run links written by apid: the thread and tool call a finished agent run answers.';
+
+
+--
 -- Name: agent_run_outputs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43861,6 +43915,7 @@ CREATE TABLE public.managed_postgres_overage_deliveries (
     billed_unit_seconds bigint NOT NULL,
     delivered_millicents bigint NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    billed_storage_byte_seconds bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_deliveries_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_deliveries_check CHECK ((isfinite(updated_at) AND (updated_at >= period_start))),
     CONSTRAINT managed_postgres_overage_deliveries_delivered_millicents_check CHECK ((delivered_millicents > 0)),
@@ -57278,6 +57333,14 @@ ALTER TABLE ONLY public.agent_run_ai_spend
 
 
 --
+-- Name: agent_run_callbacks agent_run_callbacks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_callbacks
+    ADD CONSTRAINT agent_run_callbacks_pkey PRIMARY KEY (run_id);
+
+
+--
 -- Name: agent_run_outputs agent_run_outputs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63950,6 +64013,14 @@ ALTER TABLE ONLY public.managed_postgres_live_logins
 
 
 --
+-- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_storage_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_deliveries
+    ADD CONSTRAINT managed_postgres_overage_deliveries_billed_storage_check CHECK ((billed_storage_byte_seconds >= 0)) NOT VALID;
+
+
+--
 -- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69809,6 +69880,27 @@ CREATE UNIQUE INDEX agent_execution_workflows_principal_key ON public.agent_exec
 --
 
 CREATE INDEX agent_run_ai_reservations_run_idx ON public.agent_run_ai_reservations USING btree (run_id, expires_at);
+
+
+--
+-- Name: agent_run_callbacks_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_run_callbacks_account_idx ON public.agent_run_callbacks USING btree (account_id);
+
+
+--
+-- Name: agent_run_callbacks_endpoint_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_run_callbacks_endpoint_idx ON public.agent_run_callbacks USING btree (endpoint_id);
+
+
+--
+-- Name: agent_run_callbacks_undelivered_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_run_callbacks_undelivered_idx ON public.agent_run_callbacks USING btree (created_at) WHERE (delivered_at IS NULL);
 
 
 --
@@ -83312,6 +83404,13 @@ CREATE TRIGGER events_enqueue_fanout BEFORE INSERT ON public.events FOR EACH ROW
 
 
 --
+-- Name: events events_operator_action_audit_log; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER events_operator_action_audit_log AFTER INSERT ON public.events FOR EACH ROW WHEN ((new.kind ~~ 'operator.action.%'::text)) EXECUTE FUNCTION public.events_copy_operator_action_to_audit_log();
+
+
+--
 -- Name: exclusive_work_trigger_bindings exclusive_webhook_routing_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -87215,6 +87314,30 @@ ALTER TABLE ONLY public.agent_run_ai_spend
 
 ALTER TABLE ONLY public.agent_run_ai_spend
     ADD CONSTRAINT agent_run_ai_spend_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_callbacks agent_run_callbacks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_callbacks
+    ADD CONSTRAINT agent_run_callbacks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_callbacks agent_run_callbacks_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_callbacks
+    ADD CONSTRAINT agent_run_callbacks_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_callbacks agent_run_callbacks_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_callbacks
+    ADD CONSTRAINT agent_run_callbacks_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
 
 
 --

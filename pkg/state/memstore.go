@@ -873,9 +873,12 @@ type MemStore struct {
 	routeMonitorNextCheck     map[string]time.Time
 	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
 	// routeProbeData holds ADR-847 probe rounds and results; lazily created.
-	routeProbeOnce             sync.Once
-	routeProbeData             *memRouteProbes
-	routeHealthGates           map[string]api.RouteHealthGate
+	routeProbeOnce   sync.Once
+	routeProbeData   *memRouteProbes
+	routeHealthGates map[string]api.RouteHealthGate
+	// deploymentPromotedAt mirrors deployments.promoted_at
+	// (ADR-20261028110044 amendment 4).
+	deploymentPromotedAt       map[string]time.Time
 	promotionRecoveries        map[string]map[string]promotionRecoveryRecord
 	promotionMigrationRuntimes map[string]promotionMigrationRuntime
 	promotionMigrations        map[string]promotionMigrationCapture
@@ -6226,9 +6229,16 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		applyScheduledStart(&d, start)
 		m.finishScheduledStartLocked(start)
 	}
+	promotedAt := time.Now().UTC()
+	if newPercent == 100 && priorPercent < 100 {
+		m.markDeploymentPromotedLocked(id, promotedAt)
+	}
 	m.putDeploymentLocked(id, d)
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
+		if newWeights[i] == 100 && other.TrafficPercent < 100 {
+			m.markDeploymentPromotedLocked(sibling.ID, promotedAt)
+		}
 		other.TrafficPercentExplicit = manualTrafficExplicit(other.TrafficPercent, newWeights[i], other.TrafficPercentExplicit)
 		other.TrafficPercent = newWeights[i]
 		m.putDeploymentLocked(sibling.ID, other)
@@ -7879,10 +7889,6 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
-	// Mirrors PgStore: rebinding to another repository retires its previews.
-	if previous, bound := m.githubBindings[b.AppID]; bound && githubBindingRepoChanged(previous, b) {
-		m.markAppPRPreviewsStaleLocked(app)
-	}
 	// Mirrors PgStore: a re-bind keeps the app's GitHub policy.
 	b.ProductionTrigger = m.githubBindings[b.AppID].ProductionTrigger
 	b.PreviewsOff = m.githubBindings[b.AppID].PreviewsOff
@@ -7933,14 +7939,7 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 	if !ok {
 		return ErrNotFound
 	}
-	m.markAppPRPreviewsStaleLocked(parent)
-	delete(m.githubBindings, appID)
-	return nil
-}
-
-// markAppPRPreviewsStaleLocked mirrors PgStore's markAppPRPreviewsStaleTx.
-// Callers hold m.mu.
-func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
+	// Mirrors PgStore: the app's PR preview environments go stale.
 	anchors := make(map[string]string)
 	for _, set := range m.previewSets {
 		if root, ok := m.apps[set.RootAppID]; ok {
@@ -7965,6 +7964,8 @@ func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 			m.apps[id] = preview
 		}
 	}
+	delete(m.githubBindings, appID)
+	return nil
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
@@ -18993,6 +18994,7 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		return err
 	}
 	m.events = append(m.events, e)
+	m.copyOperatorActionToAuditLogLocked(e)
 	return nil
 }
 

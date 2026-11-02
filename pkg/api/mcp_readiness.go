@@ -3,19 +3,20 @@ package api
 import (
 	"context"
 	"errors"
-	"github.com/google/uuid"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 const MCPReadinessTokenHeader = "MCP-Probe-Authorization"
 const CodeMCPReadinessRequired = "mcp_readiness_required"
 
-var readinessRolePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-var readinessHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var readinessRolePattern = lazyregexp.New(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+var readinessHashPattern = lazyregexp.New(`^[a-f0-9]{64}$`)
 
 type MCPReadinessRole struct {
 	Monitor         *MCPReadinessMonitorConfig `json:"monitor,omitempty"`

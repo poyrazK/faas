@@ -39,6 +39,19 @@ type CallbackToken struct {
 	Kinds      []string  `json:"k"`
 	IssuedAt   time.Time `json:"i"`
 	ExpiresAt  time.Time `json:"x"`
+	// Issuer pins a URL issued by a member of a company app's organization
+	// to that membership version: a removed or re-roled issuer's URLs stop
+	// working (bug hunt 34). Empty for personal apps and workload tokens.
+	IssuerOrgID      string `json:"o,omitempty"`
+	IssuerAccountID  string `json:"u,omitempty"`
+	IssuerOrgVersion int64  `json:"r,omitempty"`
+}
+
+// CallbackIssuer is the organization membership a company-app URL was issued
+// under.
+type CallbackIssuer struct {
+	OrgID, AccountID string
+	Revision         int64
 }
 
 // Allows reports whether the token may carry a message of kind.
