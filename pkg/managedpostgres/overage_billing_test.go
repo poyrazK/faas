@@ -197,10 +197,10 @@ func TestOverageBillerRetryAfterALostResponseKeepsItsStartingPoint(t *testing.T)
 		t.Fatal(err)
 	}
 	if len(f.published) != 2 || f.published[0].DeliveredMillicents != 0 || f.published[1].DeliveredMillicents != 0 ||
-		f.published[1].TargetMillicents != 40_000 {
+		f.published[1].TargetMillicents != 2*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("published %+v; want both steps to start from 0, so the provider keeps one", f.published)
 	}
-	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 40_000 {
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 2*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("recorded %+v", delivery)
 	}
 }
@@ -218,17 +218,17 @@ func TestOverageBillerKeepsShadowAndLiveApart(t *testing.T) {
 		t.Fatalf("shadow = %+v, %v", summary, err)
 	}
 	f.store.used["acct2026-11"] = testAllowance + 3*3600
-	if summary, err := f.biller(t, true, november).Deliver(ctx); err != nil || summary.Delivered != 1 || summary.Millicents != 60_000 {
+	if summary, err := f.biller(t, true, november).Deliver(ctx); err != nil || summary.Delivered != 1 || summary.Millicents != 3*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("live after shadow = %+v, %v; want the whole month charged", summary, err)
 	}
-	if len(f.published) != 1 || f.published[0].DeliveredMillicents != 0 || f.published[0].TargetMillicents != 60_000 {
+	if len(f.published) != 1 || f.published[0].DeliveredMillicents != 0 || f.published[0].TargetMillicents != 3*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("published %+v; want a step from 0, not from the shadow amount", f.published)
 	}
 	f.store.used["acct2026-11"] = testAllowance + 4*3600
 	if summary, err := f.biller(t, false, november).Deliver(ctx); err != nil || summary.Shadowed != 0 {
 		t.Fatalf("shadow after live = %+v, %v; want nothing recorded", summary, err)
 	}
-	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 60_000 {
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 3*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
 		t.Fatalf("recorded %+v; want the live charge kept", delivery)
 	}
 }
