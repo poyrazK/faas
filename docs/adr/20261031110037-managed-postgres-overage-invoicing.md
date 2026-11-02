@@ -1,7 +1,7 @@
 # ADR: Managed PostgreSQL overage invoicing
 
 Date: 2026-10-31
-Status: Accepted
+Status: Accepted; price amended by [ADR-20261102072425](20261102072425-managed-postgres-overage-at-provider-price-plus-5.md) ($0.2331 per CU-hour, Neon Scale's price plus 5%)
 Amends: [ADR 20261025094915](20261025094915-managed-postgres-compute-caps-on-running-databases.md) (decision 2: overage was unbilled until invoicing)
 Related: [ADR-1430](1430-plan-entitlements-from-october-2026-cogs-report.md) (plan entitlements, COGS report), [ADR 20261027093220](20261027093220-object-storage-billed-daily.md) (object-storage charge steps), [ADR-1320](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) (spend cap)
 

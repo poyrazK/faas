@@ -1,9 +1,11 @@
 package apidserver
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,47 +42,9 @@ func (s *server) renderAppLogDrains(w http.ResponseWriter, r *http.Request, log 
 		App:         dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain)},
 		PlanAllowed: planKnown && limits.LogDrainPerApp > 0,
 	}
-	if data.PlanAllowed {
-		drains, listErr := s.store.ListAppLogDrainsForApp(ctx, app.ID)
-		if listErr != nil {
-			data.ErrorMessage = "Log-drain data is temporarily unavailable. Please try again shortly."
-			log.Warn("dashboard log drains: list drains", "account_id", acct.ID, "app_id", app.ID, "err", listErr)
-		} else {
-			healthRows, healthErr := s.store.ListAppLogDrainHealthForApp(ctx, app.ID)
-			if healthErr != nil {
-				data.ErrorMessage = "Log-drain health is temporarily unavailable. Please try again shortly."
-				log.Warn("dashboard log drains: list health", "account_id", acct.ID, "app_id", app.ID, "err", healthErr)
-			}
-			healthByID := make(map[string]state.AppLogDrainHealth, len(healthRows))
-			for _, health := range healthRows {
-				healthByID[health.DrainID] = health
-			}
-			data.Drains = make([]dashboard.LogDrainPageItem, 0, len(drains))
-			now := time.Now().UTC()
-			from := now.Add(-24 * time.Hour)
-			firstBucket := from.Truncate(appLogDrainAnalyticsBucketInterval).Add(appLogDrainAnalyticsBucketInterval)
-			for _, drain := range drains {
-				item := dashboardLogDrainPageItem(drain, healthByID[drain.ID])
-				samples, analyticsErr := s.store.ListAppLogDrainDeliveryAnalytics(ctx, drain.ID,
-					firstBucket.Add(-appLogDrainAnalyticsBucketInterval), now.Truncate(appLogDrainAnalyticsBucketInterval))
-				if analyticsErr != nil {
-					log.Warn("dashboard log drains: list analytics", "account_id", acct.ID, "drain_id", drain.ID, "err", analyticsErr)
-				} else {
-					analytics := appLogDrainAnalyticsResponse(samples, drain.ID, "24h", from, now)
-					if len(analytics.Buckets) > 0 {
-						item.AnalyticsAvailable = true
-						item.AnalyticsDelivered = analytics.Summary.Delivered
-						item.AnalyticsFailed = analytics.Summary.Failed
-						item.AnalyticsDropped = analytics.Summary.Dropped
-						item.AnalyticsRetries = analytics.Summary.Retries
-						item.AnalyticsSuccessRate = fmt.Sprintf("%.2f%%", analytics.Summary.SuccessRate*100)
-						item.AnalyticsAverageLatency = fmt.Sprintf("%.1f ms", analytics.Summary.AverageLatencyMS)
-					}
-				}
-				data.Drains = append(data.Drains, item)
-			}
-		}
-	}
+	// Drains are listed on every plan, so an owner whose plan stopped
+	// including them sees the ones delivery paused (logs audit 2026-10-31 D3).
+	data.Drains, data.ErrorMessage = s.dashboardLogDrainItems(r, log, acct, app)
 	view, _ := AccountFrom(ctx)
 	appCount, countErr := s.store.CountDeployedApps(ctx, acct.ID)
 	if countErr != nil {
@@ -95,6 +59,71 @@ func (s *server) renderAppLogDrains(w http.ResponseWriter, r *http.Request, log 
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(ctx), page); err != nil {
 		renderProblem(w, log, err)
 	}
+}
+
+// dashboardLogDrainItems renders app's drains with their health, plan
+// coverage and last-24h analytics, and the message to show when part of that
+// could not be read. Targets are masked as the API masks them.
+func (s *server) dashboardLogDrainItems(r *http.Request, log *slog.Logger, acct state.Account, app state.App) ([]dashboard.LogDrainPageItem, string) {
+	ctx := r.Context()
+	drains, err := s.store.ListAppLogDrainsForApp(ctx, app.ID)
+	if err != nil {
+		log.Warn("dashboard log drains: list drains", "account_id", acct.ID, "app_id", app.ID, "err", err)
+		return nil, "Log-drain data is temporarily unavailable. Please try again shortly."
+	}
+	message := ""
+	healthRows, err := s.store.ListAppLogDrainHealthForApp(ctx, app.ID)
+	if err != nil {
+		message = "Log-drain health is temporarily unavailable. Please try again shortly."
+		log.Warn("dashboard log drains: list health", "account_id", acct.ID, "app_id", app.ID, "err", err)
+	}
+	healthByID := make(map[string]state.AppLogDrainHealth, len(healthRows))
+	for _, health := range healthRows {
+		healthByID[health.DrainID] = health
+	}
+	paused, err := s.store.ListAppLogDrainsPausedByPlan(ctx, app.ID)
+	if err != nil {
+		message = "Log-drain health is temporarily unavailable. Please try again shortly."
+		log.Warn("dashboard log drains: list plan coverage", "account_id", acct.ID, "app_id", app.ID, "err", err)
+	}
+	reveal := appLogDrainTargetVisible(r)
+	now := time.Now().UTC()
+	items := make([]dashboard.LogDrainPageItem, 0, len(drains))
+	for _, drain := range drains {
+		item := dashboardLogDrainPageItem(drain, healthByID[drain.ID])
+		if drain.Enabled && slices.Contains(paused, drain.ID) {
+			item.PlanPaused, item.Status, item.Active = true, api.AppLogDrainHealthStatusInactive, false
+		}
+		if !reveal {
+			item.TargetURL = api.MaskAppLogDrainTargetURL(item.TargetURL)
+		}
+		s.addDashboardLogDrainAnalytics(ctx, log, acct, &item, now)
+		items = append(items, item)
+	}
+	return items, message
+}
+
+// addDashboardLogDrainAnalytics fills item's last-24h delivery summary.
+func (s *server) addDashboardLogDrainAnalytics(ctx context.Context, log *slog.Logger, acct state.Account, item *dashboard.LogDrainPageItem, now time.Time) {
+	from := now.Add(-24 * time.Hour)
+	firstBucket := from.Truncate(appLogDrainAnalyticsBucketInterval).Add(appLogDrainAnalyticsBucketInterval)
+	samples, err := s.store.ListAppLogDrainDeliveryAnalytics(ctx, item.ID,
+		firstBucket.Add(-appLogDrainAnalyticsBucketInterval), now.Truncate(appLogDrainAnalyticsBucketInterval))
+	if err != nil {
+		log.Warn("dashboard log drains: list analytics", "account_id", acct.ID, "drain_id", item.ID, "err", err)
+		return
+	}
+	analytics := appLogDrainAnalyticsResponse(samples, item.ID, "24h", from, now)
+	if len(analytics.Buckets) == 0 {
+		return
+	}
+	item.AnalyticsAvailable = true
+	item.AnalyticsDelivered = analytics.Summary.Delivered
+	item.AnalyticsFailed = analytics.Summary.Failed
+	item.AnalyticsDropped = analytics.Summary.Dropped
+	item.AnalyticsRetries = analytics.Summary.Retries
+	item.AnalyticsSuccessRate = fmt.Sprintf("%.2f%%", analytics.Summary.SuccessRate*100)
+	item.AnalyticsAverageLatency = fmt.Sprintf("%.1f ms", analytics.Summary.AverageLatencyMS)
 }
 
 func dashboardLogDrainPageItem(drain state.AppLogDrain, health state.AppLogDrainHealth) dashboard.LogDrainPageItem {

@@ -138,11 +138,10 @@ type BuildManifest struct {
 	// zstd (builderd's FAAS_BUILD_LAYER_ZSTD, ADR-20261028084018). An older
 	// guest ignores it and keeps gzip.
 	LayerCompression string `json:"layer_compression,omitempty"`
-	// BuildKitSnapshotter is "" (fuse-overlayfs, the default) or
-	// BuildKitSnapshotterAuto, which lets rootless BuildKit pick kernel
-	// overlayfs when the guest kernel allows it (builderd's
-	// FAAS_BUILD_KERNEL_OVERLAY, ADR-20261029105325). An older guest ignores
-	// it.
+	// BuildKitSnapshotter is "" (fuse-overlayfs) or BuildKitSnapshotterAuto,
+	// which lets rootless BuildKit pick kernel overlayfs when the guest kernel
+	// allows it. builderd sends Auto unless FAAS_BUILD_KERNEL_OVERLAY=false
+	// (ADR-20261029105325). An older guest ignores it.
 	BuildKitSnapshotter string `json:"buildkit_snapshotter,omitempty"`
 	// DeferCacheExport moves the dependency-cache export off the deploy's
 	// critical path (builderd's FAAS_BUILD_DEFER_CACHE_EXPORT,
