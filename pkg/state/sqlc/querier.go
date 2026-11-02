@@ -1752,6 +1752,10 @@ type Querier interface {
 	FinancialComputeJobClaimDefer(ctx context.Context, db DBTX, arg FinancialComputeJobClaimDeferParams) (int64, error)
 	FinancialComputeJobLeases(ctx context.Context, db DBTX, arg FinancialComputeJobLeasesParams) ([][]byte, error)
 	FinancialComputeJobSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeJobSamplingReadyParams) (pgtype.Bool, error)
+	// FinancialComputeLatestLease for many app instances in one statement, through
+	// financial_compute_instance_history (ADR 20261102160622). The caller matches
+	// each row's account and app to its instance's.
+	FinancialComputeLatestAppInstanceLeases(ctx context.Context, db DBTX, arg FinancialComputeLatestAppInstanceLeasesParams) ([]FinancialComputeLatestAppInstanceLeasesRow, error)
 	FinancialComputeLatestLease(ctx context.Context, db DBTX, arg FinancialComputeLatestLeaseParams) ([]byte, error)
 	FinancialComputeLeaseGet(ctx context.Context, db DBTX, arg FinancialComputeLeaseGetParams) ([]byte, error)
 	FinancialComputeLeasePut(ctx context.Context, db DBTX, arg FinancialComputeLeasePutParams) (int64, error)
@@ -6211,6 +6215,12 @@ type Querier interface {
 	ReleaseActivatedManagedPostgresCutoverAdmission(ctx context.Context, db DBTX, arg ReleaseActivatedManagedPostgresCutoverAdmissionParams) (int64, error)
 	ReleaseApplicationStandardEnrollmentWorker(ctx context.Context, db DBTX, arg ReleaseApplicationStandardEnrollmentWorkerParams) (int64, error)
 	ReleaseApplicationStandardOperationWorker(ctx context.Context, db DBTX, arg ReleaseApplicationStandardOperationWorkerParams) (int64, error)
+	// A newer candidate that cannot be verified beside the serving deployment
+	// and an older in-flight canary takes the canary's rollout grant before its
+	// smoke (ADR-20261030102813 amendment, Hunt 31 H31-4). The released canaries
+	// leave traffic and end their rollouts as aborted; a retained revision stays
+	// live at 0%, as in RetireLiveDeploymentSiblings.
+	ReleaseCanariesForVerification(ctx context.Context, db DBTX, arg ReleaseCanariesForVerificationParams) (int64, error)
 	ReleaseCloneCheckpointConfiguration(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointConfigurationParams) (int64, error)
 	ReleaseCloneCheckpointObjectFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointObjectFenceParams) (int64, error)
 	ReleaseCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointPostgresFenceParams) (int64, error)
@@ -6828,6 +6838,8 @@ type Querier interface {
 	// Password writers lock/update the account before its credential row, matching
 	// reset redemption, producer handoff and account erasure. The revision survives
 	// password deletion, so restoring an old PHC never revives an older reset link.
+	// A password change also ends the account's legacy MFA-disable email
+	// requests, which carry no revision (bug hunt 2026-10-28 H98).
 	SetAccountPassword(ctx context.Context, db DBTX, arg SetAccountPasswordParams) (int64, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	SetAppPublicBuildURLs(ctx context.Context, db DBTX, arg SetAppPublicBuildURLsParams) (int64, error)
@@ -6890,6 +6902,8 @@ type Querier interface {
 	SetMFARequired(ctx context.Context, db DBTX, arg SetMFARequiredParams) (int64, error)
 	// Enrollment and policy changes invalidate saved disable-email links, including
 	// while issuance/delivery gates are off. Burns of recovery codes keep the factor.
+	// Durable links follow mfa_revision; the legacy inline requests carry no
+	// revision, so each statement consumes them too (bug hunt 2026-10-28 H98).
 	SetMFASecret(ctx context.Context, db DBTX, arg SetMFASecretParams) (int64, error)
 	SetManagedPostgresOverage(ctx context.Context, db DBTX, arg SetManagedPostgresOverageParams) error
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
@@ -7014,6 +7028,10 @@ type Querier interface {
 	// predecessor to be judged against. A retained revision stays live at 0%,
 	// as in RetireLiveDeploymentSiblings.
 	SupersedeInFlightCanarySiblings(ctx context.Context, db DBTX, arg SupersedeInFlightCanarySiblingsParams) ([]pgtype.UUID, error)
+	// A deployment a newer revision overtook before it went live (ADR-681 fence,
+	// outpaced builds) records why, and an in-flight canary rollout ends as
+	// aborted instead of staying pending on a superseded row (Hunt 31 H31-3).
+	SupersedeOutpacedDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int64, error)
 	// Ends one realtime delivery's records whatever stage they reached; the
 	// consumer group redelivers under a new item identifier (ADR-1322).
 	SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error)

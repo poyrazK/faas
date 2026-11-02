@@ -108,3 +108,31 @@ Anything the app answered, including its own 5xx inside the 200 envelope,
 and a dispatch that timed out in flight keep the single attempt. The last
 refused attempt ends `failed`, not dead-lettered. Crons with failure rules
 are unchanged: they already use the plan's retry budget.
+
+## Amendment 2026-11-02: one attempt for every cron without failure rules
+
+A cron with a schedule policy (ADR-385) but no failure rules queued its run
+without the single-attempt policy, so the drain gave it the plan's queue
+retry budget: an app answering 5xx or timing out received the same scheduled
+time up to 3 (Hobby), 10 (Pro) or 25 (Scale) times, then the run was
+dead-lettered. ADR-385 keeps the retry behavior of definitions without
+failure rules, which for an HTTP cron is one delivery. Its runs now carry the
+single-attempt policy and the platform-refusal retries of this ADR's
+2026-10-29 amendment, as plain crons do; a cron with failure rules keeps the
+plan budget its rules may use.
+
+A plain cron whose run could not be queued (a store read or the enqueue
+failed) consumed its claimed occurrence: the claim was not rolled back and the
+run was lost, with only the audit row recording it. Such a failure now rolls
+the claim back, so the next minute's sweep queues the run. An enqueue the
+store refuses for good still consumes the occurrence, so a cron cannot retry
+it every minute.
+
+A cron with a schedule policy on an app with no live deployment is suspended
+(`no_live_deployment`), as a plain cron is, instead of queuing a failing run
+every tick.
+
+The cron sweep runs on schedd's main loop, which also beats the node's
+heartbeat. It now dispatches for at most 10 s per pass and continues in
+further passes within the minute, so a minute with many due crons cannot hold
+the heartbeat past its 90 s staleness.

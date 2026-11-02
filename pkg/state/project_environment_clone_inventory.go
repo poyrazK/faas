@@ -3,8 +3,9 @@ package state
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // CloneInventoryPolicy says how a configuration or customer-data table's rows
@@ -61,7 +62,7 @@ const (
 	CloneBlockerPointInTimeRestoreUnavailable = "point_in_time_restore_unavailable"
 )
 
-var cloneInventoryIdentifier = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+var cloneInventoryIdentifier = lazyregexp.New(`^[a-z_][a-z0-9_]{0,62}$`)
 
 // Clone admission needs a frozen source and an isolated target copy; diff,
 // qualification, promotion and rollback belong to full promotion.

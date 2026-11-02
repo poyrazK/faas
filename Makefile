@@ -504,6 +504,11 @@ deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip
 verify-action-ref-contents-check: ## Verify release.yml's Contents API check accepts a pinned ref that vendors the bare CLI
 	@bash scripts/ci/verify-action-ref-contents_test.sh
 
+.PHONY: release-scripts-check
+release-scripts-check: ## Verify release.yml's moving Action tag (stable tags, forward only) and rendered release notes
+	@bash scripts/ci/advance-action-major-tag_test.sh
+	@bash scripts/ci/render-release-notes_test.sh
+
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
 	@bash scripts/ci/test_environment_preflight_action.sh
