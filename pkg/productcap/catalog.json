@@ -5810,8 +5810,6 @@
       "description": "Serve a wildcard custom domain.",
       "maturity": "ga",
       "plans": [
-        "free",
-        "hobby",
         "pro",
         "scale"
       ],

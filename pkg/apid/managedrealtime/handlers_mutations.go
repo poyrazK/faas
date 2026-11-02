@@ -45,6 +45,9 @@ func (s *Service) MutateManagedRealtimeMessage(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
+	if !s.allowRealtimeWrites(w, acct, 1) {
+		return
+	}
 	store, ok := s.Host.Store().(state.ManagedRealtimeMutationStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("message mutation storage unavailable"))

@@ -3255,13 +3255,25 @@ type RealtimeLimits struct {
 	// setting a user's preferences back to the defaults frees its slot
 	// (ADR-1323, amendment of 2026-10-31).
 	NotificationPreferencesPerAccount int
+	// RetainedWritesPerSecond and RetainedWriteBurst bound the writes an
+	// account's endpoints make to control-plane Postgres through apid:
+	// retained publishes and batches (each message counts), publisher
+	// credential publishes, inbox messages, message edits and deletes,
+	// snapshots and scheduled publishes. Publisher credentials and schedules
+	// do not pass the account's API request budget, so without this an
+	// account's endpoints could write without bound. A refused request gets a
+	// 429 with Retry-After; a scheduled publish waits for the bucket instead.
+	// The burst is at least ManagedRealtimeBatchMaxMessages (32), so a full
+	// batch always fits (ADR-1323, amendment of 2026-11-02).
+	RetainedWritesPerSecond int
+	RetainedWriteBurst      int
 }
 
 var realtimeLimits = map[Plan]RealtimeLimits{
 	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32, NotificationPreferencesPerAccount: 1_000},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256, NotificationPreferencesPerAccount: 10_000},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024, NotificationPreferencesPerAccount: 50_000},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32, NotificationPreferencesPerAccount: 1_000, RetainedWritesPerSecond: 10, RetainedWriteBurst: 32},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256, NotificationPreferencesPerAccount: 10_000, RetainedWritesPerSecond: 50, RetainedWriteBurst: 100},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024, NotificationPreferencesPerAccount: 50_000, RetainedWritesPerSecond: 200, RetainedWriteBurst: 400},
 }
 
 // Managed realtime per-user state and schemas (ADR-1323, amendment of
@@ -14299,6 +14311,13 @@ const (
 	AppHealthWarningErrorRatePct    = 5.0
 	AppHealthUnhealthyErrorRatePct  = 25.0
 	AppHealthCollectorInterval      = 30 * time.Second
+	// A worker's queue evidence is the newest AppHealthWorkerRecordScan
+	// records of each attached trigger (ADR-20261102091500). A message that
+	// has waited AppHealthWorkerBacklogAgeWarn degrades the worker; a dead
+	// letter written within AppHealthWorkerDeadLetterWindow does too.
+	AppHealthWorkerRecordScan       = 1000
+	AppHealthWorkerBacklogAgeWarn   = 10 * time.Minute
+	AppHealthWorkerDeadLetterWindow = time.Hour
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost

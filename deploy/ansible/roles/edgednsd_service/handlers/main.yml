@@ -1,0 +1,11 @@
+---
+- name: edgednsd_service — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-edgednsd
+
+- name: edgednsd_service — try-restart faas-edgednsd
+  ansible.builtin.command: systemctl try-restart faas-edgednsd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-edgednsd
+  when: faas_edgednsd_enabled | bool

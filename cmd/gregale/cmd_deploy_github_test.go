@@ -452,6 +452,34 @@ func TestRenderGithubSnippetAddsDependabotVersionToDefaultAndAutoPins(t *testing
 	}
 }
 
+// The starter makes no network call, so it deploys pushes to whichever
+// branch GitHub reports as the repository's default rather than a branch
+// named main, and it says the GitHub App may deploy the same push.
+func TestRenderGithubSnippetDeploysDefaultBranch(t *testing.T) {
+	out := main.RenderGithubSnippet(main.GithubSnippetEnv{}, "api", "", false)
+	var workflow struct {
+		On   map[string]any `yaml:"on"`
+		Jobs map[string]struct {
+			If string `yaml:"if"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(out), &workflow); err != nil {
+		t.Fatalf("workflow is invalid YAML: %v\n%s", err, out)
+	}
+	if push, ok := workflow.On["push"]; !ok || push != nil {
+		t.Fatalf("on.push = %#v, want an unfiltered push trigger", push)
+	}
+	if got := workflow.Jobs["deploy"].If; !strings.Contains(got, "github.event.repository.default_branch") {
+		t.Fatalf("deploy job if = %q, want the repository default branch", got)
+	}
+	if strings.Contains(out, "branches: [main]") {
+		t.Fatalf("workflow still pins main:\n%s", out)
+	}
+	if !strings.Contains(out, "# If the Gregale GitHub App also deploys this repository's pushes") {
+		t.Fatalf("workflow lacks the double-deploy note:\n%s", out)
+	}
+}
+
 func TestNormalizeGithubActionSHA(t *testing.T) {
 	valid := "F1E2D3C4B5A6987654321098765432109ABCDEF0"
 	got, err := main.NormalizeGithubActionSHA("  " + valid + "\n")

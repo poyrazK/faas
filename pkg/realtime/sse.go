@@ -24,7 +24,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value, ok := m.endpoints.Load(id)
-	if !ok {
+	if !ok || !servedOnHost(value.(*endpointState), r) {
 		http.NotFound(w, r)
 		return
 	}

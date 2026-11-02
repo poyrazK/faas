@@ -3525,7 +3525,7 @@ gregale github repos my-api --installation-id 12345
 
 Bind GitHub, configure previews, and write an Actions workflow
 
-`gregale github setup [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--installation-id <ID>] [--deploy-branches <MAPPINGS>] [--pinned-sha <SHA>] [--pin-action] [--enable-action-updates] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-bots] [--no-preview-bots] [--preview-drafts] [--no-preview-drafts] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--dry-run] [--force] <slug>`
+`gregale github setup [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--installation-id <ID>] [--deploy-branches <MAPPINGS>] [--pinned-sha <SHA>] [--pin-action] [--enable-action-updates] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-bots] [--no-preview-bots] [--preview-drafts] [--no-preview-drafts] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--wait-for <WORKFLOW>] [--dry-run] [--force] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3548,6 +3548,7 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--root-dir <DIR>` | repository-relative source root for the root workload |  |
 | `--ignore <PATHS>` | comma-separated ignored change paths |  |
 | `--rollout <MODE>` | production rollout mode: standard\|safe | one of `standard` · `safe` |
+| `--wait-for <WORKFLOW>` | deploy a branch push only after this GitHub Actions workflow (its name: field) succeeds for the commit |  |
 | `--dry-run` | show generated files without writing or changing remote state |  |
 | `--force` | overwrite an existing workflow file |  |
 
@@ -3556,6 +3557,7 @@ Examples:
 ```sh
 gregale github setup my-api --repo acme/my-api --dry-run
 gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72
+gregale github setup my-api --repo acme/my-api --wait-for CI
 ```
 
 ### github disconnect
