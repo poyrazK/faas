@@ -21,10 +21,9 @@ export type GitHubInstallStatus = {
    */
   github_login?: string;
   /**
-   * Empty for installations connected since ADR-20261101160300: an
-   * installation has no default branch, and a bind without a branch
-   * takes the repository's default branch. Older connections report
-   * the `main` they stored.
+   * Empty for newer connections: an installation has no default
+   * branch, and a bind without a branch takes the repository's
+   * default branch. Older connections report the `main` they stored.
    *
    * @deprecated
    */
