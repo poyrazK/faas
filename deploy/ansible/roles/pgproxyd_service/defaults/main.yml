@@ -35,3 +35,9 @@ pgproxyd_db_url: ""
 # neither.
 pgproxyd_instance_id: 0
 pgproxyd_cancel_peers: {}
+
+# The platform's compute node networks as CIDRs, e.g. ["198.51.100.0/24"]
+# (bug hunt 34). Their connections skip pgproxyd's handshake caps (512 in
+# flight, 32 per address), so strangers holding those slots cannot lock the
+# apps out of their databases. Empty: every client shares the caps.
+pgproxyd_trusted_sources: []
