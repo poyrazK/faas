@@ -28,11 +28,18 @@ database reservation boundary:
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
+A Free-plan database needs enforced compute caps, because Free has no
+overage to pay for compute past its allowance. Until the platform enforces
+them, `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors
+and restores answer `403 managed_postgres_not_in_plan` on Free, and a
+Compose `postgres` service is not provisioned (the deploy names the plan as
+the reason).
+
 Storage is pooled across the account's databases: one database may use the
 whole pool. Storage is a limit, not billed overage
 ([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
 Compute is a limit too, unless a paid account turns overage on: then compute
-above the allowance costs $0.20 per CU-hour, up to twice the allowance
+above the allowance costs $0.2331 per CU-hour, up to twice the allowance
 ([Compute overage](#compute-overage)).
 
 All current plans use provider-managed compute suspension. Always-on database
@@ -967,11 +974,12 @@ choice, `{"enabled": true|false}`:
 - Off is the default, and the databases are suspended at the allowance.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
-- Compute above the allowance costs $0.20 per CU-hour
-  (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`). It is charged
-  only past the allowance and only up to the ceiling, so a month of overage
-  costs at most one allowance: $5 on Hobby, $15 on Pro, $40 on Scale. It
-  appears on the next invoice as its own line.
+- Compute above the allowance costs $0.2331 per CU-hour
+  (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`): Neon Scale's
+  $0.222 plus 5% ([ADR-20261102072425](adr/20261102072425-managed-postgres-overage-at-provider-price-plus-5.md)).
+  It is charged only past the allowance and only up to the ceiling, so a
+  month of overage costs at most one allowance: $5.83 on Hobby, $17.48 on
+  Pro, $46.62 on Scale. It appears on the next invoice as its own line.
 - Free accounts get `403 managed_postgres_not_in_plan`.
 
 The charge does not count toward the account's spend cap: the overage
