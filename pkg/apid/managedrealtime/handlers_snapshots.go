@@ -42,6 +42,9 @@ func (s *Service) ManagedRealtimeChannelSnapshot(w http.ResponseWriter, r *http.
 			api.WriteProblem(w, api.ErrRealtimeInvalid("snapshot must contain at most 65536 bytes of base64 data"))
 			return
 		}
+		if !s.allowRealtimeWrites(w, acct, 1) {
+			return
+		}
 		j, err = store.PutManagedRealtimeChannelSnapshot(r.Context(), state.ManagedRealtimeChannelSnapshot{EndpointID: ep.ID, Channel: ch, Sequence: req.Sequence, Data: data, Binary: req.Binary})
 	case http.MethodDelete:
 		err = store.DeleteManagedRealtimeChannelSnapshot(r.Context(), ep.ID, ch)
