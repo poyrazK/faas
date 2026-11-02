@@ -1,10 +1,11 @@
 package api
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // CommitRecoveryAlertAcknowledgement confirms processing of one exact transition.
@@ -23,7 +24,7 @@ type CommitRecoveryAlertOutbox struct {
 	Active   []CommitRecoveryBlockerIncident   `json:"active"`
 }
 
-var commitRecoveryAlertSession = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var commitRecoveryAlertSession = lazyregexp.New(`^[0-9a-f]{32}$`)
 
 func alertIncidentSequence(id, session string) (uint64, bool) {
 	prefix := session + "-"

@@ -137,6 +137,9 @@ RULES = [
     # Keyed credential hashes (ADR 20261029202403): storage plumbing under
     # every credential, no capability of its own.
     (r"^credhash$", "INFRA"),
+    # Compile-on-first-use regexps for package-level patterns
+    # (ADR-20261101215228 measurement); no capability of its own.
+    (r"^lazyregexp$", "INFRA"),
     # Each family's ring and rollout switches (amendment 1).
     (r"^credential-(scheduler|outbound|uploads|attach|dev-bridge|data-api)-(keys-file|writes|plain-lookup)$", "INFRA"),
     # vmmd's instance bridge switches (connection-survival ADR): data-path plumbing.
