@@ -237,6 +237,13 @@ func standardOnboardingPersisted(t *testing.T, e standardOnboardingBoundaryEnv, 
 
 func standardOnboardingWizard(t *testing.T, e standardOnboardingBoundaryEnv) api.AppResponse {
 	t.Helper()
+	// The wizard binds only an installation the account connected
+	// (ADR-20261101160300).
+	if err := e.store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{
+		AccountID: e.owner.Account.ID, InstallationID: 42, AuditGithubLogin: "alice", SealedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed GitHub install: %v", err)
+	}
 	mgr := e.server.sessions
 	raw, err := mintDashboardSession(t.Context(), e.store, mgr, e.owner.Account.ID)
 	if err != nil {
