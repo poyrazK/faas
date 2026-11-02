@@ -20,7 +20,7 @@ The step 1 and step 2a PRs (#6211, #6216) were closed unmerged.
 
 Still open from this ADR:
 
-- storage past the pool at $0.60 per GiB-month, to be added on the deliveries ledger by an amendment to ADR-20261031110037;
+- storage past the pool, to be added on the deliveries ledger by an amendment to ADR-20261031110037. Its price is now Neon's $0.35 per GB-month plus 5%, $0.3675 ([ADR-20261102072425](20261102072425-managed-postgres-overage-at-provider-price-plus-5.md)), not $0.60;
 - the always-on add-on, which has no price yet.
 
 ## Context
