@@ -7,7 +7,7 @@ match, on lists and waits. Both use Kubernetes syntax, so a selector copied
 from `kubectl` works here.
 
 Labels are a preview, released per account (`resource-labels` in
-`gregale capabilities`). They are free on every plan: they hold no resources.
+`gregale feature list`). They are free on every plan: they hold no resources.
 
 Labels are **not secret**. They appear in lists, the dashboard and audit
 events. Never put a credential in a label.
