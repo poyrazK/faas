@@ -33206,7 +33206,13 @@ INSERT INTO environment_desired_revisions
 VALUES ($1::uuid, $2::text,
         $3::text, $4::jsonb, $5::text)
 ON CONFLICT (source_id, commit_sha, definition_digest) DO UPDATE
-    SET source_id = excluded.source_id
+    SET source_id = excluded.source_id,
+        approved_by = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                           THEN excluded.approved_by ELSE environment_desired_revisions.approved_by END,
+        approved_at = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                           THEN now() ELSE environment_desired_revisions.approved_at END
 RETURNING id, source_id, commit_sha, definition_digest, definition, approved_by, approved_at
 `
 
@@ -33218,6 +33224,10 @@ type InsertEnvironmentDesiredRevisionParams struct {
 	ApprovedBy       string
 }
 
+// Approving the same revision again keeps its row. A person's approval
+// replaces a key's ("api_key:<id>"), never the reverse, so a person can stand
+// in for the apps' release approvals after CI approved the revision
+// (ADR-20261020085706 amendment 8).
 func (q *Queries) InsertEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg InsertEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error) {
 	row := db.QueryRow(ctx, insertEnvironmentDesiredRevision,
 		arg.SourceID,

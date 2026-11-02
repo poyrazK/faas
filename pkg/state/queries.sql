@@ -11079,12 +11079,22 @@ JOIN project_environments e ON e.id = s.environment_id AND e.account_id = s.acco
 WHERE s.id = sqlc.arg(source_id)::uuid;
 
 -- name: InsertEnvironmentDesiredRevision :one
+-- Approving the same revision again keeps its row. A person's approval
+-- replaces a key's ("api_key:<id>"), never the reverse, so a person can stand
+-- in for the apps' release approvals after CI approved the revision
+-- (ADR-20261020085706 amendment 8).
 INSERT INTO environment_desired_revisions
     (source_id, commit_sha, definition_digest, definition, approved_by)
 VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(commit_sha)::text,
         sqlc.arg(definition_digest)::text, sqlc.arg(definition)::jsonb, sqlc.arg(approved_by)::text)
 ON CONFLICT (source_id, commit_sha, definition_digest) DO UPDATE
-    SET source_id = excluded.source_id
+    SET source_id = excluded.source_id,
+        approved_by = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                           THEN excluded.approved_by ELSE environment_desired_revisions.approved_by END,
+        approved_at = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                           THEN now() ELSE environment_desired_revisions.approved_at END
 RETURNING *;
 
 -- name: SetEnvironmentApprovedRevision :one

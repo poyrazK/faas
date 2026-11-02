@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -324,5 +325,30 @@ func TestCompanyFreezeOverrideNeedsTheRightToLiftIt(t *testing.T) {
 	code, body := orgFreezeDo(t, e, adminCLI, "POST", "/v1/apps/frz-ovr/deployments", deploy, nil)
 	if p := decodeProblemCode([]byte(body)); p == api.CodeReleaseFreezeOverrideNotAllowed || p == api.CodeReleaseFrozen {
 		t.Fatalf("admin overrides the company freeze = %d %s, want it accepted", code, body)
+	}
+}
+
+// adr: 20261019071733 amendment 7 — a schedule whose time falls in a company
+// freeze overrides it on the same terms: release_at may be now, so a deploy
+// key could otherwise ship past the freeze seconds later (release review
+// 2026-11-02).
+func TestCompanyFreezeScheduledOverrideNeedsTheRightToLiftIt(t *testing.T) {
+	e, org := newCompanyFreezeApp(t, "frz-sched")
+	store := *e.Store()
+	admin, adminCLI := sharedAppMember(t, store, org, state.OrgRoleAdmin, api.ScopesAdminOnly)
+	ci := memberKey(t, store, org, admin, []string{api.ScopeDeployWrite})
+	if code, body := orgFreezeDo(t, e, adminCLI, "POST", "/v1/orgs/"+org.Slug+"/freezes",
+		api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "release train"}, nil); code != http.StatusCreated {
+		t.Fatalf("admin freezes the company = %d %s", code, body)
+	}
+	deploy := api.CreateDeploymentRequest{Image: imageRef('d'), OverrideFreeze: "hotfix 4711",
+		ReleaseAt: time.Now().UTC().Format(time.RFC3339)}
+	code, body := orgFreezeDo(t, e, ci, "POST", "/v1/apps/frz-sched/deployments", deploy, nil)
+	if code != http.StatusForbidden || !strings.Contains(body, api.CodeReleaseFreezeOverrideNotAllowed) {
+		t.Fatalf("deploy key schedules past the company freeze = %d %s, want 403 %s", code, body, api.CodeReleaseFreezeOverrideNotAllowed)
+	}
+	code, body = orgFreezeDo(t, e, adminCLI, "POST", "/v1/apps/frz-sched/deployments", deploy, nil)
+	if p := decodeProblemCode([]byte(body)); p == api.CodeReleaseFreezeOverrideNotAllowed || p == api.CodeReleaseFrozen {
+		t.Fatalf("admin schedules past the company freeze = %d %s, want it accepted", code, body)
 	}
 }
