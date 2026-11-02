@@ -296,6 +296,7 @@ sql:
       - "pkg/state/migration_cutover_queries.sql"
       - "pkg/state/migration_source_queries.sql"
       - "pkg/state/migration_verification_queries.sql"
+      - "pkg/state/org_agent_queries.sql"
       - "pkg/state/native_issue_ticket_queries.sql"
       - "pkg/state/node_admission_queries.sql"
       - "pkg/state/node_lease_queries.sql"

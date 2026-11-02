@@ -159,6 +159,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, p)
 		return
 	}
+	if p := s.orgAgentKeyProblem(r.Context(), mem.OrgID, acct.ID, scopes); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))

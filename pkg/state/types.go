@@ -7145,6 +7145,9 @@ type CliAuthCode struct {
 	AccountID  string // empty until ClaimCliAuthCode
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
+	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
+	// approval; "" is the personal one (ADR-20261101225122).
+	OrgID string
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row

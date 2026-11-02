@@ -2752,6 +2752,7 @@ type CliAuthCode struct {
 	ConsumedAt pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	DeviceHash []byte
+	OrgID      pgtype.UUID
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -10439,6 +10440,15 @@ type OrgActivityOutbox struct {
 	DeliveredAt pgtype.Timestamptz
 	LastError   pgtype.Text
 	CreatedAt   pgtype.Timestamptz
+}
+
+// ADR-20261101225122 whether agents may act in an organization and with which capabilities; apid is the only writer.
+type OrgAgentPolicy struct {
+	OrgID         pgtype.UUID
+	AgentsAllowed bool
+	AllowedScopes []string
+	UpdatedAt     pgtype.Timestamptz
+	UpdatedBy     pgtype.UUID
 }
 
 type OrgAppQuotaFence struct {

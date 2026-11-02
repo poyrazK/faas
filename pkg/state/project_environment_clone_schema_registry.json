@@ -3516,6 +3516,7 @@
       "created_at",
       "device_hash",
       "expires_at",
+      "org_id",
       "status",
       "token_hash"
     ],
@@ -13116,6 +13117,17 @@
       "revoked_at",
       "role",
       "token_hash"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "org_agent_policies",
+    "columns": [
+      "agents_allowed",
+      "allowed_scopes",
+      "org_id",
+      "updated_at",
+      "updated_by"
     ],
     "kind": "account_identity"
   },
