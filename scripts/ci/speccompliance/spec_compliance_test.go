@@ -240,7 +240,9 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
 	"POST /dashboard/mcp/retirements/{id}":                             true,
 
+	"GET /dashboard/apps/{slug}/profiles/captures":                           true, // ADR-1155 HTML captures page over the profile capture API
 	"POST /dashboard/apps/{slug}/profiles/captures":                          true, // ADR-1155 session + CSRF adapter for the profile capture API
+	"POST /dashboard/apps/{slug}/profiles/captures/{id}/delete":              true, // ADR-1155 session + CSRF adapter for capture delete
 	"GET /dashboard/apps/{slug}/profiles/captures/{id}":                      true, // ADR-1155 HTML capture page over the profile capture API
 	"GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof":                true, // ADR-1155 session-authenticated download adapter
 	"GET /dashboard/apps/{slug}/profiles/captures/{id}/diff":                 true, // ADR-1155 HTML comparison page over the capture diff API
@@ -415,6 +417,9 @@ var routeExclude = map[string]bool{
 	"POST /v1/agent-callbacks":                        true,
 	"POST /v1/agent-callbacks/{token}":                true,
 	"POST /v1/agent-callbacks/revocations":            true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
+	"POST /v1/agent-tools/invoke":                     true,
+	"POST /v1/agent-tools/close_thread":               true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,

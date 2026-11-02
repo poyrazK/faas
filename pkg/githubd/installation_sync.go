@@ -29,6 +29,14 @@ type InstallationSyncStore interface {
 // InstallationRepositoryClient lists repositories for an exact GitHub App
 // installation. AccountID is part of the call so a stale or forged account
 // association cannot silently select a different installation's token.
+// InstallationSyncRenamer is the optional rename seam. With it, a binding
+// whose repository GitHub still lists under the same repository ID but a new
+// name is renamed instead of detached (ADR-20261101160300): a rename the
+// repository webhook missed no longer stops the app's deploys.
+type InstallationSyncRenamer interface {
+	RenameGitHubRepository(context.Context, int64, string, string) error
+}
+
 type InstallationRepositoryClient interface {
 	ListInstallableReposContext(context.Context, string, int64) ([]githubdgrpc.Repo, error)
 }
@@ -38,6 +46,7 @@ type InstallationSyncSummary struct {
 	Installations      int
 	RemoteRepositories int
 	ExistingBindings   int
+	RenamedBindings    int
 	DetachedBindings   int
 	Failures           int
 }
@@ -106,22 +115,43 @@ func (s *InstallationSyncer) SyncOnce(ctx context.Context) (InstallationSyncSumm
 		summary.ExistingBindings += len(bindings)
 
 		remoteNames := make(map[string]struct{}, len(remote))
+		remoteByID := make(map[int64]string, len(remote))
 		for _, repo := range remote {
 			if name := canonicalRepoName(repo.FullName); name != "" {
 				remoteNames[name] = struct{}{}
+				if repo.ID > 0 {
+					remoteByID[repo.ID] = repo.FullName
+				}
 			}
 		}
+		renamer, _ := s.Store.(InstallationSyncRenamer)
 		missingNames := make(map[string]string)
+		renamed := make(map[string]string)
 		for _, binding := range bindings {
 			name := canonicalRepoName(binding.RepoFullName)
 			if name == "" {
 				continue
 			}
-			if _, ok := remoteNames[name]; !ok {
-				// Keep the durable spelling because the SQL mutation matches
-				// the exact value stored on apps.
-				missingNames[name] = binding.RepoFullName
+			if _, ok := remoteNames[name]; ok {
+				continue
 			}
+			if current, ok := remoteByID[binding.RepoID]; ok && binding.RepoID > 0 && renamer != nil {
+				renamed[binding.RepoFullName] = current
+				continue
+			}
+			// Keep the durable spelling because the SQL mutation matches
+			// the exact value stored on apps.
+			missingNames[name] = binding.RepoFullName
+		}
+		var installErr error
+		for oldName, newName := range renamed {
+			if renameErr := renamer.RenameGitHubRepository(ctx, install.InstallationID, oldName, newName); renameErr != nil {
+				summary.Failures++
+				installErr = fmt.Errorf("installation %d: rename repository %q: %w", install.InstallationID, oldName, renameErr)
+				errs = append(errs, installErr)
+				continue
+			}
+			summary.RenamedBindings++
 		}
 		missing := make([]string, 0, len(missingNames))
 		for _, name := range missingNames {
@@ -129,7 +159,6 @@ func (s *InstallationSyncer) SyncOnce(ctx context.Context) (InstallationSyncSumm
 		}
 		sort.Strings(missing)
 		detached := len(missing)
-		var installErr error
 		if detached > 0 {
 			if removeErr := s.Store.RemoveGitHubRepositories(ctx, install.InstallationID, missing); removeErr != nil {
 				summary.Failures++

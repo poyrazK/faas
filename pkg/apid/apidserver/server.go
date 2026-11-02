@@ -3286,6 +3286,17 @@ func (s *server) handler() http.Handler {
 		MaxFailures:   api.AgentCallbackFailuresPerIPPerMinute,
 		CountStatuses: []int{http.StatusNotFound},
 	})(http.HandlerFunc(s.receiveAgentCallback)))
+	// ADR-20261030125501 §4: Gregale's RAP toolset. Discovery and thread
+	// closure carry no credential; an invocation is backed by the callback
+	// URL it carries, so a bad one counts like a bad callback token.
+	mux.HandleFunc("GET /v1/agent-tools/.well-known/rap-toolset", s.getAgentToolset)
+	mux.Handle("POST /v1/agent-tools/invoke", middleware.AuthLimit(middleware.AuthLimitConfig{
+		Log:           s.log,
+		Window:        time.Minute,
+		MaxFailures:   api.AgentCallbackFailuresPerIPPerMinute,
+		CountStatuses: []int{http.StatusNotFound},
+	})(http.HandlerFunc(s.invokeAgentTool)))
+	mux.HandleFunc("POST /v1/agent-tools/close_thread", s.closeAgentToolThread)
 	mux.HandleFunc("GET /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}/labels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJobLabels))))
@@ -5380,7 +5391,9 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/deployment-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileDeploymentPolicy))))
 	// ADR-1155: on-demand capture form, capture page and session-authenticated pprof download.
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCaptures))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/captures", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateProfileCapture))))
+	mux.Handle("POST /dashboard/apps/{slug}/profiles/captures/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteProfileCapture))))
 	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCapture))))
 	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDownloadProfileCapture))))
 	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/diff", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCaptureDiff))))

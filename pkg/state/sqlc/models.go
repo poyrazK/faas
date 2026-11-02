@@ -894,6 +894,8 @@ type App struct {
 	DeploymentCronBefore              []byte
 	DeploymentMailRevision            int64
 	Labels                            []byte
+	GithubProductionTrigger           pgtype.Text
+	GithubPreviewEnabled              pgtype.Bool
 }
 
 type AppApiRoute struct {
@@ -10254,6 +10256,7 @@ type OidcExchangedToken struct {
 	Jti       pgtype.Text
 	CreatedAt pgtype.Timestamptz
 	Scopes    []string
+	AppID     pgtype.UUID
 }
 
 type OidcTrustPolicy struct {
@@ -13653,6 +13656,7 @@ type RequestTelemetry struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202611 struct {
@@ -13692,6 +13696,7 @@ type RequestTelemetry202611 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202612 struct {
@@ -13731,6 +13736,7 @@ type RequestTelemetry202612 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202701 struct {
@@ -13770,6 +13776,7 @@ type RequestTelemetry202701 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -13834,6 +13841,7 @@ type RequestTelemetryDefault struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type ReservedIpInventory struct {
@@ -15084,6 +15092,7 @@ type UsageMinute struct {
 	JobID             pgtype.UUID
 	JobRunID          pgtype.UUID
 	JobExecutionClass pgtype.Text
+	PausedMbSeconds   int64
 }
 
 type UsageMonthTotal struct {

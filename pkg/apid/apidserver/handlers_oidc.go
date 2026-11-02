@@ -203,6 +203,17 @@ func (a accountLookupAdapter) GitHubRepositoryIDsForOIDCSubject(ctx context.Cont
 	return resolver.GitHubRepositoryIDsForOIDCSubject(ctx, accountID, issuerURL, subject)
 }
 
+// OIDCDeployTargetForSubject satisfies oidc.DeployTargetLookup. A store that
+// cannot resolve deploy targets refuses them: the exchange then issues no
+// deploy bearer under a trust policy Gregale created.
+func (a accountLookupAdapter) OIDCDeployTargetForSubject(ctx context.Context, accountID, issuerURL, subject, appSlug string) (state.OIDCDeployTarget, error) {
+	resolver, ok := a.store.(state.OIDCDeployTargetResolver)
+	if !ok {
+		return state.OIDCDeployTarget{}, state.ErrNotFound
+	}
+	return resolver.OIDCDeployTargetForSubject(ctx, accountID, issuerURL, subject, appSlug)
+}
+
 // auditorAsOIDCEmitter wraps *auditor as the narrow
 // pkg/oidc.AuditEmitter interface. The auditor's Emit is the same
 // signature (kind, accountID, data); the adapter is a single

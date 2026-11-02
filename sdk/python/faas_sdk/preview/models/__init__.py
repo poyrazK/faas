@@ -2206,6 +2206,7 @@ from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBra
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .git_hub_installation_summary import GitHubInstallationSummary
 from .git_hub_webhook_activity import GitHubWebhookActivity
 from .git_hub_webhook_activity_status import GitHubWebhookActivityStatus
 from .github_check_update_record import GithubCheckUpdateRecord
@@ -8372,6 +8373,7 @@ __all__ = (
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
+    "GitHubInstallationSummary",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusDeployBranches",
