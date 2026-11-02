@@ -8020,6 +8020,15 @@ func (q *Queries) ClearManagedPostgresRestoreSlot(ctx context.Context, db DBTX, 
 	return result.RowsAffected(), nil
 }
 
+const clearObjectStorageCeilingGrant = `-- name: ClearObjectStorageCeilingGrant :exec
+DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1
+`
+
+func (q *Queries) ClearObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearObjectStorageCeilingGrant, ownerID)
+	return err
+}
+
 const clearObsoleteDeploymentsRetainingRecovery = `-- name: ClearObsoleteDeploymentsRetainingRecovery :execrows
 UPDATE deployments SET deleted_at=$1::timestamptz,deleted_by_principal='system'
 WHERE app_id=$2::uuid AND status IN ('superseded','failed','cancelled')
@@ -69254,6 +69263,23 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 	return items, nil
 }
 
+const objectStorageCeilingGrant = `-- name: ObjectStorageCeilingGrant :one
+SELECT owner_id, max_bytes, reason, granted_by, granted_at FROM object_storage_ceiling_grants WHERE owner_id=$1
+`
+
+func (q *Queries) ObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ObjectStorageCeilingGrant, error) {
+	row := db.QueryRow(ctx, objectStorageCeilingGrant, ownerID)
+	var i ObjectStorageCeilingGrant
+	err := row.Scan(
+		&i.OwnerID,
+		&i.MaxBytes,
+		&i.Reason,
+		&i.GrantedBy,
+		&i.GrantedAt,
+	)
+	return i, err
+}
+
 const objectStorageGatewayStorageAdvance = `-- name: ObjectStorageGatewayStorageAdvance :execrows
 UPDATE object_storage_gateway_storage g
 SET stored_byte_hours = LEAST(1152921504606846976::numeric, g.stored_byte_hours
@@ -70680,22 +70706,27 @@ func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype
 }
 
 const objectUsageAccountPlanCap = `-- name: ObjectUsageAccountPlanCap :one
-SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+SELECT a.plan, a.overage_cap_cents, g.max_bytes AS ceiling_grant_bytes FROM accounts a
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = a.id WHERE a.id=$1
 UNION ALL
-SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
+SELECT o.plan, o.overage_cap_cents, g.max_bytes FROM orgs o
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = o.id
+WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
 `
 
 type ObjectUsageAccountPlanCapRow struct {
-	Plan            string
-	OverageCapCents pgtype.Int8
+	Plan              string
+	OverageCapCents   pgtype.Int8
+	CeilingGrantBytes pgtype.Int8
 }
 
-// The plan and spend cap that set an account's object-storage ceilings
-// (ADR-1320, ADR-20261101214152). A null cap is no cap.
+// The plan, spend cap and support grant that set an account's object-storage
+// ceilings (ADR-1320, ADR-20261101214152). A null cap is no cap; a null grant
+// keeps the plan's ceiling.
 func (q *Queries) ObjectUsageAccountPlanCap(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectUsageAccountPlanCapRow, error) {
 	row := db.QueryRow(ctx, objectUsageAccountPlanCap, id)
 	var i ObjectUsageAccountPlanCapRow
-	err := row.Scan(&i.Plan, &i.OverageCapCents)
+	err := row.Scan(&i.Plan, &i.OverageCapCents, &i.CeilingGrantBytes)
 	return i, err
 }
 
@@ -100674,6 +100705,32 @@ func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvo
 		arg.Details,
 		arg.DetailLifecycle,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const setObjectStorageCeilingGrant = `-- name: SetObjectStorageCeilingGrant :exec
+INSERT INTO object_storage_ceiling_grants (owner_id, max_bytes, reason, granted_by, granted_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (owner_id) DO UPDATE SET max_bytes = EXCLUDED.max_bytes, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at
+`
+
+type SetObjectStorageCeilingGrantParams struct {
+	OwnerID   pgtype.UUID
+	MaxBytes  int64
+	Reason    string
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+}
+
+func (q *Queries) SetObjectStorageCeilingGrant(ctx context.Context, db DBTX, arg SetObjectStorageCeilingGrantParams) error {
+	_, err := db.Exec(ctx, setObjectStorageCeilingGrant,
+		arg.OwnerID,
+		arg.MaxBytes,
+		arg.Reason,
+		arg.GrantedBy,
+		arg.GrantedAt,
 	)
 	return err
 }
