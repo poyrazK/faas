@@ -41,6 +41,7 @@ func (s *server) collectAppHealth(w http.ResponseWriter, r *http.Request, acct s
 	assessment := apphealth.CollectScopeWith(ctx, s.store, s.promqlClient, app, scope, apphealth.Options{
 		MetricsAllowed: acct.Plan.PerAppMetricsAllowed(),
 		AssessWorkers:  s.platformFlagEnabled(platformflags.AppHealthWorkers, acct),
+		AssessMemory:   s.platformFlagEnabled(platformflags.AppHealthMemory, acct),
 	})
 	if environment.ID != "" {
 		current, err := s.store.ProjectEnvironmentBySlug(ctx, acct.ID, app.ProjectID, scope)

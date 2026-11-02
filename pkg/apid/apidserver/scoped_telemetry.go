@@ -84,6 +84,7 @@ func (s *server) scopedOperationalSummary(ctx context.Context, acct state.Accoun
 	health := apphealth.CollectScopeWith(ctx, s.store, s.promqlClient, app, scope, apphealth.Options{
 		MetricsAllowed: acct.Plan.PerAppMetricsAllowed(),
 		AssessWorkers:  s.platformFlagEnabled(platformflags.AppHealthWorkers, acct),
+		AssessMemory:   s.platformFlagEnabled(platformflags.AppHealthMemory, acct),
 	})
 	health.ProjectID, health.EnvironmentID = env.ProjectID, env.ID
 	out.Health = &health

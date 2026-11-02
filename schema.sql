@@ -30908,6 +30908,35 @@ CREATE TABLE public.app_mcp_task_compatibility (
 
 
 --
+-- Name: app_memory_pressure; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_memory_pressure (
+    app_id uuid NOT NULL,
+    window_started_at timestamp with time zone NOT NULL,
+    episodes integer NOT NULL,
+    lowest_available_mb integer NOT NULL,
+    total_mb integer NOT NULL,
+    peak_anon_mb integer NOT NULL,
+    last_at timestamp with time zone NOT NULL,
+    CONSTRAINT app_memory_pressure_check CHECK ((last_at >= window_started_at)),
+    CONSTRAINT app_memory_pressure_episodes_check CHECK ((episodes > 0)),
+    CONSTRAINT app_memory_pressure_last_at_check CHECK (isfinite(last_at)),
+    CONSTRAINT app_memory_pressure_lowest_available_mb_check CHECK ((lowest_available_mb >= 0)),
+    CONSTRAINT app_memory_pressure_peak_anon_mb_check CHECK ((peak_anon_mb >= 0)),
+    CONSTRAINT app_memory_pressure_total_mb_check CHECK ((total_mb >= 0)),
+    CONSTRAINT app_memory_pressure_window_started_at_check CHECK (isfinite(window_started_at))
+);
+
+
+--
+-- Name: TABLE app_memory_pressure; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.app_memory_pressure IS 'ADR-20261102124306 per-app memory-pressure rollup written by schedd from guest reports.';
+
+
+--
 -- Name: app_openapi_docs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58133,6 +58162,14 @@ ALTER TABLE ONLY public.app_mcp_readiness_policy_history
 
 ALTER TABLE ONLY public.app_mcp_task_compatibility
     ADD CONSTRAINT app_mcp_task_compatibility_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_memory_pressure app_memory_pressure_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_memory_pressure
+    ADD CONSTRAINT app_memory_pressure_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -88769,6 +88806,14 @@ ALTER TABLE ONLY public.app_mcp_readiness_policy_history
 
 ALTER TABLE ONLY public.app_mcp_task_compatibility
     ADD CONSTRAINT app_mcp_task_compatibility_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_memory_pressure app_memory_pressure_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_memory_pressure
+    ADD CONSTRAINT app_memory_pressure_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

@@ -1628,6 +1628,19 @@
     "kind": "operational"
   },
   {
+    "table": "app_memory_pressure",
+    "columns": [
+      "app_id",
+      "episodes",
+      "last_at",
+      "lowest_available_mb",
+      "peak_anon_mb",
+      "total_mb",
+      "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_openapi_docs",
     "columns": [
       "account_id",
