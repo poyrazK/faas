@@ -103,6 +103,9 @@ type edgeMetrics struct {
 	// placement counts how each dial attempt used placement routing
 	// (ADR-20261031105055).
 	placement *prometheus.CounterVec
+	// tlsHandshakeFailures counts connections the public TLS listener
+	// refused during the handshake (ADR-20261102081618).
+	tlsHandshakeFailures prometheus.Counter
 }
 
 func newEdgeMetrics() *edgeMetrics {
@@ -132,6 +135,10 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gatewayd_public_edge_placement_total",
 			Help: "Compute-edge dial attempts by placement result: remote (routed to the node that last served the host), self (that node is this one), miss (no node known), unusable (the node is not in the inventory, unready or excluded), failed (its dial failed) (ADR-20261031105055).",
 		}, []string{"result"}),
+		tlsHandshakeFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gatewayd_public_edge_tls_handshake_failures_total",
+			Help: "Connections a compute edge's public TLS listener refused during the handshake, such as a peer without the zone's Authenticated Origin Pulls certificate (ADR-20261102081618).",
+		}),
 	}
 	for _, result := range placementResults {
 		m.placement.WithLabelValues(result)
@@ -141,7 +148,7 @@ func newEdgeMetrics() *edgeMetrics {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures)
 	return m
 }
 
