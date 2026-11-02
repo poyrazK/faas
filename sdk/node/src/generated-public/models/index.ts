@@ -435,6 +435,7 @@ export type { KafkaSASLConfig } from './KafkaSASLConfig.js';
 export type { KafkaSASLMechanism } from './KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './KafkaTLSConfig.js';
 export type { KafkaTriggerConfig } from './KafkaTriggerConfig.js';
+export type { KeyOrg } from './KeyOrg.js';
 export type { LatestDeploymentsByAppResponse } from './LatestDeploymentsByAppResponse.js';
 export type { ListAuditEventsResponse } from './ListAuditEventsResponse.js';
 export type { ListAuditLogResponse } from './ListAuditLogResponse.js';
@@ -797,6 +798,8 @@ export type { OperationWorkflowVerificationDuration } from './OperationWorkflowV
 export type { OperationWorkflowVerificationPerformance } from './OperationWorkflowVerificationPerformance.js';
 export type { OrgAccountID } from './OrgAccountID.js';
 export type { OrgActivityResponse } from './OrgActivityResponse.js';
+export type { OrgAgentPolicyRequest } from './OrgAgentPolicyRequest.js';
+export type { OrgAgentPolicyResponse } from './OrgAgentPolicyResponse.js';
 export type { OrgAppListResponse } from './OrgAppListResponse.js';
 export type { OrgAppSummary } from './OrgAppSummary.js';
 export type { OrgInvitationResponse } from './OrgInvitationResponse.js';

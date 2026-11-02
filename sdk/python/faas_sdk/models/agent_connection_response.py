@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -42,6 +43,10 @@ class AgentConnectionResponse:
     """The key label."""
     last_used_at: datetime.datetime | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
+    org_id: UUID | Unset = UNSET
+    """The organization the agent acts in."""
+    member: str | Unset = UNSET
+    """Email of the member who connected the agent, in an organization's list."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +74,12 @@ class AgentConnectionResponse:
         if not isinstance(self.expires_at, Unset):
             expires_at = self.expires_at.isoformat()
 
+        org_id: str | Unset = UNSET
+        if not isinstance(self.org_id, Unset):
+            org_id = str(self.org_id)
+
+        member = self.member
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -90,6 +101,10 @@ class AgentConnectionResponse:
             field_dict["last_used_at"] = last_used_at
         if expires_at is not UNSET:
             field_dict["expires_at"] = expires_at
+        if org_id is not UNSET:
+            field_dict["org_id"] = org_id
+        if member is not UNSET:
+            field_dict["member"] = member
 
         return field_dict
 
@@ -126,6 +141,15 @@ class AgentConnectionResponse:
         else:
             expires_at = datetime.datetime.fromisoformat(_expires_at)
 
+        _org_id = d.pop("org_id", UNSET)
+        org_id: UUID | Unset
+        if isinstance(_org_id, Unset):
+            org_id = UNSET
+        else:
+            org_id = UUID(_org_id)
+
+        member = d.pop("member", UNSET)
+
         agent_connection_response = cls(
             id=id,
             kind=kind,
@@ -137,6 +161,8 @@ class AgentConnectionResponse:
             label=label,
             last_used_at=last_used_at,
             expires_at=expires_at,
+            org_id=org_id,
+            member=member,
         )
 
         agent_connection_response.additional_properties = d
