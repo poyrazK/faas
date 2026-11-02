@@ -145,3 +145,75 @@ the installation listing, renames by ID and `installation_target`, and the App
 settings check. The acceptance test for `github-deploys` is the app-bound push
 test. The journey's `push_to_deploy` known failure is removed once the suite
 passes against a release with this change.
+
+## Amendment 1 (2026-11-02): deploys that wait for CI, and Actions sign-in for project repositories
+
+### Context
+
+13. A push deploys as soon as GitHub delivers it, beside the repository's
+    own CI. The production trigger is `webhook` or `actions`; githubd ignores
+    `check_suite` and `workflow_run`, and the workflow `gregale github setup`
+    writes runs on `push`. A commit whose tests fail still reaches
+    production. A separate workflow cannot `needs:` another workflow.
+14. The first-use OIDC exchange finds an account through an app binding
+    (`apps.github_*`). A repository connected only through a project (an
+    import, `gregale deploy --repo … --project`) records its name and
+    installation on `projects`, so the deploy Action's exchange is refused
+    unless the customer writes a trust policy.
+15. `gregale deploy --github` prints a workflow for branch `main` and leaves
+    the App's push trigger alone, so on an App-connected repository each
+    push deploys twice and a repository whose default branch is not `main`
+    never deploys.
+16. The deploy Action's metadata says safe rollout is Pro/Scale only;
+    traffic splitting is allowed on every plan (`pkg/api/limits.go`).
+
+### Decision
+
+12. **`gregale github setup --wait-for WORKFLOW`.** The generated workflow
+    runs on `workflow_run` completions of the named workflow for the deploy
+    branches and deploys only a successful run for a push to this repository
+    (never a pull request or fork run), at the run's `head_sha` and branch.
+    Release tags and manual dispatches deploy directly, as before. The deploy
+    Action treats such a run like a branch push: it skips a commit that is no
+    longer the branch head and carries the branch to apid, so a CI run that
+    finishes after a newer commit's cannot roll production back; its Check
+    Run reports on the tested commit. Without `--wait-for` the workflow no
+    longer passes `ref:`, so the Action's existing superseded-push guard
+    applies to it. No App permission, event subscription, durable state or
+    githubd change is needed. A webhook-side "wait for checks" trigger was
+    rejected for now: it needs the App to read check suites, a durable
+    pending-deploy record and a timeout policy.
+13. **Project repositories sign in from Actions.** When no trust policy or
+    app binding matches, apid lists the projects bound to the subject's
+    repository through an installation their account connected, and asks
+    githubd for each installation's repositories. A binding counts only while
+    its installation sees a repository of that name; exactly one confirmed
+    account resolves, and the exchange requires the token's `repository_id`
+    claim to equal the repository ID githubd reported. A project records no
+    repository ID, so trusting the name alone would reopen H68 (a repository
+    re-created under a freed owner name). The same confirmed ID is required
+    of an explicit trust policy for a repository bound only through a
+    project; githubd being unavailable then fails the exchange, as the deploy
+    it authorizes would fail its source fetch.
+14. **`gregale deploy --github`** stays network-free: its workflow runs on
+    every push and its job only for the repository's default branch, and its
+    header says that the App may deploy the same push and that
+    `gregale github setup` hands production deploys to a workflow.
+15. The Action documents safe rollout as available on every plan.
+
+### Compatibility
+
+No migration. A new apid beside an older githubd uses the existing
+`ListInstallableRepos` RPC. Workflows generated before this change keep
+working; `--wait-for` needs a deploy Action from this release for the branch
+freshness check (an older pinned Action deploys the tested commit without
+it).
+
+### Validation
+
+Render tests cover the `--wait-for` triggers, condition, ref and branch
+environments; `scripts/ci/test_deploy_action_head.sh` covers successful,
+failed, pull-request, fork and superseded `workflow_run` events; a
+conformance case covers the project binding listing; `pkg/apid/oidcrepo`
+covers confirmation, re-created repositories, ambiguity and githubd
+failures; an apid test covers the exchange for a project-only repository.

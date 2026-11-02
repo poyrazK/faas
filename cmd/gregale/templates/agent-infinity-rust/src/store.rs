@@ -80,6 +80,11 @@ CREATE TABLE IF NOT EXISTS agent_held_tool_calls (
 
 static SCHEMA_READY: AtomicBool = AtomicBool::new(false);
 
+/// Serializes schema creation: concurrent CREATE TABLE IF NOT EXISTS of one
+/// table collide in Postgres's catalog, and a new database's first slices
+/// run in parallel.
+const SCHEMA_LOCK: i64 = 0x6167_656e_7473_0001;
+
 #[derive(Debug)]
 pub struct StoreError(pub String);
 
@@ -93,7 +98,11 @@ impl std::error::Error for StoreError {}
 
 impl From<tokio_postgres::Error> for StoreError {
     fn from(e: tokio_postgres::Error) -> Self {
-        StoreError(e.to_string())
+        // A server error's Display is only "db error"; keep its code and text.
+        match e.as_db_error() {
+            Some(db) => StoreError(format!("{} {}", db.code().code(), db.message())),
+            None => StoreError(e.to_string()),
+        }
     }
 }
 
@@ -109,11 +118,16 @@ pub struct Db(pub Arc<Client>);
 
 impl Db {
     /// Create the tables once per process; every statement is idempotent.
+    /// The statements run as one implicit transaction under SCHEMA_LOCK.
     pub async fn ensure_schema(&self) -> Result<(), StoreError> {
         if SCHEMA_READY.load(Ordering::Acquire) {
             return Ok(());
         }
-        self.0.batch_execute(SCHEMA).await?;
+        self.0
+            .batch_execute(&format!(
+                "SELECT pg_advisory_xact_lock({SCHEMA_LOCK});\n{SCHEMA}"
+            ))
+            .await?;
         SCHEMA_READY.store(true, Ordering::Release);
         Ok(())
     }

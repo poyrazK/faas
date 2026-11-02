@@ -2283,8 +2283,12 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrValidation("reviewed promotion requires the exact named environment at 100% traffic and a serving guard"))
 		return
 	}
+	// Each serving release needs its own instance; refuse a split the app
+	// could not run whole.
+	releaseLimit := api.TrafficSplitMaxReleases(app.MaxConcurrency, acct.Plan)
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
+		ctx = state.WithTrafficSplitReleaseLimit(ctx, releaseLimit)
 		var writeErr error
 		if req.ExpectedReview != nil {
 			store, ok := s.store.(state.ReviewedTrafficStore)
@@ -2307,6 +2311,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		if writeReleaseReviewError(w, err) {
 			return
 		}
+		var limitErr *state.TrafficSplitReleaseLimitError
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such deployment")
@@ -2336,6 +2341,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
 			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
+		case errors.As(err, &limitErr):
+			api.WriteProblem(w, api.ErrTrafficSplitReleaseLimit(limitErr.Limit, limitErr.Requested))
 		case errors.Is(err, state.ErrMCPTaskCompatibilityGate):
 			api.WriteProblem(w, api.ErrMCPTaskCompatibilityGate(err.Error()))
 		default:

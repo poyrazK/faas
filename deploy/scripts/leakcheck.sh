@@ -2,8 +2,9 @@
 # leakcheck.sh — assert the box has zero leaked VM resources after tests
 # (spec §Commands `make leakcheck`, invariant §6.2-4/5).
 #
-# Checks: no leftover fc-* network namespaces, no orphan tap devices, no jailer
-# chroots under /srv/fc/jail, no lingering faas-tenant per-instance cgroup scopes.
+# Checks: no leftover fc-* network namespaces, no orphan tap or private-network
+# devices (gpn-*, gpx-*), no jailer chroots under /srv/fc/jail, no lingering
+# faas-tenant per-instance cgroup scopes.
 # (jailer v1.7 rejects '.' in --id, so the actual scope name is the bare
 # instance id with no 'vm-' prefix and no '.scope' suffix — see
 # pkg/fcvm/cgroup.go and pkg/fcvm/config.go::PerInstanceScope.)
@@ -25,9 +26,12 @@ if command -v ip >/dev/null 2>&1; then
     [[ "$ns" == fc-* ]] && note "netns $ns"
   done < <(ip netns list 2>/dev/null | awk '{print $1}')
 
-  # 2. Orphan tap devices in the root namespace
+  # 2. Orphan tap devices in the root namespace, and private-network devices:
+  # gpn-h/gpn-p per-VM side-links, gpn-* account bridges and gpx-* VXLAN
+  # transport links (pkg/fcvm privateVethNames, pkg/privatenetwork).
   while read -r dev; do
     [[ "$dev" == tap-* || "$dev" == ve-* || "$dev" =~ ^vh[0-9]+(@.*)?$ ]] && note "netdev $dev"
+    [[ "$dev" == gpn-* || "$dev" == gpx-* ]] && note "private-network netdev $dev"
   done < <(ip -o link show 2>/dev/null | awk -F': ' '{print $2}')
 fi
 
