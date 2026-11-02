@@ -182,7 +182,7 @@ func (s *PgStore) ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, e
 func (s *PgStore) ListAppLogDrainsPausedByPlan(ctx context.Context, appID string) ([]string, error) {
 	id, err := parsePgUUID(appID)
 	if err != nil {
-		return []string{}, nil
+		return []string{}, nil //nolint:nilerr // A malformed id names no app, so none of its drains is paused.
 	}
 	rows, err := sqlc.New().ListAppLogDrainPlanSubjectDrains(ctx, s.pool, id)
 	if err != nil {
