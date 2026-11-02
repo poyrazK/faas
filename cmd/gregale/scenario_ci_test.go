@@ -343,8 +343,32 @@ func TestGeneratedTestCIRunCommandAddsLoadFlagAsAContinuation(t *testing.T) {
 	}
 }
 
+func TestGeneratedTestCIInstallCommandPinsReleaseBuilds(t *testing.T) {
+	const unpinned = `curl -fsSL https://get.gregale.dev | sh -s -- --dir "$RUNNER_TEMP/gregale"`
+	for _, tc := range []struct {
+		version string
+		want    string
+	}{
+		{"v0.1.18", `curl -fsSL https://get.gregale.dev | sh -s -- --version v0.1.18 --dir "$RUNNER_TEMP/gregale"`},
+		{"v0.1.18-rc.313", `curl -fsSL https://get.gregale.dev | sh -s -- --version v0.1.18-rc.313 --dir "$RUNNER_TEMP/gregale"`},
+		// Development builds have no published tag to install.
+		{"dev", unpinned},
+		{"", unpinned},
+		{"v0.1.18-rc.313-4-gabc1234", unpinned},
+		{"v0.1.18-rc.313-dirty", unpinned},
+		{"v0.1.18-dirty", unpinned},
+		{"abc1234", unpinned},
+		{"v0.1.18; touch /tmp/x", unpinned},
+	} {
+		if got := main.GeneratedTestCIInstallCommand(tc.version); got != tc.want {
+			t.Errorf("install command for version %q:\n got %s\nwant %s", tc.version, got, tc.want)
+		}
+	}
+}
+
 func TestGeneratedTestCICommandsAreValidBash(t *testing.T) {
 	for name, command := range map[string]string{
+		"install":       main.GeneratedTestCIInstallCommand("v0.1.18-rc.313"),
 		"run":           main.GeneratedTestCIRunCommand(false),
 		"run with load": main.GeneratedTestCIRunCommand(true),
 		"compare":       main.GeneratedTestCICompareCommand(),

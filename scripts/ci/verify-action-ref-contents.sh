@@ -4,8 +4,10 @@
 #
 # PINNED_SHA is the immutable ref the CLI generates: the previous release's
 # commit, so it may still vendor the bare bin/gregale (releases before
-# rc.275) instead of bin/gregale.gz. MAJOR is the moving tag (v0) this
-# release just moved, which must carry this release's compressed CLI.
+# rc.275) instead of bin/gregale.gz. MAJOR is the moving tag (v0), which a
+# newer stable release has just moved to its own commit and a prerelease
+# leaves in place (scripts/ci/advance-action-major-tag.sh); either way it
+# must carry a compressed CLI.
 # Needs GITHUB_REPOSITORY and a gh that can read the repository.
 set -euo pipefail
 
