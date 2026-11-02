@@ -53,6 +53,9 @@ func (s *Service) PublishManagedRealtimeChannelBatch(w http.ResponseWriter, r *h
 		}
 		items[i] = state.ManagedRealtimeBatchItem{TTLSeconds: ttl, Metadata: msg.Metadata, Data: data, Binary: msg.Binary}
 	}
+	if !s.allowRealtimeWrites(w, acct, len(items)) {
+		return
+	}
 	store, ok := s.Host.Store().(state.ManagedRealtimeBatchStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("batch publishing unavailable"))
