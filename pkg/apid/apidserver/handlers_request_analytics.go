@@ -82,6 +82,10 @@ func (s *server) requestAnalyticsCompleteness(ctx context.Context, appID string,
 	if !ok {
 		return nil, nil
 	}
+	return requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
+}
+
+func requestAnalyticsCompletenessFrom(ctx context.Context, reader requestAnalyticsCompletenessReader, log *slog.Logger, appID string, window requestAnalyticsWindow) (*bool, []string) {
 	until := window.Until
 	if settled := window.AsOf.Add(-api.RequestAnalyticsSettleLag); until.After(settled) {
 		until = settled
@@ -92,7 +96,9 @@ func (s *server) requestAnalyticsCompleteness(ctx context.Context, appID string,
 	}
 	gaps, err := reader.RequestTelemetryCompleteness(ctx, appID, window.From, until)
 	if err != nil {
-		s.log.Warn("request analytics completeness check failed", "app_id", appID, "err", err)
+		if log != nil {
+			log.Warn("request analytics completeness check failed", "app_id", appID, "err", err)
+		}
 		return nil, nil
 	}
 	complete := len(gaps) == 0

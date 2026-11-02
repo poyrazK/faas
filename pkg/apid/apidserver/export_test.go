@@ -647,6 +647,14 @@ var ParseIssueListFilter = parseIssueListFilter
 var ParseRequestAnalyticsGroupBy = parseRequestAnalyticsGroupBy
 var ParseRequestAnalyticsRouteFilter = parseRequestAnalyticsRouteFilter
 var ParseRequestAnalyticsWindow = parseRequestAnalyticsWindow
+
+// RequestAnalyticsCompleteness judges the window [from, until) read at asOf.
+func RequestAnalyticsCompleteness(ctx context.Context, reader interface {
+	RequestTelemetryCompleteness(context.Context, string, time.Time, time.Time) ([]string, error)
+}, appID string, from, until, asOf time.Time) (*bool, []string) {
+	return requestAnalyticsCompletenessFrom(ctx, reader, nil, appID, requestAnalyticsWindow{From: from, Until: until, AsOf: asOf})
+}
+
 var ParseScanMultipart = parseScanMultipart
 var ParseSuspectedDependency = parseSuspectedDependency
 var ParseSweepOlderThan = parseSweepOlderThan

@@ -65,7 +65,7 @@ func TestParseRequestAnalyticsWindow(t *testing.T) {
 			retention: 3 * 24 * time.Hour,
 			wantFrom:  time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC),
 			wantUntil: time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC),
-			wantSince: "12h",
+			wantSince: "12h0m0s",
 			wantClamp: true,
 		},
 		{
