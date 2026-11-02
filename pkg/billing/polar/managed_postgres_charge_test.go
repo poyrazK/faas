@@ -95,12 +95,23 @@ func TestPublishManagedPostgresChargeSendsTheStepDifference(t *testing.T) {
 	if err := p.PublishManagedPostgresCharge(context.Background(), step); err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "managed_postgres_usage" || got.ExternalID != "faas-managed-postgres-acct-2026-11-60000" || got.ExternalCustomerID != "acct" || got.Timestamp != at.Format(time.RFC3339) {
+	if got.Name != "managed_postgres_usage" || got.ExternalID != "faas-managed-postgres-step-acct-2026-11-from-40000" || got.ExternalCustomerID != "acct" || got.Timestamp != at.Format(time.RFC3339) {
 		t.Fatalf("event = %+v", got)
 	}
 	if got.Metadata["charge_millicents"] != float64(20_000) || got.Metadata["cumulative_millicents"] != float64(60_000) ||
 		got.Metadata["millicents_per_unit_hour"] != float64(api.ManagedPostgresOverageMillicentsPerComputeUnitHour) || got.Metadata["billed_unit_seconds"] != float64(10800) {
 		t.Fatalf("metadata = %+v", got.Metadata)
+	}
+	// A retry after an ambiguous response starts from the same delivered
+	// charge with a larger target; it must be the same event to the provider
+	// (bug hunt 33).
+	first := got.ExternalID
+	step.TargetMillicents = 80_000
+	if err := p.PublishManagedPostgresCharge(context.Background(), step); err != nil {
+		t.Fatal(err)
+	}
+	if got.ExternalID != first {
+		t.Fatalf("retry external ID = %q, want %q", got.ExternalID, first)
 	}
 }
 

@@ -147,9 +147,13 @@ at least once, so deduplicate by `message_id` or `sequence`.
   device or worker; acks then move a cursor Gregale stores (at most 256 per
   endpoint, kept 30 days after last use).
 - A connection holds at most 8 channels, and each frame from the client is at
-  most 4 KiB. Refusals arrive as `{"type":"error","code":...}` frames with the
-  channel, for example `not_authorized` or `subscription_limit`; the
-  connection stays open.
+  most 4 KiB. It may send 20 commands a second (bursts of 40): subscribe,
+  unsubscribe, reset, read state, inbox and preference frames. Acks, presence
+  and signals have their own limits. A command past the budget gets
+  `command_rate_limited` and is dropped.
+- Refusals arrive as `{"type":"error","code":...}` frames with the channel,
+  for example `not_authorized` or `subscription_limit`; the connection stays
+  open.
 - Code 1008 closes a connection whose token expired or changed: reconnect with
   a fresh token. Code 1013 means try again: reconnect from the saved cursor.
 

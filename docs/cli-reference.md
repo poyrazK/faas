@@ -3469,9 +3469,9 @@ Bind an app to a visible GitHub repository
 
 | Flag | Meaning | |
 |---|---|---|
-| `--installation-id <ID>` | GitHub App installation id (auto-resolved when omitted) |  |
+| `--installation-id <ID>` | GitHub App installation id (the app&#39;s, or the account&#39;s only one, when omitted) |  |
 | `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME | required |
-| `--branch <BRANCH>` | production branch |  |
+| `--branch <BRANCH>` | production branch (defaults to the repository&#39;s default branch) |  |
 | `--deploy-branches <MAPPINGS>` | branch=scope mappings |  |
 
 Examples:
@@ -3508,24 +3508,30 @@ gregale github sync my-api
 
 List repositories the connected GitHub installation can see
 
-`gregale github repos <slug>`
+`gregale github repos [--installation-id <ID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--installation-id <ID>` | GitHub App installation id (defaults to the app&#39;s, or the account&#39;s only one) |  |
 
 Examples:
 
 ```sh
 gregale github repos my-api
+gregale github repos my-api --installation-id 12345
 ```
 
 ### github setup
 
 Bind GitHub, configure previews, and write an Actions workflow
 
-`gregale github setup [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--deploy-branches <MAPPINGS>] [--pinned-sha <SHA>] [--pin-action] [--enable-action-updates] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-bots] [--no-preview-bots] [--preview-drafts] [--no-preview-drafts] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--dry-run] [--force] <slug>`
+`gregale github setup [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--installation-id <ID>] [--deploy-branches <MAPPINGS>] [--pinned-sha <SHA>] [--pin-action] [--enable-action-updates] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-bots] [--no-preview-bots] [--preview-drafts] [--no-preview-drafts] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--dry-run] [--force] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME (required for a dry run) |  |
-| `--production-branch <BRANCH>` | production branch (default: current binding or main) |  |
+| `--production-branch <BRANCH>` | production branch (default: current binding or the repository&#39;s default branch) |  |
+| `--installation-id <ID>` | GitHub App installation id (the app&#39;s, or the account&#39;s only one, when omitted) |  |
 | `--deploy-branches <MAPPINGS>` | comma-separated branch=environment mappings (default or registered environment) |  |
 | `--pinned-sha <SHA>` | pin the generated deploy Action to this full 40-character commit SHA (default: immutable SHA embedded in the CLI release) |  |
 | `--pin-action` | resolve the current v0 deploy Action tag to its commit SHA |  |

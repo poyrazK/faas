@@ -939,6 +939,16 @@ func (s *PgStore) enrichIssueAttribution(ctx context.Context, now time.Time) err
 	return nil
 }
 
+// issueAttributionSettled reports whether no later evidence can attribute the
+// occurrence: it names no request, trace or invocation, or its evidence had
+// api.IssueAttributionRetryWindow since ingestion to arrive.
+func issueAttributionSettled(e api.IssueEvent, receivedAt, now time.Time) bool {
+	if e.RequestID == "" && e.TraceID == "" && e.InvocationID == "" {
+		return true
+	}
+	return !receivedAt.After(now.Add(-api.IssueAttributionRetryWindow))
+}
+
 func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries, row sqlc.IssueUnattributedEventsRow, now time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -984,7 +994,14 @@ func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries
 			}
 		}
 	}
-	changed, err := q.IssueEnrichAttribution(ctx, tx, sqlc.IssueEnrichAttributionParams{AppID: row.AppID, DeploymentID: row.DeploymentID, EventID: row.EventID, ConsumerID: consumer, TenantID: tenant, Now: issueTime(now)})
+	checkedAt := issueTime(now)
+	if !consumer.Valid && !tenant.Valid && issueAttributionSettled(e, row.ReceivedAt.Time, now) {
+		// Checked for the last time: an infinite check time takes the
+		// occurrence out of the retry scan for good, instead of locking its app
+		// and rewriting the row every maintenance pass until retention purges it.
+		checkedAt = pgtype.Timestamptz{InfinityModifier: pgtype.Infinity, Valid: true}
+	}
+	changed, err := q.IssueEnrichAttribution(ctx, tx, sqlc.IssueEnrichAttributionParams{AppID: row.AppID, DeploymentID: row.DeploymentID, EventID: row.EventID, ConsumerID: consumer, TenantID: tenant, Now: checkedAt})
 	if err != nil {
 		return err
 	}

@@ -130,3 +130,6 @@ ensure_zone_rule http_request_cache_settings gregale_s3_cache_bypass set_cache_s
 ensure_zone_rule http_config_settings gregale_s3_config set_config \
   '{"bic": false, "email_obfuscation": false, "rocket_loader": false, "automatic_https_rewrites": false, "fonts": false, "disable_rum": true, "disable_zaraz": true}'
 echo "next: set faas_object_gateway_public_endpoint=https://$PILOT_HOST on the compute nodes, then the load test runbook"
+if [[ "${CUTOVER:-}" == yes ]]; then
+  echo "cutover: once s3.$PLATFORM_DOMAIN's record points at the tunnel, set faas_object_gateway_endpoint_on_tunnel: true on the control plane so FaasComputeObjectGatewayUnavailable pages"
+fi

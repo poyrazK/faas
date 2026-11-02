@@ -293,10 +293,11 @@ func (p *InternalReverseProxy) withPreference(r *http.Request) *http.Request {
 	if p.placement == nil {
 		return r
 	}
+	ctx := WithPlacementAsked(r.Context())
 	if pref, ok := p.placement.Prefer(r); ok {
-		return r.WithContext(WithPreferredNode(r.Context(), pref))
+		ctx = WithPreferredNode(ctx, pref)
 	}
-	return r
+	return r.WithContext(ctx)
 }
 
 // markPlacement replaces a client's placement request with this proxy's own.

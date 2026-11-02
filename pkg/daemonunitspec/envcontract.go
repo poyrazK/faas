@@ -639,6 +639,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_LOG_ARCHIVE_RETENTION_DAYS", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_SECRET", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_SPOOL_ROOT", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_LOG_DRAIN_SPOOL_BUDGET_BYTES", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "optional byte budget shared by every log-drain spool on the node; defaults to 2 GiB"},
 	{Name: "FAAS_LOG_DRAIN_SPOOL_ROOT", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "optional gateway log-drain spool override; defaults to /var/lib/faas/log-drains"},
 	{Name: "FAAS_LOG_LEVEL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "info; re-read on SIGHUP"},
 	{Name: "FAAS_LOG_SEARCH_ENABLED", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault, Default: "0", Note: "ADR-20261018083536 operator gate for GET /v1/apps/{slug}/log-events and /log-events/facets, vmmd's runtime log projection, and (meterd) the ADR-20261022172052 log context on firing alerts; explicit 1 enables the internal preview"},

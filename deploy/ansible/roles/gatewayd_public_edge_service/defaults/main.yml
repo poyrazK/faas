@@ -8,6 +8,11 @@ faas_edge_on_compute_nodes: false
 # manifest as http://<control-plane private address>:8090.
 faas_edge_control_plane_target: ''
 
+# ADR-20261031105055: send each app host to the gatewayd-internal of the node
+# that last served it, instead of this node's. The manifest's
+# public_edge.placement_routing sets it per cell.
+faas_edge_placement_routing: false
+
 # Cloudflare Tunnel connector, pinned by version and per-architecture SHA-256
 # (cloudflare/cloudflared release notes, matching GitHub's asset digests).
 # --token-file needs 2025.4.0 or later.

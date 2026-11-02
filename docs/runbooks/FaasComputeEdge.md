@@ -16,7 +16,7 @@ fleets without the edge.
 
 | Alert | Severity | Meaning |
 |---|---|---|
-| `FaasComputeEdgeUnavailable` | page | No edge answers, or no connector holds a tunnel connection, for 2 minutes. App requests through the tunnel fail. |
+| `FaasComputeEdgeUnavailable` | page | For 2 minutes no node has both its edge answering and its connector holding a tunnel connection, including every connector stopped. App requests through the tunnel fail. |
 | `FaasComputeEdgeDown` | warn | One node's edge does not answer. |
 | `FaasComputeEdgeConnectorDisconnected` | warn | One node's connector is down or holds no tunnel connection. |
 | `FaasComputeEdgeLocalFallback` | warn | One node's edge keeps routing to the compute pool because its own gatewayd-internal is unhealthy. |

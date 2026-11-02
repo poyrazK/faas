@@ -358,6 +358,9 @@ message IncrementRequestTelemetryRequest {
   // ADR-1138: trace_id was inferred by Gregale (the calling instance sent no
   // traceparent and was serving exactly one request) rather than propagated.
   bool trace_inferred = 38;
+  // ADR-20261028110044 amendment 3: a 5xx the gateway returned because a
+  // Gregale dependency could not admit the request. Route evidence skips it.
+  bool platform_refusal = 39;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the
