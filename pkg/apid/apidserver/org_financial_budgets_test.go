@@ -19,10 +19,18 @@ import (
 func TestOrgFinancialBudgetRoutes(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	store := *e.Store()
-	org := apidserver.SeedSharedOrgWithOwner(t, e, "budget-company", "Budget Company", api.PlanPro)
+	// A MemStore organization owns its resources when it starts on Free; it
+	// keeps them on a paid plan.
+	org := apidserver.SeedSharedOrgWithOwner(t, e, "budget-company", "Budget Company", api.PlanFree)
+	if err := store.UpdateOrgPlan(t.Context(), org.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: e.Acct().ID, OrgID: org.ID, Slug: "company-preview", PreviewOfSlug: "production", RAMMB: 256, MaxConcurrency: 1})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if payer, err := state.FinancialBudgetPayer(t.Context(), store, app); err != nil || payer != org.ID {
+		t.Fatalf("payer of the organization's app = %q, %v; want the organization %s", payer, err, org.ID)
 	}
 	spec := financialDraftSpec()
 	spec.Scope = financial.BudgetScope{Kind: "app", ID: app.ID}
