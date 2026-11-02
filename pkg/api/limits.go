@@ -5547,8 +5547,8 @@ var planLimits = map[Plan]Limits{
 		WebhookOutboxMaxPending:        1_000,
 		WebhookOutboxMaxBacklogBytes:   16 << 20,
 		InboundWebhookAcceptsPerMinute: 60,
-		LogDrainPerApp:           0,
-		LogDrainPerAccount:       0,
+		LogDrainPerApp:                 0,
+		LogDrainPerAccount:             0,
 		// Trigger primitive (issue #757 / ADR-0NN): Free is the
 		// abuse-floor tier — TriggersAllowed=false so a POST on a
 		// Free account gets 402 CodePlanTriggersNotAllowed before the
@@ -5981,8 +5981,8 @@ var planLimits = map[Plan]Limits{
 		WebhookOutboxMaxPending:        5_000,
 		WebhookOutboxMaxBacklogBytes:   64 << 20,
 		InboundWebhookAcceptsPerMinute: 1_200,
-		LogDrainPerApp:           3,
-		LogDrainPerAccount:       10,
+		LogDrainPerApp:                 3,
+		LogDrainPerAccount:             10,
 		// Trigger primitive (issue #757 / ADR-0NN): Hobby is the
 		// entry paid tier — unlocks the in-platform queue kind and
 		// the sqs_compat kind (the two no-external-broker shapes).
@@ -6415,8 +6415,8 @@ var planLimits = map[Plan]Limits{
 		WebhookOutboxMaxPending:        25_000,
 		WebhookOutboxMaxBacklogBytes:   256 << 20,
 		InboundWebhookAcceptsPerMinute: 3_000,
-		LogDrainPerApp:           10,
-		LogDrainPerAccount:       30,
+		LogDrainPerApp:                 10,
+		LogDrainPerAccount:             30,
 		// Trigger primitive (issue #757 / ADR-0NN): Pro is the first
 		// tier where the external-broker kinds unlock (Kafka, NATS,
 		// Redis-streams) — the egress-allowlist tier (ADR-031) is
@@ -6844,8 +6844,8 @@ var planLimits = map[Plan]Limits{
 		WebhookOutboxMaxPending:        50_000,
 		WebhookOutboxMaxBacklogBytes:   512 << 20,
 		InboundWebhookAcceptsPerMinute: 6_000,
-		LogDrainPerApp:           25,
-		LogDrainPerAccount:       100,
+		LogDrainPerApp:                 25,
+		LogDrainPerAccount:             100,
 		// Trigger primitive (issue #757 / ADR-0NN): Scale is the upper
 		// tier — caps align with the SQL CHECK ceilings (5000 records
 		// / 5 min window / 25 attempts) so a Scale customer's

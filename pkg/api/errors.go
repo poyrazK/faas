@@ -4019,7 +4019,7 @@ func ErrInboundWebhookBacklogFull(which WebhookBacklogCap, limit, observed int64
 	return NewProblem(http.StatusTooManyRequests, CodeInboundWebhookBacklogFull, "Inbound webhook backlog full", detail).
 		WithLimit(limit, observed).
 		WithHeader("Retry-After", webhookBacklogRetryAfter()).
-		WithDocs(docsBase + "/inbound-webhooks#backlog")
+		WithDocs(docsBase + "/event-driven#inbound-webhook-backlog")
 }
 
 // ErrInboundWebhookRateLimited refuses a verified inbound delivery past the
@@ -4032,7 +4032,7 @@ func ErrInboundWebhookRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("this account's plan accepts %d inbound webhook deliveries a minute. Nothing was accepted: retry the same event after %d seconds.", limit, retryAfterS)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs(docsBase + "/inbound-webhooks#rate-limit")
+		WithDocs(docsBase + "/event-driven#inbound-webhook-rate-limit")
 }
 
 // Managed realtime endpoint errors (ADR-156). Realtime is an opt-in

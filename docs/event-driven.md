@@ -625,6 +625,26 @@ receiver that times out pauses its subscription for a minute, as a `429` or
 reopens. A suspended or deleted account's deliveries, and an app's after
 the app is deleted, wait without being sent.
 
+## Inbound webhooks
+
+An inbound webhook endpoint verifies each provider delivery's signature and
+accepts it into the app's queue, where it runs like a queue message.
+
+### Inbound webhook backlog
+
+Accepted deliveries meet the same caps as a queue send: pending messages per
+app and backlog bytes per account (see [queue limits](#queue-limits)). While
+either is full, a verified delivery gets `429 inbound_webhook_backlog_full`
+with `Retry-After: 60` and nothing is accepted, so the provider retries the
+same event later.
+
+### Inbound webhook rate limit
+
+An account's endpoints accept a bounded number of verified deliveries a
+minute: Free 60, Hobby 1,200, Pro 3,000, Scale 6,000. Past it a delivery gets
+`429 inbound_webhook_rate_limited` with `Retry-After`. Deliveries that fail
+signature verification are limited separately, per client IP.
+
 ## Deployment lifecycle webhooks
 
 Subscribe to `deployment.live` and `deployment.failed` to drive a platform's
