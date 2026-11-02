@@ -775,6 +775,14 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, role, controlPlaneAddress s
 		if edge.PlacementRouting {
 			b.WriteString("faas_edge_placement_routing: true\n")
 		}
+		// ADR-20261102081618 §5: spread an app over its nodes, and serve from
+		// this node's instances first.
+		if edge.PlacementNodeSet {
+			b.WriteString("faas_edge_placement_node_set: true\n")
+		}
+		if edge.LocalFirst {
+			b.WriteString("faas_gateway_edge_local_first: true\n")
+		}
 		// ADR-20261102081618: Cloudflare also connects to the edge directly on
 		// 443, so the node's firewall admits 80/443 from Cloudflare only.
 		if edge.DirectEntry() {

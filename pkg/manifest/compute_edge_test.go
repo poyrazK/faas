@@ -114,3 +114,32 @@ func TestPublicEdgeDNS(t *testing.T) {
 		})
 	}
 }
+
+// adr: 20261102081618 — the node set needs placement routing, and local first
+// needs the node set, so the edges never settle on one node.
+func TestPublicEdgeSpreadSwitches(t *testing.T) {
+	fleet := []Host{{Name: "cp-1", Role: "control-plane"}, {Name: "cn-1", Role: "compute-only"}}
+	for _, tc := range []struct {
+		name    string
+		edge    PublicEdge
+		wantErr string
+	}{
+		{name: "both on", edge: PublicEdge{ComputeNodes: true, PlacementRouting: true, PlacementNodeSet: true, LocalFirst: true}},
+		{name: "node set first", edge: PublicEdge{ComputeNodes: true, PlacementRouting: true, PlacementNodeSet: true}},
+		{name: "node set without routing", edge: PublicEdge{ComputeNodes: true, PlacementNodeSet: true}, wantErr: "public_edge.placement_node_set"},
+		{name: "local first without the node set", edge: PublicEdge{ComputeNodes: true, PlacementRouting: true, LocalFirst: true}, wantErr: "public_edge.local_first"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := tc.edge.validate(fleet)
+			if tc.wantErr == "" {
+				if len(errs) != 0 {
+					t.Fatalf("validate = %v, want no errors", errs)
+				}
+				return
+			}
+			if !strings.Contains(errs.Error(), tc.wantErr) {
+				t.Fatalf("validate = %v, want %q", errs, tc.wantErr)
+			}
+		})
+	}
+}

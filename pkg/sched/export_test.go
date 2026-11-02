@@ -1089,3 +1089,9 @@ func DrainLeaseRecoveryDue(every time.Duration, nows ...time.Time) []bool {
 	}
 	return due
 }
+
+// OpenWorkflowDueGate is one dispatch tick's workflow due gate over read.
+func OpenWorkflowDueGate(read state.WorkflowRunDueReader) func(context.Context) bool {
+	g := &workflowDueGate{read: read}
+	return g.open
+}

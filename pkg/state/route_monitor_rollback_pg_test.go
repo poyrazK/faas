@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routemonitor"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -14,7 +15,7 @@ import (
 // rollbackMonitorIncident opens a real error-budget incident on stable after a
 // healthy baseline on candidate, with the failing release completed `released`
 // ago.
-func rollbackMonitorIncident(t *testing.T, released string) (*state.PgStore, state.Account, state.App, state.Deployment, state.Deployment) {
+func rollbackMonitorIncident(t *testing.T, released string) (*pgxpool.Pool, *state.PgStore, state.Account, state.App, state.Deployment, state.Deployment) {
 	t.Helper()
 	pool, s, a, app, stable, candidate := productionMonitorPG(t)
 	config, err := s.GetRouteMonitor(t.Context(), a.ID, app.ID)
@@ -36,12 +37,12 @@ func rollbackMonitorIncident(t *testing.T, released string) (*state.PgStore, sta
 	productionMonitorTraffic(t, pool, a, app, stable.ID, "POST", "/checkout", 500, 100, 600, false)
 	productionMonitorDue(t, pool, app.ID)
 	productionMonitorEvaluate(t, s, a, app)
-	return s, a, app, stable, candidate
+	return pool, s, a, app, stable, candidate
 }
 
 // adr: 845
 func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
-	s, a, app, stable, candidate := rollbackMonitorIncident(t, "5 minutes")
+	_, s, a, app, stable, candidate := rollbackMonitorIncident(t, "5 minutes")
 	claim, claimed, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID)
 	if err != nil || !claimed {
 		t.Fatalf("claim = %+v, %t, %v", claim, claimed, err)
@@ -74,7 +75,7 @@ func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
 
 // adr: 845
 func TestRouteMonitorRollbackPostgresSkipsLateIncident(t *testing.T) {
-	s, a, app, _, _ := rollbackMonitorIncident(t, "2 hours")
+	_, s, a, app, _, _ := rollbackMonitorIncident(t, "2 hours")
 	if _, claimed, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID); err != nil || claimed {
 		t.Fatalf("late incident claimed=%t err=%v", claimed, err)
 	}
