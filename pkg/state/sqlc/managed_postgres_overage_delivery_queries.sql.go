@@ -89,7 +89,9 @@ ON CONFLICT (provider, subject_id, period_start) DO UPDATE
 SET live = EXCLUDED.live, billed_unit_seconds = EXCLUDED.billed_unit_seconds,
     delivered_millicents = EXCLUDED.delivered_millicents, updated_at = EXCLUDED.updated_at
 WHERE d.delivered_millicents = $8::bigint
-  AND EXCLUDED.delivered_millicents > d.delivered_millicents
+  AND d.live = $9::boolean
+  AND (EXCLUDED.live OR NOT d.live)
+  AND (EXCLUDED.delivered_millicents > d.delivered_millicents OR (EXCLUDED.live AND NOT d.live))
 RETURNING true AS recorded
 `
 
@@ -102,10 +104,13 @@ type RecordManagedPostgresOverageDeliveryParams struct {
 	DeliveredMillicents int64
 	UpdatedAt           pgtype.Timestamptz
 	PreviousMillicents  int64
+	PreviousLive        bool
 }
 
-// Advances the cumulative charge only from previous_millicents (zero: no row
-// yet), so a replica that lost the race records nothing.
+// Advances the cumulative charge only from the row as read (previous_millicents
+// and previous_live; zero: no row yet), so a replica that lost the race records
+// nothing. A live delivery may replace a shadow row, which charged nothing; a
+// shadow delivery never replaces a live one (bug hunt 33).
 func (q *Queries) RecordManagedPostgresOverageDelivery(ctx context.Context, db DBTX, arg RecordManagedPostgresOverageDeliveryParams) (bool, error) {
 	row := db.QueryRow(ctx, recordManagedPostgresOverageDelivery,
 		arg.Provider,
@@ -116,6 +121,7 @@ func (q *Queries) RecordManagedPostgresOverageDelivery(ctx context.Context, db D
 		arg.DeliveredMillicents,
 		arg.UpdatedAt,
 		arg.PreviousMillicents,
+		arg.PreviousLive,
 	)
 	var recorded bool
 	err := row.Scan(&recorded)

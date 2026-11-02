@@ -46,9 +46,14 @@ type guestSpansAccounts interface {
 // GuestSpansIngester is process-wide: both SpansWriter listeners (single-box
 // Unix socket and split-box mTLS) share one accumulator and flush loop.
 type GuestSpansIngester struct {
-	acc      *gateway.SpansAccumulator
-	accounts guestSpansAccounts
-	limiter  *peraccount.Limiter
+	acc     *gateway.SpansAccumulator
+	limiter *peraccount.Limiter
+	// plans resolves the app's resource owner's plan and the bucket its
+	// exports draw from (tracing tenancy T6).
+	plans *telemetryPlans
+	// released, when set by WithTracingRelease, refuses exports while the
+	// tracing capability is off for the app's resource owner.
+	released TracingReleased
 	log      *slog.Logger
 	// logs, when set by WithLogs, ingests guest OTLP log exports (ADR-213
 	// runtime adapter); nil reports log exports unavailable.
@@ -65,27 +70,39 @@ func NewGuestSpansIngester(accounts guestSpansAccounts, limiter *peraccount.Limi
 	if log == nil {
 		log = slog.Default()
 	}
-	return &GuestSpansIngester{acc: gateway.NewSpansAccumulator(), accounts: accounts, limiter: limiter, log: log}
+	return &GuestSpansIngester{acc: gateway.NewSpansAccumulator(), limiter: limiter, plans: newTelemetryPlans(accounts, limiter), log: log}
 }
 
-// limitsFor returns the account's plan limits, caching them in the shared
-// limiter so steady-state exports avoid a database read.
-func (g *GuestSpansIngester) limitsFor(ctx context.Context, accountID uuid.UUID) (api.Limits, error) {
-	if limits, ok := g.limiter.CachedLimits(accountID); ok {
-		return limits, nil
-	}
-	acct, err := g.accounts.AccountByID(ctx, accountID.String())
+// WithTracingRelease gates exports on the tracing capability's platform flag
+// for the app's resource owner, as apid gates the tracing routes and settings
+// (ADR-20261023115741). An export for an account the capability is off for is
+// refused as disabled.
+func (g *GuestSpansIngester) WithTracingRelease(released TracingReleased) *GuestSpansIngester {
+	g.released = released
+	return g
+}
+
+// planFor returns the plan of the app's resource owner (tracing tenancy T6):
+// a company app is admitted, bounded and rate limited by its organization's
+// plan, as request-telemetry retention keeps its rows, not by the plan of
+// whoever created it. Steady-state exports read it from cache.
+func (g *GuestSpansIngester) planFor(ctx context.Context, accountID uuid.UUID, appID string) (telemetryPlan, error) {
+	app, err := uuid.Parse(appID)
 	if err != nil {
-		return api.Limits{}, err
+		return g.plans.forAccount(ctx, accountID)
 	}
-	limits := api.MustLimitsFor(acct.Plan)
-	g.limiter.CacheLimits(accountID, limits)
-	return limits, nil
+	return g.plans.forApp(ctx, accountID, app)
 }
 
 func (g *GuestSpansIngester) ingest(ctx context.Context, req *apidpb.IngestGuestSpansRequest) *apidpb.IngestGuestSpansResponse {
 	accountID, err := uuid.Parse(req.GetAccountId())
-	if err != nil || req.GetAppId() == "" || req.GetDeploymentId() == "" {
+	if err != nil || req.GetDeploymentId() == "" {
+		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansInvalid}
+	}
+	// The app is host-owned (vmmd resolves it from the instance); the
+	// spans merge only into its own request rows (tracing tenancy T4).
+	appID, err := uuid.Parse(req.GetAppId())
+	if err != nil {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansInvalid}
 	}
 	codec := req.GetCodec()
@@ -96,24 +113,26 @@ func (g *GuestSpansIngester) ingest(ctx context.Context, req *apidpb.IngestGuest
 	if !ok || len(req.GetPayload()) == 0 || len(req.GetPayload()) > api.TraceMaxFrameBytes {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansInvalid}
 	}
-	limits, err := g.limitsFor(ctx, accountID)
+	plan, err := g.planFor(ctx, accountID, req.GetAppId())
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansDisabled}
 		}
-		g.log.Warn("guest spans: account lookup failed", "err", err)
+		g.log.Warn("guest spans: plan lookup failed", "err", err)
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansUnavailable}
 	}
-	if !limits.DebugTelemetryEnabled {
+	limits := plan.Limits
+	if !limits.DebugTelemetryEnabled || (g.released != nil && !g.released(plan.Flag)) {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansDisabled}
 	}
 	if g.acc.Len() >= guestSpansMaxBuckets {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansRateLimited, RetryAfterMs: int64(time.Second / time.Millisecond)}
 	}
-	if taken, retryMs := g.limiter.Take(accountID, limits.DebugTelemetryRequestsPerMinute); !taken {
+	if taken, retryMs := g.limiter.TakeForApp(plan.Subject, appID, limits.DebugTelemetryRequestsPerMinute); !taken {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansRateLimited, RetryAfterMs: retryMs}
 	}
-	accepted, rejected, err := g.acc.AddOTLPTraceExport(accountID, string(limits.Plan), contentType, contentEncoding, req.GetPayload(), api.TraceMaxDecodedBytes)
+	target := gateway.SpanTarget{AccountID: accountID, AppID: appID}
+	accepted, rejected, err := g.acc.AddOTLPTraceExportFor(target, string(limits.Plan), contentType, contentEncoding, req.GetPayload(), api.TraceMaxDecodedBytes)
 	if err != nil {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansInvalid}
 	}
@@ -124,8 +143,8 @@ func (g *GuestSpansIngester) ingest(ctx context.Context, req *apidpb.IngestGuest
 func (g *GuestSpansIngester) Run(ctx context.Context, interval time.Duration, write func(context.Context, *apidpb.WriteSpansSummaryRequest) (*apidpb.WriteSpansSummaryResponse, error)) error {
 	return g.acc.RunFlushLoop(ctx, gateway.FlushLoopConfig{
 		Interval: interval,
-		WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-			resp, err := write(writeCtx, &apidpb.WriteSpansSummaryRequest{TraceId: traceID, SummaryJson: summaryJSON, AccountId: accountID})
+		WriteTargetFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+			resp, err := write(writeCtx, target.Request(traceID, summaryJSON))
 			if err != nil {
 				return "", 0, err
 			}

@@ -46,7 +46,8 @@ Prometheus discovers both per node from apid
 (`/v1/internal/metrics/s3-gatewayd-compute-targets`,
 `/v1/internal/metrics/cloudflared-s3-targets`) while the manifest runs the
 gateway on compute nodes; `FaasComputeObjectGatewayDown`,
-`FaasComputeObjectGatewayConnectorDisconnected` and
+`FaasComputeObjectGatewayConnectorDisconnected`,
+`FaasComputeObjectGatewayUnavailable` (after the cutover) and
 `FaasS3GatewayPortShareSaturated` cover them
 (`docs/runbooks/FaasObjectStorage.md`).
 
@@ -81,6 +82,24 @@ gateway on compute nodes; `FaasComputeObjectGatewayDown`,
    the gateway's 512 MB and one CPU out of tenant admission (`gregalectl
    compute-nodes sizing --edge --object-gateway`).
 
+## Public reads on the node
+
+With `object_storage.compute_public_reads: true` in the manifest (ADR step
+7), the role also writes
+`faas-gatewayd-public-edge.service.d/50-faas-object-public-reads.conf`. The
+node's app edge then serves public bucket reads itself, with this node's
+registry and the gateway-only credential:
+
+- the manifest gives the edge `api.ObjectGatewayPublicReadSharePercent` of
+  the node's share (`faas_object_public_read_max_bytes_per_second`);
+- it lowers `faas_object_gateway_max_bytes_per_second` by the same amount,
+  so the node stays within its 30%.
+
+Uploads keep going to the control plane. Turning the switch off removes the
+drop-in and restarts the edge, which goes back to forwarding public reads.
+The edge reads the drop-in, registry and credential only at start, so a
+change to any of them restarts it while public reads are on.
+
 ## Load test pilot
 
 For the one-node load test (ADR step 5,
@@ -91,6 +110,17 @@ compute variables. The role then writes the pilot host as the registry's
 `deploy/scripts/cloudflare-s3-tunnel.sh` creates the s3 tunnel and the pilot
 record and stages the token on the pilot node alone. Set the variable back to
 `''` before the cutover.
+
+## Cutover
+
+When `s3.<domain>` moves to the s3 tunnel (ADR step 6), set
+`faas_object_gateway_endpoint_on_tunnel: true` in the control plane's
+variables (`CP_ANSIBLE_VARS_B64`). Prometheus then labels the compute
+gateways `s3_endpoint_route="tunnel"`, and
+`FaasComputeObjectGatewayUnavailable` pages when no node has both its
+gateway answering and its connector connected. Before the cutover the page
+stays silent, since the tunnel carries at most the pilot host. Set it back to
+false if `s3.<domain>` returns to the control-plane origin.
 
 ## Checks
 

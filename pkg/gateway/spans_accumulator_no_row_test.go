@@ -44,7 +44,7 @@ func TestDrainOnceRetriesNoRowAndMergesPendingSpans(t *testing.T) {
 		t.Fatal(err)
 	}
 	acc.drainOnce(context.Background(), cfg, pending)
-	if entry := pending[spanBucketKey{accountID: account, traceID: tid}]; entry == nil || entry.retries != 1 {
+	if entry := pending[spanBucketKey{target: SpanTarget{AccountID: account}, traceID: tid}]; entry == nil || entry.retries != 1 {
 		t.Fatalf("no_row entry = %+v, want kept with one retry", entry)
 	}
 

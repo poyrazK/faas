@@ -150,7 +150,10 @@ func LogAppLogFrameWithIdentity(log *slog.Logger, f scheddgrpc.LogFrame, identit
 	if f.Level != "" {
 		attrs = append(attrs, "level", logsanitize.Field(f.Level))
 	}
-	log.Info("app_log", attrs...)
+	// Debug, not Info: every viewer re-journaled each customer line into
+	// the platform's own logs (one copy per open viewer, kept outside the
+	// customer's retention and erasure).
+	log.Debug("app_log", attrs...)
 }
 
 // RenderAppLogsError renders a schedd-side dial error as either a
@@ -174,18 +177,21 @@ func LogAppLogFrameWithIdentity(log *slog.Logger, f scheddgrpc.LogFrame, identit
 // substring, so the escaping is benign there. New helpers that
 // emit structured data should use json.Marshal instead.
 func RenderAppLogsError(w http.ResponseWriter, flusher http.Flusher, err error) {
+	// The raw error carried node IDs, dial targets, socket paths and gRPC
+	// descriptions to API clients; they get a fixed message, and the cause
+	// stays in the caller's logs.
 	if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 		// Already past StartSSE — write the degraded event
 		// instead of trying to overwrite the 200 (the consumer
 		// reads the SSE body, not the status).
-		_, _ = fmt.Fprintf(w, "event: degraded\ndata: {\"error\":%q,\"code\":\"not_found\"}\n\n", err.Error())
+		_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"error\":\"no running instance\",\"code\":\"not_found\"}\n\n")
 		_, _ = fmt.Fprint(w, "event: end\ndata: {\"reason\":\"not_found\"}\n\n")
 		if flusher != nil {
 			flusher.Flush()
 		}
 		return
 	}
-	_, _ = fmt.Fprintf(w, "event: degraded\ndata: {\"error\":%q}\n\n", err.Error())
+	_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"error\":\"the log stream is temporarily unavailable\"}\n\n")
 	_, _ = fmt.Fprint(w, "event: end\ndata: {\"reason\":\"schedd_unreachable\"}\n\n")
 	if flusher != nil {
 		flusher.Flush()
