@@ -8002,6 +8002,17 @@ func (q *Queries) ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX
 	return err
 }
 
+const clearManagedPostgresPlanExcessNotices = `-- name: ClearManagedPostgresPlanExcessNotices :exec
+DELETE FROM managed_postgres_plan_excess_notices WHERE database_id=ANY($1::uuid[])
+`
+
+// ADR-20261102125208: a database back inside its plan loses its notice, so a
+// later suspension is noticed again.
+func (q *Queries) ClearManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearManagedPostgresPlanExcessNotices, databaseIds)
+	return err
+}
+
 const clearManagedPostgresRestoreSlot = `-- name: ClearManagedPostgresRestoreSlot :execrows
 UPDATE managed_postgres_databases SET restore_slot_until=NULL,updated_at=$1::timestamptz
 WHERE id=$2::uuid AND restore_slot_until IS NOT NULL
@@ -53930,6 +53941,56 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 	return items, nil
 }
 
+const listUnmailedManagedPostgresPlanExcessNotices = `-- name: ListUnmailedManagedPostgresPlanExcessNotices :many
+SELECT n.database_id,n.reason,n.recorded_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.mail_intent_id IS NULL AND n.recorded_at>$1::timestamptz AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.recorded_at,n.database_id LIMIT $2
+`
+
+type ListUnmailedManagedPostgresPlanExcessNoticesParams struct {
+	Since     pgtype.Timestamptz
+	BatchSize int32
+}
+
+type ListUnmailedManagedPostgresPlanExcessNoticesRow struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	AccountID    pgtype.UUID
+	Name         string
+	ServiceClass string
+}
+
+// The notices still to mail: recorded after since, not yet linked to an
+// intent, for databases not being deleted.
+func (q *Queries) ListUnmailedManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresPlanExcessNoticesParams) ([]ListUnmailedManagedPostgresPlanExcessNoticesRow, error) {
+	rows, err := db.Query(ctx, listUnmailedManagedPostgresPlanExcessNotices, arg.Since, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnmailedManagedPostgresPlanExcessNoticesRow{}
+	for rows.Next() {
+		var i ListUnmailedManagedPostgresPlanExcessNoticesRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Reason,
+			&i.RecordedAt,
+			&i.AccountID,
+			&i.Name,
+			&i.ServiceClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnmailedManagedPostgresRestoreSlotNotices = `-- name: ListUnmailedManagedPostgresRestoreSlotNotices :many
 SELECT n.database_id,n.kind,n.slot_until,n.restorable_until,n.recorded_at,d.account_id,d.name
 FROM managed_postgres_restore_slot_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
@@ -90549,6 +90610,27 @@ func (q *Queries) RecordManagedPostgresLifecycleResource(ctx context.Context, db
 		arg.DatabaseID,
 		arg.LeaseToken,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordManagedPostgresPlanExcessNotice = `-- name: RecordManagedPostgresPlanExcessNotice :execrows
+INSERT INTO managed_postgres_plan_excess_notices(database_id,reason,recorded_at)
+VALUES($1::uuid,$2::text,$3::timestamptz)
+ON CONFLICT (database_id) DO NOTHING
+`
+
+type RecordManagedPostgresPlanExcessNoticeParams struct {
+	DatabaseID pgtype.UUID
+	Reason     string
+	RecordedAt pgtype.Timestamptz
+}
+
+// One notice per suspension; later sweeps leave it alone.
+func (q *Queries) RecordManagedPostgresPlanExcessNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresPlanExcessNoticeParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresPlanExcessNotice, arg.DatabaseID, arg.Reason, arg.RecordedAt)
 	if err != nil {
 		return 0, err
 	}

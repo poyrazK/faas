@@ -14812,6 +14812,25 @@ WHERE n.mail_intent_id IS NULL AND n.recorded_at>sqlc.arg(since)::timestamptz
   AND d.restore_slot_until>sqlc.arg(now)::timestamptz))
 ORDER BY n.recorded_at,n.database_id,n.kind LIMIT sqlc.arg(batch_size);
 
+-- name: ClearManagedPostgresPlanExcessNotices :exec
+-- ADR-20261102125208: a database back inside its plan loses its notice, so a
+-- later suspension is noticed again.
+DELETE FROM managed_postgres_plan_excess_notices WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]);
+
+-- name: RecordManagedPostgresPlanExcessNotice :execrows
+-- One notice per suspension; later sweeps leave it alone.
+INSERT INTO managed_postgres_plan_excess_notices(database_id,reason,recorded_at)
+VALUES(sqlc.arg(database_id)::uuid,sqlc.arg(reason)::text,sqlc.arg(recorded_at)::timestamptz)
+ON CONFLICT (database_id) DO NOTHING;
+
+-- name: ListUnmailedManagedPostgresPlanExcessNotices :many
+-- The notices still to mail: recorded after since, not yet linked to an
+-- intent, for databases not being deleted.
+SELECT n.database_id,n.reason,n.recorded_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.mail_intent_id IS NULL AND n.recorded_at>sqlc.arg(since)::timestamptz AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.recorded_at,n.database_id LIMIT sqlc.arg(batch_size);
+
 -- name: ReadManagedPostgresLifecycleRestoreSource :one
 SELECT * FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE;
 
