@@ -3075,6 +3075,7 @@
       "cache_status",
       "cancelled_at",
       "cancelled_by_deployment_cascade",
+      "coalesced_with",
       "deployment_id",
       "enqueued_at",
       "failure_class",

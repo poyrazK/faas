@@ -13570,11 +13570,11 @@ func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error
 	row := s.pool.QueryRow(ctx,
 		`update builds
 		   set status = 'running', started_at = now()
-		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
+		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
 		   and not (kind = 'preview' and exists (
 		     select 1 from builds o
 		      where o.status = 'queued' and o.kind <> 'preview'
-		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=o.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))))
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
 		           started_at, finished_at, enqueued_at,
@@ -13605,15 +13605,18 @@ func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, node
 		   set status = 'running', started_at = now()
 		  from deployments d
 		 where b.id = $1
-		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
+		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=b.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
 		   and not (b.kind = 'preview' and exists (
 		     select 1 from builds o
 		      where o.status = 'queued' and o.kind <> 'preview'
-		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=o.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))))
 		   and d.id = b.deployment_id
 		   and (
-		     b.enqueued_at <= now() - $3::interval
-		     or coalesce((
+		     (b.coalesced_with is not null and (
+		       coalesce((select w.finished_at from builds w where w.id = b.coalesced_with), '-infinity'::timestamptz) <= now() - $3::interval
+		       or coalesce((select nullif(bp.builder_node_id, '') from build_provenance bp where bp.build_id = b.coalesced_with), $2) = $2))
+		     or b.coalesced_with is null and b.enqueued_at <= now() - $3::interval
+		     or b.coalesced_with is null and coalesce((
 		       select nullif(bp.builder_node_id, '')
 		         from deployments prior_d
 		         join builds prior_b on prior_b.deployment_id = prior_d.id
@@ -13657,7 +13660,7 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		   set status = 'running', started_at = now()
 		 where id = (
 		   select id from builds
-		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
+		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
 		    order by (kind = 'preview'), enqueued_at asc
 		    limit 1
 		    for update skip locked
@@ -13686,12 +13689,12 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairnessWindow time.Duration) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`update builds set status='running', started_at = now()
-    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and id = (
+    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes'))) and id = (
       select b.id
         from builds b
         join deployments d on d.id = b.deployment_id
         join apps a on a.id = d.app_id
-       where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
+       where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=b.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
        order by (b.kind = 'preview'), exists (
          select 1 from recent_build_claims r
           where r.account_id = a.account_id
@@ -13729,15 +13732,18 @@ func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, node
 	}
 	row := s.pool.QueryRow(ctx,
 		`update builds set status = 'running', started_at = now()
-		 where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and id = (
+		 where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=builds.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes'))) and id = (
 		   select b.id
 		     from builds b
 		     join deployments d on d.id = b.deployment_id
 		     join apps a on a.id = d.app_id
-		    where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
+		    where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now()) and not exists (select 1 from builds w where w.id=b.coalesced_with and (w.status='queued' or (w.status='running' and w.started_at > now() - interval '30 minutes')))
 		      and (
-		        b.enqueued_at <= now() - $2::interval
-		        or coalesce((
+		        (b.coalesced_with is not null and (
+		          coalesce((select w.finished_at from builds w where w.id = b.coalesced_with), '-infinity'::timestamptz) <= now() - $2::interval
+		          or coalesce((select nullif(bp.builder_node_id, '') from build_provenance bp where bp.build_id = b.coalesced_with), $1) = $1))
+		        or b.coalesced_with is null and b.enqueued_at <= now() - $2::interval
+		        or b.coalesced_with is null and coalesce((
 		          select nullif(bp.builder_node_id, '')
 		            from deployments prior_d
 		            join builds prior_b on prior_b.deployment_id = prior_d.id
