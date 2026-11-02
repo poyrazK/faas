@@ -265,6 +265,32 @@ func TestChangeEventValidation(t *testing.T) {
 	}
 }
 
+// A refused publication publishes nothing and answers with the refusal, so
+// the relay keeps its rows and retries after the back-off (bug hunt 36).
+func TestAdmitRefusalPublishesNothing(t *testing.T) {
+	f := newFixture(t)
+	var gotApp state.App
+	var gotEvents int
+	f.handler.Admit = func(_ context.Context, acct state.Account, app state.App, events int) *api.Problem {
+		if acct.ID != f.store.account.ID {
+			t.Fatalf("admitted account %q, want the app's resource account", acct.ID)
+		}
+		gotApp, gotEvents = app, events
+		return api.ErrEventPublishRateLimited(5, events, time.Second)
+	}
+	w := f.serve(f.token(t, workloadidentity.DataAPIEventsAudience), batch(t, event(1), event(2), event(3)))
+	if w.Code != http.StatusTooManyRequests || len(f.publisher.events) != 0 || f.publisher.notified != 0 {
+		t.Fatalf("status %d, %d published: %s", w.Code, len(f.publisher.events), w.Body)
+	}
+	if gotApp.ID != f.store.app.ID || gotEvents != 3 {
+		t.Fatalf("admitted app %q with %d events, want %q with 3", gotApp.ID, gotEvents, f.store.app.ID)
+	}
+	f.handler.Admit = func(context.Context, state.Account, state.App, int) *api.Problem { return nil }
+	if w := f.serve(f.token(t, workloadidentity.DataAPIEventsAudience), batch(t, event(1))); w.Code != http.StatusOK || len(f.publisher.events) != 1 {
+		t.Fatalf("admitted publication: status %d, %d published", w.Code, len(f.publisher.events))
+	}
+}
+
 func TestUnavailablePublisher(t *testing.T) {
 	f := newFixture(t)
 	f.handler.Publisher = nil

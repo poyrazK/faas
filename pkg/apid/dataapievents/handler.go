@@ -38,12 +38,17 @@ type Handler struct {
 	Verifier  *workloadidentity.Verifier
 	Store     Store
 	Publisher Publisher
-	Now       func() time.Time
+	// Admit decides a publication before any of its events is published:
+	// nil, or the refusal every other publication path gives (events
+	// paused, the account's publish rate). The relay retries a refused
+	// publication after its back-off. Nil admits every publication.
+	Admit func(ctx context.Context, acct state.Account, app state.App, events int) *api.Problem
+	Now   func() time.Time
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	acct, appID, err := h.workload(r)
+	acct, app, err := h.workload(r)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required",
 			"a gregale:data-api:events workload token from a live instance of an active app is required"))
@@ -58,41 +63,47 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, problem)
 		return
 	}
-	source, err := appevents.AppProducerSource(appID)
+	source, err := appevents.AppProducerSource(app.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("application identity"))
 		return
 	}
+	if h.Admit != nil {
+		if problem := h.Admit(r.Context(), acct, app, len(batch.Events)); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.EventPublishBatchTimeout)
 	defer cancel()
-	results := h.publish(ctx, acct, appID, batch.Events)
+	results := h.publish(ctx, acct, app.ID, batch.Events)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(api.DataAPIChangeEventBatchResponse{Source: source, Results: results})
 }
 
 // workload verifies the token and resolves its live app and account.
-func (h Handler) workload(r *http.Request) (state.Account, string, error) {
+func (h Handler) workload(r *http.Request) (state.Account, state.App, error) {
 	if h.Verifier == nil || h.Store == nil {
-		return state.Account{}, "", errors.New("workload trust is not configured")
+		return state.Account{}, state.App{}, errors.New("workload trust is not configured")
 	}
 	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	claims, err := h.Verifier.Verify(token, workloadidentity.DataAPIEventsAudience, h.now())
 	if err != nil {
-		return state.Account{}, "", err
+		return state.Account{}, state.App{}, err
 	}
 	app, err := h.Store.AppByID(r.Context(), claims.AppID)
 	if err != nil || app.AccountID != claims.AccountID || app.Status == state.AppDeleted {
-		return state.Account{}, "", errors.New("token does not name this app")
+		return state.Account{}, state.App{}, errors.New("token does not name this app")
 	}
 	acct, err := state.AppResourceAccount(r.Context(), h.Store, app)
 	if err != nil || !acct.Active() {
-		return state.Account{}, "", errors.New("account is not active")
+		return state.Account{}, state.App{}, errors.New("account is not active")
 	}
 	instance, err := h.Store.InstanceByID(r.Context(), claims.InstanceID)
 	if err != nil || instance.AppID != app.ID || !state.State(instance.State).CountsForConcurrency() {
-		return state.Account{}, "", errors.New("instance is not live")
+		return state.Account{}, state.App{}, errors.New("instance is not live")
 	}
-	return acct, app.ID, nil
+	return acct, app, nil
 }
 
 // publish publishes events in order. It stops at the first event that may
