@@ -3,10 +3,10 @@ package state
 import (
 	"context"
 	"fmt"
-	"regexp"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 type IssueSlackRoutingRule struct {
@@ -38,7 +38,7 @@ type IssueSlackRoutingStore interface {
 	PreviewIssueSlackRouting(context.Context, string, string, PutIssueSlackRoutingPolicy, IssueSlackRoutingSample) (IssueSlackRoutingPreview, error)
 }
 
-var slackRoutingValue = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+var slackRoutingValue = lazyregexp.New(`^[a-z0-9][a-z0-9-]*$`)
 
 func ValidSlackRoutingKey(key string) bool {
 	return len(key) <= api.IssueSlackRoutingKeyMaxBytes && slackRoutingValue.MatchString(key)
