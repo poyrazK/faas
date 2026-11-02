@@ -1,17 +1,20 @@
-// adr: 1138
+// adr: 1138, 20261102082606
 package vmmdgrpc
 
 import (
 	"context"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
@@ -19,35 +22,44 @@ import (
 // non-zero trace id and parent id.
 var traceparentPattern = regexp.MustCompile(`^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$`)
 
-// inflightTraces keeps the traceparent of each HTTP forward while it is in
-// flight, next to the activity counter and nothing else of the request
-// (ADR-1138). The zero value is ready to use.
+// inflightForward is what vmmd keeps of an HTTP forward while it is in
+// flight: its traceparent (ADR-1138) and when its request budget runs out
+// (ADR-20261102082606). Either may be empty.
+type inflightForward struct {
+	traceparent string
+	deadline    time.Time
+}
+
+// inflightTraces keeps the traceparent and deadline of each HTTP forward
+// while it is in flight, next to the activity counter and nothing else of
+// the request. The zero value is ready to use.
 type inflightTraces struct {
 	mu         sync.Mutex
 	next       uint64
-	byInstance map[string]map[uint64]string
+	byInstance map[string]map[uint64]inflightForward
 }
 
-// begin records one HTTP forward and returns the func that ends it.
-// traceparent may be empty: the forward still counts, so an instance serving
-// one traced and one untraced request is not mistaken for serving one.
-func (t *inflightTraces) begin(instance, traceparent string) func() {
+// begin records one HTTP forward and returns the func that ends it. The
+// forward may carry neither a traceparent nor a deadline: it still counts, so
+// an instance serving one traced and one untraced request is not mistaken
+// for serving one.
+func (t *inflightTraces) begin(instance string, forward inflightForward) func() {
 	if instance == "" {
 		return func() {}
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.byInstance == nil {
-		t.byInstance = map[string]map[uint64]string{}
+		t.byInstance = map[string]map[uint64]inflightForward{}
 	}
 	forwards := t.byInstance[instance]
 	if forwards == nil {
-		forwards = map[uint64]string{}
+		forwards = map[uint64]inflightForward{}
 		t.byInstance[instance] = forwards
 	}
 	t.next++
 	id := t.next
-	forwards[id] = traceparent
+	forwards[id] = forward
 	return func() {
 		t.mu.Lock()
 		defer t.mu.Unlock()
@@ -58,18 +70,41 @@ func (t *inflightTraces) begin(instance, traceparent string) func() {
 	}
 }
 
-// only returns the traceparent of the instance's one HTTP forward in flight.
-func (t *inflightTraces) only(instance string) (string, bool) {
+// only returns the instance's one HTTP forward in flight.
+func (t *inflightTraces) only(instance string) (inflightForward, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	forwards := t.byInstance[instance]
 	if len(forwards) != 1 {
-		return "", false
+		return inflightForward{}, false
 	}
-	for _, traceparent := range forwards {
-		return traceparent, traceparent != ""
+	for _, forward := range forwards {
+		return forward, true
 	}
-	return "", false
+	return inflightForward{}, false
+}
+
+// forwardOf is what vmmd keeps of an HTTP forward that starts at now.
+func forwardOf(req *vmmdpb.ForwardHTTPRequestInit, now time.Time) inflightForward {
+	return inflightForward{traceparent: forwardTraceparent(req), deadline: forwardDeadline(req, now)}
+}
+
+// forwardDeadline is when the request's single X-Faas-Deadline-Ms budget,
+// counted from now, runs out; zero without one. Only the gateway sets the
+// header: it drops a customer-supplied x-faas-* header before forwarding.
+func forwardDeadline(req *vmmdpb.ForwardHTTPRequestInit, now time.Time) time.Time {
+	value, count := "", 0
+	for _, h := range req.GetHeaders() {
+		if strings.EqualFold(h.GetName(), api.DeadlineHeader) {
+			value = strings.TrimSpace(h.GetValue())
+			count++
+		}
+	}
+	ms, err := strconv.ParseInt(value, 10, 64)
+	if count != 1 || err != nil || ms <= 0 || ms > api.RequestBudgetPlanMax.Milliseconds() {
+		return time.Time{}
+	}
+	return now.Add(time.Duration(ms) * time.Millisecond)
 }
 
 // forwardTraceparent is the request's single valid W3C traceparent, or "".
@@ -88,13 +123,14 @@ func forwardTraceparent(req *vmmdpb.ForwardHTTPRequestInit) string {
 	return value
 }
 
-// InflightRequestTrace answers with the traceparent of the one request the
-// serving instance behind a service call's source address is handling
-// (ADR-1138): only when exactly one forward of any kind (HTTP, upgrade, TCP,
-// UDP, dispatch) is in flight and it is an HTTP request that carried a valid
-// traceparent. The caller comes from the same host-owned live identity as
-// ResolveServiceCaller, never a cached address mapping. Anything else
-// answers empty.
+// InflightRequestTrace answers with the traceparent and deadline of the one
+// request the serving instance behind a service call's source address is
+// handling (ADR-1138, ADR-20261102082606): only when exactly one forward of
+// any kind (HTTP, upgrade, TCP, UDP, dispatch) is in flight and it is an HTTP
+// request. The traceparent is set when that request carried a valid one, the
+// deadline when it carried a request budget. The caller comes from the same
+// host-owned live identity as ResolveServiceCaller, never a cached address
+// mapping. Anything else answers empty.
 func (s *Server) InflightRequestTrace(_ context.Context, req *vmmdpb.InflightRequestTraceRequest) (*vmmdpb.InflightRequestTraceResponse, error) {
 	address, err := netip.ParseAddr(req.GetSourceIp())
 	if err != nil || !address.Is4() {
@@ -115,9 +151,13 @@ func (s *Server) InflightRequestTrace(_ context.Context, req *vmmdpb.InflightReq
 	if inflight, seen := s.activity.Inflight(instance); !seen || inflight != 1 {
 		return &vmmdpb.InflightRequestTraceResponse{}, nil
 	}
-	traceparent, ok := s.inflightTraces.only(instance)
+	forward, ok := s.inflightTraces.only(instance)
 	if !ok {
 		return &vmmdpb.InflightRequestTraceResponse{}, nil
 	}
-	return &vmmdpb.InflightRequestTraceResponse{Traceparent: traceparent}, nil
+	resp := &vmmdpb.InflightRequestTraceResponse{Traceparent: forward.traceparent}
+	if !forward.deadline.IsZero() {
+		resp.DeadlineUnixMs = forward.deadline.UnixMilli()
+	}
+	return resp, nil
 }

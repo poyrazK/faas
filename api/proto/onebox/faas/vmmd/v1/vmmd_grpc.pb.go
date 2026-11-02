@@ -370,8 +370,11 @@ type VmmdClient interface {
 	// request (ADR-1138). The caller is resolved from the same host-owned live
 	// identity as ResolveServiceCaller. It answers only when exactly one
 	// forward of any kind is in flight and it is an HTTP request that carried a
-	// valid traceparent; otherwise traceparent is empty. Older vmmds answer
-	// Unimplemented, which callers treat as empty.
+	// valid traceparent; otherwise traceparent is empty. Under the same
+	// one-forward rule it also answers that request's deadline
+	// (ADR-20261102082606), whether or not it carried trace context. Older
+	// vmmds answer Unimplemented or leave the deadline 0, which callers treat
+	// as unknown.
 	InflightRequestTrace(ctx context.Context, in *InflightRequestTraceRequest, opts ...grpc.CallOption) (*InflightRequestTraceResponse, error)
 	// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
 	// PR #114). Returns the vmmd process's Firecracker version + the
@@ -2072,8 +2075,11 @@ type VmmdServer interface {
 	// request (ADR-1138). The caller is resolved from the same host-owned live
 	// identity as ResolveServiceCaller. It answers only when exactly one
 	// forward of any kind is in flight and it is an HTTP request that carried a
-	// valid traceparent; otherwise traceparent is empty. Older vmmds answer
-	// Unimplemented, which callers treat as empty.
+	// valid traceparent; otherwise traceparent is empty. Under the same
+	// one-forward rule it also answers that request's deadline
+	// (ADR-20261102082606), whether or not it carried trace context. Older
+	// vmmds answer Unimplemented or leave the deadline 0, which callers treat
+	// as unknown.
 	InflightRequestTrace(context.Context, *InflightRequestTraceRequest) (*InflightRequestTraceResponse, error)
 	// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
 	// PR #114). Returns the vmmd process's Firecracker version + the

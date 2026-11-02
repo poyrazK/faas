@@ -1956,7 +1956,7 @@ Examples:
 
 ```sh
 gregale release approval require --app my-api --approvals 2 --notify releases
-gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h
+gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h --notify releases
 gregale release approval pending --app my-api
 gregale release approval status v42 --app my-api
 gregale release reject v42 --app my-api --reason "checkout latency is up"
@@ -1976,7 +1976,7 @@ Stop requiring approvals for an app
 
 Require approvals for an app&#39;s production releases
 
-`gregale release approval require [--app <slug>] --approvals <N> [--after-stage <N>] [--timeout <DURATION>] [--approvers <ROLE>] [--allow-self-approval] [--notify <CHANNEL,...>]`
+`gregale release approval require [--app <slug>] --approvals <N> [--after-stage <N>] [--timeout <DURATION>] [--approvers <ROLE>] [--allow-self-approval] --notify <CHANNEL,...>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1986,7 +1986,7 @@ Require approvals for an app&#39;s production releases
 | `--timeout <DURATION>` | abort a release that waits longer (default 24h) |  |
 | `--approvers <ROLE>` | who may approve (default admin: owners and admins) | one of `admin` · `developer` |
 | `--allow-self-approval` | count the deployer&#39;s own approval |  |
-| `--notify <CHANNEL,...>` | Slack or email channels told when a release waits, is decided or times out |  |
+| `--notify <CHANNEL,...>` | Slack or email channels told when a release waits, is decided or times out | required |
 
 #### release approval policy
 

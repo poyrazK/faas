@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">
+body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5rem} a {color:#2563eb} form {display:flex;gap:1rem;flex-wrap:wrap;padding:1rem;background:#f1f5f9;color:#0f172a} label {display:grid;gap:.25rem} input,select,button {padding:.4rem} table {width:100%;border-collapse:collapse} td,th {text-align:left;padding:.5rem;border-bottom:1px solid #ddd} code {overflow-wrap:anywhere} .notice {padding:1rem;background:#fef3c7;color:#92400e} .muted {color:#64748b}
+</style></head><body>
+{{$d := .Data}}
+<nav><a href="/dashboard/apps/{{$d.AppSlug}}">{{$d.AppSlug}}</a>{{if $.On "traffic-profiles"}} · <a href="/dashboard/apps/{{$d.AppSlug}}/profiles">Profiles</a>{{end}}</nav>
+<h1>Profile captures</h1>
+{{template "profile_captures" $d}}
+</body></html>

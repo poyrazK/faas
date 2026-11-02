@@ -133,7 +133,17 @@ func TestOpenExchangesStayBounded(t *testing.T) {
 		go func() { h.ServeHTTP(httptest.NewRecorder(), req); done <- struct{}{} }()
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for serveExchange(h, uuid.NewString(), false).Code != http.StatusServiceUnavailable {
+	for {
+		id := uuid.NewString()
+		rr := serveExchange(h, id, false)
+		if rr.Code == http.StatusServiceUnavailable {
+			// vmmd fails only this request on the echo; without it, its
+			// completion wait gets 404 and it fences the whole bridge.
+			if got := rr.Header().Get(RefusedHeader); got != id {
+				t.Fatalf("refused exchange echoed %q, want %q", got, id)
+			}
+			break
+		}
 		if time.Now().After(deadline) {
 			t.Fatal("open exchanges were not bounded")
 		}
@@ -145,5 +155,16 @@ func TestOpenExchangesStayBounded(t *testing.T) {
 	}
 	if rr := serveExchange(h, uuid.NewString(), false); rr.Code != http.StatusOK {
 		t.Fatalf("completed exchanges still counted as open: %d", rr.Code)
+	}
+}
+
+// vmmd admits at most a plan's concurrency_per_vm requests to one instance.
+// A bridge that refused below that bound would fail requests admission had
+// capacity for.
+func TestOpenExchangeLimitCoversEveryPlansRequestBound(t *testing.T) {
+	for _, plan := range api.Plans {
+		if bound := plan.ConcurrencyPerVMBound(); bound > api.TrafficBridgeCompletionMaxEntries {
+			t.Errorf("plan %s admits %d requests per instance, above the bridge's %d open exchanges", plan, bound, api.TrafficBridgeCompletionMaxEntries)
+		}
 	}
 }

@@ -1191,7 +1191,7 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 	if r.TLS != nil {
 		proto = "https"
 	}
-	if !trustsIngressPeer(peer, trustedIngressCIDRs) {
+	if !trustsIngressPeer(peer, trustedIngressCIDRs) && !verifiedIngress(r) {
 		return peerText, proto
 	}
 
@@ -1216,7 +1216,25 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 // peer, the same test CanonicalForwardingContext applies before it reads any
 // forwarded header.
 func TrustedIngressPeer(r *http.Request, trustedIngressCIDRs []netip.Prefix) bool {
-	return trustsIngressPeer(remoteAddrIP(r.RemoteAddr), trustedIngressCIDRs)
+	return verifiedIngress(r) || trustsIngressPeer(remoteAddrIP(r.RemoteAddr), trustedIngressCIDRs)
+}
+
+type verifiedIngressKey struct{}
+
+// WithVerifiedIngress marks ctx as a connection whose peer proves it is the
+// ingress with a client certificate the listener verified. Cloudflare reaches
+// a compute edge from addresses we do not list, so the certificate stands in
+// for FAAS_TRUSTED_INGRESS_CIDRS there (ADR-20261102081618 §2).
+func WithVerifiedIngress(ctx context.Context) context.Context {
+	return context.WithValue(ctx, verifiedIngressKey{}, true)
+}
+
+// verifiedIngress reports whether r came over a marked connection and its
+// client certificate was verified. Both are required, so a mark on a
+// connection without a verified certificate trusts nothing.
+func verifiedIngress(r *http.Request) bool {
+	marked, _ := r.Context().Value(verifiedIngressKey{}).(bool)
+	return marked && r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 }
 
 func trustsIngressPeer(peer netip.Addr, trustedIngressCIDRs []netip.Prefix) bool {

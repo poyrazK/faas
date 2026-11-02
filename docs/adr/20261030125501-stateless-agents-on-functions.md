@@ -128,7 +128,7 @@ Each step is one PR behind the `agents` capability.
    - **Publish.** `data` (JSON, at most `AgentCallbackPayloadMaxBytes`, the realtime message limit) is appended to the endpoint's `agent-inbox` channel with metadata `thread_id`, `kind` and `message_id`, and idempotency key `callback:{thread}:{message_id}`, where each `:` in the thread becomes `~` (fix, 2026-11-02: both IDs may carry `:`, so thread `a:b` with message `c` and thread `a` with message `b:c` shared a key and the second result was refused with a 409; `~` is in neither ID, and a thread without `:` keeps its key). A retried post lands once and gets the first sequence; the same `message_id` with other data is a 409.
    - **Tests.** Unit and property tests in `pkg/apid/agents` cover the thread scope against tampered tokens, issue and post rules, refusal after issue, and landing once.
    **Built, part two (2026-11-01).**
-   - **Revocation.** `POST /v1/agent-callbacks/revocations` with `{endpoint_id, thread_id}` closes a thread to every URL issued for it until then. apid records the time in `agent_callback_revocations`, one row per endpoint and thread. A post is refused like an unknown route when its token was issued at or before that time. A URL issued later works, so a thread can reopen.
+   - **Revocation.** `POST /v1/agent-callbacks/revocations` with `{endpoint_id, thread_id}` closes a thread to every URL issued for it until then. apid records the time in `agent_callback_revocations`, one row per endpoint and thread. A post is refused like an unknown route when its token was issued at or before that time. A URL issued later works, so a thread can reopen. The database's clock dates both the revocation and a token's issue, so they compare on one clock (fix, 2026-11-02: tokens took apid's clock and revocations the database's, so with apid behind, a URL issued after a revocation never worked, and with apid ahead, one issued before a revocation outlived it).
    - **Rate limit.** Each apid counts one thread's posts in fixed one-minute windows. Past `AgentCallbacksPerMinutePerThread` (600) it answers `429 agent_callback_rate_limited` with the limit and the count. Each replica counts alone, so N replicas accept at most N × 600: the limit stops a runaway tool, and a post needs a valid token anyway.
    - **Tests.** `TestPropertyRevokedCallbackNeverPublishes`: over random issues, revocations and posts, a URL publishes exactly when it was issued after its thread's latest revocation. Tests also cover the revoke and rate-limit rules and the store's revocation record.
 4. The Infinity Postgres store adapter and the template app, and a journey in `tests/journeys`: a two-turn stateless agent that sleeps, wakes on its callback and answers.
@@ -192,6 +192,14 @@ Each step is one PR behind the `agents` capability.
      - Sleeps count against the endpoint's 256 realtime schedules (`state.ManagedRealtimeScheduleLimit`, which also counts finished schedules for a day). That bounds the sleeps of one endpoint in preview; a sleep store of its own is left to the capability gateway.
    - **Thread closure.** RAP's `close_thread` names a thread without a credential, so it changes nothing. A thread closes by revoking its callback URLs.
    - **Next.** The templates do not call it yet. Part two wires `gregale_sleep` into the templates and the journey.
+
+   **Step 5, part two (2026-11-02): `agent-infinity-rust` sleeps.**
+   - **The template loads Gregale's toolset** from its RAP discovery endpoint, once per process, as RAP asks runtimes to. Each tool is invoked with Infinity's own `invoke_rap_tool` and a callback URL issued for the calling thread. Without the toolset, the agent runs with `lookup` alone.
+   - **The scripted model sleeps:** `sleep N` calls `gregale_sleep` when the toolset offers it, and an answer names the tool its result came from.
+   - **Journey.** The Infinity run of `TestStatelessAgent` also sleeps for 30 seconds, parks, and checks that the woken thread answers from the platform's tool result.
+   - **`agent-stateless-node` stays on `lookup`.** It is the hand-written loop, without a RAP client.
+   - **Fix: schema creation takes an advisory lock.** A new database's first slices run in parallel, and concurrent `CREATE TABLE IF NOT EXISTS` of one table collide in Postgres's catalog. The store tests hit it; the failed slice was retried, so it healed, but it failed once. Store errors now keep the server's code and message.
+   - **Prerequisite.** The wake-up is a realtime schedule, so it needs `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` on apid, as realtime triggers already do (ADR-1322).
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 
 ## Open questions

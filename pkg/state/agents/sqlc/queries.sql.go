@@ -29,6 +29,19 @@ func (q *Queries) AccountAgentLoad(ctx context.Context, db DBTX, accountID strin
 	return i, err
 }
 
+const agentCallbackClock = `-- name: AgentCallbackClock :one
+SELECT clock_timestamp()::timestamptz AS now
+`
+
+// ADR-20261030125501 §3: the clock RevokeAgentCallbacks records, read when a
+// callback URL is issued so issue and revocation compare on one clock.
+func (q *Queries) AgentCallbackClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, agentCallbackClock)
+	var now pgtype.Timestamptz
+	err := row.Scan(&now)
+	return now, err
+}
+
 const agentCallbacksRevokedAt = `-- name: AgentCallbacksRevokedAt :one
 SELECT revoked_at FROM agent_callback_revocations
  WHERE endpoint_id = $1::text::uuid AND thread_id = $2::text

@@ -26,6 +26,15 @@
     - /etc/faas/secrets/object-storage/gateway-provider.env
   register: faas_object_gateway_removed
 
+# The app edge goes back to forwarding public reads before its registry and
+# credential disappear for good: it read them at start.
+- name: s3_gateway_compute_service — leave public reads to the control plane
+  notify: restart faas-gatewayd-public-edge for public reads
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-public-edge.service.d/50-faas-object-public-reads.conf
+    state: absent
+  register: faas_object_public_reads_dropin_removed
+
 - name: s3_gateway_compute_service — reload systemd after removing the gateway  # noqa: no-handler (removal must be visible before later roles query units)
   ansible.builtin.systemd_service:
     daemon_reload: true

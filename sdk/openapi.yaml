@@ -11804,6 +11804,19 @@ paths:
       tags: [edge_rules]
       operationId: listEdgeRulesForApp
       summary: List every edge rule bound to one app.
+      parameters:
+        - name: covering
+          in: query
+          required: false
+          description: |
+            When true, also return the rules written on the account's other
+            apps with the same owner whose host pattern (anything but `@app`)
+            can cover this app's hosts. The gateway applies those to this
+            app's hosts too. Each rule carries its own `app_id`; the ETag
+            stays this app's rule set.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Edge rules for this app, ordered by priority ASC.
@@ -27582,7 +27595,7 @@ components:
           maxItems: 10
           items: {$ref: '#/components/schemas/ReleaseGateResult'}
           description: "The release gates judged with this decision."
-        rollback_skipped: {type: string, description: "Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix."}
+        rollback_skipped: {type: string, description: "Post-release decisions only: why an automatic rollback did not take the release off: the problem code that refused it, such as rollback_crosses_release, or rollback_failed when it ran and did not restore the previous release. The regression was found; the release keeps serving until someone rolls back or ships a fix."}
         decided_at: {type: string, format: date-time}
     RolloutDecisionSample:
       description: "One side's aggregates over the observation window. Request counts are organic requests; probe counts are reported separately."
@@ -38357,6 +38370,10 @@ components:
         included_gb_hours: {type: integer, format: int64}
         overage_gb_hours: {type: number}
         overage_cents: {type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.'}
+        quiet_paused_gb_hours:
+          type: number
+          description: 'GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero.'
+          x-since: "2026-10"
         used_cpu_hours:
           type: number
           description: 'Per-month CPU-hours (informational; not billed).'
