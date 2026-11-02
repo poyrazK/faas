@@ -1,4 +1,4 @@
-# ADR-20261102072425: Managed PostgreSQL overage is the provider's price plus 5%
+# ADR-20261102072425: Managed PostgreSQL compute overage is the provider's price plus 5%; storage overage is $0.50 per GB-month
 
 - **Status:** accepted (owner, 2026-11-02)
 - **Date:** 2026-11-02
@@ -23,17 +23,18 @@
 
 ## Decision
 
-1. **Managed PostgreSQL overage costs what the provider charges Gregale, plus 5%.**
+1. **Managed PostgreSQL compute overage costs what the provider charges Gregale, plus 5%.**
    - `price = provider price × (100 + api.ManagedPostgresOverageMarkupPercent) / 100`, in integer millicents.
    - `api.ManagedPostgresOverageMarkupPercent = 5`.
 2. **Compute.**
    - `api.ManagedPostgresNeonScaleMillicentsPerComputeUnitHour = 22_200` ($0.222).
    - Overage is `api.ManagedPostgresOverageMillicentsPerComputeUnitHour = 23_310`, which is $0.2331 per CU-hour.
    - The ceiling is unchanged, so a month of overage costs at most one allowance: Hobby $5.83 (25 CU-h), Pro $17.48 (75), Scale $46.62 (200).
-3. **Storage past the pool, when it is billed.**
-   - Neon's $0.35 per GB-month becomes $0.3675 per GB-month, replacing ADR-20261031165104's $0.60.
+3. **Storage past the pool, when it is billed, costs $0.50 per GB-month.**
+   - This is a fixed price, not cost plus 5%; it replaces ADR-20261031165104's $0.60.
+   - It is about 43% over Neon's $0.35 per GB-month and below the $0.60 the COGS report planned.
    - The storage billing change converts it to the ledger's unit from Neon's own definition of a GB.
-4. **A provider price change moves the cost constant, and the price follows.**
+4. **A provider compute price change moves the cost constant, and the price follows.**
    - Charges are cumulative per UTC month, so a change applies to the whole month its release goes live in.
    - Ship it before the month it is for.
    - Live billing starts at a month boundary (`FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM`), so this change reprices nothing already delivered.
@@ -44,7 +45,8 @@ Gregale sells compute (the pricing principle): the provider's cost passes throug
 
 ## Consequences
 
-- The overage margin is 5% of the provider's price. It no longer depends on a COGS estimate.
+- The compute overage margin is 5% of the provider's price. It no longer depends on a COGS estimate.
+- Storage overage keeps a wider margin, $0.15 per GB-month over Neon's price.
 - The business model (`ex44_faas_financial_model.xlsx`) and the COGS report's managed PostgreSQL rows need the owner's update to these figures.
 - **Still open:**
   - The always-on add-on has no price yet.
