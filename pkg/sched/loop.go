@@ -2596,8 +2596,12 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// for the tick, not a live listing and a lease read per instance per app.
 	budgetPreload := l.engine.loadStrictComputePreload(ctx, apps)
 	for _, app := range apps {
-		if err := l.engine.reconcileFinancialBudgetStops(ctx, app.ID, budgetPreload); err != nil {
-			l.log.Warn("reaper: preview budget stop", "app", app.ID, "err", err)
+		// ADR 20261102205122: an app the sweep has nothing to apply to
+		// costs no lock and no reads.
+		if !budgetPreload.idle(app, l.engine.financialBudgetNow()) {
+			if err := l.engine.reconcileFinancialBudgetStops(ctx, app.ID, budgetPreload); err != nil {
+				l.log.Warn("reaper: preview budget stop", "app", app.ID, "err", err)
+			}
 		}
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {

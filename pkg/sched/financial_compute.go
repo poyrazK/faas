@@ -18,6 +18,29 @@ import (
 type strictComputePreload struct {
 	rows   map[string][]state.Instance
 	leases map[string]financial.ComputeLease
+	// budgetAccounts holds the owned apps' accounts with any budget policy
+	// (ADR 20261102205122); nil when the store cannot tell.
+	budgetAccounts map[string]bool
+}
+
+// idle reports that the sweep has nothing to apply to app this tick, so the
+// reaper skips its app lock and reads (ADR 20261102205122): its account holds
+// no budget policy, so no hold retires anything; it is not a preview, whose
+// stops the sweep also applies; and no preloaded lease of its instances ends
+// their compute.
+func (p *strictComputePreload) idle(app state.App, now time.Time) bool {
+	if p == nil || p.budgetAccounts == nil || p.budgetAccounts[app.AccountID] || app.PreviewOfSlug != "" {
+		return false
+	}
+	for _, ins := range p.rows[app.ID] {
+		if !strictComputeLeaseChecked(ins) {
+			continue
+		}
+		if lease, known := p.leases[ins.ID]; strictLeaseRetires(lease, known, now) {
+			return false
+		}
+	}
+	return true
 }
 
 // loadStrictComputePreload reads the tick's preload for apps, or returns nil
@@ -56,6 +79,20 @@ func (e *Engine) loadStrictComputePreload(ctx context.Context, apps []state.App)
 	if pre.leases, err = leaseReader.FinancialComputeLatestInstanceLeases(ctx, keys); err != nil {
 		e.log.Warn("sched: strict compute sweep: bulk leases; reading per app", "err", err)
 		return nil
+	}
+	if budgets, ok := e.store.(state.FinancialBudgetAccountsReader); ok {
+		ids := make([]string, 0, len(accounts))
+		seen := make(map[string]struct{}, len(accounts))
+		for _, account := range accounts {
+			if _, dup := seen[account]; !dup && account != "" {
+				seen[account] = struct{}{}
+				ids = append(ids, account)
+			}
+		}
+		if pre.budgetAccounts, err = budgets.AccountsWithFinancialBudgets(ctx, ids); err != nil {
+			e.log.Warn("sched: strict compute sweep: budget accounts; sweeping every app", "err", err)
+			pre.budgetAccounts = nil
+		}
 	}
 	return pre
 }
