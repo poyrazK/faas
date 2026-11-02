@@ -60,4 +60,4 @@
    - Metrics, the environment contract, and the operator guide.
 2. **The view.** `plan_excess` on the database list and read, the CLI's `list` and `get`, and the dashboard, shown while the switch and the compute cap are both `on`. It is ranked with the same `PlanExcess` the sweep uses.
    Production can turn the switch `on` in the release that ships it.
-3. **Next.** The owner's email.
+3. **The email.** The sweep records a notice per suspended database (`managed_postgres_plan_excess_notices`) and drops it once the database is back inside the plan. apid mails each notice once through the producer outbox (template `managed_postgres_plan_excess`), behind `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED` on apid and maild (off by default).

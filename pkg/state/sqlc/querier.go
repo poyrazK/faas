@@ -480,6 +480,9 @@ type Querier interface {
 	ClearExpiredAppForkExecOutput(ctx context.Context, db DBTX, arg ClearExpiredAppForkExecOutputParams) (int64, error)
 	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
 	ClearMFA(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	// ADR-20261102125208: a database back inside its plan loses its notice, so a
+	// later suspension is noticed again.
+	ClearManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) error
 	ClearManagedPostgresRestoreSlot(ctx context.Context, db DBTX, arg ClearManagedPostgresRestoreSlotParams) (int64, error)
 	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
@@ -3804,6 +3807,9 @@ type Querier interface {
 	// windows, weekly windows and after-rollback policies.
 	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
 	// The notices still to mail: recorded after since, not yet linked to an
+	// intent, for databases not being deleted.
+	ListUnmailedManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresPlanExcessNoticesParams) ([]ListUnmailedManagedPostgresPlanExcessNoticesRow, error)
+	// The notices still to mail: recorded after since, not yet linked to an
 	// intent, and for 'ending' only while the copy still holds a slot that has
 	// not ended.
 	ListUnmailedManagedPostgresRestoreSlotNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresRestoreSlotNoticesParams) ([]ListUnmailedManagedPostgresRestoreSlotNoticesRow, error)
@@ -6104,6 +6110,8 @@ type Querier interface {
 	// nothing. A live delivery may replace a shadow row, which charged nothing; a
 	// shadow delivery never replaces a live one (bug hunt 33).
 	RecordManagedPostgresOverageDelivery(ctx context.Context, db DBTX, arg RecordManagedPostgresOverageDeliveryParams) (bool, error)
+	// One notice per suspension; later sweeps leave it alone.
+	RecordManagedPostgresPlanExcessNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresPlanExcessNoticeParams) (int64, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
 	// ADR-20261031123259: one notice per copy and kind; the first sweep to reach
 	// it records it and later sweeps leave it alone.

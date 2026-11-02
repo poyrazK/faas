@@ -45,6 +45,9 @@ type managedPostgresHooks struct {
 	RestoreSlotExpired func(context.Context, managedpostgres.Database)
 	// NotifyRestoreSlot queues a restore slot email (ADR-20261031123259).
 	NotifyRestoreSlot func(context.Context, managedpostgres.RestoreSlotNotice) error
+	// NotifyPlanExcess queues the email for a database suspended past its
+	// plan (ADR-20261102125208).
+	NotifyPlanExcess func(context.Context, managedpostgres.PlanExcessNotice) error
 }
 
 func (h *managedPostgresHooks) charges() billing.ManagedPostgresChargeSink {
@@ -66,6 +69,13 @@ func (h *managedPostgresHooks) notifyRestoreSlot() func(context.Context, managed
 		return nil
 	}
 	return h.NotifyRestoreSlot
+}
+
+func (h *managedPostgresHooks) notifyPlanExcess() func(context.Context, managedpostgres.PlanExcessNotice) error {
+	if h == nil {
+		return nil
+	}
+	return h.NotifyPlanExcess
 }
 
 func (h *managedPostgresHooks) overage() managedPostgresOverageGate {
@@ -356,12 +366,13 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		return nil, err
 	}
 	options := managedpostgres.CapEnforcerOptions{
-		Mode:           mode,
-		StorageMode:    storageMode,
-		PlanExcessMode: planExcessMode,
-		Logger:         log,
-		Notify:         hooks.notifyCap(),
-		Ceiling:        managedPostgresCapLimits(store, accountStore, hooks.overage()),
+		Mode:             mode,
+		StorageMode:      storageMode,
+		PlanExcessMode:   planExcessMode,
+		Logger:           log,
+		Notify:           hooks.notifyCap(),
+		NotifyPlanExcess: hooks.notifyPlanExcess(),
+		Ceiling:          managedPostgresCapLimits(store, accountStore, hooks.overage()),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))

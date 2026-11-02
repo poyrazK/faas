@@ -97,6 +97,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return errors.New("maild: managed postgres restore slot notification schema is unavailable")
 		}
 	}
+	if internalmail.ManagedPostgresPlanExcessOutboxEnabled(os.Getenv) {
+		if err := store.ManagedPostgresPlanExcessOutboxReady(ctx); err != nil {
+			return errors.New("maild: managed postgres plan excess notification schema is unavailable")
+		}
+	}
 	if internalmail.AccountRestoredOutboxEnabled(os.Getenv) {
 		if err := store.AccountRestoredOutboxReady(ctx); err != nil {
 			return errors.New("maild: account restoration notification schema is unavailable")
@@ -182,6 +187,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Metrics: ops.Handler(),
 
 		ManagedPostgresRestoreSlotOutboxEnabled: func() bool { return internalmail.ManagedPostgresRestoreSlotOutboxEnabled(os.Getenv) },
+		ManagedPostgresPlanExcessOutboxEnabled:  func() bool { return internalmail.ManagedPostgresPlanExcessOutboxEnabled(os.Getenv) },
 	}
 	monitor := internalmail.NewMonitor(store, service.Enabled, service.DeliveryEnabled, service.ReportsEnabled, service.FeedbackEnabled)
 	retentionMonitor := internalmail.NewRetentionMonitor(store, func() bool { return internalmail.RetentionEnabled(os.Getenv) }, cfg.RetentionPolicy)

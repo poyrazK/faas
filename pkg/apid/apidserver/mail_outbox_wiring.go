@@ -91,6 +91,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	if err := outbox.ConfigureManagedPostgresRestoreSlot(ctx, getenv); err != nil {
 		return err
 	}
+	if err := outbox.ConfigureManagedPostgresPlanExcess(ctx, getenv); err != nil {
+		return err
+	}
 	if outbox != nil {
 		if err := outbox.Ready(ctx); err != nil {
 			return errors.New("apid: producer mail outbox schema is unavailable")
@@ -168,6 +171,23 @@ func (s *server) noticeManagedPostgresRestoreSlot(ctx context.Context, notice ma
 	err := s.deletionMailOutbox.NoticeManagedPostgresRestoreSlot(ctx, notice.AccountID, mailoutbox.ManagedPostgresRestoreSlotNotice{
 		DatabaseID: notice.DatabaseID, DatabaseName: notice.DatabaseName, Kind: notice.Kind, SlotUntil: notice.SlotUntil,
 		RestorableUntil: notice.RestorableUntil, RecordedAt: notice.RecordedAt,
+	})
+	if errors.Is(err, internalmail.ErrDisabled) {
+		return nil
+	}
+	return err
+}
+
+// noticeManagedPostgresPlanExcess queues the email for one database the cap
+// sweep suspended past its plan (ADR-20261102125208) to the account that owns
+// it. With the outbox off there is nothing to queue and nothing to retry.
+func (s *server) noticeManagedPostgresPlanExcess(ctx context.Context, notice managedpostgres.PlanExcessNotice) error {
+	if s.deletionMailOutbox == nil {
+		return nil
+	}
+	err := s.deletionMailOutbox.NoticeManagedPostgresPlanExcess(ctx, notice.AccountID, mailoutbox.ManagedPostgresPlanExcessNotice{
+		DatabaseID: notice.DatabaseID, DatabaseName: notice.DatabaseName, ServiceClass: string(notice.ServiceClass),
+		Reason: notice.Reason, RecordedAt: notice.RecordedAt,
 	})
 	if errors.Is(err, internalmail.ErrDisabled) {
 		return nil
