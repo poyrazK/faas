@@ -378,6 +378,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAYD_ROLE` | gatewayd-internal, shared | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAY_CIRCUIT_BREAKER` | gatewayd-internal | `dropin` |  |  | `` | ADR-201 §2; on (the drop-in default since H4-68) shares one instance-health breaker between the public path and the service proxy, tuned per app by kind=circuit_breaker rules; off installs the legacy fixed-TTL quarantine and leaves the public path unbroken |
 | `FAAS_GATEWAY_CONTROL_LISTEN` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_GATEWAY_EDGE_LOCAL_FIRST` | gatewayd-internal | `default` |  | 0 | `` | ADR-20261102081618 §5: 1 makes gatewayd-internal on a compute node serve requests a compute edge forwarded from its own node's instances while one has a free slot, name every node of the app in X-Faas-Instance-Nodes, and scale out from its share of the app's instances; turn on after the edges' FAAS_EDGE_PLACEMENT_NODE_SET; default off |
 | `FAAS_GATEWAY_EGRESS_PENDING_PATH` | gatewayd-internal | `default` |  | /var/lib/faas/egress-meter/pending.json | `` | optional durable egress journal path; independent gateway instances need private roots, while replacement generations inherit the same root and use generation slots |
 | `FAAS_GATEWAY_EGRESS_SOCKET` | shared | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_LISTEN` | gatewayd-internal, shared | `unit` |  |  | `` |  |

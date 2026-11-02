@@ -23,6 +23,12 @@ const (
 	// response came from. The public edge always strips it;
 	// gatewayd-internal drops a guest's copy.
 	InstanceNodeHeader = "X-Faas-Instance-Node"
+	// InstanceNodesHeader names every node with ready instances of the
+	// app and how many, "<node id>=<count>,...", sorted by node id
+	// (ADR-20261102081618 §5a). gatewayd-internal sends it beside
+	// InstanceNodeHeader with FAAS_GATEWAY_EDGE_LOCAL_FIRST on; the public
+	// edge always strips it and gatewayd-internal drops a guest's copy.
+	InstanceNodesHeader = "X-Faas-Instance-Nodes"
 )
 
 type edgePlacementKey struct{}
@@ -39,11 +45,32 @@ func takeEdgePlacement(r *http.Request) *http.Request {
 }
 
 // stampInstanceNode names the instance's node on a forwarded response when
-// the edge asked for it.
+// the edge asked for it, and every node of the app when the handler attached
+// them (ADR-20261102081618 §5a).
 func stampInstanceNode(ctx context.Context, h http.Header, nodeID string) {
-	if asked, _ := ctx.Value(edgePlacementKey{}).(bool); asked && nodeID != "" {
+	if !edgeAskedPlacement(ctx) {
+		return
+	}
+	if nodeID != "" {
 		h.Set(InstanceNodeHeader, nodeID)
 	}
+	if nodes, _ := ctx.Value(instanceNodesKey{}).(string); nodes != "" {
+		h.Set(InstanceNodesHeader, nodes)
+	}
+}
+
+// edgeAskedPlacement reports whether a compute edge asked for the node
+// behind this request.
+func edgeAskedPlacement(ctx context.Context) bool {
+	asked, _ := ctx.Value(edgePlacementKey{}).(bool)
+	return asked
+}
+
+type instanceNodesKey struct{}
+
+// withInstanceNodes attaches the InstanceNodesHeader value for the response.
+func withInstanceNodes(ctx context.Context, value string) context.Context {
+	return context.WithValue(ctx, instanceNodesKey{}, value)
 }
 
 type preferredNodeKey struct{}
