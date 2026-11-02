@@ -213,9 +213,12 @@ func TestDoctorEnvRequiredKnowsPlatformAndAppVariables(t *testing.T) {
 		t.Fatalf("customer-operation-export: exit=%d check=%+v", code, check)
 	}
 
-	// The journey fixture reads variables the realtime journey sets with
-	// `env set`; only the app knows them.
-	probe := filepath.Join("..", "..", "tests", "journeys", "testdata", "probe-node")
+	// Source that reads variables set with `env set` / `secrets set`, with no
+	// fallback: only the app knows them. (The journey's probe-node fixture
+	// first showed this, before it gained fallbacks in #6363.)
+	probe := t.TempDir()
+	main.WriteFile(t, probe, "package.json", "{}")
+	main.WriteFile(t, probe, "server.js", "const token = process.env.E2E_REALTIME_CALLBACK_TOKEN;\nconst jwks = process.env.E2E_REALTIME_JWKS_B64;\n")
 	code, check := doctorEnvCheck(t, probe, "--app", "probe")
 	if code != 0 || check.Status != "warn" || !strings.Contains(check.Hint, "not logged in") || !strings.Contains(strings.Join(check.Sources, ","), "E2E_REALTIME_CALLBACK_TOKEN") {
 		t.Fatalf("logged out: exit=%d check=%+v", code, check)
