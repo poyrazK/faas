@@ -1,12 +1,17 @@
 package gateway
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
 
 func (h *Handler) applyMCPAliasPolicy(w http.ResponseWriter, r *http.Request, app App) bool {
 	if app.CanonicalHost == "" || app.CanonicalHost == hostname(r.Host) {
 		return false
 	}
-	rule := h.edgeRules.MatchJWT(r.Context(), app.CanonicalHost, r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleJWTResolved {
+		return h.edgeRules.MatchJWT(ctx, app.CanonicalHost, path, r.Method)
+	})
 	if rule == nil {
 		return false
 	}

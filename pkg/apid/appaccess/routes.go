@@ -300,6 +300,27 @@ var routeActions = map[string]authz.OrgAction{
 	// nobody could. Members who can read the app read its rules, history,
 	// events and trace; owners and admins change them, as they do the app's
 	// security settings. Purging cached responses is a deploy-level action.
+	// The other surfaces that write a company app's edge rules (ADR-091
+	// amendment 2026-11-02, review round 8): an OpenAPI policy apply and a
+	// route-policy apply create rules as the edge-rule routes do, so they
+	// take the same permission; importing or editing the contract they read
+	// is app configuration; previews, plans, receipts and suggestions read.
+	"GET /v1/apps/{slug}/openapi":                                authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/openapi/preview":                        authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/openapi/diff":                           authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/openapi/dry-run":                       authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/openapi":                               authz.OrgActionConfigureApp,
+	"DELETE /v1/apps/{slug}/openapi":                             authz.OrgActionConfigureApp,
+	"POST /v1/apps/{slug}/openapi/apply":                         authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/deployments/{deployment}/openapi":       authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":     authz.OrgActionConfigureApp,
+	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":    authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/deployments/{deployment}/route-policy":  authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/route-policy/plan":                     authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/route-policy/apply":                    authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}":     authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/throttle-suggestions":                   authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/policy/status":                          authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/edge-rules":                             authz.OrgActionReadApp,
 	"GET /v1/edge-rules/{id}":                                    authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/edge-rules/versions":                    authz.OrgActionReadApp,
