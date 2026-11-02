@@ -390,3 +390,8 @@ RETURNING revoked_at;
 -- name: AgentCallbacksRevokedAt :one
 SELECT revoked_at FROM agent_callback_revocations
  WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND thread_id = sqlc.arg(thread_id)::text;
+
+-- name: AgentCallbackClock :one
+-- ADR-20261030125501 §3: the clock RevokeAgentCallbacks records, read when a
+-- callback URL is issued so issue and revocation compare on one clock.
+SELECT clock_timestamp()::timestamptz AS now;
