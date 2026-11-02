@@ -3192,6 +3192,9 @@
       "cli": [
         "mcp serve",
         "mcp connections"
+      ],
+      "routes": [
+        "/v1/agent-connections"
       ]
     },
     {
