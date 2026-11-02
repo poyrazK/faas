@@ -411,3 +411,8 @@ SELECT c.run_id::text AS run_id, c.account_id::text AS account_id, c.endpoint_id
 
 -- name: MarkAgentRunCallbackDelivered :exec
 UPDATE agent_run_callbacks SET delivered_at = now() WHERE run_id = sqlc.arg(run_id)::text::uuid AND delivered_at IS NULL;
+
+-- name: AgentCallbackClock :one
+-- ADR-20261030125501 §3: the clock RevokeAgentCallbacks records, read when a
+-- callback URL is issued so issue and revocation compare on one clock.
+SELECT clock_timestamp()::timestamptz AS now;

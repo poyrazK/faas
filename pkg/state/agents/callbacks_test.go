@@ -1,6 +1,7 @@
 // adr: 20261030125501 §3 — a thread's latest revocation is what apid checks a
-// callback token's issue time against. §4 — a gregale_run run is linked to
-// its thread in the admitting transaction and settled once.
+// callback token's issue time against, and both are read from the database's
+// clock. §4 — a gregale_run run is linked to its thread in the admitting
+// transaction and settled once.
 package agents_test
 
 import (
@@ -34,6 +35,16 @@ func TestCallbackRevocations(t *testing.T) {
 	second, err := s.RevokeCallbacks(ctx, account, endpoint, "thread-1")
 	if err != nil || !second.After(first) {
 		t.Fatalf("a second revocation %v is not later than %v: %v", second, first, err)
+	}
+	// apid stamps a token's issue time from CallbackClock, so a revocation
+	// and an issue order on the one database clock.
+	issued, err := s.CallbackClock(ctx)
+	if err != nil || !issued.After(second) {
+		t.Fatalf("the clock read after a revocation, %v, is not later than it, %v: %v", issued, second, err)
+	}
+	third, err := s.RevokeCallbacks(ctx, account, endpoint, "thread-1")
+	if err != nil || !third.After(issued) {
+		t.Fatalf("a revocation after a clock read, %v, is not later than it, %v: %v", third, issued, err)
 	}
 	if _, found, _ := s.CallbacksRevokedAt(ctx, endpoint, "thread-2"); found {
 		t.Fatal("another thread reads as revoked")

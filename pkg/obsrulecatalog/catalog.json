@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "ac43bfe76a843e600649adb37ce469752f099ee796fd17c893bc6e1b5a7d4029",
+      "revision": "98b03c02af7cf0c77076689f3443fbd694519b26abac3327c29a7e728aae9691",
       "files": [
         "faas.rules.yml"
       ],
@@ -2290,11 +2290,11 @@
           "group_name": "faas_object_storage",
           "rule_name": "FaasS3GatewayPortShareSaturated",
           "definition": {
-            "expression_hash": "37517b80fb01f1af2bdecf936eb3a4b39d6e8bcafc2d14bc330bc32227260925",
+            "expression_hash": "33b6bf81ad4491fdaf72b93e3ecff5b92e2db5c8946d750a0f762be4ad045639",
             "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "60a5224488e86d9d85f753f032b86320c07d8d7f7ad4c89b7b062cb563fd18ac"
+            "fingerprint": "3435af8eca401086850cdbfd07185e94a40e4b75885178a110ca4393b055ec72"
           }
         },
         {
@@ -6630,7 +6630,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "111ccec20275eb9e0ac3562c260cc4e718bc00d0b1f44ab155e45af6bc61307d",
+      "revision": "17ca9ed04ae95acda7122d6cd0678f15690560e2319fa3f7368ada456ed5c752",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8998,11 +8998,11 @@
           "group_name": "faas_object_storage",
           "rule_name": "FaasS3GatewayPortShareSaturated",
           "definition": {
-            "expression_hash": "37517b80fb01f1af2bdecf936eb3a4b39d6e8bcafc2d14bc330bc32227260925",
+            "expression_hash": "33b6bf81ad4491fdaf72b93e3ecff5b92e2db5c8946d750a0f762be4ad045639",
             "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "60a5224488e86d9d85f753f032b86320c07d8d7f7ad4c89b7b062cb563fd18ac"
+            "fingerprint": "3435af8eca401086850cdbfd07185e94a40e4b75885178a110ca4393b055ec72"
           }
         },
         {

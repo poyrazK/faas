@@ -40,8 +40,12 @@ SELECT app_id::text,scope FROM deployments WHERE id=sqlc.arg(id)::uuid;
 
 -- name: ListTrafficSiblingsInScope :many
 -- aborted_canary is the H5-62 candidate: aborted before its rollout completed.
+-- never_served is a live 0% release that has not served since it went live
+-- (a release staged with no traffic): serving_ended_at is stamped by trigger
+-- whenever a serving row stops serving.
 SELECT id::text,traffic_percent,
-    (canary_total_steps > 0 AND rollout_state = 'aborted' AND rollout_completed_at IS NULL)::boolean AS aborted_canary
+    (canary_total_steps > 0 AND rollout_state = 'aborted' AND rollout_completed_at IS NULL)::boolean AS aborted_canary,
+    (traffic_percent = 0 AND serving_ended_at IS NULL)::boolean AS never_served
 FROM deployments
 WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='live' AND id<>sqlc.arg(id)::uuid ORDER BY id;
 

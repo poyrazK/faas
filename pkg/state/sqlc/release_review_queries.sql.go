@@ -13,7 +13,8 @@ import (
 
 const listTrafficSiblingsInScope = `-- name: ListTrafficSiblingsInScope :many
 SELECT id::text,traffic_percent,
-    (canary_total_steps > 0 AND rollout_state = 'aborted' AND rollout_completed_at IS NULL)::boolean AS aborted_canary
+    (canary_total_steps > 0 AND rollout_state = 'aborted' AND rollout_completed_at IS NULL)::boolean AS aborted_canary,
+    (traffic_percent = 0 AND serving_ended_at IS NULL)::boolean AS never_served
 FROM deployments
 WHERE app_id=$1::uuid AND scope=$2::text AND status='live' AND id<>$3::uuid ORDER BY id
 `
@@ -28,9 +29,13 @@ type ListTrafficSiblingsInScopeRow struct {
 	ID             string
 	TrafficPercent int32
 	AbortedCanary  bool
+	NeverServed    bool
 }
 
 // aborted_canary is the H5-62 candidate: aborted before its rollout completed.
+// never_served is a live 0% release that has not served since it went live
+// (a release staged with no traffic): serving_ended_at is stamped by trigger
+// whenever a serving row stops serving.
 func (q *Queries) ListTrafficSiblingsInScope(ctx context.Context, db DBTX, arg ListTrafficSiblingsInScopeParams) ([]ListTrafficSiblingsInScopeRow, error) {
 	rows, err := db.Query(ctx, listTrafficSiblingsInScope, arg.AppID, arg.Scope, arg.ID)
 	if err != nil {
@@ -40,7 +45,12 @@ func (q *Queries) ListTrafficSiblingsInScope(ctx context.Context, db DBTX, arg L
 	items := []ListTrafficSiblingsInScopeRow{}
 	for rows.Next() {
 		var i ListTrafficSiblingsInScopeRow
-		if err := rows.Scan(&i.ID, &i.TrafficPercent, &i.AbortedCanary); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.TrafficPercent,
+			&i.AbortedCanary,
+			&i.NeverServed,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
