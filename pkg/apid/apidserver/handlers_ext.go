@@ -2283,8 +2283,12 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrValidation("reviewed promotion requires the exact named environment at 100% traffic and a serving guard"))
 		return
 	}
+	// Each serving release needs its own instance; refuse a split the app
+	// could not run whole.
+	releaseLimit := api.TrafficSplitMaxReleases(app.MaxConcurrency, acct.Plan)
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
+		ctx = state.WithTrafficSplitReleaseLimit(ctx, releaseLimit)
 		var writeErr error
 		if req.ExpectedReview != nil {
 			store, ok := s.store.(state.ReviewedTrafficStore)
@@ -2307,6 +2311,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		if writeReleaseReviewError(w, err) {
 			return
 		}
+		var limitErr *state.TrafficSplitReleaseLimitError
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such deployment")
@@ -2336,6 +2341,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
 			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
+		case errors.As(err, &limitErr):
+			api.WriteProblem(w, api.ErrTrafficSplitReleaseLimit(limitErr.Limit, limitErr.Requested))
 		case errors.Is(err, state.ErrMCPTaskCompatibilityGate):
 			api.WriteProblem(w, api.ErrMCPTaskCompatibilityGate(err.Error()))
 		default:
@@ -2516,25 +2523,42 @@ func rollbackEnvironmentAmbiguousProblem(appSlug string) *api.Problem {
 		WithDocs("https://gregale.dev/docs/deploys#rollback")
 }
 
+// trafficSplit describes a scope whose traffic more than one deployment
+// shares: earlier is the oldest of them as a retypeable ref, and canary is
+// set while a canary rollout owns the weights.
+type trafficSplit struct {
+	earlier string
+	canary  bool
+}
+
 // trafficSplitEarlierRelease reports whether more than one deployment of the
-// scope serves a share of traffic, and the oldest of them as a retypeable
-// ref. A plain rollback then has no single previous release: the latest
-// superseded row is one nobody serves, so `rollback` re-activated a release
-// the customer had rolled away from while the split stayed in place (H10-10).
-// A split in another environment does not block this one's rollback.
-func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID, scope string) (string, bool) {
+// scope serves a share of traffic. A plain rollback then has no single
+// previous release: the latest superseded row is one nobody serves, so
+// `rollback` re-activated a release the customer had rolled away from while
+// the split stayed in place (H10-10). A split in another environment does not
+// block this one's rollback.
+func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID, scope string) (trafficSplit, bool) {
 	deployments, err := s.store.LiveDeployments(ctx, appID)
 	if err != nil {
-		return "", false
+		return trafficSplit{}, false
 	}
 	var rows []state.Deployment
+	var split trafficSplit
 	for _, d := range deployments {
-		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 && recoveryScope(d.Scope) == recoveryScope(scope) {
+		if d.Status != state.DeployLive || recoveryScope(d.Scope) != recoveryScope(scope) {
+			continue
+		}
+		// The same test the store applies before refusing a traffic change
+		// with ErrTrafficChangeDuringCanary.
+		if d.CanaryTotalSteps > 0 && (d.RolloutState == "pending" || d.RolloutState == "rolling_out") {
+			split.canary = true
+		}
+		if d.TrafficPercent > 0 && d.TrafficPercent < 100 {
 			rows = append(rows, d)
 		}
 	}
 	if len(rows) < 2 {
-		return "", false
+		return trafficSplit{}, false
 	}
 	earliest := rows[0]
 	for _, d := range rows[1:] {
@@ -2542,16 +2566,27 @@ func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID, scope st
 			earliest = d
 		}
 	}
+	split.earlier = earliest.ID
 	if earliest.Revision > 0 {
-		return fmt.Sprintf("v%d", earliest.Revision), true
+		split.earlier = fmt.Sprintf("v%d", earliest.Revision)
 	}
-	return earliest.ID, true
+	return split, true
 }
 
-func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
+// rollbackDuringTrafficSplitProblem names the way back from a split. During a
+// canary the traffic routes refuse every weight change, so promoting the
+// earlier release is refused too; aborting the rollout is what hands its
+// traffic back to the release it replaced.
+func rollbackDuringTrafficSplitProblem(appSlug string, split trafficSplit) *api.Problem {
+	if split.canary {
+		return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
+			"A release is still rolling out",
+			fmt.Sprintf("the newest release is still rolling out, so traffic is split and there is no single previous release to roll back to. Stop the rollout and return its traffic to the release it replaced: gregale rollouts recover %s --action abort", appSlug)).
+			WithDocs("https://gregale.dev/docs/deploys#rollback")
+	}
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"Traffic is split between deployments",
-		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, earlier)).
+		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, split.earlier)).
 		WithDocs("https://gregale.dev/docs/deploys#rollback")
 }
 
@@ -2713,8 +2748,8 @@ func (s *server) planRollback(r *http.Request, acct state.Account, app state.App
 		if !ok {
 			return rollbackPlan{}, rollbackEnvironmentAmbiguousProblem(app.Slug)
 		}
-		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID, scope); split {
-			return rollbackPlan{}, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
+		if split, ok := s.trafficSplitEarlierRelease(ctx, app.ID, scope); ok {
+			return rollbackPlan{}, rollbackDuringTrafficSplitProblem(app.Slug, split)
 		}
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID, scope)
 		if err != nil {

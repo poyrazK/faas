@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -60,6 +61,16 @@ type Config struct {
 	CancelPeers map[string]string `toml:"cancel_peers"`
 	// peers is CancelPeers parsed by validate.
 	peers map[uint8]string
+	// Admission (bug hunt 34): startup_timeout bounds TLS and the startup
+	// message (default 5s); trusted_sources are the platform's compute
+	// node networks (CIDRs), whose connections skip the handshake caps so
+	// strangers filling them cannot lock apps out; max_auth_failures caps
+	// one source's failed logins to one database per minute (default 10).
+	StartupTimeout  time.Duration `toml:"startup_timeout"`
+	TrustedSources  []string      `toml:"trusted_sources"`
+	MaxAuthFailures int           `toml:"max_auth_failures"`
+	// trusted is TrustedSources parsed by validate.
+	trusted []netip.Prefix
 }
 
 // DefaultOpsAddr is pgproxyd's loopback ops listener.
@@ -100,6 +111,17 @@ func (c *Config) validate() error {
 	}
 	if c.PoolWait < 0 || c.PoolWait > 5*time.Minute || c.PoolServerIdle < 0 || c.PoolServerIdle > time.Hour {
 		return errors.New("pgproxyd: pool_wait must be at most 5m and pool_server_idle at most 1h")
+	}
+	if c.StartupTimeout < 0 || c.StartupTimeout > 30*time.Second || c.MaxAuthFailures < 0 || c.MaxAuthFailures > 1000 {
+		return errors.New("pgproxyd: startup_timeout must be at most 30s and max_auth_failures at most 1000")
+	}
+	c.trusted = make([]netip.Prefix, 0, len(c.TrustedSources))
+	for _, raw := range c.TrustedSources {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("pgproxyd: trusted_sources entry %q must be a CIDR", raw)
+		}
+		c.trusted = append(c.trusted, prefix.Masked())
 	}
 	return c.parsePeers()
 }

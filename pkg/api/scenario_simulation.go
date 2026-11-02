@@ -8,11 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/behaviorcompare"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // These are versioned protocol bounds, not account quotas.
@@ -26,9 +26,9 @@ const (
 	MaxScenarioSimulationAttempts     = 256
 )
 
-var simulationName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-var simulationIntegration = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
-var simulationField = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
+var simulationName = lazyregexp.New(`^[a-z][a-z0-9-]{0,62}$`)
+var simulationIntegration = lazyregexp.New(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
+var simulationField = lazyregexp.New(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
 
 type ScenarioSimulationPlan struct {
 	Version  int                         `json:"version" yaml:"version"`

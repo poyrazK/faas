@@ -87,6 +87,30 @@
     group: root
     mode: "0644"
 
+# ADR-20261102081618: with public_edge.entry both the edge serves Cloudflare
+# directly, which needs TLS material the operator provisions on every compute
+# node. Fail here, before the drop-in points the edge at missing files.
+- name: gatewayd_public_edge_service — find the direct-entry TLS material
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ faas_edge_public_tls_cert }}"
+    - "{{ faas_edge_public_tls_key }}"
+    - "{{ faas_edge_public_tls_client_ca }}"
+  register: faas_edge_public_tls_files
+  when: faas_edge_entry == 'both'
+
+- name: gatewayd_public_edge_service — require the direct-entry TLS material
+  ansible.builtin.assert:
+    that:
+      - faas_edge_public_tls_files.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      public_edge.entry both needs {{ faas_edge_public_tls_cert }},
+      {{ faas_edge_public_tls_key }} and {{ faas_edge_public_tls_client_ca }}
+      on this node: the zone's Origin CA pair and its Authenticated Origin
+      Pulls CA (ADR-20261102081618 §2).
+  when: faas_edge_entry == 'both'
+
 - name: gatewayd_public_edge_service — install apps domain and control-plane target drop-in
   notify: restart faas-gatewayd-public-edge
   ansible.builtin.template:

@@ -90,6 +90,9 @@ func (h *managedPostgresHooks) notifyCap() func(context.Context, managedpostgres
 }
 
 func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
+	// An invalid value fails startup in loadManagedPostgresCapEnforcer; here
+	// it reads as not "on", which refuses Free databases.
+	capMode, _ := managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
 	registry, err := managedpostgres.Load(getenv, managedPostgresFactories(pool))
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -191,7 +194,8 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			return nil
 		},
 		Admit: func(ctx context.Context, accountID string) error {
-			if !registry.UsagePolicy().Enabled {
+			usagePolicy := registry.UsagePolicy().Enabled
+			if !usagePolicy && capMode == managedpostgres.CapEnforcementOn {
 				return nil
 			}
 			account, lookupErr := state.BillingResourceAccount(ctx, accountStore, accountID)
@@ -200,6 +204,18 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 					metrics.ObserveAdmission(lookupErr)
 				}
 				return lookupErr
+			}
+			// Every create and restore path admits here, so the Free-plan
+			// refusal the create route makes also covers Compose, dev,
+			// pipeline mirrors and restores (bug hunt 33 H1).
+			if managedPostgresFreeClosed(api.Plan(account.Plan), capMode) {
+				if metrics != nil {
+					metrics.ObserveAdmission(managedpostgres.ErrNotInPlan)
+				}
+				return managedpostgres.ErrNotInPlan
+			}
+			if !usagePolicy {
+				return nil
 			}
 			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
 			if !ok || limits.DatabasesMax <= 0 {
@@ -385,7 +401,7 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 		}
 		return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
 			Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
-			StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
+			StoragePool: managedPostgresStoragePool(limits, overageOn), StorageAllowance: limits.StorageLimitBytes}, nil
 	}
 }
 

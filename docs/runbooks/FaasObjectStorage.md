@@ -26,6 +26,7 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `s3_gateway_transfer_bytes_total{direction}`,
 `s3_gateway_transfer_throttled_seconds_total{direction}`,
 `s3_gateway_transfer_limit_bytes_per_second`,
+`gatewayd_public_object_transfer_{bytes_total,throttled_seconds_total,limit_bytes_per_second}`,
 `up{job="s3-gatewayd-compute"}`, `up{job="cloudflared-s3"}`,
 `cloudflared_tunnel_ha_connections{job="cloudflared-s3"}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
@@ -60,7 +61,11 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
   Existing buckets keep working.
 - **Port share saturated.** A gateway on a compute node paces transfers to
   its share of the node's port (`transfer.max_bytes_per_second`, one budget
-  for uploads and downloads). Transfers get slower; none fail.
+  for uploads and downloads). Transfers get slower; none fail. With
+  `object_storage.compute_public_reads`, the node's app edge serves public
+  bucket reads within its own part of the share
+  (`FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND`,
+  `gatewayd_public_object_transfer_*`), and s3-gatewayd keeps the rest.
 - **Compute gateway or s3 connector down.** On a cell that runs the gateway
   on its compute nodes, one node's `faas-s3-gatewayd-compute` stopped
   answering its control listener (port 9096), or its s3 tunnel connector
@@ -109,7 +114,10 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
    `journalctl -u faas-apid | grep "no backend with room"` for refusals.
 6. Port share: `rate(s3_gateway_transfer_bytes_total[5m])` by direction
    against `s3_gateway_transfer_limit_bytes_per_second`, and whether one
-   node or every node in the cell is at its share.
+   node or every node in the cell is at its share. Public reads served by
+   the node's app edge have their own part:
+   `gatewayd_public_object_transfer_bytes_total` against
+   `gatewayd_public_object_transfer_limit_bytes_per_second`.
 7. Compute gateway: on the node, `systemctl status faas-s3-gatewayd-compute
    faas-cloudflared-s3`, `curl -fsS http://127.0.0.1:9096/readyz` and
    `journalctl -u faas-s3-gatewayd-compute -u faas-cloudflared-s3`. A

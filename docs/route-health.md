@@ -225,6 +225,12 @@ rate-limit or revocation state was unavailable, and neither deployment caused
 it. Deadlines, open circuits, capacity refusals and failed wakes or boots still
 count, because a candidate can cause each of them.
 
+Route evidence does not depend on per-route metrics: request telemetry labels
+routes whether or not the app turned on per-route Prometheus series. Each app
+has 50 route labels per gateway; the routes a guard or a production monitor
+selects always keep theirs, so a rarely called selected route is never folded
+into `__route_other__`.
+
 Coverage is explicitly `observed_only`: the system cannot establish how many
 requests were dropped before telemetry storage. The ingestion allowance helps
 with normal publishing delay but does not guarantee completeness. This compares

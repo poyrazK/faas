@@ -277,3 +277,62 @@ did not cause.
   that less likely.
 - The dashboard has no production route monitoring page yet; that is
   frontend work tracked outside this ADR.
+
+## Amendment 4 (2026-11-02): route labels, open minutes and promotions
+
+A fifth review found evidence that never arrived or was anchored too early.
+
+1. **Route evidence depended on the per-route metrics opt-in.** The gateway
+   labeled request telemetry only for apps with `route_metrics_enabled`, an
+   opt-in presented as per-route Prometheus series (ADR-093). An app without it,
+   for example one created before ADR-093 or one whose owner turned the series
+   off, recorded every request as `__route_other__`. Its guard windows were
+   always unknown, so an enforced canary was held and then aborted at the hold
+   deadline, and its monitor never decided anything.
+2. **Selected routes could lose their label.** Each app has 50 labels per
+   gateway. A label idle for an hour can be reused, and only declared routes
+   (OpenAPI, `gregale.yaml`) are protected. A low-traffic guarded route, the
+   case pooled evidence exists for, could fold into `__route_other__` on an app
+   with many routes or one that answers every probed path.
+3. **Minute collapse held route removal forever.** With
+   `FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE=1` (ADR-20261101085552), the
+   gateway reported every open minute's requests as pending. Every app with
+   traffic kept a per-app pending gap refreshed on each heartbeat, so route
+   removal's coverage check always blocked it.
+4. **Manual promotions never anchored the monitor.** A traffic change that
+   took a deployment to 100%, such as promoting a release staged with
+   `--no-traffic`, recorded no time. The monitor anchored on the deployment's
+   creation, so an error-budget incident right after the promotion was skipped
+   as `outside_rollback_window`.
+
+**Decision.**
+
+- Request telemetry labels routes for every app with request telemetry,
+  whatever its per-route metrics setting; per-route Prometheus series still
+  follow the opt-in.
+- The gateway reserves labels for the routes an app's route health guard or
+  production monitor selects (at most 40). Such a label is never replaced, and
+  a full set with no idle label gives up its least recently seen unselected
+  label. gatewayd-internal reads the selections (`RouteLabelPins`) and caches
+  them for a minute; a failed read keeps the last known selections and retries
+  after 10 seconds. Selections never change how a request is handled.
+- Coverage counts as pending only requests in closed minutes that have not
+  shipped. A minute still within its grace is read by no window yet: route
+  evidence waits `RouteHealthIngestionLag` and route removal two minutes, and
+  each tick ships closed minutes before it reports coverage.
+- `deployments.promoted_at` records when a traffic change last took a
+  deployment to 100%, from below (manual splits, binding promotions and staged
+  promotions all use that path). The monitor's observation anchor and its
+  rollback window include it.
+
+**Consequences.**
+
+- Apps without per-route metrics now write one telemetry row per route
+  bucket instead of one `__route_other__` bucket; the 50-label cap still
+  bounds them.
+- A selected route can displace a busy unselected route's label; that route's
+  requests then count under `__route_other__` and its Prometheus series end.
+- A gateway that fails before shipping an open minute loses it as before; the
+  restart resets its coverage, so route evidence and removal still see the gap.
+- Releases promoted before this amendment have no `promoted_at`; the monitor
+  keeps anchoring them on their recorded rollout times.

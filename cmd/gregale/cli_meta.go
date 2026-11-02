@@ -1917,7 +1917,7 @@ var cliCommands = []cliCommand{
 		Short:   "Make production releases wait in their canary for approval",
 		Examples: []string{
 			"gregale release approval require --app my-api --approvals 2 --notify releases",
-			"gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h",
+			"gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h --notify releases",
 			"gregale release approval pending --app my-api",
 			"gregale release approval status v42 --app my-api",
 			"gregale release reject v42 --app my-api --reason \"checkout latency is up\"",
@@ -1930,7 +1930,7 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "abort a release that waits longer (default 24h)", Value: "DURATION"},
 				{Name: "approvers", Short: "who may approve (default admin: owners and admins)", Value: "ROLE", ClosedSet: []string{"admin", "developer"}},
 				{Name: "allow-self-approval", Short: "count the deployer's own approval", Bool: true},
-				{Name: "notify", Short: "Slack or email channels told when a release waits, is decided or times out", Value: "CHANNEL,..."},
+				{Name: "notify", Short: "Slack or email channels told when a release waits, is decided or times out", Value: "CHANNEL,...", Req: true},
 			}},
 			{Name: "policy", Short: "Show an app's approval policy", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
@@ -2133,7 +2133,7 @@ var cliCommands = []cliCommand{
 				{Name: "branch", Short: "production branch (defaults to the repository's default branch)", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
 			}},
-			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "setup", Short: "Bind GitHub, configure previews, and write an Actions workflow", Examples: []string{"gregale github setup my-api --repo acme/my-api --dry-run", "gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72", "gregale github setup my-api --repo acme/my-api --wait-for CI"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository OWNER/NAME (required for a dry run)", Value: "OWNER/NAME"},
 				{Name: "production-branch", Short: "production branch (default: current binding or the repository's default branch)", Value: "BRANCH"},
 				{Name: "installation-id", Short: "GitHub App installation id (the app's, or the account's only one, when omitted)", Value: "ID"},
@@ -2153,6 +2153,7 @@ var cliCommands = []cliCommand{
 				{Name: "root-dir", Short: "repository-relative source root for the root workload", Value: "DIR"},
 				{Name: "ignore", Short: "comma-separated ignored change paths", Value: "PATHS"},
 				{Name: "rollout", Short: "production rollout mode: standard|safe", Value: "MODE", ClosedSet: []string{"standard", "safe"}},
+				{Name: "wait-for", Short: "deploy a branch push only after this GitHub Actions workflow (its name: field) succeeds for the commit", Value: "WORKFLOW"},
 				{Name: "dry-run", Short: "show generated files without writing or changing remote state"},
 				{Name: "force", Short: "overwrite an existing workflow file"},
 			}},
@@ -5679,6 +5680,22 @@ var cliCommands = []cliCommand{
 					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				}},
 				{Name: "disable", Short: "Turn storage off; buckets stay bound and keep their files", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}},
+			}},
+			{Name: "hooks", Short: "Change hooks: publish committed row changes as events", Subcommands: []cliSub{
+				{Name: "sql", Short: "Print the change hooks migration", Notes: []string{"Creates the change event table, its trigger and the enable and disable helpers."}, Flags: []cliFlag{
+					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
+				}, Examples: []string{"gregale data-api hooks export > migrations/0006_change_hooks.sql"}},
+				{Name: "enable", Short: "Publish recorded changes as events from the Data API app's source", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}, Examples: []string{"gregale data-api hooks enable shop-data"}},
+				{Name: "status", Short: "Show whether change hooks are on and their event source", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				}},
+				{Name: "disable", Short: "Stop publishing; recorded changes stay in the table", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 					{Name: "no-restart", Short: "store settings without a fresh restart"},
 				}},

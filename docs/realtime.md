@@ -26,7 +26,9 @@ their frames are ignored.
 
 Create an endpoint on your app, then connect clients to
 `wss://<your-app-host>/__gregale/realtime/<endpoint-id>`. The API generates the
-endpoint ID. Pipe secrets on stdin so they stay out of shell history:
+endpoint ID. An endpoint answers on the hosts and custom domains of your
+account's apps and returns 404 on anyone else's. Pipe secrets on stdin so
+they stay out of shell history:
 
 ```bash
 printf '%s\n' "$CALLBACK_TOKEN" | gregale realtime create my-app \
@@ -66,6 +68,13 @@ sends its token as a second requested subprotocol,
 `gregale.realtime.bearer.<token>` (the Node SDK does this for you). This works
 only on an endpoint with `allowed_origins`, and the browser's `Origin` must
 match one of them exactly. Tokens are at most 3,072 bytes.
+
+Changing how an endpoint admits clients applies to open connections too. When
+you finalize a token rotation, its grace deadline passes, you change the
+authentication mode or the OIDC issuer, JWKS URL, audience, algorithms or
+required claims, or you remove an origin from `allowed_origins`, Gregale
+closes every connection the new settings would refuse with code 1008. Changing
+channel rules or the claims they read leaves connections open.
 
 ### Callbacks
 
@@ -270,6 +279,14 @@ where realtime holds real capacity on our servers:
   `capacity_unavailable`.
 - **Event schemas:** 64 versions per channel and event type, and 1,024 per
   endpoint.
+- **Writes:** an account's endpoints write retained messages (each message of a
+  batch counts), inbox messages, message edits and deletes, snapshots and
+  scheduled messages at most 10 (Hobby), 50 (Pro) or 200 (Scale) times a
+  second, with bursts of 32, 100 or 400. Publisher credentials share this rate
+  with your API key. A write past it gets HTTP 429 with code
+  `realtime_write_rate_limited`, the limit and `Retry-After`; nothing was
+  written. A due scheduled message waits for the rate instead of failing.
+  Live publishes are not counted.
 - **Functions triggered by channel messages** bill as normal compute.
 
 An endpoint's `max_connections` still caps that endpoint; the account limit

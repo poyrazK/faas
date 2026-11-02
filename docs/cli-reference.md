@@ -1956,7 +1956,7 @@ Examples:
 
 ```sh
 gregale release approval require --app my-api --approvals 2 --notify releases
-gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h
+gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h --notify releases
 gregale release approval pending --app my-api
 gregale release approval status v42 --app my-api
 gregale release reject v42 --app my-api --reason "checkout latency is up"
@@ -1976,7 +1976,7 @@ Stop requiring approvals for an app
 
 Require approvals for an app&#39;s production releases
 
-`gregale release approval require [--app <slug>] --approvals <N> [--after-stage <N>] [--timeout <DURATION>] [--approvers <ROLE>] [--allow-self-approval] [--notify <CHANNEL,...>]`
+`gregale release approval require [--app <slug>] --approvals <N> [--after-stage <N>] [--timeout <DURATION>] [--approvers <ROLE>] [--allow-self-approval] --notify <CHANNEL,...>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1986,7 +1986,7 @@ Require approvals for an app&#39;s production releases
 | `--timeout <DURATION>` | abort a release that waits longer (default 24h) |  |
 | `--approvers <ROLE>` | who may approve (default admin: owners and admins) | one of `admin` · `developer` |
 | `--allow-self-approval` | count the deployer&#39;s own approval |  |
-| `--notify <CHANNEL,...>` | Slack or email channels told when a release waits, is decided or times out |  |
+| `--notify <CHANNEL,...>` | Slack or email channels told when a release waits, is decided or times out | required |
 
 #### release approval policy
 
@@ -3525,7 +3525,7 @@ gregale github repos my-api --installation-id 12345
 
 Bind GitHub, configure previews, and write an Actions workflow
 
-`gregale github setup [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--installation-id <ID>] [--deploy-branches <MAPPINGS>] [--pinned-sha <SHA>] [--pin-action] [--enable-action-updates] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-bots] [--no-preview-bots] [--preview-drafts] [--no-preview-drafts] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--dry-run] [--force] <slug>`
+`gregale github setup [--repo <OWNER/NAME>] [--production-branch <BRANCH>] [--installation-id <ID>] [--deploy-branches <MAPPINGS>] [--pinned-sha <SHA>] [--pin-action] [--enable-action-updates] [--workflow <PATH>] [--preview] [--no-preview] [--preview-ttl-hours <HOURS>] [--preview-bots] [--no-preview-bots] [--preview-drafts] [--no-preview-drafts] [--preview-service-policy <POLICY>] [--root-dir <DIR>] [--ignore <PATHS>] [--rollout <MODE>] [--wait-for <WORKFLOW>] [--dry-run] [--force] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3548,6 +3548,7 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--root-dir <DIR>` | repository-relative source root for the root workload |  |
 | `--ignore <PATHS>` | comma-separated ignored change paths |  |
 | `--rollout <MODE>` | production rollout mode: standard\|safe | one of `standard` · `safe` |
+| `--wait-for <WORKFLOW>` | deploy a branch push only after this GitHub Actions workflow (its name: field) succeeds for the commit |  |
 | `--dry-run` | show generated files without writing or changing remote state |  |
 | `--force` | overwrite an existing workflow file |  |
 
@@ -3556,6 +3557,7 @@ Examples:
 ```sh
 gregale github setup my-api --repo acme/my-api --dry-run
 gregale github setup my-api --repo acme/my-api --preview --preview-ttl-hours 72
+gregale github setup my-api --repo acme/my-api --wait-for CI
 ```
 
 ### github disconnect
@@ -9123,6 +9125,66 @@ Show whether storage is on and its bound buckets
 Turn storage off; buckets stay bound and keep their files
 
 `gregale data-api storage disable [--env <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+### data-api hooks
+
+Change hooks: publish committed row changes as events
+
+#### data-api hooks export
+
+Print the change hooks migration
+
+`gregale data-api hooks export [--schema <SCHEMA>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <SCHEMA>` | the Data API&#39;s first exposed schema (default api) |  |
+
+Examples:
+
+```sh
+gregale data-api hooks export > migrations/0006_change_hooks.sql
+```
+
+Creates the change event table, its trigger and the enable and disable helpers.
+
+#### data-api hooks enable
+
+Publish recorded changes as events from the Data API app&#39;s source
+
+`gregale data-api hooks enable [--env <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+Examples:
+
+```sh
+gregale data-api hooks enable shop-data
+```
+
+#### data-api hooks status
+
+Show whether change hooks are on and their event source
+
+`gregale data-api hooks status [--env <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <SCOPE>` | environment scope (also --scope) |  |
+
+#### data-api hooks disable
+
+Stop publishing; recorded changes stay in the table
+
+`gregale data-api hooks disable [--env <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|

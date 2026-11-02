@@ -91,7 +91,8 @@ func TestPublishManagedPostgresChargeSendsTheStepDifference(t *testing.T) {
 		}
 	}
 	step := billing.ManagedPostgresChargeStep{SubjectID: "acct", PeriodStart: period, At: at, UsedUnitSeconds: 93600,
-		AllowanceSeconds: 90000, BilledUnitSeconds: 3600 * 3, DeliveredMillicents: 40_000, TargetMillicents: 60_000}
+		AllowanceSeconds: 90000, BilledUnitSeconds: 3600 * 3, DeliveredMillicents: 40_000, TargetMillicents: 60_000,
+		UsedStorageByteSeconds: 3 << 40, StoragePoolBytes: 1 << 30, BilledStorageByteSeconds: 1 << 40}
 	if err := p.PublishManagedPostgresCharge(context.Background(), step); err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +102,10 @@ func TestPublishManagedPostgresChargeSendsTheStepDifference(t *testing.T) {
 	if got.Metadata["charge_millicents"] != float64(20_000) || got.Metadata["cumulative_millicents"] != float64(60_000) ||
 		got.Metadata["millicents_per_unit_hour"] != float64(api.ManagedPostgresOverageMillicentsPerComputeUnitHour) || got.Metadata["billed_unit_seconds"] != float64(10800) {
 		t.Fatalf("metadata = %+v", got.Metadata)
+	}
+	if got.Metadata["billed_storage_byte_seconds"] != float64(1<<40) || got.Metadata["storage_pool_bytes"] != float64(1<<30) ||
+		got.Metadata["storage_millicents_per_gib_month"] != float64(api.ManagedPostgresStorageOverageMillicentsPerGiBMonth) {
+		t.Fatalf("storage metadata = %+v", got.Metadata)
 	}
 	// A retry after an ambiguous response starts from the same delivered
 	// charge with a larger target; it must be the same event to the provider

@@ -12,6 +12,23 @@ faas_edge_control_plane_target: ''
 # that last served it, instead of this node's. The manifest's
 # public_edge.placement_routing sets it per cell.
 faas_edge_placement_routing: false
+# ADR-20261102081618 §5b: spread each app host's requests over every node the
+# app runs on, by ready instances. The manifest's
+# public_edge.placement_node_set sets it.
+faas_edge_placement_node_set: false
+# ADR-20261102081618: how Cloudflare reaches this edge. "tunnel", the default,
+# is the connector only; "both" also opens the edge's TLS listener on
+# faas_edge_public_tls_port for proxied address records. The manifest's
+# public_edge.entry sets it per cell.
+faas_edge_entry: tunnel
+faas_edge_public_tls_port: 443
+# Operator-provisioned secrets, never in inventory or the repository: the
+# zone's Cloudflare Origin CA certificate and key (the pair the control
+# plane's Caddy serves), and the CA behind the zone's Authenticated Origin
+# Pulls certificate. The edge reads all three through systemd LoadCredential.
+faas_edge_public_tls_cert: /etc/faas/secrets/edge-tls/origin.pem
+faas_edge_public_tls_key: /etc/faas/secrets/edge-tls/origin.key
+faas_edge_public_tls_client_ca: /etc/faas/secrets/edge-tls/origin-pull-ca.pem
 
 # Cloudflare Tunnel connector, pinned by version and per-architecture SHA-256
 # (cloudflare/cloudflared release notes, matching GitHub's asset digests).

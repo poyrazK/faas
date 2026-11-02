@@ -59,8 +59,8 @@ func (f *fakeInbox) AppendManagedRealtimeChannelMetadata(_ context.Context, ep, 
 	return m, nil
 }
 
-// fakeRevocations keeps each thread's latest revocation, at the fixture's
-// clock.
+// fakeRevocations keeps each thread's latest revocation, at its own clock,
+// the database's, which the fixture runs with apid's unless a test skews it.
 type fakeRevocations struct {
 	now func() time.Time
 	at  map[string]time.Time
@@ -75,6 +75,10 @@ func (f *fakeRevocations) RevokeCallbacks(_ context.Context, _, endpointID, thre
 func (f *fakeRevocations) CallbacksRevokedAt(_ context.Context, endpointID, threadID string) (time.Time, bool, error) {
 	t, ok := f.at[endpointID+"/"+threadID]
 	return t, ok, nil
+}
+
+func (f *fakeRevocations) CallbackClock(context.Context) (time.Time, error) {
+	return f.now(), nil
 }
 
 const (
@@ -469,6 +473,36 @@ func TestCallbackRevocation(t *testing.T) {
 	}
 	if code := f.revoke(t, callbackAccount, "ep-1", "a b"); code != http.StatusBadRequest {
 		t.Fatalf("revoking a bad thread = %d", code)
+	}
+}
+
+// A token's issue time is read from the clock revocations are recorded on,
+// so apid's clock running behind or ahead of the database changes nothing: a
+// URL issued before a revocation stops working, and one issued after it
+// works.
+func TestCallbackRevocationIgnoresAPIDClockSkew(t *testing.T) {
+	// skew is how far the database's clock runs ahead of apid's.
+	for _, skew := range []time.Duration{5 * time.Second, -5 * time.Second} {
+		t.Run(skew.String(), func(t *testing.T) {
+			f := newCallbackFixture(t)
+			f.h.Revocations = &fakeRevocations{now: func() time.Time { return f.now.Add(skew) }, at: map[string]time.Time{}}
+			before, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+			f.now = f.now.Add(time.Millisecond)
+			if code := f.revoke(t, callbackAccount, "ep-1", "t"); code != http.StatusOK {
+				t.Fatalf("revoke = %d", code)
+			}
+			if code, _ := f.post(t, before, toolResult("m1", `1`)); code != http.StatusNotFound {
+				t.Fatalf("a URL issued before the revocation answered %d", code)
+			}
+			f.now = f.now.Add(time.Millisecond)
+			after, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+			if code != http.StatusCreated {
+				t.Fatalf("issue = %d", code)
+			}
+			if code, _ := f.post(t, after, toolResult("m2", `1`)); code != http.StatusAccepted {
+				t.Fatalf("a URL issued after the revocation answered %d", code)
+			}
+		})
 	}
 }
 
