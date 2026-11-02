@@ -273,6 +273,12 @@ func (o *WorkflowOrchestrator) ChildDBPhaseForTest(ctx context.Context) (context
 }
 func OutsideDBPhaseForTest(ctx context.Context, wait func()) { outsideDBPhase(ctx, wait) }
 
+// SetPlatformRetryDelayForTest shortens the wait before retrying a step
+// attempt Gregale refused before delivery (ADR-081 amendment 2026-11-02).
+func (o *WorkflowOrchestrator) SetPlatformRetryDelayForTest(d time.Duration) {
+	o.platformRetryDelay = d
+}
+
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot
@@ -638,6 +644,13 @@ func XHTTPGatewaySynth(client *http.Client, base string) interface {
 	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)
 } {
 	return &httpGatewaySynth{client: client, basePrefix: base}
+}
+
+// XWorkflowGatewaySynth is the gateway transport workflow steps use, with a
+// test token minter: workflow dispatches always carry an internal token.
+func XWorkflowGatewaySynth(client *http.Client, base string) WorkflowStepExecutor {
+	return &httpGatewaySynth{client: client, basePrefix: base,
+		mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
 }
 
 // Members of fakeNotifier

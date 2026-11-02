@@ -1485,6 +1485,18 @@ const (
 	CronPlatformRetryDelay = 5 * time.Second
 )
 
+// WorkflowStepPlatformRetries is how many attempts beyond its max_attempts a
+// workflow step may make when Gregale refused an attempt before the app
+// received it (a 5xx from the gateway's dispatch endpoint: a failed wake, an
+// unavailable traffic-security check). Such an attempt never ends the step
+// within that bound; an attempt the app answered keeps the step's own policy.
+// A refused attempt retries no sooner than WorkflowStepPlatformRetryDelay
+// (ADR-081 amendment 2026-11-02).
+const (
+	WorkflowStepPlatformRetries    = 2
+	WorkflowStepPlatformRetryDelay = 5 * time.Second
+)
+
 // CronCatchUpRecordedMax bounds the due occurrences a schedule-policy or
 // command cron records in one tick after an outage or suspension: the newest
 // is dispatched and the ones before it are recorded as missed or coalesced.
