@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -56,7 +57,15 @@ func (s *PgStore) ClaimRouteMonitorRollback(ctx context.Context, accountID, appI
 	if err != nil {
 		return RouteMonitorRollbackClaim{}, false, err
 	}
-	claim, claimed, changed := decideRouteMonitorRollback(c, &incident, d, clock.Time)
+	promoted, err := sqlc.New().ReadDeploymentPromotedAt(ctx, tx, d.ID)
+	if err != nil {
+		return RouteMonitorRollbackClaim{}, false, fmt.Errorf("read deployment promotion: %w", err)
+	}
+	var promotedAt *time.Time
+	if promoted.Valid {
+		promotedAt = &promoted.Time
+	}
+	claim, claimed, changed := decideRouteMonitorRollback(c, &incident, d, promotedAt, clock.Time)
 	if !changed {
 		return RouteMonitorRollbackClaim{}, false, nil
 	}
