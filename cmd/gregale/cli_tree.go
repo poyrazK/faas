@@ -970,12 +970,12 @@ func rewriteCliTree(args []string) ([]string, error) {
 		return args, nil
 	}
 	if len(args) > 1 && args[0] == "help" {
-		topic, err := rewriteTreePath(args[1:])
-		if err != nil {
-			// Help needs no app (`help app scale`); the tree's help answers.
-			return args, nil
+		if topic, err := rewriteTreePath(args[1:]); err == nil {
+			return append([]string{"help"}, topic...), nil
 		}
-		return append([]string{"help"}, topic...), nil
+		// Help needs no app (`help app scale`): a path that cannot rewrite
+		// without one is answered by the tree's own help.
+		return args, nil
 	}
 	return rewriteTreePath(args)
 }
