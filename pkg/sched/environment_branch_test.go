@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 20261031193635
 
@@ -10,18 +10,15 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // seedEnvironmentBranch publishes a live production deployment of one app and
-// returns the deployment a branch of production created from it.
-func seedEnvironmentBranch(t *testing.T, store *state.MemStore, mode string) (state.App, state.Deployment) {
-	return seedEnvironmentBranchWithData(t, store, mode, false)
-}
-
-// seedEnvironmentBranchWithData optionally binds a managed PostgreSQL
-// credential in production, so the branch starts with its data pending.
-func seedEnvironmentBranchWithData(t *testing.T, store *state.MemStore, mode string, managedPostgres bool) (state.App, state.Deployment) {
+// returns the deployment a branch of production created from it. With
+// managedPostgres the parent binds a database, so the branch's data starts
+// pending.
+func seedEnvironmentBranch(t *testing.T, store *state.MemStore, mode string, managedPostgres bool) (state.App, state.Deployment) {
 	t.Helper()
 	ctx := context.Background()
 	acct, err := store.CreateAccount(ctx, "branch@example.com", api.PlanPro)
@@ -78,19 +75,23 @@ func seedEnvironmentBranchWithData(t *testing.T, store *state.MemStore, mode str
 // first request cold boots.
 func TestPrimeEnvironmentBranchRequestActivatesWithoutBoot(t *testing.T) {
 	store := state.NewMemStore()
-	app, dep := seedEnvironmentBranch(t, store, api.ExecutionModeRequest)
-	vmm := &fakeVMM{}
-	notifier := &fakeNotifier{}
-	engine := newEngine(t, store, vmm, notifier, "1.10.0")
+	app, dep := seedEnvironmentBranch(t, store, api.ExecutionModeRequest, false)
+	vmm := &sched.FakeVMM{}
+	notifier := &sched.FakeNotifier{}
+	engine := sched.XNewEngine(t, store, vmm, notifier, "1.10.0")
 
 	if err := engine.Prime(context.Background(), app.ID, dep.ID); err != nil {
 		t.Fatalf("Prime(branch): %v", err)
 	}
-	if vmm.coldBoots != 0 || vmm.restores != 0 || vmm.snapshots != 0 {
-		t.Fatalf("branch prime executed VM work: cold=%d restore=%d snapshot=%d", vmm.coldBoots, vmm.restores, vmm.snapshots)
+	if *vmm.ColdBoots() != 0 || *vmm.Restores() != 0 || *vmm.Snapshots() != 0 {
+		t.Fatalf("branch prime executed VM work: cold=%d restore=%d snapshot=%d", *vmm.ColdBoots(), *vmm.Restores(), *vmm.Snapshots())
 	}
 	if instances, err := store.ListInstancesForApp(context.Background(), app.ID); err != nil || len(instances) != 0 {
 		t.Fatalf("branch prime instances = %d, %v; want none", len(instances), err)
+	}
+	payload, ok := notifier.LastPayload(db.NotifyDeploymentReady)
+	if !ok {
+		t.Fatal("no deployment_ready")
 	}
 	var ready struct {
 		DeploymentID     string `json:"deployment_id"`
@@ -98,7 +99,6 @@ func TestPrimeEnvironmentBranchRequestActivatesWithoutBoot(t *testing.T) {
 		InstanceID       string `json:"instance_id"`
 		NoSnapshotReason string `json:"no_snapshot_reason"`
 	}
-	payload := lastNotifyPayload(t, notifier, db.NotifyDeploymentReady)
 	if err := json.Unmarshal([]byte(payload), &ready); err != nil {
 		t.Fatal(err)
 	}
@@ -112,16 +112,16 @@ func TestPrimeEnvironmentBranchRequestActivatesWithoutBoot(t *testing.T) {
 // it would boot without its binding URLs.
 func TestPrimeEnvironmentBranchWaitsForData(t *testing.T) {
 	store := state.NewMemStore()
-	app, dep := seedEnvironmentBranchWithData(t, store, api.ExecutionModeRequest, true)
-	vmm := &fakeVMM{}
-	notifier := &fakeNotifier{}
-	engine := newEngine(t, store, vmm, notifier, "1.10.0")
+	app, dep := seedEnvironmentBranch(t, store, api.ExecutionModeRequest, true)
+	vmm := &sched.FakeVMM{}
+	notifier := &sched.FakeNotifier{}
+	engine := sched.XNewEngine(t, store, vmm, notifier, "1.10.0")
 
 	if err := engine.Prime(context.Background(), app.ID, dep.ID); err != nil {
 		t.Fatalf("Prime(branch with pending data): %v", err)
 	}
-	if vmm.coldBoots != 0 || notifier.count(db.NotifyDeploymentReady) != 0 {
-		t.Fatalf("pending data activated the branch: cold=%d ready=%d", vmm.coldBoots, notifier.count(db.NotifyDeploymentReady))
+	if *vmm.ColdBoots() != 0 || notifier.Count(db.NotifyDeploymentReady) != 0 {
+		t.Fatalf("pending data activated the branch: cold=%d ready=%d", *vmm.ColdBoots(), notifier.Count(db.NotifyDeploymentReady))
 	}
 }
 
@@ -129,15 +129,15 @@ func TestPrimeEnvironmentBranchWaitsForData(t *testing.T) {
 // prime: one cold boot that stays running.
 func TestPrimeEnvironmentBranchWorkerStillBoots(t *testing.T) {
 	store := state.NewMemStore()
-	app, dep := seedEnvironmentBranch(t, store, api.ExecutionModeWorker)
-	vmm := &fakeVMM{}
-	notifier := &fakeNotifier{}
-	engine := newEngine(t, store, vmm, notifier, "1.10.0")
+	app, dep := seedEnvironmentBranch(t, store, api.ExecutionModeWorker, false)
+	vmm := &sched.FakeVMM{}
+	notifier := &sched.FakeNotifier{}
+	engine := sched.XNewEngine(t, store, vmm, notifier, "1.10.0")
 
 	if err := engine.Prime(context.Background(), app.ID, dep.ID); err != nil {
 		t.Fatalf("Prime(branch worker): %v", err)
 	}
-	if vmm.coldBoots != 1 {
-		t.Fatalf("branch worker cold boots = %d; want 1", vmm.coldBoots)
+	if *vmm.ColdBoots() != 1 {
+		t.Fatalf("branch worker cold boots = %d; want 1", *vmm.ColdBoots())
 	}
 }

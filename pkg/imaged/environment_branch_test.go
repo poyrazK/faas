@@ -12,7 +12,7 @@ import (
 // ADR-20261031193635: only a deployment an environment branch created from
 // its parent's build may go live without a snapshot.
 func TestEnvironmentBranchActivationIsOnlyForBranchDeployments(t *testing.T) {
-	for _, mode := range []string{"branch", "ordinary", "instance_supplied"} {
+	for _, mode := range []string{"branch", "ordinary", "instance_supplied", "data_pending"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := t.Context()
 			store := state.NewMemStore()
@@ -37,6 +37,14 @@ func TestEnvironmentBranchActivationIsOnlyForBranchDeployments(t *testing.T) {
 			}
 			if err := store.MarkDeploymentLive(ctx, parent.ID); err != nil {
 				t.Fatal(err)
+			}
+			if mode == "data_pending" {
+				// The parent binds a database the branch has not copied yet.
+				if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{AccountID: account.ID, AppID: app.ID, Scope: "production", Key: "DATABASE_URL",
+					Ciphertext: []byte("sealed"), ManagedPostgresBindingID: "binding-1", ManagedCredentialRef: "ref-1", ManagedCredentialGeneration: 1,
+					ManagedPostgresAccess: "read_write"}); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if _, _, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
 				AccountID: account.ID, ProjectID: project.ID, ParentSlug: "production", Slug: "pr-1",
