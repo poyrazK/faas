@@ -1089,7 +1089,7 @@ func cmdEdgeRulesRm(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale edge rule delete <id> [--app <slug>] [--yes]", "edge-rules")
 		return 1
 	}
-	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+	if code := requireConfirmationFlag(*quiet, "--yes", "edge rule deletion"); code != 0 {
 		return code
 	}
 	id := fs.Arg(0)
