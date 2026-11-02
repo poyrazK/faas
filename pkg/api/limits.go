@@ -633,6 +633,11 @@ const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonSc
 // arrive (ADR-20261031110037).
 const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 
+// ManagedPostgresStorageOverageMillicentsPerGiBMonth prices storage a subject
+// with overage on holds past its plan's pool: $0.50 per GiB-month, averaged
+// over the UTC month (ADR-20261102072425; ADR-20261031110037 amendment 2).
+const ManagedPostgresStorageOverageMillicentsPerGiBMonth = 50_000
+
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.
@@ -14527,6 +14532,17 @@ const (
 	DataAPIStorageTransfers          = 4
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
+	// Change hooks (ADR-20261022121642), mirrored in the runtime's limits:
+	// events and body bytes per runtime publication, the largest event data
+	// before its rows are dropped, the relay's claim lease, how long one
+	// publication may take, and the relay's idle poll range.
+	DataAPIChangeEventsBatchMaxEvents = 100
+	DataAPIChangeEventsBatchMaxBytes  = 1 << 20
+	DataAPIChangeEventDataMaxBytes    = 64 << 10
+	DataAPIChangeEventsLease          = 60 * time.Second
+	DataAPIChangeEventsPublishTimeout = 10 * time.Second
+	DataAPIChangeEventsIdleMin        = time.Second
+	DataAPIChangeEventsIdleMax        = 30 * time.Second
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour

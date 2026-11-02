@@ -36,11 +36,13 @@ Compose `postgres` service is not provisioned (the deploy names the plan as
 the reason).
 
 Storage is pooled across the account's databases: one database may use the
-whole pool. Storage is a limit, not billed overage
-([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
-Compute is a limit too, unless a paid account turns overage on: then compute
-above the allowance costs $0.2331 per CU-hour, up to twice the allowance
-([Compute overage](#compute-overage)).
+whole pool. Storage and compute are limits unless a paid account turns
+overage on ([Compute overage](#compute-overage)):
+
+- compute above the allowance costs $0.2331 per CU-hour, up to twice the
+  allowance;
+- the pool doubles, and storage past the plan's pool, averaged over the
+  month, costs $0.50 per GiB-month.
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -990,6 +992,12 @@ choice, `{"enabled": true|false}`:
   It is charged only past the allowance and only up to the ceiling, so a
   month of overage costs at most one allowance: $5.83 on Hobby, $17.48 on
   Pro, $46.62 on Scale. It appears on the next invoice as its own line.
+- With overage on the storage pool doubles. Storage held past the plan's pool,
+  averaged over the UTC month, costs $0.50 per GiB-month
+  (`api.ManagedPostgresStorageOverageMillicentsPerGiBMonth`). At most one more
+  pool is charged a month: $0.50 on Hobby, $2.50 on Pro, $10 on Scale. It is
+  part of the same charge. A month that charged storage keeps charging it
+  after overage is turned off, so the month's total never drops.
 - Free accounts get `403 managed_postgres_not_in_plan`.
 
 The charge does not count toward the account's spend cap: the overage
@@ -999,7 +1007,9 @@ apid delivers the charge after each compute cap sweep
 ([ADR-20261031110037](adr/20261031110037-managed-postgres-overage-invoicing.md)):
 
 - It charges subjects that reached their allowance in the month (the
-  `allowance` cap event) with overage on at the time, or turned on later.
+  `allowance` cap event) with overage on at the time, or turned on later,
+  subjects with overage on (for storage past the pool), and subjects already
+  charged in the month.
 - The month's total is cumulative. Each step sends only the difference from
   the last delivered total, keyed by that total, so a retry is a duplicate,
   never a second charge.
