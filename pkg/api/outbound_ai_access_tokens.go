@@ -2,17 +2,17 @@ package api
 
 import (
 	"net/http"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // OutboundAIAccessTokenPrefix starts every AI gateway access token
 // (ADR-1431), so secret scanners can recognise one.
 const OutboundAIAccessTokenPrefix = "ggai_"
 
-var outboundAIAccessTokenName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+var outboundAIAccessTokenName = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // CreateOutboundAIAccessTokenRequest issues a token that lets a caller
 // outside Gregale act as one app on the AI gateway (ADR-1431).

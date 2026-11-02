@@ -2,9 +2,10 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // DockerHubMirrorsEnv names the operator's Docker Hub mirrors: a
@@ -15,7 +16,7 @@ import (
 // Docker Hub itself.
 const DockerHubMirrorsEnv = "FAAS_DOCKER_HUB_MIRRORS"
 
-var dockerHubMirrorHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?$`)
+var dockerHubMirrorHost = lazyregexp.New(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?$`)
 
 // ParseDockerHubMirrors parses a DockerHubMirrorsEnv value. Each entry is a
 // lowercase registry host with an optional port, reached over HTTPS; a
