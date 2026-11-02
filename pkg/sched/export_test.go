@@ -25,6 +25,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capflags"
+	core "github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -1094,4 +1095,18 @@ func DrainLeaseRecoveryDue(every time.Duration, nows ...time.Time) []bool {
 func OpenWorkflowDueGate(read state.WorkflowRunDueReader) func(context.Context) bool {
 	g := &workflowDueGate{read: read}
 	return g.open
+}
+
+// DataRepairRecoveryDue replays nows through one rehearsal coordinator's
+// recovery spacing; pending keeps a claim pending throughout.
+func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
+	c := &DataRepairRehearsalCoordinator{pendingClaims: map[string]core.RehearsalFrame{}}
+	if pending {
+		c.pendingClaims["claim"] = core.RehearsalFrame{}
+	}
+	due := make([]bool, len(nows))
+	for i, now := range nows {
+		due[i] = c.recoveryDue(now)
+	}
+	return due
 }
