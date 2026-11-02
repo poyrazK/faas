@@ -58,11 +58,7 @@ type OverageSubject struct {
 type OverageBillingStore interface {
 	OverageSubjects(ctx context.Context, periodStart time.Time) ([]OverageSubject, error)
 	OverageDelivered(ctx context.Context, provider, subjectID string, periodStart time.Time) (OverageDelivery, error)
-	// RecordOverageDelivery advances the month's delivery from previous, the
-	// row as read (zero when none). A live delivery may replace a shadow
-	// row, which charged nothing; a shadow delivery never replaces a live
-	// one. It reports false when another writer moved the row first.
-	RecordOverageDelivery(ctx context.Context, delivery OverageDelivery, previous OverageDelivery) (bool, error)
+	RecordOverageDelivery(ctx context.Context, delivery OverageDelivery, previousMillicents int64) (bool, error)
 }
 
 // OverageChargeStep raises a subject's month charge from Delivered to Target.
@@ -173,21 +169,9 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	if err != nil {
 		return err
 	}
-	live := b.options.Publish != nil
-	// The step starts from what this mode has delivered. A shadow row
-	// charged nothing, so a live step starts from zero over it; a shadow
-	// step never rewrites a live row, whose charge it would hide (bug hunt
-	// 33).
-	baseline := delivered.Millicents
-	if delivered.Millicents > 0 && delivered.Live != live {
-		if !live {
-			return nil
-		}
-		baseline = 0
-	}
 	// Overage counts when the subject reached its allowance with it on, has it
 	// on now, or was already charged this month.
-	if !subject.Overage && !limits.Overage && baseline == 0 {
+	if !subject.Overage && !limits.Overage && delivered.Millicents == 0 {
 		return nil
 	}
 	snapshot, err := b.usage.UsageSnapshot(ctx, subject.SubjectID, at)
@@ -195,29 +179,26 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 		return err
 	}
 	billed, target := OverageCharge(snapshot.ComputeUnitSeconds, max(limits.Allowance, subject.Allowance))
-	if target <= baseline {
+	if target <= delivered.Millicents {
 		return nil
 	}
-	// The provider de-duplicates on the step's starting point, not its
-	// target: after an ambiguous publish (a timeout, apid restarting) the
-	// next sweep starts from the same point, so its step is a duplicate of
-	// the one the provider may hold, never a second charge.
 	step := OverageChargeStep{SubjectID: subject.SubjectID, PeriodStart: month, At: now,
 		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: max(limits.Allowance, subject.Allowance),
-		BilledUnitSeconds: billed, DeliveredMillicents: baseline, TargetMillicents: target}
+		BilledUnitSeconds: billed, DeliveredMillicents: delivered.Millicents, TargetMillicents: target}
+	live := b.options.Publish != nil
 	if live {
 		if err := b.options.Publish(ctx, step); err != nil {
 			return err
 		}
 	}
 	recorded, err := b.billing.RecordOverageDelivery(ctx, OverageDelivery{Provider: b.options.Provider, SubjectID: subject.SubjectID,
-		PeriodStart: month, Live: live, BilledUnitSeconds: billed, Millicents: target, UpdatedAt: now}, delivered)
+		PeriodStart: month, Live: live, BilledUnitSeconds: billed, Millicents: target, UpdatedAt: now}, delivered.Millicents)
 	if err != nil || !recorded {
 		// Another replica recorded first. A published step is idempotent on
 		// its target, so the provider keeps one copy.
 		return err
 	}
-	summary.Millicents += target - baseline
+	summary.Millicents += target - delivered.Millicents
 	if live {
 		summary.Delivered++
 	} else {
@@ -225,6 +206,6 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	}
 	b.options.Logger.Info("managed postgres overage charged", "subject_id", subject.SubjectID, "period", month.Format("2006-01"),
 		"live", live, "used_unit_seconds", snapshot.ComputeUnitSeconds, "billed_unit_seconds", billed,
-		"previous_millicents", baseline, "target_millicents", target)
+		"previous_millicents", delivered.Millicents, "target_millicents", target)
 	return nil
 }
