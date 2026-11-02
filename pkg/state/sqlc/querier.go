@@ -1752,6 +1752,10 @@ type Querier interface {
 	FinancialComputeJobClaimDefer(ctx context.Context, db DBTX, arg FinancialComputeJobClaimDeferParams) (int64, error)
 	FinancialComputeJobLeases(ctx context.Context, db DBTX, arg FinancialComputeJobLeasesParams) ([][]byte, error)
 	FinancialComputeJobSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeJobSamplingReadyParams) (pgtype.Bool, error)
+	// FinancialComputeLatestLease for many app instances in one statement, through
+	// financial_compute_instance_history (ADR 20261102160622). The caller matches
+	// each row's account and app to its instance's.
+	FinancialComputeLatestAppInstanceLeases(ctx context.Context, db DBTX, arg FinancialComputeLatestAppInstanceLeasesParams) ([]FinancialComputeLatestAppInstanceLeasesRow, error)
 	FinancialComputeLatestLease(ctx context.Context, db DBTX, arg FinancialComputeLatestLeaseParams) ([]byte, error)
 	FinancialComputeLeaseGet(ctx context.Context, db DBTX, arg FinancialComputeLeaseGetParams) ([]byte, error)
 	FinancialComputeLeasePut(ctx context.Context, db DBTX, arg FinancialComputeLeasePutParams) (int64, error)
