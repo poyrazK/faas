@@ -292,7 +292,9 @@ own hosts: a rule's `match_host` must be `@app`, the app's
 `routes` and `async_routes` in a `gregale.yaml` it deploys. A rule that covers
 other hosts (`*`, a wildcard, another app's host), or a route that sends
 another app's host to this app, needs an account API key, because edge rules
-apply to every host they cover across your apps.
+apply to every host they cover across your apps. A route rule written with a
+deploy token may serve only the token's app: routing its hosts to another app
+needs an account API key too.
 
 ```bash
 gregale app deploy-token create --app my-api --label ci   # default expiry: 90 days

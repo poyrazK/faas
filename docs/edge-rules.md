@@ -179,6 +179,12 @@ ends it, and later kinds do not run.
 15. `cache` and `async`.
 16. `budget`, `retry` and `circuit_breaker` while the request is forwarded.
 
+`ip`, `geo`, `jwt`, `throttle`, `waf` and `challenge` match the path the
+client sent, and the rewritten path when a `rewrite` changed it: a gate on
+`/api/**` keeps applying after a rewrite takes `/api` away, and a gate written
+for the rewritten path still applies. The kinds after them (`limit`,
+`validate`, `respond`, `cache`, `async`) see the rewritten path.
+
 Refusals are ordered from cheapest to most expensive, so a request blocked by
 IP or country never costs a token check or a body read, and a request
 refused for its size never uses a throttle token.
@@ -231,7 +237,9 @@ The matched request is served by `target_app_slug`, which must be an app of
 the same account and owner: one of your personal apps for a rule on a personal
 app, or an app of the same organization for a rule on an organization's app.
 The path is unchanged; add a `rewrite` rule to change it.
-Renaming the target app updates the route rules that name it.
+Renaming the target app updates the route rules that name it. A deploy
+token, or another credential bound to one app, may write a route rule only
+to that app itself; routing to another app needs an account API key.
 
 The rest of a routed request runs as the target app's: its `@app` rules
 apply, and the source app's `@app` rules do not. Rules written for the host
@@ -249,7 +257,9 @@ put the gate on the host, or on the target app's `@app`.
 becomes `/v1/users`. A `to` of `/` strips the prefix (`/api/users` becomes
 `/users`, `/api` becomes `/`), and a `from` of `*` puts `to` in front of every
 path. The client still sees its original URL. `from` is a plain prefix, so
-pair it with a `match_path` that selects the requests you mean.
+pair it with a `match_path` that selects the requests you mean. Access gates
+(`ip`, `geo`, `jwt`, `throttle`, `waf`, `challenge`) match both the original
+and the rewritten path; see [Order of kinds](#order-of-kinds).
 
 ### redirect
 
@@ -333,6 +343,11 @@ A request needs `Authorization: Bearer <token>` signed by a key from
 and each of `required_claims` as a string claim with exactly that value. A missing or invalid token
 gets 401. The key's `alg` must match the token's, and encryption keys are not
 used for signatures.
+
+A new or edited rule needs `audience` or at least one `required_claims`
+entry. Without one, every token the issuer signs would pass, and a shared
+issuer (GitHub Actions, Google) signs tokens for anyone who asks. Rules saved
+before this check keep working until you edit them.
 
 `require_exp` defaults to true: a token without an `exp` claim is rejected,
 because it never expires. Set `require_exp: false` to accept such tokens.

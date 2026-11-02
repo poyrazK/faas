@@ -5556,7 +5556,12 @@ type Querier interface {
 	ReadLifecycleTrafficInputs(ctx context.Context, db DBTX, appID string) ([]byte, error)
 	ReadLiveTrafficSumInScope(ctx context.Context, db DBTX, arg ReadLiveTrafficSumInScopeParams) (int64, error)
 	ReadMCPAccessPolicyAppAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
-	ReadMCPAccessPolicyRules(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ReadMCPAccessPolicyRulesRow, error)
+	// The account's JWT rules the gateway can apply to the app's hosts (ADR-091
+	// amendment 2026-11-02, review round 8): the app's own, and those of its live
+	// sibling apps in the same owner scope (the company organization, or none for
+	// a personal app) other than "@app" ones. The CLI reads the same set from
+	// GET /v1/apps/{slug}/edge-rules?covering=true.
+	ReadMCPAccessPolicyRules(ctx context.Context, db DBTX, arg ReadMCPAccessPolicyRulesParams) ([]ReadMCPAccessPolicyRulesRow, error)
 	ReadMCPAttentionAction(ctx context.Context, db DBTX, arg ReadMCPAttentionActionParams) (McpReadinessAttentionAction, error)
 	ReadMCPAttentionIncident(ctx context.Context, db DBTX, arg ReadMCPAttentionIncidentParams) (McpReadinessIncident, error)
 	ReadMCPAttentionSnapshot(ctx context.Context, db DBTX, incidentID pgtype.UUID) ([]byte, error)
