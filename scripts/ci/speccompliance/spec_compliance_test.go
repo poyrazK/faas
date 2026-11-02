@@ -503,6 +503,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/suspend":                      true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/restore":                      true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
+	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":                   true, // operator-only destructive node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/activate":                      true, // operator-only node lifecycle control
@@ -936,12 +937,13 @@ var dtoExclude = map[string]bool{
 	// surface; intentionally undocumented for public consumers.
 	// The C7 follow-on registers ONLY the new ObsHealthResponse —
 	// every other Obs* DTO stays admin-only and is excluded here.
-	"ObsAccountMutationResponse": true,
-	"ObsAppDetail":               true,
-	"ObsAppDetailResponse":       true,
-	"ObsAppHealth":               true,
-	"ObsAppSnapshot":             true, // obs app snapshot rows, same private surface
-	"ObsAuditActivityRow":        true,
+	"ObsAccountMutationResponse":      true,
+	"ObsObjectStorageCeilingResponse": true, // operator-only support grant view (ADR-20261101214152)
+	"ObsAppDetail":                    true,
+	"ObsAppDetailResponse":            true,
+	"ObsAppHealth":                    true,
+	"ObsAppSnapshot":                  true, // obs app snapshot rows, same private surface
+	"ObsAuditActivityRow":             true,
 	// ADR-115 capacity PR (post-PR #1111): admin-only capacity
 	// snapshot shapes — same admin-only posture as the other
 	// Obs* DTOs above; not registered in api/openapi.yaml.
