@@ -373,6 +373,22 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - The key derives from apid's session key. The data plane (step 4) verifies tokens without reading Postgres, and treats a session it no longer routes as revoked.
    - **Limits.** §7's table is in `pkg/api/limits.go`, with `SandboxIdleFreezeSec`, `SandboxIdleExpirySec` and `SandboxTokenTTLSec`.
 3. guest-init sandbox server mode: exec (with `run_as` and background handles), pseudo-terminal, files, archives. The netns anti-spoofing rule and a guest kernel that cannot load modules come with the root metal tests (§10).
+
+   **Built, part one (2026-11-02), on a local branch: the guest server.**
+   - **Protocol** (`pkg/sandboxproto`), vsock port 1035. Each operation is one connection: a request frame, then any data, stdin, resize or kill frames from the host, and stream or data frames back, ending in one result or error frame. The framing is agentrunproto's.
+     - The operations are `exec`, `exec_list`, `exec_output` and `exec_kill`; `file_read`, `file_write`, `file_list`, `file_stat`, `file_remove`, `file_mkdir` and `file_rename`; and `archive_create` and `archive_extract`.
+     - The guest refuses an invalid request before acting on it. Its error codes are stable (`not_found`, `outside_workspace`, `too_large`, …), and it never reports internal details.
+   - **Mode.** `/etc/faas/sandbox.json` (kind `sandbox`) selects sandbox mode, alone. guest-init brings up loopback and the relay and prepares `/workspace` and `/home/app` (uid 1000). It listens before the resume hook, so a preset snapshot can be captured there, and holds the restore-reseed contract like an agent run. It then serves up to 64 operations at once until vmmd stops the VM.
+   - **Commands** run as `app` or, with `run_as: root`, as root, in their own process group, or their own session on a terminal.
+     - A foreground command streams its output within `max_output_bytes`, shared by both streams, and drains the rest.
+     - Its timeout sends SIGTERM, then SIGKILL after 2 s. A kill frame, or the host closing the connection, kills it.
+     - A grandchild that keeps its output open delays the result by at most 500 ms.
+     - A background command returns a handle and keeps the latest `max_output_bytes` of each stream, read by offset. At most 32 are kept, and finished ones are forgotten first.
+     - As PID 1, guest-init runs a single `wait4(-1)` reaper that hands each command its own exit.
+   - **Files and archives** resolve every path inside the workspace with `os.Root`, so an absolute path elsewhere, `..`, or a link that leaves the workspace is `outside_workspace`.
+     - What the files API and extraction create is owned by `app`.
+     - Archives are tar.gz, with links kept as links, never followed. Creation is capped in bytes, and extraction in entries and unpacked bytes.
+   - **Not yet:** the anti-spoofing rule, the module-less guest kernel and the §10 root metal tests (part two), and the workspace scratch drive, which vmmd attaches in step 4.
 4. vmmd `SandboxSession` and gateway routing, on the ADR-1037 transport.
 5. agentd session lifecycle (idle timers, freezing, expiry) and schedd placement from preset snapshots, with teardown.
 6. Network modes `none` and `registries`.
