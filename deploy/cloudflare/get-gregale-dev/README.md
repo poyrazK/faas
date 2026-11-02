@@ -38,10 +38,14 @@ clean failure from `curl -f`.
    If you are happy with the redirect, you do not need this at all.
 
 2. **Pin a release.** Already done: `wrangler.toml.example` ships pinned to
-   `v0.1.18-rc.145`. Re-pin only when `scripts/install.sh` itself changes:
+   `v0.1.18-rc.313`. (The earlier `v0.1.18-rc.145` pin could not install
+   anything: that installer asked GitHub's `releases/latest`, which answers
+   `v0.1.17`, a release with no CLI archives.) Re-pin when
+   `scripts/install.sh` itself changes, for example to pick up the PATH
+   warning added after rc.313:
 
    ```bash
-   deploy/cloudflare/get-gregale-dev/pin.sh v0.1.18-rc.160
+   deploy/cloudflare/get-gregale-dev/pin.sh v0.1.18-rc.320
    ```
 
    Review the diff and commit it. Both values must move together, and an
@@ -77,9 +81,12 @@ deploy/cloudflare/get-gregale-dev/pin.sh v0.1.19
 cd deploy/cloudflare/get-gregale-dev && wrangler deploy
 ```
 
-The installer resolves the CLI version from the GitHub API at run time, so
-it does **not** need re-pinning for an ordinary release — only when the
-installer script itself changes. Leaving it pinned to an older tag is safe.
+The installer resolves the CLI version at run time from the release
+channel pointers (`CLI-LATEST`, `CLI-STABLE`, read through
+`releases/download`, ADR-20261025092617), so it does **not** need
+re-pinning for an ordinary release — only when the installer script itself
+changes. Leaving it pinned to an older tag that already reads the pointers
+is safe.
 
 ## Paths
 
@@ -95,4 +102,4 @@ installer script itself changes. Leaving it pinned to an older tag is safe.
 |---|---|
 | 503, `installer unavailable` in Worker logs | `INSTALLER_SHA256` does not match the script at `INSTALLER_REF` (re-run `pin.sh`), or GitHub is unreachable |
 | Platform's `no app is routed to …` 404 | the Worker route is not attached — check the route pattern and that the DNS record is proxied |
-| Installed CLI is an old version | not this endpoint: the installer resolves the newest release at run time. Check the GitHub Release assets |
+| Installed CLI is an old version | not this endpoint: the installer follows the channel pointers at run time. Check the `CLI-LATEST`/`CLI-STABLE` pointers and the GitHub Release assets |

@@ -111,8 +111,10 @@ in the step summary and Check Run title.
 ## Pin reproducibility
 
 The action uses `@v0` during public beta by default. The `release.yml` workflow
-force-updates the `vN` moving tag on every `vN.M.P` release, so `@v0` always
-resolves to the latest vendored binary. For full immutability, setup can
+moves the `vN` moving tag on every stable `vN.M.P` release, only forward, so
+`@v0` resolves to the newest stable vendored binary. Prereleases
+(`vN.M.P-rc.K`) and re-runs of older tags leave it in place; pin a
+prerelease's release commit SHA to try one. For full immutability, setup can
 resolve that moving tag and write its commit SHA into the generated workflow:
 
 ```bash
