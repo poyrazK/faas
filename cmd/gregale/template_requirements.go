@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -96,6 +97,17 @@ func templateManifest(name string) *gregalemanifest.Manifest {
 	return m
 }
 
+// sourceManifest is a source directory's parsed gregale.yaml, or nil when it
+// has none or it cannot be read; the deploy reports an unreadable manifest
+// itself.
+func sourceManifest(dir string) *gregalemanifest.Manifest {
+	m, ok, err := gregalemanifest.Load(dir)
+	if err != nil || !ok {
+		return nil
+	}
+	return m
+}
+
 // templateShown reports whether the view shows every capability a template
 // needs, as GET /v1/templates decides for the dashboard.
 func templateShown(view capabilityView, name string) bool {
@@ -124,21 +136,17 @@ func templateNeedsNote(name string) string {
 // app or upload exists. apid refuses those settings too, but a queue binding
 // is reconciled through its own routes after the deploy, which answered a
 // bare 404 once the app and release already existed.
-func refuseHiddenManifestCapabilities(template, sourceDir string) error {
+func refuseHiddenManifestCapabilities(ctx context.Context, template, sourceDir string) error {
 	var m *gregalemanifest.Manifest
 	what := "gregale.yaml"
 	switch {
 	case template != "":
 		m, what = templateManifest(template), "template "+template
 	case sourceDir != "":
-		loaded, ok, err := gregalemanifest.Load(sourceDir)
-		if err != nil || !ok {
-			return nil // the deploy reports an unreadable manifest itself
-		}
-		m = loaded
+		m = sourceManifest(sourceDir)
 	}
 	for _, capability := range capabilitiesFor(m) {
-		if deployCapabilityHidden(capability) {
+		if deployCapabilityHidden(ctx, capability) {
 			return fmt.Errorf("%s uses %s, which is not enabled for this account, so nothing was deployed; see `gregale feature list --early-access`", what, capabilityDisplayName(capability))
 		}
 	}
@@ -149,7 +157,7 @@ func refuseHiddenManifestCapabilities(template, sourceDir string) error {
 // account. A cached view that releases it is trusted; otherwise, including a
 // first run with no cache, the server is asked (once: the answer is cached).
 // Without a token or an answer nothing is refused here; apid still refuses.
-func deployCapabilityHidden(capability string) bool {
+func deployCapabilityHidden(ctx context.Context, capability string) bool {
 	if capabilityReleaseAll() {
 		return false
 	}
@@ -161,7 +169,7 @@ func deployCapabilityHidden(capability string) bool {
 	if haveCache && !slices.Contains(cached, capability) {
 		return false
 	}
-	if fresh, read := readHiddenCapabilities(token); read {
+	if fresh, read := readHiddenCapabilitiesContext(ctx, token); read {
 		return slices.Contains(fresh, capability)
 	}
 	return haveCache // the cache hid it and the server did not answer

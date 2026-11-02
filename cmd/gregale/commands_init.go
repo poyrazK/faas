@@ -94,13 +94,14 @@ func cmdInit(args []string) int {
 		return runCmdInitList(osStdout)
 	}
 	if (*tpl == "" || *dest == "") && initCanPrompt() {
+		view := discoveryCapabilityView()
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 		// Prompts go to stderr, like the app picker, so stdout stays the result.
 		prompt := &startPrompt{reader: bufio.NewReader(osStdin), writer: osStderr}
 		var err error
 		if *tpl == "" {
-			*tpl, err = chooseInitTemplate(ctx, prompt)
+			*tpl, err = chooseInitTemplate(ctx, prompt, view)
 		}
 		if err == nil && *dest == "" {
 			*dest, err = prompt.text(ctx, "Directory", "./"+*tpl)
@@ -132,8 +133,9 @@ func initCanPrompt() bool {
 
 // chooseInitTemplate asks what to build, then which template of that kind.
 // A category with one template needs no second question.
-func chooseInitTemplate(ctx context.Context, prompt *startPrompt) (string, error) {
-	view := discoveryCapabilityView()
+// chooseInitTemplate offers the templates view shows; the caller reads the
+// view before the prompt's context exists.
+func chooseInitTemplate(ctx context.Context, prompt *startPrompt, view capabilityView) (string, error) {
 	var categories, labels []string
 	for _, category := range templates.CategoryOrder {
 		if len(shownTemplatesIn(view, category)) > 0 {
