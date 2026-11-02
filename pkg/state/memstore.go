@@ -1368,6 +1368,9 @@ type MemStore struct {
 	// nodeMemoryReports mirrors node_memory_reports by node id (ADR
 	// 20261101091815); nil until a scheduler first publishes.
 	nodeMemoryReports map[string]NodeMemoryReport
+	// appMemoryPressure mirrors app_memory_pressure by app id
+	// (ADR-20261102124306); nil until schedd records a report.
+	appMemoryPressure map[string]AppMemoryPressure
 	// edgeListenerHeartbeats mirrors compute_nodes.edge_listener_heartbeat_at,
 	// keyed by node name; nil until a gateway first reports.
 	edgeListenerHeartbeats map[string]time.Time
