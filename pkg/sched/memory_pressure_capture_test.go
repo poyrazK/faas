@@ -134,8 +134,12 @@ func TestQueueSlowRequestCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	org, err := mem.CreateOrg(ctx, state.Org{Slug: "slow-team", Name: "Team", Plan: api.PlanPro, Status: state.OrgStatusActive, ResourceOwnershipEnabled: true})
+	// A Free organization owns its resources at once; upgrading keeps them.
+	org, err := mem.CreateOrg(ctx, state.Org{Slug: "slow-team", Name: "Team", Plan: api.PlanFree, Status: state.OrgStatusActive})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.UpdateOrgPlan(ctx, org.ID, api.PlanPro); err != nil {
 		t.Fatal(err)
 	}
 	orgApp, err := mem.CreateApp(ctx, state.App{AccountID: member.ID, OrgID: org.ID, Slug: "slow-team-app", RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60})

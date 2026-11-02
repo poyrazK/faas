@@ -164,8 +164,12 @@ func TestOrgAppCaptures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	org, err := mem.CreateOrg(ctx, state.Org{Slug: "capture-team", Name: "Team", Plan: api.PlanPro, Status: state.OrgStatusActive, ResourceOwnershipEnabled: true})
+	// A Free organization owns its resources at once; upgrading keeps them.
+	org, err := mem.CreateOrg(ctx, state.Org{Slug: "capture-team", Name: "Team", Plan: api.PlanFree, Status: state.OrgStatusActive})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.UpdateOrgPlan(ctx, org.ID, api.PlanPro); err != nil {
 		t.Fatal(err)
 	}
 	app, err := mem.CreateApp(ctx, state.App{AccountID: creator.ID, OrgID: org.ID, Slug: "capture", Status: state.AppActive})
