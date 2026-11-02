@@ -33,10 +33,11 @@ func (s *server) sendInlineSecurityAlert(ctx context.Context, acct state.Account
 	}
 	subject, body := render(time.Now().UTC())
 	s.audit.Emit(ctx, "account.security_alert_sent", &acct.ID, map[string]any{"kind": kind, "path": "inline"})
+	mailer := s.mailer // the sender in effect for this request, not a later one
 	go func() {
 		mailCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		if err := s.mailer.Send(mailCtx, Message{To: []string{acct.Email}, Subject: subject, TextBody: body}); err != nil {
+		if err := mailer.Send(mailCtx, Message{To: []string{acct.Email}, Subject: subject, TextBody: body}); err != nil {
 			s.log.Error("security_alert.inline_send_failed", "account", acct.ID, "kind", kind, "err", err)
 		}
 	}()
