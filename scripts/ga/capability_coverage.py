@@ -382,6 +382,8 @@ INFRA_RULES = [
     r"^platform-error-status$",
     # ADR-20261031105055: the compute edge's host-to-node routing and its switch.
     r"^edge-placement(-routing)?$",
+    # ADR-20261102081618: the records that send Cloudflare to the compute edges.
+    r"^edgedns$",
 ]
 
 
