@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/url"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 type IssueSavedViewFilters struct {
@@ -42,8 +42,8 @@ type ListIssueSavedViewsResponse struct {
 	Items []IssueSavedView `json:"items"`
 }
 
-var issueViewKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
-var issueViewEnvironmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var issueViewKeyPattern = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,47}$`)
+var issueViewEnvironmentPattern = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func ValidateIssueSavedViewKey(key string) error {
 	if len(key) > IssueSavedViewKeyMaxBytes || !issueViewKeyPattern.MatchString(key) {

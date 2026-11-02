@@ -67,6 +67,13 @@ var (
 // step timeout plus five minutes before each executor call.
 const WorkflowRunStaleAfter = 2*time.Hour + 5*time.Minute
 
+// WorkflowRunDueReader answers in one read whether ClaimNextDueWorkflowRun
+// could find a run, so a scheduler tick can ask once for all its dispatch
+// slots.
+type WorkflowRunDueReader interface {
+	WorkflowRunsDue(ctx context.Context) (bool, error)
+}
+
 const WorkflowRunIdempotencyKeyMaxBytes = 255
 
 func validateWorkflowRunCreateIdempotency(key string, requestFingerprint []byte) error {

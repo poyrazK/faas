@@ -427,6 +427,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			withDrainWatch(strings.TrimSpace(os.Getenv("FAAS_NODE_NAME")), cgp)
 		if envBoolOr(edgePlacementRoutingEnv, false) {
 			placement = newEdgePlacement()
+			if envBoolOr(edgePlacementNodeSetEnv, false) {
+				placement.withNodeSet()
+			}
 			lfd.withPlacement(placement, cgp)
 		}
 		go lfd.run(ctx)

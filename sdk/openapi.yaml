@@ -19219,6 +19219,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
+    dataAPIEventsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived Gregale workload identity for audience gregale:data-api:events, naming the publishing app and its live instance. Customer API keys cannot publish change events.
     operationsWorkloadIdentity:
       type: http
       scheme: bearer

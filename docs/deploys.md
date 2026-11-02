@@ -223,7 +223,8 @@ with `{"preview_enabled": false}`.
 
 **Release tags.** A tag push deploys the apps bound to the branch whose head
 the tag points at; a tag on an older commit deploys nothing. A project's tags
-deploy its production branch.
+deploy its production branch. Annotated tags (`git tag -a`) and lightweight
+tags both deploy the commit they point at.
 
 **Several installations.** If your GitHub user can connect more than one
 installation (your personal account and an organization, say), Connect GitHub
@@ -1003,8 +1004,12 @@ The first window opens when Gregale first sees traffic for the completed
 release and lasts 5 minutes. If at least 5 of the release's responses are 5xx,
 and those are at least half its requests, Gregale rolls back to the release it
 replaced. The check runs every 15 seconds, and the release keeps serving until
-the previous one is ready again. If a rollout wedges,
-`gregale rollouts recover my-api` is the manual escape hatch.
+the previous one is ready again. While a rollout runs, a plain
+`gregale rollback my-api` is refused because traffic is split; to stop the
+rollout and return its traffic to the release it replaced, run
+`gregale rollouts recover my-api --action abort`. If a rollout wedges,
+`gregale rollouts recover my-api --action advance|promote|abort` is the manual
+escape hatch.
 
 A new release that goes live while an earlier canary is still rolling out
 replaces it ([ADR-20261030102813](adr/20261030102813-a-newer-canary-supersedes-an-in-flight-one.md)).
@@ -1013,6 +1018,11 @@ The earlier canary's traffic returns to the serving release, its rollout ends
 `rollout.aborted` webhook), and only the newest release rolls out. A release
 deployed with `--rollout immediate` takes all traffic and ends the earlier
 canary's rollout the same way.
+If the app cannot run the new release beside both the serving release and the
+earlier canary (with the default max_concurrency of 1 it cannot), the earlier
+canary is replaced just before the new release's health check instead of when
+it goes live, so the check can wake it. If that check then fails, the app stays
+on the serving release.
 
 ### Safe by default
 
@@ -1187,7 +1197,8 @@ manual stage advances remain immediate.
 
 While a canary is pending or rolling out, the generic traffic-split endpoint
 returns `409 traffic_change_during_canary`. Advance or recover the rollout
-before applying a separate traffic split.
+before applying a separate traffic split; `gregale rollouts recover <app>
+--action abort` stops it and returns its traffic to the release it replaced.
 
 A saved `gregale deploy` attempt can recover a lost acceptance reply with
 `gregale release resume SESSION_ID`. Image, multipart and source-ref submissions

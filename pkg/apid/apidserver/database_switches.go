@@ -120,8 +120,8 @@ func (s *server) startDatabaseSwitch(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, problem)
 		return
 	}
-	if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID, plan.target.Scope); split {
-		api.WriteProblem(w, rollbackDuringTrafficSplitProblem(app.Slug, earlier))
+	if split, ok := s.trafficSplitEarlierRelease(ctx, app.ID, plan.target.Scope); ok {
+		api.WriteProblem(w, rollbackDuringTrafficSplitProblem(app.Slug, split))
 		return
 	}
 	sw, problem := s.databaseSwitchFor(ctx, r, acct, app, plan)

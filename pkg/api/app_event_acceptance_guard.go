@@ -2,11 +2,12 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var appEventAcceptanceTimestamp = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$`)
+var appEventAcceptanceTimestamp = lazyregexp.New(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$`)
 
 // AppEventAcceptanceGuard pins the saved receipt's precise acceptance instant.
 type AppEventAcceptanceGuard struct {

@@ -1,0 +1,18 @@
+---
+# edgednsd_service (ADR-20261102081618 §3). The manifest's public_edge.dns
+# turns it on (faas_edgednsd_managed in bootstrap.yml) and renders the names
+# and the node addresses.
+faas_edgednsd_enabled: true
+# Operator-provisioned files on the controller, never in the repository:
+# DATABASE_URL for a faas_runtime member that may read compute_nodes, and the
+# zone's Cloudflare token with Zone > DNS: Edit and nothing else.
+faas_edgednsd_env_src: ""
+faas_edgednsd_cf_token_src: ""
+# "<zone id>:<host>" per managed name, e.g. a pilot host, later the app
+# wildcard.
+faas_edgednsd_names: []
+# "<registry node name>=<public address>" per compute node.
+faas_edgednsd_node_addresses: []
+# edgednsd logs and counts the changes it would make until this is false.
+faas_edgednsd_dry_run: true
+faas_edgednsd_metrics_listen: "127.0.0.1:9113"
