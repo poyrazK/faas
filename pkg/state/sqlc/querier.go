@@ -4319,6 +4319,10 @@ type Querier interface {
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	// ADR-20261031110037: managed PostgreSQL overage charges delivered per
 	// billing provider, usage subject and UTC month.
+	// Subjects that may owe overage for the month: those that reached the
+	// compute allowance (as the cap sweep recorded it), those with overage on,
+	// whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
+	// those already charged.
 	ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, periodStart pgtype.Timestamptz) ([]ManagedPostgresOverageSubjectsRow, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
 	ManagedPostgresPersonalDatabaseReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalDatabaseReferenceParams) (bool, error)
@@ -6102,8 +6106,10 @@ type Querier interface {
 	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, db DBTX, arg RecordManagedPostgresDatabaseEndpointParams) error
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
-	// Advances the cumulative charge only from previous_millicents (zero: no row
-	// yet), so a replica that lost the race records nothing.
+	// Advances the cumulative charge only from the row as read (previous_millicents
+	// and previous_live; zero: no row yet), so a replica that lost the race records
+	// nothing. A live delivery may replace a shadow row, which charged nothing; a
+	// shadow delivery never replaces a live one (bug hunt 33).
 	RecordManagedPostgresOverageDelivery(ctx context.Context, db DBTX, arg RecordManagedPostgresOverageDeliveryParams) (bool, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
 	// ADR-20261031123259: one notice per copy and kind; the first sweep to reach

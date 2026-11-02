@@ -453,6 +453,10 @@ func TestTrafficChangeDuringCanaryProblem(t *testing.T) {
 	if got := StatusForCode(CodeTrafficChangeDuringCanary); got != http.StatusConflict {
 		t.Fatalf("StatusForCode(%q) = %d, want %d", CodeTrafficChangeDuringCanary, got, http.StatusConflict)
 	}
+	// The refusal must name a way out that the canary does not also refuse.
+	if !strings.Contains(problem.Detail, "gregale rollouts recover <app> --action abort") {
+		t.Fatalf("problem detail = %q, want the rollout abort command", problem.Detail)
+	}
 }
 
 func TestStatusForCode_ReleasePhaseUnavailable(t *testing.T) {

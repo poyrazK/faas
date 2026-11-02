@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -786,12 +787,10 @@ func cmdApp(args []string) int {
 		req.OverflowNode = &v
 	}
 
-	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.RequestTimeoutS == nil && req.FunctionConcurrency == nil && req.RevisionPinTTLSeconds == nil && req.MinInstances == nil &&
-		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
-		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
-		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil && req.PlatformTenantRequired == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.PreAuthRateLimit == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
+	// Any update flag sets a field of req; none means a read. Listing fields
+	// by hand here missed --release-policy and --release-probe-paths, which
+	// then printed the settings and changed nothing.
+	if reflect.ValueOf(req).IsZero() {
 		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
