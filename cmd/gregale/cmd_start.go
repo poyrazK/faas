@@ -65,6 +65,12 @@ func cmdStart(args []string) (code int) {
 	if !stdinIsTTY() {
 		return printErr("Interactive session required", errors.New("run gregale start in a terminal; use gregale deploy for scripts"))
 	}
+	// start signs in when the saved login is missing or rejected, and a login
+	// saved under FAAS_TOKEN would never be used (nor would a 401 from
+	// FAAS_TOKEN be fixed by one). gregale deploy works with FAAS_TOKEN.
+	if envToken() != "" {
+		return printErr("FAAS_TOKEN is set", errors.New("gregale start uses and saves its own login, which FAAS_TOKEN overrides; run 'unset FAAS_TOKEN' and retry, or use gregale deploy, which authenticates with FAAS_TOKEN"))
+	}
 	source := "."
 	if fs.NArg() == 1 {
 		source = fs.Arg(0)

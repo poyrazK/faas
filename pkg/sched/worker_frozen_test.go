@@ -5,6 +5,7 @@ package sched
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -291,5 +292,41 @@ func TestWorkerPoolStopsSurplusWorkerWithAStaleConfigProof(t *testing.T) {
 	engine.WaitWorkerStops()
 	if vmm.freezes != 1 {
 		t.Fatalf("froze %d workers after the configuration settled, want 1", vmm.freezes)
+	}
+}
+
+// adr: 20261102160622 — FrozenMaxPerNode counts every owner's frozen VMs on
+// the node, so a worker on a node another scheduler filled with frozen VMs
+// stops instead of freezing.
+func TestWorkerPoolStopsASurplusWorkerOnANodeFullOfFrozenVMs(t *testing.T) {
+	ctx := t.Context()
+	store, vmm, engine, acct, app := newFrozenWorkerEngine(t, api.PlanPro, true)
+	demand := enqueueScopedDemand(t, store, acct, app, "default", "", 10)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	booted := workerRows(t, store, app.ID, "default")
+	if len(booted) != 1 || booted[0].State != string(state.StateRunning) {
+		t.Fatalf("scale out from zero: rows=%+v", booted)
+	}
+	// This scheduler's ledger holds no frozen VM; the node's published report
+	// counts another owner's, at the cap.
+	reports := map[string]state.NodeMemoryReport{booted[0].NodeID: {
+		NodeID: booted[0].NodeID, MeasuredMB: 1000, FrozenInstances: api.FrozenMaxPerNode, MeasuredAt: time.Now(),
+	}}
+	engine.nodeMemoryReports.Store(&reports)
+
+	cancelDemand(t, store, demand)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	engine.WaitWorkerStops()
+	if vmm.freezes != 0 {
+		t.Fatalf("froze %d workers on a node at FrozenMaxPerNode", vmm.freezes)
+	}
+	for _, row := range workerRows(t, store, app.ID, "default") {
+		if state.State(row.State).CountsForRAM() {
+			t.Fatalf("worker %s is %s; on a full node a surplus worker stops", row.ID, row.State)
+		}
 	}
 }
