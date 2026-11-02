@@ -94,8 +94,9 @@ compute edge gains a TLS listener on port 443:
   credential-bound routes to the control plane, placement routing, and the
   drain grace.
 - **Firewall.** nftables admits port 443 only from Cloudflare's published
-  address ranges. The list lives in the edge role's defaults, and a check
-  compares it with Cloudflare's published list. Everything else on the public
+  address ranges. The list lives in the nftables role's files, and a weekly
+  workflow (`make cloudflare-ranges-check`) compares it with Cloudflare's
+  published list. Everything else on the public
   address is dropped.
 - **GCP.** An external IP on the network interface would move all of the
   node's egress off Cloud NAT, tenant traffic included. On GCP the address is
@@ -124,7 +125,10 @@ other than its metrics port.
   Cloudflare API only when a node's state changes.
 - **Metrics:** `edge_dns_records{name}`,
   `edge_dns_changes_total{name,action,dry_run}`,
-  `edge_dns_probe_failures_total{node}` and `edge_dns_node_in{node}`.
+  `edge_dns_probe_failures_total{node}`, `edge_dns_node_in{node}` and
+  `edge_dns_errors_total{op}`. The `faas_edge_dns` alerts and
+  `docs/runbooks/FaasEdgeDNS.md` cover a cell with no ready edge, a
+  withdrawn node, failing Cloudflare calls and a down `edgednsd`.
 
 ### 4. Drain and restart
 
