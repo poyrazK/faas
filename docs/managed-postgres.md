@@ -156,6 +156,9 @@ customers out until the owner has tested production
    `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
    maild). Create the [SQL probe](#sql-availability-probe) canary databases.
+   Keep `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` at `shadow` until
+   [databases past a lowered plan](#databases-past-a-lowered-plan) are shown
+   to the customer, then set it `on`.
 4. Approve the production backend ([Production](#production)) with fleet
    ceilings sized to the Neon plan.
 5. Run the customer journey with the owner's account:
@@ -1152,6 +1155,45 @@ The run creates a disposable database, probes it, and deletes it. The probe:
 The command exits non-zero, and `on` refuses the file, if any observation
 fails. If the compute is suspended at the limit, the pool would stop
 databases rather than block writes, and must not be turned on as specified.
+
+### Databases past a lowered plan
+
+A downgrade the customer asks for is refused while their databases do not fit
+the target plan. A plan can also drop without that check: a subscription ends
+and the account falls to Free, or the plan changes in the billing portal or by
+an operator. The compute and storage caps follow the new plan at the next
+sweep. The same sweep suspends the databases the plan no longer includes
+([ADR-20261102125208](adr/20261102125208-managed-postgres-databases-past-a-lowered-plan-are-suspended.md)):
+
+- The subject's databases rank oldest first. A database ranked past the
+  plan's database limit, or in a service class the plan does not include, is
+  past the plan.
+- A restore holding the restore slot, a deleting database and one without a
+  provider resource are not ranked.
+- A database past the plan has its project's compute quota held at its own
+  use, so Neon suspends it and it cannot start. Its data, credentials,
+  bindings and restore history stay, and its storage still counts toward the
+  pool.
+- A project that also holds a database inside the plan (a restore inside its
+  source's project) is left running and logged as shared.
+- Each sweep recomputes the set. Once the subject fits (an upgrade, a deleted
+  database, or a resize to an included class), the next sweep restores the
+  ordinary quota. Nothing is deleted.
+
+`FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres plan excess (shadow)` for each
+  project it would suspend, and writes nothing.
+- `on` writes the quota, only while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` is
+  `on` too; it logs `managed postgres plan excess suspended` when it does.
+- `off` does nothing.
+
+Keep it at `shadow` in production until customers are told: the database view
+field and the owner's email are the ADR's step 2. Metrics:
+
+- `apid_managed_postgres_plan_excess_databases`
+- `apid_managed_postgres_plan_excess_scopes{state}`, where `state` is
+  `suspended`, `shadowed` or `shared`
 
 ## Restore-to-new-database safety
 
