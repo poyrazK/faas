@@ -1685,7 +1685,7 @@ export class OrgsService {
      */
     slug: string,
     /**
-     * Current or historical UTC usage month; defaults to the current month.
+     * UTC usage month of the organization's report; defaults to the current month.
      */
     month?: string,
   }): CancelablePromise<FinancialCostsResponse> {
@@ -1772,7 +1772,7 @@ export class OrgsService {
      */
     slug: string,
     /**
-     * Stable creation operation identity, required for retries across replay-cache retention.
+     * Stable identity of this organization budget creation, required for retries.
      */
     idempotencyKey: string,
     requestBody: CreateFinancialBudgetRequest,
@@ -1794,7 +1794,7 @@ export class OrgsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        422: `Invalid policy count or financial_budget_activation_unavailable; no policy mutation occurred.`,
+        422: `Invalid organization policy count, or a strict or unsupported activation; nothing was written.`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
@@ -1805,7 +1805,7 @@ export class OrgsService {
   /**
    * Preview an organization budget and its workload consequences without writes.
    * Requires current organization membership, usage:read and session MFA. Same preview as POST /v1/billing/budgets/preview, over the apps the organization pays for. No policies, holds or decisions are written.
-   * @returns FinancialBudgetPreviewResponse Financial observation, workload consequences and enforcement readiness.
+   * @returns FinancialBudgetPreviewResponse The organization's financial observation, affected workloads and readiness.
    * @throws ApiError
    */
   public static previewOrgFinancialBudget({
@@ -1845,7 +1845,7 @@ export class OrgsService {
   /**
    * Read an organization budget, including its deletion tombstone.
    * Requires current organization membership, usage:read and session MFA. Foreign or missing policies return 404.
-   * @returns FinancialBudgetResponse Saved intent and explicit enforcement readiness.
+   * @returns FinancialBudgetResponse The organization budget's saved intent and enforcement readiness.
    * @throws ApiError
    */
   public static getOrgFinancialBudget({
@@ -1907,7 +1907,7 @@ export class OrgsService {
      */
     id: string,
     /**
-     * Retry key for this replacement at its expected policy revision.
+     * Retry key for replacing this organization budget at its expected revision.
      */
     idempotencyKey: string,
     requestBody: UpdateFinancialBudgetRequest,
@@ -1930,7 +1930,7 @@ export class OrgsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        422: `financial_budget_activation_unavailable; the existing policy revision is unchanged.`,
+        422: `Strict or unsupported activation for an organization; its current revision is kept.`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
@@ -1941,7 +1941,7 @@ export class OrgsService {
   /**
    * Tombstone an organization budget while retaining its revision history.
    * Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision prevents stale deletion.
-   * @returns FinancialBudgetResponse Tombstone and incremented revision.
+   * @returns FinancialBudgetResponse The organization budget's tombstone at its next revision.
    * @throws ApiError
    */
   public static deleteOrgFinancialBudget({
@@ -1962,7 +1962,7 @@ export class OrgsService {
      */
     id: string,
     /**
-     * Retry identity for this policy tombstone operation.
+     * Retry identity for tombstoning this organization budget.
      */
     idempotencyKey: string,
     requestBody: DeleteFinancialBudgetRequest,
@@ -1995,7 +1995,7 @@ export class OrgsService {
   /**
    * Page through an organization budget's immutable revisions.
    * Requires current organization membership, usage:read and session MFA. Use next_revision as after_revision for continuation.
-   * @returns FinancialBudgetHistoryResponse Revision page in ascending order.
+   * @returns FinancialBudgetHistoryResponse The organization budget's revisions, oldest first.
    * @throws ApiError
    */
   public static listOrgFinancialBudgetRevisions({
@@ -2012,15 +2012,15 @@ export class OrgsService {
      */
     slug: string,
     /**
-     * Budget identity whose immutable revision audit is being listed.
+     * Organization budget whose immutable revision audit is listed.
      */
     id: string,
     /**
-     * Exclusive revision cursor; use the previous response's next_revision.
+     * Exclusive cursor over the organization budget's revisions; pass the last next_revision.
      */
     afterRevision?: number,
     /**
-     * Maximum number of immutable revision records in this page.
+     * Maximum organization budget revisions returned in this page.
      */
     limit?: number,
   }): CancelablePromise<FinancialBudgetHistoryResponse> {

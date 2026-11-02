@@ -18379,7 +18379,7 @@ paths:
       parameters:
         - name: month
           in: query
-          description: Current or historical UTC usage month; defaults to the current month.
+          description: UTC usage month of the organization's report; defaults to the current month.
           schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}
       responses:
         '200':
@@ -18428,7 +18428,7 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          description: Stable creation operation identity, required for retries across replay-cache retention.
+          description: Stable identity of this organization budget creation, required for retries.
           schema: {type: string, minLength: 1, maxLength: 255}
       requestBody:
         required: true
@@ -18447,7 +18447,7 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '422':
-          description: Invalid policy count or financial_budget_activation_unavailable; no policy mutation occurred.
+          description: Invalid organization policy count, or a strict or unsupported activation; nothing was written.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -18467,7 +18467,7 @@ paths:
             schema: {$ref: '#/components/schemas/FinancialBudgetPreviewRequest'}
       responses:
         '200':
-          description: Financial observation, workload consequences and enforcement readiness.
+          description: The organization's financial observation, affected workloads and readiness.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/FinancialBudgetPreviewResponse'}
@@ -18492,7 +18492,7 @@ paths:
       description: Requires current organization membership, usage:read and session MFA. Foreign or missing policies return 404.
       responses:
         '200':
-          description: Saved intent and explicit enforcement readiness.
+          description: The organization budget's saved intent and enforcement readiness.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/FinancialBudgetResponse'}
@@ -18510,7 +18510,7 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          description: Retry key for this replacement at its expected policy revision.
+          description: Retry key for replacing this organization budget at its expected revision.
           schema: {type: string, minLength: 1, maxLength: 255}
       requestBody:
         required: true
@@ -18529,7 +18529,7 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '422':
-          description: financial_budget_activation_unavailable; the existing policy revision is unchanged.
+          description: Strict or unsupported activation for an organization; its current revision is kept.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -18543,7 +18543,7 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          description: Retry identity for this policy tombstone operation.
+          description: Retry identity for tombstoning this organization budget.
           schema: {type: string, minLength: 1, maxLength: 255}
       requestBody:
         required: true
@@ -18552,7 +18552,7 @@ paths:
             schema: {$ref: '#/components/schemas/DeleteFinancialBudgetRequest'}
       responses:
         '200':
-          description: Tombstone and incremented revision.
+          description: The organization budget's tombstone at its next revision.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/FinancialBudgetResponse'}
@@ -18574,19 +18574,19 @@ paths:
         - name: id
           in: path
           required: true
-          description: Budget identity whose immutable revision audit is being listed.
+          description: Organization budget whose immutable revision audit is listed.
           schema: {type: string, format: uuid}
         - name: after_revision
           in: query
-          description: Exclusive revision cursor; use the previous response's next_revision.
+          description: Exclusive cursor over the organization budget's revisions; pass the last next_revision.
           schema: {type: integer, format: int64, minimum: 0, maximum: 9007199254740991, default: 0}
         - name: limit
           in: query
-          description: Maximum number of immutable revision records in this page.
+          description: Maximum organization budget revisions returned in this page.
           schema: {type: integer, minimum: 1, maximum: 100, default: 100}
       responses:
         '200':
-          description: Revision page in ascending order.
+          description: The organization budget's revisions, oldest first.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/FinancialBudgetHistoryResponse'}
