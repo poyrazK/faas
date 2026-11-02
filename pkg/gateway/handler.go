@@ -6913,7 +6913,7 @@ haveApp:
 		return
 	}
 	// A preview runs unreviewed code: the credential a platform gate just
-	// verified does not reach it (ADR-20261102100000).
+	// verified does not reach it (ADR-20261102100001).
 	withholdPreviewGateCredential(r, app)
 	// The three verified identity sources have all run by this point. Keep
 	// operator-authorized deployment smoke available for rollout readiness.
