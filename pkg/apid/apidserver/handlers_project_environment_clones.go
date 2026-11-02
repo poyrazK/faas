@@ -107,7 +107,11 @@ func (s *server) fullEnvironmentCloneAdmissionOpen(ctx context.Context) (bool, e
 		return false, err
 	}
 	open, err := runtimeconfig.Bool(stored.DesiredValue)
-	return err != nil || open, nil
+	if err != nil {
+		// An unreadable stored value refuses the switch-off like a read error.
+		return false, fmt.Errorf("read %s: %w", runtimeConfigFullEnvironmentCloneAdmission, err)
+	}
+	return open, nil
 }
 
 // admitFullProjectEnvironmentClone captures the source and creates the

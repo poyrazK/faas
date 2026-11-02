@@ -118,8 +118,10 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 	records, err := captureCloneConfigurationWorkloadsTx(ctx, tx, op)
 	if errors.Is(err, ErrNotFound) {
 		// The source exists (checked above); a workload in it has no live
-		// deployment to clone, which is not a missing environment.
-		err = fmt.Errorf("%w: %v", ErrProjectEnvironmentCloneSourceNotDeployed, err)
+		// deployment to clone, which is not a missing environment. Callers
+		// test for ErrProjectEnvironmentCloneSourceNotDeployed before
+		// ErrNotFound.
+		err = fmt.Errorf("%w: %w", ErrProjectEnvironmentCloneSourceNotDeployed, err)
 	}
 	if request.RequireCompleteInventory && errors.Is(err, ErrProjectEnvironmentCloneRestoreWindowUnavailable) {
 		return ProjectEnvironmentCloneOperation{}, &ProjectEnvironmentCloneInventoryError{Blockers: []ProjectEnvironmentCloneCoverageBlocker{
