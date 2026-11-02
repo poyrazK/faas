@@ -15,7 +15,7 @@ import (
 func cmdIssueSourceMaps(args []string) int {
 	usage := "usage: gregale debug issue source-maps <publish|status|retire> --app SLUG --deployment UUID [--directory /app/dist --manifest-file FILE]"
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		if len(args) > 0 {
 			return 0
 		}
@@ -31,13 +31,13 @@ func cmdIssueSourceMaps(args []string) int {
 		return 1
 	}
 	if *app == "" || *dep == "" || len(positionals) != 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	var request api.PublishIssueSourceMapsRequest
 	if args[0] == "publish" {
 		if *file == "" || *directory == "" {
-			fmt.Fprintln(os.Stderr, usage)
+			PrintUsage(os.Stderr, usage, "issues")
 			return 1
 		}
 		input, err := openCustomerFile(*file)
@@ -57,7 +57,7 @@ func cmdIssueSourceMaps(args []string) int {
 			return printErr("Invalid manifest", err)
 		}
 	} else if args[0] != "status" && args[0] != "retire" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	c, err := authedClient()

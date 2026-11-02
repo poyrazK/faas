@@ -79,7 +79,7 @@ func TestRouteResolutionCallerStopsAtItsOwnDeadline(t *testing.T) {
 	}
 	short, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, _, err := b.resolveHostShared(short, "pulse.gregale.app"); err == nil {
+	if _, _, _, err := b.resolveHostShared(short, "pulse.gregale.app"); err == nil {
 		t.Fatal("a caller past its deadline kept waiting for the shared resolution")
 	}
 	close(router.release)

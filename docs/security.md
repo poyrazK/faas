@@ -309,6 +309,11 @@ way is blocked by a `block` rule like any other. A detection found only in
 cookies never puts the client in a penalty box. Apps on a custom domain are
 not affected.
 
+A check scores the whole URL and query, and up to 16 KiB of request headers:
+each header value up to 4 KiB, and headers in name order until the total is
+reached. Header content past that is not inspected, which keeps one client's
+oversized headers from slowing every other app's checks.
+
 Request bodies are never blocked: checking them costs tens to hundreds of
 milliseconds, so they are inspected off the request path, and only a sample
 of them under load. In `warn` and `block`, a request without a body is
@@ -321,10 +326,14 @@ check budget (roughly 500 requests per second) runs out, or no check frees
 within that wait, the rest pass unchecked and are counted as
 `inline_skipped`; the WAF never slows your app down to keep up.
 
-Start in `observe`, look for false positives, then switch to `block`:
+Start in `observe`, look for false positives, then switch to `block`. Use
+`--match-host @app`: your app is always served at its own `<slug>.gregale.dev`
+address (and any companion hostnames) as well as its custom domains, and a
+security rule that names one host leaves the others open. The CLI warns when a
+WAF, challenge, IP, geo, JWT or other gate names a single host.
 
 ```sh
-gregale edge rule create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
+gregale edge rule create --app my-api --kind waf --match-host @app --match-path '/*'
 gregale edge rule waf review --app my-api            # detections grouped by CRS rule and path, each assessed
 gregale edge rule waf update <rule-id> --add 942100  # silence a false positive, keeping the rest of the rule
 gregale edge rule update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
@@ -409,7 +418,7 @@ log mode to see what the rule would challenge, and add a `verified_bot
 missing` condition so search engine crawlers still reach your pages:
 
 ```sh
-gregale edge rule create --app my-site --kind challenge --match-host my-site.example.com \
+gregale edge rule create --app my-site --kind challenge --match-host @app \
   --match-path '/*' --match '{"field":"verified_bot","op":"missing"}' --mode log
 gregale edge rule update <rule-id> --mode enforce
 ```
@@ -582,6 +591,10 @@ Some details to know:
   machine can rotate through.
 - Many people can share one address (offices, mobile carriers). A threshold
   above 1 and a short penalty keep one of them from locking out the rest.
+- A page on another site can make its visitors' browsers request your app,
+  including URLs your rules refuse. A box made only from such cross-site
+  requests lasts at most a minute, whatever the penalty says; one refusal
+  that did not come from another site gives it the full penalty.
 - A box made on one edge node holds on every node within about a second,
   and survives a restart. Each node counts refusals toward a box on its
   own, so a client spread over several nodes can be refused a few more

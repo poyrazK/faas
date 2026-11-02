@@ -15,11 +15,11 @@ import (
 func cmdIssueLifecycleAlerts(args []string) int {
 	usage := "usage: gregale debug issue lifecycle-alerts <get|save|preview> --app SLUG [--environments production,staging --cooldown-seconds N --expected-revision N --issue UUID --event created|regressed]"
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 0
 	}
 	action := args[0]
@@ -38,7 +38,7 @@ func cmdIssueLifecycleAlerts(args []string) int {
 		return 1
 	}
 	if *app == "" || len(positionals) != 0 || action != "get" && action != "save" && action != "preview" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	invalid := ""

@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -75,25 +76,39 @@ func unknownAccountSubcommand(parent cliCommand, name string) int {
 // cmdAccountExport downloads the GDPR export bundle. Default output
 // is gregale-account-export.json in the cwd; -o picks another path.
 // --no-secrets drops the ciphertext slice (the bundle still lists the
-// apps + keys + usage without revealing the sealed envelope).
+// apps + keys + usage without revealing the sealed envelope). An existing
+// file is replaced only with --force, and --json prints a receipt instead
+// of the prose line (CLI audit 2026-10-31: both used to happen silently).
 func cmdAccountExport(args []string) int {
 	fs := newFlagSet("account export", flag.ContinueOnError)
 	out := fs.String("o", "gregale-account-export.json", "output file")
 	noSecrets := fs.Bool("no-secrets", false, "exclude ciphertext slice")
+	force := fs.Bool("force", false, "replace an existing output file")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	abs, err := filepath.Abs(*out)
+	if err != nil {
+		return printErr("Invalid output path", err)
+	}
+	if _, err := os.Lstat(abs); err == nil && !*force {
+		return printErr("Output file exists", fmt.Errorf("%s already exists; pass --force to replace it or -o to choose another path", abs))
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return printErr("Invalid output path", err)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := ExportAccountFile(client, context.Background(), *out, !*noSecrets); err != nil {
+	if err := ExportAccountFile(client, context.Background(), abs, !*noSecrets); err != nil {
 		return printErr("Export failed", err)
 	}
-	abs, _ := filepath.Abs(*out)
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"path": abs, "secrets_included": !*noSecrets}))
+	}
 	PrintOK(osStdout, "Exported account data to %s", abs)
 	return 0
 }
@@ -118,7 +133,7 @@ func cmdAccountDelete(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+	if code := requireConfirmationFlag(*quiet, "--yes", "account deletion"); code != 0 {
 		return code
 	}
 	client, err := authedClient()

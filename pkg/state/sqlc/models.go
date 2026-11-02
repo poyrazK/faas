@@ -1670,6 +1670,13 @@ type AppSloHourly struct {
 	Total int64
 }
 
+type AppSlugHold struct {
+	Slug      string
+	AccountID pgtype.UUID
+	HeldUntil pgtype.Timestamptz
+	Reason    string
+}
+
 type AppTask struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID
