@@ -14,6 +14,8 @@
     node_exporter_listen_addr: >-
       {{ (faas_private_dns_address | default(ansible_default_ipv4.address)) ~ ':9100'
          if (faas_box_role | default('single-box')) == 'compute-only'
+         else (database_node_metrics_host | default('127.0.0.1')) ~ ':9100'
+         if (faas_box_role | default('single-box')) == 'database'
          else '127.0.0.1:9100' }}
 
 - name: node_exporter — create system user
@@ -130,6 +132,12 @@
   delay: 2
   until: ne_metrics is succeeded
 
+# A host without XFS (a database node) has no XFS statistics to parse.
+- name: node_exporter — detect XFS statistics
+  ansible.builtin.stat:
+    path: /proc/fs/xfs/stat
+  register: ne_xfs_stat
+
 - name: node_exporter — verify the XFS collector parses the host kernel format
   ansible.builtin.assert:
     that:
@@ -139,7 +147,9 @@
     fail_msg: >-
       node_exporter responds, but its XFS collector cannot parse this kernel's
       /proc/fs/xfs/stat format; disk telemetry would be incomplete.
-  when: ne_metrics.status | default(0) == 200
+  when:
+    - ne_metrics.status | default(0) == 200
+    - ne_xfs_stat.stat.exists
 
 # Cleanup: same pattern as the prometheus role — keep /tmp tidy
 # after install. On EX44 (tmpfs) this is moot, but on long-lived

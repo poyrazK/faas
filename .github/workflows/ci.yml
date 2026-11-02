@@ -1651,6 +1651,14 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
+      # The restored Go cache and the race builds filled the hosted runner's
+      # disk mid-contract (run 41268247165). This job uses none of the
+      # preinstalled Android, .NET, GHC or CodeQL toolchains.
+      - name: free runner disk for the race builds
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       # Restore-only on pull requests, like every other family. The previous
       # combined actions/cache step saved a ~1 GB entry for every PR ref and
       # every source-hash change, evicting main's shared families.

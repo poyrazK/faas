@@ -43,6 +43,8 @@ func TestRolloutDecisionValidate(t *testing.T) {
 		{"negative sample", func(d *RolloutDecision) { d.Candidate.ServerErrors = -1 }},
 		{"non-finite latency", func(d *RolloutDecision) { d.Stable.P95LatencyMS = math.Inf(1) }},
 		{"negative signal", func(d *RolloutDecision) { d.Signals.OOMKills = -1 }},
+		// adr: 1445 amendment 2 — only a post-release watch decision skips a rollback.
+		{"canary decision skipping a rollback", func(d *RolloutDecision) { d.RollbackSkipped = CodeRollbackCrossesRelease }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

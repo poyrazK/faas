@@ -250,6 +250,22 @@ curl -fsS "$API/v1/agent-runs?limit=5" -H "Authorization: Bearer $TOKEN" | jq '.
 curl -fsS "$API/v1/agent-runs/<run-id>/outputs" -H "Authorization: Bearer $TOKEN" | jq .   # result, files and log tail
 ```
 
+vmmd measures each run VM's private memory once a second (ADR-20261027090011,
+rollout step 2). Nothing bills it yet: the dogfood compares it with
+configured-RAM billing. The dashboard's **Measured memory** row shows the
+totals; `paused_s` is the time the VM spent paused waiting on the model
+(ADR-20261027090012). Per run, on the control plane:
+
+```bash
+sudo -u postgres psql -d faas -c "
+SELECT r.id, r.ram_mb, u.samples, u.expected_samples, u.peak_private_mb, u.cold_boot,
+       round(u.paused_ms / 1000.0) AS paused_s,
+       round(u.private_mb_ms / greatest(u.measured_ms, 1)) AS avg_private_mb,
+       round(u.billable_mb_ms / ((r.ram_mb + 8) * greatest(u.measured_ms, 1)::numeric), 3) AS billable_over_configured
+  FROM agent_run_usage u JOIN agent_runs r ON r.id = u.run_id
+ ORDER BY u.recorded_at DESC LIMIT 20"
+```
+
 ## When it does not work
 
 | What you see | Where to look |

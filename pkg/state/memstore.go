@@ -499,6 +499,7 @@ type MemStore struct {
 	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
 	keys                      map[string]APIKey
+	agentClients              map[string]AgentClient // ADR-20261030133644
 	keyDisplayPrefixes        map[string]string
 	keyByHash                 map[string]APIKey
 	deployTokens              map[string]DeployToken
@@ -642,6 +643,12 @@ type MemStore struct {
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
 	customDomainTLSHosts map[string]customDomainTLSHost
+	// customDomainTLSAdmissions mirrors custom_domain_tls_admissions
+	// (ADR-520 amendment 1), oldest first.
+	customDomainTLSAdmissions []customDomainTLSAdmission
+	// customDomainTLSAllowedHosts mirrors custom_domain_tls_allowed_hosts
+	// (ADR-520 amendment 2): wildcard → sorted names.
+	customDomainTLSAllowedHosts map[string][]string
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole
@@ -1358,6 +1365,9 @@ type MemStore struct {
 	// CreateComputeNode to exercise the single-box path. Production
 	// (PgStore) gets the same row from migrations/00024_compute_nodes.
 	computeNodes map[string]ComputeNode
+	// nodeMemoryReports mirrors node_memory_reports by node id (ADR
+	// 20261101091815); nil until a scheduler first publishes.
+	nodeMemoryReports map[string]NodeMemoryReport
 	// edgeListenerHeartbeats mirrors compute_nodes.edge_listener_heartbeat_at,
 	// keyed by node name; nil until a gateway first reports.
 	edgeListenerHeartbeats map[string]time.Time
@@ -1456,6 +1466,14 @@ type MemStore struct {
 	// runtimeSecretSignatures maps an envelope's SHA-256 to its writer
 	// signature (ADR 20261028161502), created on first use.
 	runtimeSecretSignatures map[string][]byte
+
+	// appLabels holds each app's labels (ADR-20261031100025), created on
+	// first write; an app absent from it has none.
+	appLabels map[string]map[string]string
+
+	// resourceLabels holds the labels of databases, crons and jobs by kind
+	// and ID, created on first write.
+	resourceLabels map[LabelKind]map[string]map[string]string
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -1593,6 +1611,10 @@ type usageMinute struct {
 	// cpu_usec / tx_bytes shape. Pinned by
 	// pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds.
 	TailSeconds int64
+	// PausedMBSeconds is the minute's quiet-paused MB-seconds meterd did
+	// not bill (ADR-20261023171905 rollout step 3). Informational; first
+	// positive value wins. See RecordQuietPausedUsage.
+	PausedMBSeconds int64
 }
 
 // builderUsageRow is the per-build grain (ADR-048 §4) backing
@@ -6165,7 +6187,21 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		helperSiblings[i].ID = s.ID
 		helperSiblings[i].Prior = s.Prior
 	}
-	newWeights := RedistributeTraffic(helperSiblings, 100-newPercent)
+	newWeights, err := RedistributeManualTraffic(helperSiblings, func(i int) bool {
+		sibling := m.deployments[siblings[i].ID]
+		neverServed := sibling.TrafficPercent == 0 && !m.deploymentServedLocked(sibling.ID)
+		return abortedCanaryCandidate(sibling) || neverServed
+	}, 100-newPercent)
+	if err != nil {
+		return Deployment{}, err
+	}
+	priorWeights := make([]int, len(siblings))
+	for i, sibling := range siblings {
+		priorWeights[i] = sibling.Prior
+	}
+	if err := checkTrafficSplitReleaseLimit(ctx, priorPercent, newPercent, priorWeights, newWeights); err != nil {
+		return Deployment{}, err
+	}
 	proposed := map[string]int{id: newPercent}
 	for i, sibling := range siblings {
 		proposed[sibling.ID] = newWeights[i]
@@ -7851,7 +7887,39 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
+	// Mirrors PgStore: a re-bind keeps the app's GitHub policy.
+	b.ProductionTrigger = m.githubBindings[b.AppID].ProductionTrigger
+	b.PreviewsOff = m.githubBindings[b.AppID].PreviewsOff
 	m.githubBindings[b.AppID] = b
+	return nil
+}
+
+// SetGitHubAppProductionTrigger mirrors PgStore.
+func (m *MemStore) SetGitHubAppProductionTrigger(ctx context.Context, appID, accountID string, trigger ProductionTrigger) error {
+	return m.UpdateGitHubAppPolicy(ctx, appID, accountID, GitHubAppPolicyPatch{ProductionTrigger: &trigger})
+}
+
+// UpdateGitHubAppPolicy mirrors PgStore.
+func (m *MemStore) UpdateGitHubAppPolicy(_ context.Context, appID, accountID string, patch GitHubAppPolicyPatch) error {
+	if appID == "" || accountID == "" {
+		return ErrNotFound
+	}
+	if err := patch.Validate(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.githubBindings[appID]
+	if !ok || b.InstallID == 0 || b.AccountID != accountID {
+		return ErrNotFound
+	}
+	if patch.ProductionTrigger != nil {
+		b.ProductionTrigger = *patch.ProductionTrigger
+	}
+	if patch.PreviewEnabled != nil {
+		b.PreviewsOff = !*patch.PreviewEnabled
+	}
+	m.githubBindings[appID] = b
 	return nil
 }
 
@@ -12992,6 +13060,7 @@ func (m *MemStore) CreateCustomDomain(ctx context.Context, domain, appID, token 
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
 		return CustomDomain{}, err
 	}
+	m.dropCustomDomainTLSHostsLocked(domain)
 	m.domains[domain] = d
 	return d, nil
 }
@@ -13578,6 +13647,9 @@ func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
 	c, ok := m.crons[id]
 	if !ok || c.AppID != appID {
 		return ErrNotFound
+	}
+	if err := m.cancelPendingCronRunsLocked(id, time.Now()); err != nil {
+		return err
 	}
 	if len(c.Command) == 0 {
 		m.invalidateDeploymentCronsLocked(c.AppID)
@@ -15292,16 +15364,23 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	if inv.State != InvocationPending {
 		return inv.State, nil
 	}
+	if err := m.cancelPendingInvocationLocked(id, inv, time.Now()); err != nil {
+		return "", err
+	}
+	return InvocationCancelled, nil
+}
+
+// cancelPendingInvocationLocked cancels one pending invocation; m.mu is held.
+func (m *MemStore) cancelPendingInvocationLocked(id string, inv Invocation, now time.Time) error {
 	inv.State = InvocationCancelled
 	inv.QuotaReserved = false
-	now := time.Now()
 	inv.CompletedAt = &now
 	if err := m.operationTransitionLocked(&inv, false); err != nil {
-		return "", err
+		return err
 	}
 	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
-	return inv.State, nil
+	return nil
 }
 
 // ListInvocationsForAccount is the dashboard's unified history read.
@@ -16432,7 +16511,8 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining):
+		// A migrating VM is resident on a node too (ADR 20261101091815).
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining), string(StateMigrating):
 			out = append(out, ins)
 		}
 	}
@@ -16838,6 +16918,16 @@ func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, sta
 	for _, s := range states {
 		wanted[s] = true
 	}
+	// A job task keeps its instance (job_tasks.instance_id has no delete
+	// action): PgStore leaves such rows out, so the sweep never fails on them.
+	referenced := map[string]bool{}
+	for _, tasks := range m.jobTasks {
+		for _, task := range tasks {
+			if task.InstanceID != nil {
+				referenced[*task.InstanceID] = true
+			}
+		}
+	}
 	var out []Instance
 	for _, ins := range m.instances {
 		if !wanted[State(ins.State)] {
@@ -16846,7 +16936,7 @@ func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, sta
 		if ins.TerminalAt == nil {
 			continue
 		}
-		if !ins.TerminalAt.Before(threshold) {
+		if !ins.TerminalAt.Before(threshold) || referenced[ins.ID] {
 			continue
 		}
 		out = append(out, ins)
@@ -18902,6 +18992,7 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		return err
 	}
 	m.events = append(m.events, e)
+	m.copyOperatorActionToAuditLogLocked(e)
 	return nil
 }
 
@@ -20722,6 +20813,7 @@ type billingUsageDelivery struct {
 	meter               BillingMeter
 	hour                time.Time
 	quantity            int64
+	deliveredAt         time.Time
 }
 
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
@@ -20809,7 +20901,7 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	defer m.mu.Unlock()
 	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
 	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
-		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity, deliveredAt: m.clock()}
 	}
 	return nil
 }
@@ -28398,7 +28490,7 @@ func (m *MemStore) ListAppsWithRecentTelemetry(_ context.Context, _ pgtype.Inter
 
 // UpdateSpansSummary is intentionally unsupported by MemStore. The writer
 // updates request_telemetry rows and must be covered against PgStore.
-func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte) error {
+func (m *MemStore) UpdateSpansSummary(_ context.Context, _ SpansSummaryTarget, _ []byte, _ int) error {
 	panic("memstore: UpdateSpansSummary unimplemented")
 }
 

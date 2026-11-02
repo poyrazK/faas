@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -42,9 +43,19 @@ func guestEventPublishVerdict(err error) api.EventPublishVerdict {
 	var limited guestEventRateLimitedError
 	var syntax *json.SyntaxError
 	var mistyped *json.UnmarshalTypeError
+	var storage *state.EventStorageCapacityError
+	var pgErr *pgconn.PgError
 	switch {
 	case err == nil:
 		return api.EventPublishVerdict{Status: http.StatusAccepted}
+	case errors.As(err, &storage):
+		// As POST /v1/events:publish: stored events must be pruned or the
+		// plan upgraded before this one fits, so wait the storage back-off.
+		return api.EventPublishVerdict{Status: http.StatusTooManyRequests, Code: "event_storage_capacity_exhausted", RetryAfterSeconds: api.EventStorageRetryAfterSeconds}
+	case errors.Is(err, state.ErrConflict), errors.As(err, &pgErr) && pgErr.ConstraintName == "event_fanout_identity_uniq":
+		// The source and id already name an event with different content;
+		// retrying cannot succeed.
+		return api.EventPublishVerdict{Status: http.StatusConflict, Code: api.CodeConflict}
 	case errors.Is(err, errGuestEventsPaused):
 		return api.EventPublishVerdict{Status: http.StatusServiceUnavailable, Code: api.CodeEventsPaused, RetryAfterSeconds: guestEventsPausedRetrySeconds}
 	case errors.As(err, &limited):

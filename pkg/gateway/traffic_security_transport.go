@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -29,6 +30,62 @@ func decodeTrafficSecurity(value string) (map[trafficrevocation.Scope]trafficrev
 	return trafficrevocation.DecodeSnapshot(value)
 }
 
+// trafficSnapshotMemoEntries bounds one generation of trafficSnapshotMemo.
+// Two generations hold at most twice this many values, each at most
+// api.TrafficSecurityMaxHeaderBytes.
+const trafficSnapshotMemoEntries = 1024
+
+// trafficSnapshotMemo memoizes decoded X-Faas-Traffic-Security values by their
+// exact text. The edge decodes one per request, and an app's value repeats
+// until one of its revisions changes. Decoding re-encodes the value to prove
+// it canonical (JSON, sort, base64), which was 3.5% of the edge's CPU at
+// 300 req/s. Only values that decode are kept. A nil memo memoizes nothing.
+//
+// A filled generation becomes the previous one and the oldest is dropped, so
+// a value in use moves forward on its next hit and a stale one ages out.
+type trafficSnapshotMemo struct {
+	mu       sync.Mutex
+	current  map[string]map[trafficrevocation.Scope]trafficrevocation.State
+	previous map[string]map[trafficrevocation.Scope]trafficrevocation.State
+}
+
+// decode returns value's scopes. Every caller with the same value shares the
+// map, so it is read-only; Registry.AdmitAt clones what it keeps.
+func (m *trafficSnapshotMemo) decode(value string) (map[trafficrevocation.Scope]trafficrevocation.State, error) {
+	if m == nil {
+		return decodeTrafficSecurity(value)
+	}
+	m.mu.Lock()
+	states, ok := m.current[value]
+	if !ok {
+		if states, ok = m.previous[value]; ok {
+			m.storeLocked(value, states)
+		}
+	}
+	m.mu.Unlock()
+	if ok {
+		return states, nil
+	}
+	states, err := decodeTrafficSecurity(value)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	m.storeLocked(value, states)
+	m.mu.Unlock()
+	return states, nil
+}
+
+func (m *trafficSnapshotMemo) storeLocked(value string, states map[trafficrevocation.Scope]trafficrevocation.State) {
+	if len(m.current) >= trafficSnapshotMemoEntries {
+		m.previous, m.current = m.current, nil
+	}
+	if m.current == nil {
+		m.current = make(map[string]map[trafficrevocation.Scope]trafficrevocation.State)
+	}
+	m.current[value] = states
+}
+
 func stampTrafficSecurity(ctx context.Context, header http.Header) {
 	header.Del(trafficSecurityHeader)
 	if trafficFenceIsOff(ctx) {
@@ -45,9 +102,10 @@ func stampTrafficSecurity(ctx context.Context, header http.Header) {
 type publicTrafficSecurityKey struct{}
 
 type publicTrafficSecurity struct {
-	registry *trafficrevocation.Registry
-	cancel   context.CancelCauseFunc
-	release  func()
+	registry  *trafficrevocation.Registry
+	snapshots *trafficSnapshotMemo
+	cancel    context.CancelCauseFunc
+	release   func()
 	// peers is non-nil only while a compute gateway behind this edge predates
 	// the snapshot header (release N-1); answers then pass unverified.
 	peers TrafficSecurityPeers
@@ -66,6 +124,7 @@ type TrafficSecurityPeers interface {
 
 func (p *InternalReverseProxy) WithTrafficRevocations(registry *trafficrevocation.Registry) *InternalReverseProxy {
 	p.trafficRevocations = registry
+	p.trafficSnapshots = &trafficSnapshotMemo{}
 	return p
 }
 
@@ -84,7 +143,7 @@ func (p *InternalReverseProxy) publicTrafficContext(parent context.Context) (con
 		return parent, func() {}
 	}
 	ctx, cancel := reqbudget.WithCancellationFence(parent)
-	owner := &publicTrafficSecurity{registry: p.trafficRevocations, cancel: cancel, observer: p.trafficSecurityPeers}
+	owner := &publicTrafficSecurity{registry: p.trafficRevocations, snapshots: p.trafficSnapshots, cancel: cancel, observer: p.trafficSecurityPeers}
 	if p.trafficSecurityPeers != nil && !p.trafficSecurityPeers.Required() {
 		owner.peers = p.trafficSecurityPeers
 	}
@@ -155,7 +214,7 @@ func bindPublicTrafficSecurity(r *http.Request, resp *http.Response) error {
 		}
 		return trafficrevocation.ErrUnavailable
 	}
-	states, err := decodeTrafficSecurity(values[0])
+	states, err := owner.snapshots.decode(values[0])
 	if err != nil {
 		return err
 	}

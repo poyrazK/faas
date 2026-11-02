@@ -26,6 +26,8 @@ type nativeJailBackendFixture struct {
 	files         []*os.File
 	prepares      int
 	namespaceLive bool
+	// holder is the task NamespaceRemoved reports while the namespace is live.
+	holder        *nativeNamespaceHolderError
 	closeFailure  bool
 	beforePrepare func()
 }
@@ -92,6 +94,9 @@ func (b *nativeJailBackendFixture) InputsRemoved(_ context.Context, _ jailsetup.
 func (b *nativeJailBackendFixture) NamespaceRemoved(_ context.Context, _ jailsetup.DeviceSetupScope) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.namespaceLive && b.holder != nil {
+		return b.holder
+	}
 	if b.namespaceLive {
 		return errors.New("fixture: original namespace remains live")
 	}
@@ -385,5 +390,71 @@ func TestNativeJailDeviceNamespaceAndParentInputsHoldCleanup(t *testing.T) {
 	backend.namespaceLive = true
 	if _, err := j.owner.records(t.Context()); err == nil {
 		t.Fatal("archived namespace reappearance bypassed inventory")
+	}
+}
+
+// Linux reuses a freed namespace's inode number. A task found under a retired
+// attempt's recorded identity proves its namespace ended only when that task is
+// the recorded VM process of another instance's live launch (ADR-568 amendment
+// 2026-10-31); every other holder keeps blocking the acknowledgement.
+func TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch(t *testing.T) {
+	const holderPID, holderStart = 4242, uint64(777)
+	for _, tc := range []struct {
+		name     string
+		instance func(retired string) string
+		pid      int
+		start    uint64
+		retire   bool
+		removed  bool
+	}{
+		{name: "another instance's live VM", instance: func(string) string { return "recycled-holder" }, pid: holderPID, start: holderStart, removed: true},
+		{name: "start time differs", instance: func(string) string { return "recycled-holder" }, pid: holderPID, start: holderStart + 1},
+		{name: "pid differs", instance: func(string) string { return "recycled-holder" }, pid: holderPID + 1, start: holderStart},
+		{name: "retired instance itself", instance: func(retired string) string { return retired }, pid: holderPID, start: holderStart},
+		{name: "holder launch retired too", instance: func(string) string { return "recycled-holder" }, pid: holderPID, start: holderStart, retire: true},
+		{name: "unknown instance", instance: func(string) string { return "no-such-instance" }, pid: holderPID, start: holderStart},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			j, owner, backend, _ := nativeJailDeviceFixture(t)
+			cmd, _ := nativeJailFixtureCommand(t)
+			if err := j.run(t.Context(), owner, cmd, time.Second); err != nil {
+				t.Fatal(err)
+			}
+			lease := leaseForSlot("recycled-holder", 4)
+			lease.Plan = owner.Lease.Plan
+			if err := j.owner.prepare(t.Context(), lease); err != nil {
+				t.Fatal(err)
+			}
+			live, err := j.owner.read(lease.Instance)
+			if err != nil {
+				t.Fatal(err)
+			}
+			live.Authorized, live.PID, live.StartTime = true, holderPID, holderStart
+			if tc.retire {
+				live.Revoked, live.ExitConfirmed, live.ResourcesRemoved = true, true, true
+			}
+			if err := j.owner.write(live); err != nil {
+				t.Fatal(err)
+			}
+			owner.Revoked, owner.ExitConfirmed = true, true
+			if err := j.owner.write(owner); err != nil {
+				t.Fatal(err)
+			}
+			if err := (&nativeTunBindJournal{owner: j.owner, backend: j.owner.tunBinds, helperGroups: j.groups}).retire(t.Context(), owner); err != nil {
+				t.Fatal(err)
+			}
+			backend.mu.Lock()
+			backend.namespaceLive = true
+			backend.holder = &nativeNamespaceHolderError{err: errNativeNamespaceHeld, PID: tc.pid, StartTime: tc.start,
+				Comm: "firecracker", Task: "1", Cgroup: "/faas.slice/faas-tenant.slice/faas-tenant-hobby.slice/" + tc.instance(owner.Lease.Instance)}
+			backend.mu.Unlock()
+			err = j.owner.confirmResourcesRemoved(t.Context(), owner)
+			if tc.removed && err != nil {
+				t.Fatalf("recycled namespace identity held the acknowledgement: %v", err)
+			}
+			if !tc.removed && !errors.Is(err, errNativeNamespaceHeld) {
+				t.Fatalf("holder bypassed the namespace proof: %v", err)
+			}
+		})
 	}
 }

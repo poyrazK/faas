@@ -6,7 +6,6 @@ package vmmdgrpc
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"net/netip"
 	"time"
@@ -131,7 +130,7 @@ func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteracti
 	invalid := func(detail string) *api.Problem {
 		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid interactive job", detail)
 	}
-	if len(in.GetAttachTokenSha256()) != sha256.Size {
+	if !validAttachDigest(in.GetAttachTokenSha256()) {
 		return nil, invalid("attach_token_sha256 must be a SHA-256 digest")
 	}
 	if req.GetTaskTimeoutSec() > fcvm.JobInteractiveMaxTaskTimeoutSec {

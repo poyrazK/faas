@@ -105,6 +105,11 @@ type WAFInlineResult struct {
 	Seconds    float64
 	// SkipReason says why a WAFInlineSkipped check did not run.
 	SkipReason string
+	// CookiesOnly marks a detection whose every scoring match was in a
+	// request cookie. It still blocks, but never boxes the client: a page on
+	// another host of a shared apps domain can plant such a cookie in a
+	// visitor's browser (ADR-831 amendment 18).
+	CookiesOnly bool
 }
 
 // Why an in-path check was skipped (gateway_waf_inline_skips_total, ADR-831
@@ -157,12 +162,15 @@ func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app A
 	}
 	sample := newWAFSample(r, app, rule)
 	if (rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock) && h.edgeFeatureReleased(platformflags.EdgeWAFBlocking, app) {
-		outcome := h.checkEdgeRuleWAFInline(rule, sample)
+		res := h.checkEdgeRuleWAFInline(rule, sample)
+		outcome := res.Outcome
 		if outcome == WAFInlineDetected {
 			if rule.Mode == api.EdgeWAFModeBlock {
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Request blocked",
 					"blocked by edge rule "+rule.ID+" (kind=waf)"))
-				h.penalizeEdgeRuleRejection(r, app, rule.ID)
+				if !res.CookiesOnly {
+					h.penalizeEdgeRuleRejection(r, app, rule.ID)
+				}
 				return true, nil
 			}
 			// The header names the edge rule, not the CRS rule, so the
@@ -227,12 +235,12 @@ func newWAFSample(r *http.Request, app App, rule *EdgeRuleWAFResolved) WAFSample
 	return sample
 }
 
-// checkEdgeRuleWAFInline runs the in-path check and returns its outcome, or
-// "" when no checker is wired. Only WAFInlineDetected acts on the request: a
-// skipped or failed check fails open.
-func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSample) string {
+// checkEdgeRuleWAFInline runs the in-path check and returns its result, with
+// an empty Outcome when no checker is wired. Only WAFInlineDetected acts on
+// the request: a skipped or failed check fails open.
+func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSample) WAFInlineResult {
 	if h.wafInline == nil {
-		return ""
+		return WAFInlineResult{}
 	}
 	res := h.wafInline.CheckInline(sample)
 	outcome := res.Outcome
@@ -257,7 +265,7 @@ func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSa
 	if res.Outcome == WAFInlineSkipped {
 		h.metrics.ObserveWAFInlineSkip(sample.AppID, res.SkipReason)
 	}
-	return res.Outcome
+	return res
 }
 
 // sampleEdgeRuleWAF wraps r.Body to record the inspected prefix and returns

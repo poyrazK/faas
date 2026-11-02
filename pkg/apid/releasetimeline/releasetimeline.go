@@ -82,7 +82,10 @@ func Build(in Inputs) api.ReleaseTimeline {
 	b.schedule(d.ScheduledRelease)
 	b.approval(out.Approval)
 	b.audit()
-	if watched && !in.Now.Before(watchUntil) && out.Phase != api.ReleasePhaseRolledBack {
+	if kept := regressionKept(d); kept != nil {
+		at, _ := time.Parse(time.RFC3339Nano, kept.DecidedAt)
+		b.add(at, api.ReleaseEventWatchRegressed, regressionKeptText(kept), "", nil, kept)
+	} else if watched && !in.Now.Before(watchUntil) && out.Phase != api.ReleasePhaseRolledBack {
 		b.add(watchUntil, api.ReleaseEventWatchPassed, fmt.Sprintf("Post-release watch passed: no regression in %s", minutes(in.WatchWindow)), "", nil, nil)
 	}
 	if in.ReplacedBy != nil && !in.ReplacedBy.At.IsZero() {
@@ -119,6 +122,11 @@ func phase(in Inputs, approval *api.ReleaseApprovalStatus, watchUntil time.Time,
 	case "cancelled":
 		return api.ReleasePhaseCancelled, "Cancelled before release"
 	}
+	// A regression kept serving, including after an automatic rollback that
+	// failed, is not a rollback (ADR-1445 amendment 4).
+	if kept := regressionKept(d); kept != nil {
+		return api.ReleasePhaseReleased, "Released, but " + regressionKeptText(kept)
+	}
 	if d.RolloutAbortedAt != nil || d.RolloutState == "aborted" || in.AutoRollbackReason != "" {
 		return api.ReleasePhaseRolledBack, "Rolled back: " + rolledBackWhy(in)
 	}
@@ -153,6 +161,27 @@ func phase(in Inputs, approval *api.ReleaseApprovalStatus, watchUntil time.Time,
 func inFlight(d api.DeploymentResponse) bool {
 	state := strings.TrimSpace(d.RolloutState)
 	return d.Status == "live" && d.CanaryTotalSteps > 0 && (state == "" || state == "pending" || state == "rolling_out")
+}
+
+// regressionKept is the post-release watch's decision when it found a
+// regression but did not roll the release back (ADR-1448).
+func regressionKept(d api.DeploymentResponse) *api.RolloutDecision {
+	if dec := d.RolloutDecision; dec != nil && dec.RollbackSkipped != "" && d.Status == "live" {
+		return dec
+	}
+	return nil
+}
+
+func regressionKeptText(dec *api.RolloutDecision) string {
+	switch dec.RollbackSkipped {
+	case api.RollbackSkippedFailed:
+		return "a regression was found after the rollout (" + decisionText(dec) +
+			") and Gregale's automatic rollback did not restore the previous release, so this release still serves"
+	case api.CodeRollbackCrossesRelease:
+		return "a regression was found after the rollout (" + decisionText(dec) +
+			") and Gregale did not roll back: rolling back would cross a release command, so a person decides"
+	}
+	return "a regression was found after the rollout (" + decisionText(dec) + ") and Gregale did not roll back: Gregale could not roll it back"
 }
 
 // rolledBackWhy prefers the abort decision's summary, then the recorded

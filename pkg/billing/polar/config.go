@@ -11,6 +11,9 @@ const (
 	// DefaultObjectStorageUsageEventName is the event name reserved for
 	// immutable UTC-month object-storage charges.
 	DefaultObjectStorageUsageEventName = "faas_object_storage_usage"
+	// DefaultManagedPostgresUsageEventName is the event name reserved for
+	// managed PostgreSQL overage charges (ADR-20261031110037).
+	DefaultManagedPostgresUsageEventName = "faas_managed_postgres_usage"
 
 	EgressBillingOff    = "off"
 	EgressBillingShadow = "shadow"
@@ -19,6 +22,10 @@ const (
 	ObjectStorageBillingOff    = "off"
 	ObjectStorageBillingShadow = "shadow"
 	ObjectStorageBillingLive   = "live"
+
+	ManagedPostgresBillingOff    = "off"
+	ManagedPostgresBillingShadow = "shadow"
+	ManagedPostgresBillingLive   = "live"
 )
 
 // Config is the Polar on-disk settings. Polar product, meter, and webhook
@@ -86,6 +93,16 @@ type Config struct {
 	// 0.001 euro cents, preserving Gregale's integer-millicent ledger exactly.
 	ObjectStorageUsageEventName string `toml:"object_storage_usage_event_name"`
 	ObjectStorageMeterID        string `toml:"object_storage_meter_id"`
+	// ManagedPostgresBillingMode gates managed PostgreSQL overage charges
+	// (ADR-20261031110037): off (default), shadow (recorded, never sent) or
+	// live. ManagedPostgresBillingFrom is an RFC3339 UTC-month boundary.
+	ManagedPostgresBillingMode string `toml:"managed_postgres_billing_mode"`
+	ManagedPostgresBillingFrom string `toml:"managed_postgres_billing_from"`
+	// ManagedPostgresUsageEventName and ManagedPostgresMeterID identify a
+	// fourth Polar meter that sums metadata.charge_millicents, priced at
+	// 0.001 cents per unit like the object-storage meter.
+	ManagedPostgresUsageEventName string `toml:"managed_postgres_usage_event_name"`
+	ManagedPostgresMeterID        string `toml:"managed_postgres_meter_id"`
 	// SuccessURL and ReturnURL are optional hosted-checkout redirects.
 	SuccessURL string `toml:"success_url"`
 	ReturnURL  string `toml:"return_url"`
@@ -117,5 +134,11 @@ func (c *Config) Defaults() {
 	}
 	if c.ObjectStorageUsageEventName == "" {
 		c.ObjectStorageUsageEventName = DefaultObjectStorageUsageEventName
+	}
+	if c.ManagedPostgresBillingMode == "" {
+		c.ManagedPostgresBillingMode = ManagedPostgresBillingOff
+	}
+	if c.ManagedPostgresUsageEventName == "" {
+		c.ManagedPostgresUsageEventName = DefaultManagedPostgresUsageEventName
 	}
 }

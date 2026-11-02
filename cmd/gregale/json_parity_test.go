@@ -89,6 +89,9 @@ func topLevelDispatcher(leaf string) string {
 	if leaf == "cmdWaitAlertRollback" {
 		return "cmdAlerts"
 	}
+	if leaf == "cmdAgentConnections" {
+		return "cmdMcp" // gregale mcp connections list|revoke
+	}
 	if !strings.HasPrefix(leaf, "cmd") {
 		return ""
 	}

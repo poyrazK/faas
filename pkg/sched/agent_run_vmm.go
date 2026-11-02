@@ -49,9 +49,27 @@ type AgentRunSnapshot struct {
 
 // AgentRunHooks observe a run while it streams. Booted runs once, after the
 // VM is up and before the run reaches the guest; Output runs per chunk.
+// Usage runs at most once, before the result or the error that ends the run.
 type AgentRunHooks struct {
 	Booted func(ctx context.Context, method string, bootMs int64) error
 	Output agentrunproto.OutputReceiver
+	Usage  func(ctx context.Context, u AgentRunUsage) error
+}
+
+// AgentRunUsage is vmmd's measured memory of a run VM (ADR-20261027090011):
+// vmmdpb.AgentRunUsage, whose comments give each field's meaning.
+type AgentRunUsage struct {
+	Method, Samples, ExpectedSamples                                          int
+	MeasuredMillis, PausedMillis                                              int64
+	PrivateMBMillis, UnpausedPrivateMBMillis, BillableMBMillis, PeakPrivateMB int64
+	ColdBoot                                                                  bool
+}
+
+func agentRunUsageFromProto(u *vmmdpb.AgentRunUsage) AgentRunUsage {
+	return AgentRunUsage{Method: int(u.GetMethod()), Samples: int(u.GetSamples()), ExpectedSamples: int(u.GetExpectedSamples()),
+		MeasuredMillis: u.GetMeasuredMs(), PausedMillis: u.GetPausedMs(), PrivateMBMillis: u.GetPrivateMbMs(),
+		UnpausedPrivateMBMillis: u.GetUnpausedPrivateMbMs(), BillableMBMillis: u.GetBillableMbMs(),
+		PeakPrivateMB: u.GetPeakPrivateMb(), ColdBoot: u.GetColdBoot()}
 }
 
 type agentRunVMMClient interface {
@@ -156,6 +174,12 @@ func receiveAgentRun(ctx context.Context, stream vmmdpb.Vmmd_RunAgentClient, run
 			}
 			if hooks.Output != nil {
 				if err := hooks.Output(ctx, name, chunk); err != nil {
+					return agentrunproto.Result{}, err
+				}
+			}
+		case event.GetUsage() != nil:
+			if hooks.Usage != nil {
+				if err := hooks.Usage(ctx, agentRunUsageFromProto(event.GetUsage())); err != nil {
 					return agentrunproto.Result{}, err
 				}
 			}

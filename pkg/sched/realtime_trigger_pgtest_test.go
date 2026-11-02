@@ -189,6 +189,46 @@ func TestRealtimeTriggerDispatchSettlesConsumerGroup(t *testing.T) {
 	}
 }
 
+// adr: 1322 amendment, 1180 — a realtime trigger's invocation may run past
+// the group's lease: the dispatcher renews the claim until it settles, so the
+// message completes on its first attempt instead of being handed out again.
+func TestRealtimeTriggerRunsPastTheGroupLease(t *testing.T) {
+	f := seedRealtimeTrigger(t, 1, api.RealtimeTriggerMinLeaseSeconds)
+	ctx := t.Context()
+	if err := f.store.BindRealtimeConsumerGroupTrigger(ctx, f.account.ID, f.trigger.ID.String(), f.cfg); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	// A 2 s lease stands in for a group lease shorter than the app's timeout.
+	if _, err := f.pool.Exec(ctx, `update managed_realtime_consumer_groups set lease_seconds=2 where id=$1`, f.groupID); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var envelope sched.TriggerDispatchRequest
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil || len(envelope.Records) != 1 {
+			t.Errorf("envelope: %+v %v", envelope, err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		time.Sleep(5 * time.Second) // the handler runs well past the lease
+		_ = json.NewEncoder(w).Encode(sched.TriggerDispatchResponse{Results: []sched.TriggerDispatchResult{
+			{ItemIdentifier: envelope.Records[0].ItemIdentifier, Status: "succeeded"}}})
+	}))
+	defer gateway.Close()
+	loop := sched.MakeLoopForDLQ()
+	(*loop.GatewayHTTPClient()), (*loop.GatewayBaseURL()) = gateway.Client(), gateway.URL
+	poller, err := sched.NewRealtimePoller(f.store, f.trigger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	(*loop.TriggerPollers()) = map[string]sched.TriggerSource{f.trigger.ID.String(): poller}
+	_ = loop.DispatchOneTrigger(ctx, f.trigger, f.store, func(string) api.Plan { return api.PlanPro })
+	if status, attempts, _ := f.message(t, 1); calls != 1 || status != "absent" {
+		t.Fatalf("after a run past the lease: %d calls, message %s after %d attempts; want it completed by the one call", calls, status, attempts)
+	}
+}
+
 func TestBindRealtimeConsumerGroupTriggerRules(t *testing.T) {
 	short := seedRealtimeTrigger(t, 0, 30)
 	ctx := t.Context()

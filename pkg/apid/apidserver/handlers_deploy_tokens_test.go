@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDeployTokenHandlers_CreateListRotateRevoke(t *testing.T) {
@@ -137,5 +138,66 @@ func TestDeployTokenBearer_BoundToItsApp(t *testing.T) {
 	}
 	if deps, err := (*e.Store()).ListDeploymentsForApp(t.Context(), appB, 10, 0); err != nil || len(deps) != 0 {
 		t.Fatalf("app B has %d deployments (err=%v) after requests with app A's token", len(deps), err)
+	}
+}
+
+// Every CLI deploy reads its app, then polls the deployment it created
+// (ADR-20261031162858). A deploy token could do neither, so `gregale deploy`
+// with FAAS_TOKEN set to one failed insufficient_scope, and the official
+// deploy Action's OIDC bearer (deploy:write) failed the same app read. The
+// token reaches only its own app and that app's deployments.
+func TestDeployCredentials_ReadTheirAppAndDeployments(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	appA := apidserver.MustSeedApp(t, e, "ci-app-a")
+	appB := apidserver.MustSeedApp(t, e, "ci-app-b")
+	depA, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: appA, Status: state.DeployLive, RootfsPath: "/artifact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	depB, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: appB, Status: state.DeployLive, RootfsPath: "/artifact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdRec := e.Do(t, http.MethodPost, "/v1/apps/ci-app-a/deploy-tokens", api.CreateDeployTokenRequest{Label: "ci"}, nil)
+	if createdRec.Code != http.StatusCreated {
+		t.Fatalf("create: code=%d body=%s", createdRec.Code, createdRec.Body.String())
+	}
+	var token api.DeployTokenResponse
+	if err := json.Unmarshal(createdRec.Body.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+	deployKey, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "ci-deploy-only", []string{api.ScopeDeployWrite}); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, bearer, path string
+		want               int
+	}{
+		{"token reads its app", token.Plaintext, "/v1/apps/ci-app-a", http.StatusOK},
+		{"token cannot read another app", token.Plaintext, "/v1/apps/ci-app-b", http.StatusNotFound},
+		{"token reads its app's deployment", token.Plaintext, "/v1/deployments/" + depA.ID, http.StatusOK},
+		{"token cannot read another app's deployment", token.Plaintext, "/v1/deployments/" + depB.ID, http.StatusNotFound},
+		{"token with a malformed deployment id", token.Plaintext, "/v1/deployments/not-a-deployment", http.StatusNotFound},
+		{"token cannot read build logs", token.Plaintext, "/v1/deployments/" + depA.ID + "/logs", http.StatusForbidden},
+		{"token cannot list deployments account-wide", token.Plaintext, "/v1/deployments", http.StatusForbidden},
+		{"deploy:write key reads the app it deploys", deployKey, "/v1/apps/ci-app-a", http.StatusOK},
+		{"deploy:write key reads a deployment", deployKey, "/v1/deployments/" + depA.ID, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := e.Do(t, http.MethodGet, tc.path, nil, map[string]string{"Authorization": "Bearer " + tc.bearer})
+			if rec.Code != tc.want {
+				t.Fatalf("GET %s = %d, want %d (body=%s)", tc.path, rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+	// The read reveals nothing PATCH does not: deploy:write already updates
+	// the app and receives the same document.
+	if rec := e.Do(t, http.MethodPatch, "/v1/apps/ci-app-a", api.UpdateAppRequest{}, map[string]string{"Authorization": "Bearer " + deployKey}); rec.Code != http.StatusOK {
+		t.Fatalf("deploy:write PATCH = %d (body=%s)", rec.Code, rec.Body.String())
 	}
 }

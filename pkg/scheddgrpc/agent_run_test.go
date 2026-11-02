@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeAgentRunner plays sched.AgentRunner: it places, boots, prints and
@@ -31,6 +32,10 @@ type fakeAgentRunner struct {
 	err       error
 	cancelled bool
 	booted    bool
+	// usage, when set, is reported after the output; runErr then fails the
+	// booted run.
+	usage  *sched.AgentRunUsage
+	runErr error
 }
 
 func (f *fakeAgentRunner) Run(ctx context.Context, a sched.AgentRunAdmission, run agentrunproto.Request, placed func(sched.AgentRunPlacement) error, hooks sched.AgentRunHooks, cancel <-chan struct{}) (agentrunproto.Result, error) {
@@ -44,6 +49,12 @@ func (f *fakeAgentRunner) Run(ctx context.Context, a sched.AgentRunAdmission, ru
 	f.booted = true
 	_ = hooks.Booted(ctx, "WAKE_COLD_BOOT", 900)
 	_ = hooks.Output(ctx, "stdout", []byte("ran "+run.Command[0]))
+	if f.usage != nil {
+		_ = hooks.Usage(ctx, *f.usage)
+	}
+	if f.runErr != nil {
+		return agentrunproto.Result{}, f.runErr
+	}
 	if run.Command[0] == "wait-for-cancel" {
 		select {
 		case <-cancel:
@@ -289,5 +300,38 @@ func TestRunAgentInputDrive(t *testing.T) {
 		if tc.want == codes.OK && runner.admission.InputKey != good {
 			t.Errorf("%s: input key %q", name, runner.admission.InputKey)
 		}
+	}
+}
+
+// The usage frame reaches agentd before the result, and before the status
+// of a run that failed after it booted (ADR-20261027090011).
+func TestRunAgentForwardsUsage(t *testing.T) {
+	usage := &sched.AgentRunUsage{Method: 1, Samples: 3, ExpectedSamples: 3, MeasuredMillis: 3000, PausedMillis: 1000,
+		PrivateMBMillis: 900_000, UnpausedPrivateMBMillis: 600_000, BillableMBMillis: 616_000, PeakPrivateMB: 300}
+	want := &scheddpb.AgentRunUsage{Method: 1, Samples: 3, ExpectedSamples: 3, MeasuredMs: 3000, PausedMs: 1000,
+		PrivateMbMs: 900_000, UnpausedPrivateMbMs: 600_000, BillableMbMs: 616_000, PeakPrivateMb: 300}
+	for _, tc := range []struct {
+		name   string
+		runErr error
+	}{{name: "succeeded"}, {name: "failed after boot", runErr: errors.New("vmmd went away")}} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream, err := agentRunScheddClient(t, &fakeAgentRunner{usage: usage, runErr: tc.runErr}).RunAgent(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := stream.Send(agentRunStartFrame(t, "codex")); err != nil {
+				t.Fatal(err)
+			}
+			events, err := drainAgentRun(stream)
+			if (tc.runErr != nil) != (status.Code(err) == codes.Unavailable) {
+				t.Fatalf("stream ended with %v", err)
+			}
+			if len(events) < 4 || !proto.Equal(events[3].GetUsage(), want) {
+				t.Fatalf("events %v", events)
+			}
+			if tc.runErr == nil && (len(events) != 5 || events[4].GetResult() == nil) {
+				t.Fatalf("the result does not follow the usage: %v", events)
+			}
+		})
 	}
 }

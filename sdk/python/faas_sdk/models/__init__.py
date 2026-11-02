@@ -32,6 +32,11 @@ from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_client_request import AgentClientRequest
+from .agent_connection_response import AgentConnectionResponse
+from .agent_connection_response_kind import AgentConnectionResponseKind
+from .agent_connections_response import AgentConnectionsResponse
+from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
@@ -300,6 +305,7 @@ from .capability_status import CapabilityStatus
 from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
+from .change_managed_postgres_compute_policy_request import ChangeManagedPostgresComputePolicyRequest
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
@@ -328,6 +334,14 @@ from .config_revision_source import ConfigRevisionSource
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
+from .connection_budget_capacity import ConnectionBudgetCapacity
+from .connection_budget_capacity_source import ConnectionBudgetCapacitySource
+from .connection_budget_capacity_state import ConnectionBudgetCapacityState
+from .connection_budget_demand import ConnectionBudgetDemand
+from .connection_budget_inventory import ConnectionBudgetInventory
+from .connection_budget_runtime_observations import ConnectionBudgetRuntimeObservations
+from .connection_budget_runtime_observations_source import ConnectionBudgetRuntimeObservationsSource
+from .connection_budget_runtime_observations_state import ConnectionBudgetRuntimeObservationsState
 from .control_project_release_action import ControlProjectReleaseAction
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
@@ -405,6 +419,11 @@ from .create_managed_execution_workflow_step import CreateManagedExecutionWorkfl
 from .create_managed_execution_workflow_step_result_schema_type_0 import (
     CreateManagedExecutionWorkflowStepResultSchemaType0,
 )
+from .create_managed_postgres_binding_request import CreateManagedPostgresBindingRequest
+from .create_managed_postgres_binding_request_access import CreateManagedPostgresBindingRequestAccess
+from .create_managed_postgres_database_request import CreateManagedPostgresDatabaseRequest
+from .create_managed_postgres_database_request_availability import CreateManagedPostgresDatabaseRequestAvailability
+from .create_managed_postgres_database_request_service_class import CreateManagedPostgresDatabaseRequestServiceClass
 from .create_notification_channel_request import CreateNotificationChannelRequest
 from .create_notification_channel_request_kind import CreateNotificationChannelRequestKind
 from .create_notification_channel_request_pagerduty_region import CreateNotificationChannelRequestPagerdutyRegion
@@ -419,6 +438,7 @@ from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
+from .custom_domain_hosts_response import CustomDomainHostsResponse
 from .custom_domain_response import CustomDomainResponse
 from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
@@ -827,6 +847,7 @@ from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBra
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .git_hub_installation_summary import GitHubInstallationSummary
 from .git_hub_webhook_activity import GitHubWebhookActivity
 from .git_hub_webhook_activity_status import GitHubWebhookActivityStatus
 from .grace_window_response import GraceWindowResponse
@@ -991,6 +1012,35 @@ from .managed_execution_workflow_response_status import ManagedExecutionWorkflow
 from .managed_operation_effect import ManagedOperationEffect
 from .managed_operation_result import ManagedOperationResult
 from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
+from .managed_postgres_binding import ManagedPostgresBinding
+from .managed_postgres_binding_access import ManagedPostgresBindingAccess
+from .managed_postgres_binding_list import ManagedPostgresBindingList
+from .managed_postgres_binding_state import ManagedPostgresBindingState
+from .managed_postgres_capabilities import ManagedPostgresCapabilities
+from .managed_postgres_capabilities_availability_item import ManagedPostgresCapabilitiesAvailabilityItem
+from .managed_postgres_capabilities_credential_access_item import ManagedPostgresCapabilitiesCredentialAccessItem
+from .managed_postgres_capabilities_service_classes_item import ManagedPostgresCapabilitiesServiceClassesItem
+from .managed_postgres_compute_policy_change import ManagedPostgresComputePolicyChange
+from .managed_postgres_compute_policy_change_state import ManagedPostgresComputePolicyChangeState
+from .managed_postgres_connection_budget import ManagedPostgresConnectionBudget
+from .managed_postgres_connection_budget_model import ManagedPostgresConnectionBudgetModel
+from .managed_postgres_connection_budget_state import ManagedPostgresConnectionBudgetState
+from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
+from .managed_postgres_database import ManagedPostgresDatabase
+from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
+from .managed_postgres_database_list import ManagedPostgresDatabaseList
+from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
+from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_health import ManagedPostgresHealth
+from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
+from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
+from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
+from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_resize import ManagedPostgresResize
+from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
+from .managed_postgres_resize_state import ManagedPostgresResizeState
+from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
@@ -1926,9 +1976,12 @@ from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSerie
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
+from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
+from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resource_profile import ResourceProfile
 from .restore_app_body import RestoreAppBody
 from .restore_deleted_app_body import RestoreDeletedAppBody
+from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
@@ -2111,6 +2164,7 @@ from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
 from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
+from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
@@ -2531,6 +2585,11 @@ __all__ = (
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentClientRequest",
+    "AgentConnectionResponse",
+    "AgentConnectionResponseKind",
+    "AgentConnectionsResponse",
+    "AgentConnectionsRevokeAllResponse",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
@@ -2797,6 +2856,7 @@ __all__ = (
     "CapabilityStatusMaturity",
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
+    "ChangeManagedPostgresComputePolicyRequest",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
@@ -2825,6 +2885,14 @@ __all__ = (
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
+    "ConnectionBudgetCapacity",
+    "ConnectionBudgetCapacitySource",
+    "ConnectionBudgetCapacityState",
+    "ConnectionBudgetDemand",
+    "ConnectionBudgetInventory",
+    "ConnectionBudgetRuntimeObservations",
+    "ConnectionBudgetRuntimeObservationsSource",
+    "ConnectionBudgetRuntimeObservationsState",
     "ControlProjectReleaseAction",
     "ControlWorkflowRecoveryPolicyRequest",
     "ControlWorkflowRecoveryPolicyRequestOperation",
@@ -2900,6 +2968,11 @@ __all__ = (
     "CreateManagedExecutionWorkflowRequestFailurePolicy",
     "CreateManagedExecutionWorkflowStep",
     "CreateManagedExecutionWorkflowStepResultSchemaType0",
+    "CreateManagedPostgresBindingRequest",
+    "CreateManagedPostgresBindingRequestAccess",
+    "CreateManagedPostgresDatabaseRequest",
+    "CreateManagedPostgresDatabaseRequestAvailability",
+    "CreateManagedPostgresDatabaseRequestServiceClass",
     "CreateNotificationChannelRequest",
     "CreateNotificationChannelRequestKind",
     "CreateNotificationChannelRequestPagerdutyRegion",
@@ -2914,6 +2987,7 @@ __all__ = (
     "CronRun",
     "CronRunOutcome",
     "CSRFTokenResponse",
+    "CustomDomainHostsResponse",
     "CustomDomainResponse",
     "CustomMetricListResponse",
     "CustomMetricRequest",
@@ -3304,6 +3378,7 @@ __all__ = (
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
+    "GitHubInstallationSummary",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusDeployBranches",
@@ -3466,6 +3541,35 @@ __all__ = (
     "ManagedOperationEffect",
     "ManagedOperationResult",
     "ManagedOperationResultGregaleOperationResult",
+    "ManagedPostgresBinding",
+    "ManagedPostgresBindingAccess",
+    "ManagedPostgresBindingList",
+    "ManagedPostgresBindingState",
+    "ManagedPostgresCapabilities",
+    "ManagedPostgresCapabilitiesAvailabilityItem",
+    "ManagedPostgresCapabilitiesCredentialAccessItem",
+    "ManagedPostgresCapabilitiesServiceClassesItem",
+    "ManagedPostgresComputePolicyChange",
+    "ManagedPostgresComputePolicyChangeState",
+    "ManagedPostgresConnectionBudget",
+    "ManagedPostgresConnectionBudgetModel",
+    "ManagedPostgresConnectionBudgetState",
+    "ManagedPostgresConnectionBudgetVersion",
+    "ManagedPostgresDatabase",
+    "ManagedPostgresDatabaseAvailability",
+    "ManagedPostgresDatabaseList",
+    "ManagedPostgresDatabaseServiceClass",
+    "ManagedPostgresDatabaseState",
+    "ManagedPostgresHealth",
+    "ManagedPostgresHealthComputeState",
+    "ManagedPostgresHealthLastErrorCode",
+    "ManagedPostgresHealthProviderStatus",
+    "ManagedPostgresHealthStatus",
+    "ManagedPostgresResize",
+    "ManagedPostgresResizeFromClass",
+    "ManagedPostgresResizeState",
+    "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",
@@ -4277,9 +4381,12 @@ __all__ = (
     "RequestAnalyticsTimeseriesSeriesMethod",
     "RequestAuditListResponse",
     "RequestAuditRecord",
+    "ResizeManagedPostgresDatabaseRequest",
+    "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResourceProfile",
     "RestoreAppBody",
     "RestoreDeletedAppBody",
+    "RestoreManagedPostgresDatabaseRequest",
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
@@ -4456,6 +4563,7 @@ __all__ = (
     "SetAccountEgressAllowlistExtraRequest",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",
+    "SetCustomDomainHostsRequest",
     "SetDeploymentAliasRequest",
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",

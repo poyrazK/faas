@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -1638,6 +1639,10 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	defer func() { _ = credentialAuth.Close() }()
 	credentialMatcher := apidgrpc.NewCredentialMatcher(credentialAuth)
 	deps.credentialMatcher = credentialMatcher
+	// Operation capabilities and dev-bridge tokens are keyed under rings this
+	// node never holds; apid matches them (amendment 1, decision 2).
+	credhash.SetRemote(credhash.FamilyScheduler, credentialMatcher.Remote())
+	credhash.SetRemote(credhash.FamilyDevBridge, credentialMatcher.Remote())
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
 	// over (ADR-1736). Requests and their sinks keep ctx.
@@ -2753,8 +2758,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			defer close(flushDone)
 			err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
 				Interval: flushInterval,
-				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				// The target names the calling app, so a service binding's
+				// span lands in its caller's rows only (tracing tenancy T4).
+				WriteTargetFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+					return retainedSpansWriter.WriteSummary(writeCtx, target.Request(traceID, summaryJSON))
 				},
 				Log: log,
 				MaxSpansPerTrace: func(string) int {
@@ -3363,7 +3370,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if journalClient != nil {
 		journalRPC = journalClient
 	}
-	journalQueue := gateway.NewRequestIDJournalQueue(newRequestIDJournalWriter(journalRPC, log).Write, deps.metrics, log)
+	journalWrite := newRequestIDJournalWriter(journalRPC, log).Write
+	// ADR-20261101085552: with the switch on, the journal stays on this node
+	// and apid asks for a request ID over a lookup stream on the same apid
+	// connection, instead of the control plane storing a row per request.
+	if osGetenv("FAAS_REQUEST_ID_JOURNAL_LOCAL") == "1" {
+		local, stop, err := startLocalRequestIDJournal(ctx, journalClient, cfg.NodeName, deps.metrics, log)
+		if err != nil {
+			return err
+		}
+		defer stop()
+		journalWrite = gateway.LocalRequestIDJournalWriter(local)
+	}
+	journalQueue := gateway.NewRequestIDJournalQueue(journalWrite, deps.metrics, log)
 	go journalQueue.Run(ctx)
 	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {
@@ -3405,6 +3424,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			FlushInterval:  5 * time.Second,
 			FlushBatchSize: 256,
 			MaxRetries:     3,
+			MinuteCollapse: osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
 			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
 			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
 			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
@@ -3479,6 +3499,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					Country:                              row.Country,
 					WakeId:                               row.WakeID,
 					TraceInferred:                        row.TraceInferred,
+					PlatformRefusal:                      row.PlatformRefusal,
 					InstanceId:                           row.InstanceID,
 					GuestDurationMs:                      int32(row.GuestDurationMS),
 					GuestRuntime:                         row.GuestRuntime,
@@ -3650,6 +3671,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// params don't appear in r.URL.Path, so the mux still
 		// routes to the dispatcher regardless of whether
 		// ?archive=1 is present.
+		logStreams := newLogStreamSlots()
 		logsMux.Handle("GET /v1/apps/{slug}/logs", &appLogsDispatcher{
 			live: &AppLogsHandler{
 				Auth: deps.authMw,
@@ -3664,6 +3686,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Ops:               nil,
 				Traffic:           deps.trafficRevocations,
 				CapabilityAllowed: deps.capabilityAllowed,
+				Streams:           logStreams,
 			},
 			archive: &ArchiveLogsHandler{
 				Auth:              deps.authMw,
@@ -3675,6 +3698,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Ops:               nil,
 				Traffic:           deps.trafficRevocations,
 				CapabilityAllowed: deps.capabilityAllowed,
+				Streams:           logStreams,
 			},
 		})
 		logsHandler = logsMux
@@ -4240,8 +4264,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				localNode := newLocalNodeID(pgStore, cfg.NodeName)
 				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, localNode)
 				// ADR-1138: guest calls without trace context join the trace of
-				// the one request their instance is serving.
-				serviceProxyConfig.InferCallerTrace = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
+				// the one request their instance is serving. ADR-20261102082606:
+				// with the switch on, the call also inherits that request's
+				// deadline.
+				serviceProxyConfig.InferCallerRequest = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
+				serviceProxyConfig.CallerDeadlines = osGetenv("FAAS_SERVICE_CALL_DEADLINES") == "1"
 			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
@@ -4473,6 +4500,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		sessionDrains = append(sessionDrains, drainServiceTCP)
 	}
+	if err := validateDatabaseRoute(cfg); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.DatabaseRouteListen) != "" {
+		if err := startDatabaseRoute(ctx, deps, cfg, errc, log); err != nil {
+			return err
+		}
+	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
 			return err
@@ -4562,6 +4597,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					}
 					dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
 					log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
+				}
+				// ADR-1027: app guests reach managed databases through the
+				// private route; rehearsal guests see private services only.
+				if dnsPort == gateway.ServiceDiscoveryDNSPort {
+					if err := withDatabaseRouteDNS(dnsHandler, cfg, log); err != nil {
+						return err
+					}
 				}
 				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
 				listenPacket := deps.listenPacket

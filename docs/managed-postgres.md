@@ -3,13 +3,14 @@
 > Customers: see [Managed PostgreSQL](postgres.md). This page covers
 > qualification, rollout, accounting and the provider adapter.
 
-> Managed PostgreSQL remains gated to qualified accounts while the provider
-> qualification is completed. Its provider-neutral commands are nevertheless
-> exposed through the customer-facing `gregale` CLI so eligible workloads use
-> the same workflow in development and production.
+> Managed PostgreSQL is generally available
+> ([ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md)). In
+> production it reaches customers once an operator approves the backend and
+> the `managed_postgres` capability flag releases it; [GA rollout](#ga-rollout)
+> lists the steps.
 
-Managed PostgreSQL now has a customer-facing, provider-neutral API while
-remaining an opt-in operator preview. The API exposes account-scoped database
+Managed PostgreSQL has a customer-facing, provider-neutral API. The API
+exposes account-scoped database
 CRUD/status, restore-to-new-database, and workload bindings under
 `/v1/postgres/*`. Provider IDs, passwords, connection URLs, and secret
 ciphertext never cross that API boundary. `provisioning_enabled` must remain
@@ -27,10 +28,19 @@ database reservation boundary:
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
+A Free-plan database needs enforced compute caps, because Free has no
+overage to pay for compute past its allowance. Until the platform enforces
+them, `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors
+and restores answer `403 managed_postgres_not_in_plan` on Free, and a
+Compose `postgres` service is not provisioned (the deploy names the plan as
+the reason).
+
 Storage is pooled across the account's databases: one database may use the
-whole pool. Storage and compute are limits, not billed overage, until managed
-PostgreSQL is invoiced
+whole pool. Storage is a limit, not billed overage
 ([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
+Compute is a limit too, unless a paid account turns overage on: then compute
+above the allowance costs $0.2331 per CU-hour, up to twice the allowance
+([Compute overage](#compute-overage)).
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -72,6 +82,10 @@ Provisioning opens while all of the following hold:
 - usage metering (`usage.enabled`) is on;
 - the `fleet` block sets both `max_databases` and
   `max_monthly_cost_millicents`;
+- `max_databases_per_account` allows every plan its databases (at least 10,
+  Scale's limit). apid takes the lower of it and the plan's limit, so a smaller
+  value would sell Scale fewer databases; unset, production uses 10. A smaller
+  value keeps provisioning closed with `database_limit_below_plan`;
 - an operator approval pins the single default backend:
   `FAAS_MANAGED_POSTGRES_PRODUCTION_BACKEND` and
   `FAAS_MANAGED_POSTGRES_PRODUCTION_FINGERPRINT`, approved from
@@ -82,7 +96,12 @@ Provisioning opens while all of the following hold:
 the configured backend's fingerprint without contacting the provider.
 
 The `managed-postgres` capability flag decides which accounts may create
-databases. The staging canary list is not read in production. When the
+databases. The staging canary list is not read in production. Until
+`FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` and
+`FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` are both `on`, only an account
+a flag rule names, or one that opted in, is released: the flag's default, the
+GA tier included, releases nobody while databases would run uncapped. apid
+logs `managed postgres release held to accounts a flag rule names` at start. When the
 approval ends, new databases, bindings, restores and resizes close; existing
 databases and credentials keep working.
 
@@ -90,6 +109,10 @@ The fleet ceilings apply across every account:
 
 - At `max_databases`, new databases, restores and snapshot copies answer
   `503 managed_postgres_new_databases_paused`.
+- The last `paid_reserve_databases` of `max_databases` are for paid plans: a
+  Free account cannot add a database once the fleet holds `max_databases`
+  minus the reserve, and its refusal suggests upgrading. Unset, the reserve is
+  20% of `max_databases`; 0 reserves none.
 - Once this UTC month's provider cost reaches `max_monthly_cost_millicents`,
   cost-raising resizes pause as well, until the next month.
 
@@ -106,6 +129,54 @@ A purge cannot be undone through Gregale. Within 7 days Neon can still recover
 the project (`POST /projects/{id}/recover`), but Gregale's catalog already
 records the database as deleted. Rescuing it is a manual operator task: recover
 the project in Neon, copy the data out, and import it into a new database.
+
+### GA rollout
+
+`managed-postgres`, `postgres-bindings` and `postgres-restore` are `ga`, so
+their flags are on for every account that has no stored definition. Keep
+customers out until the owner has tested production
+([ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md)):
+
+1. Before the release reaches production, close the flag except for the
+   owner's account:
+
+   ```bash
+   gregalectl flags default --key managed_postgres --value false --reason "GA rollout" --yes
+   gregalectl flags allow --key managed_postgres --account-id <owner-account-uuid> --reason "GA rollout" --yes
+   ```
+
+2. Qualify the backend in an isolated Neon project with
+   `managed-postgres-qualify --compute-cap` and `--storage-cap`. The deletion
+   hold check runs with every qualification.
+3. Turn on enforcement after each shadow readout (until both caps are `on`,
+   step 6's default releases nobody):
+   `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`,
+   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
+   (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
+   maild). Create the [SQL probe](#sql-availability-probe) canary databases.
+4. Approve the production backend ([Production](#production)) with fleet
+   ceilings sized to the Neon plan.
+5. Run the customer journey with the owner's account:
+
+   ```bash
+   scripts/e2e-journeys.sh --tier full --run TestManagedPostgres
+   ```
+
+6. At the public release, once the ADR's public-release gate (the P0
+   workstreams of [#6146](https://github.com/poyrazK/faas/issues/6146)) is
+   green, open it to every account:
+
+   ```bash
+   gregalectl flags default --key managed_postgres --value true --reason "GA" --yes
+   ```
+
+`gregalectl flags disable --capability managed-postgres --reason "<why>" --yes`
+hides managed PostgreSQL again. Existing databases keep running, and the
+credentials apps already hold keep working.
+
+Rollbacks that restore the database are a separate preview,
+`database-rollbacks`. An account that used them through a `postgres_restore`
+rule needs `database_rollbacks` allowed as well.
 
 ## Provider health
 
@@ -358,13 +429,62 @@ high-availability promise merely because Neon storage has internal redundancy.
 `scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
 suspension. Customer requests cannot currently select `false`; the adapter
 retains the provider-neutral field for a future always-on entitlement.
-PostgreSQL majors 14 through 18 are enabled.
+PostgreSQL majors 14 through 18 are enabled. New databases choose 15 through
+18: 14 is retiring (`Capabilities.RetiringMajors`) and stays available to the
+databases that already run it.
 
 The mutating qualification run also proves the runtime behavior: it connects
 to the disposable database, closes the connection, waits for Neon to report
 the endpoint as idle, reconnects, records wake latency, and only then allows
 the backend fingerprint to be approved. Configuration inspection alone is not
 sufficient evidence for a scale-to-zero promise.
+
+## Native backend configuration
+
+The native backend (driver `firecracker`, ADR-1027) runs each database in
+its own Firecracker VM on the fleet's database nodes. Deploy those first:
+`database` hosts and `managed_postgres` in the manifest, then
+`database_node.yml` (see `deploy/manifest/README.md`). Then copy
+`deploy/managed-postgres.native.example.json` to the operator-owned
+configuration path. It is the same file as Neon's: to keep Neon databases
+serving, list both backends. apid loads a native backend only while
+`FAAS_MANAGED_POSTGRES_NATIVE_ENABLED=1` is in its environment; without it,
+apid refuses the configuration, so no database lands on database nodes by
+accident. A region's `defaults` entry picks the backend
+new databases get. Existing databases stay on the backend that created
+them.
+
+| Setting | Meaning |
+| --- | --- |
+| `host_suffix` (required) | The `managed_postgres.host_suffix` of the manifest. Clients connect to `<database-id>.<suffix>`. |
+| `schedd_target` | Where apid reaches schedd. Default `unix:///run/faas/schedd.sock`. |
+| `schedd_client_cert_path`, `schedd_client_key_path`, `schedd_client_ca_path` | apid's client certificate for a TCP `schedd_target`. Leave them empty on the unix socket. |
+| `max_storage_bytes` | The largest volume a spec may ask for. Default 100 GiB, minimum 1 GiB. |
+| `max_restore_window_seconds` | Point-in-time restore, on when positive. Set it only where every database node runs dbbackupd. |
+| `postgres_majors` | Comma-separated majors offered. Default `14,15,16,17,18`. |
+| `port`, `tls_mode`, `database_name` | Connection details in issued URLs. Defaults `5432`, `verify-full`, `gregale`. |
+
+`data_api_enabled` issues Data API logins, as on Neon. Service classes have
+fixed shapes:
+
+- `development`: 1 vCPU and 512 MiB.
+- `burstable`: 2 vCPU and 1 GiB.
+- `production`: 2 vCPU and 2 GiB, plus a synchronous standby on a second
+  database node.
+
+`secret_env.credential-key` names the environment variable, sealed in
+apid's env, that holds the credential key: at least 32 random bytes.
+Every password is a keyed HMAC of the database, identity and access, and
+only verifiers are stored. Re-issuing a credential is byte-identical only
+under the same key. Keep it, and seal it like the other provider secrets:
+whoever holds it can derive every password.
+
+Qualify the backend like Neon's (above). `--verify` and the rollout check
+read only the configuration. A live run also needs
+`FAAS_MANAGED_POSTGRES_QUALIFY_NATIVE_DATABASE_URL`, the control-plane
+database where pgproxyd reads role verifiers. The database nodes'
+monitoring and recovery are in the runbook
+`docs/runbooks/FaasDatabaseNodes.md`.
 
 ## Safety boundary
 
@@ -648,10 +768,9 @@ The billing seam emits stable internal line-item codes
 (`managed_postgres.compute`, `managed_postgres.storage`,
 `managed_postgres.restore_history`, and `managed_postgres.egress`) with
 normalized quantities and provider-cost millicents. They are COGS/invoice
-mapping inputs only: current plans are bundled and do not expose provider
-costs or surprise overage charges to customers. A future invoice adapter can
-attach the codes to the included managed-postgres product without changing
-the Neon adapter or the customer API.
+mapping inputs only: customers never see provider costs. The only customer
+charge is compute overage, which an account turns on itself
+([Compute overage](#compute-overage)).
 
 Customers can inspect the current account snapshot with
 `GET /v1/account/managed-postgres-usage` (the `usage:read` scope) or
@@ -855,9 +974,39 @@ choice, `{"enabled": true|false}`:
 - Off is the default, and the databases are suspended at the allowance.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
-- Compute above the allowance is not billed until managed PostgreSQL has
-  invoicing.
+- Compute above the allowance costs $0.2331 per CU-hour
+  (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`): Neon Scale's
+  $0.222 plus 5% ([ADR-20261102072425](adr/20261102072425-managed-postgres-overage-at-provider-price-plus-5.md)).
+  It is charged only past the allowance and only up to the ceiling, so a
+  month of overage costs at most one allowance: $5.83 on Hobby, $17.48 on
+  Pro, $46.62 on Scale. It appears on the next invoice as its own line.
 - Free accounts get `403 managed_postgres_not_in_plan`.
+
+The charge does not count toward the account's spend cap: the overage
+setting has its own ceiling.
+
+apid delivers the charge after each compute cap sweep
+([ADR-20261031110037](adr/20261031110037-managed-postgres-overage-invoicing.md)):
+
+- It charges subjects that reached their allowance in the month (the
+  `allowance` cap event) with overage on at the time, or turned on later.
+- The month's total is cumulative. Each step sends only the difference from
+  the last delivered total, keyed by that total, so a retry is a duplicate,
+  never a second charge.
+- For seven days after a month ends
+  (`api.ManagedPostgresOverageCloseWindow`), late provider usage windows still
+  add to that month.
+- The allowance used is the larger of the plan's and the one recorded when
+  the subject reached it, so an upgrade never raises the charge.
+
+Delivery is off until an operator sets `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE`
+to `shadow` (record each step, send nothing) or `live`, with
+`FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` (a UTC month) and
+`FAAS_POLAR_MANAGED_POSTGRES_METER_ID`. That meter sums
+`metadata.charge_millicents` for the event `faas_managed_postgres_usage`, and
+each paid product carries a metered price of $0.00001 per unit on it.
+Receipts live in `managed_postgres_overage_deliveries`. Charges need cap
+enforcement on, because the cap sweep records the `allowance` event.
 
 The setting is the `postgres-overage` capability, at maturity `internal`.
 Every account reads as off, and the route answers as unknown, until an operator
@@ -1398,8 +1547,8 @@ GET `/v1/postgres/databases/{id}/resizes/{resize_id}` reports `pending` or
 `succeeded`, target generation and safe diagnostics.
 
 Clients may disconnect during the change; reconnect with existing credentials.
-Region, PostgreSQL major, storage, retention, availability and scale-to-zero
-settings stay fixed. While `updating`, the catalogue retains the last confirmed
+Region, PostgreSQL major, retention, availability and scale-to-zero settings
+stay fixed; the same request can also grow storage (see [Storage](#storage)). While `updating`, the catalogue retains the last confirmed
 class. The reconciler changes the recorded primary's compute configuration and
 commits the new class only after observing provider readiness on the same dataset.
 Timeouts preserve pending intent for recovery. Conflicting deletion, another

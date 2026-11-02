@@ -2,7 +2,9 @@ package apidserver_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -63,5 +65,42 @@ func TestBatchCreateTriggerEventTriggersNeedTriggerPlan(t *testing.T) {
 	}, nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("status = %d, want 402: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// adr: 20261031130000 — batch-create only adds event subscriptions, and what
+// it adds counts against the plan's caps: a batch past the cap is refused and
+// adds none.
+func TestBatchCreateTriggerEventTriggersHoldToThePlanCap(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanHobby)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "hobby-fn", Type: state.AppTypeFunction})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	limit := api.MustLimitsFor(api.PlanHobby).EventSubscriptionsPerApp
+	var manifest strings.Builder
+	manifest.WriteString("event_triggers:\n")
+	for i := range limit + 1 {
+		fmt.Fprintf(&manifest, "  - source: billing.*\n    type: invoice.kind%d\n", i)
+	}
+	rec := e.Do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{AppID: app.ID, ManifestYAML: manifest.String()}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var out apidserver.BatchCreateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Errors) != 1 || !strings.Contains(out.Errors[0].Message, fmt.Sprintf("at %d for", limit)) {
+		t.Fatalf("errors = %+v, want the event subscription cap of %d", out.Errors, limit)
+	}
+	subs, err := (*e.Store()).ListEventSubscriptionsForApp(t.Context(), app.ID)
+	if err != nil {
+		t.Fatalf("ListEventSubscriptionsForApp: %v", err)
+	}
+	for _, sub := range subs {
+		if sub.Enabled {
+			t.Fatalf("subscriptions = %+v, want none enabled after the refused batch", subs)
+		}
 	}
 }

@@ -141,3 +141,48 @@ func gateID(t *testing.T, store *state.MemStore, appID, name string) string {
 	t.Fatalf("no gate %s", name)
 	return ""
 }
+
+// adr: 20261022082305 amendment 1 — a synthetic check that a release gate
+// probes is not paused or deleted until the gate is removed, as an SLO a
+// gate judges is not deleted: either would switch the gate off without the
+// right to remove it (release review 2026-10-31).
+func TestSyntheticCheckUsedByAGateIsNotPausedOrDeleted(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := context.Background()
+	store := *e.Store()
+	apidserver.MustSeedDeployment(t, e, "synth-guard")
+	app, err := store.AppBySlug(ctx, "synth-guard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check, err := store.CreateSyntheticCheck(ctx, state.SyntheticCheck{AccountID: app.AccountID, AppID: app.ID, Name: "checkout",
+		Method: http.MethodGet, Path: "/checkout", ExpectedStatus: 200, TimeoutMS: 5000, IntervalSeconds: 300, Enabled: true}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.Do(t, http.MethodPost, "/v1/apps/synth-guard/release-gates",
+		api.CreateReleaseGateRequest{Name: "checkout-probe", Kind: "synthetic", Check: "checkout"}, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("create synthetic gate = %d %s", rec.Code, rec.Body)
+	}
+
+	path := "/v1/apps/synth-guard/synthetics/" + check.ID
+	paused := e.Do(t, http.MethodPatch, path, api.UpdateSyntheticCheckRequest{Enabled: false}, nil)
+	apidserver.AssertProblem(t, paused, http.StatusConflict, api.CodeConflict)
+	if !strings.Contains(paused.Body.String(), "checkout-probe") {
+		t.Fatalf("pause refusal = %s, want the gate named", paused.Body)
+	}
+	apidserver.AssertProblem(t, e.Do(t, http.MethodDelete, path, nil, nil), http.StatusConflict, api.CodeConflict)
+	if rec := e.Do(t, http.MethodPatch, path, api.UpdateSyntheticCheckRequest{Enabled: true}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("resume = %d %s", rec.Code, rec.Body)
+	}
+	if gates, _ := store.ListReleaseGates(ctx, app.ID); len(gates) != 1 {
+		t.Fatalf("gates = %+v, want the synthetic gate kept", gates)
+	}
+
+	if rec := e.Do(t, http.MethodDelete, "/v1/apps/synth-guard/release-gates/checkout-probe", nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("delete gate = %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.Do(t, http.MethodDelete, path, nil, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete check without gates = %d %s", rec.Code, rec.Body)
+	}
+}

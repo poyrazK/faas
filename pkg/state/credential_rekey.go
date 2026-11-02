@@ -18,7 +18,8 @@ type CredentialColumnStatus struct {
 	Rows   int64  `json:"rows"`
 }
 
-// credentialStatusSQL counts every account-family credential column by key.
+// credentialStatusSQL counts every credential column by key: the account
+// family's and, since amendment 1, the other families' columns.
 const credentialStatusSQL = `select 'api_keys.key_sha256' as col, case when octet_length(key_sha256) = 33 then get_byte(key_sha256, 0) else -1 end as kid, count(*) as n from api_keys where key_sha256 is not null group by 2
 	union all select 'oidc_exchanged_tokens.token_hash' as col, case when octet_length(token_hash) = 33 then get_byte(token_hash, 0) else -1 end as kid, count(*) as n from oidc_exchanged_tokens where token_hash is not null group by 2
 	union all select 'deploy_tokens.token_sha256' as col, case when octet_length(token_sha256) = 33 then get_byte(token_sha256, 0) else -1 end as kid, count(*) as n from deploy_tokens where token_sha256 is not null group by 2
@@ -51,6 +52,16 @@ const credentialStatusSQL = `select 'api_keys.key_sha256' as col, case when octe
 	union all select 'platform_mail_producer_outbox.verification_token_hash' as col, case when octet_length(verification_token_hash) = 33 then get_byte(verification_token_hash, 0) else -1 end as kid, count(*) as n from platform_mail_producer_outbox where verification_token_hash is not null group by 2
 	union all select 'consumer_keys.hashed_secret' as col, case when octet_length(hashed_secret) = 33 then get_byte(hashed_secret, 0) else -1 end as kid, count(*) as n from consumer_keys where hashed_secret is not null group by 2
 	union all select 'app_forks.access_token_hash' as col, case when octet_length(access_token_hash) = 33 then get_byte(access_token_hash, 0) else -1 end as kid, count(*) as n from app_forks where access_token_hash is not null group by 2
+	union all select 'event_delivery_acknowledgments.token_digest' as col, case when octet_length(token_digest) = 33 then get_byte(token_digest, 0) else -1 end as kid, count(*) as n from event_delivery_acknowledgments where token_digest is not null group by 2
+	union all select 'ci_job_runtime.capability_hash' as col, case when octet_length(capability_hash) = 33 then get_byte(capability_hash, 0) else -1 end as kid, count(*) as n from ci_job_runtime where capability_hash is not null group by 2
+	union all select 'managed_realtime_consumer_group_messages.token_hash' as col, case when octet_length(token_hash) = 33 then get_byte(token_hash, 0) else -1 end as kid, count(*) as n from managed_realtime_consumer_group_messages where token_hash is not null group by 2
+	union all select 'outbound_integrations.token_hash' as col, case when octet_length(token_hash) = 33 then get_byte(token_hash, 0) else -1 end as kid, count(*) as n from outbound_integrations where token_hash is not null group by 2
+	union all select 'outbound_ai_access_tokens.token_hash' as col, case when octet_length(token_hash) = 33 then get_byte(token_hash, 0) else -1 end as kid, count(*) as n from outbound_ai_access_tokens where token_hash is not null group by 2
+	union all select 'object_storage_upload_grants.token_hash' as col, case when length(token_hash) = 66 then ('x' || substr(token_hash, 1, 2))::bit(8)::int else -1 end as kid, count(*) as n from object_storage_upload_grants where token_hash is not null group by 2
+	union all select 'app_task_attach_sessions.attach_token_sha256' as col, case when octet_length(attach_token_sha256) = 33 then get_byte(attach_token_sha256, 0) else -1 end as kid, count(*) as n from app_task_attach_sessions where attach_token_sha256 is not null group by 2
+	union all select 'job_run_attach_sessions.attach_token_sha256' as col, case when octet_length(attach_token_sha256) = 33 then get_byte(attach_token_sha256, 0) else -1 end as kid, count(*) as n from job_run_attach_sessions where attach_token_sha256 is not null group by 2
+	union all select 'dev_bridge_sessions.attachment_digest' as col, case when octet_length(attachment_digest) = 33 then get_byte(attachment_digest, 0) else -1 end as kid, count(*) as n from dev_bridge_sessions where attachment_digest is not null group by 2
+	union all select 'dev_bridge_sessions.request_digest' as col, case when octet_length(request_digest) = 33 then get_byte(request_digest, 0) else -1 end as kid, count(*) as n from dev_bridge_sessions where request_digest is not null group by 2
 	order by 1, 2`
 
 // CredentialHashStatus counts the stored values of every account-family
@@ -76,11 +87,22 @@ func (s *PgStore) CredentialHashStatus(ctx context.Context) ([]CredentialColumnS
 // (ADR 20261029202403, decision 4.2): next reads a batch of its plain rows,
 // set rewrites one row if it still holds the plain hash.
 type credentialRekey struct {
+	// family is the credential family whose policy keys the column; empty
+	// is the account family.
+	family    credhash.Family
 	tag       credhash.Tag
 	next, set string
 }
 
 var credentialRekeys = []credentialRekey{
+	{
+		// ADR 20261029202403 amendment 1: AI access tokens live up to 90
+		// days, the one long-lived credential outside the account family.
+		family: credhash.FamilyOutbound,
+		tag:    credTagOutboundAIAccessToken,
+		next:   `select id, token_hash from outbound_ai_access_tokens where octet_length(token_hash) = 32 order by id limit $1`,
+		set:    `update outbound_ai_access_tokens set token_hash = $1 where id = $2 and token_hash = $3`,
+	},
 	{
 		tag:  credTagAPIKey,
 		next: `select id, key_sha256 from api_keys where octet_length(key_sha256) = 32 order by id limit $1`,
@@ -144,16 +166,23 @@ var credentialRekeys = []credentialRekey{
 }
 
 // RekeyCredentials rewrites up to batch plain hashes in each long-lived
-// account-family column as keyed digests under the current key, and returns
-// how many it rewrote. It does nothing unless keyed writes are on. A row
-// changed meanwhile is left for its own lazy rewrite.
+// credential column as keyed digests under its family's current key, and
+// returns how many it rewrote. A column whose family's keyed writes are off
+// is skipped. A row changed meanwhile is left for its own lazy rewrite.
 func (s *PgStore) RekeyCredentials(ctx context.Context, batch int) (int, error) {
-	p := credhash.Account()
-	if p == nil || !p.KeyedWrites || batch <= 0 {
+	if batch <= 0 {
 		return 0, nil
 	}
 	total := 0
 	for _, r := range credentialRekeys {
+		family := r.family
+		if family == "" {
+			family = credhash.FamilyAccount
+		}
+		p := credhash.For(family)
+		if p == nil || !p.KeyedWrites {
+			continue
+		}
 		n, err := s.rekeyCredentialColumn(ctx, p, r, batch)
 		total += n
 		if err != nil {

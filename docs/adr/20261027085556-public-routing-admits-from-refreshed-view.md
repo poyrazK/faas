@@ -160,3 +160,34 @@ The control plane's load is outside this record.
 Validation: `TestColdReadRetriesAFailedAttempt`,
 `TestColdReadRetriesASlowFirstAttempt`, `TestColdReadGivesUpAtTheColdBound`,
 `TestColdReadDoesNotRetryARefusal`.
+
+## Amendment 2 (2026-10-29): a host policy lookup waits out a short stall too
+
+Before routing, a public request resolves its host's policy (owner, live
+deployments and edge answers). A host the gateway's route cache does not hold,
+a new app's first request or any host after a gateway restart, reads the store
+under `api.TrafficPublicHostReadTimeout` (250 ms), and a read that runs out
+refuses the request with 503 `traffic_policy_unavailable` before amendment 1's
+routing read is reached. On the native acceptance node the first request of a
+newly deployed app was refused this way in three runs (lane B, 2026-10-27 to
+2026-10-29): the lookup took 343-348 ms, ending in the organization read or the
+live deployment read, and the next requests took 8 ms. A new PostgreSQL backend
+and a slow control plane both land inside that one attempt.
+
+The host policy lookup now follows amendment 1. Its first attempt keeps
+`api.TrafficPublicHostReadTimeout`. A failed attempt is retried once, and the
+lookup as a whole is bounded by `api.TrafficPublicHostColdReadTimeout` (2 s). A
+store answer, an unknown host included, is never retried. A route-cache hit
+does not read the store, so warm hosts are unchanged; a stall longer than the
+cold bound still refuses.
+
+gatewayd-internal also keeps two warm connections and warms each new one by
+touching the host policy tables before it is handed out
+(`pkg/db.DaemonMinConnections`, `pkg/db.DaemonConnectionWarmups`), so the
+first attempt rarely pays for a dial or a cold catalog.
+
+Validation: `TestHostPolicyLookupRetriesAFailedAttempt`,
+`TestHostPolicyLookupRetriesASlowFirstAttempt`,
+`TestHostPolicyLookupGivesUpAtTheColdBound`,
+`TestHostPolicyLookupDoesNotRetryAnUnknownHost`,
+`TestConnectionWarmupsRunOnMigratedSchema`.
