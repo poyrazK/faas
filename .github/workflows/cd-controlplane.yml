@@ -503,6 +503,7 @@ jobs:
           install -m 0644 deploy/ansible/roles/prometheus/files/bridge.rules.yml "${BUNDLE_ROOT}/prometheus/bridge.rules.yml"
           install -m 0644 deploy/ansible/roles/prometheus/files/pg_backup.rules.yml "${BUNDLE_ROOT}/prometheus/pg_backup.rules.yml"
           install -m 0644 deploy/ansible/roles/prometheus/files/data_repair.rules.yml "${BUNDLE_ROOT}/prometheus/data_repair.rules.yml"
+          install -m 0644 deploy/ansible/roles/prometheus/files/database_nodes.rules.yml "${BUNDLE_ROOT}/prometheus/database_nodes.rules.yml"
           install -m 0644 pkg/promqlrules/data_placement.yaml "${BUNDLE_ROOT}/prometheus/data_placement.yaml"
           # The daemon and guest-runner bytes come only from the verified
           # release.tar.gz, and the two controller-local tools from the
@@ -1354,7 +1355,7 @@ jobs:
           config_dir=/etc/prometheus
           # Every rule file prometheus.yml.j2 lists; promtool check config
           # fails on any it cannot find.
-          files=(prometheus.yml faas.rules.yml bridge.rules.yml pg_backup.rules.yml data_repair.rules.yml data_placement.yaml)
+          files=(prometheus.yml faas.rules.yml bridge.rules.yml pg_backup.rules.yml data_repair.rules.yml database_nodes.rules.yml data_placement.yaml)
 
           test -d "$source_dir"
           promtool check rules \
@@ -1362,6 +1363,7 @@ jobs:
             "$source_dir/bridge.rules.yml" \
             "$source_dir/pg_backup.rules.yml" \
             "$source_dir/data_repair.rules.yml" \
+            "$source_dir/database_nodes.rules.yml" \
             "$source_dir/data_placement.yaml"
 
           validation_dir="$(mktemp -d)"

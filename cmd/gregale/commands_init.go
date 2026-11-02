@@ -336,7 +336,7 @@ func docsURLForTemplate(name string) string {
 	case "hello-node", "hello-python", "hello-go", "customer-platform":
 		return deployFromSourceDocsURL
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "function-rust", "ai-chat",
-		"agent-stateless-node":
+		"agent-stateless-node", "agent-infinity-rust":
 		return functionsDocsURL
 	case "cron-example", "cron-worker", "event-worker", "queue-worker", "slack-bot", "webhook-receiver":
 		return eventDrivenDocsURL

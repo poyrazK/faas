@@ -309,6 +309,8 @@ func TestCmdGithubSetupPinActionResolvesAnnotatedTag(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github":
 			getCalls++
 			_, _ = w.Write([]byte(`{"connected":true,"installation_id":42,"repo_full_name":"acme/api","production_branch":"main"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github/deployment-policy":
+			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"webhook"}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/api/github/deployment-policy":
 			patchCalls++
 			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"actions"}`))
@@ -377,6 +379,8 @@ func TestCmdGithubSetupPinActionFailureDoesNotMutate(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github":
 			_, _ = w.Write([]byte(`{"connected":true,"installation_id":42,"repo_full_name":"acme/api","production_branch":"main"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github/deployment-policy":
+			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"webhook"}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/api/github/deployment-policy":
 			patchCalls++
 			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"actions"}`))
@@ -446,6 +450,10 @@ func TestCmdGithubSetupRestoresWorkflowWhenPolicyUpdateFails(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github" {
 					_, _ = w.Write([]byte(`{"connected":true,"installation_id":42,"repo_full_name":"acme/api","production_branch":"main"}`))
+					return
+				}
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github/deployment-policy" {
+					_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"webhook"}`))
 					return
 				}
 				if r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/api/github/deployment-policy" {
@@ -562,6 +570,8 @@ func TestCmdGithubSetupBindsAndIsIdempotent(t *testing.T) {
 				t.Errorf("decode bind request: %v", err)
 			}
 			_, _ = w.Write([]byte(`{"binding_id":"bind-1","repo_full_name":"acme/api","production_branch":"trunk"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github/deployment-policy":
+			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"webhook"}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/api/github/deployment-policy":
 			var patch api.GitHubDeploymentPolicyPatch
 			if err := json.NewDecoder(r.Body).Decode(&patch); err != nil || patch.ProductionTrigger == nil || *patch.ProductionTrigger != "actions" {
@@ -640,6 +650,8 @@ func TestCmdGithubSetupUsesSavedDeployBranchMappings(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github":
 			_, _ = w.Write([]byte(`{"connected":true,"installation_id":42,"repo_full_name":"acme/api","production_branch":"main","deploy_branches":{"staging":"staging"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/github/deployment-policy":
+			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"webhook"}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/api/github/deployment-policy":
 			_, _ = w.Write([]byte(`{"project_id":"project-1","production_trigger":"actions"}`))
 		default:

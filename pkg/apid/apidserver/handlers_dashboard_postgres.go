@@ -33,6 +33,7 @@ func (s *server) renderManagedPostgres(w http.ResponseWriter, r *http.Request, l
 			data.Error = "Managed PostgreSQL status is temporarily unavailable."
 		} else {
 			data.Databases = projectManagedPostgresDashboard(databases)
+			attachDashboardDatabaseLabels(data.Databases, s.dashboardResourceLabels(r, acct, state.LabelKindDatabase, dashboardDatabaseIDs(data.Databases)))
 			s.attachManagedPostgresBindings(r, log, acct.ID, &data)
 		}
 		s.attachManagedPostgresOverage(w, r, log, acct, &data)

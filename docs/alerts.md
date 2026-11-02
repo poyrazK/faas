@@ -274,15 +274,17 @@ evaluation rather than firing or clearing.
 
 ### Route monitor and canary hold alerts
 
-Two app metrics send route events to notification channels, so they reach
-you without a webhook receiver:
+Production route monitoring and the route health canary guard are a preview
+and may not be enabled for your account. Where they are, two app metrics send
+route events to notification channels, so they reach you without a webhook
+receiver:
 
-- `route_monitor_incidents` counts the app's
-  [production route monitor](route-production-monitoring.md) incidents open
-  at any time within the window: still open, or closed within it.
-- `route_health_holds` counts the app's in-flight canaries the enforced
-  [route health guard](route-health.md#hold-deadline) holds now, plus the
-  canaries it aborted within the window.
+- `route_monitor_incidents` counts the app's production route monitor
+  incidents open at any time within the window: still open, or closed within
+  it.
+- `route_health_holds` counts the app's in-flight canaries the enforced route
+  health guard holds now, plus the canaries it aborted within the window. A
+  guard that still holds a canary when its hold deadline passes aborts it.
 
 ```bash
 gregale alert create --app shop --name "route incidents" \
@@ -296,6 +298,7 @@ signal and reason. Both rules are notification-only and accept windows `5m`,
 held by route health" create them with `gt 0` over 15 minutes. Each needs its
 feature released for the account: production route monitoring for incidents,
 the route health canary guard for holds.
+
 ## SLO alerts
 
 `slo_budget_burn` and `slo_budget_remaining_pct` watch one of the app's own

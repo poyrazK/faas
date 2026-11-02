@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -37,7 +38,8 @@ func (s *server) configureAgents(pool *pgxpool.Pool) {
 	s.agentAPI = h
 }
 
-// configureAgentCallbacks wires ADR-20261030125501 §3's callback URLs. The
+// configureAgentCallbacks wires ADR-20261030125501 §3's callback URLs and
+// §4's toolset, whose sleeps are realtime schedules on the inbox. The
 // signing key derives from the session key, which every apid replica shares;
 // a callback's account must have the agents capability when it posts.
 func (s *server) configureAgentCallbacks(h *agents.Handler) {
@@ -46,6 +48,9 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	}
 	if revocations, ok := h.Store.(agents.CallbackRevocations); ok {
 		h.Revocations = revocations
+	}
+	if sleeps, ok := s.store.(agents.SleepSchedules); ok {
+		h.Sleeps = sleeps
 	}
 	if s.sessions != nil {
 		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
@@ -167,12 +172,15 @@ func (s *server) getAgentRunOutputs(w http.ResponseWriter, r *http.Request, acct
 // agentCallbackCallerRoute authenticates an issue or revoke request
 // (ADR-20261030125501 step 4). A JWT-shaped bearer is a gregale:agents
 // workload token from a live instance of an app, which reaches only that
-// app's endpoints; every other credential takes the API-key chain. No API
-// key, OIDC or hosting token is JWT-shaped, so the split never misroutes a
-// key.
+// app's endpoints; every other credential takes the API-key chain, and the
+// organization check an app route gets decides each endpoint it names. No
+// API key, OIDC or hosting token is JWT-shaped, so the split never
+// misroutes a key.
 func (s *server) agentCallbackCallerRoute(next func(http.ResponseWriter, *http.Request, agents.CallbackCaller)) http.HandlerFunc {
 	keyed := s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		next(w, r, agents.CallbackCaller{Account: acct})
+		next(w, r, agents.CallbackCaller{Account: acct, Authorize: func(endpoint state.ManagedRealtimeEndpoint) *api.Problem {
+			return s.authorizeCallbackEndpoint(r, acct, endpoint)
+		}})
 	})))
 	workload := middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +207,22 @@ func (s *server) agentCallbackCallerRoute(next func(http.ResponseWriter, *http.R
 	}
 }
 
+// authorizeCallbackEndpoint applies appaccess to the app of an endpoint an
+// API-key caller names in the body. The route names no app, so without it
+// a creator removed from, demoted in or suspended with a company app's
+// organization, or a key bound to another organization, would still issue
+// callback URLs into the app's agent inbox and revoke its threads.
+func (s *server) authorizeCallbackEndpoint(r *http.Request, acct state.Account, endpoint state.ManagedRealtimeEndpoint) *api.Problem {
+	app, err := s.store.AppByID(r.Context(), endpoint.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+	}
+	if err != nil {
+		return api.ErrCapacity("could not load the endpoint's app; retry shortly")
+	}
+	return s.authorizeNamedApp(r, acct, app)
+}
+
 func (s *server) createAgentCallback(w http.ResponseWriter, r *http.Request, caller agents.CallbackCaller) {
 	if s.agentAPI == nil {
 		api.WriteProblem(w, api.ErrCapacity("the agent API is unavailable on this control-plane host"))
@@ -223,6 +247,32 @@ func (s *server) receiveAgentCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agentAPI.ReceiveCallback(w, r)
+}
+
+// The ADR-20261030125501 §4 toolset routes carry no account credential:
+// an invocation is backed by the callback URL in its body.
+func (s *server) getAgentToolset(w http.ResponseWriter, r *http.Request) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.Toolset(w, r)
+}
+
+func (s *server) invokeAgentTool(w http.ResponseWriter, r *http.Request) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.InvokeTool(w, r)
+}
+
+func (s *server) closeAgentToolThread(w http.ResponseWriter, r *http.Request) {
+	if s.agentAPI == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.agentAPI.CloseThread(w, r)
 }
 
 func (s *server) cancelAgentRun(w http.ResponseWriter, r *http.Request, acct state.Account) {

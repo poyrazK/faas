@@ -785,6 +785,15 @@ type ApiKey struct {
 	DisplayPrefix   pgtype.Text
 }
 
+// ADR-20261030133644 agent client names for hosted MCP keys; apid is the only writer.
+type ApiKeyAgentClient struct {
+	KeyID      pgtype.UUID
+	AccountID  pgtype.UUID
+	ClientName string
+	ClientSite string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type App struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -885,6 +894,8 @@ type App struct {
 	DeploymentCronBefore              []byte
 	DeploymentMailRevision            int64
 	Labels                            []byte
+	GithubProductionTrigger           pgtype.Text
+	GithubPreviewEnabled              pgtype.Bool
 }
 
 type AppApiRoute struct {
@@ -3690,6 +3701,82 @@ type DataUpstreamProbesDefault struct {
 	Ok               bool
 	ErrorClass       pgtype.Text
 	ProbeNode        pgtype.Text
+}
+
+type DatabaseNode struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	BootSlots           int32
+	PostgresMajors      []int32
+	Lifecycle           string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type DatabaseRestoreDrill struct {
+	DrillID     pgtype.UUID
+	NodeID      string
+	SourceID    pgtype.UUID
+	TargetAt    pgtype.Timestamptz
+	StartedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	Result      string
+	RecoveredTo pgtype.Timestamptz
+	ErrorCode   pgtype.Text
+}
+
+type DatabaseRoleVerifier struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+	Verifier   string
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type DatabaseUsage struct {
+	DatabaseID pgtype.UUID
+	Meter      string
+	StartedAt  pgtype.Timestamptz
+	EndedAt    pgtype.Timestamptz
+	Rate       int64
+}
+
+type DatabaseVm struct {
+	DatabaseID           pgtype.UUID
+	NodeID               string
+	PostgresMajor        int32
+	VcpuCount            int32
+	MemMib               int32
+	VolumeBytes          int64
+	State                string
+	Bootstrapped         bool
+	AlwaysOn             bool
+	LastBackupAt         pgtype.Timestamptz
+	RestoreWindowSeconds int64
+	RestoreSource        pgtype.UUID
+	RestoreTarget        pgtype.Timestamptz
+	RestoreRecoveredTo   pgtype.Timestamptz
+	RestoreLeaseUntil    pgtype.Timestamptz
+	ResizePending        bool
+	LastError            pgtype.Text
+	LastActiveAt         pgtype.Timestamptz
+	StateChangedAt       pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	MoveNode             pgtype.Text
+	MoveLeaseUntil       pgtype.Timestamptz
+	Replicated           bool
+	StandbyNode          pgtype.Text
+	StandbyRunning       bool
+	StandbySynced        bool
+	PromotePending       bool
+	DropStandbySlot      bool
+	UpgradeMajor         pgtype.Int4
+	UpgradeFrom          pgtype.Int4
+	UpgradeOperation     pgtype.Text
+	UpgradeResult        pgtype.Text
+	UpgradeLeaseUntil    pgtype.Timestamptz
+	MajorHistory         []byte
 }
 
 type DeadLetterEvent struct {
@@ -8282,20 +8369,23 @@ type ManagedPostgresOverageDelivery struct {
 }
 
 type ManagedPostgresResize struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	DatabaseID         pgtype.UUID
-	BackendID          string
-	BackendFingerprint string
-	ProviderResourceID string
-	DataResourceID     string
-	SourceSpec         []byte
-	TargetClass        string
-	Generation         int64
-	State              string
-	CreatedAt          pgtype.Timestamptz
-	CompletedAt        pgtype.Timestamptz
-	TargetScaleToZero  pgtype.Bool
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	DatabaseID              pgtype.UUID
+	BackendID               string
+	BackendFingerprint      string
+	ProviderResourceID      string
+	DataResourceID          string
+	SourceSpec              []byte
+	TargetClass             string
+	Generation              int64
+	State                   string
+	CreatedAt               pgtype.Timestamptz
+	CompletedAt             pgtype.Timestamptz
+	TargetScaleToZero       pgtype.Bool
+	TargetStorageLimitBytes pgtype.Int8
+	TargetPostgresMajor     pgtype.Int4
+	ErrorCode               pgtype.Text
 }
 
 type ManagedPostgresRestoreProof struct {
@@ -9475,6 +9565,16 @@ type NodeLifecycleCompletion struct {
 	AuditOutboxID    int64
 }
 
+// ADR 20261101091815 node-wide measured memory, published by each node's own scheduler for its peers.
+type NodeMemoryReport struct {
+	NodeID          pgtype.UUID
+	MeasuredMb      int32
+	UsedMb          pgtype.Int4
+	FrozenInstances int32
+	MeasuredAt      pgtype.Timestamptz
+	ReportedAt      pgtype.Timestamptz
+}
+
 type NotificationChannel struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -10156,6 +10256,7 @@ type OidcExchangedToken struct {
 	Jti       pgtype.Text
 	CreatedAt pgtype.Timestamptz
 	Scopes    []string
+	AppID     pgtype.UUID
 }
 
 type OidcTrustPolicy struct {
@@ -13555,6 +13656,7 @@ type RequestTelemetry struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202611 struct {
@@ -13594,6 +13696,7 @@ type RequestTelemetry202611 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202612 struct {
@@ -13633,6 +13736,7 @@ type RequestTelemetry202612 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202701 struct {
@@ -13672,6 +13776,7 @@ type RequestTelemetry202701 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -13736,6 +13841,7 @@ type RequestTelemetryDefault struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type ReservedIpInventory struct {

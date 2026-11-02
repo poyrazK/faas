@@ -652,6 +652,11 @@ const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 // total managed PostgreSQL databases and monthly provider cost (integer
 // millicents). They are COGS breakers across every account, not plan quotas.
 const ManagedPostgresFleetDatabasesCeiling = 100000
+
+// ManagedPostgresFleetPaidReservePercent is the share of the fleet's database
+// cap only paid plans may add when the operator sets no paid reserve
+// (ADR-20261031091607).
+const ManagedPostgresFleetPaidReservePercent = 20
 const ManagedPostgresFleetMonthlyCostCeilingMillicents = 10_000_000_000
 
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
@@ -1467,6 +1472,17 @@ const (
 const (
 	CronPlatformAttempts   = 3
 	CronPlatformRetryDelay = 5 * time.Second
+)
+
+// CronCatchUpRecordedMax bounds the due occurrences a schedule-policy or
+// command cron records in one tick after an outage or suspension: the newest
+// is dispatched and the ones before it are recorded as missed or coalesced.
+// Each is a database write on schedd's main loop, so older due occurrences
+// are passed over. CronCatchUpScanMax bounds how far the in-memory walk goes
+// (about four years of minutes).
+const (
+	CronCatchUpRecordedMax = 20
+	CronCatchUpScanMax     = 1 << 21
 )
 
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
@@ -2336,6 +2352,17 @@ const (
 	RealtimeAccessMaxDeniedChannels          = 64
 )
 
+// RealtimeResumeCommandsPerSecond and RealtimeResumeCommandBurst bound the
+// commands one resumable connection sends: subscribe, unsubscribe, reset, read
+// state and the inbox and preference frames. Each can read or write
+// control-plane Postgres through apid, and nothing else bounded a client
+// looping them. Acks, presence and signals have their own bounds and do not
+// count.
+const (
+	RealtimeResumeCommandsPerSecond = 20
+	RealtimeResumeCommandBurst      = 40
+)
+
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (
@@ -2494,6 +2521,11 @@ const (
 	ObjectStorageProgressSweepInterval = time.Hour
 	ObjectStorageProgressRetry         = 5 * time.Minute
 	ObjectStorageInventoryMaxPages     = 1000
+	// MaxObjectStorageAccountKeys is the most objects (with retained
+	// versions) one account may store on every plan: Gregale meters a bucket
+	// by listing it whole, at most ObjectStorageInventoryMaxPages pages of
+	// MaxObjectS3ListItems keys. Writes past it answer account_keys.
+	MaxObjectStorageAccountKeys = ObjectStorageInventoryMaxPages * MaxObjectS3ListItems
 	// MaxObjectStorageReconcileBuckets bounds one backend's bucket listing in
 	// operator reconciliation after a database restore (ADR-20261025111015).
 	MaxObjectStorageReconcileBuckets = 100_000
@@ -2868,6 +2900,19 @@ const (
 // gateway's concurrent staged transfers (at least one), so a single tenant's
 // parallel uploads leave room for others (ADR-20261023223000).
 const ObjectUploadAccountSlotSharePercent = 50
+
+// ObjectUploadSlotWait is how long an upload or part waits for a slot before
+// it answers SlowDown. S3 transfer managers send several parts at once (the
+// AWS CLI ten) against a share of two slots, so refusing at once failed most
+// parts of a large upload (ADR-20261023223000 amendment 2026-11-01). It
+// matches ObjectDeletionAdmissionWait.
+const ObjectUploadSlotWait = 15 * time.Second
+
+// ObjectCredentialTouchTimeout bounds the S3 gateway's once-a-minute write of
+// a credential's last use. It runs before the request is served, so without
+// its own bound a stalled control-plane database held that request for the
+// whole transfer budget, even when the read itself came from cache.
+const ObjectCredentialTouchTimeout = 2 * time.Second
 
 // A request body holds an upload slot while the gateway reads it. It may go
 // ObjectUploadIdleTimeout without a byte and, after ObjectUploadMinRateGrace,
@@ -3458,6 +3503,25 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
+
+// WithSpendCap returns the limits with the storage ceiling a paid account's
+// spend cap pays for: the plan's included storage plus the GiB-months the cap
+// buys at ObjectStorageMillicentsPerGiBMonth (ADR-20261101214152). Hobby's
+// default $2 cap gives 76 GiB, Pro's $10 383 GiB, Scale's $30 1,200 GiB. A nil
+// cap (none, or a cleared one) keeps the limits; a plan ceiling that is
+// already tighter, as Free's, stays.
+func (l ObjectStoragePlanLimits) WithSpendCap(capCents *int64) ObjectStoragePlanLimits {
+	if capCents == nil || *capCents < 0 || l.IncludedBytes <= 0 {
+		return l
+	}
+	gib := min(*capCents, MaxObjectStoragePolicyValue/MillicentsPerCent) * MillicentsPerCent / ObjectStorageMillicentsPerGiBMonth
+	ceiling := MaxObjectStoragePolicyValue
+	if gib < (MaxObjectStoragePolicyValue-l.IncludedBytes)>>30 {
+		ceiling = l.IncludedBytes + gib<<30
+	}
+	l.MaxAccountBytes = tighterObjectStorageLimit(ceiling, l.MaxAccountBytes)
+	return l
+}
 
 // Policy returns the operator safety policy tightened by the plan's ceilings.
 // The tighter positive value wins; a zero plan ceiling keeps the operator's.
@@ -6870,6 +6934,14 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// DatabaseVMWritebackBurstMB is how far a database VM's memory.max sits
+	// above its memory.high, which is BillableRAMMB (ADR-1027). The VM's
+	// volume writes leave host page cache charged to its cgroup; with only
+	// PerVMOverheadMB of room, dirty pages writeback has not cleaned yet got
+	// a write-heavy database OOM-killed. memory.high throttles and reclaims
+	// above BillableRAMMB, so the steady state, admission and metering stay
+	// at BillableRAMMB; only this transient burst may exceed it.
+	DatabaseVMWritebackBurstMB = 56
 	// MeasuredChargeFloorMB and MeasuredChargeHeadroomPercent define the
 	// ADR-909 (proposed) charge: what admission by measured memory would book
 	// for a running instance. schedd only reports it (shadow mode); admission
@@ -6888,6 +6960,16 @@ const (
 	MeasuredChargeWindowSeconds = 600
 	MeasuredChargeSampleSeconds = 5
 	MeasuredChargePercentile    = 95
+	// MeasuredChargeHoldSeconds is how long an instance that misses samples
+	// (a vmmd restart, a late stream batch) keeps its recent charge before it
+	// is charged its full reservation (ADR 20261101091815).
+	MeasuredChargeHoldSeconds = 30
+	// A node's own scheduler publishes the node's measured memory every
+	// NodeMemoryReportSeconds; a peer admits by a report at most
+	// NodeMemoryPeerMaxAgeSeconds old, and otherwise by bookings (ADR
+	// 20261101091815).
+	NodeMemoryReportSeconds     = 2
+	NodeMemoryPeerMaxAgeSeconds = 6
 	// MeasuredAdmissionMaxOvercommitPercent caps reservations on a node
 	// under measured admission (ADR-909): Σ(ram_mb + 8) may reach this
 	// share of the admission ceiling while measured charges stay under the
@@ -9465,6 +9547,11 @@ const (
 	// AgentCallbacksPerMinutePerThread bounds the callbacks one apid accepts
 	// for one thread in a minute, so a runaway tool cannot flood the thread.
 	AgentCallbacksPerMinutePerThread = 600
+	// AgentSleepMaxSeconds bounds a gregale_sleep (ADR-20261030125501 §4):
+	// the wake-up is a realtime schedule on the inbox, and a schedule is due
+	// at most 30 days ahead. A sleep also counts against the endpoint's
+	// realtime schedules (state.ManagedRealtimeScheduleLimit).
+	AgentSleepMaxSeconds = 2_592_000
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).
@@ -13218,6 +13305,14 @@ func (p Plan) IssueLimits() IssueLimits {
 
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
+
+// IssueAttributionRetryWindow bounds how long after ingestion the issue
+// maintenance pass retries customer attribution for an occurrence whose
+// request evidence has not arrived (ADR-380). Telemetry evidence only matches
+// within IssueMaxClockSkew of the occurrence, so evidence later than this
+// never attributes it. An occurrence that names no request, trace or
+// invocation has no evidence to wait for and is checked once.
+const IssueAttributionRetryWindow = time.Hour
 const IssueMaxBatchEvents = 32
 
 // DeploymentTrafficPercentTotal is the complete serving traffic weight.
@@ -13299,6 +13394,38 @@ func ServiceTCPReservedPorts() []int {
 // destination; the OCI puller's egress denylist already refuses it.
 func ServiceAddressCIDR() netip.Prefix {
 	return netip.MustParsePrefix("198.19.0.0/16")
+}
+
+// ADR-1027: the app route to native managed databases. Guests reach every
+// database at one platform address, identical on every node; the host DNATs
+// it to a node-local forwarder that relays bytes to pgproxyd over the
+// overlay. Database traffic is a platform hop, not tenant egress, so it needs
+// no egress port on any plan.
+const (
+	// DatabaseRoutePort is the PostgreSQL port guests dial on the address.
+	DatabaseRoutePort = 5432
+	// DatabaseRouteProxyPort is the forwarder's reserved tenant-bridge port.
+	// No netns rule admits it: guests reach it only through the host DNAT.
+	DatabaseRouteProxyPort = 10083
+	// DatabaseRouteSessionsPerNodeMax caps concurrent database sessions
+	// through one node's forwarder.
+	DatabaseRouteSessionsPerNodeMax = 8192
+	// DatabaseRouteSessionsPerSourceMax caps one instance's concurrent
+	// sessions: well above any connection pool, far below the node cap.
+	DatabaseRouteSessionsPerSourceMax = 256
+	// DatabaseRouteDialTimeout bounds one pgproxyd dial before the forwarder
+	// tries the next upstream.
+	DatabaseRouteDialTimeout = 3 * time.Second
+	// DatabaseRouteDNSTTLSeconds is the TTL of the resolver's answer. The
+	// address never changes, so it can outlive service answers.
+	DatabaseRouteDNSTTLSeconds = 60
+)
+
+// DatabaseRouteAddress is the platform address of the database route
+// (ADR-1027). Like ServiceAddressCIDR it sits in the RFC 2544 benchmarking
+// range, in the half ADR-576 does not use.
+func DatabaseRouteAddress() netip.Addr {
+	return netip.MustParseAddr("198.18.0.1")
 }
 
 // UDPListenerReservationsPerAppMax bounds all durable reservations, including

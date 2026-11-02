@@ -499,6 +499,7 @@ type MemStore struct {
 	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
 	keys                      map[string]APIKey
+	agentClients              map[string]AgentClient // ADR-20261030133644
 	keyDisplayPrefixes        map[string]string
 	keyByHash                 map[string]APIKey
 	deployTokens              map[string]DeployToken
@@ -1364,6 +1365,9 @@ type MemStore struct {
 	// CreateComputeNode to exercise the single-box path. Production
 	// (PgStore) gets the same row from migrations/00024_compute_nodes.
 	computeNodes map[string]ComputeNode
+	// nodeMemoryReports mirrors node_memory_reports by node id (ADR
+	// 20261101091815); nil until a scheduler first publishes.
+	nodeMemoryReports map[string]NodeMemoryReport
 	// edgeListenerHeartbeats mirrors compute_nodes.edge_listener_heartbeat_at,
 	// keyed by node name; nil until a gateway first reports.
 	edgeListenerHeartbeats map[string]time.Time
@@ -7866,7 +7870,39 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	if previous, bound := m.githubBindings[b.AppID]; bound && githubBindingRepoChanged(previous, b) {
 		m.markAppPRPreviewsStaleLocked(app)
 	}
+	// Mirrors PgStore: a re-bind keeps the app's GitHub policy.
+	b.ProductionTrigger = m.githubBindings[b.AppID].ProductionTrigger
+	b.PreviewsOff = m.githubBindings[b.AppID].PreviewsOff
 	m.githubBindings[b.AppID] = b
+	return nil
+}
+
+// SetGitHubAppProductionTrigger mirrors PgStore.
+func (m *MemStore) SetGitHubAppProductionTrigger(ctx context.Context, appID, accountID string, trigger ProductionTrigger) error {
+	return m.UpdateGitHubAppPolicy(ctx, appID, accountID, GitHubAppPolicyPatch{ProductionTrigger: &trigger})
+}
+
+// UpdateGitHubAppPolicy mirrors PgStore.
+func (m *MemStore) UpdateGitHubAppPolicy(_ context.Context, appID, accountID string, patch GitHubAppPolicyPatch) error {
+	if appID == "" || accountID == "" {
+		return ErrNotFound
+	}
+	if err := patch.Validate(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.githubBindings[appID]
+	if !ok || b.InstallID == 0 || b.AccountID != accountID {
+		return ErrNotFound
+	}
+	if patch.ProductionTrigger != nil {
+		b.ProductionTrigger = *patch.ProductionTrigger
+	}
+	if patch.PreviewEnabled != nil {
+		b.PreviewsOff = !*patch.PreviewEnabled
+	}
+	m.githubBindings[appID] = b
 	return nil
 }
 
@@ -13600,6 +13636,9 @@ func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
 	if !ok || c.AppID != appID {
 		return ErrNotFound
 	}
+	if err := m.cancelPendingCronRunsLocked(id, time.Now()); err != nil {
+		return err
+	}
 	if len(c.Command) == 0 {
 		m.invalidateDeploymentCronsLocked(c.AppID)
 	}
@@ -15313,16 +15352,23 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	if inv.State != InvocationPending {
 		return inv.State, nil
 	}
+	if err := m.cancelPendingInvocationLocked(id, inv, time.Now()); err != nil {
+		return "", err
+	}
+	return InvocationCancelled, nil
+}
+
+// cancelPendingInvocationLocked cancels one pending invocation; m.mu is held.
+func (m *MemStore) cancelPendingInvocationLocked(id string, inv Invocation, now time.Time) error {
 	inv.State = InvocationCancelled
 	inv.QuotaReserved = false
-	now := time.Now()
 	inv.CompletedAt = &now
 	if err := m.operationTransitionLocked(&inv, false); err != nil {
-		return "", err
+		return err
 	}
 	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
-	return inv.State, nil
+	return nil
 }
 
 // ListInvocationsForAccount is the dashboard's unified history read.
@@ -16453,7 +16499,8 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining):
+		// A migrating VM is resident on a node too (ADR 20261101091815).
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining), string(StateMigrating):
 			out = append(out, ins)
 		}
 	}

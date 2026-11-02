@@ -1912,7 +1912,7 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
-	case "function-rust":
+	case "function-rust", "agent-infinity-rust":
 		// ADR-987: built from the template's Dockerfile; the handler value
 		// is vestigial, but the deploy API requires it to be non-empty.
 		return runtimeBinary, "handler", true

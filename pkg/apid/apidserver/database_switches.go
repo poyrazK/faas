@@ -184,6 +184,9 @@ func (s *server) databaseSwitchFor(ctx context.Context, r *http.Request, acct st
 	if !ok || limits.DatabasesMax == 0 || !managedPostgresPlanAllows(limits, source.Spec) {
 		return state.DatabaseSwitch{}, api.ErrDatabaseSwitchUnavailable("The account's plan does not allow restoring this database.", "Upgrade the plan, or restore it another way.")
 	}
+	if problem := s.databaseSwitchRoom(ctx, acct); problem != nil {
+		return state.DatabaseSwitch{}, problem
+	}
 	point, name := release.SwitchRestore(plan.crossed, databases[0])
 	if window := time.Duration(source.Spec.RestoreWindowSeconds) * time.Second; window > 0 && time.Since(point) > window {
 		return state.DatabaseSwitch{}, api.ErrDatabaseSwitchUnavailable(
@@ -199,6 +202,31 @@ func (s *server) databaseSwitchFor(ctx context.Context, r *http.Request, acct st
 	return state.DatabaseSwitch{AccountID: acct.ID, AppID: app.ID, Scope: plan.target.Scope, FromDeploymentID: plan.current.ID,
 		TargetDeploymentID: plan.target.ID, UndoneDeploymentIDs: undone, SourceDatabaseID: source.ID, TargetName: name,
 		RestorePoint: point, RequestedBy: releaseApprovalActorLabel(r, acct), CreatedAt: time.Now().UTC()}, nil
+}
+
+// databaseSwitchRoom refuses a switch whose restored copy would not fit
+// inside the plan's database limit, before anything changes. The copy
+// becomes the app's database, so it cannot take the restore slot: the
+// slot's end would revoke its bindings (ADR-20261031123259). The worker's
+// restore refuses the slot as well, for a limit reached after this check.
+func (s *server) databaseSwitchRoom(ctx context.Context, acct state.Account) *api.Problem {
+	used, limit, err := s.managedPostgres.DatabaseRoom(ctx, acct.ID)
+	switch {
+	case errors.Is(err, managedpostgres.ErrUnsupported):
+		return nil
+	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
+		return api.ErrDatabaseSwitchUnavailable("The account's plan does not allow restoring this database.", "Upgrade the plan, or restore it another way.")
+	case err != nil:
+		return customerCapacityProblem(s.log, "count managed databases", "Rollback temporarily unavailable",
+			"Gregale could not count the account's managed databases.", "Retry the request in a moment.", err)
+	case used < int64(limit):
+		return nil
+	}
+	return api.NewProblem(http.StatusForbidden, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded",
+		fmt.Sprintf("A rollback that restores the database needs room for the restored copy, which becomes the app's database and so cannot use the restore slot; the account has %d of %d databases.", used, limit)).
+		WithLimit(int64(limit), used).
+		WithHint("Delete a database you no longer need or upgrade the plan, then roll back again; or restore the database with gregale postgres restore and roll back with acknowledge_releases.").
+		WithDocs("https://gregale.dev/docs/plans")
 }
 
 // releaseMigrationDatabases lists the managed databases whose migration

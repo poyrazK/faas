@@ -74,11 +74,12 @@ func pgBuildRouteInvestigation(ctx context.Context, tx sqlc.DBTX, accountID, slu
 	if report.StableDeploymentID == "" {
 		return out, nil
 	}
-	if err := pgInvestigationExamples(ctx, tx, accountID, slug, &out); err != nil {
+	// The canary guard ranks warm latency (ADR-20261028110044 amendment 3).
+	if err := pgInvestigationExamples(ctx, tx, accountID, slug, &out, true); err != nil {
 		return out, err
 	}
 	if out.Selection.Signal == "latency" {
-		if err := pgInvestigationLatency(ctx, tx, accountID, slug, &out); err != nil {
+		if err := pgInvestigationLatency(ctx, tx, accountID, slug, &out, true); err != nil {
 			return out, err
 		}
 	}
@@ -116,7 +117,7 @@ func pgInvestigationCustomerFinding(ctx context.Context, db sqlc.DBTX, accountID
 	return target.Routes[0], nil
 }
 
-func pgInvestigationExamples(ctx context.Context, db sqlc.DBTX, accountID, slug string, out *api.RouteHealthInvestigation) error {
+func pgInvestigationExamples(ctx context.Context, db sqlc.DBTX, accountID, slug string, out *api.RouteHealthInvestigation, warm bool) error {
 	encoded, err := json.Marshal(out.Windows)
 	if err != nil {
 		return fmt.Errorf("encode investigation windows: %w", err)
@@ -138,7 +139,7 @@ func pgInvestigationExamples(ctx context.Context, db sqlc.DBTX, accountID, slug 
 	default:
 		return fmt.Errorf("unsupported investigation status code %d", out.Selection.StatusCode)
 	}
-	body, err := (&sqlc.Queries{}).RouteHealthInvestigationExamples(ctx, db, sqlc.RouteHealthInvestigationExamplesParams{AccountID: accountID, AppID: out.Report.AppID, CandidateID: out.Report.DeploymentID, StableID: out.Report.StableDeploymentID, Method: out.Selection.Method, Path: out.Selection.Path, CustomerID: out.Selection.CustomerID, CustomerGroupBy: out.Selection.CustomerGroupBy, Windows: encoded, StatusMin: minimum, StatusMax: maximum, ExampleLimit: api.RouteHealthInvestigationExamplesLimit, Latency: out.Selection.Signal == "latency"})
+	body, err := (&sqlc.Queries{}).RouteHealthInvestigationExamples(ctx, db, sqlc.RouteHealthInvestigationExamplesParams{AccountID: accountID, AppID: out.Report.AppID, CandidateID: out.Report.DeploymentID, StableID: out.Report.StableDeploymentID, Method: out.Selection.Method, Path: out.Selection.Path, CustomerID: out.Selection.CustomerID, CustomerGroupBy: out.Selection.CustomerGroupBy, Windows: encoded, StatusMin: minimum, StatusMax: maximum, ExampleLimit: api.RouteHealthInvestigationExamplesLimit, Latency: out.Selection.Signal == "latency", WarmLatency: warm})
 	if err != nil {
 		return fmt.Errorf("read investigation examples: %w", err)
 	}

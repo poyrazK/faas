@@ -126,6 +126,10 @@ an incident; mixed error/latency failures do not establish a sustained violation
 
 Counts retain publisher aggregation weights. P95 interpolates weighted latency
 bucket representatives, including successful responses and cold boot latency.
+A 5xx the gateway returns because a Gregale dependency could not admit the
+request (node admission, traffic policy, rate-limit or revocation state was
+unavailable) is not counted: it says nothing about the release. Deadlines, open
+circuits, capacity refusals and failed wakes or boots still count.
 Coverage is `observed_only`: this does not establish complete capture, an end-user
 count or compliance with an SLO. Low-traffic routes may stay unknown.
 

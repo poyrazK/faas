@@ -31,6 +31,12 @@ Operators: see the [operator guide](managed-postgres.md).
 - A database runs in a single zone. Gregale makes no high-availability
   promise for it; point-in-time restore and the 7-day undo of a delete are the
   recovery paths.
+- A plan downgrade waits until your databases fit the new plan: the refusal
+  lists the databases to delete and the ones to move to a class the plan
+  includes. A database whose delete is scheduled no longer counts.
+- When the platform is near capacity, new databases on the Free plan pause
+  first (`503 managed_postgres_new_databases_paused`); paid plans can still
+  create them.
 
 ## Create a database
 
@@ -171,6 +177,9 @@ every plan:
 - A copy cannot replace its source: the source cannot be deleted while the
   copy exists. To keep restored rows on a one-database plan, copy them back
   into the source, then purge the copy.
+- A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
+  never uses the slot: its copy becomes the app's database, so the account
+  needs room for it inside the limit.
 
 ## Change the compute class
 

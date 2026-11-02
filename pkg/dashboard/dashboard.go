@@ -208,6 +208,23 @@ type AppListItem struct {
 	// IsPreview is false. Pre-formatted at the handler edge so
 	// the template stays a pure renderer.
 	Scope string
+	// Labels are the app's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
+}
+
+// AppsListData backs /dashboard/apps.
+type AppsListData struct {
+	Items []AppListItem
+	// LabelsOn is true while the account has resource labels
+	// (ADR-20261031100025): the list shows each app's labels and takes a
+	// selector.
+	LabelsOn bool
+	// Selector is the label selector the list is filtered by, as typed.
+	Selector string
+	// SelectorError explains a selector the list could not apply; Items
+	// is empty then.
+	SelectorError string
 }
 
 // PreviewListItem is one row on /dashboard/previews (issue #961
@@ -1455,6 +1472,9 @@ type CronItem struct {
 	Occurrences           []ScheduleOccurrencePageItem
 	OccurrencesCount      int
 	HistoryAvailable      bool
+	// Labels are the cron's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
 }
 
 // CronRunRow is one projected row inside CronItem.Runs. Pre-formatted
@@ -3623,6 +3643,9 @@ type ManagedPostgresDatabaseItem struct {
 	// RestoreSlotUntil is set while a restored copy is past the plan's
 	// database limit (ADR-20261031123259).
 	RestoreSlotUntil string
+	// Labels are the database's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
 }
 
 // ManagedPostgresBindingItem is the safe metadata shown for an app binding.

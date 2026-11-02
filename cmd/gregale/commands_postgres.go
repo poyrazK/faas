@@ -63,6 +63,13 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresResize(args[1:])
 	case "resize-status":
 		return cmdPostgresResizeStatus(args[1:])
+	// ADR-1027 major upgrades: a preview, callable but out of customer
+	// help, completions and the CLI reference until launch (the API hides
+	// it outside FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS).
+	case "upgrade":
+		return cmdPostgresUpgrade(args[1:])
+	case "upgrade-status":
+		return cmdPostgresUpgradeStatus(args[1:])
 	case subRestore:
 		return cmdPostgresRestore(args[1:])
 	case "cutover":
