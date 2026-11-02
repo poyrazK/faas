@@ -23,8 +23,8 @@
 
      | Key | Value once set | Read by | Bounds |
      |---|---|---|---|
-     | `app_request_concurrency_default` | 80 | apid, gatewayd-internal, schedd | 1 to the maximum |
-     | `app_request_concurrency_max` | from step 1 | apid, gatewayd-internal, schedd | the default to 10,000 |
+     | `app_request_concurrency_default` | 80 | apid, gatewayd-internal, schedd (vmmd through schedd) | 1 to the maximum |
+     | `app_request_concurrency_max` | 1,000 | apid, gatewayd-internal, schedd (vmmd through schedd) | the default to 10,000 |
      | `app_cpu_baseline_millicores_per_gb` | 1,000 | apid, schedd | 125 to 2,000 |
      | `app_cpu_ceiling_floor_millicores` | 1,000 | apid, schedd | 250 to 2,000 |
      | `guest_vcpu_millicores` | 1,000 | schedd | 500 to 2,000 |
@@ -38,11 +38,19 @@
        outside its bounds.
      - **A daemon that cannot read the store** keeps the last value it applied.
        At boot it uses the unset behavior until its first read.
-  3. **vmmd reads none of them.** schedd already sends each boot's vCPU count
-     and CPU quota to vmmd. vmmd enforces what it receives within compiled
-     safety bounds (250 to 4,000 millicores, up to eight vCPUs). The root
-     daemon stays off the config path, and vmmd and schedd cannot apply
-     different versions of a value.
+  3. **vmmd reads none of them; schedd sends what vmmd enforces.** schedd
+     already sends each boot's vCPU count and CPU quota to vmmd. vmmd
+     enforces what it receives within compiled safety bounds (250 to 4,000
+     millicores, up to eight vCPUs).
+     - vmmd's HTTP admission also caps each instance at a request limit,
+       today the plan's `concurrency_per_vm`. schedd sends that limit with
+       the wake in a new optional field: the app's declaration, or else the
+       maximum.
+     - A vmmd that gets no value keeps the plan bound, and an older vmmd
+       ignores the field. Which wake messages vmmd checks strictly is
+       verified before step 2.
+     - The root daemon stays off the config path, and vmmd and schedd cannot
+       apply different versions of a value.
   4. **Pricing values stay in code:** plan RAM, instances per app, deployed
      apps, GB-hours, prices and rate limits. Billing and the financial model
      depend on them, and changing one is a pricing decision (ADR-1430).
@@ -97,9 +105,12 @@
     exchange then gets 404, and vmmd fences the bridge, which ends every
     other open request on the instance with `unexpected EOF`. The bench
     reproduced it at 150 open requests on one instance: 22 got 503, and the
-    other 128 failed. Production reaches this when more than 128 requests are
-    open on one instance, for example Scale's 80 per gateway through two
-    gateways. It also blocks any maximum above 128.
+    other 128 failed. Production does not reach it today: vmmd's admission
+    (`fcvm.Manager.AcquireHTTPForward`) lets at most the plan's
+    `concurrency_per_vm` (80 or fewer) through to an instance, whatever the
+    number of gateways. With `FAAS_HTTP_ADMISSION=off` it is reachable, and it
+    blocks any maximum above 128. Fixed in poyrazK/faas#6327 (rollout step
+    1a).
   - **Tuning values should not need a release.** The CPU baseline, the
     ceiling floor, the vCPU rule and the request limits will be adjusted from
     production evidence (A/B runs, step tests). The runtime-config store
@@ -127,15 +138,18 @@
   1. **Measure** memory per open request (done 2026-11-01, above). The
      maximum's compiled default is 1,000 and its bound 10,000. A node-wide
      cap on open requests, sized from about 100 KB each, belongs with them.
-  1a. **Fix the bridge's exchange limit first.**
+  1a. **Fix the bridge's exchange limit first** (poyrazK/faas#6327).
      - A refused exchange carries `X-Faas-Bridge-Exchange-Refused`. vmmd skips
-       the completion wait and the fence for it, and returns `Unavailable`
-       for that request alone, so the gateway retries or queues it.
-     - `TrafficBridgeCompletionMaxEntries` rises to the request maximum's
-       bound. An open entry is a map entry and a channel, about 200 bytes.
+       the completion wait and the fence for it, and fails that request
+       alone as `concurrency_throttled` ("App busy"), like admission refusing
+       a full instance.
      - vmmd starts its bridges from its own release bundle, and they die
        with it, so a vmmd and its bridges always run the same release. A
        bridge or vmmd without the header behaves as today.
+     - A test keeps `TrafficBridgeCompletionMaxEntries` at or above every
+       plan's `concurrency_per_vm`. Step 2 raises it to the maximum's bound
+       and extends the test to the maximum. An open entry is a map entry and
+       a channel, about 200 bytes.
   2. **Add the keys, bounds and readers** in apid, gatewayd-internal and
      schedd, with unset keys keeping today's behavior. Replace
      ADR-20261101160231's `FAAS_GUEST_VCPU_FROM_CPU_APPS` environment switch
