@@ -6090,7 +6090,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// hold an application request slot or wake/parking lease for its lifetime.
 	if h.managedRealtime != nil && strings.HasPrefix(r.URL.Path, realtime.ManagedPathPrefix) {
 		w.Header().Set(trafficSecurityHeader, trafficSecurityRealtime)
-		h.managedRealtime.ServeHTTP(w, r)
+		if h.stampRealtimeHostAccount(w, r) {
+			h.managedRealtime.ServeHTTP(w, r)
+		}
 		return
 	}
 

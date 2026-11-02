@@ -122,9 +122,9 @@ other than its metrics port.
   flowing; only failover stops.
 - **Off the request path.** The daemon reads `compute_nodes` and calls the
   Cloudflare API only when a node's state changes.
-- **Metrics:** `edge_dns_records{zone}`,
-  `edge_dns_changes_total{zone,action}` and
-  `edge_dns_probe_failures_total{node}`.
+- **Metrics:** `edge_dns_records{name}`,
+  `edge_dns_changes_total{name,action,dry_run}`,
+  `edge_dns_probe_failures_total{node}` and `edge_dns_node_in{node}`.
 
 ### 4. Drain and restart
 
@@ -195,10 +195,14 @@ demand.
   - `both` runs cloudflared and the TLS listener side by side, for the
     migration and its rollback.
   - `direct` removes cloudflared.
-- `compute_nodes[].public_ipv4` and `public_ipv6` give the addresses.
+- `fleet.hosts[].public_ipv4` gives each compute host's address. IPv6
+  records can follow the same way.
+- `public_edge.dns` turns on `edgednsd`: `zone_id`, the `names` it manages
+  (a pilot host first, the app wildcard later), and `live`.
 - The edge's TLS listener has its own switch, `FAAS_EDGE_PUBLIC_TLS_ADDR`,
   unset by default; the role sets it from `entry`.
-- `edgednsd` starts in dry run: it logs and exports the changes it would make.
+- `edgednsd` starts in dry run: it logs and exports the changes it would make
+  until `public_edge.dns.live` is set.
 
 ## Rollout
 

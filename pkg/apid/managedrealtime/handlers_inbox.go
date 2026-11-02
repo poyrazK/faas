@@ -28,6 +28,9 @@ func (s *Service) sendManagedRealtimePrincipalInbox(w http.ResponseWriter, r *ht
 		api.WriteProblem(w, api.ErrRealtimeInvalid("endpoint must be enabled for inbox sends"))
 		return
 	}
+	if !s.allowRealtimeWrites(w, acct, 1) {
+		return
+	}
 	store, ok := s.Host.Store().(state.ManagedRealtimeInboxStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("realtime inbox storage unavailable"))
