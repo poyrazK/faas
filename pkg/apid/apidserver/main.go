@@ -1933,10 +1933,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return api.DeploymentResponseCheckTimeout
 			}
 			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || reqbudget.IsAccountExportRequest(r) ||
+				reqbudget.IsAppLifecycleRequest(r) ||
 				managedrealtime.IsRealtimeGroupClaimRequest(r) || reqbudget.IsLongWaitRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait, a deploy
 				// commit scans its source archive (H9-157), an account
-				// export assembles the whole account (H14-120), realtime
+				// export assembles the whole account (H14-120), app delete
+				// and restore wait for the account's traffic lock behind
+				// deploys (H31-13), realtime
 				// group claims and queue leases long-poll, and the other
 				// long-wait routes scale with the source (B35); all get the
 				// platform ceiling instead of the 5 s default.
