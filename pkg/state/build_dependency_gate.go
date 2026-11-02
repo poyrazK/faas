@@ -146,7 +146,7 @@ func projectBuildGate(raw json.RawMessage, gate *BuildDependencyGate) (json.RawM
 
 func (m *MemStore) buildDependencyEligibleLocked(build Build, now time.Time) bool {
 	gate, err := buildGateFromStages(m.deployments[build.DeploymentID].StageState)
-	return err == nil && (gate == nil || !gate.CheckAfter.After(now))
+	return err == nil && (gate == nil || !gate.CheckAfter.After(now)) && !m.buildWaitsForProducerLocked(build, now)
 }
 
 func (m *MemStore) CheckBuildDependencies(_ context.Context, claim Build, now time.Time) (*BuildDependencyGate, error) {
