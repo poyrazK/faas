@@ -1351,6 +1351,7 @@ var FormatSuspectedDependency = formatSuspectedDependency
 var FreezeRequestFromFlags = freezeRequestFromFlags
 var FunctionConcurrencyDeployHint = functionConcurrencyDeployHint
 var GeneratedTestCICompareCommand = generatedTestCICompareCommand
+var GeneratedTestCIInstallCommand = generatedTestCIInstallCommand
 var GeneratedTestCIRunCommand = generatedTestCIRunCommand
 var GeneratedTestCIVMConfigCommand = generatedTestCIVMConfigCommand
 var GeneratedTestCIVMRunCommand = generatedTestCIVMRunCommand
