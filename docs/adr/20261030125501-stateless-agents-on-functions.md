@@ -192,6 +192,20 @@ Each step is one PR behind the `agents` capability.
      - Sleeps count against the endpoint's 256 realtime schedules (`state.ManagedRealtimeScheduleLimit`, which also counts finished schedules for a day). That bounds the sleeps of one endpoint in preview; a sleep store of its own is left to the capability gateway.
    - **Thread closure.** RAP's `close_thread` names a thread without a credential, so it changes nothing. A thread closes by revoking its callback URLs.
    - **Next.** The templates do not call it yet. Part two wires `gregale_sleep` into the templates and the journey.
+   **Step 5, part three (2026-11-02): `gregale_run`.**
+   - **The app's credential.** A callback URL names a thread, and tool servers hold callback URLs, so one alone cannot start a run.
+     - A `gregale_run` invocation also carries the app's `gregale:agents` workload token, or an API key with `deploy:write`. It goes through the same check as issuing a callback URL, and the caller must own the callback's endpoint.
+     - Without a credential the invocation gets a 401, which Infinity's RAP client turns into the call's error result. Any invocation that carries a credential is checked the same way.
+   - **Admission.** The arguments are those of `POST /v1/agents/{agent}/runs` without a checkout, GitHub target or deliveries: `agent`, `version`, `prompt`, `inputs` and `tenant`.
+     - The run is admitted under the account's plan limits, with trigger `api`.
+     - Its dedupe key derives from the endpoint, thread and call ID, so a retried invocation finds its run.
+     - Refusals the agent can act on, such as an unknown agent, a plan limit or bad arguments, are the call's tool result.
+   - **The link.** `agent_run_callbacks` (a new table, expand) records the run's endpoint, thread, call IDs and the callback URL's issue time, in the admitting transaction.
+   - **Delivery.** Every apid polls finished linked runs every 5 seconds and publishes each run's end into its thread as the call's RAP tool result.
+     - The result is JSON text with `run_id`, `state`, `outcome` and, for a run that succeeded, `result`. A result too large for one inbox message is left out, with `result_omitted`.
+     - The publish is idempotent and the link is marked after it, so a run's end lands once.
+     - A thread that can no longer receive it gets nothing: revoked since the call, its endpoint deleted, or its account without `agents`. The run itself still finishes; revoking a thread does not cancel its runs.
+   - **Next.** The template sends the app's workload token with platform tool invocations, and its scripted model learns to call `gregale_run`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 
 ## Open questions

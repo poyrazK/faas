@@ -855,6 +855,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.realtime.RunManagedRealtimeHistoryReaper(ctx)
 		go srv.realtime.RunManagedRealtimeEntityExpirations(ctx)
 		go srv.realtime.RunManagedRealtimeSchedules(ctx)
+		go srv.runAgentRunCallbacks(ctx)
 		go srv.realtime.RunRealtimeConsumerGroupAlerts(ctx)
 		go srv.realtime.RunRealtimeConsumerGroupDeadRetention(ctx)
 		go srv.realtime.RunRealtimeReplayJobs(ctx)

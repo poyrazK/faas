@@ -390,3 +390,24 @@ RETURNING revoked_at;
 -- name: AgentCallbacksRevokedAt :one
 SELECT revoked_at FROM agent_callback_revocations
  WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND thread_id = sqlc.arg(thread_id)::text;
+
+-- name: InsertAgentRunCallback :exec
+-- ADR-20261030125501 §4: the thread and tool call a gregale_run run answers.
+-- A retried invocation that found its run keeps the first link.
+INSERT INTO agent_run_callbacks (run_id, account_id, endpoint_id, thread_id, tool_call_id, provider_call_id, issued_at)
+VALUES (sqlc.arg(run_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(endpoint_id)::text::uuid,
+  sqlc.arg(thread_id)::text, sqlc.arg(tool_call_id)::text, sqlc.narg(provider_call_id)::text, sqlc.arg(issued_at)::timestamptz)
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: ListUndeliveredAgentRunCallbacks :many
+-- Finished gregale_run runs whose end apid has not yet published into their
+-- thread. The mark is written after the publish, which is idempotent, so an
+-- interrupted delivery is retried and lands once.
+SELECT c.run_id::text AS run_id, c.account_id::text AS account_id, c.endpoint_id::text AS endpoint_id, c.thread_id,
+  c.tool_call_id, c.provider_call_id, c.issued_at, r.state, r.outcome_code, r.outcome_message, o.result
+ FROM agent_run_callbacks c JOIN agent_runs r ON r.id=c.run_id LEFT JOIN agent_run_outputs o ON o.run_id=c.run_id
+ WHERE c.delivered_at IS NULL AND r.finished_at IS NOT NULL
+ ORDER BY r.finished_at, c.run_id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: MarkAgentRunCallbackDelivered :exec
+UPDATE agent_run_callbacks SET delivered_at = now() WHERE run_id = sqlc.arg(run_id)::text::uuid AND delivered_at IS NULL;
