@@ -1490,6 +1490,18 @@ const (
 	CronPlatformRetryDelay = 5 * time.Second
 )
 
+// WorkflowStepPlatformRetries is how many attempts beyond its max_attempts a
+// workflow step may make when Gregale refused an attempt before the app
+// received it (a 5xx from the gateway's dispatch endpoint: a failed wake, an
+// unavailable traffic-security check). Such an attempt never ends the step
+// within that bound; an attempt the app answered keeps the step's own policy.
+// A refused attempt retries no sooner than WorkflowStepPlatformRetryDelay
+// (ADR-081 amendment 2026-11-02).
+const (
+	WorkflowStepPlatformRetries    = 2
+	WorkflowStepPlatformRetryDelay = 5 * time.Second
+)
+
 // CronCatchUpRecordedMax bounds the due occurrences a schedule-policy or
 // command cron records in one tick after an outage or suspension: the newest
 // is dispatched and the ones before it are recorded as missed or coalesced.
@@ -7105,6 +7117,11 @@ const (
 	// timeout's order of magnitude.
 	FrozenEarlyFreezeMinSeconds = 2
 	FrozenEarlyFreezeMaxSeconds = 300
+	// FrozenEarlyFreezeDefaultSeconds is schedd's frozen_tier_early_freeze_after_s
+	// when unset (ADR 20261102072403): a quiet between_requests instance
+	// freezes 15 s after its last request, releasing its vCPU, CPU and
+	// concurrency bookings half way through a function's 30 s idle timeout.
+	FrozenEarlyFreezeDefaultSeconds = 15
 	// FrozenMaxPerNode caps a node's frozen instances: each holds a
 	// Firecracker process, a jail uid and a network namespace.
 	FrozenMaxPerNode = 1000
@@ -13426,6 +13443,10 @@ const (
 	// the local vmmd to name the trace of the one request a calling instance
 	// is serving (ADR-1138); past it the call starts its own trace.
 	ServiceTraceInferenceTimeout = 25 * time.Millisecond
+	// ServiceCallDeadlineHopOverhead is kept back from the calling request's
+	// remaining budget when a service call inherits it, so the caller still
+	// has time to read the answer (ADR-20261102082606).
+	ServiceCallDeadlineHopOverhead = 10 * time.Millisecond
 	// Private guest DNS reads the scenario DNS chaos policy for every
 	// *.svc.gregale question, rehearsing or not (ADR-20261024230731). A read
 	// gets ServiceDNSChaosLookupTimeout; after a failed read the node answers
