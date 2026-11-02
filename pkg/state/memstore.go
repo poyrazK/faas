@@ -632,6 +632,9 @@ type MemStore struct {
 	// ON CONFLICT (build_id) DO UPDATE so a redelivered build
 	// overwrites the same row instead of doubling.
 	buildProvenance map[string]BuildProvenance
+	// buildCoalescedWith maps a deferred build to the identical build it waits
+	// for (builds.coalesced_with, ADR-20261102100000).
+	buildCoalescedWith map[string]string
 	// ADR-740 developer live patches; allocated on first use.
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
@@ -1719,7 +1722,8 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		// buildProvenance is the ADR-038 "what ran?" map keyed by
 		// build_id (mirrors the build_provenance.build_id UNIQUE).
 		// Starts empty; CreateBuildProvenance fills it.
-		buildProvenance: map[string]BuildProvenance{},
+		buildProvenance:    map[string]BuildProvenance{},
+		buildCoalescedWith: map[string]string{},
 		// issue #72 / ADR-125: mirror-rules and mirror-results
 		// stores. Empty until the first create; the per-app count
 		// in CreateMirrorRuleIfUnderQuota walks the map.
@@ -12734,7 +12738,13 @@ func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nod
 }
 
 func (m *MemStore) buildEligibleOnNodeLocked(build Build, nodeID string, affinityGrace time.Duration, now time.Time) bool {
-	if affinityGrace <= 0 || !build.EnqueuedAt.After(now.Add(-affinityGrace)) {
+	if affinityGrace <= 0 {
+		return true
+	}
+	if eligible, coalesced := m.coalescedBuildEligibleOnNodeLocked(build, nodeID, affinityGrace, now); coalesced {
+		return eligible
+	}
+	if !build.EnqueuedAt.After(now.Add(-affinityGrace)) {
 		return true
 	}
 	preferred := m.preferredBuilderNodeLocked(build)
