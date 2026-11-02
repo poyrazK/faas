@@ -321,6 +321,19 @@ type AgentRunAiSpend struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+// ADR-20261030125501 gregale_run links written by apid: the thread and tool call a finished agent run answers.
+type AgentRunCallback struct {
+	RunID          pgtype.UUID
+	AccountID      pgtype.UUID
+	EndpointID     pgtype.UUID
+	ThreadID       string
+	ToolCallID     string
+	ProviderCallID pgtype.Text
+	IssuedAt       pgtype.Timestamptz
+	DeliveredAt    pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
 // ADR-20261027090010 agent run outputs written by agentd: inline result.json, the output file manifest and the log tail.
 type AgentRunOutput struct {
 	RunID        pgtype.UUID
@@ -15093,6 +15106,7 @@ type UsageMinute struct {
 	JobID             pgtype.UUID
 	JobRunID          pgtype.UUID
 	JobExecutionClass pgtype.Text
+	PausedMbSeconds   int64
 }
 
 type UsageMonthTotal struct {

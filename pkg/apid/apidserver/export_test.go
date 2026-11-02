@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/oidcrepo"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
@@ -58,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -1136,6 +1138,9 @@ func (r *server) CaptureProjectEnvironmentValues(p0 context.Context, p1 state.Ac
 	return r.captureProjectEnvironmentValues(p0, p1, p2, p3)
 }
 func (r *server) CheckedRollbackSweep(p0 context.Context) error { return r.checkedRollbackSweep(p0) }
+func (r *server) RollbackOutcomeSweep(p0 context.Context, p1 time.Time) error {
+	return r.plainRollbacks().Sweep(p0, p1)
+}
 func (r *server) ConfigureAIGateway(p0 Config, p1 func(string) string) error {
 	return r.configureAIGateway(p0, p1)
 }
@@ -1939,6 +1944,18 @@ func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.
 	return r.planDowngradeProblem(ctx, subject, target)
 }
 
+// SetManagedPostgresCapModeForTest sets FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT
+// as configureManagedPostgresCapMode would.
+func (r *server) SetManagedPostgresCapModeForTest(mode managedpostgres.CapEnforcementMode) {
+	r.managedPostgresCapMode = mode
+}
+
+// EnsureDevPostgresForTest provisions a developer environment's database as
+// `gregale dev --postgres` does.
+func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Account, app state.App) (*api.DevPostgresResponse, error) {
+	return r.ensureDevPostgres(ctx, acct, app, &api.DevPostgresRequest{})
+}
+
 // RequestBillingMailOutboxesForTest selects the three webhook billing-mail
 // outboxes without configuring one, so a delivery that reaches an outbox
 // fails closed with 503 (Hunt 17 H17-3).
@@ -2000,4 +2017,11 @@ func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func
 	p := newAppErrorsPurger(store, nil, nil, slog.New(slog.DiscardHandler), true)
 	p.now = now
 	p.purgeAll(ctx)
+}
+
+// OIDCAccountLookup is the OIDC exchange's account lookup with project
+// repository bindings confirmed through repos (ADR-20261101160300,
+// amendment 1).
+func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLister) oidc.AccountLookup {
+	return newOIDCAccountLookup(store, repos)
 }

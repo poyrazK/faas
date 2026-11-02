@@ -1052,6 +1052,10 @@ type Handler struct {
 	// queue-depth budget remains fleet-wide. The guest listener stays runtime-
 	// agnostic while the edge accounts for streams and upgrades.
 	vmConcurrency *vmConcurrencyManager
+	// edgeLocalFirst, when set, makes requests a compute edge forwarded use
+	// this node's instances first (ADR-20261102081618 §5); nil keeps the
+	// global rotation.
+	edgeLocalFirst *edgeLocalFirst
 	// vmConcurrencyAudit emits vm.inflight_threshold_reached when a request
 	// observes a full instance slot set. It shares the gateway audit sink so
 	// operators can correlate saturation with wake and reaper events.
@@ -6106,7 +6110,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// hold an application request slot or wake/parking lease for its lifetime.
 	if h.managedRealtime != nil && strings.HasPrefix(r.URL.Path, realtime.ManagedPathPrefix) {
 		w.Header().Set(trafficSecurityHeader, trafficSecurityRealtime)
-		h.managedRealtime.ServeHTTP(w, r)
+		if h.stampRealtimeHostAccount(w, r) {
+			h.managedRealtime.ServeHTTP(w, r)
+		}
 		return
 	}
 
@@ -7718,6 +7724,10 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
+	if preferredInstanceID == "" {
+		// An instance-affinity pick stays where the session is.
+		capacityCtx = h.localFirstContext(capacityCtx)
+	}
 	pick, vmRelease, vmWaited, err = h.acquireVMTarget(withRoutePriorityRequest(capacityCtx, r), app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
@@ -7833,7 +7843,7 @@ haveApp:
 		attribute.Bool("cold", cold),
 	)
 	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward", forwardAttrs...)
-	r = r.WithContext(forwardCtx)
+	r = r.WithContext(h.instanceNodesContext(forwardCtx, app.ID))
 	defer func() {
 		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		forwardSpan.End()

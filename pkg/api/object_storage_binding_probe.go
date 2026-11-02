@@ -1,8 +1,8 @@
 package api
 
-import "regexp"
+import "github.com/onebox-faas/faas/pkg/lazyregexp"
 
-var objectStorageBindingPrefixPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,47}$`)
+var objectStorageBindingPrefixPattern = lazyregexp.New(`^[A-Z][A-Z0-9_]{0,47}$`)
 
 // ValidObjectStorageBindingPrefix matches the prefix contract for the six
 // injected managed object-storage environment variables.

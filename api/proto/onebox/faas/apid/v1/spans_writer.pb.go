@@ -55,9 +55,26 @@ type WriteSpansSummaryRequest struct {
 	// account_id — UUID of the matching customer. Used for the
 	// per-account rate-cap (Stage 4 takes one token per flush
 	// window, not per request; PR-B's caps cache carries across).
-	AccountId     string `protobuf:"bytes,3,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AccountId string `protobuf:"bytes,3,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	// app_id — optional UUID of the app that produced the spans: the
+	// in-guest bridge's instance, a service binding's or outbound
+	// integration's caller, or an app-bound credential. When set, the
+	// summary merges only into that app's request rows, and the plan that
+	// bounds it is the app's resource owner's. Empty keeps the account-wide
+	// merge older producers rely on.
+	AppId string `protobuf:"bytes,4,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	// org_id — optional UUID of the company organization a customer key is
+	// bound to. When set, the summary merges into rows of that
+	// organization's apps, whoever created them, instead of rows carrying
+	// account_id.
+	OrgId string `protobuf:"bytes,5,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	// customer_credential — the spans came from a customer credential held
+	// by account_id (the public OTLP endpoint). A company app's rows are then
+	// merged only while that account may still deploy to the company, so a
+	// creator who left it cannot write its apps' evidence.
+	CustomerCredential bool `protobuf:"varint,6,opt,name=customer_credential,json=customerCredential,proto3" json:"customer_credential,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *WriteSpansSummaryRequest) Reset() {
@@ -109,6 +126,27 @@ func (x *WriteSpansSummaryRequest) GetAccountId() string {
 		return x.AccountId
 	}
 	return ""
+}
+
+func (x *WriteSpansSummaryRequest) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *WriteSpansSummaryRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *WriteSpansSummaryRequest) GetCustomerCredential() bool {
+	if x != nil {
+		return x.CustomerCredential
+	}
+	return false
 }
 
 // WriteSpansSummaryResponse is the per-flush outcome. outcome ∈
@@ -408,12 +446,15 @@ var File_onebox_faas_apid_v1_spans_writer_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_spans_writer_proto_rawDesc = "" +
 	"\n" +
-	"&onebox/faas/apid/v1/spans_writer.proto\x12\x13onebox.faas.apid.v1\"w\n" +
+	"&onebox/faas/apid/v1/spans_writer.proto\x12\x13onebox.faas.apid.v1\"\xd6\x01\n" +
 	"\x18WriteSpansSummaryRequest\x12\x19\n" +
 	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12!\n" +
 	"\fsummary_json\x18\x02 \x01(\fR\vsummaryJson\x12\x1d\n" +
 	"\n" +
-	"account_id\x18\x03 \x01(\tR\taccountId\"[\n" +
+	"account_id\x18\x03 \x01(\tR\taccountId\x12\x15\n" +
+	"\x06app_id\x18\x04 \x01(\tR\x05appId\x12\x15\n" +
+	"\x06org_id\x18\x05 \x01(\tR\x05orgId\x12/\n" +
+	"\x13customer_credential\x18\x06 \x01(\bR\x12customerCredential\"[\n" +
 	"\x19WriteSpansSummaryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\xc5\x01\n" +

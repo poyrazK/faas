@@ -2762,8 +2762,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			defer close(flushDone)
 			err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
 				Interval: flushInterval,
-				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				// The target names the calling app, so a service binding's
+				// span lands in its caller's rows only (tracing tenancy T4).
+				WriteTargetFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+					return retainedSpansWriter.WriteSummary(writeCtx, target.Request(traceID, summaryJSON))
 				},
 				Log: log,
 				MaxSpansPerTrace: func(string) int {
@@ -2872,6 +2874,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if deps.pool != nil {
 		handler.WithConcurrencyQueueAdmission(state.NewPGConcurrencyQueueAdmission(deps.pool))
+	}
+	// ADR-20261102081618 §5: requests a compute edge forwarded use this node's
+	// instances first, responses name every node of the app, and scale-out
+	// reads demand from this gateway's share. Turn it on after the edges
+	// spread by node set (FAAS_EDGE_PLACEMENT_NODE_SET).
+	if osGetenv("FAAS_GATEWAY_EDGE_LOCAL_FIRST") == "1" && deps.pgStore != nil && cfg.NodeName != "" {
+		handler.WithEdgeLocalFirst(newLocalNodeID(deps.pgStore, cfg.NodeName).Get)
+		log.Info("gatewayd-internal: edge local first on", "node_name", cfg.NodeName)
 	}
 	var realtimeControlProxy http.Handler
 	// Managed realtime is an opt-in data plane. When the local realtimed
@@ -3676,6 +3686,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// params don't appear in r.URL.Path, so the mux still
 		// routes to the dispatcher regardless of whether
 		// ?archive=1 is present.
+		logStreams := newLogStreamSlots()
 		logsMux.Handle("GET /v1/apps/{slug}/logs", &appLogsDispatcher{
 			live: &AppLogsHandler{
 				Auth: deps.authMw,
@@ -3690,6 +3701,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Ops:               nil,
 				Traffic:           deps.trafficRevocations,
 				CapabilityAllowed: deps.capabilityAllowed,
+				Streams:           logStreams,
 			},
 			archive: &ArchiveLogsHandler{
 				Auth:              deps.authMw,
@@ -3701,6 +3713,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Ops:               nil,
 				Traffic:           deps.trafficRevocations,
 				CapabilityAllowed: deps.capabilityAllowed,
+				Streams:           logStreams,
 			},
 		})
 		logsHandler = logsMux
@@ -4266,8 +4279,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				localNode := newLocalNodeID(pgStore, cfg.NodeName)
 				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, localNode)
 				// ADR-1138: guest calls without trace context join the trace of
-				// the one request their instance is serving.
-				serviceProxyConfig.InferCallerTrace = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
+				// the one request their instance is serving. ADR-20261102082606:
+				// with the switch on, the call also inherits that request's
+				// deadline.
+				serviceProxyConfig.InferCallerRequest = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
+				serviceProxyConfig.CallerDeadlines = osGetenv("FAAS_SERVICE_CALL_DEADLINES") == "1"
 			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {

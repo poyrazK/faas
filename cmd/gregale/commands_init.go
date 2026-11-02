@@ -94,13 +94,14 @@ func cmdInit(args []string) int {
 		return runCmdInitList(osStdout)
 	}
 	if (*tpl == "" || *dest == "") && initCanPrompt() {
+		view := discoveryCapabilityView()
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 		// Prompts go to stderr, like the app picker, so stdout stays the result.
 		prompt := &startPrompt{reader: bufio.NewReader(osStdin), writer: osStderr}
 		var err error
 		if *tpl == "" {
-			*tpl, err = chooseInitTemplate(ctx, prompt)
+			*tpl, err = chooseInitTemplate(ctx, prompt, view)
 		}
 		if err == nil && *dest == "" {
 			*dest, err = prompt.text(ctx, "Directory", "./"+*tpl)
@@ -132,10 +133,12 @@ func initCanPrompt() bool {
 
 // chooseInitTemplate asks what to build, then which template of that kind.
 // A category with one template needs no second question.
-func chooseInitTemplate(ctx context.Context, prompt *startPrompt) (string, error) {
+// chooseInitTemplate offers the templates view shows; the caller reads the
+// view before the prompt's context exists.
+func chooseInitTemplate(ctx context.Context, prompt *startPrompt, view capabilityView) (string, error) {
 	var categories, labels []string
 	for _, category := range templates.CategoryOrder {
-		if len(listedTemplatesIn(category)) > 0 {
+		if len(shownTemplatesIn(view, category)) > 0 {
 			categories = append(categories, category)
 			labels = append(labels, templates.CategoryLabels[category])
 		}
@@ -144,7 +147,7 @@ func chooseInitTemplate(ctx context.Context, prompt *startPrompt) (string, error
 	if err != nil {
 		return "", err
 	}
-	names := listedTemplatesIn(categories[choice])
+	names := shownTemplatesIn(view, categories[choice])
 	if len(names) == 1 {
 		return names[0], nil
 	}
@@ -171,6 +174,18 @@ func listedTemplatesIn(category string) []string {
 	return names
 }
 
+// shownTemplatesIn is listedTemplatesIn less the templates that need a
+// capability the view hides.
+func shownTemplatesIn(view capabilityView, category string) []string {
+	var names []string
+	for _, name := range listedTemplatesIn(category) {
+		if templateShown(view, name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // runCmdInitList prints the built-in templates grouped by category, in the
 // canonical order pinned by templates.CategoryOrder. Each category
 // gets a header (category name) + a count + a comma-separated list
@@ -182,23 +197,36 @@ func listedTemplatesIn(category string) []string {
 // emits the canonical template-name slice instead, so discovery is
 // scriptable without scraping category headings.
 func runCmdInitList(stdout io.Writer) int {
+	// A template that needs a capability the account does not have is left
+	// out, as GET /v1/templates leaves it out of the dashboard.
+	view := discoveryCapabilityView()
+	var shown []string
+	for _, n := range templates.ListedNames() {
+		if templateShown(view, n) {
+			shown = append(shown, n)
+		}
+	}
 	if jsonOutput {
 		return jsonOut(writeJSONTo(stdout, struct {
 			Templates []string `json:"templates"`
-		}{Templates: templates.ListedNames()}))
+		}{Templates: shown}))
 	}
 	width := 0
-	for _, n := range templates.ListedNames() {
+	for _, n := range shown {
 		width = max(width, len(n))
 	}
 	for _, cat := range templates.CategoryOrder {
-		inCat := listedTemplatesIn(cat)
+		inCat := shownTemplatesIn(view, cat)
 		if len(inCat) == 0 {
 			continue
 		}
 		_, _ = fmt.Fprintf(stdout, "%s (%d):\n", cat, len(inCat))
 		for _, n := range inCat {
-			_, _ = fmt.Fprintln(stdout, strings.TrimRight(fmt.Sprintf("  %-*s  %s", width, n, templates.Summary(n)), " "))
+			line := fmt.Sprintf("  %-*s  %s", width, n, templates.Summary(n))
+			if note := templateNeedsNote(n); note != "" {
+				line += " (" + note + ")"
+			}
+			_, _ = fmt.Fprintln(stdout, strings.TrimRight(line, " "))
 		}
 	}
 	_, _ = fmt.Fprintf(stdout, "Docs: %s\n", cliDocsURL)
@@ -424,19 +452,8 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 		present[pair.Key] = struct{}{}
 		values[pair.Key] = pair.Value
 	}
-	required := map[string][]string{
-		"object-storage-python":    []string{"STORAGE_APP_TOKEN"},
-		"object-storage-node":      []string{"STORAGE_APP_TOKEN"},
-		"s3-uploader":              []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
-		"slack-bot":                []string{"SLACK_SIGNING_SECRET"},
-		"rest-api-postgres":        []string{"DATABASE_URL"},
-		"rest-api-postgres-python": []string{"DATABASE_URL"},
-		"secret-reload-node":       []string{"DATABASE_URL"},
-		"customer-platform":        []string{"DATABASE_URL"},
-		"cron-worker":              []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
-	}
 	var missing []string
-	for _, key := range required[tpl] {
+	for _, key := range templateRequiredSecrets[tpl] {
 		if _, ok := present[key]; !ok || strings.TrimSpace(values[key]) == "" {
 			missing = append(missing, key)
 		}

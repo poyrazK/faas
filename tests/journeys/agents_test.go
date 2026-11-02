@@ -2,6 +2,7 @@ package journeys
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -17,6 +18,8 @@ import (
 // wrote. The agent holds nothing while it waits: its function is parked.
 // It runs once per template: agent-stateless-node (a hand-written loop) and
 // agent-infinity-rust (Infinity's step mode, its tool answering in RAP).
+// The Infinity agent also sleeps with gregale_sleep (step 5), parks, and
+// wakes on the platform's own tool result.
 
 // agentThreadWait bounds one slice's way from an inbox publish to its row:
 // a wake, a realtime trigger dispatch and one Postgres transaction.
@@ -41,6 +44,9 @@ type agentShape struct {
 	toolCall func(view map[string]any) (url, id string)
 	// result is the tool's answer for one message or tool call.
 	result func(j *agentJourney, messageID string) []byte
+	// sleeps: the template loads Gregale's toolset and calls
+	// gregale_sleep for "sleep N".
+	sleeps bool
 }
 
 var agentShapes = []agentShape{
@@ -80,8 +86,12 @@ var agentShapes = []agentShape{
 			body, _ := json.Marshal(map[string]any{"type": "tool_result", "group_id": j.threadID, "id": id, "text": "Valletta"})
 			return body
 		},
+		sleeps: true,
 	},
 }
+
+// agentSleepSeconds outlasts a park, so the wake-up finds the agent parked.
+const agentSleepSeconds = 30
 
 // TestStatelessAgent is the two-turn stateless agent journey (row 167), once
 // per template.
@@ -129,6 +139,11 @@ func statelessAgent(t *testing.T, tg *target, shape agentShape) {
 	s.step("tool_answers", j.toolAnswers)
 	s.step("agent_answers", j.agentAnswers)
 	s.check("answered_thread_refuses_callbacks", j.callbackRevoked)
+	if shape.sleeps {
+		s.step("agent_sleeps", j.sleeps)
+		s.step("sleeping_agent_parks", func(t *testing.T) { tg.ok(t, 2*time.Minute, "app", "park", j.app) })
+		s.step("agent_wakes", j.wakes)
+	}
 }
 
 // available skips unless the account may use agents, realtime and managed
@@ -171,9 +186,15 @@ func (j *agentJourney) inboxDeclared(t *testing.T) {
 
 // ask publishes the user's question, as the seller's backend does.
 func (j *agentJourney) ask(t *testing.T) {
+	j.publish(t, j.threadID, "q-1", "What is the capital of Malta?")
+}
+
+func (j *agentJourney) publish(t *testing.T, threadID, messageID, text string) {
+	t.Helper()
+	data, _ := json.Marshal(map[string]string{"text": text})
 	res := j.tg.apiCall(http.MethodPost, "/v1/apps/"+j.app+"/realtime/endpoints/"+j.endpoint+"/channels/agent-inbox/publish",
-		map[string]any{"data": `{"text":"What is the capital of Malta?"}`,
-			"metadata": map[string]string{"thread_id": j.threadID, "message_id": "q-1", "kind": "user"}}, j.key)
+		map[string]any{"data": string(data),
+			"metadata": map[string]string{"thread_id": threadID, "message_id": messageID, "kind": "user"}}, j.key)
 	if res.status/100 != 2 {
 		t.Fatalf("publish: %s", res)
 	}
@@ -181,7 +202,11 @@ func (j *agentJourney) ask(t *testing.T) {
 
 // thread reads the agent's view of the thread.
 func (j *agentJourney) thread(t *testing.T) map[string]any {
-	r := fetch(http.MethodGet, j.base+"/threads/"+j.threadID, map[string]string{"Authorization": "Bearer " + j.readToken})
+	return j.threadView(t, j.threadID)
+}
+
+func (j *agentJourney) threadView(t *testing.T, threadID string) map[string]any {
+	r := fetch(http.MethodGet, j.base+"/threads/"+threadID, map[string]string{"Authorization": "Bearer " + j.readToken})
 	if r.status != http.StatusOK {
 		return nil
 	}
@@ -244,5 +269,38 @@ func (j *agentJourney) callbackRevoked(t *testing.T) {
 	eventually(t, "the callback URL refused", time.Minute, 5*time.Second, func() (bool, string) {
 		r := j.postCallback("r-2")
 		return r.status == http.StatusNotFound, r.String()
+	})
+}
+
+// sleepThread is the thread that sleeps: a fresh one, so its history holds
+// only the sleep.
+func (j *agentJourney) sleepThread() string { return j.threadID + "-sleep" }
+
+// sleeps asks the agent to sleep and waits for its gregale_sleep call. Gregale
+// holds the wake-up; the journey posts nothing.
+func (j *agentJourney) sleeps(t *testing.T) {
+	j.publish(t, j.sleepThread(), "s-1", fmt.Sprintf("sleep %d", agentSleepSeconds))
+	eventually(t, "the agent's gregale_sleep call", agentThreadWait, 5*time.Second, func() (bool, string) {
+		messages := threadMessages(j.threadView(t, j.sleepThread()))
+		for _, m := range messages {
+			if str(m, "call.function.name") == "gregale_sleep" {
+				return len(messages) == 2, compact(messages)
+			}
+		}
+		return false, compact(messages)
+	})
+}
+
+// wakes waits for the parked agent to wake on its sleep's result and answer.
+func (j *agentJourney) wakes(t *testing.T) {
+	want := fmt.Sprintf("gregale_sleep answered: Slept for %d seconds.", agentSleepSeconds)
+	eventually(t, "the woken agent's answer", agentThreadWait+agentSleepSeconds*time.Second, 5*time.Second, func() (bool, string) {
+		messages := threadMessages(j.threadView(t, j.sleepThread()))
+		for _, m := range messages {
+			if str(m, "content.text") == want {
+				return len(messages) == 4, compact(messages)
+			}
+		}
+		return false, compact(messages)
 	})
 }

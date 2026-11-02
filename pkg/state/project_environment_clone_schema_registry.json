@@ -18640,6 +18640,7 @@
       "net_rx_bytes",
       "net_tx_bytes",
       "org_id",
+      "paused_mb_seconds",
       "requests",
       "tail_seconds",
       "tx_bytes"
@@ -19616,6 +19617,21 @@
       "endpoint_id",
       "revoked_at",
       "thread_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_callbacks",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "issued_at",
+      "provider_call_id",
+      "run_id",
+      "thread_id",
+      "tool_call_id"
     ],
     "kind": "operational"
   },

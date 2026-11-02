@@ -10,6 +10,25 @@ bash "$PREFLIGHT" --static "$ROOT" >/dev/null
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+# A WAL prune unit that can read the archive disk unbounded fails the static
+# contract: its daily run stalled the control-plane database.
+for unbounded in IOReadBandwidthMax MemoryHigh; do
+  copy="$TMP/static-$unbounded"
+  for rel in deploy/ansible/group_vars/control_plane/off_host_backup.yml \
+    deploy/ansible/roles/postgres/tasks/main.yml \
+    deploy/scripts/pg-restore-verify.sh deploy/scripts/faas-pg-basebackup-push.sh \
+    deploy/scripts/faas-pg-wal-prune.sh deploy/scripts/faas-rclone-backup-identity.py \
+    deploy/systemd/faas-pg-basebackup-push.service deploy/systemd/faas-pg-wal-prune.service; do
+    mkdir -p "$(dirname "$copy/$rel")"
+    cp "$ROOT/$rel" "$copy/$rel"
+  done
+  grep -v "^${unbounded}=" "$ROOT/deploy/systemd/faas-pg-wal-prune.service" >"$copy/deploy/systemd/faas-pg-wal-prune.service"
+  if bash "$PREFLIGHT" --static "$copy" >/dev/null 2>&1; then
+    echo "expected a WAL prune unit without ${unbounded} to fail the static contract" >&2
+    exit 1
+  fi
+done
 BIN="$TMP/bin"
 mkdir -p "$BIN"
 IDENTITY_HELPER="$BIN/faas-rclone-backup-identity.py"

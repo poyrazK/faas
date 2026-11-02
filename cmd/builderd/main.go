@@ -256,7 +256,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: %w", err)
 	}
-	// ADR-20261029105325: kernel overlayfs for builder BuildKit, off by default.
+	// ADR-20261029105325: kernel overlayfs for builder BuildKit, on by default.
 	buildkitSnapshotter, err := builderdpkg.ParseKernelOverlay(os.Getenv(builderdpkg.KernelOverlayEnv))
 	if err != nil {
 		return fmt.Errorf("builderd: %w", err)

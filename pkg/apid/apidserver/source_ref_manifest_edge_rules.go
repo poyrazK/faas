@@ -7,6 +7,9 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -54,6 +57,11 @@ func (s *server) reconcileManifestEdgeRules(ctx context.Context, acct state.Acco
 	for _, params := range set.desired {
 		desiredByKey[params.ManifestKey] = params
 		desiredOrder = append(desiredOrder, params.ManifestKey)
+	}
+	if manifestEdgeRulesChange(set, existingByKey, desiredByKey) {
+		if problem := s.authorizeSharedManifestEdgeRules(ctx); problem != nil {
+			return problem
+		}
 	}
 
 	// A manifest rule never adopts an unowned edge rule implicitly. This
@@ -117,4 +125,35 @@ func (s *server) reconcileManifestEdgeRules(ctx context.Context, acct state.Acco
 		}
 	}
 	return nil
+}
+
+// manifestEdgeRulesChange reports whether reconciling set would create,
+// update or delete any manifest-owned rule.
+func manifestEdgeRulesChange(set manifestEdgeRuleSet, existingByKey map[string]state.EdgeRule, desiredByKey map[string]state.CreateEdgeRuleParams) bool {
+	for key, desired := range desiredByKey {
+		current, exists := existingByKey[key]
+		if !exists || !set.matches(current, desired) {
+			return true
+		}
+	}
+	for key := range existingByKey {
+		if _, keep := desiredByKey[key]; !keep {
+			return true
+		}
+	}
+	return false
+}
+
+// authorizeSharedManifestEdgeRules applies the organization permission the
+// edge-rules API requires (org.manage_app_security, owners and admins) when a
+// manifest changes a company app's edge rules: deploy rights alone must not
+// create, change or remove them. An unchanged manifest deploys as before, and
+// personal apps carry no grant.
+func (s *server) authorizeSharedManifestEdgeRules(ctx context.Context) *api.Problem {
+	_, sharedProject := projectaccess.From(ctx)
+	_, sharedApp := appaccess.FromContext(ctx)
+	if !sharedProject && !sharedApp {
+		return nil
+	}
+	return authz.AuthorizeOrgAction(ctx, authz.OrgActionManageAppSecurity, loadOrgAuditFrom(s.audit))
 }

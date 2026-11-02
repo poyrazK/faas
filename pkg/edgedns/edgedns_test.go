@@ -1,0 +1,252 @@
+// adr: 20261102081618
+// edgedns_test.go pins how the managed names' records follow the compute
+// nodes: probes in a row decide, a drain is immediate, and the last record
+// never goes.
+package edgedns_test
+
+import (
+	"context"
+	"errors"
+	"net/netip"
+	"slices"
+	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/onebox-faas/faas/pkg/edgedns"
+)
+
+var (
+	wildcard = edgedns.Name{ZoneID: "zone-1", Host: "*.gregale.dev"}
+	addrA    = netip.MustParseAddr("203.0.113.1")
+	addrB    = netip.MustParseAddr("203.0.113.2")
+)
+
+func TestPlan(t *testing.T) {
+	rec := func(id string, a netip.Addr) edgedns.Record { return edgedns.Record{ID: id, Addr: a} }
+	for _, tc := range []struct {
+		name    string
+		current []edgedns.Record
+		desired []netip.Addr
+		want    []string
+	}{
+		{name: "first node", desired: []netip.Addr{addrA}, want: []string{"create *.gregale.dev -> 203.0.113.1"}},
+		{name: "a node joins", current: []edgedns.Record{rec("r1", addrA)}, desired: []netip.Addr{addrA, addrB}, want: []string{"create *.gregale.dev -> 203.0.113.2"}},
+		{name: "a node leaves", current: []edgedns.Record{rec("r1", addrA), rec("r2", addrB)}, desired: []netip.Addr{addrA}, want: []string{"delete *.gregale.dev -> 203.0.113.2 (r2)"}},
+		{name: "replace creates first", current: []edgedns.Record{rec("r1", addrA)}, desired: []netip.Addr{addrB}, want: []string{"create *.gregale.dev -> 203.0.113.2", "delete *.gregale.dev -> 203.0.113.1 (r1)"}},
+		{name: "no node keeps every record", current: []edgedns.Record{rec("r1", addrA)}},
+		{name: "in step", current: []edgedns.Record{rec("r1", addrA)}, desired: []netip.Addr{addrA}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, c := range edgedns.Plan(wildcard, tc.current, tc.desired) {
+				got = append(got, c.String())
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("Plan = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// fakeDNS is one zone's address records in memory.
+type fakeDNS struct {
+	records    map[string][]edgedns.Record
+	cname      bool
+	failCreate bool
+	writes     int
+	nextID     int
+}
+
+func newFakeDNS(addrs ...netip.Addr) *fakeDNS {
+	f := &fakeDNS{records: map[string][]edgedns.Record{}}
+	for _, a := range addrs {
+		f.nextID++
+		f.records[wildcard.Host] = append(f.records[wildcard.Host], edgedns.Record{ID: "r" + a.String(), Addr: a})
+	}
+	return f
+}
+
+func (f *fakeDNS) Records(_ context.Context, name edgedns.Name) ([]edgedns.Record, bool, error) {
+	return slices.Clone(f.records[name.Host]), f.cname, nil
+}
+
+func (f *fakeDNS) Create(_ context.Context, name edgedns.Name, addr netip.Addr) error {
+	if f.failCreate {
+		return errors.New("create refused")
+	}
+	f.writes++
+	f.records[name.Host] = append(f.records[name.Host], edgedns.Record{ID: "r" + addr.String(), Addr: addr})
+	return nil
+}
+
+func (f *fakeDNS) Delete(_ context.Context, name edgedns.Name, id string) error {
+	f.writes++
+	f.records[name.Host] = slices.DeleteFunc(f.records[name.Host], func(r edgedns.Record) bool { return r.ID == id })
+	return nil
+}
+
+func (f *fakeDNS) addrs() []netip.Addr {
+	var out []netip.Addr
+	for _, r := range f.records[wildcard.Host] {
+		out = append(out, r.Addr)
+	}
+	slices.SortFunc(out, func(a, b netip.Addr) int { return a.Compare(b) })
+	return out
+}
+
+type fixture struct {
+	t       *testing.T
+	dns     *fakeDNS
+	rec     *edgedns.Reconciler
+	metrics *edgedns.Metrics
+	reg     *prometheus.Registry
+}
+
+func newFixture(t *testing.T, dns *fakeDNS, dryRun bool) *fixture {
+	t.Helper()
+	reg := prometheus.NewRegistry()
+	m := edgedns.NewMetrics(reg)
+	r, err := edgedns.NewReconciler(edgedns.Config{Names: []edgedns.Name{wildcard}, DryRun: dryRun}, dns, m, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fixture{t: t, dns: dns, rec: r, metrics: m, reg: reg}
+}
+
+// tick runs one step with node A and B in the given states.
+func (f *fixture) tick(aReady, bReady, bActive bool) {
+	f.t.Helper()
+	nodes := []edgedns.Node{
+		{Name: "a", Public: addrA, Active: true, Ready: aReady},
+		{Name: "b", Public: addrB, Active: bActive, Ready: bReady},
+	}
+	if err := f.rec.Step(context.Background(), nodes); err != nil {
+		f.t.Fatalf("Step: %v", err)
+	}
+}
+
+func (f *fixture) want(addrs ...netip.Addr) {
+	f.t.Helper()
+	if got := f.dns.addrs(); !slices.Equal(got, addrs) {
+		f.t.Fatalf("records = %v, want %v", got, addrs)
+	}
+}
+
+func TestReconcilerWithdrawsAfterMissesAndRestoresAfterAnswers(t *testing.T) {
+	f := newFixture(t, newFakeDNS(addrA, addrB), false)
+	for range edgedns.DefaultFailAfter - 1 {
+		f.tick(true, false, true)
+		f.want(addrA, addrB)
+	}
+	f.tick(true, false, true)
+	f.want(addrA)
+	for range edgedns.DefaultRestoreAfter - 1 {
+		f.tick(true, true, true)
+		f.want(addrA)
+	}
+	f.tick(true, true, true)
+	f.want(addrA, addrB)
+	if n := testutil.CollectAndCount(f.reg, "edge_dns_probe_failures_total"); n != 1 {
+		t.Fatalf("edge_dns_probe_failures_total series = %d, want node b's", n)
+	}
+}
+
+func TestReconcilerWithdrawsADrainedNodeAtOnce(t *testing.T) {
+	f := newFixture(t, newFakeDNS(addrA, addrB), false)
+	f.tick(true, true, false)
+	f.want(addrA)
+}
+
+func TestReconcilerNeverRemovesTheLastRecord(t *testing.T) {
+	f := newFixture(t, newFakeDNS(addrA, addrB), false)
+	for range 10 {
+		f.tick(false, false, true)
+	}
+	f.want(addrA, addrB)
+
+	// With one node left in, the other goes, and that one stays even after
+	// it fails too.
+	f = newFixture(t, newFakeDNS(addrA), false)
+	for range 10 {
+		f.tick(false, false, true)
+	}
+	f.want(addrA)
+}
+
+func TestReconcilerRestartChangesNothing(t *testing.T) {
+	dns := newFakeDNS(addrA)
+	f := newFixture(t, dns, false)
+	f.tick(true, true, true)
+	if dns.writes != 0 {
+		t.Fatalf("the first tick wrote %d records", dns.writes)
+	}
+	// B was not behind the name, so it earns its place like a new node.
+	for range edgedns.DefaultRestoreAfter - 2 {
+		f.tick(true, true, true)
+	}
+	f.want(addrA)
+	f.tick(true, true, true)
+	f.want(addrA, addrB)
+}
+
+func TestReconcilerLeavesANameACNAMEHolds(t *testing.T) {
+	dns := newFakeDNS()
+	dns.cname = true
+	f := newFixture(t, dns, false)
+	for range edgedns.DefaultRestoreAfter + 1 {
+		f.tick(true, true, true)
+	}
+	if dns.writes != 0 {
+		t.Fatalf("wrote %d records beside a CNAME", dns.writes)
+	}
+}
+
+func TestReconcilerDryRunWritesNothing(t *testing.T) {
+	dns := newFakeDNS(addrA, addrB)
+	f := newFixture(t, dns, true)
+	f.tick(true, true, false)
+	if dns.writes != 0 {
+		t.Fatalf("dry run wrote %d records", dns.writes)
+	}
+	f.want(addrA, addrB)
+	if n := testutil.CollectAndCount(f.reg, "edge_dns_changes_total"); n != 1 {
+		t.Fatalf("edge_dns_changes_total series = %d, want the one dry-run delete", n)
+	}
+}
+
+func TestReconcilerKeepsTheOldRecordWhenItsReplacementFails(t *testing.T) {
+	dns := newFakeDNS(addrA)
+	f := newFixture(t, dns, false)
+	dns.failCreate = true
+	// A drains while B, never behind the name, earns its place: B's create
+	// fails, so A's record must stay.
+	for range edgedns.DefaultRestoreAfter {
+		_ = f.rec.Step(context.Background(), []edgedns.Node{
+			{Name: "a", Public: addrA, Active: false, Ready: true},
+			{Name: "b", Public: addrB, Active: true, Ready: true},
+		})
+	}
+	f.want(addrA)
+}
+
+func TestReconcilerKeepsANodeWithoutAnAddressOut(t *testing.T) {
+	dns := newFakeDNS(addrA)
+	f := newFixture(t, dns, false)
+	for range edgedns.DefaultRestoreAfter + 1 {
+		if err := f.rec.Step(context.Background(), []edgedns.Node{
+			{Name: "a", Public: addrA, Active: true, Ready: true},
+			{Name: "c", Active: true, Ready: true},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.want(addrA)
+}
+
+func TestNewReconcilerNeedsNames(t *testing.T) {
+	if _, err := edgedns.NewReconciler(edgedns.Config{}, newFakeDNS(), nil, nil); err == nil {
+		t.Fatal("a reconciler with no names was accepted")
+	}
+}
