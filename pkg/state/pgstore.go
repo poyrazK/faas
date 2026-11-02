@@ -10538,7 +10538,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 				return fmt.Errorf("state: check newer deployment revision: %w", err)
 			}
 			if newer {
-				if _, err := tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1`, id); err != nil {
+				if err := supersedeOutpacedDeploymentTx(ctx, tx, id); err != nil {
 					return fmt.Errorf("state: supersede stale deployment: %w", err)
 				}
 				if err := tx.Commit(ctx); err != nil {
@@ -29105,8 +29105,14 @@ func (s *PgStore) ListSessions(ctx context.Context, accountID string) ([]Session
 // the supplied sid (the calling session). Returns the count via
 // pgx.RowsAffected.
 func (s *PgStore) RevokeAllSessions(ctx context.Context, accountID, exceptID string) (int, error) {
+	// Signing out everywhere also ends outstanding legacy MFA-disable email
+	// requests (bug hunt 2026-10-28 H98).
 	tag, err := s.pool.Exec(ctx,
-		`update sessions set revoked_at = now()
+		`with legacy as (
+		   update mfa_disable_requests set consumed_at = clock_timestamp()
+		    where account_id = $1 and consumed_at is null
+		 )
+		 update sessions set revoked_at = now()
 		   where account_id = $1 and id <> $2 and revoked_at is null`,
 		accountID, exceptID)
 	if err != nil {
