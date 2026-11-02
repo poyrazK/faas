@@ -37,9 +37,9 @@ func seedPREnvironment(t *testing.T, store *state.PgStore) prEnvironmentFixture 
 		InstallID: f.installation, RepoFullName: f.repo, ProductionBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	app := func(slug, projectID string) state.App {
+	app := func(slug, projectID, workload string) state.App {
 		t.Helper()
-		created, err := store.CreateApp(ctx, state.App{AccountID: f.acct.ID, ProjectID: projectID, Slug: slug,
+		created, err := store.CreateApp(ctx, state.App{AccountID: f.acct.ID, ProjectID: projectID, Slug: slug, WorkloadName: workload,
 			Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive})
 		if err != nil {
 			t.Fatal(err)
@@ -64,8 +64,8 @@ func seedPREnvironment(t *testing.T, store *state.PgStore) prEnvironmentFixture 
 		}
 		return created
 	}
-	f.web = app("web-"+suffix, f.project.ID)
-	worker := app("worker-"+suffix, f.project.ID) // a project service: no binding of its own
+	f.web = app("web-"+suffix, f.project.ID, "web")
+	worker := app("worker-"+suffix, f.project.ID, "worker") // a project service: no binding of its own
 	bind(f.web, f.repo)
 	f.webPreview, f.workerPreview = preview(f.web), preview(worker)
 	if err := store.PutPRPreviewSet(ctx, state.PRPreviewSet{InstallationID: f.installation, RepoFullName: f.repo, PRNumber: 7,
@@ -75,7 +75,7 @@ func seedPREnvironment(t *testing.T, store *state.PgStore) prEnvironmentFixture 
 	}
 	// Another repository of the same installation keeps its previews when
 	// only the first repository is removed.
-	f.otherWeb = app("blog-"+suffix, "")
+	f.otherWeb = app("blog-"+suffix, "", "")
 	bind(f.otherWeb, "acme/blog-"+suffix)
 	f.otherRepoPreview = preview(f.otherWeb)
 	return f
