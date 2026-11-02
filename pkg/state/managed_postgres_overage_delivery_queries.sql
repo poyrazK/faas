@@ -14,8 +14,10 @@ WHERE d.provider = sqlc.arg(provider)::text AND d.subject_id = sqlc.arg(subject_
   AND d.period_start = sqlc.arg(period_start)::timestamptz;
 
 -- name: RecordManagedPostgresOverageDelivery :one
--- Advances the cumulative charge only from previous_millicents (zero: no row
--- yet), so a replica that lost the race records nothing.
+-- Advances the cumulative charge only from the row as read (previous_millicents
+-- and previous_live; zero: no row yet), so a replica that lost the race records
+-- nothing. A live delivery may replace a shadow row, which charged nothing; a
+-- shadow delivery never replaces a live one (bug hunt 33).
 INSERT INTO managed_postgres_overage_deliveries AS d (provider, subject_id, period_start, live,
     billed_unit_seconds, delivered_millicents, updated_at)
 VALUES (sqlc.arg(provider)::text, sqlc.arg(subject_id)::uuid, sqlc.arg(period_start)::timestamptz,
@@ -25,5 +27,7 @@ ON CONFLICT (provider, subject_id, period_start) DO UPDATE
 SET live = EXCLUDED.live, billed_unit_seconds = EXCLUDED.billed_unit_seconds,
     delivered_millicents = EXCLUDED.delivered_millicents, updated_at = EXCLUDED.updated_at
 WHERE d.delivered_millicents = sqlc.arg(previous_millicents)::bigint
-  AND EXCLUDED.delivered_millicents > d.delivered_millicents
+  AND d.live = sqlc.arg(previous_live)::boolean
+  AND (EXCLUDED.live OR NOT d.live)
+  AND (EXCLUDED.delivered_millicents > d.delivered_millicents OR (EXCLUDED.live AND NOT d.live))
 RETURNING true AS recorded;
