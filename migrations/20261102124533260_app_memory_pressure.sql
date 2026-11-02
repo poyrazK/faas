@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS app_memory_pressure (
     lowest_available_mb integer NOT NULL CHECK (lowest_available_mb >= 0),
     total_mb            integer NOT NULL CHECK (total_mb >= 0),
     peak_anon_mb        integer NOT NULL CHECK (peak_anon_mb >= 0),
-    last_at             timestamptz NOT NULL CHECK (isfinite(last_at) AND last_at >= window_started_at)
+    last_at             timestamptz NOT NULL CHECK (isfinite(last_at)),
+    CHECK (last_at >= window_started_at)
 );
 COMMENT ON TABLE app_memory_pressure IS
     'ADR-20261102124306 per-app memory-pressure rollup written by schedd from guest reports.';
