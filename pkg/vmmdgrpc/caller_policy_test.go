@@ -38,6 +38,12 @@ func TestCallerPolicy(t *testing.T) {
 		{"gateway destroy", tlsPeer("gatewayd-internal.faas"), vmmdpb.Vmmd_Destroy_FullMethodName, nil, codes.PermissionDenied},
 		{"gateway fork exec", tlsPeer("gatewayd-internal.faas"), vmmdpb.Vmmd_ExecForkCommand_FullMethodName, nil, codes.PermissionDenied},
 		{"gateway attach", tlsPeer("gatewayd-internal.faas"), vmmdpb.Vmmd_AttachAppTask_FullMethodName, nil, codes.OK},
+		// ADR-20261027090013: the gateway checked the session token.
+		{"gateway sandbox call", tlsPeer("gatewayd-internal.faas"), vmmdpb.Vmmd_SandboxCall_FullMethodName, nil, codes.OK},
+		{"schedd sandbox call", tlsPeer("schedd.faas"), vmmdpb.Vmmd_SandboxCall_FullMethodName, nil, codes.PermissionDenied},
+		{"builderd sandbox call", tlsPeer("builderd.faas"), vmmdpb.Vmmd_SandboxCall_FullMethodName, nil, codes.PermissionDenied},
+		{"unix socket sandbox call", unix, vmmdpb.Vmmd_SandboxCall_FullMethodName, nil, codes.OK},
+		{"no peer sandbox call", context.Background(), vmmdpb.Vmmd_SandboxCall_FullMethodName, nil, codes.Unauthenticated},
 		{"unix socket exec", unix, vmmdpb.Vmmd_ExecuteExecution_FullMethodName, nil, codes.OK},
 		{"no peer exec", context.Background(), vmmdpb.Vmmd_ExecuteExecution_FullMethodName, nil, codes.Unauthenticated},
 		// builderd tears down the builder VMs it boots (rc.301 failed every build).

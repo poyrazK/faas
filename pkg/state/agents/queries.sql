@@ -404,13 +404,15 @@ RETURNING id::text AS id;
 
 -- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
-  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id
  FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: ListSandboxSessions :many
 -- Newest first; a page continues before the (created_at, id) of the last row.
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
-  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id
  FROM sandbox_sessions
  WHERE account_id=sqlc.arg(account_id)::text::uuid
  AND (sqlc.narg(state)::text IS NULL OR state=sqlc.narg(state)::text)

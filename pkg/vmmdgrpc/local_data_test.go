@@ -62,6 +62,7 @@ func TestLocalDataServesOnlyTheGatewayRPCs(t *testing.T) {
 		{vmmdpb.Vmmd_ForwardHTTPStream_FullMethodName, codes.OK},
 		{vmmdpb.Vmmd_ForwardTCPStream_FullMethodName, codes.OK},
 		{vmmdpb.Vmmd_AttachAppTask_FullMethodName, codes.OK},
+		{vmmdpb.Vmmd_SandboxCall_FullMethodName, codes.OK},
 		{vmmdpb.Vmmd_Destroy_FullMethodName, codes.PermissionDenied},
 		{vmmdpb.Vmmd_ExecuteAppTask_FullMethodName, codes.PermissionDenied},
 		{vmmdpb.Vmmd_CreateAdmittedRuntime_FullMethodName, codes.PermissionDenied},

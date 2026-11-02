@@ -30,14 +30,25 @@ const maxBytes = 1024
 // expired. The data plane answers it like an absent route.
 var ErrToken = errors.New("sandboxtoken: invalid sandbox token")
 
-// Claims is what a token grants: data-plane calls on one session.
+// Claims is what a token grants: data-plane calls on one session. A token
+// minted once the session is placed also names its node and instance, which
+// the data plane routes by without reading the control plane, and the plan's
+// command caps, which it applies.
 type Claims struct {
-	SandboxID string    `json:"s"`
-	AccountID string    `json:"a"`
-	TenantID  string    `json:"t,omitempty"`
-	IssuedAt  time.Time `json:"i"`
-	ExpiresAt time.Time `json:"x"`
+	SandboxID  string    `json:"s"`
+	AccountID  string    `json:"a"`
+	TenantID   string    `json:"t,omitempty"`
+	NodeID     string    `json:"n,omitempty"`
+	InstanceID string    `json:"v,omitempty"`
+	IssuedAt   time.Time `json:"i"`
+	ExpiresAt  time.Time `json:"x"`
+	// ExecTimeoutMaxMillis and ExecOutputMaxBytes bound one command.
+	ExecTimeoutMaxMillis int64 `json:"et,omitempty"`
+	ExecOutputMaxBytes   int64 `json:"eo,omitempty"`
 }
+
+// Placed reports whether the token routes to a booted session.
+func (c Claims) Placed() bool { return c.NodeID != "" && c.InstanceID != "" }
 
 // Signer signs and verifies sandbox tokens.
 type Signer struct {

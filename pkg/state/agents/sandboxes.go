@@ -50,10 +50,13 @@ type Sandbox struct {
 	OutcomeCode      string
 	OutcomeMessage   string
 	CloseRequestedAt *time.Time
-	LastActivityAt   time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	ClosedAt         *time.Time
+	// NodeID and InstanceID place a session once agentd has booted it.
+	NodeID         string
+	InstanceID     string
+	LastActivityAt time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	ClosedAt       *time.Time
 }
 
 // SandboxAdmission is a session to admit. QueuedMax is the plan's
@@ -213,7 +216,8 @@ func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 		RAMMB: int(row.RamMb), NetworkMode: row.NetworkMode, State: row.State, IdleTimeoutSec: int(row.IdleTimeoutSec),
 		ExpiresAt: row.ExpiresAt.Time.UTC(), OutcomeCode: row.OutcomeCode.String, OutcomeMessage: row.OutcomeMessage.String,
 		CloseRequestedAt: optTime(row.CloseRequestedAt), LastActivityAt: row.LastActivityAt.Time.UTC(),
-		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(), ClosedAt: optTime(row.ClosedAt)}
+		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(), ClosedAt: optTime(row.ClosedAt),
+		NodeID: row.NodeID, InstanceID: row.InstanceID}
 	if err := json.Unmarshal(row.Labels, &sb.Labels); err != nil {
 		return Sandbox{}, fmt.Errorf("decode sandbox labels: %w", err)
 	}

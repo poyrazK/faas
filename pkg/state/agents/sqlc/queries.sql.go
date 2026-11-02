@@ -861,7 +861,8 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 
 const getSandboxSession = `-- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
-  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id
  FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
 
@@ -889,6 +890,8 @@ type GetSandboxSessionRow struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	ClosedAt         pgtype.Timestamptz
+	NodeID           string
+	InstanceID       string
 }
 
 func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandboxSessionParams) (GetSandboxSessionRow, error) {
@@ -913,6 +916,8 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
+		&i.NodeID,
+		&i.InstanceID,
 	)
 	return i, err
 }
@@ -1543,7 +1548,8 @@ func (q *Queries) ListClaimableAgentRuns(ctx context.Context, db DBTX, maxRows i
 
 const listSandboxSessions = `-- name: ListSandboxSessions :many
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
-  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id
  FROM sandbox_sessions
  WHERE account_id=$1::text::uuid
  AND ($2::text IS NULL OR state=$2::text)
@@ -1578,6 +1584,8 @@ type ListSandboxSessionsRow struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	ClosedAt         pgtype.Timestamptz
+	NodeID           string
+	InstanceID       string
 }
 
 // Newest first; a page continues before the (created_at, id) of the last row.
@@ -1615,6 +1623,8 @@ func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSand
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ClosedAt,
+			&i.NodeID,
+			&i.InstanceID,
 		); err != nil {
 			return nil, err
 		}

@@ -131,6 +131,13 @@ service Vmmd {
   // output plus one terminal result back.
   rpc AttachAppTask(stream AttachAppTaskRequest) returns (stream AttachAppTaskEvent);
 
+  // SandboxCall runs one sandbox session operation (ADR-20261027090013 §4).
+  // The first frame names the instance, the sandbox it must be and the
+  // sandboxproto request; vmmd resumes a quiet-paused guest, dials its
+  // sandbox port and relays sandboxproto frames both ways until the guest
+  // answers. An instance that is not that sandbox's VM is NotFound.
+  rpc SandboxCall(stream SandboxCallRequest) returns (stream SandboxCallEvent);
+
   // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
   // The caller supplies the deadline on the gRPC context.
   rpc WaitJobExit(WaitJobExitRequest) returns (JobExitResponse);
@@ -3230,6 +3237,33 @@ message AttachAppTaskEvent {
 }
 
 message AttachAppTaskAttached {}
+
+message SandboxCallRequest {
+  oneof message {
+    SandboxCallStart start = 1;
+    // frame is a sandboxproto frame after the request: data, data-end,
+    // stdin, stdin-eof, resize or kill.
+    SandboxFrame frame = 2;
+  }
+}
+
+message SandboxCallStart {
+  string instance = 1;
+  string sandbox_id = 2;
+  // request is the sandboxproto request as JSON.
+  bytes request = 3;
+}
+
+message SandboxFrame {
+  uint32 type = 1;
+  bytes body = 2;
+}
+
+message SandboxCallEvent {
+  // frame is a sandboxproto frame from the guest: stdout, stderr, data,
+  // and finally one result or error.
+  SandboxFrame frame = 1;
+}
 
 message AllowResolvedEgressRequest {
   string source_ip = 1;

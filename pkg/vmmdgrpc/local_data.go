@@ -33,6 +33,7 @@ var localDataMethods = map[string]bool{
 	vmmdpb.Vmmd_Ping_FullMethodName:                 true,
 	vmmdpb.Vmmd_AllowResolvedEgress_FullMethodName:  true,
 	vmmdpb.Vmmd_AttachAppTask_FullMethodName:        true,
+	vmmdpb.Vmmd_SandboxCall_FullMethodName:          true,
 	vmmdpb.Vmmd_InflightRequestTrace_FullMethodName: true,
 	vmmdpb.Vmmd_Logs_FullMethodName:                 true,
 	vmmdpb.Vmmd_ResolveServiceCaller_FullMethodName: true,

@@ -390,6 +390,27 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - Archives are tar.gz, with links kept as links, never followed. Creation is capped in bytes, and extraction in entries and unpacked bytes.
    - **Not yet:** the anti-spoofing rule, the module-less guest kernel and the §10 root metal tests (part two), and the workspace scratch drive, which vmmd attaches in step 4.
 4. vmmd `SandboxSession` and gateway routing, on the ADR-1037 transport.
+
+   **Built (2026-11-02), on a local branch.** Nothing is reachable until step 5 boots sessions.
+   - **vmmd `SandboxCall`** is a bidi stream that carries one sandboxproto operation, matching the guest's one connection per operation. §4 named it `SandboxSession`.
+     - The first message names the instance and the session and carries the request. vmmd validates the request before it dials.
+     - vmmd marks the instance active for the whole call, so ADR-1151 cannot quiet-pause it mid-operation, and resumes it if it is quiet-paused. A frozen instance is `Unavailable`.
+     - It dials vsock port 1035 only on a live instance whose fcvm `SandboxID` matches, which step 5's boot path sets. Anything else is `NotFound`.
+     - It relays the host's data, data-end, stdin, resize and kill frames to the guest and drops every other frame type. It relays the guest's frames back until the result or error. It parses nothing in them.
+     - `SandboxCall` is a local data method (ADR-20261030230157). A certificate caller must be gatewayd-internal, by the caller policy of bug hunt H17.
+   - **Placement rides in the token.** A read of a placed session mints a token with its node and instance, plus the plan's command timeout and output caps. Before placement the token routes nowhere: the data plane answers `409 sandbox_not_ready` with `Retry-After: 1`, and the caller reads the session again.
+   - **Routes** (`pkg/gateway/sandboxdata`) are served by gatewayd-internal, ahead of the apid proxy. gatewayd-public treats `api.IsSandboxDataPath` (`exec`, `files`, `stdin` and `workspace` under a session; not `ports`) as compute-owned. The routes:
+     - `POST …/exec` takes a command line, which runs under `/bin/sh -c`, or an argument vector. It answers JSON, or SSE (`stdout`, `stderr`, then `result` or `error`) under `Accept: text/event-stream`, or `202 {handle}` for a background command. The timeout defaults to 60 s within the plan cap. A value above a cap is refused with `agent_limit`, carrying the limit and the observed value. `tty` is `sandbox_unsupported` until the interactive attach.
+     - `GET …/exec`, `GET`/`DELETE …/exec/{handle}`.
+     - `GET`/`PUT …/files?path=`, `…/files:list`, `…/files:stat`, and `POST …/files:remove`, `:mkdir`, `:rename`.
+   - **Credentials.** The token is the only credential. The gateway verifies it with the session binding key it shares with apid, so no call reads Postgres. A missing, forged, expired or other-session token answers `404`, like an absent route.
+   - **Problem codes.** Guest refusals get stable codes of their own: `sandbox_entry_not_found`, `sandbox_path_exists`, `sandbox_path_outside_workspace`, `sandbox_not_a_directory`, `sandbox_is_a_directory`, `sandbox_directory_not_empty`, `sandbox_too_large`, `sandbox_busy` and `sandbox_command_start_failed`. A session no longer on its node is `sandbox_not_found`.
+   - **Not yet:**
+     - the terminal (`stdin`, the WebSocket) and the archive routes, which come with step 7;
+     - the workspace scratch drive and setting `SandboxID`, which come with step 5's boot path;
+     - a token check in vmmd as well, like attach's, which comes with step 5: the boot path can hand vmmd a key derived for that session alone;
+     - the memory integral, which comes with step 11;
+     - OpenAPI and SDK entries, which come with step 9.
 5. agentd session lifecycle (idle timers, freezing, expiry) and schedd placement from preset snapshots, with teardown.
 6. Network modes `none` and `registries`.
 7. Workspace persist and hydrate.

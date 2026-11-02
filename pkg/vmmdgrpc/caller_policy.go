@@ -29,7 +29,14 @@ var schedulerOnlyMethods = map[string]string{
 	vmmdpb.Vmmd_Destroy_FullMethodName:          "instance destruction",
 }
 
-// CallerPolicyUnaryInterceptor enforces schedulerOnlyMethods on unary RPCs.
+// gatewayOnlyMethods run sandbox session operations, which the session token
+// authorizes at gatewayd-internal before it calls (ADR-20261027090013 §4). A
+// certificate caller must be gatewayd-internal.
+var gatewayOnlyMethods = map[string]string{
+	vmmdpb.Vmmd_SandboxCall_FullMethodName: "sandbox session calls",
+}
+
+// CallerPolicyUnaryInterceptor enforces the caller policy on unary RPCs.
 func CallerPolicyUnaryInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if err := authorizeCaller(ctx, info.FullMethod, req); err != nil {
@@ -39,7 +46,7 @@ func CallerPolicyUnaryInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
-// CallerPolicyStreamInterceptor enforces schedulerOnlyMethods on streams.
+// CallerPolicyStreamInterceptor enforces the caller policy on streams.
 func CallerPolicyStreamInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		if err := authorizeCaller(ss.Context(), info.FullMethod, nil); err != nil {
@@ -50,9 +57,13 @@ func CallerPolicyStreamInterceptor() grpc.StreamServerInterceptor {
 }
 
 func authorizeCaller(ctx context.Context, method string, req any) error {
-	what, restricted := schedulerOnlyMethods[method]
-	if !restricted {
+	what, schedulerOnly := schedulerOnlyMethods[method]
+	gatewayWhat, gatewayOnly := gatewayOnlyMethods[method]
+	if !schedulerOnly && !gatewayOnly {
 		return nil
+	}
+	if gatewayOnly {
+		what = gatewayWhat
 	}
 	if p, ok := peer.FromContext(ctx); ok && p != nil && p.AuthInfo == nil && p.Addr != nil && p.Addr.Network() == "unix" {
 		return nil
@@ -60,6 +71,12 @@ func authorizeCaller(ctx context.Context, method string, req any) error {
 	cn, err := wire.PeerCN(ctx)
 	if err != nil {
 		return status.Error(codes.Unauthenticated, what+" requires verified daemon credentials")
+	}
+	if gatewayOnly {
+		if cn == "gatewayd-internal.faas" {
+			return nil
+		}
+		return status.Error(codes.PermissionDenied, "only gatewayd-internal may call "+what)
 	}
 	if cn == "schedd.faas" || (cn == "builderd.faas" && builderMayCall(method, req)) {
 		return nil

@@ -3799,6 +3799,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		apidHandler = jobTaskLogsCarveOut{logs: logsMux, next: apidHandler}
 	}
+	// ADR-20261027090013: sandbox session commands and files run in the
+	// session's VM, so they are compute-owned like attach.
+	if sandbox := newSandboxDataHandler(deps, log); sandbox != nil {
+		apidHandler = sandboxDataCarveOut{sandbox: sandbox, next: apidHandler}
+	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-

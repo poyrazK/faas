@@ -449,6 +449,11 @@ type Instance struct {
 	// AgentRunOnly marks a VM WakeAgentRun booted for one agent run. It is
 	// also ExecutionOnly; ExecuteExecution refuses it and RunAgent requires it.
 	AgentRunOnly bool
+	// SandboxID is the sandbox session a VM was booted for
+	// (ADR-20261027090013); empty for every other VM. Only a VM that carries
+	// it serves sandbox calls, and only for that session. The session boot
+	// path sets it (rollout step 5).
+	SandboxID string
 	// AgentRunRelay is the run principal of the VM's relay; host-only.
 	AgentRunRelay *AgentRunRelay `json:"-"`
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).

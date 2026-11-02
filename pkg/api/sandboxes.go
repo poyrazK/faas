@@ -7,6 +7,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -27,6 +28,24 @@ const (
 	// CodeSandboxUnsupported: the request asks for something sessions do
 	// not offer yet; the detail names it.
 	CodeSandboxUnsupported = "sandbox_unsupported"
+	// CodeSandboxNotReady: the session's VM is not booted yet, or the token
+	// was read before it was; read the session again and retry.
+	CodeSandboxNotReady = "sandbox_not_ready"
+
+	// Refusals from the session's VM (ADR-20261027090013 §4).
+	// CodeSandboxEntryNotFound: no such workspace path or background
+	// command.
+	CodeSandboxEntryNotFound     = "sandbox_entry_not_found"
+	CodeSandboxPathExists        = "sandbox_path_exists"
+	CodeSandboxOutsideWorkspace  = "sandbox_path_outside_workspace"
+	CodeSandboxNotADirectory     = "sandbox_not_a_directory"
+	CodeSandboxIsADirectory      = "sandbox_is_a_directory"
+	CodeSandboxDirectoryNotEmpty = "sandbox_directory_not_empty"
+	CodeSandboxTooLarge          = "sandbox_too_large"
+	// CodeSandboxBusy: the session runs as many operations or keeps as many
+	// background commands as it can.
+	CodeSandboxBusy               = "sandbox_busy"
+	CodeSandboxCommandStartFailed = "sandbox_command_start_failed"
 )
 
 // CreateSandboxRequest creates a sandbox session from a harness preset.
@@ -97,4 +116,26 @@ type SandboxList struct {
 func ErrSandboxUnsupported(field, detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeSandboxUnsupported, "Not supported for sandbox sessions",
 		fmt.Sprintf("%s: %s", field, detail)).WithDocs(docsBase + "/plans#agents")
+}
+
+// IsSandboxDataPath reports a sandbox session's data-plane path
+// (ADR-20261027090013 §3): its commands, files, terminal input and workspace
+// archives. Those calls run in the session's VM, so the compute gateway serves
+// them; the session itself and its ports are apid's.
+func IsSandboxDataPath(p string) bool {
+	rest, ok := strings.CutPrefix(p, "/v1/sandboxes/")
+	if !ok {
+		return false
+	}
+	id, tail, found := strings.Cut(rest, "/")
+	if !found || id == "" {
+		return false
+	}
+	resource, _, _ := strings.Cut(tail, "/")
+	resource, _, _ = strings.Cut(resource, ":")
+	switch resource {
+	case "exec", "files", "stdin", "workspace":
+		return true
+	}
+	return false
 }

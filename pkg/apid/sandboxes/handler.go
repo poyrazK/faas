@@ -66,7 +66,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	h.audit(r.Context(), "sandbox.created", sb)
-	httpkit.WriteJSON(w, http.StatusCreated, h.view(sb, true))
+	httpkit.WriteJSON(w, http.StatusCreated, h.view(acct, sb, true))
 }
 
 // List handles GET /v1/sandboxes, filtered by state and by a label
@@ -94,7 +94,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request, acct state.Accoun
 			break
 		}
 		if selector.Matches(sb.Labels) {
-			out.Items = append(out.Items, h.view(sb, false))
+			out.Items = append(out.Items, h.view(acct, sb, false))
 		}
 	}
 	httpkit.WriteJSON(w, http.StatusOK, out)
@@ -111,7 +111,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 		api.WriteProblem(w, h.problem(acct, "sandbox.get", err))
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, h.view(sb, true))
+	httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, true))
 }
 
 // Update handles PATCH /v1/sandboxes/{id}: a live session's idle timeout
@@ -142,7 +142,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, h.view(sb, false))
+	httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, false))
 }
 
 // Close handles DELETE /v1/sandboxes/{id}. A queued session closes at once;
@@ -158,7 +158,7 @@ func (h *Handler) Close(w http.ResponseWriter, r *http.Request, acct state.Accou
 		return
 	}
 	h.audit(r.Context(), "sandbox.closed", sb)
-	httpkit.WriteJSON(w, http.StatusOK, h.view(sb, false))
+	httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, false))
 }
 
 func (h *Handler) configured(w http.ResponseWriter) bool {
@@ -201,8 +201,9 @@ var sandboxStates = map[string]bool{agentstore.SandboxQueued: true, agentstore.S
 	agentstore.SandboxFrozen: true, agentstore.SandboxClosed: true, agentstore.SandboxExpired: true, agentstore.SandboxFailed: true}
 
 // view is a session as the API shows it. withToken mints a token for a
-// live session; it ends with the session at the latest.
-func (h *Handler) view(sb agentstore.Sandbox, withToken bool) api.Sandbox {
+// live session; it ends with the session at the latest. A placed session's
+// token names its node and instance, and carries the plan's command caps.
+func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool) api.Sandbox {
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
 		Network: api.SandboxNetwork{Mode: sb.NetworkMode}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
@@ -221,8 +222,10 @@ func (h *Handler) view(sb agentstore.Sandbox, withToken bool) api.Sandbox {
 	if sb.ExpiresAt.Before(expires) {
 		expires = sb.ExpiresAt
 	}
+	idx := acct.Plan.PlanIndex()
 	token, err := h.Tokens.Sign(sandboxtoken.Claims{SandboxID: sb.ID, AccountID: sb.AccountID, TenantID: sb.TenantID,
-		IssuedAt: now, ExpiresAt: expires})
+		NodeID: sb.NodeID, InstanceID: sb.InstanceID, IssuedAt: now, ExpiresAt: expires,
+		ExecTimeoutMaxMillis: int64(api.SandboxExecTimeoutMaxSec[idx]) * 1000, ExecOutputMaxBytes: int64(api.SandboxExecOutputMaxBytes[idx])})
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Error("sign sandbox token", "sandbox_id", sb.ID, "err", err)
