@@ -52,7 +52,7 @@ type CloneInventoryLiveCondition struct {
 	SourceScope bool   `json:"source_scope,omitempty"`
 }
 
-var cloneInventoryLiveValue = regexp.MustCompile(`^[a-z_]{1,32}$`)
+var cloneInventoryLiveValue = lazyregexp.New(`^[a-z_]{1,32}$`)
 
 func validCloneInventoryLive(columns []string, live []CloneInventoryLiveCondition) bool {
 	known := map[string]bool{}
