@@ -344,7 +344,7 @@ RULES = [
     (r"oci|image|container", "Container / OCI image"),
     (r"build|railpack|buildkit", "Builds in builder"),
     (r"upload|tarball|source|deploy", "Source deploys:"),
-    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|apps-list|apps-new|app-detail", "Apps: create"),
+    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|apps-list|apps-new|app-detail", "Apps: create"),
 ]
 
 # Checked before everything else, for every source: names a broad rule or the
