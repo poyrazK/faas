@@ -63,6 +63,34 @@ func testNodeMemoryReports(t *testing.T, store nodeMemoryReportTestStore) {
 	}
 }
 
+// adr: 20261102072403 — the stats poller reads only its node's resident
+// instances: live ones on that node, frozen and migrating included.
+func TestListResidentInstancesOnNode(t *testing.T) {
+	store, ctx, _, app, dep := state.MemCoverageFixture(t)
+	create := func(st state.State, node string) string {
+		t.Helper()
+		ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(st), 128, node, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ins.ID
+	}
+	running, frozen := create(state.StateRunning, "node"), create(state.StateFrozen, "node")
+	create(state.StateRunning, "other")
+	create(state.StateStopped, "node")
+	got, err := store.ListResidentInstancesOnNode(ctx, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, ins := range got {
+		ids[ins.ID] = true
+	}
+	if len(got) != 2 || !ids[running] || !ids[frozen] {
+		t.Fatalf("ListResidentInstancesOnNode = %+v, want the running and frozen instances on node", got)
+	}
+}
+
 // A migrating VM holds memory on its node, so the live listing the stats
 // poller reads includes it.
 func TestListAllInstancesIncludesMigrating(t *testing.T) {

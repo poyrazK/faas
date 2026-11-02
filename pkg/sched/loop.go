@@ -241,6 +241,7 @@ type Loop struct {
 	workflowsDispatched               bool
 	workflowScheduleMinute            int64
 	workflowFailurePolicyAfter        string
+	workflowFailurePolicyNextPass     time.Time
 	workflowScheduleAfter             string
 	workflowScheduleComplete          bool
 	workflowScheduleFailed            bool
@@ -4395,11 +4396,15 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	// while every lower slot is still busy, so an idle scheduler polls as
 	// before and capacity grows by one slot a tick under load (ADR-20261025232118).
 	busy := 0
+	gate := newWorkflowDueGate(l.engine.Store())
 	for slot := range api.WorkflowDispatchSlots {
 		if slot >= api.WorkflowDispatchBaseSlots && busy < slot {
 			break
 		}
 		outcome := l.workPool().submit(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
+			if !gate.open(ctx) {
+				return
+			}
 			orch := l.workflowOrch
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
@@ -4417,6 +4422,35 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	if l.workflowOrch != nil {
 		l.workflowOrch.metrics.SetDispatchSlots(busy, api.WorkflowDispatchSlots)
 	}
+}
+
+// workflowDueGate asks once per dispatch tick whether any workflow run is due.
+// Each slot's claim used to ask on its own: with nothing due, every scheduler
+// read the same answer once per base slot every second.
+type workflowDueGate struct {
+	once sync.Once
+	read state.WorkflowRunDueReader
+	due  bool
+}
+
+// newWorkflowDueGate gates on store's due check; a store without one opens
+// every slot.
+func newWorkflowDueGate(store state.Store) *workflowDueGate {
+	read, _ := store.(state.WorkflowRunDueReader)
+	return &workflowDueGate{read: read}
+}
+
+// open reports whether a slot should try to claim. A failed check opens it,
+// leaving the decision to the claim.
+func (g *workflowDueGate) open(ctx context.Context) bool {
+	if g.read == nil {
+		return true
+	}
+	g.once.Do(func() {
+		due, err := g.read.WorkflowRunsDue(ctx)
+		g.due = err != nil || due
+	})
+	return g.due
 }
 
 func (l *Loop) dispatchTriggerTick(ctx context.Context) {

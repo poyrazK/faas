@@ -42,6 +42,18 @@ TimeoutStartSec=2h
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
+# The first prune after each nightly basebackup hashes a day of WAL (about
+# 24 GB at one segment a minute) for the off-host check, from the disk
+# PostgreSQL runs on. Unbounded, it saturated that disk for 7-8 minutes every
+# day near 04:00 UTC on production-us, and control-plane database calls timed
+# out until it finished. The I/O priority above does nothing on a disk whose
+# scheduler is `none` (cloud persistent disks); the cgroup read cap does. At
+# 16 MB/s a day of WAL takes about 25 minutes, inside the timeout and the 2 h
+# prune-freshness alert. MemoryHigh keeps the segments it streams from
+# evicting PostgreSQL's pages from the page cache.
+IOReadBandwidthMax=/var/lib/pgsql/archive 16M
+MemoryHigh=512M
+CPUQuota=50%
 UMask=0077
 StandardOutput=journal
 StandardError=journal

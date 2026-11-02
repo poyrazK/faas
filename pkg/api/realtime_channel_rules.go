@@ -2,11 +2,12 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var realtimeChannelRuleClaim = regexp.MustCompile(`\{([a-z_][a-z0-9_]{0,63})\}`)
+var realtimeChannelRuleClaim = lazyregexp.New(`\{([a-z_][a-z0-9_]{0,63})\}`)
 
 // RealtimeChannelRuleClaims returns the claim names a rule's pattern reads.
 func RealtimeChannelRuleClaims(pattern string) []string {

@@ -36,13 +36,16 @@ signed with any other secret with 401 and counts it as
 |---|---|
 | Pull request | PR previews: create on open and reopen, rebuild on push, tear down on close |
 | Push | Push-to-deploy on the production branch, deployment skips, CI sources |
-| Repository | Keeping bindings when a repository is renamed, transferred, archived or deleted. Without it a rename detaches the binding at the next installation sync. |
-| Issues | Only for issue-tracker callbacks (ADR-1476) |
+| Repository | Keeping bindings and projects when a repository is renamed, transferred or deleted. Without it a rename reaches Gregale only at the next hourly installation sync, which matches by repository ID, and pushes in between are not deployed. |
+| Issues | Issue-tracker callbacks (ADR-1476) |
 
-GitHub sends installation events (`installation`, `installation_repositories`)
-to every App without a subscription. githubd answers any other subscribed event
-with `202 {"status":"ignored"}`, so extra subscriptions are harmless but
-useless.
+GitHub sends installation events (`installation`, `installation_repositories`,
+and `installation_target` when a user or organization is renamed) to every App
+without a subscription. githubd answers any other subscribed event with
+`202 {"status":"ignored"}`, so extra subscriptions are harmless but useless.
+
+`FaasGithubAppConfigDrift` fires when GitHub reports the App without one of
+these events or one of the permissions below (ADR-20261101160300).
 
 ## Permissions
 
@@ -54,6 +57,23 @@ useless.
 | Issues | Read and write | The preview status comment on the PR (PR comments use the Issues API), issue-tracker callbacks |
 | Metadata | Read-only | Required by GitHub for every App |
 | Pull requests | Read-only | Current PR head checks before acting on a delivery |
+| Organization → Members | Read-only | Connect GitHub checks that whoever connects an organization's installation is an active admin of it |
+
+## Connect GitHub URLs
+
+| Setting | Value |
+|---|---|
+| Callback URL | `<console origin>/oauth/code-callback`: apid's `cli_auth_url_base` (`FAAS_CLI_AUTH_URL_BASE`) plus the path, or `FAAS_GITHUB_APP_REDIRECT_URI` when set. The two must match exactly. |
+| Request user authorization (OAuth) during installation | on |
+| Setup URL | `<console origin>/oauth/callback` (used only when the option above is off) |
+| Redirect on update | on |
+
+Connect GitHub sends the customer to GitHub's user authorization. When the
+GitHub user has no installation of the App, Gregale sends them to install it;
+with user authorization during installation on, GitHub returns to the
+Callback URL and the connection completes in one pass. Both callbacks work for
+every Gregale sign-in provider: GitHub proves that the authorizing user owns
+the personal installation or administers the organization.
 
 Adding a permission makes GitHub ask every installation's owner to approve it;
 until they do, those installations keep the old permission set.

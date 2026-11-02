@@ -321,6 +321,19 @@ type AgentRunAiSpend struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+// ADR-20261030125501 gregale_run links written by apid: the thread and tool call a finished agent run answers.
+type AgentRunCallback struct {
+	RunID          pgtype.UUID
+	AccountID      pgtype.UUID
+	EndpointID     pgtype.UUID
+	ThreadID       string
+	ToolCallID     string
+	ProviderCallID pgtype.Text
+	IssuedAt       pgtype.Timestamptz
+	DeliveredAt    pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
 // ADR-20261027090010 agent run outputs written by agentd: inline result.json, the output file manifest and the log tail.
 type AgentRunOutput struct {
 	RunID        pgtype.UUID
@@ -894,6 +907,8 @@ type App struct {
 	DeploymentCronBefore              []byte
 	DeploymentMailRevision            int64
 	Labels                            []byte
+	GithubProductionTrigger           pgtype.Text
+	GithubPreviewEnabled              pgtype.Bool
 }
 
 type AppApiRoute struct {
@@ -3944,6 +3959,7 @@ type Deployment struct {
 	MailFailureAccountRevision pgtype.Int8
 	MailFailureAppRevision     pgtype.Int8
 	MailFailureSuccessRevision pgtype.Int8
+	PromotedAt                 pgtype.Timestamptz
 }
 
 type DeploymentAlias struct {
@@ -8357,13 +8373,14 @@ type ManagedPostgresLiveLogin struct {
 
 // Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).
 type ManagedPostgresOverageDelivery struct {
-	Provider            string
-	SubjectID           pgtype.UUID
-	PeriodStart         pgtype.Timestamptz
-	Live                bool
-	BilledUnitSeconds   int64
-	DeliveredMillicents int64
-	UpdatedAt           pgtype.Timestamptz
+	Provider                 string
+	SubjectID                pgtype.UUID
+	PeriodStart              pgtype.Timestamptz
+	Live                     bool
+	BilledUnitSeconds        int64
+	DeliveredMillicents      int64
+	UpdatedAt                pgtype.Timestamptz
+	BilledStorageByteSeconds int64
 }
 
 type ManagedPostgresResize struct {
@@ -10254,6 +10271,7 @@ type OidcExchangedToken struct {
 	Jti       pgtype.Text
 	CreatedAt pgtype.Timestamptz
 	Scopes    []string
+	AppID     pgtype.UUID
 }
 
 type OidcTrustPolicy struct {
@@ -13653,6 +13671,7 @@ type RequestTelemetry struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202611 struct {
@@ -13692,6 +13711,7 @@ type RequestTelemetry202611 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202612 struct {
@@ -13731,6 +13751,7 @@ type RequestTelemetry202612 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetry202701 struct {
@@ -13770,6 +13791,7 @@ type RequestTelemetry202701 struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -13834,6 +13856,7 @@ type RequestTelemetryDefault struct {
 	FlagEvidence                []byte
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 type ReservedIpInventory struct {
@@ -15084,6 +15107,7 @@ type UsageMinute struct {
 	JobID             pgtype.UUID
 	JobRunID          pgtype.UUID
 	JobExecutionClass pgtype.Text
+	PausedMbSeconds   int64
 }
 
 type UsageMonthTotal struct {

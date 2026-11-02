@@ -3,15 +3,16 @@ package api
 import (
 	"encoding/json"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var collectionDiagnosticHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
-var collectionDiagnosticIdentity = regexp.MustCompile(`^[a-zA-Z0-9_.:-]+$`)
-var collectionDiagnosticRuleName = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
-var collectionDiagnosticRunbook = regexp.MustCompile(`^[a-zA-Z0-9:/_.%#~-]+$`)
+var collectionDiagnosticHash = lazyregexp.New(`^[0-9a-f]{64}$`)
+var collectionDiagnosticIdentity = lazyregexp.New(`^[a-zA-Z0-9_.:-]+$`)
+var collectionDiagnosticRuleName = lazyregexp.New(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
+var collectionDiagnosticRunbook = lazyregexp.New(`^[a-zA-Z0-9:/_.%#~-]+$`)
 
 // ValidObsAlertCollectionRejection enforces the persisted allowlist as well as
 // the CLI contract. Only typed, bounded, sanitized observations may be retained.

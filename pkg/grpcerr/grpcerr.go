@@ -73,6 +73,12 @@ func codeToGRPC(code string) codes.Code {
 		return codes.Unimplemented
 	case api.CodeGitHubAccountConflict:
 		return codes.AlreadyExists
+	case api.CodeGitHubAppNotInstalled:
+		return codes.NotFound
+	case api.CodeGitHubInstallationChoiceRequired, api.CodeGitHubInstallationRequired:
+		return codes.FailedPrecondition
+	case api.CodeGitHubInstallationNotAccessible, api.CodeGitHubInstallationOwnerRequired, api.CodeGitHubOrgAdminRequired, api.CodeGitHubPermissionPending:
+		return codes.PermissionDenied
 	case api.CodeBuildOOM,
 		api.CodeBuildTimeout:
 		return codes.ResourceExhausted
