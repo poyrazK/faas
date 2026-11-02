@@ -235,6 +235,7 @@ func effectiveConnectionContext() *connectionContext {
 	entry, _ := configEntry(effectiveConfigEntries(cfg), configKeyAPIBase)
 	return &connectionContext{selectedProfile(cfg), source, entry.Value, entry.Source}
 }
+
 // displayConnectionContext is effectiveConnectionContext for printing: the
 // API address loses credentials an FAAS_API URL may embed.
 func displayConnectionContext() *connectionContext {
