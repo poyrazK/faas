@@ -279,6 +279,12 @@ type EdgePlacement interface {
 	Learn(r *http.Request, nodeID string)
 }
 
+// EdgePlacementSet is an EdgePlacement that also takes every node of the app,
+// InstanceNodesHeader's "<node id>=<count>,..." (ADR-20261102081618 §5b).
+type EdgePlacementSet interface {
+	LearnSet(r *http.Request, nodes string)
+}
+
 // WithEdgePlacement makes the proxy ask gatewayd-internal for the node of
 // the instance behind each response, remember it in placement, and hand the
 // host's preferred node to the dialer through the request context. Every
@@ -313,7 +319,18 @@ func (p *InternalReverseProxy) markPlacement(h http.Header) {
 func (p *InternalReverseProxy) takeInstanceNode(r *http.Request, h http.Header) {
 	node := strings.TrimSpace(h.Get(InstanceNodeHeader))
 	h.Del(InstanceNodeHeader)
-	if node != "" && p.placement != nil {
+	// ADR-20261102081618 §5a: a gatewayd-internal with local-first on also
+	// names every node of the app; no client sees it.
+	nodes := strings.TrimSpace(h.Get(InstanceNodesHeader))
+	h.Del(InstanceNodesHeader)
+	if p.placement == nil {
+		return
+	}
+	if set, ok := p.placement.(EdgePlacementSet); ok && nodes != "" {
+		set.LearnSet(r, nodes)
+		return
+	}
+	if node != "" {
 		p.placement.Learn(r, node)
 	}
 }

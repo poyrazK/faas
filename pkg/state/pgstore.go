@@ -8729,7 +8729,8 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		if _, err := tx.Exec(ctx,
 			`update deployments
 			    set traffic_percent = $2,
-			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end
+			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end,
+			        promoted_at = case when $2 = 100 and traffic_percent < 100 then clock_timestamp() else promoted_at end
 			  where id = $1`,
 			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false), manualTrafficKeepsExplicit(stamp.prior, stamp.next)); err != nil {
 			if stamp.target {

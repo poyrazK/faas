@@ -241,12 +241,13 @@ func (d *localFirstDialer) placementRoute(ctx context.Context, rec *gateway.Dial
 	return endpoint, pref, true
 }
 
-// dialPlacement dials the node placement named; a failure forgets the host,
-// so its next request routes locally until a response names a node again.
+// dialPlacement dials the node placement named; a failure forgets that node
+// for the host, so the host's next request goes to another of its nodes, or
+// locally until a response names a node again.
 func (d *localFirstDialer) dialPlacement(ctx context.Context, endpoint computeGatewayEndpoint, pref gateway.PreferredNode) (net.Conn, error) {
 	conn, err := d.placementPool.dial(ctx, endpoint)
 	if err != nil && ctx.Err() == nil {
-		d.placement.Forget(pref.Host)
+		d.placement.Forget(pref.Host, pref.NodeID)
 		d.metrics.placement.WithLabelValues(placementFailed).Inc()
 	}
 	return conn, err

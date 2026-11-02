@@ -96,14 +96,47 @@ ss -ltn 'sport = :443'
 Also watch `gatewayd_public_edge_tls_handshake_failures_total`. A steady rise
 means Cloudflare is not presenting the zone's client certificate.
 
-## Next
+## 7. edgednsd, dry run first
 
-Step 3 of the ADR, `edgednsd`, keeps the app hosts' records in step with the
-ready nodes. The pilot, step 4, points one app host at the node addresses and
-runs the live test.
+`edgednsd` runs on the control plane. It keeps each managed name's proxied A
+records pointed at the compute nodes whose edges are ready. Give it two files
+on the controller, both kept out of the repository:
+
+- `faas_edgednsd_env_src`: `DATABASE_URL` for a `faas_runtime` member that may
+  read `compute_nodes`;
+- `faas_edgednsd_cf_token_src`: a Cloudflare token with Zone > DNS: Edit on
+  the apps zone only.
+
+In the manifest, add each compute host's address and the pilot name:
+
+```yaml
+fleet:
+  hosts:
+    - name: fsn-2
+      role: compute-only
+      public_ipv4: <address from step 5>
+public_edge:
+  entry: both
+  dns:
+    zone_id: <zone id>
+    names: [<pilot app host>]
+```
+
+Release, then watch `edge_dns_changes_total{dry_run="true"}` and edgednsd's
+log. Each "would create" line should name one ready node's address for the
+pilot host.
+
+## 8. Pilot
+
+Set `public_edge.dns.live: true` and release. edgednsd creates the pilot
+host's records, which take precedence over the wildcard, so only that host
+leaves the tunnel. Run the ADR's step 0 questions against it. Remove each
+injected failure as soon as it is measured.
 
 ## Undo
 
+- **Pilot:** remove `public_edge.dns` and release, then delete the pilot host's
+  A records. Their comment reads `edgednsd (ADR-20261102081618)`.
 - **Listeners:** set `public_edge.entry: tunnel` and release.
 - **GCP addresses:** `APPLY=1 gcp-compute-edge-address.sh delete NODE...`.
 - **Configuration rule:** delete it in the dashboard (Rules > Configuration Rules).

@@ -11,6 +11,11 @@ Metrics use the daemon prefix (`apid_` or `vmmd_`):
 `<daemon>_log_archive_local_bytes_max`,
 `<daemon>_log_archive_flush_duration_seconds`,
 `<daemon>_log_archive_upload_duration_seconds`.
+vmmd also counts lines it dropped before they reached the spool in
+`vmmd_log_archive_lines_dropped_total` (full eviction queue, full spool,
+spool write failure, or a ring retired after the archive closed); every drop
+also counts in `vmmd_log_archive_failures_total{reason}`, which this alert
+watches.
 For control-plane checks use the `apid` prefix and `apid` service below; on a
 compute host substitute the `vmmd` prefix and `faas-vmmd` service.
 Issue: #562. Ownership, kill switches and recovery: [FaasLogs](FaasLogs.md).
@@ -51,7 +56,10 @@ Three failure shapes show up first:
    Spool is full; the shipper is now in back-pressure mode
    and new per-instance rings will spill to the local
    filesystem (`reason="spool_full"`). `reason="queue_full"` means
-   vmmd's bounded eviction-to-disk queue is saturated.
+   vmmd's bounded eviction-to-disk queue is saturated. Evicted lines are
+   dropped then; a torn-down VM's retained lines wait up to 2 s for room
+   and are then written to the spool directly (logged as
+   `logarchive.retire_spilled`), so mass teardown no longer drops them.
 
 A fourth shape is observable through the `FaasLogArchiveShipperDegraded`
 alert: `reason="throttle"` means the vendor is rate-limiting the
