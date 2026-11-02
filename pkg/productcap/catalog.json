@@ -78,7 +78,8 @@
         "/v1/agent-callbacks",
         "/v1/agent-runs",
         "/v1/agent-tools",
-        "/v1/agents"
+        "/v1/agents",
+        "/v1/sandboxes"
       ],
       "consumers": [
         "schedd"
@@ -3189,6 +3190,9 @@
       ],
       "docs_url": "/docs/mcp",
       "acceptance_test": "pkg/mcpmanagement/server_test.go::TestManagementMCPJourney",
+      "routes": [
+        "/v1/agent-connections"
+      ],
       "cli": [
         "mcp serve",
         "mcp connections"

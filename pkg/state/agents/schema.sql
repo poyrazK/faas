@@ -190,3 +190,28 @@ CREATE TABLE agent_callback_revocations (
  revoked_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY (endpoint_id, thread_id)
 );
+CREATE TABLE sandbox_sessions (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ account_id uuid NOT NULL,
+ tenant_id uuid,
+ kind text NOT NULL DEFAULT 'ephemeral',
+ preset text NOT NULL,
+ ram_mb integer NOT NULL,
+ network_mode text NOT NULL DEFAULT 'registries',
+ state text NOT NULL DEFAULT 'queued',
+ idle_timeout_sec integer NOT NULL,
+ expires_at timestamptz NOT NULL,
+ labels jsonb NOT NULL DEFAULT '{}',
+ outcome_code text,
+ outcome_message text,
+ lease_owner text,
+ lease_token text,
+ lease_expires_at timestamptz,
+ node_id text,
+ instance_id text,
+ close_requested_at timestamptz,
+ last_activity_at timestamptz NOT NULL DEFAULT now(),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ closed_at timestamptz
+);

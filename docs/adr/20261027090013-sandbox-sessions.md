@@ -353,6 +353,25 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
 
 1. This ADR. The owner confirmed §5's billing rule (D15); the financial-model update is still owed.
 2. Migrations and the apid `sandboxes` domain: intents, tokens, gating.
+
+   **Built (2026-11-02), on a local branch.**
+   - **`sandbox_sessions`** (migration `20261102111658009`, expand) holds the intent:
+     - §1's states, with CHECKs, and `kind`;
+     - the preset, RAM, network mode, idle timeout, end and labels;
+     - an outcome, `close_requested_at`, and `closed_at` on terminal states only;
+     - lease and placement columns for agentd (step 5).
+   - **Routes** (`pkg/apid/sandboxes`), under `agents`: `POST /v1/sandboxes`, `GET /v1/sandboxes` (filtered by state and by a label selector, newest first), and `GET`, `PATCH` and `DELETE /v1/sandboxes/{id}`.
+     - Create takes a preset, `kind`, `ram_mb`, `tenant`, `network.mode`, `idle_timeout_s`, `lifetime_s` and labels.
+     - The defaults are the preset's RAM within `AgentRunRAMMBMax`, `ephemeral`, `registries`, `SandboxIdleExpirySec` and the plan's `SandboxMaxLifetimeSec`.
+     - These are refused with `sandbox_unsupported`, naming the field: `kind: persistent`; `network.mode: web`, until the egress gateway; and `image`, `manifest`, `snapshot_id`, `env` and `ports`, until their steps.
+     - Free creates none, since its `SandboxMaxLifetimeSec` is 0.
+     - Queued sessions share `AgentRunQueuedPerAccount` with queued runs, counted under the account's agent lock. Concurrency stays agentd's, at claim time.
+     - Closing a queued session closes it. A claimed one gets `close_requested_at`, which agentd acts on (step 5).
+   - **Tokens** (`pkg/sandboxtoken`, format `sbx1`) are HMAC-signed and bound to the session, account and tenant.
+     - A token lives `SandboxTokenTTLSec` (900 s), never past the session's end.
+     - Create and every read of a live session return a fresh one, so reading needs `deploy:write`; the list carries none.
+     - The key derives from apid's session key. The data plane (step 4) verifies tokens without reading Postgres, and treats a session it no longer routes as revoked.
+   - **Limits.** §7's table is in `pkg/api/limits.go`, with `SandboxIdleFreezeSec`, `SandboxIdleExpirySec` and `SandboxTokenTTLSec`.
 3. guest-init sandbox server mode: exec (with `run_as` and background handles), pseudo-terminal, files, archives. The netns anti-spoofing rule and a guest kernel that cannot load modules come with the root metal tests (§10).
 4. vmmd `SandboxSession` and gateway routing, on the ADR-1037 transport.
 5. agentd session lifecycle (idle timers, freezing, expiry) and schedd placement from preset snapshots, with teardown.

@@ -199,6 +199,32 @@ type PlatformTenant struct {
 	Status    string
 }
 
+type SandboxSession struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	TenantID         pgtype.UUID
+	Kind             string
+	Preset           string
+	RamMb            int32
+	NetworkMode      string
+	State            string
+	IdleTimeoutSec   int32
+	ExpiresAt        pgtype.Timestamptz
+	Labels           []byte
+	OutcomeCode      pgtype.Text
+	OutcomeMessage   pgtype.Text
+	LeaseOwner       pgtype.Text
+	LeaseToken       pgtype.Text
+	LeaseExpiresAt   pgtype.Timestamptz
+	NodeID           pgtype.Text
+	InstanceID       pgtype.Text
+	CloseRequestedAt pgtype.Timestamptz
+	LastActivityAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	ClosedAt         pgtype.Timestamptz
+}
+
 type WorkflowEvent struct {
 	ID        pgtype.UUID
 	RunID     pgtype.UUID

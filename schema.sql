@@ -54789,6 +54789,59 @@ CREATE TABLE public.safe_release_worker_lease (
 
 
 --
+-- Name: sandbox_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    tenant_id uuid,
+    kind text DEFAULT 'ephemeral'::text NOT NULL,
+    preset text NOT NULL,
+    ram_mb integer NOT NULL,
+    network_mode text DEFAULT 'registries'::text NOT NULL,
+    state text DEFAULT 'queued'::text NOT NULL,
+    idle_timeout_sec integer NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    outcome_code text,
+    outcome_message text,
+    lease_owner text,
+    lease_token text,
+    lease_expires_at timestamp with time zone,
+    node_id text,
+    instance_id text,
+    close_requested_at timestamp with time zone,
+    last_activity_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    closed_at timestamp with time zone,
+    CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
+    CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
+    CONSTRAINT sandbox_sessions_instance_id_check CHECK (((instance_id IS NULL) OR ((char_length(instance_id) >= 1) AND (char_length(instance_id) <= 128)))),
+    CONSTRAINT sandbox_sessions_kind_check CHECK ((kind = ANY (ARRAY['ephemeral'::text, 'persistent'::text]))),
+    CONSTRAINT sandbox_sessions_labels_check CHECK ((jsonb_typeof(labels) = 'object'::text)),
+    CONSTRAINT sandbox_sessions_lease_check CHECK (((lease_token IS NULL) = (lease_expires_at IS NULL))),
+    CONSTRAINT sandbox_sessions_lease_owner_check CHECK (((lease_owner IS NULL) OR ((char_length(lease_owner) >= 1) AND (char_length(lease_owner) <= 128)))),
+    CONSTRAINT sandbox_sessions_lease_token_check CHECK (((lease_token IS NULL) OR ((char_length(lease_token) >= 1) AND (char_length(lease_token) <= 128)))),
+    CONSTRAINT sandbox_sessions_network_mode_check CHECK ((network_mode = ANY (ARRAY['none'::text, 'registries'::text, 'web'::text]))),
+    CONSTRAINT sandbox_sessions_node_id_check CHECK (((node_id IS NULL) OR ((char_length(node_id) >= 1) AND (char_length(node_id) <= 128)))),
+    CONSTRAINT sandbox_sessions_outcome_code_check CHECK (((outcome_code IS NULL) OR (outcome_code ~ '^[a-z][a-z0-9_]{0,63}$'::text))),
+    CONSTRAINT sandbox_sessions_outcome_message_check CHECK (((outcome_message IS NULL) OR (char_length(outcome_message) <= 2048))),
+    CONSTRAINT sandbox_sessions_preset_check CHECK (((char_length(preset) >= 1) AND (char_length(preset) <= 64))),
+    CONSTRAINT sandbox_sessions_ram_mb_check CHECK ((((ram_mb >= 512) AND (ram_mb <= 4096)) AND ((ram_mb % 512) = 0))),
+    CONSTRAINT sandbox_sessions_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text, 'closed'::text, 'expired'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: TABLE sandbox_sessions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_sessions IS 'ADR-20261027090013 sandbox sessions; apid inserts queued intents, closes queued ones and requests the close of live ones; agentd (ADR-20261027090014) owns every other transition.';
+
+
+--
 -- Name: saved_route_requirements; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -68563,6 +68616,14 @@ ALTER TABLE ONLY public.safe_release_worker_lease
 
 
 --
+-- Name: sandbox_sessions sandbox_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: saved_route_requirements saved_route_requirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78931,6 +78992,27 @@ CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations
 --
 
 CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verifications USING btree (next_attempt_at, created_at, operation_id) WHERE (phase = 'pending'::text);
+
+
+--
+-- Name: sandbox_sessions_account_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_sessions_account_created_idx ON public.sandbox_sessions USING btree (account_id, created_at DESC, id DESC);
+
+
+--
+-- Name: sandbox_sessions_live_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_sessions_live_idx ON public.sandbox_sessions USING btree (account_id, state) WHERE (state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text]));
+
+
+--
+-- Name: sandbox_sessions_queue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_sessions_queue_idx ON public.sandbox_sessions USING btree (created_at, id) WHERE (state = 'queued'::text);
 
 
 --
@@ -101345,6 +101427,22 @@ ALTER TABLE ONLY public.runtime_upgrade_verifications
 
 ALTER TABLE ONLY public.runtime_upgrade_verifications
     ADD CONSTRAINT runtime_upgrade_verifications_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.runtime_upgrade_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_tenant_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_tenant_fkey FOREIGN KEY (account_id, tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
 
 
 --

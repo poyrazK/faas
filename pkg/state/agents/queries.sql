@@ -390,3 +390,47 @@ RETURNING revoked_at;
 -- name: AgentCallbacksRevokedAt :one
 SELECT revoked_at FROM agent_callback_revocations
  WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND thread_id = sqlc.arg(thread_id)::text;
+
+-- name: CountQueuedSandboxSessions :one
+-- ADR-20261027090013 §7: queued sessions share AgentRunQueuedPerAccount with queued runs.
+SELECT count(*)::integer FROM sandbox_sessions WHERE account_id=sqlc.arg(account_id)::text::uuid AND state='queued';
+
+-- name: InsertSandboxSession :one
+INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels)
+VALUES (sqlc.arg(account_id)::text::uuid,sqlc.narg(tenant_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(preset)::text,
+  sqlc.arg(ram_mb)::integer,sqlc.arg(network_mode)::text,sqlc.arg(idle_timeout_sec)::integer,sqlc.arg(expires_at)::timestamptz,
+  sqlc.arg(labels)::jsonb)
+RETURNING id::text AS id;
+
+-- name: GetSandboxSession :one
+SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at
+ FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: ListSandboxSessions :many
+-- Newest first; a page continues before the (created_at, id) of the last row.
+SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at
+ FROM sandbox_sessions
+ WHERE account_id=sqlc.arg(account_id)::text::uuid
+ AND (sqlc.narg(state)::text IS NULL OR state=sqlc.narg(state)::text)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR (created_at, id) < (sqlc.narg(before_created_at)::timestamptz, sqlc.narg(before_id)::text::uuid))
+ ORDER BY created_at DESC, id DESC LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: UpdateSandboxSessionTimeouts :execrows
+-- A live session's idle timeout and end; a terminal one is unchanged.
+UPDATE sandbox_sessions SET idle_timeout_sec=sqlc.arg(idle_timeout_sec)::integer, expires_at=sqlc.arg(expires_at)::timestamptz, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND state IN ('queued','starting','ready','frozen');
+
+-- name: CloseQueuedSandboxSession :execrows
+-- No VM exists yet, so apid closes a queued session itself.
+UPDATE sandbox_sessions SET state='closed', outcome_code='closed', closed_at=now(), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND state='queued';
+
+-- name: RequestSandboxSessionClose :execrows
+-- A claimed session is agentd's: apid records the request, and agentd tears
+-- the VM down and closes it.
+UPDATE sandbox_sessions SET close_requested_at=coalesce(close_requested_at, now()), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND state IN ('starting','ready','frozen');

@@ -19620,6 +19620,35 @@
     "kind": "operational"
   },
   {
+    "table": "sandbox_sessions",
+    "columns": [
+      "account_id",
+      "close_requested_at",
+      "closed_at",
+      "created_at",
+      "expires_at",
+      "id",
+      "idle_timeout_sec",
+      "instance_id",
+      "kind",
+      "labels",
+      "last_activity_at",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "network_mode",
+      "node_id",
+      "outcome_code",
+      "outcome_message",
+      "preset",
+      "ram_mb",
+      "state",
+      "tenant_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_run_ai_spend",
     "columns": [
       "account_id",

@@ -211,6 +211,25 @@ func (q *Queries) ClaimAgentDeliveries(ctx context.Context, db DBTX, arg ClaimAg
 	return items, nil
 }
 
+const closeQueuedSandboxSession = `-- name: CloseQueuedSandboxSession :execrows
+UPDATE sandbox_sessions SET state='closed', outcome_code='closed', closed_at=now(), updated_at=now()
+ WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND state='queued'
+`
+
+type CloseQueuedSandboxSessionParams struct {
+	SessionID string
+	AccountID string
+}
+
+// No VM exists yet, so apid closes a queued session itself.
+func (q *Queries) CloseQueuedSandboxSession(ctx context.Context, db DBTX, arg CloseQueuedSandboxSessionParams) (int64, error) {
+	result, err := db.Exec(ctx, closeQueuedSandboxSession, arg.SessionID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countActiveAgents = `-- name: CountActiveAgents :one
 SELECT count(*)::integer FROM agents WHERE account_id=$1::text::uuid AND state='active'
 `
@@ -260,6 +279,18 @@ SELECT count(*)::integer FROM agent_runs WHERE account_id=$1::text::uuid AND sta
 
 func (q *Queries) CountQueuedAgentRuns(ctx context.Context, db DBTX, accountID string) (int32, error) {
 	row := db.QueryRow(ctx, countQueuedAgentRuns, accountID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countQueuedSandboxSessions = `-- name: CountQueuedSandboxSessions :one
+SELECT count(*)::integer FROM sandbox_sessions WHERE account_id=$1::text::uuid AND state='queued'
+`
+
+// ADR-20261027090013 §7: queued sessions share AgentRunQueuedPerAccount with queued runs.
+func (q *Queries) CountQueuedSandboxSessions(ctx context.Context, db DBTX, accountID string) (int32, error) {
+	row := db.QueryRow(ctx, countQueuedSandboxSessions, accountID)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -828,6 +859,64 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 	return i, err
 }
 
+const getSandboxSession = `-- name: GetSandboxSession :one
+SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at
+ FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type GetSandboxSessionParams struct {
+	SessionID string
+	AccountID string
+}
+
+type GetSandboxSessionRow struct {
+	ID               string
+	AccountID        string
+	TenantID         string
+	Kind             string
+	Preset           string
+	RamMb            int32
+	NetworkMode      string
+	State            string
+	IdleTimeoutSec   int32
+	ExpiresAt        pgtype.Timestamptz
+	Labels           []byte
+	OutcomeCode      pgtype.Text
+	OutcomeMessage   pgtype.Text
+	CloseRequestedAt pgtype.Timestamptz
+	LastActivityAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	ClosedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandboxSessionParams) (GetSandboxSessionRow, error) {
+	row := db.QueryRow(ctx, getSandboxSession, arg.SessionID, arg.AccountID)
+	var i GetSandboxSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.TenantID,
+		&i.Kind,
+		&i.Preset,
+		&i.RamMb,
+		&i.NetworkMode,
+		&i.State,
+		&i.IdleTimeoutSec,
+		&i.ExpiresAt,
+		&i.Labels,
+		&i.OutcomeCode,
+		&i.OutcomeMessage,
+		&i.CloseRequestedAt,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
 const getTenantStatus = `-- name: GetTenantStatus :one
 SELECT status FROM platform_tenants WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
@@ -1130,6 +1219,43 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 	return i, err
 }
 
+const insertSandboxSession = `-- name: InsertSandboxSession :one
+INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels)
+VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
+  $5::integer,$6::text,$7::integer,$8::timestamptz,
+  $9::jsonb)
+RETURNING id::text AS id
+`
+
+type InsertSandboxSessionParams struct {
+	AccountID      string
+	TenantID       pgtype.Text
+	Kind           string
+	Preset         string
+	RamMb          int32
+	NetworkMode    string
+	IdleTimeoutSec int32
+	ExpiresAt      pgtype.Timestamptz
+	Labels         []byte
+}
+
+func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
+	row := db.QueryRow(ctx, insertSandboxSession,
+		arg.AccountID,
+		arg.TenantID,
+		arg.Kind,
+		arg.Preset,
+		arg.RamMb,
+		arg.NetworkMode,
+		arg.IdleTimeoutSec,
+		arg.ExpiresAt,
+		arg.Labels,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const listActiveAgents = `-- name: ListActiveAgents :many
 SELECT id::text AS id,name,description,state,latest_version,created_at,updated_at FROM agents
  WHERE account_id=$1::text::uuid AND state='active' AND name>$2::text
@@ -1415,6 +1541,91 @@ func (q *Queries) ListClaimableAgentRuns(ctx context.Context, db DBTX, maxRows i
 	return items, nil
 }
 
+const listSandboxSessions = `-- name: ListSandboxSessions :many
+SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at
+ FROM sandbox_sessions
+ WHERE account_id=$1::text::uuid
+ AND ($2::text IS NULL OR state=$2::text)
+ AND ($3::timestamptz IS NULL OR (created_at, id) < ($3::timestamptz, $4::text::uuid))
+ ORDER BY created_at DESC, id DESC LIMIT $5::integer
+`
+
+type ListSandboxSessionsParams struct {
+	AccountID       string
+	State           pgtype.Text
+	BeforeCreatedAt pgtype.Timestamptz
+	BeforeID        pgtype.Text
+	MaxRows         int32
+}
+
+type ListSandboxSessionsRow struct {
+	ID               string
+	AccountID        string
+	TenantID         string
+	Kind             string
+	Preset           string
+	RamMb            int32
+	NetworkMode      string
+	State            string
+	IdleTimeoutSec   int32
+	ExpiresAt        pgtype.Timestamptz
+	Labels           []byte
+	OutcomeCode      pgtype.Text
+	OutcomeMessage   pgtype.Text
+	CloseRequestedAt pgtype.Timestamptz
+	LastActivityAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	ClosedAt         pgtype.Timestamptz
+}
+
+// Newest first; a page continues before the (created_at, id) of the last row.
+func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSandboxSessionsParams) ([]ListSandboxSessionsRow, error) {
+	rows, err := db.Query(ctx, listSandboxSessions,
+		arg.AccountID,
+		arg.State,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSandboxSessionsRow{}
+	for rows.Next() {
+		var i ListSandboxSessionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.TenantID,
+			&i.Kind,
+			&i.Preset,
+			&i.RamMb,
+			&i.NetworkMode,
+			&i.State,
+			&i.IdleTimeoutSec,
+			&i.ExpiresAt,
+			&i.Labels,
+			&i.OutcomeCode,
+			&i.OutcomeMessage,
+			&i.CloseRequestedAt,
+			&i.LastActivityAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ClosedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSettleableAgentRuns = `-- name: ListSettleableAgentRuns :many
 SELECT r.id::text AS id FROM agent_runs r WHERE r.state='delivering'
  AND NOT EXISTS (SELECT 1 FROM agent_deliveries d WHERE d.run_id=r.id AND d.state IN ('pending','sending','reconciling'))
@@ -1682,6 +1893,27 @@ func (q *Queries) RequestAgentRunCancel(ctx context.Context, db DBTX, arg Reques
 	return result.RowsAffected(), nil
 }
 
+const requestSandboxSessionClose = `-- name: RequestSandboxSessionClose :execrows
+UPDATE sandbox_sessions SET close_requested_at=coalesce(close_requested_at, now()), updated_at=now()
+ WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+ AND state IN ('starting','ready','frozen')
+`
+
+type RequestSandboxSessionCloseParams struct {
+	SessionID string
+	AccountID string
+}
+
+// A claimed session is agentd's: apid records the request, and agentd tears
+// the VM down and closes it.
+func (q *Queries) RequestSandboxSessionClose(ctx context.Context, db DBTX, arg RequestSandboxSessionCloseParams) (int64, error) {
+	result, err := db.Exec(ctx, requestSandboxSessionClose, arg.SessionID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const requeueAgentRun = `-- name: RequeueAgentRun :execrows
 UPDATE agent_runs SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, started_at=NULL, updated_at=now()
  WHERE id=$1::text::uuid AND lease_token=$2::text AND state='starting'
@@ -1917,4 +2149,31 @@ func (q *Queries) TryLockAccountAgents(ctx context.Context, db DBTX, accountID s
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const updateSandboxSessionTimeouts = `-- name: UpdateSandboxSessionTimeouts :execrows
+UPDATE sandbox_sessions SET idle_timeout_sec=$1::integer, expires_at=$2::timestamptz, updated_at=now()
+ WHERE id=$3::text::uuid AND account_id=$4::text::uuid
+ AND state IN ('queued','starting','ready','frozen')
+`
+
+type UpdateSandboxSessionTimeoutsParams struct {
+	IdleTimeoutSec int32
+	ExpiresAt      pgtype.Timestamptz
+	SessionID      string
+	AccountID      string
+}
+
+// A live session's idle timeout and end; a terminal one is unchanged.
+func (q *Queries) UpdateSandboxSessionTimeouts(ctx context.Context, db DBTX, arg UpdateSandboxSessionTimeoutsParams) (int64, error) {
+	result, err := db.Exec(ctx, updateSandboxSessionTimeouts,
+		arg.IdleTimeoutSec,
+		arg.ExpiresAt,
+		arg.SessionID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -65,6 +65,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/apid/routejobs"
+	"github.com/onebox-faas/faas/pkg/apid/sandboxes"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
@@ -235,6 +236,9 @@ type server struct {
 	liveRollout livequeries.Rollout
 	// agentAPI serves the agent routes; nil until configureAgents runs.
 	agentAPI *agents.Handler
+	// sandboxAPI serves the sandbox session routes; nil until
+	// configureSandboxes runs.
+	sandboxAPI *sandboxes.Handler
 	// realtimeRollout is who sees the realtime preview until an operator
 	// writes the realtime_preview platform flag (ADR-20261019102657).
 	realtimeRollout               managedrealtime.PreviewGate
@@ -3263,6 +3267,14 @@ func (s *server) handler() http.Handler {
 	// ADR-20261027090010 agents: the agents capability owns these routes, so
 	// the capability gate hides them like unregistered routes from every
 	// account it is off for.
+	// ADR-20261027090013: sandbox session intents. Reading a session mints
+	// its data-plane token, so it needs the write scope; the list carries no
+	// tokens.
+	mux.HandleFunc("POST /v1/sandboxes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.sandboxRoute((*sandboxes.Handler).Create))))))
+	mux.HandleFunc("GET /v1/sandboxes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).List)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Get)))))
+	mux.HandleFunc("PATCH /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Update)))))
+	mux.HandleFunc("DELETE /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Close)))))
 	mux.HandleFunc("POST /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgent)))))
 	mux.HandleFunc("GET /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAgents))))
 	mux.HandleFunc("GET /v1/agents/{agent}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgent))))

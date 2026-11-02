@@ -14394,6 +14394,33 @@ type SafeReleaseWorkerLease struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+// ADR-20261027090013 sandbox sessions; apid inserts queued intents, closes queued ones and requests the close of live ones; agentd (ADR-20261027090014) owns every other transition.
+type SandboxSession struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	TenantID         pgtype.UUID
+	Kind             string
+	Preset           string
+	RamMb            int32
+	NetworkMode      string
+	State            string
+	IdleTimeoutSec   int32
+	ExpiresAt        pgtype.Timestamptz
+	Labels           []byte
+	OutcomeCode      pgtype.Text
+	OutcomeMessage   pgtype.Text
+	LeaseOwner       pgtype.Text
+	LeaseToken       pgtype.Text
+	LeaseExpiresAt   pgtype.Timestamptz
+	NodeID           pgtype.Text
+	InstanceID       pgtype.Text
+	CloseRequestedAt pgtype.Timestamptz
+	LastActivityAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	ClosedAt         pgtype.Timestamptz
+}
+
 type SavedRouteRequirement struct {
 	AppID        pgtype.UUID
 	AccountID    pgtype.UUID
