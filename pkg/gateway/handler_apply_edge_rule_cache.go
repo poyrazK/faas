@@ -271,12 +271,16 @@ func isHopByHopHeader(k string) bool {
 // request. The stored copy was captured from an earlier request, so adding it
 // sent every X-RateLimit-* header twice, once with a stale value.
 func cachedHeaderSuperseded(w http.ResponseWriter, k string) bool {
-	switch lower := strings.ToLower(k); {
-	case strings.HasPrefix(lower, "x-ratelimit-"), strings.HasPrefix(lower, "x-accountratelimit-"),
-		strings.HasPrefix(lower, "x-routeratelimit-"):
-		return len(w.Header().Values(k)) > 0
-	}
-	return false
+	return isGatewayRateLimitHeader(k) && len(w.Header().Values(k)) > 0
+}
+
+// isGatewayRateLimitHeader reports the header families the gateway writes
+// for the current request's allowance (X-RateLimit-*, X-AccountRateLimit-*,
+// X-RouteRateLimit-*).
+func isGatewayRateLimitHeader(k string) bool {
+	lower := strings.ToLower(k)
+	return strings.HasPrefix(lower, "x-ratelimit-") || strings.HasPrefix(lower, "x-accountratelimit-") ||
+		strings.HasPrefix(lower, "x-routeratelimit-")
 }
 
 // itoaLen is a small helper for setting Content-Length without

@@ -244,7 +244,7 @@ func (f *httpFetcher) Fetch(ctx context.Context, repoFullName, commitSHA, token 
 	// paths) and the per-entry + total byte cap. The cap is
 	// the same default the apid path uses (10 000 entries,
 	// 2.5× the compressed cap).
-	err = extractStream(tempDir, reader, f.maxTotalBytes, defaultExtractLimits())
+	err = extractStream(ctx, tempDir, reader, f.maxTotalBytes, defaultExtractLimits())
 	// Consuming the sentinel byte exceeds the cap even if it completes a
 	// valid gzip trailer. A decoder EOF caused by the cap is a size error,
 	// not evidence of a malformed provider archive.
@@ -333,7 +333,7 @@ func defaultExtractLimits() extractLimit {
 //     reader hit a clean io.EOF
 //
 // maxTotalBytes==0 disables the cumulative cap (tests).
-func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimit) error {
+func extractStream(ctx context.Context, dst string, r io.Reader, maxTotalBytes int64, lim extractLimit) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("gzip: %w: %w", err, ErrBadArchive)
@@ -457,7 +457,7 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 	if err := gz.Close(); err != nil {
 		return fmt.Errorf("gzip trailer verify: %w: %w", err, ErrBadArchive)
 	}
-	return materializeLinks(dst, links, &total, maxTotalBytes, lim.MaxFileBytes, &entries, lim.MaxEntries)
+	return materializeLinks(ctx, dst, links, &total, maxTotalBytes, lim.MaxFileBytes, &entries, lim.MaxEntries)
 }
 
 // stripArchiveRoot removes the codeload "<owner>-<repo>-<sha>/" wrapper.

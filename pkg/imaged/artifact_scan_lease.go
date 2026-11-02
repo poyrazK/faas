@@ -17,6 +17,10 @@ func (l *Loop) privateSecurityLeaseFailure(ctx context.Context, app state.App, d
 		if allowed {
 			return false, "", nil
 		}
+		if readErr != nil && !leaseEvidenceDefinitive(readErr) {
+			l.log.Warn("imaged: security evidence lease skipped; enrollment unreadable", "deployment", dep.ID, "err", readErr)
+			return true, "", readErr
+		}
 		return true, "security_scan_evidence_missing", readErr
 	}
 	reader, ok := l.store.(state.DeploymentRuntimeScanStore)
@@ -29,6 +33,14 @@ func (l *Loop) privateSecurityLeaseFailure(ctx context.Context, app state.App, d
 	}
 	if err != nil {
 		if producedEvidenceBusy(err) || ctx.Err() != nil {
+			return true, "", err
+		}
+		if !leaseEvidenceDefinitive(err) {
+			// A store read that failed (a CP Postgres timeout) says
+			// nothing about the evidence; it parked enforce apps whose
+			// evidence was fine (bug hunt 2026-10-28 H84). The next
+			// minute reads again.
+			l.log.Warn("imaged: security evidence lease skipped; evidence unreadable", "deployment", dep.ID, "err", err)
 			return true, "", err
 		}
 		reason := "security_scan_evidence_invalid"
@@ -66,4 +78,13 @@ func (l *Loop) legacySecurityLeaseAllowed(ctx context.Context, app state.App) (b
 		return false, err
 	}
 	return len(value.Adoptions) == 0 && len(value.MaterializedFields) == 0, nil
+}
+
+// leaseEvidenceDefinitive reports whether a lease read error is a verdict on
+// the evidence (none fresh, a stale runtime, a missing or invalid signature)
+// rather than a failure to read it.
+func leaseEvidenceDefinitive(err error) bool {
+	return errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrApplicationStandardRuntimeStale) ||
+		errors.Is(err, state.ErrApplicationStandardsPending) ||
+		errors.Is(err, cosign.ErrSignatureInvalid) || errors.Is(err, cosign.ErrSignatureMissing)
 }

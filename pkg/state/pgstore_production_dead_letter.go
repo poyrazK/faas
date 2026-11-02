@@ -138,7 +138,7 @@ func (s *PgStore) productionDeadLetterReplayMany(ctx context.Context, accountID,
 	for _, row := range rows {
 		ev := deadLetterEventFromSQLC(row)
 		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, ev.AppID, ev); err != nil {
-			if errors.Is(err, ErrNotFound) {
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 				continue
 			}
 			return 0, err

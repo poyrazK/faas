@@ -95,7 +95,7 @@ func cmdDataAPIStorageSQL(args []string) int {
 	schema := fs.String("schema", "api", "the Data API's first exposed schema")
 	upgrade := fs.Bool("upgrade", false, "print the upgrade for a storage_objects table without object_key")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api storage sql [--schema api] [--upgrade]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api storage export [--schema api] [--upgrade]", "data-api")
 		return 1
 	}
 	sql, err := dataAPIStorageSQL(*schema, *upgrade)
@@ -168,7 +168,7 @@ func cmdDataAPIStorageEnable(args []string) int {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "File storage on for %s: bucket %s is %q in storage routes", app, bound.Bucket, bound.Name)
-	_, _ = fmt.Fprintf(osStdout, "Add the storage_objects table and your policies with a migration (gregale data-api storage sql). Until it exists, storage answers 503 storage_unavailable and the rest of the API keeps serving.\n")
+	_, _ = fmt.Fprintf(osStdout, "Add the storage_objects table and your policies with a migration (gregale data-api storage export). Until it exists, storage answers 503 storage_unavailable and the rest of the API keeps serving.\n")
 	if !receipt.Restarted {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the settings.\n", app)
 	}

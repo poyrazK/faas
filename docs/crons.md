@@ -16,6 +16,10 @@ Crons are available on Hobby, Pro and Scale. Free accounts get
 Disabled crons count toward both limits. A request over a limit gets
 `403 plan_cron_quota` with the limit and your current count.
 
+If a plan change leaves you over a limit, your oldest enabled crons keep
+running and the rest stop until the plan allows them again. Running one of the
+stopped crons with `gregale cron run` also gets `403 plan_cron_quota`.
+
 ## Create a cron
 
 ```bash
@@ -116,7 +120,8 @@ It never runs immediately because of the change, and it does not catch up on
 the times it passed while it was off.
 
 Disabling a cron stops future runs. It does not cancel a run that is already
-queued or in progress.
+queued or in progress. Deleting a cron also cancels its runs that have not
+started, including runs waiting to retry; a run already in progress finishes.
 
 ### Suspension
 
@@ -132,7 +137,7 @@ yourself stays disabled. Deleting an app suspends its crons with
 gregale cron run CRON_ID                         # queue the run, print its request id
 gregale cron run CRON_ID --wait                  # follow it; exit 0 only if it succeeds
 gregale cron run --app my-api --interactive      # pick a cron and follow the run
-gregale cron fire-now REQUEST_ID --wait          # follow a request you already made
+gregale cron run get REQUEST_ID --wait          # follow a request you already made
 ```
 
 A manual run sends the same request as a scheduled run and does not move the
@@ -161,7 +166,7 @@ Each run shows when it started, how long it took, its outcome (`success`,
 period.
 
 Schedule decisions (`gregale cron occurrences CRON_ID`) and manual-run
-requests (`gregale cron fire-now REQUEST_ID`) are kept for 90 days. A
+requests (`gregale cron run get REQUEST_ID`) are kept for 90 days. A
 decision that is still waiting or running is kept until it settles.
 
 A run that fails with `application returned HTTP 404` reached your app, but
@@ -189,8 +194,9 @@ need more control:
 
 - **Overlap**: `allow`, `skip` or `replace` a run that is still active.
 - **Missed runs**: `skip` or `coalesce_latest` the times a busy or unavailable
-  scheduler passed, with each decision recorded and listed by
-  `gregale cron occurrences CRON_ID`.
+  scheduler passed, with the decisions listed by
+  `gregale cron occurrences CRON_ID`. After a long gap only the newest 20 due
+  times are recorded; `coalesce_latest` always runs the latest one.
 - **Start deadline**: give up on a run that cannot start within N seconds.
 - **Failure rules**: map HTTP statuses or a reported `outcome_code` to
   `retry` or `fail_partition` (fail without retrying), and choose whether an

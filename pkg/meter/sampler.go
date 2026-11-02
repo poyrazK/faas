@@ -213,6 +213,8 @@ type Sampler struct {
 	// closed minute when every earlier one is. The provider pusher delivers
 	// only the hours before it (ADR-1162).
 	firstIncomplete time.Time
+	// settle delays rolling a closed minute (WithRollSettle).
+	settle time.Duration
 	// catchUp holds what every caught-up minute of one SampleAndRoll shares;
 	// nil outside a catch-up.
 	catchUp *catchUpReads
@@ -413,7 +415,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 	if _, ok := s.store.(instanceBillingSecondsStore); !ok {
 		return s.rollApps(ctx, observedAt, MinuteKey(observedAt), false, false)
 	}
-	newest := observedAt.Truncate(time.Minute).Add(-time.Minute)
+	newest := s.newestClosedMinute(observedAt)
 	pending, rolled, firstIncomplete, err := s.minutesToCatchUp(ctx, s.appRolled, newest)
 	s.appRolled = rolled
 	if err != nil {
@@ -422,7 +424,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 	s.firstIncomplete = firstIncomplete
 	var out []RolledRow
 	if len(pending) > 0 {
-		s.catchUp = &catchUpReads{since: pending[0].Add(-api.MeterCatchUpWindow), end: pending[len(pending)-1].Add(time.Minute)}
+		s.catchUp = &catchUpReads{since: pending[0].Add(-api.MeterTelemetryDrainWindow), end: pending[len(pending)-1].Add(time.Minute)}
 		defer func() { s.catchUp = nil }()
 	}
 	for _, minute := range pending {
@@ -464,6 +466,19 @@ func (s *Sampler) UnrecordedMinutes() []time.Time {
 	}
 	slices.SortFunc(out, func(a, b time.Time) int { return a.Compare(b) })
 	return out
+}
+
+// WithRollSettle makes the sampler roll a minute only settle after it closes
+// (api.MeterRollSettle in meterd), so residency intervals still committing
+// at the boundary are seen (ADR-20261030120000).
+func (s *Sampler) WithRollSettle(settle time.Duration) *Sampler {
+	s.settle = settle
+	return s
+}
+
+// newestClosedMinute is the newest minute closed at least s.settle ago.
+func (s *Sampler) newestClosedMinute(observedAt time.Time) time.Time {
+	return observedAt.Add(-s.settle).Truncate(time.Minute).Add(-time.Minute)
 }
 
 // FirstIncompleteMinute is the oldest closed minute the latest SampleAndRoll
@@ -565,16 +580,18 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	// RolledRow.Plan is populated in one DB read rather than one
 	// per app. The lookup mirrors Residency's per-tick account
 	// fan-out: the sampler runs once per minute, so the scan cost
-	// is bounded by the customer count, not the app count. A
-	// failure here is non-fatal — the closure falls back to
-	// "free" at emission time (OpsMetrics.MeteredMBSecondsTotal
-	// treats empty as free) so a transient Postgres blip doesn't
-	// drop the entire tick's metric.
+	// is bounded by the customer count, not the app count. The map
+	// also names each row's billing subject (meterAppSubject): without
+	// it a company app's minute would be written, first-write-wins, to
+	// its creator's account. A failed read fails the roll, and the
+	// minute is rolled again by a later tick (ADR-20261030120000).
 	planByAccount := make(map[string]api.Plan)
-	if accounts, accErr := s.listBillingResourceAccounts(ctx, catchUp); accErr == nil {
-		for _, a := range accounts {
-			planByAccount[a.ID] = a.Plan
-		}
+	accounts, err := s.listBillingResourceAccounts(ctx, catchUp)
+	if err != nil {
+		return nil, fmt.Errorf("meter: list billing accounts: %w", err)
+	}
+	for _, a := range accounts {
+		planByAccount[a.ID] = a.Plan
 	}
 	floorHeld := newFloorHolders(s.store)
 	instancesByApp, err := s.catchUpWindowInstances(ctx, minute, catchUp)
@@ -851,7 +868,14 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// instances share its floor (bug hunt 2026-10-27 O3).
 		floorByDeployment := map[string]int{}
 		for _, ins := range ins {
-			if !state.State(ins.State).CountsForRAM() {
+			// With exact residency the minute's own residency says which
+			// instances held capacity; a caught-up minute must not use the
+			// instance's state now (ADR-20261030120000).
+			counts := state.State(ins.State).CountsForRAM()
+			if exactResidency {
+				counts = residentSeconds[ins.ID] > 0
+			}
+			if !counts {
 				continue
 			}
 			// Same skip as the live-instance loop above: mode='mirror'
@@ -868,8 +892,14 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			depFloor, seen := floorByDeployment[ins.DeploymentID]
 			if !seen {
 				dep, err := s.store.DeploymentByID(ctx, ins.DeploymentID)
-				if err != nil {
+				if errors.Is(err, state.ErrNotFound) {
 					continue
+				}
+				if err != nil {
+					// A failed read would bill the minute without the
+					// deployment's floor, first-write-wins; the minute is
+					// rolled again instead.
+					return out, fmt.Errorf("meter: deployment floor %s: %w", ins.DeploymentID, err)
 				}
 				depFloor = dep.EffectiveMinInstances()
 				floorByDeployment[ins.DeploymentID] = depFloor
@@ -1114,11 +1144,12 @@ func (s *Sampler) catchUpWindowInstances(ctx context.Context, minute time.Time, 
 
 // billingWindowInstances groups by app the instances a roll of minute can
 // write rows for, in one store read. The window reaches back
-// api.MeterCatchUpWindow so an instance that ended recently still drains the
-// gateway and network telemetry its sources hold for it. nil means the store
-// cannot list the window and the caller reads each app's history instead.
+// api.MeterTelemetryDrainWindow so an instance that ended recently still
+// drains the gateway and network telemetry its sources hold for it. nil means
+// the store cannot list the window and the caller reads each app's history
+// instead.
 func (s *Sampler) billingWindowInstances(ctx context.Context, minute time.Time) (map[string][]state.Instance, error) {
-	return s.billingInstancesBetween(ctx, minute.Add(-api.MeterCatchUpWindow), minute.Add(time.Minute))
+	return s.billingInstancesBetween(ctx, minute.Add(-api.MeterTelemetryDrainWindow), minute.Add(time.Minute))
 }
 
 func (s *Sampler) billingInstancesBetween(ctx context.Context, since, end time.Time) (map[string][]state.Instance, error) {

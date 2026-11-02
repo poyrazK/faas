@@ -122,7 +122,14 @@ func TestUsageRecorderCountsAndReportsHours(t *testing.T) {
 	clock = start.Add(10 * time.Second) // 10:00:40, minute 0
 	r.sample(clock)
 	_ = b.Close()
-	waitFor(t, "one connection", func() bool { return len(f.m.Snapshot()) == 1 })
+	// sample counts the endpoint's reservations, which the handler releases
+	// only after the connection has left Snapshot.
+	value, ok := f.m.endpoints.Load(f.endpoint)
+	if !ok {
+		t.Fatal("endpoint not registered")
+	}
+	endpoint := value.(*endpointState)
+	waitFor(t, "one connection", func() bool { return endpoint.reserved.Load() == 1 })
 	clock = start.Add(70 * time.Second) // 10:01:40, minute 1
 	r.sample(clock)
 	r.report(t.Context())

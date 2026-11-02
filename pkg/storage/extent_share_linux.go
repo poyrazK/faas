@@ -45,15 +45,43 @@ type fiemapExtent struct {
 
 // fileExtents lists path's allocated extents with FS_IOC_FIEMAP.
 func fileExtents(path string) ([]physicalExtent, error) {
-	f, err := os.Open(path) //nolint:forbidigo // cache-owned entry path; metadata only.
+	var out []physicalExtent
+	err := walkExtents(path, func(_, physical, length int64, shared bool) {
+		out = append(out, physicalExtent{physical: physical, length: length, shared: shared})
+	})
 	if err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+// sharedRanges lists the [start, end) file offsets of path's extents that
+// share their blocks with another file.
+func sharedRanges(path string) ([]interval, error) {
+	var out []interval
+	err := walkExtents(path, func(logical, _, length int64, shared bool) {
+		if shared {
+			out = append(out, interval{start: logical, end: logical + length})
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// walkExtents calls fn with each allocated extent of path, from
+// FS_IOC_FIEMAP. A delayed or unknown placement has no physical address yet
+// and is reported unshared: it counts as the file's own bytes.
+func walkExtents(path string, fn func(logical, physical, length int64, shared bool)) error {
+	f, err := os.Open(path) //nolint:forbidigo // cache-owned entry path; metadata only.
+	if err != nil {
+		return err
 	}
 	defer func() { _ = f.Close() }()
 	headerSize := int(unsafe.Sizeof(fiemapHeader{}))
 	extentSize := int(unsafe.Sizeof(fiemapExtent{}))
 	buf := make([]byte, headerSize+fiemapBatch*extentSize)
-	var out []physicalExtent
 	var start uint64
 	for {
 		clear(buf)
@@ -64,30 +92,24 @@ func fileExtents(path string) ([]physicalExtent, error) {
 		header.extentCount = fiemapBatch
 		if _, _, errno := unix.Syscall(unix.SYS_IOCTL, f.Fd(), fsIocFiemap, uintptr(unsafe.Pointer(&buf[0]))); errno != 0 { //nolint:gosec // G103: see above.
 			if errors.Is(errno, unix.EOPNOTSUPP) || errors.Is(errno, unix.ENOTTY) {
-				return nil, errExtentsUnsupported
+				return errExtentsUnsupported
 			}
-			return nil, errno
+			return errno
 		}
 		mapped := int(header.mappedExtents)
 		if mapped == 0 {
-			return out, nil
+			return nil
 		}
 		last := false
 		for i := range mapped {
 			x := (*fiemapExtent)(unsafe.Pointer(&buf[headerSize+i*extentSize])) //nolint:gosec // G103: see above.
-			// A delayed or unknown placement has no physical address yet;
-			// count it as the file's own bytes.
 			unplaced := x.flags&(fiemapExtentUnknown|fiemapExtentDelalloc) != 0
-			out = append(out, physicalExtent{
-				physical: int64(x.physical),
-				length:   int64(x.length),
-				shared:   !unplaced && x.flags&fiemapExtentShared != 0,
-			})
+			fn(int64(x.logical), int64(x.physical), int64(x.length), !unplaced && x.flags&fiemapExtentShared != 0)
 			start = x.logical + x.length
 			last = last || x.flags&fiemapExtentLast != 0
 		}
 		if last {
-			return out, nil
+			return nil
 		}
 	}
 }

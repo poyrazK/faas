@@ -56,6 +56,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if response.status_code == 504:
         response_504 = Problem.from_dict(response.json())
 
@@ -89,9 +94,9 @@ def sync_detailed(
      Read-only, payload-free counts and earliest effective deadline across all retained captured pending
     application recipients for this subscription. One Repeatable Read snapshot includes current
     controls. Processing work, future arrivals and publications awaiting recipient capture are excluded.
-    No sample cap; request and statement budgets bound scan time. Timeout returns 504 without partial
-    counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not
-    model future admission or guarantee deadline safety.
+    No sample cap; request and statement budgets bound scan time. Timeout returns 503 (504 from older
+    edges) without partial counts. Incomplete or absent evidence is unknown, never zero or a successful
+    recovery. Counts do not model future admission or guarantee deadline safety.
 
     Args:
         slug (str):
@@ -128,9 +133,9 @@ def sync(
      Read-only, payload-free counts and earliest effective deadline across all retained captured pending
     application recipients for this subscription. One Repeatable Read snapshot includes current
     controls. Processing work, future arrivals and publications awaiting recipient capture are excluded.
-    No sample cap; request and statement budgets bound scan time. Timeout returns 504 without partial
-    counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not
-    model future admission or guarantee deadline safety.
+    No sample cap; request and statement budgets bound scan time. Timeout returns 503 (504 from older
+    edges) without partial counts. Incomplete or absent evidence is unknown, never zero or a successful
+    recovery. Counts do not model future admission or guarantee deadline safety.
 
     Args:
         slug (str):
@@ -162,9 +167,9 @@ async def asyncio_detailed(
      Read-only, payload-free counts and earliest effective deadline across all retained captured pending
     application recipients for this subscription. One Repeatable Read snapshot includes current
     controls. Processing work, future arrivals and publications awaiting recipient capture are excluded.
-    No sample cap; request and statement budgets bound scan time. Timeout returns 504 without partial
-    counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not
-    model future admission or guarantee deadline safety.
+    No sample cap; request and statement budgets bound scan time. Timeout returns 503 (504 from older
+    edges) without partial counts. Incomplete or absent evidence is unknown, never zero or a successful
+    recovery. Counts do not model future admission or guarantee deadline safety.
 
     Args:
         slug (str):
@@ -199,9 +204,9 @@ async def asyncio(
      Read-only, payload-free counts and earliest effective deadline across all retained captured pending
     application recipients for this subscription. One Repeatable Read snapshot includes current
     controls. Processing work, future arrivals and publications awaiting recipient capture are excluded.
-    No sample cap; request and statement budgets bound scan time. Timeout returns 504 without partial
-    counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not
-    model future admission or guarantee deadline safety.
+    No sample cap; request and statement budgets bound scan time. Timeout returns 503 (504 from older
+    edges) without partial counts. Incomplete or absent evidence is unknown, never zero or a successful
+    recovery. Counts do not model future admission or guarantee deadline safety.
 
     Args:
         slug (str):

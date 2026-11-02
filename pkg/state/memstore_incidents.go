@@ -63,18 +63,18 @@ func sortEpisodesNewestFirst(eps []AlertEpisode) {
 	})
 }
 
-// withRuleLocked fills the rule columns, or reports the rule gone.
-func (m *MemStore) withRuleLocked(ep AlertEpisode) (AlertEpisode, bool) {
-	r, ok := m.alertRules[ep.RuleID]
-	if !ok {
-		return ep, false
+// withRuleLocked fills the rule columns; once the rule is deleted, the copy
+// keepDeletedRuleEpisodesLocked left on the episode stands in for it
+// (ADR-20261030214500).
+func (m *MemStore) withRuleLocked(ep AlertEpisode) AlertEpisode {
+	if r, ok := m.alertRules[ep.RuleID]; ok {
+		ep.AppID, ep.RuleName, ep.Metric, ep.RuleState = r.AppID, r.Name, r.Metric, r.State
 	}
-	ep.AppID, ep.RuleName, ep.Metric, ep.RuleState = r.AppID, r.Name, r.Metric, r.State
 	if ep.ResolvedAt != nil {
 		at := *ep.ResolvedAt
 		ep.ResolvedAt = &at
 	}
-	return ep, true
+	return ep
 }
 
 func (m *MemStore) ListAlertEpisodes(_ context.Context, accountID, appID string, resolvedSince time.Time, limit int) ([]AlertEpisode, error) {
@@ -85,8 +85,8 @@ func (m *MemStore) ListAlertEpisodes(_ context.Context, accountID, appID string,
 		if ep.AccountID != accountID || (ep.ResolvedAt != nil && ep.ResolvedAt.Before(resolvedSince)) {
 			continue
 		}
-		ep, ok := m.withRuleLocked(ep)
-		if !ok || (appID != "" && ep.AppID != appID) {
+		ep = m.withRuleLocked(ep)
+		if appID != "" && ep.AppID != appID {
 			continue
 		}
 		out = append(out, ep)
@@ -102,10 +102,7 @@ func (m *MemStore) AlertEpisodeByID(_ context.Context, accountID, id string) (Al
 	if !ok || ep.AccountID != accountID {
 		return AlertEpisode{}, ErrNotFound
 	}
-	if ep, ok = m.withRuleLocked(ep); !ok {
-		return AlertEpisode{}, ErrNotFound
-	}
-	return ep, nil
+	return m.withRuleLocked(ep), nil
 }
 
 func (m *MemStore) ListRouteMonitorIncidentSummaries(_ context.Context, accountID, appID string, closedSince time.Time, limit int) ([]RouteMonitorIncidentSummary, error) {
@@ -155,4 +152,24 @@ func routeMonitorIncidentSummary(inc api.RouteMonitorIncident) RouteMonitorIncid
 		out.ClosedAt = &at
 	}
 	return out
+}
+
+// keepDeletedRuleEpisodesLocked mirrors the alert_rules_keep_episodes trigger:
+// a deleted rule's episodes keep its name, metric and app, and an open one is
+// resolved (ADR-20261030214500). m.mu is held.
+func (m *MemStore) keepDeletedRuleEpisodesLocked(r AlertRule, at time.Time) {
+	for id, ep := range m.alertEpisodes {
+		if ep.RuleID != r.ID {
+			continue
+		}
+		ep.AppID, ep.RuleName, ep.Metric, ep.RuleState = r.AppID, r.Name, r.Metric, ""
+		if ep.ResolvedAt == nil {
+			resolved := at
+			if resolved.Before(ep.OpenedAt) {
+				resolved = ep.OpenedAt
+			}
+			ep.ResolvedAt = &resolved
+		}
+		m.alertEpisodes[id] = ep
+	}
 }

@@ -228,6 +228,7 @@ type ProjectEnvironmentInspection = projectEnvironmentInspection
 type ProjectEnvironmentPromotionWaitReceipt = projectEnvironmentPromotionWaitReceipt
 type QueueCanaryConsentKey = queueCanaryConsentKey
 type QueueStatusReport = queueStatusReport
+type ReleaseGateFlags = releaseGateFlags
 type ResumableUploadState = resumableUploadState
 type RolloutHeldNotice = rolloutHeldNotice
 type RouteHealthCorrelationReport = routeHealthCorrelationReport
@@ -677,6 +678,11 @@ var CliTreeCanonicalFlag = cliTreeCanonicalFlag
 var CliTreeFlagsForDisplay = cliTreeFlagsForDisplay
 var CliTreeFlagSynonyms = &cliTreeFlagSynonyms
 var CliTreeFolds = &cliTreeFolds
+var CliTreeFlagFolds = &cliTreeFlagFolds
+var RewriteFlagFold = rewriteFlagFold
+var CliTreeFlagFoldSpelling = func(fold cliTreeFlagFold) string { return fold.spelling() }
+var CliTreeFold = cliTreeFold
+var ManifestLeafFlags = manifestLeafFlags
 var CliTreeEarlierName = cliTreeEarlierName
 var CliTreeNounsHolding = cliTreeNounsHolding
 var CliTreeHintTerminal = &cliTreeHintTerminal
@@ -935,6 +941,8 @@ var CmdMan = cmdMan
 var CmdMetrics = cmdMetrics
 
 var ParseJobCommand = parseJobCommand
+
+var SplitJobArgv = splitJobArgv
 var CmdMfa = cmdMfa
 var CmdMfaConfirm = cmdMfaConfirm
 var CmdMfaDisable = cmdMfaDisable
@@ -985,6 +993,7 @@ var CmdPostgresDelete = cmdPostgresDelete
 var CmdPostgresDiagnostics = cmdPostgresDiagnostics
 var CmdPostgresGet = cmdPostgresGet
 var CmdPostgresList = cmdPostgresList
+var CmdPostgresUndelete = cmdPostgresUndelete
 var CmdPostgresReconcile = cmdPostgresReconcile
 var CmdPostgresResize = cmdPostgresResize
 var CmdPostgresUsage = cmdPostgresUsage
@@ -1120,12 +1129,8 @@ var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
 
-// ReleaseGateRequest builds a release-gates add request from its flags.
-func ReleaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above, aiMetric string,
-	maxIncrease, minSamples int) (api.CreateReleaseGateRequest, error) {
-	return releaseGateRequest(releaseGateFlags{name: name, slo: slo, maxBurn: maxBurn, newErrors: newErrors, maxGroups: maxGroups,
-		minEvents: minEvents, metric: metric, below: below, above: above, aiMetric: aiMetric, maxIncrease: maxIncrease, minSamples: minSamples})
-}
+// ReleaseGateRequest builds a release gate create request from its flags.
+var ReleaseGateRequest = releaseGateRequest
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
 	return collectListPages[T](p0, p1, p2, p3)
@@ -1208,6 +1213,8 @@ var DeployIdempotencyKey = deployIdempotencyKey
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings
+
+var DeployManifestLabels = deployManifestLabels
 var DeployManifestTriggersWithRollback = deployManifestTriggersWithRollback
 var DeployOperationIdempotencyKey = deployOperationIdempotencyKey
 var DeployOptionsFingerprint = deployOptionsFingerprint
@@ -1677,6 +1684,7 @@ var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
 var ReleaseDiffLines = releaseDiffLines
 var ReleaseSummaryLine = releaseSummaryLine
+var ReleaseTimelineLines = releaseTimelineLines
 var ReleasedUsage = releasedUsage
 var RemoveTestFaultRules = removeTestFaultRules
 var RenderAccountSLO = renderAccountSLO
@@ -2120,6 +2128,17 @@ var WriteTestReport = writeTestReport
 var WriteWaitedDeploymentReceiptUntil = writeWaitedDeploymentReceiptUntil
 var WriteWaitedDeploymentReceiptUntilWithOptions = writeWaitedDeploymentReceiptUntilWithOptions
 var ZeroConfigDeployServer = zeroConfigDeployServer
+
+// Data API runtime served by the control plane (ADR-20261031095954).
+var ServedDataAPIRuntime = servedDataAPIRuntime
+var UploadedSourceFiles = uploadedSourceFiles
+var UploadedServerHas = uploadedServerHas
+var ReadDataAPIRuntimeArchive = readDataAPIRuntimeArchive
+var AttachDataAPIRuntime = attachDataAPIRuntime
+
+type DataAPIHealthProbe = dataAPIHealthProbe
+
+const ServedRuntimeVersion = servedRuntimeVersion
 
 // Members of appTaskStreamSession
 func (r *appTaskStreamSession) Stdout() **io.PipeReader { return &r.stdout }
@@ -2594,3 +2613,7 @@ func TierDiscoverableFlags(names, capabilities []string) []string {
 var BindExclusiveLock = bindExclusiveLock
 
 type ExclusiveLock = exclusiveLock
+
+// GitHub connector commands (ADR-20261101160300).
+var CmdGithub = cmdGithub
+var CmdGithubSetup = cmdGithubSetup

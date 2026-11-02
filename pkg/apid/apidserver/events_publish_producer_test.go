@@ -2,8 +2,10 @@ package apidserver_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -26,20 +28,26 @@ func TestAccountEventPublishStampsProducer(t *testing.T) {
 	event := func(id string) api.PublishEventRequest {
 		return api.PublishEventRequest{ID: id, Source: "orders", Type: "order.created", Data: json.RawMessage(`{"order_id":"o-1"}`)}
 	}
+	// ADR-20261030170000: the receipt is a published event's only copy.
+	receipts := map[string]events.Envelope{}
 	producer := func(account, id string) string {
 		t.Helper()
-		rows, err := store.ListEvents(t.Context(), account, 20)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, row := range rows {
-			var envelope events.Envelope
-			if row.Kind == "event.published" && json.Unmarshal(row.Data, &envelope) == nil && envelope.ID == id {
-				return envelope.Producer
+		for {
+			work, err := store.ClaimDuePublishedEvent(t.Context(), time.Now().Add(time.Hour))
+			if errors.Is(err, state.ErrNotFound) {
+				break
 			}
+			var envelope events.Envelope
+			if err != nil || json.Unmarshal(work.Payload, &envelope) != nil {
+				t.Fatal(work, err)
+			}
+			receipts[envelope.AccountID+"/"+envelope.ID] = envelope
 		}
-		t.Fatalf("event %s was not recorded for %s", id, account)
-		return ""
+		envelope, ok := receipts[account+"/"+id]
+		if !ok {
+			t.Fatalf("event %s was not recorded for %s", id, account)
+		}
+		return envelope.Producer
 	}
 
 	if rec := e.Do(t, "POST", "/v1/events:publish", event("personal-1"), nil); rec.Code != http.StatusAccepted {

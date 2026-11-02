@@ -35,7 +35,7 @@ func ingressOutcome(s reposcan.IngressSetting, slug string, plan api.Plan, limit
 		case plan.WebSocketEnabled():
 			return "this plan forwards WebSockets by default"
 		case plan.WebSocketResponseAllowed():
-			return fmt.Sprintf("enable WebSockets with `gregale app %s --websocket-enabled`", slug)
+			return fmt.Sprintf("enable WebSockets with `gregale app update --websocket-enabled %s`", slug)
 		default:
 			return "this plan does not forward WebSockets"
 		}
@@ -53,18 +53,18 @@ func requestBodyMax(limits api.Limits) int64 {
 }
 
 // requestTimeoutOutcome compares a proxy timeout with the app request budget
-// (ADR-093): its default, and the ceiling `--request-timeout` may raise it
+// (ADR-093): its default, and the ceiling `gregale app update --request-timeout` may raise it
 // to on this plan (ADR-1150).
 func requestTimeoutOutcome(value, slug string, limits api.Limits) string {
 	def, ceiling := limits.RequestBudgetForType("app"), limits.RequestBudgetMaxDuration()
 	asked, ok := ingressDuration(value)
 	switch {
 	case !ok:
-		return fmt.Sprintf("requests time out after %s by default, and `gregale app %s --request-timeout` allows up to %s on this plan", ingressSeconds(def), slug, ingressSeconds(ceiling))
+		return fmt.Sprintf("requests time out after %s by default, and `gregale app update --request-timeout SECONDS %s` allows up to %s on this plan", ingressSeconds(def), slug, ingressSeconds(ceiling))
 	case asked <= def:
 		return fmt.Sprintf("requests may take up to %s by default, which covers it", ingressSeconds(def))
 	case asked <= ceiling:
-		return fmt.Sprintf("requests time out after %s by default; `gregale app %s --request-timeout %d` matches it", ingressSeconds(def), slug, int64((asked+time.Second-1)/time.Second))
+		return fmt.Sprintf("requests time out after %s by default; `gregale app update --request-timeout %d %s` matches it", ingressSeconds(def), int64((asked+time.Second-1)/time.Second), slug)
 	default:
 		return fmt.Sprintf("requests time out after %s by default and after at most %s on this plan", ingressSeconds(def), ingressSeconds(ceiling))
 	}

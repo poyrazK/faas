@@ -37,9 +37,31 @@ A rule applies to a request when every selector it sets matches.
 
 A rule only ever applies to hosts your account owns: another account's rule
 never runs on your traffic, even with `match_host` `*`. A host pattern other
-than `@app` covers every host of your account that it matches, including
-hosts of your other apps. To keep a rule to one app, use `@app` or the app's
-own hostnames.
+than `@app` covers every host it matches among the apps with the same owner
+as the rule's app: a rule on one of your personal apps covers your other
+personal apps' hosts, and a rule on an organization's app covers that
+organization's apps' hosts. It never crosses between the two, although apps
+you create for an organization stay under your account. To keep a rule to one
+app, use `@app` or the app's own hostnames.
+
+A PR preview applies its production app's `@app` rules as well as its own, so
+a `jwt`, `ip`, `geo`, `waf` or `challenge` rule on production also gates the
+preview's hosts. `route` and `async` rules are the exception: a preview serves
+its own code. An inherited `throttle` rule shares production's buckets.
+
+Edge rules do not run for managed realtime connections
+(`/__gregale/realtime/`), which authenticate with their own tokens, for
+requests to a production fork, which carry the fork's token, or for the
+`robots.txt`, `favicon.ico` and health-check answers the gateway serves itself
+when your manifest configures them.
+
+Edge rules apply to requests that arrive at your public hosts. A call from one
+of your apps to another over the internal service network goes straight to the
+target and skips the target's edge rules, `jwt`, `ip`, `waf`, `challenge` and
+`throttle` included. Which apps may make such calls is set by the service
+policy and `x-gregale-allow-callers` (see
+[Internal services](networking.md#internal-services)); check credentials in the
+app itself when a caller must prove more than which app it is.
 
 ### Path globs
 
@@ -200,7 +222,15 @@ keep refusing in a penalty box for the whole app; see
 ```
 
 The matched request is served by `target_app_slug`, which must be an app of
-the same account. The path is unchanged; add a `rewrite` rule to change it.
+the same account and owner: one of your personal apps for a rule on a personal
+app, or an app of the same organization for a rule on an organization's app.
+The path is unchanged; add a `rewrite` rule to change it.
+Renaming the target app updates the route rules that name it.
+
+The rest of a routed request runs as the target app's: its `@app` rules
+apply, and the source app's `@app` rules do not. Rules written for the host
+itself (an exact host, `*` or a glob) still apply. To gate routed paths too,
+put the gate on the host, or on the target app's `@app`.
 
 ### rewrite
 
@@ -252,7 +282,10 @@ expanded value is capped at 1 KiB and loses control characters.
 letter case; a rule that names one is rejected. The client address that IP,
 `geo`, `throttle` and `challenge` rules use, and that your app receives in
 `X-Faas-Client-Ip` and `X-Real-IP`, is the one the request arrived with,
-whatever a `headers` rule does. Request headers are changed before authentication. Use `set`, not
+whatever a `headers` rule does. A `Set-Cookie` value, here or in a
+`redirect` rule's headers, loses a `Domain` attribute that names the shared
+apps or platform domain, as your app's own cookies do, so the cookie stays
+with the host that set it; your custom domain's `Domain` is kept. Request headers are changed before authentication. Use `set`, not
 `add`, for a header your app relies on, so a client cannot supply its own
 value alongside it. For common security headers,
 [Security headers on your app](security#security-headers-on-your-app) sets a
@@ -439,10 +472,11 @@ the app woken and capacity found. `total_deadline_ms` (optional) bounds the
 whole request from arrival, including upload, wake and queueing. Both are
 capped by your plan: 30 s on Free, 60 s on Hobby, 5 minutes on Pro and
 15 minutes on Scale. A request past its budget before the response starts
-gets 504 `request_budget_exceeded`. A client may lower or raise the execution
-budget within the plan ceiling with the `x-faas-budget-ms` header, or the
-header named in `allow_override_header`; it never extends
-`total_deadline_ms`.
+gets 503 `request_budget_exceeded`. A client may lower the execution budget
+with the `x-faas-budget-ms` header. To let callers also raise it, within the
+plan ceiling, name a header in `allow_override_header` that only your trusted
+callers send; any caller can send `x-faas-budget-ms`, so on its own it never
+raises the rule's budget. Neither header extends `total_deadline_ms`.
 
 ### cache
 
@@ -457,7 +491,9 @@ app. After that,
 `stale_while_revalidate_seconds` (at most 300) serves the old response while
 one request refreshes it, and `stale_if_error_seconds` (at most 300; 0
 turns it off) serves it when the app fails. `vary_on` adds `Accept-Language`
-or `Accept-Encoding` to the cache key.
+or `Accept-Encoding` to the cache key. Responses over 1 MiB are not cached,
+and each gateway keeps at most 16 MiB of one app's responses: past that, the
+app's least recently used responses are dropped first.
 
 Requests with credentials (`Authorization`, cookies) are never cached or
 served from the cache, and neither are responses with `Set-Cookie` or
@@ -531,10 +567,14 @@ apps accept this kind.
 
 Creating, changing or deleting a rule returns once the gateways serving your
 app have the new rules, and from then on no gateway serves the old ones.
-While a change is being applied, requests to the hosts it covers get 503
-`capacity_unavailable` ("Edge policy update in progress") with
-`Retry-After: 1`. If the gateways cannot be reached, the change is refused
-with 503 and nothing changes; retry it. Changes to one account's rules are
+While a change is being applied, your hosts keep serving: each gateway uses
+the rules it has until it takes the new ones, so for a second or two some
+requests run under the old rules and some under the new. Each request runs
+under one set from start to finish. The one exception is a `route` rule
+whose target app is being renamed: until the change lands, its requests get
+503 `traffic_policy_unavailable` with `Retry-After: 1` rather than being
+served by the app the host belongs to. If the gateways cannot be reached,
+the change is refused with 503 and nothing changes; retry it. Changes to one account's rules are
 applied one at a time; other accounts' changes never wait for yours.
 
 Two people editing the same app's rules at once cannot overwrite each other:
@@ -603,6 +643,10 @@ total), a kind your plan does not include with 402
 `plan_edge_rule_kind_not_allowed`, and a kind not enabled for your account
 with 403 `capability_not_released`.
 
+After a downgrade, rules your new plan would not allow keep applying, so a
+gate you set up does not open on its own; new rules of those kinds are
+refused until the plan allows them again. Delete the ones you no longer need.
+
 ## Responses from the edge
 
 | Status and code | Sent by |
@@ -622,7 +666,7 @@ with 403 `capability_not_released`.
 | 429 `rate_limited` | `throttle` |
 | 503 `edge_rule_maintenance` | `maintenance` |
 | 503 `capacity_unavailable` | a rule change being applied, rules the gateway cannot load, an unreachable JWKS |
-| 504 `request_budget_exceeded` | `budget` |
+| 503 `request_budget_exceeded` | `budget` |
 
 Errors use the [problem format](errors); `gregale edge rule events
 --request-id <id>` finds the rule behind a refused request.

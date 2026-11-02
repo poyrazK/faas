@@ -43,6 +43,9 @@ type Runner struct {
 	// memory shares snapshot memory pages with image blocks (ADR-956); nil
 	// disables it.
 	memory *memorySharer
+	// memoryPeersOff keeps memory pages from being shared with other memory
+	// files (ADR-956 amendment 2026-10-31), which is on by default.
+	memoryPeersOff bool
 }
 
 func New(store state.SnapshotReplicaLeaseStore, backend storage.StorageBackend, nodeID string, log *slog.Logger) *Runner {

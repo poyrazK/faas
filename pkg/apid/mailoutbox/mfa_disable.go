@@ -73,7 +73,7 @@ func (s *Service) QueueMFADisable(ctx context.Context, accountID, expectedEmail 
 	}
 	r := q.PlatformMailProducerOutbox{ID: pgID(uuid.NewString()), AccountID: account.ID, Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, RecipientAddress: address,
 		Template: MFADisableTemplate, TemplateVersion: 1, ExpiresAt: pgtype.Timestamptz{Time: issued.Time.Add(api.InternalMailMFADisableTTL), Valid: true}, RecoveryID: recovery.RecoveryID,
-		VerificationTokenHash: api.HashToken(raw), VerificationKeyID: s.mfaDisable.keyID, VerificationOrigin: s.mfaDisable.origin}
+		VerificationTokenHash: storedTokenHash(tagMFADisable, api.HashToken(raw)), VerificationKeyID: s.mfaDisable.keyID, VerificationOrigin: s.mfaDisable.origin}
 	sealed, err := secretbox.SealBytes(s.mfaDisable.writer.Recipient(), verificationBinding(r), raw, api.MFADisableTokenBytes)
 	if err != nil || len(sealed) > api.InternalMailVerificationCipherMaxBytes {
 		return errVerificationPayloadUnavailable

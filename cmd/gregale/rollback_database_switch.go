@@ -17,7 +17,7 @@ import (
 // Rollbacks that restore the database (ADR-20261023181931).
 
 const rollbackSwitchesUsage = "usage: gregale rollback switches <slug> [--json]"
-const rollbackSwitchUsage = "usage: gregale rollback switch <slug> <switch-id> [--cancel] [--wait] [--timeout 60m] [--poll-interval 2s] [--json]"
+const rollbackSwitchUsage = "usage: gregale release rollback status <slug> <switch-id> [--cancel] [--wait] [--timeout 60m] [--poll-interval 2s] [--json]"
 
 // databaseSwitchDefaultTimeout bounds waiting for a switch when --timeout is
 // not given: the restore alone can take minutes.
@@ -61,7 +61,7 @@ func cmdRollbackRestoreDatabases(slug, to string, acknowledge, noWait bool, time
 		if jsonOutput {
 			return jsonOut(writeJSON(sw))
 		}
-		PrintOK(osStdout, "Database switch %s started; follow it with: gregale rollback switch %s %s --wait", sw.ID, slug, sw.ID)
+		PrintOK(osStdout, "Database switch %s started; follow it with: gregale release rollback status %s %s --wait", sw.ID, slug, sw.ID)
 		return 0
 	}
 	return followDatabaseSwitch(client, slug, sw, timeout, interval)
@@ -110,7 +110,7 @@ func followDatabaseSwitch(client *api.Client, slug string, sw api.DatabaseSwitch
 			if jsonOutput {
 				_ = writeJSON(sw)
 			}
-			return printErr("Still switching", fmt.Errorf("switch %s is %s; follow it with: gregale rollback switch %s %s --wait", sw.ID, sw.Phase, slug, sw.ID))
+			return printErr("Still switching", fmt.Errorf("switch %s is %s; follow it with: gregale release rollback status %s %s --wait", sw.ID, sw.Phase, slug, sw.ID))
 		case <-time.After(interval):
 		}
 		next, err := client.GetDatabaseSwitch(ctx, slug, sw.ID)

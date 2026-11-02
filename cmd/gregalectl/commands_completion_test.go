@@ -32,6 +32,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchSealDomain":       "seal-domain",    // ADR 20261022111812 seal domains
 		"dispatchLiveQuery":        "live-query",     // ADR 20261028161502 live writer signatures
 		"dispatchRuntimeSecret":    "runtime-secret", // ADR 20261028161502 runtime writer signatures
+		"dispatchCredentials":      "credentials",    // ADR 20261029202403 keyed credential hashes
 		"dispatchHoneytoken":       "honeytoken",     // ADR 20261024014500 honeytokens
 		"dispatchObjectStorage":    "object-storage", // ADR 20261025111015 restore reconcile
 		"dispatchPKI":              "pki",
@@ -58,6 +59,8 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchObs":              "obs",           // Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side meta-obs health snapshot
 		"dispatchDebug":            "debug",         // ADR-127 PR-D — operator-side OTel spans writer smoke harness
 		"dispatchGithub":           "github",        // durable webhook + Check Run recovery
+
+		"dispatchDatabaseNodes": "database-nodes", // ADR-1027 native database moves, restarts and switchovers
 	}
 	caseNames, err := extractMainCaseArms(dispatchConsts)
 	if err != nil {

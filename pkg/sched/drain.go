@@ -40,6 +40,21 @@ var _ dispatch.JobKind = dispatch.JobKindInvocation
 // retried bad payload just keeps failing.
 var ErrPermanentInvoke = errors.New("sched: permanent invoke error")
 
+// applicationStatusError is a failure the app's own code returned: a 4xx,
+// or a 500 the runner marked handler_error. It wraps ErrPermanentInvoke and
+// keeps the status, so an event delivery can tell a handler that threw from
+// one that refused its input (ADR-20261031100001).
+type applicationStatusError struct {
+	status int
+	err    error
+}
+
+func (e applicationStatusError) Error() string { return e.err.Error() }
+func (e applicationStatusError) Unwrap() error { return e.err }
+
+// Is makes an application status failure count as ErrAppAnswered.
+func (e applicationStatusError) Is(target error) bool { return target == ErrAppAnswered }
+
 // ErrDispatchRefused marks a 5xx answer from gatewayd-internal's dispatch
 // endpoint. The endpoint answers 200 with the app's response whenever the
 // app received the request, so a 5xx means the gateway refused or failed
@@ -53,6 +68,19 @@ type dispatchRefusedError struct{ err error }
 func (e dispatchRefusedError) Error() string        { return e.err.Error() }
 func (e dispatchRefusedError) Unwrap() error        { return e.err }
 func (e dispatchRefusedError) Is(target error) bool { return target == ErrDispatchRefused }
+
+// ErrAppAnswered marks a delivery that failed on the app's own answer: an
+// error status or a runner exception inside the gateway's 200 envelope. The
+// cron delivery metric counts it as app_error, not as a platform failure.
+var ErrAppAnswered = errors.New("sched: the app answered with an error")
+
+// appAnsweredError marks an app answer that is not an applicationStatusError
+// (an ordinary 5xx), keeping its message while matching ErrAppAnswered.
+type appAnsweredError struct{ err error }
+
+func (e appAnsweredError) Error() string        { return e.err.Error() }
+func (e appAnsweredError) Unwrap() error        { return e.err }
+func (e appAnsweredError) Is(target error) bool { return target == ErrAppAnswered }
 
 // ErrPermanentWake is the sentinel for wake errors that the drain
 // will never recover from (no such app, app PARKED, account deleted).
@@ -115,16 +143,19 @@ func failOutcome(err error) state.FailOption {
 //   - No new daemon: drains live inside cmd/schedd. The schedd main
 //     goroutine subscribes to invocation_due + runDrainTick (1s).
 type Drain struct {
-	store     state.Store
-	engine    *Engine
-	gateway   GatewaySynth
-	notifier  Notifier
-	log       *slog.Logger
-	now       func() time.Time
-	batchSize int
-	audit     *audit.Auditor
-	ops       *wire.OpsMetrics
-	appTasks  *AppTaskCoordinator
+	store    state.Store
+	engine   *Engine
+	gateway  GatewaySynth
+	notifier Notifier
+	log      *slog.Logger
+	now      func() time.Time
+	// financialAdmission is state.CheckFinancialBudgetAdmissionForScope; a
+	// test holds an app through it without a funded compute ledger.
+	financialAdmission func(context.Context, state.Store, state.App, string, string, time.Time) error
+	batchSize          int
+	audit              *audit.Auditor
+	ops                *wire.OpsMetrics
+	appTasks           *AppTaskCoordinator
 	// wakeLeaseSeconds is the lease a claimed invocation holds. The
 	// drain races claim → wake → invoke → complete inside this window.
 	// 60s is generous (the Wake+Invoke flow normally completes in well
@@ -252,6 +283,7 @@ func NewDrain(store state.Store, engine *Engine, opts ...DrainOption) *Drain {
 		longSlots:           make(chan struct{}, DefaultDrainLongDispatches),
 		longQueueApps:       map[string]bool{},
 		log:                 slog.Default(),
+		financialAdmission:  state.CheckFinancialBudgetAdmissionForScope,
 	}
 	for _, o := range opts {
 		o(d)
@@ -783,9 +815,13 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if !d.engine.ownsApp(app) {
 		return
 	}
-	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
+	if err := d.financialAdmission(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
 		// Keep pending work and its attempt count intact. A held budget is
-		// an admission decision, not a failed customer execution.
+		// an admission decision, not a failed customer execution. The row
+		// moves back by a minute (ADR-20261031100001): left due, a held
+		// app's rows stayed at the head of every walk, and a walk's 2,048
+		// rows of them hid other tenants' work behind them.
+		_ = d.store.FailInvocation(ctx, inv.ID, "held by the app's compute budget", financialHoldDeferral, 0)
 		d.log.Debug("drain: preview budget admission deferred", "inv", inv.ID, "app_id", app.ID)
 		return
 	}
@@ -1057,7 +1093,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted())
-		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr, err)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
@@ -1135,11 +1171,12 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
+		retryAfter, budget = d.eventDeliveryFailure(ctx, inv, err, retryAfter, budget)
 		if errors.Is(err, ErrDispatchRefused) {
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
-		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr, err)
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
@@ -1215,7 +1252,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		d.log.Warn("drain: fail classified cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
-	d.observeScheduledFailure(inv, retryAfter, budget, nil)
+	d.observeScheduledFailure(inv, retryAfter, budget, nil, ErrAppAnswered)
 	if retryAfter == 0 {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1241,7 +1278,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 		d.log.Warn("drain: settle uncertain cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
-	d.observeScheduledFailure(inv, retryAfter, budget, nil)
+	d.observeScheduledFailure(inv, retryAfter, budget, nil, dispatchErr)
 	if decision.Action == "hold" {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1289,13 +1326,19 @@ func (d *Drain) observeScheduledClaim(inv state.Invocation) {
 	d.ops.ObserveDelayedTaskScheduleLag(d.now().Sub(scheduledAt))
 }
 
-func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr error) {
+// observeScheduledFailure counts a failed delivery attempt. cause is the
+// delivery error; a final failure the app answered counts as app_error for
+// crons (delayed tasks keep failed).
+func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr, cause error) {
 	if failErr != nil {
 		return
 	}
 	outcome := wire.DelayedTaskDispatchRetry
 	if retryAfter == 0 {
 		outcome = wire.DelayedTaskDispatchFailed
+		if errors.Is(cause, ErrAppAnswered) {
+			outcome = wire.CronDeliveryAppError
+		}
 	} else if budget > 0 && inv.Attempts >= budget {
 		outcome = wire.DelayedTaskDispatchDeadLetter
 	}
@@ -1307,6 +1350,9 @@ func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Du
 func (d *Drain) observeScheduledDispatch(inv state.Invocation, outcome string) {
 	switch inv.Source {
 	case state.InvocationDelayedTask:
+		if outcome == wire.CronDeliveryAppError {
+			outcome = wire.DelayedTaskDispatchFailed
+		}
 		d.ops.ObserveDelayedTaskDispatch(outcome)
 	case state.InvocationCron:
 		d.ops.ObserveCronDelivery(outcome)
@@ -1471,13 +1517,54 @@ func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryP
 	if !policy.Zero() || !state.IsEventDelivery(inv) {
 		return policy
 	}
+	maxSeconds := float64(api.EventDeliveryRetryMaxSeconds)
+	if inv.WorkPolicyName != "" {
+		// A pending delivery holds every younger one of its key, so a
+		// keyed delivery backs off only to 30 s.
+		maxSeconds = api.EventDeliveryKeyedRetryMaxSeconds
+	}
 	if app != nil {
 		if appPolicy := app.RetryPolicy(); !appPolicy.Zero() {
+			// The app's curve applies within bounds (ADR-20261031100001): an
+			// app policy with no cap took the default event cap, and none may
+			// wait past 5 minutes between attempts, or a keyed delivery could
+			// hold its key for days.
+			if appPolicy.MaxSeconds <= 0 {
+				appPolicy.MaxSeconds = maxSeconds
+			}
+			appPolicy.MaxSeconds = min(appPolicy.MaxSeconds, float64(api.EventDeliveryRetryMaxSeconds))
 			return appPolicy
 		}
 	}
 	return dispatch.RetryPolicy{BaseSeconds: api.EventDeliveryRetryBaseSeconds,
-		MaxSeconds: api.EventDeliveryRetryMaxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
+		MaxSeconds: maxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
+}
+
+// financialHoldDeferral is how far a row of an app held by its compute
+// budget moves back: out of the head of the walk, attempts untouched.
+const financialHoldDeferral = time.Minute
+
+// eventDeliveryFailure applies ADR-20261031100001 to a failed event
+// delivery. A handler that threw (the runner's 500) or asked to be retried
+// (408, 429) retries with the event backoff and is dead-lettered when its
+// attempts run out; any other 4xx is final but dead-lettered at once, so it
+// can be replayed after a fix. Every other invocation keeps the gateway's
+// verdict, as does a failure the app's code did not return.
+func (d *Drain) eventDeliveryFailure(ctx context.Context, inv state.Invocation, err error, retryAfter time.Duration, budget int) (time.Duration, int) {
+	var appErr applicationStatusError
+	if !state.IsEventDelivery(inv) || !errors.As(err, &appErr) {
+		return retryAfter, budget
+	}
+	delay := d.invocationRetryDelay(ctx, inv)
+	if delay <= 0 {
+		delay = time.Second
+	}
+	if appErr.status >= http.StatusInternalServerError || appErr.status == http.StatusRequestTimeout || appErr.status == http.StatusTooManyRequests {
+		return delay, budget
+	}
+	// A budget the attempt has already reached makes FailInvocation
+	// dead-letter the row instead of failing it.
+	return delay, max(inv.Attempts, 1)
 }
 
 // retryAfterFor is retained as a compatibility wrapper for drain callers

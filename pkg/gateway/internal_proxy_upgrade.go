@@ -46,6 +46,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			pr.Out.URL.Scheme = p.Target.Scheme
 			pr.Out.URL.Host = p.Target.Host
 			pr.Out.Host = pr.In.Host // app lookup uses the customer hostname
+			p.markPlacement(pr.Out.Header)
 			stampTrafficStart(pr.Out)
 			clientIP, proto := p.forwardingContext(pr.In)
 			if clientIP != "" {
@@ -55,6 +56,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			propagation.TraceContext{}.Inject(pr.In.Context(), propagation.HeaderCarrier(pr.Out.Header))
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			p.takeInstanceNode(r, resp.Header)
 			if err := bindPublicTrafficSecurity(r, resp); err != nil {
 				return err
 			}
@@ -90,7 +92,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 				// reconnect to the replacement process.
 				drain.EndOnShutdown(streamCtx, cancelStream)
 				return copyPublicUpgrade(streamCtx, w, r, resp)
-			} else if edgeTransportStatus(r, resp.StatusCode) {
+			} else if edgeTransportStatus(r, resp.StatusCode, w.Header()) {
 				w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
 				resp.StatusCode = edgeOrigin504TransportStatus
 			}

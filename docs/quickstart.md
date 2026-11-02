@@ -24,7 +24,7 @@ through `gregale logs`.
 
 After you finish, Start remembers the app in the selected source directory.
 From there, `gregale logs --follow`, `gregale metrics`, `gregale inspect`, and
-`gregale deploy` reuse that target. Use `gregale context` to see or change your
+`gregale deploy` reuse that target. Use `gregale config context get` to see or change your
 defaults. For an isolated edit-and-reload loop, run `gregale dev`; see
 [reusable development setup](gregale-dev.md#save-setup-for-the-next-session-or-a-teammate).
 

@@ -30,7 +30,16 @@ func TestProjectPlanShowsComposeEnvImport(t *testing.T) {
 				UnsetEnvKeys:       []string{"BILLING_URL", "STRIPE_KEY"},
 				UnsetEnvKeyReasons: map[string]string{"BILLING_URL": "service_address", "STRIPE_KEY": "secret"}},
 			want:    []string{"Imported from Compose", "LOG_LEVEL, NODE_ENV", "BILLING_URL (Docker address of a datastore or non-HTTP service)", "STRIPE_KEY (looks like a secret)"},
-			wantNot: []string{"x-gregale-env-import"},
+			wantNot: []string{"x-gregale-env-import", "` or `gregale env set"},
+		},
+		{
+			name: "kubernetes imported",
+			workload: api.PlanWorkload{Name: "api", RootDir: "api",
+				DetectedBy:      &api.PlanDetectedBy{Detector: "k8s", Marker: "k8s/api.yaml"},
+				ImportedEnvKeys: []string{"LOG_LEVEL"},
+				UnsetEnvKeys:    []string{"DB_PASSWORD"}, UnsetEnvKeyReasons: map[string]string{"DB_PASSWORD": "secret_ref"}},
+			want:    []string{"Imported from Kubernetes manifests", "LOG_LEVEL", "Set them with `gregale env set --app <app> KEY=VALUE`,"},
+			wantNot: []string{"Imported from Compose"},
 		},
 		{
 			name: "not opted in",

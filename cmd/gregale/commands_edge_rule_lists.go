@@ -55,7 +55,7 @@ func cmdEdgeRuleListsList(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "%-32s %-8s %7s %5s  %s\n", "NAME", "KIND", "ITEMS", "RULES", "DESCRIPTION")
 	for _, l := range out.Lists {
-		_, _ = fmt.Fprintf(osStdout, "%-32s %-8s %7d %5d  %s\n", l.Name, l.Kind, l.ItemCount, len(l.ReferencedBy), truncate(l.Description, 40))
+		_, _ = fmt.Fprintf(osStdout, "%-32s %-8s %7d %5d  %s\n", terminalSafe(l.Name), l.Kind, l.ItemCount, len(l.ReferencedBy), terminalSafe(truncate(l.Description, 40)))
 	}
 	return 0
 }
@@ -72,9 +72,9 @@ func printEdgeRuleList(l api.EdgeRuleListResponse) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(l))
 	}
-	_, _ = fmt.Fprintf(osStdout, "%s (%s, %d items)\n", l.Name, l.Kind, l.ItemCount)
+	_, _ = fmt.Fprintf(osStdout, "%s (%s, %d items)\n", terminalSafe(l.Name), l.Kind, l.ItemCount)
 	if l.Description != "" {
-		_, _ = fmt.Fprintf(osStdout, "  %s\n", l.Description)
+		_, _ = fmt.Fprintf(osStdout, "  %s\n", terminalSafe(l.Description))
 	}
 	if len(l.ReferencedBy) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  used by: %s\n", strings.Join(l.ReferencedBy, ", "))

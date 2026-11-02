@@ -144,8 +144,10 @@ func withoutDegradedNodes(nodes []state.ComputeNode) []state.ComputeNode {
 	for _, n := range nodes {
 		// Degraded by vmmd's report (step 2) or by an open wake breaker
 		// (step 3); unavailable once its capacity stream went silent
-		// (ADR-20261029085904).
-		if n.Readiness != state.NodeReadinessDegraded && n.Readiness != state.NodeReadinessUnavailable && !n.WakeBreakerOpen(now) {
+		// (ADR-20261029085904); held under CPU pressure
+		// (ADR 20261030100950).
+		if n.Readiness != state.NodeReadinessDegraded && n.Readiness != state.NodeReadinessUnavailable &&
+			!n.WakeBreakerOpen(now) && !n.CPUPressured(now) {
 			proven = append(proven, n)
 		}
 	}

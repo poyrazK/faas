@@ -67,6 +67,18 @@ type BackendConfig struct {
 	// MaxBuckets caps the live buckets placed on this backend; 0 is no
 	// ceiling. Set it below the provider's per-account bucket quota.
 	MaxBuckets int64 `json:"max_buckets,omitempty"`
+	// GatewayAccessKeyEnv, GatewaySecretKeyEnv and GatewaySessionTokenEnv
+	// name the credential the S3 gateways use instead of AccessKeyEnv,
+	// SecretKeyEnv and SessionTokenEnv, so a gateway host never holds the
+	// credential that creates and deletes buckets (ADR-20261031122757 §4). A
+	// backend that names none reaches the provider from the gateways with
+	// the admin credential.
+	GatewayAccessKeyEnv    string `json:"gateway_access_key_env,omitempty"`
+	GatewaySecretKeyEnv    string `json:"gateway_secret_key_env,omitempty"`
+	GatewaySessionTokenEnv string `json:"gateway_session_token_env,omitempty"`
+	// useGatewayCredential is set by LoadGateway: the backend's provider is
+	// built with the gateway credential when it names one.
+	useGatewayCredential bool
 }
 
 // UsageConfig selects the provider-specific authoritative usage adapter. It
@@ -225,7 +237,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 			if !validGCSLocation.MatchString(b.GCSLocation) || !validGCSServiceAccount.MatchString(b.GCSServiceAccount) {
 				return nil, fmt.Errorf("object storage: backend %s requires a valid GCS location and service account", b.ID)
 			}
-			if b.S3Region != "" || b.PathStyle || b.AccessKeyEnv != "" || b.SecretKeyEnv != "" || b.SessionTokenEnv != "" {
+			if b.S3Region != "" || b.PathStyle || b.AccessKeyEnv != "" || b.SecretKeyEnv != "" || b.SessionTokenEnv != "" || b.hasGatewayCredential() {
 				return nil, fmt.Errorf("object storage: backend %s mixes GCS and S3 settings", b.ID)
 			}
 			switch b.GCSStorageClass {
@@ -247,6 +259,16 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 			if err != nil || o.Host == "" || o.User != nil || o.Path != "" || o.RawQuery != "" || o.Fragment != "" || (o.Scheme != "https" && (!b.AllowHTTP || o.Scheme != "http")) {
 				return nil, errors.New("object storage: allowed_origins must be explicit origins")
 			}
+		}
+		if (b.GatewayAccessKeyEnv == "") != (b.GatewaySecretKeyEnv == "") || (b.GatewaySessionTokenEnv != "" && b.GatewayAccessKeyEnv == "") {
+			return nil, fmt.Errorf("object storage: backend %s must name both gateway credential variables", b.ID)
+		}
+		if b.GatewayAccessKeyEnv != "" && (b.GatewayAccessKeyEnv == b.AccessKeyEnv || b.GatewaySecretKeyEnv == b.SecretKeyEnv) {
+			return nil, fmt.Errorf("object storage: backend %s must name a gateway credential apart from its admin credential", b.ID)
+		}
+		gatewayCredential := b.useGatewayCredential && b.GatewayAccessKeyEnv != ""
+		if gatewayCredential {
+			b.AccessKeyEnv, b.SecretKeyEnv, b.SessionTokenEnv = b.GatewayAccessKeyEnv, b.GatewaySecretKeyEnv, b.GatewaySessionTokenEnv
 		}
 		factory, ok := factories[b.Driver]
 		if !ok {
@@ -278,7 +300,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if b.ObjectLock.Enabled && !SupportsNativeObjectLock(p) {
 			return nil, fmt.Errorf("object storage: backend %s lacks its declared Object Lock contract", b.ID)
 		}
-		r.backends[b.ID] = Backend{ObjectLock: b.ObjectLock, Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage, MaxBuckets: b.MaxBuckets}
+		r.backends[b.ID] = Backend{ObjectLock: b.ObjectLock, Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage, MaxBuckets: b.MaxBuckets, GatewayCredential: gatewayCredential}
 		configs[b.ID] = b
 	}
 	for region, id := range c.Defaults {
@@ -336,6 +358,22 @@ func (r *Registry) ChargeForUsage(usage api.ObjectStorageUsage, allowance api.Ob
 }
 
 func Load(getenv func(string) string) (*Registry, error) {
+	return load(getenv, false)
+}
+
+// LoadGateway loads the registry for the S3 gateways: s3-gatewayd and
+// gatewayd-public's public reads. Each backend that names a gateway
+// credential is reached with it instead of the bucket-admin credential apid
+// uses (ADR-20261031122757 §4).
+func LoadGateway(getenv func(string) string) (*Registry, error) {
+	return load(getenv, true)
+}
+
+func (b BackendConfig) hasGatewayCredential() bool {
+	return b.GatewayAccessKeyEnv != "" || b.GatewaySecretKeyEnv != "" || b.GatewaySessionTokenEnv != ""
+}
+
+func load(getenv func(string) string, gateway bool) (*Registry, error) {
 	path := getenv("FAAS_OBJECT_STORAGE_CONFIG")
 	if path == "" {
 		return nil, nil
@@ -361,6 +399,9 @@ func Load(getenv func(string) string) (*Registry, error) {
 	}
 	if err := validateLoadedOwnedNodes(c, getenv); err != nil {
 		return nil, err
+	}
+	for i := range c.Backends {
+		c.Backends[i].useGatewayCredential = gateway
 	}
 	return NewRegistry(c, getenv, map[string]Factory{"gcs": NewGCS, "s3": NewS3})
 }

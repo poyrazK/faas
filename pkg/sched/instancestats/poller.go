@@ -348,6 +348,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.publishMemoryShadowWithBridges(instances, rows, p.Telemetry.InstanceBridgeMB(p.now()), started)
 		p.publishQuietPaused(rows, started)
 		p.publishMeasuredCPU(rows, started)
+		p.publishCPUPressure(p.Telemetry.CPUPressure(p.now()), started)
 		p.PauseLedger.Observe(ctx, rows, p.now())
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
@@ -360,13 +361,15 @@ func (p *Poller) Tick(ctx context.Context) error {
 	rows := make([]InstanceStat, 0, len(instances))
 	rolled := make([]wire.InstanceStatRow, 0, len(instances))
 	bridgeMB := make(map[string]int)
+	pressure := make(map[string]sched.NodeCPUPressure)
 	for _, node := range nodes {
-		nodeRows, nodeRolled, nodeBridge := p.tickNode(ctx, node, byNode[node.ID], sidecarByDeploy)
+		nodeRows, nodeRolled, snap := p.tickNode(ctx, node, byNode[node.ID], sidecarByDeploy)
 		rows = append(rows, nodeRows...)
 		rolled = append(rolled, nodeRolled...)
-		if nodeBridge > 0 {
+		if nodeBridge := snapshotBridgeMB(snap); nodeBridge > 0 {
 			bridgeMB[node.ID] = nodeBridge
 		}
+		snapshotCPUPressure(pressure, node.ID, snap)
 	}
 	// Replace is atomic; readers see either the previous snapshot
 	// or the next, never a torn mix.
@@ -374,6 +377,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	p.publishMemoryShadowWithBridges(instances, rows, bridgeMB, started)
 	p.publishQuietPaused(rows, started)
 	p.publishMeasuredCPU(rows, started)
+	p.publishCPUPressure(pressure, started)
 	p.PauseLedger.Observe(ctx, rows, p.now())
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
@@ -613,12 +617,13 @@ func (p *Poller) decodeTelemetrySnapshot(
 
 // tickNode reads one node's Stats, through Router's cached client when
 // set and otherwise over a fresh Dialer connection, and decodes the
-// result into InstanceStat rows + wire rollup rows. On failure it logs,
-// increments the per-node error counter, and returns empty slices — the
-// caller continues to the next node.
-func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings []state.Instance, sidecarByDeploy map[string][]int) ([]InstanceStat, []wire.InstanceStatRow, int) {
+// result into InstanceStat rows + wire rollup rows, returning the snapshot
+// for its node-level readings. On failure it logs, increments the per-node
+// error counter, and returns empty slices and a nil snapshot — the caller
+// continues to the next node.
+func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings []state.Instance, sidecarByDeploy map[string][]int) ([]InstanceStat, []wire.InstanceStatRow, *sched.StatsSnapshot) {
 	if p.Router == nil && p.Dialer == nil {
-		return nil, nil, 0
+		return nil, nil, nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, statsCallTimeout)
 	defer cancel()
@@ -634,7 +639,7 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 			if p.Metrics != nil {
 				p.Metrics.InstanceStatsPartialError(node.ID)
 			}
-			return nil, nil, 0
+			return nil, nil, nil
 		}
 		defer func() { _ = vmm.Close() }()
 		snap, err = vmm.Stats(callCtx)
@@ -644,10 +649,10 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		if p.Metrics != nil {
 			p.Metrics.InstanceStatsPartialError(node.ID)
 		}
-		return nil, nil, 0
+		return nil, nil, nil
 	}
 	rows, rolled := p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
-	return rows, rolled, snapshotBridgeMB(snap)
+	return rows, rolled, snap
 }
 
 // snapshotBridgeMB is the node's instance bridge memory a Stats snapshot

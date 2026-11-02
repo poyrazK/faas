@@ -40,6 +40,9 @@ func (s *server) validateRuleChannels(ctx context.Context, accountID string, ids
 // channel-only rule stores no webhook: an empty URL and an empty sealed
 // secret, which the evaluator reads as "deliver to channels only".
 func sealCreateWebhook(ctx context.Context, req api.CreateAlertRuleRequest) ([]byte, *api.Problem) {
+	if req.NotifyResolved && req.WebhookURL == "" {
+		return nil, errNotifyResolvedNeedsWebhook()
+	}
 	if req.WebhookURL == "" && req.WebhookSecret == "" {
 		return []byte{}, nil
 	}
@@ -81,7 +84,16 @@ func (s *server) updatedRuleChannels(ctx context.Context, accountID string, exis
 	if merged.WebhookURL == "" && count == 0 {
 		return nil, api.ErrAlertRuleInvalid("an alert rule needs a webhook_url or at least one notification channel")
 	}
+	if merged.NotifyResolved && merged.WebhookURL == "" {
+		return nil, errNotifyResolvedNeedsWebhook()
+	}
 	return req, nil
+}
+
+// errNotifyResolvedNeedsWebhook refuses notify_resolved on a rule with no
+// webhook: channels always receive resolves (ADR-20261029203000).
+func errNotifyResolvedNeedsWebhook() *api.Problem {
+	return api.ErrAlertRuleInvalid("notify_resolved needs a webhook_url; notification channels always receive resolves")
 }
 
 // bindRuleChannels stores a rule's channels. On a create that fails here

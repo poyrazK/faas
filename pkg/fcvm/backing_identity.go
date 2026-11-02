@@ -113,6 +113,11 @@ func (m *Manager) resolveBackingFile(key string) (string, error) {
 // this node's cache.
 var errBackingNotCached = errors.New("is not cached locally")
 
+// errBackingCheckFailed marks a backing refusal caused by this node rather
+// than the capture: the identity record could not be read (other than being
+// absent), or this node's kernel or base could not be fetched or hashed.
+var errBackingCheckFailed = errors.New("backing check failed on this node")
+
 // fetchBackingFile is resolveBackingFile for a restore that is about to
 // attach the image: a logical key missing from this node's cache is read
 // through the storage backend first, which installs it in the cache, and then
@@ -437,8 +442,11 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 		}
 	}
 	rc, err := store.Get(ctx, key)
-	if err != nil {
+	if errors.Is(err, storage.ErrNotFound) {
 		return fmt.Errorf("%w: read %s: %w", ErrSnapshotBackingUnverified, key, err)
+	}
+	if err != nil {
+		return fmt.Errorf("%w: read %s: %w: %w", ErrSnapshotBackingUnverified, key, errBackingCheckFailed, err)
 	}
 	var recorded BackingIdentity
 	decodeErr := json.NewDecoder(io.LimitReader(rc, 4096)).Decode(&recorded)
@@ -448,7 +456,8 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 	}
 	current, err := m.identifyBacking(baseKey, func(key string) (string, error) { return m.fetchBackingFile(ctx, key) })
 	if err != nil {
-		return err
+		// This node's images, not the capture, could not be identified.
+		return fmt.Errorf("%w: %w", errBackingCheckFailed, err)
 	}
 	if current.Kernel != recorded.Kernel || current.Base != recorded.Base {
 		return fmt.Errorf("%w: captured kernel=%s base=%s, now kernel=%s base=%s", ErrSnapshotBackingChanged,

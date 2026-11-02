@@ -86,6 +86,14 @@ func (r *OutboundRelayReceiver) handleGuestStream(instance string, guest net.Con
 	if err := relaywire.Write(upstream, preamble); err != nil {
 		return "write", err
 	}
+	// ADR-20261027090012: an agent run whose model-wait pause is on reports
+	// its relay bytes, and outboundd's bytes resume a paused VM before they
+	// are written to it.
+	if relay := r.mgr.AgentRelayOpened(instance); relay != nil {
+		defer relay.Close()
+		spliceOutboundRelayReaders(guest, upstream, relay.Reader(r.ctx, guest, false), relay.Reader(r.ctx, upstream, true))
+		return "", nil
+	}
 	spliceOutboundRelay(guest, upstream)
 	return "", nil
 }
@@ -143,8 +151,15 @@ func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamb
 // either direction fails rather than reaching EOF, both connections close so
 // the other copy cannot block forever.
 func spliceOutboundRelay(guest, upstream net.Conn) {
+	spliceOutboundRelayReaders(guest, upstream, guest, upstream)
+}
+
+// spliceOutboundRelayReaders is spliceOutboundRelay reading the guest's bytes
+// from fromGuest and outboundd's from fromUpstream, readers that wrap the two
+// connections.
+func spliceOutboundRelayReaders(guest, upstream net.Conn, fromGuest, fromUpstream io.Reader) {
 	done := make(chan struct{}, 2)
-	pipe := func(dst, src net.Conn) {
+	pipe := func(dst net.Conn, src io.Reader) {
 		defer func() { done <- struct{}{} }()
 		if _, err := io.Copy(dst, src); err != nil {
 			_ = guest.Close()
@@ -155,8 +170,8 @@ func spliceOutboundRelay(guest, upstream net.Conn) {
 			_ = half.CloseWrite()
 		}
 	}
-	go pipe(upstream, guest)
-	go pipe(guest, upstream)
+	go pipe(upstream, fromGuest)
+	go pipe(guest, fromUpstream)
 	<-done
 	<-done
 }

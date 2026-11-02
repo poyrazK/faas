@@ -27,6 +27,19 @@ var (
 	ErrUsageStale    = pgerrors.ErrUsageStale
 )
 
+// ChangeRejectedError is a provider's final refusal of an in-place change:
+// asking again for the same change cannot succeed. Code is a stable
+// snake_case reason, such as upgrade_refused (pg_upgrade's check refused
+// the cluster, which stays on its major) or upgrade_failed (the database
+// needs a point-in-time restore). It is an ErrConflict.
+type ChangeRejectedError struct {
+	Code string
+}
+
+func (e *ChangeRejectedError) Error() string { return "managed postgres: change rejected: " + e.Code }
+
+func (e *ChangeRejectedError) Unwrap() error { return ErrConflict }
+
 // ErrProvisioningClosed reports that the operator rollout gate (canary
 // window, qualification or account allowlist) is closed for this account.
 // It wraps ErrUnavailable so retry semantics and existing errors.Is checks
@@ -56,11 +69,27 @@ func (notInPlanError) Error() string {
 
 func (notInPlanError) Unwrap() error { return ErrQuotaExceeded }
 
+// ErrRestoreSlotInUse refuses a restore past the plan's database limit while
+// another copy already holds the restore slot (ADR-20261031123259). It unwraps
+// to ErrQuotaExceeded.
+var ErrRestoreSlotInUse error = restoreSlotInUseError{}
+
+type restoreSlotInUseError struct{}
+
+func (restoreSlotInUseError) Error() string {
+	return "another restored database already holds the restore slot past the plan's database limit; purge it first"
+}
+
+func (restoreSlotInUseError) Unwrap() error { return ErrQuotaExceeded }
+
 // QuotaProblem names an ErrQuotaExceeded refusal for API problems, telling a
 // plan entitlement apart from a usage quota.
 func QuotaProblem(err error) (status int, code, title string) {
 	if errors.Is(err, ErrNotInPlan) {
 		return 403, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan"
+	}
+	if errors.Is(err, ErrRestoreSlotInUse) {
+		return 403, "managed_postgres_restore_slot_in_use", "Another restored database holds the restore slot"
 	}
 	return 403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
 }
@@ -68,8 +97,8 @@ func QuotaProblem(err error) (status int, code, title string) {
 // ProvisioningClosedDetail and UnavailableDetail are the customer-facing
 // explanations for ErrProvisioningClosed and a real provider outage.
 const (
-	ProvisioningClosedDetail = "Managed PostgreSQL is an operator preview and provisioning is not open for this account right now. Existing databases and bindings keep working; ask the platform operator to open provisioning."
-	UnavailableDetail        = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
+	ProvisioningClosedDetail = "New managed PostgreSQL databases, bindings, restores and resizes are not open for this account right now. Existing databases and bindings keep working; retry later or contact support."
+	UnavailableDetail        = "The managed PostgreSQL provider is temporarily unavailable. Existing databases keep running; retry later or contact support."
 )
 
 // UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
@@ -305,12 +334,91 @@ type RestoreRequest struct {
 	Verification *RestoreVerification
 }
 
+// ImportSource is a PostgreSQL database on another backend to copy into a
+// new one (ADR-1027 migration off Neon): reachable at Host:Port over TLS
+// with a certificate for Host, as User, who can read everything in
+// Database. SkipExtensions are extensions the source provider installs for
+// itself. Password is sensitive and never printed.
+type ImportSource struct {
+	Host           string
+	Port           int
+	Database       string
+	User           string
+	Password       string
+	SkipExtensions []string
+}
+
+func (ImportSource) String() string   { return "[REDACTED]" }
+func (ImportSource) GoString() string { return "managedpostgres.ImportSource{[REDACTED]}" }
+
+// ImportRequest copies Source into the provider's empty database
+// ResourceID. OperationID (a lowercase UUID, ADR-1370's
+// copy_operation_id) names the import: importing again under it reports
+// the import unchanged, or restarts a failed one; another ID while one is
+// running or done is ErrConflict.
+type ImportRequest struct {
+	ResourceID  string
+	Source      ImportSource
+	OperationID string
+}
+
+// ImportState is an import's progress.
+type ImportState string
+
+const (
+	ImportNone    ImportState = "none"
+	ImportRunning ImportState = "running"
+	ImportDone    ImportState = "done"
+	ImportFailed  ImportState = "failed"
+)
+
+// ImportStatus reports an import; ErrorCode is a stable code.
+type ImportStatus struct {
+	State       ImportState
+	ErrorCode   string
+	StartedAt   time.Time
+	FinishedAt  time.Time
+	SourceMajor int
+	// OperationID is the import this status describes. A finished copy
+	// keeps it across a restart of the database, so ImportDone with the
+	// expected ID proves the copy's lineage.
+	OperationID string
+	// MissingExtensions names, for extension_unavailable, the source
+	// extensions the target cannot create: plain identifiers only, never
+	// connection data.
+	MissingExtensions []string
+	// RequiredVolumeBytes is, for target_too_small, the storage size the
+	// target needs for the copy (zero when the estimate fell short during
+	// the copy).
+	RequiredVolumeBytes int64
+}
+
+// Importer is a provider that copies a database from another backend into
+// one of its own. Import starts the copy, or reports one already running or
+// done; ImportStatus reports it. An import interrupted before it finished
+// leaves the target empty and can be started again. ImportStatus need not
+// wake the database, so it may report ImportNone for a finished copy whose
+// database stopped since; Import under the same OperationID is the
+// authoritative answer.
+type Importer interface {
+	Import(ctx context.Context, req ImportRequest) (ImportStatus, error)
+	ImportStatus(ctx context.Context, resourceID string) (ImportStatus, error)
+}
+
 // RestoreInspector verifies an existing target against its pinned source and
 // point. Providers whose metadata expresses historical positions instead of
 // timestamps can resolve that mapping independently. This inspection must not
 // create a resource or substitute a mutable source selector.
 type RestoreInspector interface {
 	InspectRestore(context.Context, string, RestoreRequest) (ObservedDatabase, error)
+}
+
+// ProvisionInspector is Inspect for a database still being provisioned,
+// for a provider that finishes a provisioned database's setup only once its
+// resource is up. The service and the qualification inspect a provisioning
+// database that is not a restore through it; it must not create a resource.
+type ProvisionInspector interface {
+	InspectProvision(ctx context.Context, providerResourceID string) (ObservedDatabase, error)
 }
 
 type DeleteResult struct {
@@ -700,6 +808,13 @@ type Capabilities struct {
 	PointInTimeRestore bool
 	ClassResize        bool
 	ScaleToZeroUpdate  bool
+	// StorageResize means Update grows StorageLimitBytes in place. Storage
+	// never shrinks.
+	StorageResize bool
+	// MajorUpgrade means Update upgrades PostgresMajor in place to a later
+	// one of PostgresMajors, and may reject it for good with a
+	// *ChangeRejectedError.
+	MajorUpgrade bool
 	// RestoreUsageIsolated means a provider can meter a restored target
 	// independently of its source. It must not also be counted in the source
 	// resource's Usage response.
@@ -711,6 +826,11 @@ type Capabilities struct {
 	MaxRestoreWindowSeconds      int64
 	MaxStorageBytes              int64
 	UsageMeters                  []Meter
+	// RetiringMajors are majors that existing databases keep (restore, resize
+	// and maintenance still work) but new databases may not choose: their
+	// upstream end of life is near or past, and no provider upgrades a major in
+	// place. Each is also in PostgresMajors.
+	RetiringMajors []int
 }
 
 func (c Capabilities) Validate() error {
@@ -723,11 +843,19 @@ func (c Capabilities) Validate() error {
 	if c.ScaleToZeroUpdate && !c.ScaleToZero {
 		return ErrInvalid
 	}
-	if c.ClassResize && len(c.ServiceClasses) < 2 {
+	if c.ClassResize && len(c.ServiceClasses) < 2 || c.MajorUpgrade && len(c.PostgresMajors) < 2 {
 		return ErrInvalid
 	}
 	hasRestoreUsageAccounting := c.RestoreUsageIsolated || c.RestoreUsageIncludedInSource
 	if (c.RestoreUsageIsolated && c.RestoreUsageIncludedInSource) || (hasRestoreUsageAccounting && !c.PointInTimeRestore) {
+		return ErrInvalid
+	}
+	for _, major := range c.RetiringMajors {
+		if !contains(c.PostgresMajors, major) {
+			return ErrInvalid
+		}
+	}
+	if len(c.NewDatabaseMajors()) == 0 || hasDuplicates(c.RetiringMajors) {
 		return ErrInvalid
 	}
 	if hasDuplicates(c.PostgresMajors) || hasDuplicates(c.ServiceClasses) || hasDuplicates(c.Availability) || hasDuplicates(c.CredentialAccess) || hasDuplicates(c.UsageMeters) {
@@ -771,6 +899,31 @@ func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
 	}
 	if !contains(c.CredentialAccess, access) {
 		return ErrUnsupported
+	}
+	return nil
+}
+
+// NewDatabaseMajors are the majors a new database may choose: every offered
+// major except the retiring ones.
+func (c Capabilities) NewDatabaseMajors() []int {
+	var majors []int
+	for _, major := range c.PostgresMajors {
+		if !contains(c.RetiringMajors, major) {
+			majors = append(majors, major)
+		}
+	}
+	return majors
+}
+
+// SupportsNewDatabase is Supports for a database being created: a retiring
+// major stays supported for the databases that have it, but no new database
+// may choose it.
+func (c Capabilities) SupportsNewDatabase(spec Spec) error {
+	if err := c.Supports(spec); err != nil {
+		return err
+	}
+	if contains(c.RetiringMajors, spec.PostgresMajor) {
+		return fmt.Errorf("%w: postgres major %d is retiring and no longer offered for new databases (offered: %s)", ErrUnsupported, spec.PostgresMajor, joinOffered(c.NewDatabaseMajors(), strconv.Itoa))
 	}
 	return nil
 }
@@ -824,6 +977,25 @@ type Provider interface {
 	IssueCredentials(context.Context, CredentialRequest) (CredentialMaterial, error)
 	RevokeCredentials(context.Context, CredentialRequest) error
 	Usage(context.Context, string, UsageWindow) (Usage, error)
+}
+
+// SessionObservation reports what revoked identities still hold on one
+// database. Fields are counts, or 1 when a provider can only report presence;
+// callers treat any nonzero field as "some remain" and never rely on totals.
+type SessionObservation struct {
+	Sessions             int64
+	PreparedTransactions int64
+}
+
+// SessionTerminator is an optional capability that ends the sessions of
+// credentials already revoked through RevokeCredentials (ADR-1370). Every
+// request names the same ProviderResourceID. Both methods are idempotent; an
+// absent role holds no sessions and no prepared transactions. A provider may
+// terminate every session on the database, since an activation owns all of
+// its bindings. Without this capability an activation cannot fence its source.
+type SessionTerminator interface {
+	TerminateSessions(context.Context, []CredentialRequest) error
+	ObserveSessions(context.Context, []CredentialRequest) (SessionObservation, error)
 }
 
 // ScaleToZeroProber is an optional qualification-only capability. Providers
@@ -915,6 +1087,25 @@ type Database struct {
 	// (ADR-20261029174950); zero unless the database is deleting on a
 	// schedule. An immediate delete clears it.
 	PurgeAfter time.Time
+	// RestoreSlotUntil is set while a restored database holds the restore
+	// slot past its owner's database limit (ADR-20261031123259): when it
+	// passes with no room, the database's delete is scheduled.
+	RestoreSlotUntil time.Time
+}
+
+// RestoreRange is the span a point-in-time restore from d can target at now:
+// from the later of its creation and the start of its restore window, up to
+// now (exclusive). Restore applies the same bounds; ok is false while d
+// cannot be restored from.
+func (d Database) RestoreRange(now time.Time) (earliest, latest time.Time, ok bool) {
+	if d.State != StateReady || d.ProviderResourceID == "" || d.Spec.RestoreWindowSeconds <= 0 || !d.CreatedAt.Before(now) {
+		return time.Time{}, time.Time{}, false
+	}
+	earliest = now.Add(-time.Duration(d.Spec.RestoreWindowSeconds) * time.Second)
+	if earliest.Before(d.CreatedAt) {
+		earliest = d.CreatedAt
+	}
+	return earliest, now, true
 }
 
 // Restorable reports whether a scheduled delete can still be undone at now.

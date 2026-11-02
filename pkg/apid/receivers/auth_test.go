@@ -35,6 +35,7 @@ import (
 // `lookup` field; nil lookup returns "hash miss" semantics.
 type fakeAuthStore struct {
 	lookup func(hash []byte) (state.Account, state.APIKey, error)
+	oidc   func(hash []byte) (state.Account, state.APIKey, error)
 	calls  int
 }
 
@@ -44,6 +45,14 @@ func (f *fakeAuthStore) AuthenticateKey(_ context.Context, hash []byte) (state.A
 		return state.Account{}, state.APIKey{}, state.ErrNotFound
 	}
 	return f.lookup(hash)
+}
+
+func (f *fakeAuthStore) AuthenticateOIDCBearer(_ context.Context, hash []byte) (state.Account, state.APIKey, error) {
+	f.calls++
+	if f.oidc == nil {
+		return state.Account{}, state.APIKey{}, state.ErrNotFound
+	}
+	return f.oidc(hash)
 }
 
 // dialAuthBufconn brings up an in-process gRPC server backed by a

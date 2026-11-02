@@ -182,3 +182,41 @@ back during an incident got `403 org_role_forbidden`. They are now mapped:
 
 Account-wide freezes (`/v1/freezes`) stay with the account that owns the app's
 resources; they name no app in their URL.
+
+## Amendment 4 (2026-10-31): custom domains, crons and invocations
+
+Custom domains, crons and invocation replays name a company app outside
+`/v1/apps/{slug}`: the create request names it in its body, and every other
+route names a domain, cron or invocation. appaccess resolves the app behind
+those URLs, so a creator who left the company already loses them, but the
+routes were never mapped. Only the app's creator, while an owner or admin,
+reached them, and the body-addressed creates priced the request by the
+caller's personal plan. A company's other owners could not remove a production
+domain or stop a cron on an app another member created; a Free member of a Pro
+company was refused crons the company pays for, and a Pro member of a Free
+company got them (bug hunt 2026-10-28 B9, H90).
+
+**Decision.**
+
+- **Read permission** (every member): a domain, its doctor report, a cron, its
+  runs and occurrences, and the cron list filtered to one app. A cron run's
+  output and an invocation take the logs permission.
+- **Configure permission** (owners, admins, developers): adding, verifying,
+  retrying, defaulting and removing a custom domain; creating, changing and
+  deleting a cron. They configure where and when the app runs, as its
+  environment does.
+- **Deploy permission** (owners, admins, developers): running a cron now,
+  cancelling a cron run, and replaying an invocation.
+- A body-addressed create (`POST /v1/domains`, `POST /v1/crons`) acts as the
+  app's resource account (`state.AppResourceAccount`), as Wrap-addressed routes
+  do: its plan decides wildcard domains, cron and domain limits, and its
+  account holds the rows. A request for an app the caller cannot reach is
+  judged on the caller's own plan, so the 402 a Free account gets before the
+  app lookup is unchanged.
+
+**Unchanged.** Legacy `/v1/triggers` administration stays personal-only:
+company triggers go through the reviewed queue-binding APIs
+(docs/organization-queues.md). Edge rules follow
+ADR-20261029100110. Managed PostgreSQL cutover preparation keeps the
+creator-only fallback. Background workers that read the creator's account
+instead of `state.AppResourceAccount` are not covered here.

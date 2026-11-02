@@ -1,6 +1,9 @@
 package daemonunitspec
 
-import "github.com/onebox-faas/faas/pkg/daemonunit"
+import (
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
+)
 
 // UnitGatewaydInternal is the canonical unit for faas-gatewayd-internal
 // — routing + wake + proxy (Tier A7 split, ADR-070). It serves the local
@@ -70,7 +73,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
 		OOMPolicy:    "continue",
-		User:         "faas",
+		User:         api.GatewaydInternalUser,
 		Group:        "faas",
 		ExecStart:    `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
 		Restart:      "on-failure",

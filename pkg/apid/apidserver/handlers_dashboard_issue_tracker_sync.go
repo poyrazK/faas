@@ -184,7 +184,7 @@ func (s *server) dashboardTrackerSyncPreview(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if app.AccountID != acct.ID {
+	if !dashboardAppOwner(r, &acct, app) {
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the owner may inspect provider sync"))
 		return
 	}
@@ -296,7 +296,7 @@ func (s *server) dashboardTrackerPushAllowed(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return false
 	}
-	if app.AccountID != acct.ID {
+	if !dashboardAppOwner(r, &acct, app) {
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the owner may synchronize a ticket"))
 		return false
 	}

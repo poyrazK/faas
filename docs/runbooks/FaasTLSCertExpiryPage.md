@@ -1,82 +1,50 @@
 # FaasTLSCertExpiryPage
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
-Metric: `gateway_tls_cert_expiry_seconds` (gatewayd-public `/metrics`).
-Spec: §12 + ADR-024 H3 (closed in PR #345).
+Metric: `gateway_tls_cert_expiry_seconds` (apid `/metrics`, `pkg/apid/certexpiry`).
+Spec: §12, ADR-024 H3, ADR-520.
 Severity: warn at 14 days (ADR-1236). `FaasTLSCertExpiryImminent` pages
-below 72 hours.
-
-> **Legacy daemon only (revised 2026-08-04).** This runbook applies
-> to the legacy `cmd/gatewayd/` daemon and to `cmd/gatewayd-public/`
-> *before* PR #633. The production deployment terminates TLS at
-> Caddy + Cloudflare upstream of `api.gregale.dev`, not in the
-> daemon. PR #633 stripped certmagic + Hetzner DNS-01 from
-> `gatewayd-public`; the legacy daemon keeps them during the
-> migration window. PR-C sweeps the certmagic packages and
-> this runbook will be archived alongside them.
->
-> The certificate metrics and this runbook are retained for legacy
-> observability only. Current production TLS terminates at the upstream
-> Caddy/Cloudflare edge; use `docs/ops/secrets-rotation.md` for the current
-> provider-token procedure. The legacy `gatewayd.toml` config file is kept
-> only as migration reference.
+below 72 hours and links here too.
 
 ## Symptom
 
-Smallest remaining lifetime across cached certs in `cfg.StorageDir`
-is ≤ 14 days. The §12 panel is the gauge the operator reads; the
-alert pages the operator when the gauge drops below the hard 14-day
-threshold. A negative value is also a page (cert already past
-`NotAfter`).
+The soonest-expiring edge certificate on a verified custom domain has under
+14 days left (under 72 hours for `FaasTLSCertExpiryImminent`). Caddy on the
+public edge obtains and renews every customer certificate on demand
+(ADR-520) and renews at about 30 days, so renewal has been failing for at
+least two weeks.
 
-The most likely cause is **certmagic renew failure** — DNS-01 writes
-failed (Hetzner token rotated without the new one being loaded,
-or the apps zone no longer grants zone-write to the token), or
-certmagic's renew loop is wedged.
+The value comes from apid's domain doctor, which completes a TLS handshake
+with every verified custom domain at most every 30 s and records the leaf's
+`NotAfter` in `custom_domains.cert_expires_at`. Every apid replica exports
+the same value; the rule takes `min()`.
 
 ## Verify
 
-```bash
-curl -fsS http://127.0.0.1:9090/metrics | grep gateway_tls_cert_expiry_seconds
-journalctl -u faas-gatewayd-public --since '-1h' --no-pager | grep -iE 'certmagic|renew|acme|hetzner'
-ls -la /var/lib/faas/certs/certificates/  # 0700, faas:faas
-```
-
-## Check
+Find the host from the per-host series, soonest first:
 
 ```bash
-# Is the Hetzner DNS token still valid? The error path emits
-# "no such zone" or "unauthorized" on POST /api/v1/records.
-journalctl -u faas-gatewayd-public --since '-24h' --no-pager | grep -iE 'hetzner|api/v1/records|unauthorized'
-
-# Is the apps domain still delegated to this box's IP?
-dig +short $(grep -E '^\[tls\]' -A 30 /etc/faas/gatewayd.toml | grep wildcard_cert_domain | head -1 | cut -d'"' -f2)
+curl -fsS http://127.0.0.1:9101/metrics | grep gateway_tls_cert_expiry_by_host_seconds | sort -t' ' -k2 -n | head
 ```
 
-If the Hetzner token is the cause, rotate it:
-
-1. Generate a new token in the Hetzner Cloud Console.
-2. Drop the token using the current provider-owned secret procedure (the
-  legacy `LoadCredential` call is what the retired daemon reads).
-3. `systemctl restart faas-gatewayd-public` (the H4 file-watch reload is
-   the open follow-up; until then, a restart is the rotation step).
-4. Certmagic will re-mint on the next wake. Watch the gauge
-   climb back above 60 d.
-
-## Silence
+Then confirm what the edge serves:
 
 ```bash
-amtool silence add \
-  --matchers='alertname=FaasTLSCertExpiryPage' \
-  --duration=1h \
-  --comment='Hetzner token rotation in progress'
+openssl s_client -connect <edge-ip>:443 -servername <host> </dev/null 2>/dev/null | openssl x509 -noout -enddate -issuer
 ```
 
-## Recover
+## Fix
 
-If certmagic's renew loop is wedged (logs show the same "obtaining
-certificate" line for > 30 minutes with no progress), kill the
-gatewayd-public daemon; on restart certmagic re-evaluates against the on-disk
-state and either resumes the in-flight obtain or starts fresh.
-Re-verify the gauge climbs back above 60 d within 10 minutes of
-the first mint.
+Renewal needs, for the host:
+
+1. The `custom_domains` row still verified. A drifted or removed domain is
+   not renewed on purpose; `gregale domains` shows its state.
+2. The on-demand ask allowing it: check `gateway_tls_on_demand_*` on
+   gatewayd-public and its log for a denial reason (plan, budget, unknown).
+3. HTTP-01 reachable: port 80 open on the public edge and not redirected
+   away for `/.well-known/acme-challenge/`.
+4. CAA records on the customer's zone allowing Let's Encrypt.
+
+The public edge's Caddy log (`journalctl -u caddy`) names the failing step
+for the host. Once the cause is fixed, the next handshake to the host
+triggers renewal; the doctor records the new expiry within a minute.

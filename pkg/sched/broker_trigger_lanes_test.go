@@ -64,6 +64,62 @@ func laneTrigger(t *testing.T, store *state.MemStore, email, slug string) (state
 	return app, trigger
 }
 
+// A deleted app's broker triggers stay enabled for a restore but are not
+// polled, and neither are those of an app whose billing account is
+// suspended: either way every record would have retried into a dead letter
+// and, on Kafka, been committed past (bug hunt 2026-10-28 B32).
+func TestDeletedOrSuspendedAppsDoNotConsumeBrokerRecords(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	app, trigger := laneTrigger(t, store, "deleted-broker@example.test", "deleted-broker")
+	listed := func() bool {
+		t.Helper()
+		triggers, err := store.ListEnabledTriggers(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, listed := range triggers {
+			if listed.ID == trigger.ID {
+				return true
+			}
+		}
+		return false
+	}
+	if !listed() {
+		t.Fatal("a live app's broker trigger is not listed")
+	}
+	if !sched.XTriggerAppConsumes(ctx, store, app) {
+		t.Fatal("a live app's broker trigger may not consume")
+	}
+	deleted, err := store.ScheduleAppDeletion(ctx, app.ID, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed() || sched.XTriggerAppConsumes(ctx, store, deleted) {
+		t.Fatal("a deleted app's broker trigger is still polled")
+	}
+	limits, _ := api.LimitsFor(api.PlanScale)
+	restored, err := store.RestoreApp(ctx, app.ID, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !listed() {
+		t.Fatal("a restored app's broker trigger did not come back")
+	}
+	if err := store.UpdateAccountStatus(ctx, restored.AccountID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if sched.XTriggerAppConsumes(ctx, store, restored) {
+		t.Fatal("a suspended account's broker trigger is still polled")
+	}
+	if err := store.UpdateAccountStatus(ctx, restored.AccountID, state.AccountPastDue); err != nil {
+		t.Fatal(err)
+	}
+	if !sched.XTriggerAppConsumes(ctx, store, restored) {
+		t.Fatal("a past-due account, which still serves, stopped consuming")
+	}
+}
+
 func TestSlowBrokerTriggerDoesNotHoldOthers(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

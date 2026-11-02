@@ -117,12 +117,11 @@ CreateAppWebhookIfUnderQuota
 CreateBuildProvenance
 CreateBuildWithID
 CreateConsumerKey
-CreateCorsPresetIfUnderQuota
+CreateConsumerKeyForConsumerIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions
 CreateCustomDomain
 CreateDeploymentScopeExclusion
-CreateEdgeRule
 CreateEdgeRuleIfUnderQuota
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
@@ -330,6 +329,7 @@ ListDeploymentAudit
 ListDeploymentAuditByAlertRule
 ListDeploymentLogs
 ListDeploymentScopeExclusions
+ListDeploymentSidecarEnvReseals
 ListDeploymentSidecarLayers
 ListDeploymentsByNodeID
 ListDeploymentsForAccount
@@ -338,7 +338,6 @@ ListDistinctUpstreamHostHashes
 ListDomainsForAccount
 ListDomainsForApp
 ListDueInvocations
-ListEdgeRulesForAccount
 ListEdgeRulesForApp
 ListEgressCircuitCandidates
 ListEnabledAlertRules
@@ -404,7 +403,6 @@ ListWorkflowRuns
 LiveCrashCaptureDeploymentIDs
 LiveDeploymentForScope
 LiveDeployments
-LoadAllOverageCapCents
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes
 LookupDeploymentScopeExclusions
@@ -602,6 +600,7 @@ UpsertAppTrustedSigner
 UpsertComputeNode
 UpsertComputeNodeFromOperator
 UpsertDeploymentOpenAPIDoc
+UpsertDeploymentOpenAPIDocIfUnderQuota
 UpsertDeploymentScanResult
 UpsertDeploymentSecretFindings
 UpsertDoctorObservation

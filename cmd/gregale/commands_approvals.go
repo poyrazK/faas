@@ -164,7 +164,7 @@ func approvalsOff(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	slug, ok := approvalsApp(*app, "usage: gregale release approval off [--app <slug>]")
+	slug, ok := approvalsApp(*app, "usage: gregale release approval disable [--app <slug>]")
 	if !ok {
 		return 1
 	}

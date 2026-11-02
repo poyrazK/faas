@@ -7,6 +7,15 @@ command when one is known. `type` defaults to `about:blank` when no specific
 problem URI is supplied. `instance` identifies the specific occurrence when
 the caller supplies an occurrence URI.
 
+On app and API requests, Gregale sends its own timeouts and failed
+connections to your app as 503 rather than 502 or 504. The response carries
+its `code` and the `X-Faas-Error-Code` header, so the problem body and request
+id reach you through Cloudflare, which replaces 502 and 504 bodies with its
+own page. A 502
+or 504 that your app returns itself is passed on unchanged, and Cloudflare
+then shows its own error page in place of your body. Key automation on `code`
+or `X-Faas-Error-Code`, not on the status.
+
 | Code family | Meaning | Next step |
 |---|---|---|
 | `plan_*` | The current plan does not include a feature or quota | Check [plans](plans.md) and upgrade or reduce the request. |
@@ -17,7 +26,7 @@ the caller supplies an occurrence URI.
 | `app_startup_crash` | The app process exited before it became ready (the detail carries its last output lines) | Fix the error in that output; `gregale logs APP` has the full startup log. |
 | `execution_mode_conflict` | The app's startup behavior contradicts its `execution_mode` (a worker bound a port or exited, a job served; a worker with a push queue binding may listen for its deliveries) | Set `execution_mode` to match the app, or change its start command. |
 | `validation_failed` | A request or manifest is malformed | Correct the named field; no write is committed. |
-| `request_budget_exceeded` (504) | The request ran past its wall-clock budget (30 s for apps by default) before the app sent response headers; `limit` and `observed` are in milliseconds | Return headers sooner (stream, or accept and process asynchronously with `gregale invoke --async`), or lower the work per request. A `kind=budget` edge rule can set a route budget up to the plan maximum. |
+| `request_budget_exceeded` (503) | The request ran past its wall-clock budget (30 s for apps by default) before the app sent response headers; `limit` and `observed` are in milliseconds | Return headers sooner (stream, or accept and process asynchronously with `gregale invoke --async`), or lower the work per request. A `kind=budget` edge rule can set a route budget up to the plan maximum. |
 | `capacity_unavailable` | The platform cannot admit work now | Retry with backoff; the response includes `Retry-After` where applicable. |
 | `idempotency_key_reused` (422) | The request's `Idempotency-Key` was used in the last 24 hours for a different request (another body, query, or precondition header); nothing ran, and the first request's result is kept ([ADR-20261022204036](adr/20261022204036-idempotency-key-bound-to-request.md)) | Send a new key for a new request. To get the first request's result, resend it unchanged with the same key. |
 | `auth_rate_limited` (429) | Too many failed authentication attempts came from this address, or password sign-in for this email address is paused after repeated failures from any address | Wait for `Retry-After`, then retry with valid credentials, or reset the password to lift the pause. |
@@ -32,7 +41,7 @@ the caller supplies an occurrence URI.
 | `event_stream_unavailable` (SSE) | Gregale could not open the account event stream | Reconnect in a moment; if it persists, check Gregale status. |
 | `bad_request` (400) | A dashboard action is malformed or incomplete | Return to the form, check the requested fields, and retry. |
 | `transport_error` (503, CLI) | The CLI could not reach Gregale's API | Check connectivity and the configured API URL, then retry. |
-| `bad_gateway` (502) | Gregale could not complete a connection to the app | Retry the request; if it continues, check app logs. |
+| `bad_gateway` (503) | Gregale could not complete a connection to the app | Retry the request; if it continues, check app logs. |
 | `app_unavailable` (503) | The gateway could not reach the selected app instance | Retry after the supplied delay; inspect app logs if the app remains unavailable. |
 | `app_health_unavailable` (503) | The app's last known wake did not leave a live instance | Retry after the supplied delay; inspect app logs if the app remains unavailable. |
 | `realtime_unavailable` (503) | Gregale cannot currently reach the managed realtime service | Retry after the supplied delay. |

@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,16 +58,24 @@ func (s *server) testNotificationChannel(w http.ResponseWriter, r *http.Request,
 // channelTestAllowed takes one of the account's
 // NotificationChannelTestsPerAccountMinute test sends (ADR-20261028101615).
 func (s *server) channelTestAllowed(acct state.Account) *api.Problem {
+	return s.testSendAllowed(&s.channelTestsOnce, &s.channelTests, acct,
+		api.NotificationChannelTestsPerAccountMinute, api.ErrNotificationChannelTestRateLimited)
+}
+
+// testSendAllowed takes one of an account's limit test sends a minute from
+// the limiter once builds; limited is the 429 past it.
+func (s *server) testSendAllowed(once *sync.Once, limiter **peraccount.Limiter, acct state.Account, limit int,
+	limited func(limit, retryAfterS int) *api.Problem) *api.Problem {
 	account, err := uuid.Parse(acct.ID)
 	if err != nil {
 		// Account ids are UUIDs; one that is not cannot be counted, so
 		// the send is refused rather than let through unlimited.
-		s.log.Error("notification channel test: account id is not a UUID", "account", acct.ID, "err", err)
+		s.log.Error("test send: account id is not a UUID", "account", acct.ID, "err", err)
 		return api.ErrInternal("could not count this account's test sends")
 	}
-	s.channelTestsOnce.Do(func() { s.channelTests = peraccount.NewLimiter() })
-	if ok, retryMS := s.channelTests.Take(account, api.NotificationChannelTestsPerAccountMinute); !ok {
-		return api.ErrNotificationChannelTestRateLimited(api.NotificationChannelTestsPerAccountMinute, int((retryMS+999)/1000))
+	once.Do(func() { *limiter = peraccount.NewLimiter() })
+	if ok, retryMS := (*limiter).Take(account, limit); !ok {
+		return limited(limit, int((retryMS+999)/1000))
 	}
 	return nil
 }

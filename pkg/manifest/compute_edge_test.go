@@ -34,3 +34,16 @@ func TestPublicEdgeComputeNodesValidate(t *testing.T) {
 		})
 	}
 }
+
+// adr: 20261031105055 — placement routing needs the compute edge it routes.
+func TestPublicEdgePlacementRoutingNeedsComputeNodes(t *testing.T) {
+	control := Host{Name: "cp-1", Role: "control-plane"}
+	compute := Host{Name: "cn-1", Role: "compute-only"}
+	if errs := (PublicEdge{ComputeNodes: true, PlacementRouting: true}).validate([]Host{control, compute}); len(errs) != 0 {
+		t.Fatalf("validate = %v, want no errors", errs)
+	}
+	errs := (PublicEdge{PlacementRouting: true}).validate([]Host{control, compute})
+	if !strings.Contains(errs.Error(), "public_edge.placement_routing") {
+		t.Fatalf("validate = %v, want a public_edge.placement_routing error", errs)
+	}
+}

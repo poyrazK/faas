@@ -72,7 +72,7 @@ type mcpTasksObserverSetupResult struct {
 func cmdMCPTasksObserver(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		PrintUsage(os.Stderr,
-			"usage: gregale mcp server tasks observer <setup|status> --app <observer-app> --worker-app <worker-app> [flags]", "mcp")
+			"usage: gregale mcp observer <setup|status> --app <observer-app> --worker-app <worker-app> [flags]", "mcp")
 		return 0
 	}
 	switch args[0] {
@@ -532,9 +532,9 @@ func printMCPTasksObserverSetup(w io.Writer, result mcpTasksObserverSetupResult,
 	if result.ReadyToLink {
 		_, _ = fmt.Fprintf(w, "  Next: gregale mcp server tasks setup --app %s --observer-app %s --min 0 --apply\n", result.WorkerSlug, result.ObserverSlug)
 	} else if !result.ObserverMinimumConfigured {
-		_, _ = fmt.Fprintf(w, "  Next: gregale mcp server tasks observer setup --app %s --worker-app %s --config <gregale-mcp.json> --apply\n", result.ObserverSlug, result.WorkerSlug)
+		_, _ = fmt.Fprintf(w, "  Next: gregale mcp observer setup --app %s --worker-app %s --config <gregale-mcp.json> --apply\n", result.ObserverSlug, result.WorkerSlug)
 	} else {
-		_, _ = fmt.Fprintf(w, "  Next: gregale mcp server tasks observer status --app %s --worker-app %s\n", result.ObserverSlug, result.WorkerSlug)
+		_, _ = fmt.Fprintf(w, "  Next: gregale mcp observer status --app %s --worker-app %s\n", result.ObserverSlug, result.WorkerSlug)
 	}
 }
 

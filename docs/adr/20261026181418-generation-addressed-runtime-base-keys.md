@@ -324,3 +324,56 @@ re-adoption drops the marker. Until then, a vmmd N boot can attach N-1's
 bytes. Closing this needs the pre-stage to verify the cached bytes after it
 marks them, or a per-base lock shared by the daemons on a node. A lock only
 helps once both N and N-1 take it.
+
+## Amendment 2026-10-31 · A serving imaged keeps a newer release's guest-init
+
+**Incident.** production-us, 2026-10-31, rc.312 rollout. fsn-2 had rolled to
+rc.312; fsn-3 still served rc.311. fsn-3's pre-stage failed at 14:57 UTC. It
+scanned `runner-base-debian-parent` for 467 s, and the bytes changed under the
+scan (`artifact_mismatch`). Its failure publication was then refused because
+the base's producer had changed after admission. Both nodes' snapshot boots of
+node24 apps failed the same way at 14:49 and 14:55. In the 75 minutes from
+14:06, the producer catalogue recorded ten producers of that one base. They
+alternated between two guest-init digests (rc.311 `abfb23e4`, rc.312
+`3da2a3c1`) over the same image (`f724602e`). Every earlier rollout window
+shows the same alternation (2026-10-30 16:16–16:27, 2026-10-31 00:58–01:36).
+
+**Cause.** Every release builds its own guest-init into every base. A base's
+generation (§1) is its image ref, which a release usually leaves unchanged. Both
+releases therefore stage the same logical key, and the catalogue's current
+pointer is keyed by it (follow-up 3). ADR-435's reuse check accepts the current
+producer only when its guest-init is this imaged's own. So while two releases
+served, each rebuilt the other's base on its next stage and republished it as
+current. ext4 builds are not byte-reproducible (H10-101), so every swap changed
+the bytes. That staled every scan and snapshot boot in flight on that base.
+
+**Decision.** A serving imaged keeps a current producer whose only difference
+is its guest-init when another release published it after this imaged started.
+Only a newer release's rollout does that while an older imaged serves. The
+release pre-stage (`FAAS_IMAGED_PRESTAGE_ONLY`) still rebuilds every base it
+stages with its own guest-init, so a release ships its guest-init, and so does
+a rollback, whose pre-stage runs like any other. A serving imaged that started
+after the publication still rebuilds; that covers the post-switch imaged's
+deferred child bases. The same rule applies when a child base is built on its
+current parent. The digest sidecar now names the guest-init in the bytes rather
+than the staging imaged's own, which the guest-init patch path and convergence
+read.
+
+During a rollout, the older release's cold boots attach the newer release's
+guest-init. When the image is unchanged, that already happens on every node
+between its pre-stage and its vmmd restart. The guest protocol is
+skew-compatible both ways
+([release compatibility](../release-compatibility.md)).
+
+**Residual risk.** The rule takes effect for the older release only, so it
+protects the rollout after the release that carries it. If an older imaged
+restarts during a rollout, it may rebuild once over the newer base. The newer
+serving imaged then keeps that rebuild until the next pre-stage on any node.
+Keying the producer catalogue's current pointer and the shared keys by
+guest-init as well (follow-up 3) would remove the shared pointer altogether.
+The generation check (ADR-20261024085817) would need to tell a guest-init
+change apart from an image change, or every release would drain.
+
+`TestVerifiedBaseServingReleaseKeepsANewerReleasesGuestInit` covers the three
+cases: the older serving release keeps the newer base, a release started after
+the publication rebuilds, and the pre-stage ships its own guest-init.

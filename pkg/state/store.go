@@ -286,6 +286,12 @@ var ErrInvalidPreviewPrState = errors.New("state: invalid preview_pr_state")
 // api.ErrTrafficPercentSumInvalid (409 Conflict).
 var ErrTrafficPercentSumInvalid = errors.New("state: traffic_percent sum != 100")
 
+// ErrTrafficResidualUnassigned refuses a manual traffic change whose remaining
+// weight has no recipient but aborted canary candidates, which receive traffic
+// only when named (RedistributeManualTraffic). It wraps
+// ErrTrafficPercentSumInvalid: applied, the change would leave Σ below 100.
+var ErrTrafficResidualUnassigned = fmt.Errorf("%w: only an aborted canary could take the remaining traffic", ErrTrafficPercentSumInvalid)
+
 // ErrInvalidMirrorPercent is returned by CreateMirrorRule /
 // UpdateMirrorRule when the requested percent falls outside
 // [0, 100]. The CHECK constraint on mirror_rules.percent
@@ -3280,10 +3286,17 @@ type Store interface {
 	// migration 00330 makes this unreachable in practice, but
 	// the explicit error lets a misuse at the call site fail
 	// closed). Idempotent: a re-delivered cold-boot event
-	// overwrites the same row, not create a second one. The
-	// capture count for the per-account quota is computed via
-	// CountOpenAPIDocsByAccount.
+	// overwrites the same row, not create a second one. It checks
+	// no quota.
 	UpsertDeploymentOpenAPIDoc(ctx context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error
+	// UpsertDeploymentOpenAPIDocIfUnderQuota is UpsertDeploymentOpenAPIDoc
+	// for the per-account allowance (api.Plan.OpenAPIDocsPerAccount): it
+	// counts the documents of the app's billing subject
+	// (ADR-202610171904) and saves this one in one step, under the
+	// subject's lock. Replacing a deployment's document is not a new one.
+	// Over the allowance it returns *OpenAPIDocQuotaError; a deployment
+	// that is not the app's is ErrNotFound.
+	UpsertDeploymentOpenAPIDocIfUnderQuota(ctx context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool, limit int) error
 	// DeleteDeploymentOpenAPIDoc removes the doc row for one
 	// deployment. ErrNotFound when no row OR the caller's
 	// accountID does not match — same IDOR floor as the read.
@@ -3292,10 +3305,9 @@ type Store interface {
 	// caller treats a 404 as success after a delete).
 	DeleteDeploymentOpenAPIDoc(ctx context.Context, deploymentID, accountID string) error
 	// CountOpenAPIDocsByAccount returns the number of doc rows
-	// the account owns. Drives the per-account quota gate
-	// (api.Plan.OpenAPIDocsPerAccount). The count is computed
-	// server-side via a SELECT COUNT(*) so the apid doesn't
-	// load the full body slice.
+	// the account owns. The per-account quota counts the app's
+	// billing subject instead, in
+	// UpsertDeploymentOpenAPIDocIfUnderQuota.
 	CountOpenAPIDocsByAccount(ctx context.Context, accountID string) (int, error)
 
 	// Per-app OpenAPI import (issue #975 item #2 / ADR-126).
@@ -3330,10 +3342,12 @@ type Store interface {
 	UpsertAppOpenAPIDoc(ctx context.Context, appID, accountID string, doc []byte, endpointCount int, openapiVersion string) error
 	// UpsertAppOpenAPIDocIfUnderQuota bundles the per-account quota
 	// gate (count + lock + check) with the upsert so a TOCTOU race
-	// between two concurrent imports under the same account can't
-	// slip past the cap. The PgStore impl runs the count + upsert
-	// inside a transaction with a row lock on the account; the
-	// MemStore impl serialises under m.mu. Returns
+	// between two concurrent imports can't slip past the cap. The
+	// allowance and the count belong to the app's billing subject
+	// (ADR-202610171904). The PgStore impl runs the count + upsert
+	// inside a transaction under the subject's lock
+	// (lockQuotaSubjectTx); the MemStore impl serialises under m.mu.
+	// Returns
 	// ErrOpenAPIImportsPerAccountQuotaReached when count>=limit;
 	// ErrNotFound when the parent app row is missing or the
 	// caller's accountID does not match.
@@ -3380,6 +3394,11 @@ type Store interface {
 	// returns ([]nil, nil). vmmd's Wake path consumes this
 	// eagerly to convert into wake.Workloads entries.
 	ListDeploymentSidecarLayers(ctx context.Context, deploymentID string) ([]DeploymentSidecarLayer, error)
+	// ListDeploymentSidecarEnvReseals returns the runtime-domain copies of the
+	// deployment's sidecar env values that `gregalectl seal-domain migrate`
+	// wrote (ADR 20261022111812), ordered by sidecar and key; empty when
+	// there are none.
+	ListDeploymentSidecarEnvReseals(ctx context.Context, deploymentID string) ([]SidecarEnvReseal, error)
 
 	// SetDeploymentSourceURL records the canonical upstream URL +
 	// commit SHA the build was triggered from (Tier 3 / issue #197
@@ -3906,9 +3925,9 @@ type Store interface {
 	// pinned by the createAlertRuleIfUnderQuota path at
 	// handlers_alert_presets.go:255. We match by joining
 	// alert_presets on (name) and selecting the rule whose name LIKE
-	// (display_name || ' (%'); the existing
-	// alert_rules_account_name_uniq index covers the LIKE prefix
-	// scan as a range scan on (account_id, name) — no new index.
+	// (display_name || ' (%'); the alert_rules_app_name_uniq index
+	// covers the LIKE prefix scan as a range scan on (app_id, name)
+	// (ADR-20261029203000).
 	//
 	// Returns:
 	//   - (AlertRule{}, ErrNotFound) when no rule exists for this
@@ -4020,6 +4039,13 @@ type Store interface {
 	CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error)
 	ListEdgeRulesForAccount(ctx context.Context, accountID string) ([]EdgeRule, error)
 	ListEdgeRulesForApp(ctx context.Context, appID string) ([]EdgeRule, error)
+	// ListEdgeRulesUsingCorsPreset returns the account's rules that apply
+	// presetID, and ListRouteRulesTargeting its route rules that send to
+	// targetSlug, in match order. The CORS preset barrier and the app rename
+	// read only the rules they change, not every rule of the account (ADR-091
+	// amendment 2026-10-30, round 5).
+	ListEdgeRulesUsingCorsPreset(ctx context.Context, accountID, presetID string) ([]EdgeRule, error)
+	ListRouteRulesTargeting(ctx context.Context, accountID, targetSlug string) ([]EdgeRule, error)
 	GetEdgeRuleByID(ctx context.Context, id string) (EdgeRule, error)
 	// UpdateEdgeRule coalesces the optional fields onto edge_rules.
 	// nil pointers leave the field untouched; Action is
@@ -6597,10 +6623,10 @@ type Store interface {
 	// accountID is REQUIRED — PR-D code-review #1 pins the
 	// WHERE clause on (trace_id, account_id) so a buggy upstream
 	// caller can't overwrite a different customer's row. The
-	// gateway-side accumulator already rejects
-	// trace_id/account_id collisions (ErrAccountMismatch); this
+	// gateway-side accumulator buffers each (account, trace)
+	// separately and maxSpans bounds the row to the plan; this
 	// is the SQL-side defense in depth.
-	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte) error
+	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error
 
 	// ListRequestTelemetryByApp backs GET /v1/apps/{slug}/debug/requests.
 	// Time-windowed (since, until) with hard limit; cursor pagination

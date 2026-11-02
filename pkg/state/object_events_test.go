@@ -136,8 +136,10 @@ func objectMutationEvents(t *testing.T, st accountingStore) {
 					count++
 				}
 			}
-			if count != 1 {
-				t.Fatal("duplicate publication", count)
+			// ADR-20261030170000: the receipt taken above is the event's only
+			// copy, and noObjectEvent saw no second one.
+			if count != 0 {
+				t.Fatal("published event kept a ledger row", count)
 			}
 		})
 	}
@@ -189,6 +191,10 @@ func objectMutationEventRollback(t *testing.T, st accountingStore) {
 	if err = st.AppendEvent(t.Context(), "test", "event.published", &b.AccountID, payload); err != nil {
 		t.Fatal(err)
 	}
+	forgedAt, err := st.EventReceiptAcceptedAt(t.Context(), b.AccountID, api.ObjectEventSource, forged.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before, err := st.ObjectUsage(t.Context(), b.AccountID, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -209,18 +215,10 @@ func objectMutationEventRollback(t *testing.T, st accountingStore) {
 	if err != nil || status.VersionsObserved {
 		t.Fatal("publication error recorded native observation", status, err)
 	}
-	ledger, err := st.ListEvents(t.Context(), b.AccountID, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	count := 0
-	for _, row := range ledger {
-		if row.Kind == "event.published" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Fatal("rollback left an event", count)
+	// ADR-20261030170000: the forged receipt is the event's only copy, and the
+	// refused completion neither replaced nor removed it.
+	if at, err := st.EventReceiptAcceptedAt(t.Context(), b.AccountID, api.ObjectEventSource, forged.ID); err != nil || !at.Equal(forgedAt) {
+		t.Fatal("rollback changed the forged receipt", at, forgedAt, err)
 	}
 }
 

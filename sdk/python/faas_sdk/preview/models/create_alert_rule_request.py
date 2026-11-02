@@ -72,6 +72,10 @@ class CreateAlertRuleRequest:
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires
     action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify."""
+    notify_resolved: bool | Unset = UNSET
+    """Also send the webhook a signed alert.resolved event when the rule recovers. Requires webhook_url;
+    notification channels always receive resolves. Defaults to false, because receivers that predate it count every
+    delivery as a fire."""
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
@@ -128,6 +132,8 @@ class CreateAlertRuleRequest:
             edge_rule_id = str(self.edge_rule_id)
 
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
+
+        notify_resolved = self.notify_resolved
 
         enabled = self.enabled
 
@@ -187,6 +193,8 @@ class CreateAlertRuleRequest:
             field_dict["edge_rule_id"] = edge_rule_id
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
+        if notify_resolved is not UNSET:
+            field_dict["notify_resolved"] = notify_resolved
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
         if failure_source is not UNSET:
@@ -246,6 +254,8 @@ class CreateAlertRuleRequest:
             edge_rule_id = UUID(_edge_rule_id)
 
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
+
+        notify_resolved = d.pop("notify_resolved", UNSET)
 
         enabled = d.pop("enabled", UNSET)
 
@@ -308,6 +318,7 @@ class CreateAlertRuleRequest:
             event_subscription_id=event_subscription_id,
             edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
+            notify_resolved=notify_resolved,
             enabled=enabled,
             failure_source=failure_source,
             custom_metric_name=custom_metric_name,

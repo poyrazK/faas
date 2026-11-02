@@ -18,6 +18,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ValidateObjectStoragePricing refuses a registry rate card other than the
+// published one. apid computes month-close charges and customer estimates
+// from it whether or not billing is on, so a mistyped price or currency would
+// otherwise become wrong invoices with no error (ADR-1430).
+func ValidateObjectStoragePricing(registry *objectstorage.Registry) error {
+	if registry == nil || registry.Pricing == nil {
+		return nil
+	}
+	if want := api.PublishedObjectStoragePricing(); *registry.Pricing != want {
+		return fmt.Errorf("apid: object storage pricing is not the published rate card (currency %s, storage_millicents_per_gib_month %d, request and egress prices 0); got currency %q, storage %d, requests %d, egress %d",
+			want.Currency, want.StorageMillicentsPerGiBMonth, registry.Pricing.Currency, registry.Pricing.StorageMillicentsPerGiBMonth, registry.Pricing.RequestsMillicentsPerMillion, registry.Pricing.EgressMillicentsPerGiB)
+	}
+	return nil
+}
+
 func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *objectstorage.Registry) error {
 	sink, ok := provider.(billing.ObjectStorageLineItemSink)
 	if !ok {
@@ -87,15 +102,17 @@ func (s *Service) GetObjectStorageUsage(w http.ResponseWriter, r *http.Request, 
 		BucketProblem(w, err)
 		return
 	}
-	httpkit.WriteJSON(w, 200, s.ObjectStorageUsageResponse(usage, charges, acct.Plan))
+	httpkit.WriteJSON(w, 200, s.ObjectStorageUsageResponse(usage, charges, snapshot.PlanLimits))
 }
 
 // ObjectStorageUsageResponse reports the account's effective policy: the
-// operator safety policy tightened by its plan's ceilings (ADR-1320).
-func (s *Service) ObjectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge, plan api.Plan) api.ObjectStorageUsageResponse {
+// operator safety policy tightened by its plan's ceilings (ADR-1320),
+// including the storage ceiling its spend cap pays for (ADR-20261101214152).
+// limits are the plan limits the usage snapshot was read with.
+func (s *Service) ObjectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge, limits api.ObjectStoragePlanLimits) api.ObjectStorageUsageResponse {
 	out := api.ObjectStorageUsageResponse{
 		Usage:       usage,
-		Policy:      api.MustLimitsFor(plan).ObjectStorage.Policy(s.Host.ObjectStorage().Accounting),
+		Policy:      limits.Policy(s.Host.ObjectStorage().Accounting),
 		Charges:     charges,
 		BillingMode: "off",
 	}
@@ -233,6 +250,9 @@ func (s *Service) reconcileObjectInventory(ctx context.Context, st state.ObjectS
 	if err != nil || native {
 		return err
 	}
+	if scans, ok := st.(state.ObjectInventoryScanStore); ok {
+		return s.advanceObjectInventory(ctx, st, scans, b, report, page)
+	}
 	token := uuid.NewString()
 	if err := st.ClaimObjectInventory(ctx, b.ID, token); err != nil {
 		if errors.Is(err, state.ErrConflict) {
@@ -312,14 +332,21 @@ func (s *Service) scanObjectInventory(ctx context.Context, st state.ObjectStorag
 	if page != nil {
 		record = func(context.Context) error { page(); return nil }
 	}
-	bytes, objects, counters, err := objectstorage.CompleteOwnedUsageCounters(ctx, backend.Provider, b.PhysicalName, record)
-	if !counters {
-		bytes, objects, err = CompleteObjectInventory(ctx, backend.Provider, b.PhysicalName, record)
-	}
+	bytes, objects, err := completeBucketInventory(ctx, backend.Provider, b.PhysicalName, record)
 	if err != nil {
 		return err
 	}
 	return st.FinishObjectInventory(ctx, b.ID, token, bytes, objects)
+}
+
+// completeBucketInventory lists a whole bucket in one attempt: from an owned
+// node's usage counters when it has them, otherwise by listing.
+func completeBucketInventory(ctx context.Context, p objectstorage.Provider, physical string, record func(context.Context) error) (bytes, objects int64, err error) {
+	bytes, objects, counters, err := objectstorage.CompleteOwnedUsageCounters(ctx, p, physical, record)
+	if !counters {
+		bytes, objects, err = CompleteObjectInventory(ctx, p, physical, record)
+	}
+	return bytes, objects, err
 }
 
 func (s *Service) inventoryRequestRecorder(b state.ObjectBucket) func(context.Context) error {
@@ -352,7 +379,7 @@ func (s *Service) CustomerObjectRequestRecorder(b state.ObjectBucket) func(conte
 }
 
 func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
-	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_inventory_scans_total", Help: "Complete or failed object storage inventory scans."}, []string{"outcome"})
+	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_inventory_scans_total", Help: "Object storage inventory attempts: success publishes, partial records progress of a listing that continues (ADR-20261030100835), failed does neither or keeps the pages listed before the failure."}, []string{"outcome"})
 	pages := prometheus.NewCounter(prometheus.CounterOpts{Name: "faas_object_storage_inventory_provider_requests_total", Help: "Provider listing requests made by periodic inventory scans; platform maintenance, not charged to accounts."})
 	accruals := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_gateway_storage_accruals_total", Help: "Gateway-metered stored byte-hour accruals (ADR-20261024132844)."}, []string{"outcome"})
 	placement := newPlacementMetrics()

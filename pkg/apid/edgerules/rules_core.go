@@ -156,6 +156,9 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := ValidateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		return m, prob
 	}
+	if prob := s.AppBoundHostProblem(ctx, app, req.MatchHost); prob != nil {
+		return m, prob
+	}
 	if prob := s.createReleaseProblem(acct, req); prob != nil {
 		return m, prob
 	}
@@ -165,7 +168,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, app.ID, acct.ID, req.Kind, req.Action); prob != nil {
 		return m, prob
 	}
-	if prob := s.RouteTargetProblem(ctx, acct.ID, req.Kind, req.Action); prob != nil {
+	if prob := s.RouteTargetProblem(ctx, acct.ID, app.ID, req.Kind, req.Action); prob != nil {
 		return m, prob
 	}
 	// Default priority=100, enabled=true when unset.
@@ -275,6 +278,9 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if prob := api.ValidateEdgeRuleMatchHost(*req.MatchHost); prob != nil {
 			return m, prob
 		}
+		if prob := s.appBoundUpdateHostProblem(ctx, row.AppID, *req.MatchHost); prob != nil {
+			return m, prob
+		}
 	}
 	if req.MatchPath != nil {
 		if !strings.HasPrefix(*req.MatchPath, "/") || len(*req.MatchPath) > 2048 {
@@ -341,7 +347,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
 			return m, prob
 		}
-		if prob := s.RouteTargetProblem(ctx, acct.ID, string(row.Kind), *req.Action); prob != nil {
+		if prob := s.RouteTargetProblem(ctx, acct.ID, row.AppID, string(row.Kind), *req.Action); prob != nil {
 			return m, prob
 		}
 	} else if req.MatchPath != nil && row.Action.Validate != nil && row.Action.Validate.Parameters != nil {

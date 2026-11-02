@@ -193,6 +193,14 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
+	if app.PreviewOfSlug != "" {
+		// A preview also applies its production app's app-wide rules.
+		production, prodErr := client.ListEdgeRulesForApp(context.Background(), app.PreviewOfSlug)
+		if prodErr != nil {
+			return printErr("List failed", prodErr)
+		}
+		rules = append(rules, edgeruletrace.PreviewInheritedRules(production)...)
+	}
 	// Context loading below must cover kinds the proposal introduces too.
 	contextRules := rules
 	if !proposal.Empty() {

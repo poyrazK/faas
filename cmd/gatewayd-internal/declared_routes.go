@@ -216,7 +216,12 @@ func (m *declaredRoutesMatcher) loadPolicy(ctx context.Context, app gateway.App)
 	m.mu.Unlock()
 	defer m.finishDeclaredRouteLoad(load)
 
-	doc, _, err := m.store.GetAppOpenAPIDoc(ctx, app.ID, app.AccountID)
+	readDoc := m.store.GetAppOpenAPIDoc
+	if contracts, ok := m.store.(state.RouteContractDocStore); ok {
+		// A PR preview is held to its production app's document.
+		readDoc = contracts.GetRouteContractOpenAPIDoc
+	}
+	doc, _, err := readDoc(ctx, app.ID, app.AccountID)
 	if errors.Is(err, state.ErrNotFound) {
 		policy := declaredRoutePolicy{expires: now.Add(m.ttl), missing: true}
 		if err := sealDeclaredRoutePolicy(&policy); err != nil {

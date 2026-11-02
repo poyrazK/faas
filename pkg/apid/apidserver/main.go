@@ -21,6 +21,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/certexpiry"
+	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
 	"net"
@@ -43,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/apid/deploywatchdog"
@@ -79,6 +82,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -832,6 +836,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.operation.RunChildSettlementSignals(ctx)
 		go srv.object.RunObjectStorageRecovery(ctx)
 		go srv.object.RunObjectStorageAccounting(ctx)
+		go srv.object.RunObjectStorageUsageExports(ctx, os.Getenv)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
@@ -977,6 +982,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if archiveClient != nil {
 			srv.logArchive = archiveClient
 		}
+		reportLogArchiveEnabled(srv, archiveClient != nil)
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
 			BeforeAccountDelete: srv.beforeAccountDelete,
@@ -1664,6 +1670,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.seedEnvPlatformFlags(deps.getenv) // ADR-1700 boot fallbacks for the gates above
 	registerPlatformFlagRetireBy(ops.Registry())
 
+	// Bug hunt 32 M6: the FaasTLSCertExpiry* alerts read edge certificate
+	// expiries; the domain doctor records them, nothing else can see them.
+	if expiryStore, ok := srv.store.(state.CustomDomainCertExpiryStore); ok {
+		ops.Registry().MustRegister(certexpiry.New(expiryStore, time.Now, srv.log))
+	}
+
 	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
 	srv.datadogIntegrationEnabled = deps.getenv("FAAS_DATADOG_INTEGRATION_ENABLED") == "1"
 	if srv.customMetricHistoryEnabled {
@@ -1680,6 +1692,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
+	if err := object.ValidateObjectStoragePricing(objectRegistry); err != nil {
+		return err
+	}
 	srv.WithObjectStorage(objectRegistry)
 	if err := srv.configureHosting(deps.getenv); err != nil {
 		return fmt.Errorf("apid internal hosting configuration: %w", err)
@@ -1687,12 +1702,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
+	srv.managedPostgresUncapped = managedpostgres.ProductionEnvironmentActive(deps.getenv) && !managedpostgres.CapsEnforced(deps.getenv)
+	if srv.managedPostgresUncapped {
+		log.Warn("managed postgres release held to accounts a flag rule names: compute and storage caps are not both on")
+	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
-		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap}, ops.Registry())
+		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired,
+			NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot}, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	// ADR-1027 major-upgrade and storage-growth previews: nobody sees them
+	// unless listed.
+	if srv.postgresUpgrades, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS")); err != nil {
+		return fmt.Errorf("apid managed postgres configuration: %w", err)
+	}
+	if srv.postgresStorage, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS")); err != nil {
+		return fmt.Errorf("apid managed postgres configuration: %w", err)
+	}
 	srv.configureManagedPostgresCapMode(deps.getenv)
 	if err := srv.configureManagedPostgresSQLProber(deps.getenv, ops.Registry()); err != nil {
 		return fmt.Errorf("apid managed postgres sql probe: %w", err)
@@ -1876,6 +1904,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR 20261027163626: time each phase of the traffic binding guard.
 	state.SetTrafficPolicyPhaseObserver(ops.ObserveTrafficPolicyPhase)
 	state.SetTrafficBindingScopeObserver(ops.ObserveTrafficBindingScope)
+	state.SetTrafficBindingCaptureObserver(ops.ObserveTrafficBindingCapture)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid
 	// listener. Same shape as gatewayd-public PR-B: a fresh
@@ -1902,12 +1931,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if reqbudget.IsDeploymentResponseCheckRequest(r) {
 				return api.DeploymentResponseCheckTimeout
 			}
-			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || reqbudget.IsAccountExportRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
+			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || reqbudget.IsAccountExportRequest(r) ||
+				managedrealtime.IsRealtimeGroupClaimRequest(r) || reqbudget.IsLongWaitRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait, a deploy
 				// commit scans its source archive (H9-157), an account
-				// export assembles the whole account (H14-120), and realtime
-				// group claims may long-poll; all get the platform ceiling
-				// instead of the 5 s default.
+				// export assembles the whole account (H14-120), realtime
+				// group claims and queue leases long-poll, and the other
+				// long-wait routes scale with the source (B35); all get the
+				// platform ceiling instead of the 5 s default.
 				return api.RequestBudgetMax
 			}
 			return 0
@@ -2064,6 +2095,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	defer uninstallRuntimeSigner()
+	if err := installCredentialPolicy(deps.getenv, log); err != nil {
+		return err
+	}
 	// ADR 20261022111812: apid reads the account domain.
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Account, len(accountDomainIdentities) > 0)
 
@@ -2317,6 +2351,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runApplicationStandardWorker(ctx)
 	go srv.runMigrationVerificationWorker(ctx)
 	go srv.runMigrationCutoverWorker(ctx)
+	go credentialkeys.RunRekey(ctx, srv.store, log)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -2610,6 +2645,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// H5-34: one gate across both telemetry listeners bounds their share of
 	// apid's database pool.
 	ingest := receivers.NewIngestGate(api.TelemetryIngestDBConcurrency)
+	// ADR-20261101085552: gateways that keep the request-ID journal on their
+	// node hold a lookup stream on whichever listener carries their request
+	// telemetry; one hub serves both and the debug request lookup.
+	srv.requestIDLookups = receivers.NewRequestIDLookupHub(log)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
 		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
@@ -2617,6 +2656,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
 		}
+		receivers.RegisterRequestIDLookups(rtSrv, srv.requestIDLookups)
 		go func() {
 			log.Info("apid request telemetry server listening")
 			if err := rtSrv.Serve(rtLis); err != nil {
@@ -2625,6 +2665,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
+	// The retention purge runs even with app errors switched off: rows
+	// written while it was on (request samples with headers) must still
+	// age out on the plan's schedule.
+	go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
 	if deps.getenv("FAAS_APP_ERRORS_ENABLED") != "false" { //nolint:goconst // kill-switch sentinel; the canonical "true" env literal.
 		appErrTarget := cfg.GetAppErrorsTarget(deps.getenv)
 		appErrTLS, tlsErr := cfg.LoadAppErrorsTLSWithPrefixAndVerifierAndReload(nodeVerifier, appErrRotator.Reload(nil))
@@ -2637,6 +2681,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
+		}
+		if !isUnixSocketPath(appErrTarget) { // where runAppErrorsServer serves RequestTelemetry
+			receivers.RegisterRequestIDLookups(appErrSrv, srv.requestIDLookups)
 		}
 		go func() {
 			log.Info("apid app errors server listening", "target", appErrTarget)
@@ -2653,30 +2700,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			go wire.WatchTLSReload(ctx, log, appErrHupCh, appErrRotator, appErrReload)
 		}
-		go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
-
-		// ADR-127 PR-D: gatewayd-public → apid AuthenticateKey
-		// unary RPC. Lives on /run/faas/auth.sock; the OTel spans
-		// writer refuses to start without it (fail-closed posture
-		// for an unauthenticated OTLP surface). Defaults to enabled
-		// when the env var is unset; set FAAS_AUTH_RPC_ENABLED=false
-		// to disable — but doing so will break the OTel handler
-		// at the gateway, which is the intended safe default.
-		if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
-			authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
-			authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log)
-			if err != nil {
-				_ = l.Close()
-				return fmt.Errorf("apid: auth server: %w", err)
-			}
-			go func() {
-				log.Info("apid auth server listening")
-				if err := authSrv.Serve(authLis); err != nil {
-					log.Error("apid auth serve", "err", err)
-				}
-			}()
-		}
-
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
 		// by watchLogLevelReload). Install three parallel ones — each
@@ -2723,9 +2746,32 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
+		receivers.RegisterRequestIDLookups(appErrSrv, srv.requestIDLookups)
 		go func() {
 			if err := appErrSrv.Serve(appErrLis); err != nil {
 				log.Error("apid consumer usage serve", "err", err)
+			}
+		}()
+	}
+
+	// ADR-127 PR-D: gatewayd-public → apid AuthenticateKey unary RPC, on
+	// /run/faas/auth.sock; the OTel spans writer refuses to start without
+	// it (fail-closed posture for an unauthenticated OTLP surface). Since
+	// ADR 20261029202403 every gateway resolves API keys and OIDC bearers
+	// through it too, so it runs whether or not app errors are on. Set
+	// FAAS_AUTH_RPC_ENABLED=false to disable it — which breaks gateway
+	// key authentication and the OTel handler.
+	if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
+		authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
+		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log)
+		if err != nil {
+			_ = l.Close()
+			return fmt.Errorf("apid: auth server: %w", err)
+		}
+		go func() {
+			log.Info("apid auth server listening")
+			if err := authSrv.Serve(authLis); err != nil {
+				log.Error("apid auth serve", "err", err)
 			}
 		}()
 	}
@@ -3286,8 +3332,12 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	)...)
 	receivers.RegisterAppErrorsReceiver(srv, store, ops, appErrorsEnabled, ingest)
 	// The private history reader shares this authenticated listener for
-	// compute-only realtimed nodes in split-box deployments.
+	// compute-only realtimed nodes in split-box deployments. So does
+	// credential lookup: a compute node's gatewayd-internal cannot key a
+	// credential hash itself (ADR 20261029202403); single-box gateways ask
+	// over /run/faas/auth.sock.
 	if !isUnixSocketPath(target) {
+		receivers.RegisterAuthReceiver(srv, store)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
 			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
@@ -3331,8 +3381,11 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest)
-	// Single-box realtimed reaches apid through this DAC-protected socket.
+	// Single-box realtimed reaches apid through this DAC-protected socket,
+	// and asks it to match Data API server keys there (ADR 20261029202403
+	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
+	receivers.RegisterAuthReceiver(srv, store)
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
 	} else {

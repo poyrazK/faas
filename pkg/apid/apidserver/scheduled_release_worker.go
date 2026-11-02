@@ -130,7 +130,7 @@ func (s *server) scheduleSiblings(ctx context.Context, d state.Deployment) ([]st
 // before a start. It returns the start decision and the freezes the
 // schedule's override covers now.
 func (s *server) scheduleStartChecks(ctx context.Context, sr state.ScheduledRelease, app state.App, d state.Deployment, siblings []state.Deployment, now time.Time) (schedule.Decision, []string) {
-	active, err := freeze.ActiveFor(ctx, s.store, app.AccountID, app.ID, d.Scope, now)
+	active, err := freeze.ActiveFor(ctx, s.store, app, d.Scope, now)
 	if err != nil {
 		s.log.Warn("scheduled releases: read freezes", "schedule", sr.ID, "err", err)
 		return schedule.WaitOrExpire(sr, now, "Gregale could not read the deploy freezes"), nil

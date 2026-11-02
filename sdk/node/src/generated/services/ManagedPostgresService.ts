@@ -8,10 +8,13 @@ import type { CreateDataAPIContractTaskRequest } from '../models/CreateDataAPICo
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
 import type { DataAPIConnectionBudgets } from '../models/DataAPIConnectionBudgets.js';
+import type { DataAPIRuntime } from '../models/DataAPIRuntime.js';
 import type { DataAPIRuntimeConnectionReport } from '../models/DataAPIRuntimeConnectionReport.js';
 import type { DataAPIUsage } from '../models/DataAPIUsage.js';
 import type { DataAPIUsageReport } from '../models/DataAPIUsageReport.js';
 import type { DataAPIUsageReportResponse } from '../models/DataAPIUsageReportResponse.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
@@ -28,6 +31,7 @@ import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsag
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -129,6 +133,39 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Set and remove a database's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the database carries after it, with
+   * the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+   * Requires postgres:manage or admin scope and MFA. While the capability is on,
+   * GET /v1/postgres/databases and GET /v1/postgres/databases/{id} include labels, and GET /v1/postgres/databases
+   * takes ?selector=, a Kubernetes label selector.
+   *
+   * @returns LabelsResponse The database's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, scope or MFA, a database this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateManagedPostgresDatabaseLabels({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/postgres/databases/{id}/labels',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
    * Get managed PostgreSQL database status
    * @returns ManagedPostgresDatabase Database status without provider credentials
    * @returns Problem Authentication or database status error
@@ -188,6 +225,36 @@ export class ManagedPostgresService {
       },
       query: {
         'purge': purge,
+      },
+    });
+  }
+  /**
+   * Read a managed database's conditions.
+   * Preview (resource-conditions capability). The database's Ready,
+   * Progressing and Degraded conditions, mapped from the response
+   * GET /v1/postgres/databases/{id} returns, cached health included, and
+   * never stored. Ready follows the lifecycle state; a database whose
+   * compute scaled to zero is Ready=True with reason suspended. Failed,
+   * deleting and deleted databases report terminal conditions.
+   * Cache-Control no-store.
+   *
+   * @returns ResourceStatus The managed database's conditions.
+   * @returns Problem Missing sign-in, database read scope or MFA, a database this account does not own, managed databases not configured, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getManagedPostgresDatabaseStatus({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/status',
+      path: {
+        'id': id,
       },
     });
   }
@@ -544,6 +611,7 @@ export class ManagedPostgresService {
   }
   /**
    * Restore a database into a new managed PostgreSQL database
+   * The restored database counts toward the plan's database limit. A restore may go one database past the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once the account has room; otherwise its delete is scheduled then. A second restore past the limit while a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
    * @returns Problem Invalid point in time, plan limit, or provider error
    * @returns ManagedPostgresDatabase Restore accepted or ready
    * @throws ApiError
@@ -619,6 +687,36 @@ export class ManagedPostgresService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/data-api/connection-budget',
+      path: {
+        'slug': slug,
+      },
+    });
+  }
+  /**
+   * Download the current Data API runtime
+   * Returns the Data API runtime this control plane serves: its version,
+   * and a gzipped tar of the runtime under one `data-api/` directory with
+   * its SHA-256. `gregale data-api create` and `gregale data-api deploy`
+   * deploy this archive, so an older CLI release does not redeploy an older
+   * runtime. A running Data API reports the version it was built from as
+   * `runtime_version` on `/healthz`; a different version is not the
+   * platform's current runtime.
+   *
+   * @returns DataAPIRuntime The current runtime
+   * @returns Problem App lookup, permission or runtime failure
+   * @throws ApiError
+   */
+  public static getDataApiRuntime({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DataAPIRuntime | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/data-api/runtime',
       path: {
         'slug': slug,
       },

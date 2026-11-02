@@ -274,7 +274,7 @@ against one frozen target. Each case can execute real actions. Review the cases
 and integrations before confirming them:
 
 ```sh
-gregale automation live suite --app billing --name paid-invoice \
+gregale automation live run --app billing --name paid-invoice \
   --case happy --case expected-failure \
   --expected-version 7 --expected-published-version 4 \
   --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
@@ -300,7 +300,7 @@ Only one CLI process may own that journal at a time.
 Continue the original suite explicitly:
 
 ```sh
-gregale automation live suite --resume suite-progress.json \
+gregale automation live run --resume suite-progress.json \
   --confirm-real-actions --timeout 15m --json > suite-result.json
 ```
 
@@ -627,7 +627,7 @@ Add `--share` when creating a new CLI suite to retain its selection and run link
 in the app dashboard:
 
 ```sh
-gregale automation live suite --app billing --name paid-invoice \
+gregale automation live run --app billing --name paid-invoice \
   --case happy --case expected-failure \
   --expected-version 7 --expected-published-version 4 \
   --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
@@ -1831,9 +1831,9 @@ before rolling back application binaries.
 Inspect a deployed schedule before relying on its cadence or catch-up behavior:
 
 ```sh
-gregale workflow schedules preview --app billing --workflow nightly
+gregale workflow schedule simulate --app billing --workflow nightly
 gregale --json workflows schedules preview --app billing --workflow nightly --count 8
-gregale workflow schedules preview --app billing --workflow nightly \
+gregale workflow schedule simulate --app billing --workflow nightly \
   --at 2027-03-28T00:00:00Z --since 2027-03-27T00:00:00Z
 ```
 
@@ -2021,7 +2021,7 @@ downgrading; export resume history before rolling the migration back.
 ## Admission history and reliability alerts
 
 Inspect the last 30 days of due schedule outcomes with
-`gregale workflow schedule-history --app reports --limit 100` or
+`gregale workflow schedule history --app reports --limit 100` or
 `GET /v1/apps/{slug}/workflows/schedules/occurrences`. Both started and skipped
 minutes are retained, including `skipped_quota` and `skipped_overlap`; each
 started occurrence includes its run ID even after the run expires. History
@@ -2034,9 +2034,9 @@ Recover a selected skipped occurrence with a preview followed by an explicit
 replay:
 
 ```sh
-gregale workflow schedule-history replay-preview --app reports \
+gregale workflow schedule history replay-preview --app reports \
   --occurrence-id 00000000-0000-4000-8000-000000000001
-gregale workflow schedule-history replay --app reports \
+gregale workflow schedule replay --app reports \
   --occurrence-id 00000000-0000-4000-8000-000000000001
 ```
 
@@ -2795,7 +2795,7 @@ Save a reviewed mixture of cancellations and retries from one native recovery jo
 gregale automation recovery-response-plan --app consumer --job JOB_UUID \
   --key incident-20261011 --reason 'provider incident' \
   --cancel-position 1 --retry-position 2 --plan-out response.json
-gregale automation recovery-response-preview --plan response.json
+gregale automation recovery-response check --plan response.json
 gregale automation recovery-response apply --plan response.json --yes
 gregale automation recovery-response status --plan response.json
 ```
@@ -2830,10 +2830,10 @@ Inspect the current version with `gregale automation recovery-policy --app consu
 
 ```sh
 gregale automation recovery-policy --app consumer --file policy.json
-gregale automation recovery-policy-reviews --app consumer
-gregale automation recovery-policy-reviews --app consumer \
+gregale automation recovery-policy history --app consumer
+gregale automation recovery-policy history --app consumer \
   --review REVIEW_UUID --plan-out prepared.json
-gregale automation recovery-response-preview --plan prepared.json
+gregale automation recovery-response check --plan prepared.json
 gregale automation recovery-response apply --plan prepared.json --yes
 gregale automation recovery-response status --plan prepared.json
 ```
@@ -2849,9 +2849,9 @@ Reviews freeze settings and explain each matched target's prepared or suppressed
 Record an operator decision on a retained prepared plan:
 
 ```sh
-gregale automation recovery-policy-reviews --app consumer --review REVIEW_ID --decision approved --reason "Provider recovered; retry reviewed"
-gregale automation recovery-policy-reviews --app consumer --review REVIEW_ID --decision dismissed --reason "Incident resolved externally"
-gregale automation recovery-policy-reviews --app consumer --review REVIEW_ID --status
+gregale automation recovery-policy history --app consumer --review REVIEW_ID --decision approved --reason "Provider recovered; retry reviewed"
+gregale automation recovery-policy history --app consumer --review REVIEW_ID --decision dismissed --reason "Incident resolved externally"
+gregale automation recovery-policy history --app consumer --review REVIEW_ID --status
 ```
 
 Use one operation per command. Decisions require a prepared plan and a reason.
@@ -2943,7 +2943,7 @@ remains manual.
 ```bash
 gregale automation recovery-policy --app consumer --file automatic-policy.json
 gregale automation recovery-policy --app consumer
-gregale automation recovery-policy-reviews --app consumer
+gregale automation recovery-policy history --app consumer
 ```
 
 Automatic retries use the same exact-target, keyed child recovery path as manual
@@ -3223,7 +3223,7 @@ candidate file:
 
 ```sh
 gregale automation failure-recovery review --app orders --failure FAILURE_UUID --expected-policy-version 3
-gregale automation failure-recovery-reviews --app orders --limit 25
+gregale automation failure-recovery list --app orders --limit 25
 gregale automation failure-recovery review --app orders --review REVIEW_UUID
 gregale automation failure-recovery review --app orders --review REVIEW_UUID --decision submit --reason 'Provider recovered; reviewed safe resume'
 gregale automation failure-recovery review --app orders --review REVIEW_UUID --decision cancel --reason 'Handled manually'
@@ -3430,7 +3430,7 @@ existing meaning. Saved-failure retry payloads omit `state` and
 Inspect a submitted automatic first-recovery review:
 
 ```sh
-gregale automation failure-recovery-evidence --app orders --review REVIEW_UUID
+gregale automation failure-recovery evidence --app orders --review REVIEW_UUID
 ```
 
 The read-only diagnosis reports the frozen run and expected generation, available
@@ -3443,7 +3443,7 @@ cases remain blocked.
 Save verified proof with a stable request UUID and operator reason:
 
 ```sh
-gregale automation failure-recovery-evidence --app orders --review REVIEW_UUID \
+gregale automation failure-recovery evidence --app orders --review REVIEW_UUID \
   --repair --request-id REQUEST_UUID --reason 'Restore verified terminal proof'
 ```
 
@@ -3475,7 +3475,7 @@ Automatic retries now have the same verified repair workflow as first recovery.
 Use the review and action IDs from the recovery queue:
 
 ```sh
-gregale automation recovery-retry-evidence --app orders \
+gregale automation recovery evidence --app orders \
   --review REVIEW_UUID --action ACTION_UUID
 ```
 
@@ -3487,7 +3487,7 @@ run cannot substitute for missing generation-two evidence.
 When diagnosis reports a repairable missing result:
 
 ```sh
-gregale automation recovery-retry-evidence --app orders \
+gregale automation recovery evidence --app orders \
   --review REVIEW_UUID --action ACTION_UUID --repair \
   --request-id REQUEST_UUID --reason 'Restore verified retry outcome'
 ```
@@ -3524,7 +3524,7 @@ A pending retry can be blocked when the parent's saved result is missing. Select
 its parent evidence explicitly:
 
 ```sh
-gregale automation recovery-retry-evidence --app orders \
+gregale automation recovery evidence --app orders \
   --review REVIEW_UUID --action ACTION_UUID --parent
 ```
 
@@ -3537,7 +3537,7 @@ When the exact retained parent terminal outcome is verifiable and its saved
 result is missing:
 
 ```sh
-gregale automation recovery-retry-evidence --app orders \
+gregale automation recovery evidence --app orders \
   --review REVIEW_UUID --action ACTION_UUID --parent --repair \
   --request-id REQUEST_UUID --reason 'Restore verified parent outcome'
 ```
@@ -3660,7 +3660,7 @@ proof, policy, quota and budgets.
 Initial recovery entries in `gregale automation recovery-policy --app orders
 --queue` now include `initial_evidence`, alongside the retry-only `evidence`
 field. Its `stage`, `diagnosis`, `evidence_url` and `cli_command` point to the
-initial review and `gregale automation failure-recovery-evidence --app orders
+initial review and `gregale automation failure-recovery evidence --app orders
 --review REVIEW_UUID` inspection command.
 
 A prepared review has no submitted recovery job. The diagnosis identifies its
@@ -3748,7 +3748,7 @@ proof, as described below.
 
 ### Repairing manual initial recovery evidence
 
-The existing `gregale automation failure-recovery-evidence --app APP --review REVIEW`
+The existing `gregale automation failure-recovery evidence --app APP --review REVIEW`
 command diagnoses submitted preview-mode initial recoveries as well as automatic
 initial recoveries. Add `--repair --request-id UUID --reason REASON` to save a
 missing result when the retained job, generation-one admission and completed run

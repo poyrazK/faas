@@ -64,7 +64,7 @@ func (m *MemStore) ListRollbackOn5xxCandidates(_ context.Context, grace time.Dur
 	m.mu.Lock()
 	out := make([]RollbackOn5xxCandidate, 0)
 	for _, d := range m.deployments {
-		if d.Status != DeployLive || !d.RollbackOn5xx || d.LastAutoRollbackReason != "" ||
+		if d.Status != DeployLive || !d.RollbackOn5xx || d.LastAutoRollbackReason != "" || postReleaseRollbackSkipped(d.RolloutDecision) ||
 			d.TrafficPercent != 100 || d.RolloutState != "complete" ||
 			d.First5xxWindowEndsAt != nil && !d.First5xxWindowEndsAt.After(cutoff) {
 			continue

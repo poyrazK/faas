@@ -3,6 +3,7 @@ package meter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/canary"
+	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -119,6 +121,10 @@ type Loop struct {
 	// snapshots recordFinancialPricing last confirmed stored. Only the sample
 	// goroutine touches it.
 	pricedTerms map[string]string
+
+	// freePeriods caches when a Free account's Free period began this month
+	// (freePeriodStart). Only the quota goroutine touches it.
+	freePeriods map[string]freePeriod
 }
 
 // NewLoop wires the loop. The interfaces are local to pkg/meter so the
@@ -299,6 +305,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	} else {
 		sampler = NewSampler(l.store, l.cpu, l.now)
 	}
+	sampler.WithRollSettle(api.MeterRollSettle)
 	if mode, err := ParseQuietPauseMode(l.cfg.QuietPauseUnbilled); err != nil {
 		l.log.Warn("meter: quiet pause billing stays off", "err", err)
 	} else if mode != QuietPauseOff {
@@ -636,6 +643,11 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			l.recordSpendCapHold(ctx, acct, now, capCents)
 		}
 		used := MonthlyUsageGB(usages)
+		if acct.Plan != api.PlanFree {
+			delete(l.freePeriods, acct.ID)
+		} else if CheckQuota(acct.Plan, used).Action != "" {
+			used = l.freePeriodUsageGB(ctx, acct, now, used)
+		}
 		if _, err := (QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands}).Enforce(ctx, acct, used, now); err != nil {
 			// EnforceQuota already logged + skipped parked-instance failures;
 			// only status/structural errors reach here.
@@ -687,8 +699,33 @@ func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now t
 	at := now.UTC()
 	hold := state.SpendCapHold{AccountID: acct.ID, Month: time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC),
 		CapCents: capCents, ObservedCents: observed}
+	// The hold engages when none is recorded for this month and cap; that is
+	// when the customer is told (ADR-20261030093512). A failed read sends
+	// nothing rather than mailing on every tick.
+	prior, held, readErr := holds.GetSpendCapHold(ctx, acct.ID)
+	engaged := readErr == nil && (!held || !prior.Month.Equal(hold.Month) || prior.CapCents != capCents)
 	if err := holds.PutSpendCapHold(ctx, hold); err != nil {
 		l.log.Warn("meter: record spend cap hold failed", "account", acct.ID, "err", err)
+		return
+	}
+	if engaged {
+		l.sendSpendCapMail(ctx, acct, hold, now)
+	}
+}
+
+func (l *Loop) sendSpendCapMail(ctx context.Context, acct state.Account, hold state.SpendCapHold, now time.Time) {
+	if acct.Email == "" {
+		return
+	}
+	subject, body := mail.SpendCapReachedBody(acct.Email, string(acct.Plan), hold.CapCents, hold.ObservedCents, now)
+	msg := mail.Message{
+		To: []string{acct.Email}, Subject: subject, TextBody: body,
+		// One notice per account, month and cap: a second meterd that saw
+		// the same transition dedupes at the provider.
+		MessageID: fmt.Sprintf("%s:spend_cap_reached:%s:%d", acct.ID, hold.Month.Format("2006-01"), hold.CapCents),
+	}
+	if err := l.mailer.Send(ctx, msg); err != nil {
+		l.log.Warn("meter: spend cap mail", "account", acct.ID, "err", err)
 	}
 }
 

@@ -71,6 +71,7 @@ func NewHealthCollector(registry *Registry, store HealthStore, options HealthCol
 }
 
 func (c *HealthCollector) Sweep(ctx context.Context) (summary HealthCollectionSummary, sweepErr error) {
+	ctx = WithBackgroundRequests(ctx)
 	summary.Enabled, summary.StaleAfter = c.policy.Enabled, c.policy.StaleAfter
 	defer func() {
 		if c.options.ObserveSweep != nil {

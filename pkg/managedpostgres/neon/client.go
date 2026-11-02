@@ -28,6 +28,11 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, query url.Va
 	if p.requestsDeferred(path) {
 		return managedpostgres.ErrUnavailable
 	}
+	if managedpostgres.BackgroundRequests(ctx) {
+		if err := p.paceBackground(ctx); err != nil {
+			return err
+		}
+	}
 	ctx, span := trace.StartSpan(ctx, "gregale.binding.managed_postgres",
 		attribute.String("gregale.dependency.type", "managed_binding"),
 		attribute.String("gregale.binding.type", "managed_postgres"),

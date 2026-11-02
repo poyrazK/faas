@@ -234,6 +234,9 @@ func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 		"FAAS_REQUEST_TELEMETRY_ENABLED=false",
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET=" + filepath.Join(telemetryDir, "request_telemetry.sock"),
 		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET=" + filepath.Join(telemetryDir, "otel_spans_writer.sock"),
+		// apid's auth RPC runs whether or not app errors are on (ADR
+		// 20261029202403); keep it off the shared /run/faas default.
+		"FAAS_APID_AUTH_SOCKET=" + filepath.Join(telemetryDir, "auth.sock"),
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 		"FAAS_APPS_DOMAIN=apps.test.example",

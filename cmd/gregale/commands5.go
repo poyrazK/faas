@@ -959,6 +959,10 @@ func cmdAppScale(slug string, args []string) int {
 		if explicit["per-instance-concurrency"] {
 			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
+		if explicit["min"] {
+			// The policy was copied from the app, so it holds the old floor.
+			policy.MinInstances = *min
+		}
 		req.ScalingPolicy = policy
 	}
 	if explicit["idle"] {
@@ -1171,7 +1175,16 @@ func cmdAppDispatch(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|traffic-status|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
 		return 1
 	}
+	if args[0] == subWait && hasSelectorFlag(args[1:]) {
+		return cmdAppWaitSelected(args[1:])
+	}
 	slug := args[0]
+	if code, ok := cmdAppConditions(slug, args[1:]); ok {
+		return code
+	}
+	if code, ok := cmdAppLabels(slug, args[1:]); ok {
+		return code
+	}
 	if len(args) >= 2 {
 		switch args[1] {
 		case subHealth:
@@ -1785,11 +1798,11 @@ func cmdQueueDeadLetter(args []string) int {
 		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--cursor C] [--all]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> [--limit N] [--cursor C] [--all]", "queue")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> --limit N (1 <= N <= 100)", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> --limit N (1 <= N <= 100)", "queue")
 		return 1
 	}
 	slug := pos[0]

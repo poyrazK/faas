@@ -83,6 +83,9 @@ func (e *Engine) sidecarsForDeploymentWithValues(ctx context.Context, dep state.
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := e.applySidecarEnvReseals(ctx, dep.ID, specs); err != nil {
+		return nil, nil, err
+	}
 	var declarations api.Sidecars
 	if err := json.Unmarshal(dep.Sidecars, &declarations); err != nil {
 		return nil, nil, fmt.Errorf("decode sidecar secret references: %w", err)
@@ -257,6 +260,41 @@ func cloneSidecarProbe(in *api.SidecarProbe) *api.SidecarProbe {
 // sidecar JSON. The returned values are still age ciphertext; only vmmd, with
 // the host identity, opens them at wake. Sorting keys keeps the schedd-to-vmmd
 // wire deterministic even though the JSON object is a map.
+// applySidecarEnvReseals swaps in the runtime-domain copies of sidecar env
+// values that `gregalectl seal-domain migrate --domain runtime` wrote (ADR
+// 20261022111812), so a vmmd without the fleet identity opens them. A copy
+// is used only while the deployment still declares the ciphertext it
+// replaced; anything else keeps the declared value.
+func (e *Engine) applySidecarEnvReseals(ctx context.Context, deploymentID string, specs []fcvm.WorkloadSpec) error {
+	declared := false
+	for _, spec := range specs {
+		declared = declared || len(spec.SealedEnv) > 0
+	}
+	if !declared {
+		return nil
+	}
+	reseals, err := e.store.ListDeploymentSidecarEnvReseals(ctx, deploymentID)
+	if err != nil {
+		return fmt.Errorf("list sidecar env reseals: %w", err)
+	}
+	if len(reseals) == 0 {
+		return nil
+	}
+	byKey := make(map[[2]string]state.SidecarEnvReseal, len(reseals))
+	for _, r := range reseals {
+		byKey[[2]string{r.SidecarName, r.Key}] = r
+	}
+	for i := range specs {
+		for j, entry := range specs[i].SealedEnv {
+			r, ok := byKey[[2]string{specs[i].Name, entry.Key}]
+			if ok && r.SourceSHA256 == state.SidecarEnvSourceDigest(entry.Ciphertext) {
+				specs[i].SealedEnv[j].Ciphertext = r.Ciphertext
+			}
+		}
+	}
+	return nil
+}
+
 func sealedSidecarEnv(sc api.Sidecar) ([]fcvm.SealedEnvEntry, error) {
 	if len(sc.Env) == 0 {
 		return nil, nil

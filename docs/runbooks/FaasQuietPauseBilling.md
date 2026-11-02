@@ -55,7 +55,7 @@ billed.
 
 meterd rolled instance-minutes whose open pause ran past its node's
 watermark, so it billed the uncovered part. Normal watermark lag is a few
-seconds, against meterd's 60-120 s roll delay, so a sustained count means a
+seconds, against meterd's 75-135 s roll delay, so a sustained count means a
 node stopped writing.
 
 1. Find the node: `time() - schedd_quiet_pause_ledger_watermark_seconds` is

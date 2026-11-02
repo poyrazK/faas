@@ -3,8 +3,8 @@
 With Node.js 22+, npm and a local Docker daemon, run from this directory:
 
 ```sh
-gregale data-api dev --port 0 --once
-gregale data-api dev --port 0
+gregale data-api serve --port 0 --once
+gregale data-api serve --port 0
 ```
 
 The config selects migrations, seed data, buyer/other test identities and

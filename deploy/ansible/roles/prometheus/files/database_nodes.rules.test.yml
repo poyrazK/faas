@@ -1,0 +1,508 @@
+# ADR-1027: database-node alerts fire on their symptom and stay quiet on
+# healthy nodes.
+rule_files:
+  - database_nodes.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: a down pgproxyd pages, a down dbbackupd warns
+    interval: 1m
+    input_series:
+      - series: up{job="pgproxyd",instance="10.42.0.5:9109",node="db-1"}
+        values: 0+0x20
+      - series: up{job="pgproxyd",instance="10.42.0.6:9109",node="db-2"}
+        values: 1+0x20
+      - series: up{job="vmmd-database",instance="10.42.0.6:9104",node="db-2"}
+        values: 1+0x20
+      - series: up{job="dbbackupd",instance="10.42.0.6:9110",node="db-2"}
+        values: 0+0x20
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FaasDatabaseNodeDaemonDown
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FaasDatabaseNodeDaemonDown
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: database-node
+              family: database_nodes
+              job: pgproxyd
+              instance: 10.42.0.5:9109
+              node: db-1
+            exp_annotations:
+              summary: pgproxyd on database node db-1 is down
+              description: Control-plane Prometheus cannot scrape pgproxyd on db-1. Every database on the node is unreachable (pgproxyd) or cannot wake (vmmd) until it recovers; production-class databases fail over to their standbys once the node stops answering schedd.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+      - eval_time: 9m
+        alertname: FaasDatabaseArchiveKeeperDown
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: FaasDatabaseArchiveKeeperDown
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              job: dbbackupd
+              instance: 10.42.0.6:9110
+              node: db-2
+            exp_annotations:
+              summary: dbbackupd on database node db-2 is down
+              description: Databases on db-2 cannot archive WAL or take base backups; point-in-time restore stops advancing and WAL fills their volumes until dbbackupd returns.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: an unshipped archive warns after 15 minutes plus the hold
+    interval: 1m
+    input_series:
+      # Uploads stop at minute 0: the oldest pending file ages 60 s a minute.
+      - series: dbarchive_pending_oldest_seconds{job="dbbackupd",instance="10.42.0.5:9110",node="db-1"}
+        values: 600+60x30
+      - series: dbarchive_pending_oldest_seconds{job="dbbackupd",instance="10.42.0.6:9110",node="db-2"}
+        values: 5+0x30
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasDatabaseArchiveOffNodeStale
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: FaasDatabaseArchiveOffNodeStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              job: dbbackupd
+              instance: 10.42.0.5:9110
+              node: db-1
+            exp_annotations:
+              summary: Database node db-1 has not shipped its archive for 27m 0s
+              description: The oldest archive file on db-1 that is not yet in the bucket is older than 15 minutes. Losing the node now would lose those commits; check dbbackupd's upload errors and the bucket's reachability.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+  - name: an off-site mirror an hour behind warns after half an hour
+    interval: 1m
+    input_series:
+      # The mirror stops at minute 0 with its oldest change 50 minutes old.
+      - series: dbarchive_offsite_pending_oldest_seconds{job="dbbackupd",instance="10.42.0.5:9110",node="db-1"}
+        values: 3000+60x60
+      - series: dbarchive_offsite_pending_oldest_seconds{job="dbbackupd",instance="10.42.0.6:9110",node="db-2"}
+        values: 30+0x60
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasDatabaseArchiveOffsiteStale
+        exp_alerts: []
+      - eval_time: 42m
+        alertname: FaasDatabaseArchiveOffsiteStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              job: dbbackupd
+              instance: 10.42.0.5:9110
+              node: db-1
+            exp_annotations:
+              summary: Database node db-1 has not mirrored its archive off-site for 1h 32m 0s
+              description: The oldest archive change on db-1 not yet in the off-site mirror is over an hour old. The bucket is unaffected; losing it now would lose what the mirror lacks. Check dbbackupd's off-site errors and the mirror's reachability.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: one failed prune is tolerated, two warn
+    interval: 30m
+    input_series:
+      - series: dbarchive_prune_errors_total{job="dbbackupd",instance="10.42.0.5:9110",node="db-1"}
+        values: 0 0 1 1 2 2 2
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: FaasDatabaseArchivePruneFailing
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: FaasDatabaseArchivePruneFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              job: dbbackupd
+              instance: 10.42.0.5:9110
+              node: db-1
+            exp_annotations:
+              summary: dbbackupd on db-1 keeps failing to prune its archive
+              description: At least two prune passes failed in the last 3 hours. The local archive and the bucket keep files past their retention, and the node's archive disk fills.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: wake refusals warn per node above a fifth of sessions
+    interval: 1m
+    input_series:
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",result="ok"}
+        values: 0+10x30
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",result="57P03"}
+        values: 0+5x30
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",result="28P01"}
+        values: 0+50x30
+      # A healthy node with the odd refusal.
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",result="ok"}
+        values: 0+100x30
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",result="57P03"}
+        values: 0+1x30
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasDatabaseWakeRefusals
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: FaasDatabaseWakeRefusals
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: Database node db-1 refuses 33.33% of authenticated sessions as unavailable
+              description: pgproxyd answered more than 20% of authenticated sessions on db-1 with 57P03 (the database is starting or unavailable) for 10 minutes. Check schedd's database scheduler and the node's vmmd for failed or queued wakes.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: slow wakes warn at a five second p95
+    interval: 1m
+    input_series:
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",le="1"}
+        values: 0+0x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",le="5"}
+        values: 0+1x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",le="10"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",le="+Inf"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",le="1"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",le="5"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",le="10"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",le="+Inf"}
+        values: 0+10x40
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: FaasDatabaseWakeSlow
+        exp_alerts: []
+      - eval_time: 18m
+        alertname: FaasDatabaseWakeSlow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: Database wakes on db-1 take 9.722s at p95
+              description: The 95th percentile from an authenticated client to a running database on db-1 has exceeded 5 seconds for 15 minutes. Usual causes are boot slots or the RAM ceiling queueing wakes, no spare VMs, or a slow volume.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: a running replicated database without a synchronized standby warns after 30 minutes
+    interval: 1m
+    input_series:
+      # Two replicas report the same catalog.
+      - series: schedd_database_standbys{job="schedd",instance="a",state="running",status="unsynced"}
+        values: 1+0x40
+      - series: schedd_database_standbys{job="schedd",instance="b",state="running",status="unsynced"}
+        values: 1+0x40
+      # Parked databases may park unsynchronized; they are not counted.
+      - series: schedd_database_standbys{job="schedd",instance="a",state="parked",status="none"}
+        values: 3+0x40
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: FaasDatabaseStandbyMissing
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: FaasDatabaseStandbyMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: 1 running production-class databases have no synchronized standby
+              description: "For 30 minutes at least one running replicated database has had no promotable standby: its standby keeps failing to attach, or no other node has room for one. Until one attaches, losing its node means a restore from the archive instead of a failover."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: planned switchovers are no failover incident
+    interval: 1m
+    input_series:
+      - series: schedd_database_failovers_total{job="schedd",instance="a",trigger="switchover",result="ok"}
+        values: 0 1 2 3 4 5 6 7 8 9
+      - series: schedd_database_failovers_total{job="schedd",instance="a",trigger="switchover",result="failed"}
+        values: 0 1 2 3 4 5 6 7 8 9
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: FaasDatabaseFailedOver
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasDatabaseFailoverFailed
+        exp_alerts: []
+  - name: failovers and failed moves warn while recent
+    interval: 1m
+    input_series:
+      - series: schedd_database_failovers_total{job="schedd",instance="a",trigger="running",result="ok"}
+        values: 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+      - series: schedd_database_failovers_total{job="schedd",instance="b",trigger="lost_node",result="failed"}
+        values: 0+0x30
+      - series: schedd_database_moves_total{job="schedd",instance="a",result="failed"}
+        values: 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasDatabaseFailedOver
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FaasDatabaseFailedOver
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: Production-class databases failed over to their standbys
+              description: schedd promoted at least one standby in the last 15 minutes (trigger lost_node, running or parked). The old primary's node needs investigation, and each failed-over database runs without a standby until a new one attaches.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+      - eval_time: 25m
+        alertname: FaasDatabaseFailedOver
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: FaasDatabaseFailoverFailed
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FaasDatabaseMoveFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: A database move between nodes failed
+              description: At least one move failed in the last hour. The database stays on its node, woken again if it was running, with last_error move_failed; evacuation retries it on a later sweep.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: a failed failover warns
+    interval: 1m
+    input_series:
+      - series: schedd_database_failovers_total{job="schedd",instance="a",trigger="parked",result="failed"}
+        values: 0 0 2 2 2 2 2 2 2 2
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasDatabaseFailoverFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: A database failover failed
+              description: schedd tried to promote a standby in the last 15 minutes and failed; the database stays on its silent node and schedd retries. Read schedd's dbsched failover errors.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: a node with over 90% of its volume committed warns
+    interval: 1m
+    input_series:
+      - series: schedd_database_node_volume_bytes{job="schedd",instance="a",node="db-1"}
+        values: 950+0x40
+      - series: schedd_database_node_volume_capacity_bytes{job="schedd",instance="a",node="db-1"}
+        values: 1000+0x40
+      - series: schedd_database_node_volume_bytes{job="schedd",instance="a",node="db-2"}
+        values: 500+0x40
+      - series: schedd_database_node_volume_capacity_bytes{job="schedd",instance="a",node="db-2"}
+        values: 1000+0x40
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: FaasDatabaseNodeVolumeNearFull
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: FaasDatabaseNodeVolumeNearFull
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: Database node db-1 has committed 95% of its volume capacity
+              description: Databases, standbys and incoming moves on db-1 have reserved over 90% of its volume_capacity_bytes. New databases, storage growth and standbys go elsewhere or fail with no capacity.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: an expiring proxy certificate warns at 14 days and pages at 72 hours
+    interval: 1m
+    input_series:
+      # Ten days left, counting down with the clock.
+      - series: pgproxyd_tls_cert_expiry_seconds{job="pgproxyd",instance="10.42.0.5:9109",node="db-1"}
+        values: 864000-60x120
+      # A renewed one on db-2.
+      - series: pgproxyd_tls_cert_expiry_seconds{job="pgproxyd",instance="10.42.0.6:9109",node="db-2"}
+        values: 7776000-60x120
+      # Two and a half days left on db-3.
+      - series: pgproxyd_tls_cert_expiry_seconds{job="pgproxyd",instance="10.42.0.7:9109",node="db-3"}
+        values: 216000-60x120
+    alert_rule_test:
+      - eval_time: 59m
+        alertname: FaasDatabaseProxyCertExpiring
+        exp_alerts: []
+      - eval_time: 61m
+        alertname: FaasDatabaseProxyCertExpiring
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: pgproxyd's certificate on db-1 expires in 9d 22h 59m 0s
+              description: The public certificate pgproxyd serves on db-1 expires within 14 days. Renew it and install the new chain and key (pgproxyd_tls_cert_src / pgproxyd_tls_key_src); pgproxyd reloads them without a restart.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              node: db-3
+            exp_annotations:
+              summary: pgproxyd's certificate on db-3 expires in 2d 10h 59m 0s
+              description: The public certificate pgproxyd serves on db-3 expires within 14 days. Renew it and install the new chain and key (pgproxyd_tls_cert_src / pgproxyd_tls_key_src); pgproxyd reloads them without a restart.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+      - eval_time: 11m
+        alertname: FaasDatabaseProxyCertExpiryImminent
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: database-node
+              family: database_nodes
+              node: db-3
+            exp_annotations:
+              summary: pgproxyd's certificate on db-3 expires in 2d 11h 49m 0s
+              description: The public certificate pgproxyd serves on db-3 expires within 72 hours; after that every client connection to the node's databases fails verification.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+  - name: a read-only database warns after five minutes, not before
+    interval: 1m
+    input_series:
+      - series: schedd_database_storage{level="read_only",instance="10.42.0.2:9102"}
+        values: 0 0 1+0x10
+      - series: schedd_database_storage{level="read_only",instance="10.42.0.3:9102"}
+        values: 0 0 0+0x10
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasDatabaseStorageReadOnly
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasDatabaseStorageReadOnly
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: 1 native database(s) read-only, short of storage
+              description: "The storage guard turned these primaries read-only before their volumes filled; their apps' writes fail with SQLSTATE 25006. schedd logs each database_id ('database is read-only, short of storage'). The customer frees space or grows storage; the guard turns the database writable again on its own."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+  - name: a standby low below its primary warns after fifteen minutes
+    interval: 1m
+    input_series:
+      - series: schedd_database_storage{level="standby_low",instance="10.42.0.2:9102"}
+        values: 0 0 1+0x30
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasDatabaseStandbyStorageLow
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasDatabaseStandbyStorageLow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: 1 native database standby(s) short of storage while their primary is not
+              description: "A standby normally has more room than its primary, which turns read-only first. These hold data their primary does not, usually WAL their restartpoints kept, and will fill first; a full standby stops replaying and the database loses its failover. schedd logs each database_id ('standby is short of storage'). Restart the database in place (runbook)."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+  - name: stale databases warn only after a day
+    interval: 1m
+    input_series:
+      - series: schedd_database_stale_vms{instance="10.42.0.2:9102"}
+        values: 3+0x1600
+    alert_rule_test:
+      - eval_time: 12h
+        alertname: FaasDatabaseStaleVMs
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: FaasDatabaseStaleVMs
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: 3 native database(s) still on an outdated base after a day
+              description: "Database VMs survive vmmd restarts, so a release's PostgreSQL minor, guest-init or launch changes reach a running database only when it restarts. schedd restarts idle always-on databases on its own; these stayed busy, or are scale-to-zero databases that never went idle. Restart them in place: gregalectl database-nodes restart (runbook)."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+  - name: a node without a passing restore drill for two days warns
+    interval: 1m
+    input_series:
+      # db-1 last passed at t=0 and never again; db-2 keeps passing.
+      - series: schedd_database_restore_drill_last_ok_timestamp_seconds{node="db-1",instance="10.42.0.2:9102"}
+        values: 0+0x3200
+      - series: schedd_database_restore_drill_last_ok_timestamp_seconds{node="db-2",instance="10.42.0.2:9102"}
+        values: 0+60x3200
+    alert_rule_test:
+      - eval_time: 1d
+        alertname: FaasDatabaseRestoreDrillStale
+        exp_alerts: []
+      - eval_time: 2d3h
+        alertname: FaasDatabaseRestoreDrillStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: No restore drill has passed on database node db-1 for two days
+              description: "schedd restores one of each node's databases from its backups every day into a throwaway database. None has passed on db-1 for two days, so nothing proves its databases restore. Look for failed or skipped drills in schedd's log."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: a failed restore drill warns for a day
+    interval: 1m
+    input_series:
+      - series: schedd_database_restore_drills_total{result="failed",instance="10.42.0.2:9102"}
+        values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1+0x200
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasDatabaseRestoreDrillFailed
+        exp_alerts: []
+      - eval_time: 1h
+        alertname: FaasDatabaseRestoreDrillFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: A database restore drill failed
+              description: "A daily restore drill could not restore a database from its node's backups in the last day. The same restore serves customers' point-in-time restores and node-loss recovery."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: a failed major upgrade pages for an hour
+    interval: 1m
+    input_series:
+      - series: schedd_database_upgrades_total{result="failed",instance="10.42.0.2:9102"}
+        values: 0 0 0 0 0 0 0 0 0 0 1+0x100
+      - series: schedd_database_upgrades_total{result="refused",instance="10.42.0.2:9102"}
+        values: 0 1+0x100
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasDatabaseUpgradeFailed
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasDatabaseUpgradeFailed
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: An in-place PostgreSQL major upgrade failed
+              description: "At least one major upgrade failed in the last hour. The database is failed with last_error upgrade_failed and stays down until it is restored to a point before the upgrade, which recovers on its old major."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+      - eval_time: 100m
+        alertname: FaasDatabaseUpgradeFailed
+        exp_alerts: []

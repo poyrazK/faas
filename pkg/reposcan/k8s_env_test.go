@@ -253,3 +253,46 @@ func TestK8sServiceTarget(t *testing.T) {
 		}
 	}
 }
+
+// A ConfigMap is reported as not imported unless every workload that reads
+// it is annotated for the import, and the warning names the ones that are not.
+func TestScanWithOptions_KubernetesConfigMapImport(t *testing.T) {
+	const configMap = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cfg}\ndata: {LOG_LEVEL: debug}\n"
+	deployment := func(name, annotations, env string) string {
+		return fmt.Sprintf("---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: %s%s}\nspec:\n  template:\n    spec:\n      containers:\n        - name: %s\n          image: acme/%s:1\n%s", name, annotations, name, name, env)
+	}
+	const (
+		annotated = ", annotations: {gregale.dev/env-import: \"true\"}"
+		envFrom   = "          envFrom: [{configMapRef: {name: cfg}}]\n"
+		keyRef    = "          env: [{name: LEVEL, valueFrom: {configMapKeyRef: {name: cfg, key: LOG_LEVEL}}}]\n"
+	)
+	tests := []struct {
+		name    string
+		body    string
+		want    string
+		wantNot string
+	}{
+		{"unread", configMap + deployment("api", annotated, ""), `kind ConfigMap "cfg" ignored: its values are not imported`, "values not imported into"},
+		{"annotated reader", configMap + deployment("api", annotated, envFrom), "", `ConfigMap "cfg"`},
+		{"unannotated reader", configMap + deployment("api", annotated, envFrom) + deployment("worker", "", keyRef),
+			"kind ConfigMap \"cfg\": values not imported into worker; annotate the workload with `gregale.dev/env-import: \"true\"`", "ignored: its values"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := ScanWithOptions(k8sPodFS(tc.body), k8sOn())
+			if err != nil {
+				t.Fatal(err)
+			}
+			joined := strings.Join(result.Warnings, "\n")
+			if tc.want != "" && !strings.Contains(joined, tc.want) {
+				t.Errorf("warnings missing %q:\n%s", tc.want, joined)
+			}
+			if strings.Contains(joined, tc.wantNot) {
+				t.Errorf("warnings have %q:\n%s", tc.wantNot, joined)
+			}
+			if strings.Contains(joined, "debug") {
+				t.Errorf("a ConfigMap value reached a warning:\n%s", joined)
+			}
+		})
+	}
+}

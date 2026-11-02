@@ -32,8 +32,9 @@ func pythonPlan(t *testing.T, fixture string, mutate func(map[string]any)) []byt
 
 // spec: §4.6
 // ADR-1500 amendment 2: a Railpack Python build whose deploy inputs are the
-// toolchain and /app runs its start command as written on the runner base;
-// system packages, extra paths and package-manager starts keep the full layer.
+// toolchain and /app runs its start command on the runner base; system
+// packages, extra paths and package managers other than a `run` (amendment 3)
+// keep the full layer.
 func TestClassifyPython(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -44,8 +45,9 @@ func TestClassifyPython(t *testing.T) {
 		{name: "requirements.txt", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", nil), wantStart: []string{"/bin/sh", "-c", "python app.py"}},
 		{name: "uv project", plan: pythonPlan(t, "railpack-0.38.0-py-uv.json", nil), wantStart: []string{"/bin/sh", "-c", "python app.py"}},
 		{name: "gunicorn", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", setStart("gunicorn --bind 0.0.0.0:8080 app:app")), wantStart: []string{"/bin/sh", "-c", "gunicorn --bind 0.0.0.0:8080 app:app"}},
-		{name: "uv run", plan: pythonPlan(t, "railpack-0.38.0-py-uv.json", setStart("uv run app.py")), wantReason: ReasonPackageManagerStart},
-		{name: "poetry run", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", setStart("poetry run python app.py")), wantReason: ReasonPackageManagerStart},
+		{name: "uv run", plan: pythonPlan(t, "railpack-0.38.0-py-uv.json", setStart("uv run app.py")), wantStart: []string{"/bin/sh", "-c", "python app.py"}},
+		{name: "poetry run", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", setStart("poetry run python app.py")), wantStart: []string{"/bin/sh", "-c", "python app.py"}},
+		{name: "uvx", plan: pythonPlan(t, "railpack-0.38.0-py-uv.json", setStart("uvx gunicorn app:app")), wantReason: ReasonPackageManagerStart},
 		{name: "no start", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", setStart(" ")), wantReason: ReasonNoStartCommand},
 		{name: "system packages", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", func(p map[string]any) {
 			p["deploy"].(map[string]any)["aptPackages"] = []any{"libpq5"}
@@ -137,6 +139,14 @@ func TestRewritePyvenvConfig(t *testing.T) {
 	uv := "home = /mise/installs/python/3.12.12/bin\nimplementation = CPython\nuv = 0.9.2\nversion_info = 3.12.12\ninclude-system-site-packages = false\n"
 	if got, ok := RewritePyvenvConfig([]byte(uv), interp); !ok || string(got) != "home = /usr/local/bin\nimplementation = CPython\nuv = 0.9.2\nversion_info = 3.12.12\ninclude-system-site-packages = false\n" {
 		t.Fatalf("uv rewrite = %q, %v", got, ok)
+	}
+	// virtualenv's, as Pipenv and PDM create it (ADR-1500 amendment 3).
+	ve := "home = /mise/installs/python/3.12.12/bin\nimplementation = CPython\nversion_info = 3.12.12.final.0\nvirtualenv = 20.31.2\n" +
+		"include-system-site-packages = false\nbase-prefix = /mise/installs/python/3.12.12\nbase-exec-prefix = /mise/installs/python/3.12.12\n" +
+		"base-executable = /mise/installs/python/3.12.12/bin/python3.12\n"
+	if got, ok := RewritePyvenvConfig([]byte(ve), interp); !ok || string(got) != "home = /usr/local/bin\nimplementation = CPython\nversion_info = 3.12.12.final.0\nvirtualenv = 20.31.2\n"+
+		"include-system-site-packages = false\nbase-prefix = /usr/local\nbase-exec-prefix = /usr/local\nbase-executable = /usr/local/bin/python3.12\n" {
+		t.Fatalf("virtualenv rewrite = %q, %v", got, ok)
 	}
 	for _, body := range []string{"include-system-site-packages = false\n", "home = /usr/bin\n"} {
 		if _, ok := RewritePyvenvConfig([]byte(body), interp); ok {

@@ -205,7 +205,53 @@ func quotaSubjectKinds() []quotaSubjectKind {
 			var q *state.ConsumerKeyQuotaError
 			return errors.As(err, &q) && q.Scope == api.PlanQuotaScopeAccount
 		},
+	}, {
+		name: "openapi docs",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			d, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Scope: "production", ImageDigest: "sha256:test"})
+			if err != nil {
+				return err
+			}
+			return store.UpsertDeploymentOpenAPIDocIfUnderQuota(ctx, d.ID, app.AccountID, app.ID, []byte(`{"openapi":"3.1.0"}`),
+				state.OpenAPIDocSourceManualUpload, false, 1)
+		},
+		accountCap: func(err error) bool {
+			var q *state.OpenAPIDocQuotaError
+			return errors.As(err, &q)
+		},
+	}, {
+		name: "openapi imports",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			return store.UpsertAppOpenAPIDocIfUnderQuota(ctx, app.ID, app.AccountID, []byte(`{"openapi":"3.1.0","info":{"title":"quota"}}`), 1, "3.1.0", 1)
+		},
+		accountCap: openAPIImportAccountCap,
+	}, {
+		// A domain claim spends the pending-domain budget until it is
+		// verified (api.CustomDomainLimitsFor).
+		name: "pending custom domains",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			_, err := store.(pendingDomainClaimer).CreateCustomDomainIfUnderQuota(ctx, "claim-"+uuid.NewString()[:8]+".example.test",
+				app.ID, "token-"+uuid.NewString(), 10, 1)
+			return err
+		},
+		accountCap: pendingDomainAccountCap,
 	}}
+}
+
+// pendingDomainClaimer is the domain claim both stores implement; it is not
+// part of state.Store.
+type pendingDomainClaimer interface {
+	CreateCustomDomainIfUnderQuota(ctx context.Context, domain, appID, token string, appLimit, accountLimit int) (state.CustomDomain, error)
+}
+
+func pendingDomainAccountCap(err error) bool {
+	var q *state.CustomDomainQuotaError
+	return errors.As(err, &q) && q.Scope == "account"
+}
+
+func openAPIImportAccountCap(err error) bool {
+	var q *state.QuotaError
+	return errors.As(err, &q) && q.Kind == state.QuotaErrorKindOpenAPIImports && !q.NotAllowed
 }
 
 func cronAccountCap(err error) bool {

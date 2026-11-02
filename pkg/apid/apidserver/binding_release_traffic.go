@@ -37,15 +37,20 @@ func (s *server) bindingReleaseTrafficObservations(r *http.Request, acct state.A
 		ID    string
 		Prior int
 	}, 0, len(rows))
+	var held []bool
 	for _, d := range rows {
 		if d.ID != target.ID && d.Scope == target.Scope {
 			siblings = append(siblings, struct {
 				ID    string
 				Prior int
 			}{d.ID, d.TrafficPercent})
+			held = append(held, state.AbortedCanaryCandidate(d))
 		}
 	}
-	weights := state.RedistributeTraffic(siblings, 100-percent)
+	weights, err := state.RedistributeManualTraffic(siblings, func(i int) bool { return held[i] }, 100-percent)
+	if err != nil { // ErrTrafficResidualUnassigned: refuse as the store would.
+		return nil, api.ErrTrafficResidualUnassigned(100 - percent)
+	}
 	proposed := map[string]int{target.ID: percent}
 	for i, d := range siblings {
 		proposed[d.ID] = weights[i]

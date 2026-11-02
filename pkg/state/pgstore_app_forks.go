@@ -21,6 +21,9 @@ func (s *PgStore) CreateAppFork(ctx context.Context, params CreateAppForkParams)
 	}
 	accountID, appID, deploymentID := mustPgUUID(p.AccountID), mustPgUUID(p.AppID), mustPgUUID(p.DeploymentID)
 	createdAt := pgtype.Timestamptz{Time: p.CreatedAt, Valid: true}
+	if p.AccessTokenHash != nil {
+		p.AccessTokenHash = storedCredential(CredentialColumnForkToken, p.AccessTokenHash)
+	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

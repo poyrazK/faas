@@ -218,7 +218,7 @@ func cmdAccountDPA(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale account dpa [-o FILE]", "account")
+		PrintUsage(os.Stderr, "usage: gregale account dpa get [-o FILE]", "account")
 		return 1
 	}
 	// DPA route is unauth-friendly on the server (it's also reachable

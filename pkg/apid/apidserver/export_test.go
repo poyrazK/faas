@@ -10,6 +10,7 @@
 package apidserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -42,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/logerasure"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
@@ -245,6 +247,8 @@ const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
 const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
 const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
+const S3GatewayComputeMetricsDiscoveryPath = s3GatewayComputeMetricsDiscoveryPath
+const CloudflaredS3MetricsDiscoveryPath = cloudflaredS3MetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
 
 // sessionCookie is the legacy session cookie name test fixtures send; the
@@ -421,6 +425,23 @@ var Contains = contains
 var CookieDo = cookieDo
 var CountAffectedRequests = countAffectedRequests
 var CreateApp = createApp
+
+// CustomHistoryEnv is setup with custom metric history (and so OTLP ingest) on.
+var CustomHistoryEnv = customHistoryEnv
+
+// PostOTLPEncoded sends one OTLP metrics export to app shop with a
+// Content-Encoding (ADR-20261029203000).
+func PostOTLPEncoded(t *testing.T, e testEnv, contentType, encoding string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/v1/apps/shop/otlp/v1/metrics", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+e.key)
+	r.Header.Set("Content-Type", contentType)
+	r.Header.Set("Content-Encoding", encoding)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, r)
+	return rec
+}
+
 var CreateAppTaskForTest = createAppTaskForTest
 var CreateExecutionAs = createExecutionAs
 var CreateProjectEnvironmentConfigFixture = createProjectEnvironmentConfigFixture
@@ -527,6 +548,7 @@ var MakeFeatureFlagOutcomesResponse = makeFeatureFlagOutcomesResponse
 var ManagedExecutionWorkflowStepLabel = managedExecutionWorkflowStepLabel
 var ManagedPostgresAccountingDiagnosticsView = managedPostgresAccountingDiagnosticsView
 var ManagedPostgresCapabilitiesView = managedPostgresCapabilitiesView
+var ProjectManagedPostgresDashboard = projectManagedPostgresDashboard
 var ManagedPostgresConnectionURL = managedPostgresConnectionURL
 var ManagedPostgresNotConfiguredProblem = managedPostgresNotConfiguredProblem
 var ManagedPostgresPlanAllows = managedPostgresPlanAllows
@@ -1023,6 +1045,8 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) PostgresUpgrades() *managedpg.Rollout               { return &r.postgresUpgrades }
+func (r *server) PostgresStorage() *managedpg.Rollout                { return &r.postgresStorage }
 func (r *server) LogArchive() *logerasure.Objects                    { return &r.logArchive }
 func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
 	return r.beforeAccountDelete(ctx, acct)
@@ -1376,6 +1400,9 @@ func (r *server) RenderPreviewsList(p0 http.ResponseWriter, p1 *http.Request, p2
 func (r *server) RenderReleaseApprovalPage(p0 http.ResponseWriter, p1 *http.Request) {
 	r.renderReleaseApprovalPage(p0, p1)
 }
+func (r *server) RenderReleasePage(p0 http.ResponseWriter, p1 *http.Request) {
+	r.renderReleasePage(p0, p1)
+}
 func (r *server) ReplaceProjectEnvironmentQueueBindings(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.replaceProjectEnvironmentQueueBindings(p0, p1, p2)
 }
@@ -1424,6 +1451,13 @@ func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }
+
+// WithEventSubscriptionReconcile marks ctx as a production deploy whose
+// manifest replaces the app's event subscriptions (ADR-20261031130000).
+func WithEventSubscriptionReconcile(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sourceManifestReconcileEventsKey{}, true)
+}
+
 func (r *server) RollbackSourceRefManifest(p0 context.Context, p1 sourceRefManifestStaged) error {
 	return r.rollbackSourceRefManifest(p0, p1)
 }
@@ -1451,6 +1485,12 @@ func (r *server) GatewaydPublicEdgeMetricsDiscovery(p0 http.ResponseWriter, p1 *
 }
 func (r *server) CloudflaredMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.cloudflaredMetricsDiscovery(p0, p1)
+}
+func (r *server) S3GatewayComputeMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.s3GatewayComputeMetricsDiscovery(p0, p1)
+}
+func (r *server) CloudflaredS3MetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.cloudflaredS3MetricsDiscovery(p0, p1)
 }
 func (r *server) SendTestAlertPresetCore(p0 context.Context, p1 state.Account, p2 string, p3 string) (api.TestAlertPresetResponse, *api.Problem) {
 	return r.sendTestAlertPresetCore(p0, p1, p2, p3)
@@ -1563,11 +1603,17 @@ func (r testEnv) Do(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]s
 func (r testEnv) DoAdmin(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doAdmin(p0, p1, p2, p3, p4)
 }
+func (r testEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
+	return r.doSession(p0, p1, p2, p3, p4, p5)
+}
 func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doOperator(p0, p1, p2, p3, p4)
 }
 func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string, p5 string) *httptest.ResponseRecorder {
 	return r.doAs(p0, p1, p2, p3, p4, p5)
+}
+func (r testEnv) FreezeAfterAutomaticRollback(ctx context.Context, app state.App, rolledBackID, cause string) {
+	r.s.freezeAfterAutomaticRollback(ctx, app, rolledBackID, cause)
 }
 
 // Issues acceptance tests share the original PostgreSQL fixture and evidence setup.
@@ -1737,6 +1783,13 @@ func NewGithubdBridgeForTest(store githubdBridgeStore, notif githubdBridgeNotifi
 // SetAgentStoreForTest gives the configured agent API a store; call it
 // after ConfigureAgentsForTest.
 func (s *server) SetAgentStoreForTest(store agents.Store) { s.agentAPI.Store = store }
+
+// SetAgentCallbackRevocationsForTest gives the configured agent API the
+// callback revocations it otherwise keeps in Postgres, so the callback
+// routes answer; call it after ConfigureAgentsForTest.
+func (s *server) SetAgentCallbackRevocationsForTest(r agents.CallbackRevocations) {
+	s.agentAPI.Revocations = r
+}
 
 // RealtimePreviewEveryone shows realtime preview features to every account
 // (ADR-20261019102657).
@@ -1917,3 +1970,34 @@ var SealOAuthCodeState = sealOAuthCodeState
 // ProjectReadinessOverrides exposes projectReadinessOverrides to the
 // external test package.
 var ProjectReadinessOverrides = projectReadinessOverrides
+
+// SetEventPublishClock pins the event publish rate limiter's clock.
+func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }
+
+// GitHub connector bearer handlers (ADR-20261101160300).
+func (r *server) ListGitHubRepositoriesForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.listGitHubRepositories(w, req, acct)
+}
+func (r *server) GetGitHubDeployPolicyForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.getGitHubDeployPolicy(w, req, acct)
+}
+func (r *server) PatchGitHubDeployPolicyForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.patchGitHubDeployPolicy(w, req, acct)
+}
+func (r *server) BindGitHubConnectionForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.bindGitHubConnection(w, req, acct)
+}
+func (r *server) GetGitHubConnectionForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.getGitHubConnection(w, req, acct)
+}
+
+// AppErrorsPurgeStore is the store the app_errors retention purge needs.
+type AppErrorsPurgeStore = appErrorsPurgeStore
+
+// PurgeAppErrorsOnce runs one app_errors retention pass at now over every
+// account the store lists.
+func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func() time.Time) {
+	p := newAppErrorsPurger(store, nil, nil, slog.New(slog.DiscardHandler), true)
+	p.now = now
+	p.purgeAll(ctx)
+}

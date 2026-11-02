@@ -53,11 +53,30 @@ func TestPublicSurface(t *testing.T) {
 		}
 	})
 	t.Run("status_incidents", func(t *testing.T) {
-		r := get(tg.api + "/v1/status/incidents")
+		// The overview lists active and recently resolved incidents; each
+		// has its own page at /v1/status/incidents/{id}.
+		r := get(tg.api + "/v1/status")
 		if r.status != http.StatusOK {
-			t.Fatalf("GET /v1/status/incidents: %s", r)
+			t.Fatalf("GET /v1/status: %s", r)
 		}
-		jsonBody(t, r)
+		doc := jsonBody(t, r)
+		var events []any
+		for _, key := range []string{"active_events", "resolved_incidents"} {
+			list, ok := field(doc, key).([]any)
+			if !ok {
+				t.Fatalf("GET /v1/status has no %s list: %s", key, tail(compact(doc), 500))
+			}
+			events = append(events, list...)
+		}
+		if len(events) == 0 {
+			t.Log("no active or recently resolved incident to open")
+			return
+		}
+		id := str(events[0], "id")
+		r = get(tg.api + "/v1/status/incidents/" + id)
+		if r.status != http.StatusOK || str(jsonBody(t, r), "id") != id {
+			t.Fatalf("GET /v1/status/incidents/%s: %s", id, r)
+		}
 	})
 	t.Run("cli_status", func(t *testing.T) {
 		res := tg.runAs(t, "", time.Minute, "status")

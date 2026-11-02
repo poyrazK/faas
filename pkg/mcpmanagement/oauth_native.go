@@ -53,7 +53,9 @@ func (r *remoteServer) finishNativeLogin(ctx context.Context, w http.ResponseWri
 		oauthError(w, 401, "access_denied", "Gregale sign-in expired or could not be verified; start a new connection")
 		return
 	}
-	r.prepareAccount(w, req, flow, r.apiClient(result.Plaintext), result.Account.ID, minTime(expiry, time.Now().Add(maxConnectionLifetime)), csrf, true)
+	client = r.apiClient(result.Plaintext)
+	r.nameAgentClient(ctx, client, flow)
+	r.prepareAccount(w, req, flow, client, result.Account.ID, minTime(expiry, time.Now().Add(maxConnectionLifetime)), csrf, true)
 }
 
 // continueLogin is where apid sends the browser after the user approves a
@@ -174,6 +176,7 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 	for i, app := range apps {
 		apps[i] = api.AppResponse{ID: app.ID, Slug: app.Slug}
 	}
+	r.releaseRevokedGrants(ctx, account.ID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pruneLocked()
@@ -187,7 +190,7 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 		return
 	}
 	if r.opts.Hosted && r.accountGrantsLocked(account.ID) >= hostedGrantsPerAccount {
-		oauthError(w, 429, "temporarily_unavailable", fmt.Sprintf("This account already has %d agent connections. Revoke an mcp-login key on your account's API keys page, or wait for one to expire.", hostedGrantsPerAccount))
+		oauthError(w, 429, "temporarily_unavailable", fmt.Sprintf("This account already has %d agent connections. Revoke one with `gregale mcp connection revoke`, or wait for one to expire.", hostedGrantsPerAccount))
 		return
 	}
 	id, err := randomToken("gmcp_grant_")

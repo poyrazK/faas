@@ -199,6 +199,15 @@ type stubAccountLookup struct {
 	bySubject map[string]state.Account
 }
 
+// OIDCDeployTargetForSubject binds every app a test names to the test
+// repository, deploying from main (ADR-20261101100000).
+func (s *stubAccountLookup) OIDCDeployTargetForSubject(_ context.Context, _, _, _, app string) (state.OIDCDeployTarget, error) {
+	if app == "" {
+		return state.OIDCDeployTarget{}, state.ErrNotFound
+	}
+	return state.OIDCDeployTarget{AppID: "app-" + app, Branches: []string{"main"}}, nil
+}
+
 func (s *stubAccountLookup) AccountByOIDCSubject(_ context.Context, _, subject string) (state.Account, error) {
 	if a, ok := s.bySubject[subject]; ok {
 		return a, nil
@@ -277,10 +286,12 @@ func newHarness(t *testing.T, clock func() time.Time) (*Handler, *memTrustPolicy
 	audit := &memAuditor{}
 	v := &fakeVerifier{
 		claims: &Claims{
-			Subject: testSub,
-			Issuer:  testIssuer,
-			Aud:     []string{"faas.example.com"},
-			Exp:     time.Now().Add(5 * time.Minute),
+			Subject:   testSub,
+			Issuer:    testIssuer,
+			Aud:       []string{"faas.example.com"},
+			Exp:       time.Now().Add(5 * time.Minute),
+			Ref:       "refs/heads/main",
+			EventName: "push",
 		},
 	}
 	lookup := &stubAccountLookup{
@@ -320,6 +331,7 @@ func TestServeHTTP_HappyPath_PreExistingPolicy(t *testing.T) {
 
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
+		App:      "web",
 		Token:    makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
 		Audience: "faas.example.com",
 	})
@@ -451,6 +463,7 @@ func TestServeHTTP_RFC8693FormExchange(t *testing.T) {
 		"audience":             {"faas.example.com"},
 		"requested_token_type": {TokenExchangeAccessTokenType},
 		"scope":                {"deploy:write"},
+		"resource":             {"urn:gregale:app:web"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/exchange", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -609,6 +622,7 @@ func TestServeHTTP_FirstUse_AutoCreate(t *testing.T) {
 
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
+		App:      "web",
 		Token:    makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
 		Audience: "faas.example.com",
 	})
@@ -661,6 +675,7 @@ func TestServeHTTP_FirstUse_ImmutableGitHubSubjectStaysExact(t *testing.T) {
 
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
+		App:      "web",
 		Token:    makeEnvelopeWithSubject(t, testIssuer, subject, time.Now().Add(5*time.Minute)),
 		Audience: "faas.example.com",
 	})
@@ -689,6 +704,7 @@ func TestServeHTTP_RequestedAudienceMustBeInVerifiedClaims(t *testing.T) {
 
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
+		App:      "web",
 		Token:    makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
 		Audience: "faas.example.com",
 	})
@@ -734,6 +750,7 @@ func TestServeHTTP_BadJWT_400(t *testing.T) {
 	h, _, _, _, _ := newHarness(t, nil)
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
+		App:      "web",
 		Token:    "not-a-jwt",
 		Audience: "faas.example.com",
 	})
@@ -750,6 +767,7 @@ func TestServeHTTP_SubjectNotBound_401(t *testing.T) {
 	h, _, _, _, _ := newHarness(t, nil)
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
+		App:      "web",
 		// Different subject than the lookup table knows.
 		Token:    makeEnvelopeWithSub(t, testIssuer, "unknown:sub:ject", time.Now().Add(5*time.Minute)),
 		Audience: "faas.example.com",
@@ -799,6 +817,7 @@ func TestServeHTTP_TokenID_AuditCorrelationRegression(t *testing.T) {
 
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
+		App:      "web",
 		Token:    makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
 		Audience: "faas.example.com",
 	})
@@ -875,6 +894,7 @@ func TestServeHTTP_LegacyPermissivePolicyIsPinned(t *testing.T) {
 	}
 	body := mustJSON(t, ExchangeRequest{
 		Provider: "github",
+		App:      "web",
 		Token:    makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
 		Audience: "faas.example.com",
 	})
@@ -927,16 +947,20 @@ func (p patternVerifier) Verify(ctx context.Context, rawToken string, policy *OI
 // the stored policy; a repository the account does not bind must not.
 func TestServeHTTP_BoundRepositoryAdmitsOtherSubjects(t *testing.T) {
 	account := state.Account{ID: testAcctID, Email: "octo@example.com", Plan: "free", Status: "active"}
+	// A bound repository's other subjects are verified under the policy;
+	// only a run on a deploy ref outside pull requests gets a deploy bearer
+	// (ADR-20261101100000).
 	for _, tc := range []struct {
-		name    string
-		subject string
-		bound   bool
-		want    int
+		name       string
+		subject    string
+		ref, event string
+		bound      bool
+		want       int
 	}{
-		{"other branch", "repo:octocat/hello:ref:refs/heads/feature-7", true, http.StatusOK},
-		{"pull_request run", "repo:octocat/hello:pull_request", true, http.StatusOK},
-		{"second repository", "repo:octocat/other:ref:refs/heads/main", true, http.StatusOK},
-		{"unbound repository", "repo:mallory/evil:ref:refs/heads/main", false, http.StatusUnauthorized},
+		{"other branch", "repo:octocat/hello:ref:refs/heads/feature-7", "refs/heads/feature-7", "push", true, http.StatusForbidden},
+		{"pull_request run", "repo:octocat/hello:pull_request", "refs/pull/7/merge", "pull_request", true, http.StatusForbidden},
+		{"second repository", "repo:octocat/other:ref:refs/heads/main", "refs/heads/main", "push", true, http.StatusOK},
+		{"unbound repository", "repo:mallory/evil:ref:refs/heads/main", "refs/heads/main", "push", false, http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			policies := newMemTrustPolicyStore()
@@ -955,13 +979,15 @@ func TestServeHTTP_BoundRepositoryAdmitsOtherSubjects(t *testing.T) {
 			if tc.bound {
 				lookup.bound[tc.subject] = account
 			}
-			fake := &fakeVerifier{claims: &Claims{Issuer: testIssuer, Aud: []string{"faas.example.com"}, Exp: time.Now().Add(5 * time.Minute)}}
+			fake := &fakeVerifier{claims: &Claims{Issuer: testIssuer, Aud: []string{"faas.example.com"}, Exp: time.Now().Add(5 * time.Minute),
+				Ref: tc.ref, EventName: tc.event}}
 			h := NewHandler(HandlerDeps{
 				Verifier: patternVerifier{fake}, Policies: policies, Tokens: newMemTokenStore(),
 				Lookups: lookup, Audit: &memAuditor{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			})
 			body := mustJSON(t, ExchangeRequest{
 				Provider: "github",
+				App:      "web",
 				Token:    makeEnvelopeWithSub(t, testIssuer, tc.subject, time.Now().Add(5*time.Minute)),
 				Audience: "faas.example.com",
 			})

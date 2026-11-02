@@ -145,7 +145,7 @@ its dependencies are added.
    and `/app`; no system packages), with no npm script to resolve. A start
    command that runs through a Python package manager (`uv run`,
    `poetry run`, `pipenv`, ...) is ineligible: those tools live in the
-   toolchain the layer drops. As for Node, the platform clears Railpack's
+   toolchain the layer drops (amendment 3 drops a `run` where that is safe). As for Node, the platform clears Railpack's
    default apt step, which the app's own minimal base also did; Wolfi's
    runner-python313 has no apt.
 3. **Layer (imaged).** Railpack creates `/app/.venv` with mise's Python, so
@@ -179,6 +179,62 @@ n2 metal host on 2026-10-30 (5/5 subtests, leakcheck clean) with app layers
 of 298 MB for the Python 3.11 own-base deployment against 50.8 MB
 (`python313`) and 51.2 MB (`python312`) on the shared bases;
 `TestSharedRuntimeRollbackMetal` passed again in the same run.
+
+## Amendment 3 (2026-10-30): package managers' `run`
+
+Amendment 2 kept the full layer for any start command that runs through a
+Python package manager. Railpack's own start commands never do (`python
+app.py`, `gunicorn ...`), but a Procfile, `railpack.json` or gregale start
+command often reads `uv run uvicorn main:app` or `poetry run gunicorn app:app`.
+Railpack 0.38 installs every Python project into `/app/.venv` (pip, uv,
+Poetry with `POETRY_VIRTUALENVS_IN_PROJECT`, Pipenv with
+`PIPENV_VENV_IN_PROJECT`, PDM), so with `/app/.venv/bin` first on PATH the
+`run` is mostly redundant. Mostly: each tool can do more than start the
+command.
+
+1. **Rewrite.** `sharedruntime.ResolvePythonStart` splits the start command
+   into simple commands (`;`, `&&`, `||`, `|`, `&`, newlines; quotes kept as
+   written) and drops `uv run`, `poetry run`, `pdm run` or `pipenv run` in
+   front of a command, after assignments and `exec`. `uv run -m mod` becomes
+   `python -m mod` and `uv run app.py` becomes `python app.py`. Only flags
+   that change nothing once the build has synced the environment are
+   accepted (`--frozen`, `--locked`, `--no-sync`, `--no-dev`, `--quiet`,
+   ...). Any other flag (`--with`, `--python`, `--directory`, `--env-file`),
+   any other subcommand or package manager (`uvx`, `hatch`, `pip install`),
+   and shell syntax it does not follow around a package manager (subshells,
+   command substitution, here-documents) keep the full layer, as before.
+2. **Check against the layer (imaged).** While filtering the app layer,
+   imaged records the names in `/app/.venv/bin`, whether `/app/.env` exists,
+   and which `.py` files carry a PEP 723 `# /// script` block. A `run` is
+   dropped only when that shows the tool would do nothing else:
+   - the command is the virtualenv's Python, one of its scripts, or a path.
+     Otherwise it may be a Poetry, PDM or Pipfile script the tool resolves
+     itself; Railpack installs Poetry projects with `--no-root`, so their
+     `[tool.poetry.scripts]` are not in the virtualenv
+     (`run_target_unresolved`);
+   - for `pipenv run`, there is no `/app/.env`, which Pipenv loads
+     (`pipenv_dotenv`);
+   - for `uv run script.py`, the script has no inline metadata, which gives
+     it an environment of its own (`inline_script_metadata`).
+   The builder VM's verdict, which only feeds the build log, sees the plan
+   and not the layer, so it does not check the target.
+3. **virtualenv's `pyvenv.cfg`.** Pipenv and PDM create the environment
+   with virtualenv, whose `pyvenv.cfg` also names the creator's
+   `base-prefix` and `base-exec-prefix`. CPython reads only `home`, but
+   those keys now move to the base's prefix too, as `executable` and
+   `base-executable` already did.
+
+Dropping `uv run` also skips its runtime sync. On the full layer, `uv run`
+without `--no-dev` syncs the dev group at every boot. On the shared base the
+app runs in the environment the build synced (`--no-dev`), which is what
+`uv run --no-sync` would do.
+
+Acceptance is `TestSharedRuntimePythonMetal/shared-python313-uv-run`. A uv
+project locked with uv 0.13.1 (Railpack 0.38's) and started by the Procfile
+line `web: uv run gunicorn ...` must land on `python313` with an /app-only
+layer and serve after a snapshot restore. The full test passed 6/6 on the n2
+metal host on 2026-10-30, with leakcheck clean. The `uv run` app layer was
+40.3 MB, against 298 MB for the Python 3.11 own-base deployment.
 
 ## Consequences
 

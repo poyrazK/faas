@@ -37,8 +37,8 @@ func ValidateTrustBundleForNode(rootDir, hostRole string, extraSANs AltNames, no
 // never written below outputRoot. Each invocation reissues the selected leaf
 // set so node identity and transport SANs cannot leak between fleet members.
 func IssueTrustBundle(issuerRoot, outputRoot, hostRole, nodeCN string, extraSANs AltNames) error {
-	if hostRole == "compute-only" && nodeCN == "" {
-		return errors.New("pki: compute-only trust bundle requires a node identity")
+	if UsesNodeIdentity(hostRole) && nodeCN == "" {
+		return fmt.Errorf("pki: %s trust bundle requires a node identity", hostRole)
 	}
 	if err := ValidateIssuanceMaterial(issuerRoot, hostRole); err != nil {
 		return err
@@ -69,7 +69,7 @@ func IssueTrustBundle(issuerRoot, outputRoot, hostRole, nodeCN string, extraSANs
 	}
 	for _, role := range RolesForBox(hostRole) {
 		commonName := role.CommonName
-		if hostRole == "compute-only" && RoleUsesNodeIdentity(role) {
+		if UsesNodeIdentity(hostRole) && RoleUsesNodeIdentity(role) {
 			commonName = nodeCN
 		}
 		if err := ensureLeafWithIdentity(outputRoot, role, commonName, caCert, caKey, true, extraSANs); err != nil {
@@ -88,8 +88,8 @@ func IssueTrustBundle(issuerRoot, outputRoot, hostRole, nodeCN string, extraSANs
 // The active root never needs CA issuance material and the returned roles are
 // the exact consumer set the orchestrator must reload.
 func RenewTrustBundle(issuerRoot, activeRoot, outputRoot, hostRole, nodeCN string, extraSANs AltNames) ([]Role, error) {
-	if hostRole == "compute-only" && nodeCN == "" {
-		return nil, errors.New("pki: compute-only trust bundle requires a node identity")
+	if UsesNodeIdentity(hostRole) && nodeCN == "" {
+		return nil, fmt.Errorf("pki: %s trust bundle requires a node identity", hostRole)
 	}
 	if err := ValidateIssuanceMaterial(issuerRoot, hostRole); err != nil {
 		return nil, err
@@ -127,7 +127,7 @@ func RenewTrustBundle(issuerRoot, activeRoot, outputRoot, hostRole, nodeCN strin
 	var changed []Role
 	for _, role := range RolesForBox(hostRole) {
 		commonName := role.CommonName
-		if hostRole == "compute-only" && RoleUsesNodeIdentity(role) {
+		if UsesNodeIdentity(hostRole) && RoleUsesNodeIdentity(role) {
 			commonName = nodeCN
 		}
 		repair, err := trustLeafNeedsRenewal(outputRoot, role, commonName, caCert, extraSANs)
@@ -348,8 +348,8 @@ func RecoverPendingInstall(targetRoot string) error {
 // certificates until the orchestrator reloads them after this function
 // returns, so they never observe the short on-disk pair transition.
 func InstallTrustBundle(bundleRoot, targetRoot, hostRole, nodeCN string, extraSANs AltNames) error {
-	if hostRole == "compute-only" && nodeCN == "" {
-		return errors.New("pki: compute-only trust bundle install requires a node identity")
+	if UsesNodeIdentity(hostRole) && nodeCN == "" {
+		return fmt.Errorf("pki: %s trust bundle install requires a node identity", hostRole)
 	}
 	if err := recoverInstallJournal(targetRoot); err != nil {
 		return fmt.Errorf("pki: recover interrupted trust bundle install: %w", err)
@@ -652,7 +652,7 @@ func validateTrustBundle(rootDir, hostRole string, extraSANs AltNames, nodeCN st
 			return fmt.Errorf("pki: leaf %q is outside its validity window", certPath)
 		}
 		expectedCN := role.CommonName
-		if nodeCN != "" && hostRole == "compute-only" && RoleUsesNodeIdentity(role) {
+		if nodeCN != "" && UsesNodeIdentity(hostRole) && RoleUsesNodeIdentity(role) {
 			expectedCN = nodeCN
 		}
 		if cert.Subject.CommonName != expectedCN {

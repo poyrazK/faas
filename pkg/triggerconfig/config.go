@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 
 	"filippo.io/age"
 
@@ -356,6 +357,7 @@ func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage) (jso
 	if err != nil {
 		return nil, fmt.Errorf("decode incoming %s config: %w", kind, err)
 	}
+	moved := movesDestination(kind, storedTop, incomingTop)
 	for _, leaf := range leaves {
 		incomingBlock, supplied, err := leafBlock(incomingTop, leaf)
 		if err != nil {
@@ -371,6 +373,11 @@ func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage) (jso
 			if err != nil {
 				return nil, err
 			}
+			_, storedSealed := storedBlock[leaf.sealed]
+			_, storedPlain := storedBlock[leaf.plain]
+			if exists && moved && (storedSealed || storedPlain) {
+				return nil, fmt.Errorf("%s: %w", leafPath(leaf), ErrCredentialMove)
+			}
 			if exists {
 				if storedSealed, ok := storedBlock[leaf.sealed]; ok {
 					incomingBlock[leaf.sealed] = cloneRaw(storedSealed)
@@ -384,6 +391,53 @@ func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage) (jso
 		}
 	}
 	return encodeObject(incomingTop)
+}
+
+// ErrCredentialMove refuses an update that points a Kafka or Redis Streams
+// trigger at a different server without supplying its credential again.
+// The stored credential used to follow the update, so anyone who could edit
+// a trigger but was never given its credential could point it at their own
+// broker and read the password off the connection (bug hunt 2026-10-28
+// H107). NATS keeps its own rule in mergeNATSURL.
+var ErrCredentialMove = errors.New("supply the credential again to point the trigger at a different server")
+
+// destinationKeys are the config keys that name the server a kind connects
+// to.
+func destinationKeys(kind api.TriggerKind) []string {
+	switch kind {
+	case api.TriggerKindKafka:
+		return []string{"brokers"}
+	case api.TriggerKindRedisStreams:
+		return []string{"addr"}
+	}
+	return nil
+}
+
+func movesDestination(kind api.TriggerKind, stored, incoming rawObject) bool {
+	for _, key := range destinationKeys(kind) {
+		if !sameJSON(stored[key], incoming[key]) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameJSON(a, b json.RawMessage) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return len(a) == len(b)
+	}
+	var left, right any
+	if json.Unmarshal(a, &left) != nil || json.Unmarshal(b, &right) != nil {
+		return false
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func leafPath(leaf secretLeaf) string {
+	if leaf.block == "" {
+		return leaf.plain
+	}
+	return leaf.block + "." + leaf.plain
 }
 
 // validationPlaceholder stands in for a credential kept as ciphertext.

@@ -46,29 +46,67 @@ Covers `FaasEventRoutingStalled` (page), `FaasEventRoutingSweepSlow`,
   `Retry-After`, nothing new is accepted from customers, and schedd routes
   nothing. Object-storage notifications, inbound webhook automations and
   commit relay events are still accepted and wait. Invocations already
-  admitted finish. `gregalectl flags enable --key events` resumes routing;
-  nothing accepted is lost. Delivery-age limits keep counting while paused.
+  admitted finish. `gregalectl flags enable --key events --reason <incident>
+  --yes` resumes routing; nothing accepted is lost. Delivery-age limits keep counting while paused.
 - **Pause one account:**
-  `gregalectl flags deny --key events --account-id <uuid> --reason <why>`.
+  `gregalectl flags deny --key events --account-id <uuid> --reason <why> --yes`.
   The account's publishing answers 503 and its customer events wait;
   platform-produced events still route.
-- **Stop one consumer:** pause its subscription with the delivery controls
-  (`gregale events subscription-pause`); the account sees it.
+- **Stop one consumer:** the account pauses its subscription with the
+  delivery controls (`gregale event subscription pause`), and sees the pause.
+  There is no operator command for one account's consumer; to stop routing
+  for one account, deny it the `events` flag (above).
 - **Code rollback:** schedd, apid and vmmd release independently
   ([release compatibility](../release-compatibility.md)); roll back the unit
   that introduced the regression. Receipts, recipients and dead-letter rows
   are forward-compatible within one release.
 
+## Database restore or failover
+
+Events live in the control-plane database, so moving it back in time changes
+what was published and what was delivered.
+
+- **Unplanned failover to the standby:** events accepted within the
+  standby's replication lag are lost. `ControlPlaneFailover.md` step 4 gives
+  the window and the customer notice.
+- **Restore to an earlier point** (`migration-rollback.md`, a backup
+  restore): every event accepted after the restore point is lost. Every
+  delivery that finished after it is pending again and runs again, so
+  handlers see those events twice.
+
+After either one:
+
+1. Record the window: from the restore point (or the promote play's last
+   replay time) to the moment the old database stopped taking writes.
+2. Before customers resume publishing in bulk, decide whether routing
+   should wait. To hold it while you assess,
+   `gregalectl flags disable --key events --reason <incident> --yes` once
+   apid is up; deliveries already pending wait and nothing is lost.
+3. Tell the affected accounts the window, with both halves of the
+   consequence:
+   - **Lost:** republish events from the window with the same identity
+     (event id, or idempotency key). A survivor answers `duplicate`; a lost
+     one is accepted again.
+   - **Repeated:** handlers may receive events from the window again. The
+     `x-gregale-event-id` header is unchanged, so handlers that deduplicate
+     by it are safe (`docs/events.md`, delivery identity).
+4. Re-enable routing (`gregalectl flags enable --key events --reason
+   <incident> --yes`) and watch `FaasEventRoutingStalled` and
+   `FaasDeadLetterSpike` while the backlog drains.
+
 ## FaasEventRoutingStalled
 
-No schedd has completed a routing sweep for fifteen minutes. Events are
-accepted but none is delivered.
+No schedd has completed a routing sweep for fifteen minutes, or sweeps run
+but every claim fails and nothing is routed. Events are accepted but none is
+delivered.
 
 1. Confirm the signal:
    `sum by (job, instance) (increase(schedd_loop_work_duration_seconds_count{kind="event_fanout"}[10m]))`
    and `sum by (job, instance, outcome) (rate(schedd_loop_work_total{kind="event_fanout"}[10m]))`.
    Only `coalesced` and `dropped` outcomes mean a sweep is stuck holding the
-   kind's slot.
+   kind's slot. Sweeps that run but cannot claim show as
+   `sum by (job, instance, outcome) (increase(schedd_event_routing_outcomes_total[10m]))`
+   with only `claim_error` rising.
 2. Check every schedd is up (`FaasDaemonDown`, `FaasDaemonNotReady`) and that
    Postgres answers (`FaasPostgresDown`, `FaasDBPoolStarved`).
 3. In schedd's logs, look for `sched: claim event fanout failed`,
@@ -81,6 +119,24 @@ accepted but none is delivered.
 
 Resolution: clears once any schedd completes a sweep.
 
+## FaasEventRoutingFailing
+
+More than half of the event recipients routed in fifteen minutes failed or
+were put back to retry. Routing runs but does not deliver.
+
+1. Break it down:
+   `sum by (job, instance, outcome) (increase(schedd_event_routing_outcomes_total[15m]))`.
+2. In schedd's logs, `sched: event recipient routing failed` and
+   `sched: event recipient fanout permanently failed` carry the failure code
+   and `subscription_id`. One subscription whose target app is gone or not
+   deployed is the usual cause; the account sees it in `gregale event
+   backlog` and its dead letters.
+3. Many subscriptions at once: check the database (`FaasPostgresDown`,
+   `FaasDBPoolStarved`) and the invocation queue.
+
+Resolution: clears when fewer than half of the recipients fail, or fewer
+than 50 fail in fifteen minutes.
+
 ## FaasEventRoutingSweepSlow
 
 Sweeps finish, but the p95 takes longer than 30 seconds. Events arrive late.
@@ -91,9 +147,11 @@ Sweeps finish, but the p95 takes longer than 30 seconds. Events arrive late.
    (`schedd_loop_work_total{kind="event_fanout",outcome="rerun"}` rises);
    each pass is still one sample here, so a slow p95 means slow passes. Check
    `schedd_event_delivery_capacity_waiting` and the oldest pending age.
-3. Many running recovery or backfill jobs slow every sweep; list an
-   account's with `gregale events recovery-list` and pause the largest
-   (`gregale events recovery-pause`).
+3. Many running recovery or backfill jobs slow every sweep. Find them on the
+   control-plane database (`select account_id, app_id, count(*) from
+   event_recovery_jobs where state = 'running' group by 1, 2`, and the same
+   on `event_replay_jobs`). The account lists and pauses its own with
+   `gregale event recovery list` and `gregale event recovery pause`.
 
 Resolution: clears when the p95 falls back under 30 seconds.
 
@@ -102,8 +160,9 @@ Resolution: clears when the p95 falls back under 30 seconds.
 More than 10,000 deliveries platform-wide wait for consumer capacity
 (ADR-614 delivery limits).
 
-1. Find the accounts: `gregale events backlog` for a suspected account, or
-   the `event_routing_backlog` projection grouped by account.
+1. Find the accounts: the `event_routing_backlog` projection on the
+   control-plane database, grouped by `account_id`. (`gregale event backlog`
+   shows an account its own backlog; it cannot read another account's.)
 2. One account: its consumer is slower than its producers. It is the
    customer's to fix (scale the consumer, raise its concurrency, or pause the
    subscription); nothing is lost while it waits.
@@ -115,11 +174,14 @@ Resolution: clears below 10,000 waiting.
 
 ## FaasDeadLetterSpike
 
-More than 200 invocations and trigger records reached the dead-letter queue
-in ten minutes.
+More than 200 invocations, trigger records and event recipients whose
+routing failed reached the dead-letter queue in ten minutes.
 
 1. Break it down:
-   `topk(10, sum by (app, error_kind) (increase(faas_dlq_events_total[10m])))`.
+   `topk(10, sum by (app, error_kind) (increase(faas_dlq_events_total[10m])))`,
+   and routing failures with
+   `sum by (job, instance) (increase(schedd_event_routing_outcomes_total{outcome="failed"}[10m]))`
+   (see `FaasEventRoutingFailing`).
 2. One app with `failed` or `max_attempts`: its handler is failing; the
    customer replays after fixing it (`gregale dlq list <app>`).
 3. Many apps, or `timeout`, `broker_error` or `other`: a platform cause.
@@ -134,7 +196,7 @@ More than half of one broker kind's trigger polls failed for fifteen
 minutes.
 
 1. Find the triggers: each trigger's consumer health shows its last poll
-   error (`gregale triggers` for the account, or schedd logs
+   error (`gregale trigger list`, run by the account, or schedd logs
    `sched trigger tick: dispatch lane`).
 2. One trigger: the customer's broker is unreachable or its credentials are
    wrong; the trigger's health tells the customer.

@@ -128,6 +128,13 @@ type QualificationReport struct {
 	ScaleToZeroUpdate    bool                         `json:"scale_to_zero_update"`
 	ComputePolicy        *ComputePolicyEvidence       `json:"compute_policy,omitempty"`
 	Resize               *ResizeEvidence              `json:"resize,omitempty"`
+	StorageResize        bool                         `json:"storage_resize"`
+	StorageGrowth        *StorageResizeEvidence       `json:"storage_growth,omitempty"`
+	MajorUpgrade         bool                         `json:"major_upgrade"`
+	Upgrade              *MajorUpgradeEvidence        `json:"upgrade,omitempty"`
+	// DeletionHold is set by every run against a provider that holds
+	// databases for deletion (ADR-20261029174950); older reports lack it.
+	DeletionHold *DeletionHoldEvidence `json:"deletion_hold,omitempty"`
 	// ComputeCap is set only by a --compute-cap run, whose output is its own
 	// artifact (ADR-20261025094915); provisioning approvals never carry it.
 	ComputeCap *ComputeCapEvidence `json:"compute_cap,omitempty"`
@@ -365,8 +372,30 @@ func ValidateQualificationReport(report QualificationReport) error {
 	} else if report.ComputePolicy != nil {
 		return ErrInvalid
 	}
+	if report.StorageResize {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "storage_resize_probe")
+		if report.StorageGrowth == nil || report.StorageGrowth.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.StorageGrowth != nil {
+		return ErrInvalid
+	}
+	if report.MajorUpgrade {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "major_upgrade_probe")
+		if report.Upgrade == nil || report.Upgrade.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.Upgrade != nil {
+		return ErrInvalid
+	}
 	if report.Restore != nil {
 		requiredChecks = append(append([]string(nil), requiredChecks...), restoreQualificationChecks[:]...)
+	}
+	if report.DeletionHold != nil {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "deletion_hold_probe")
+		if report.DeletionHold.Validate() != nil {
+			return ErrUnavailable
+		}
 	}
 	if !hasQualificationChecks(report.Checks, requiredChecks) {
 		return ErrInvalid
@@ -544,6 +573,14 @@ func (r *Registry) VerifyQualificationArtifact(artifact QualificationArtifact, e
 		readiness.Reasons = append(readiness.Reasons, "compute_policy_capabilities_mismatch")
 		readiness.Ready = false
 	}
+	if backend.Capabilities.StorageResize != artifact.Report.StorageResize {
+		readiness.Reasons = append(readiness.Reasons, "storage_resize_capabilities_mismatch")
+		readiness.Ready = false
+	}
+	if backend.Capabilities.MajorUpgrade != artifact.Report.MajorUpgrade {
+		readiness.Reasons = append(readiness.Reasons, "major_upgrade_capabilities_mismatch")
+		readiness.Ready = false
+	}
 	return readiness
 }
 
@@ -698,6 +735,8 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	report.CredentialAccess = append([]CredentialAccess(nil), capabilities.CredentialAccess...)
 	report.ClassResize = capabilities.ClassResize
 	report.ScaleToZeroUpdate = capabilities.ScaleToZeroUpdate
+	report.StorageResize = capabilities.StorageResize
+	report.MajorUpgrade = capabilities.MajorUpgrade
 	if err := capabilities.Validate(); !record("capabilities_valid", err) {
 		return report, resultErr
 	}
@@ -873,6 +912,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			probeErr = probe.Validate()
 		}
 		if !record("scale_to_zero_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if _, holds := provider.(DeletionHoldProvider); holds {
+		prober, ok := provider.(DeletionHoldProber)
+		if !ok {
+			record("deletion_hold_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeDeletionHold(ctx, providerResourceID, material)
+		report.DeletionHold = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("deletion_hold_probe", probeErr) {
 			return report, resultErr
 		}
 	}
@@ -1104,6 +1158,40 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			return report, resultErr
 		}
 		restoreProbePrepared = false
+	}
+	// Last: upgrading the major and growing storage leave the resource off
+	// the qualification spec.
+	current := options.Spec
+	if capabilities.MajorUpgrade {
+		prober, ok := provider.(MajorUpgradeProber)
+		if !ok {
+			record("major_upgrade_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeMajorUpgrade(ctx, providerResourceID, current)
+		report.Upgrade = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("major_upgrade_probe", probeErr) {
+			return report, resultErr
+		}
+		current.PostgresMajor = evidence.TargetMajor
+	}
+	if capabilities.StorageResize {
+		prober, ok := provider.(StorageResizeProber)
+		if !ok {
+			record("storage_resize_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeStorageResize(ctx, providerResourceID, current)
+		report.StorageGrowth = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("storage_resize_probe", probeErr) {
+			return report, resultErr
+		}
 	}
 	if err := provider.RevokeCredentials(ctx, credentialRequest); !record("credentials_revoke", err) {
 		return report, resultErr

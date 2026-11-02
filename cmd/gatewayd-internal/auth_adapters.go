@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 
+	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/audit"
 	middleware "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -25,14 +26,20 @@ import (
 // AccountByID, AppBySlug, TouchKeyLastUsed) are already on the
 // pkg/state.Store interface — the adapter exists only because Go
 // doesn't auto-cast a larger interface to a smaller one.
-func storeAsAuthenticator(s state.Store) middleware.Authenticator {
-	return authAdapter{store: s}
+func storeAsAuthenticator(s state.Store, creds apidgrpc.CredentialLookup) middleware.Authenticator {
+	return authAdapter{store: s, creds: creds}
 }
 
-type authAdapter struct{ store state.Store }
+// authAdapter reads accounts and apps from the store but resolves
+// credentials through apid, which alone holds the key credential hashes
+// are stored under (ADR 20261029202403).
+type authAdapter struct {
+	store state.Store
+	creds apidgrpc.CredentialLookup
+}
 
 func (a authAdapter) AuthenticateKey(ctx context.Context, hash []byte) (state.Account, state.APIKey, error) {
-	return a.store.AuthenticateKey(ctx, hash)
+	return a.creds.AuthenticateKey(ctx, hash)
 }
 
 func (a authAdapter) AccountByID(ctx context.Context, id string) (state.Account, error) {
@@ -59,7 +66,7 @@ func (a authAdapter) TouchKeyLastUsed(ctx context.Context, keyID string) error {
 // /v1/auth/oidc/exchange is the only mint path, but every
 // authenticated route sees the OIDC bearer at this layer.
 func (a authAdapter) AuthenticateOIDCBearer(ctx context.Context, hash []byte) (state.Account, state.APIKey, error) {
-	return a.store.AuthenticateOIDCBearer(ctx, hash)
+	return a.creds.AuthenticateOIDCBearer(ctx, hash)
 }
 
 // storeAsSessionLookup returns middleware.SessionLookup as a view

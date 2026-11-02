@@ -97,9 +97,10 @@ def sync_detailed(
 ) -> Response[Problem | ReleaseApprovalPolicy]:
     """Require approvals for an app's production releases.
 
-     Creates or replaces the policy. Each production release then waits in a canary stage until enough
-    eligible people approve it. Organization owners and admins may change the policy. An app outside an
-    organization always counts its owner's own approval.
+     Creates or replaces the policy. Needs the admin scope (a signed-in session or an admin key). Each
+    production release then waits in a canary stage until enough eligible people approve it.
+    Organization owners and admins may change the policy. An app outside an organization always counts
+    its owner's own approval.
 
     Args:
         slug (str):
@@ -134,9 +135,10 @@ def sync(
 ) -> Problem | ReleaseApprovalPolicy | None:
     """Require approvals for an app's production releases.
 
-     Creates or replaces the policy. Each production release then waits in a canary stage until enough
-    eligible people approve it. Organization owners and admins may change the policy. An app outside an
-    organization always counts its owner's own approval.
+     Creates or replaces the policy. Needs the admin scope (a signed-in session or an admin key). Each
+    production release then waits in a canary stage until enough eligible people approve it.
+    Organization owners and admins may change the policy. An app outside an organization always counts
+    its owner's own approval.
 
     Args:
         slug (str):
@@ -166,9 +168,10 @@ async def asyncio_detailed(
 ) -> Response[Problem | ReleaseApprovalPolicy]:
     """Require approvals for an app's production releases.
 
-     Creates or replaces the policy. Each production release then waits in a canary stage until enough
-    eligible people approve it. Organization owners and admins may change the policy. An app outside an
-    organization always counts its owner's own approval.
+     Creates or replaces the policy. Needs the admin scope (a signed-in session or an admin key). Each
+    production release then waits in a canary stage until enough eligible people approve it.
+    Organization owners and admins may change the policy. An app outside an organization always counts
+    its owner's own approval.
 
     Args:
         slug (str):
@@ -201,9 +204,10 @@ async def asyncio(
 ) -> Problem | ReleaseApprovalPolicy | None:
     """Require approvals for an app's production releases.
 
-     Creates or replaces the policy. Each production release then waits in a canary stage until enough
-    eligible people approve it. Organization owners and admins may change the policy. An app outside an
-    organization always counts its owner's own approval.
+     Creates or replaces the policy. Needs the admin scope (a signed-in session or an admin key). Each
+    production release then waits in a canary stage until enough eligible people approve it.
+    Organization owners and admins may change the policy. An app outside an organization always counts
+    its owner's own approval.
 
     Args:
         slug (str):

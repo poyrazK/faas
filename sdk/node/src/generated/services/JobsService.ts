@@ -16,12 +16,16 @@ import type { JobRunCancelledResponse } from '../models/JobRunCancelledResponse.
 import type { JobRunResponse } from '../models/JobRunResponse.js';
 import type { JobTaskLogResponse } from '../models/JobTaskLogResponse.js';
 import type { JobTaskRetryResponse } from '../models/JobTaskRetryResponse.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ListJobRunsResponse } from '../models/ListJobRunsResponse.js';
 import type { ListJobsResponse } from '../models/ListJobsResponse.js';
 import type { ListJobTaskAttemptsResponse } from '../models/ListJobTaskAttemptsResponse.js';
 import type { ListJobTasksResponse } from '../models/ListJobTasksResponse.js';
 import type { ListScheduleOccurrencesResponse } from '../models/ListScheduleOccurrencesResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { PutJobRegistryCredentialRequest } from '../models/PutJobRegistryCredentialRequest.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { UpdateJobRequest } from '../models/UpdateJobRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -165,6 +169,39 @@ export class JobsService {
         \`profile_investigation_limit\`.
         `,
       },
+    });
+  }
+  /**
+   * Set and remove a job's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the job carries after it, with
+   * the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+   * Requires deploy:write or admin scope and MFA. While the capability is on,
+   * GET /v1/jobs and GET /v1/jobs/{name} include labels, and GET /v1/jobs
+   * takes ?selector=, a Kubernetes label selector.
+   *
+   * @returns LabelsResponse The job's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, scope or MFA, a job this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateJobLabels({
+    name,
+    requestBody,
+  }: {
+    /**
+     * Slug of the job whose labels change.
+     */
+    name: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/jobs/{name}/labels',
+      path: {
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
@@ -624,6 +661,40 @@ export class JobsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a job run's conditions.
+   * Preview (resource-conditions capability). The run's Succeeded and
+   * Progressing conditions, mapped from the response
+   * GET /v1/jobs/{name}/runs/{id} returns and never stored. A job run has
+   * no Ready condition: it runs to completion. Failed, cancelled and
+   * dead-letter runs report terminal conditions. Cache-Control no-store.
+   *
+   * @returns ResourceStatus The job run's conditions.
+   * @returns Problem Missing sign-in, read scope or MFA, a run this account does not own or under another job's name, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getJobRunStatus({
+    name,
+    id,
+  }: {
+    /**
+     * Name of the job the run belongs to.
+     */
+    name: string,
+    /**
+     * The id of the run whose conditions are read.
+     */
+    id: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/runs/{id}/status',
+      path: {
+        'name': name,
+        'id': id,
       },
     });
   }

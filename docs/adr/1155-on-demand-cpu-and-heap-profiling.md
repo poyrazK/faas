@@ -466,10 +466,11 @@ them.
 A second review found these gaps:
 
 - **Organization apps.** Captures of an organization's app were judged by
-  the requesting member's plan in apid and by the creating member's plan in
-  schedd, and their quotas and storage were counted per member. A Free member
-  of a Pro organization could not capture its apps; each member had their own
-  quota. Both now take the plan of the app's resource owner
+  the requesting member's plan in apid (schedd took the creating member's
+  until bug hunt 2026-10-28 B37), and their quotas and storage were counted
+  per member. A Free member of a Pro organization could not capture its apps;
+  each member had their own quota. Both now take the plan of the app's
+  resource owner
   (`state.AppResourceAccount`, as imaged and wake admission do) and count the
   hourly quotas, the storage limit and automatic rotation in the owner's pool:
   the organization, or the account for a personal app. A capture row records

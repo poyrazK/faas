@@ -107,7 +107,7 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 	case len(report.Unexpected) > 0:
 		reason = "content_outside_app"
 	default:
-		argv, why := sharedRuntimeStart(*manifest, app, runtime, report.PackageJSON)
+		argv, why := sharedRuntimeStart(*manifest, app, runtime, report)
 		if why != "" {
 			reason = why
 			break
@@ -141,12 +141,18 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 
 // sharedRuntimeStart resolves the app's start command for the runner base,
 // which ships no npm and no Python package manager: the customer's start
-// command when set, else the image's shell-form command.
-func sharedRuntimeStart(manifest api.AppManifest, app state.App, runtime string, packageJSON []byte) ([]string, string) {
-	resolve := func(command string) ([]string, string) { return sharedruntime.ResolveStart(command, packageJSON) }
+// command when set, else the image's shell-form command. report is what the
+// app layer held.
+func sharedRuntimeStart(manifest api.AppManifest, app state.App, runtime string, report *appLayerReport) ([]string, string) {
+	resolve := func(command string) ([]string, string) {
+		return sharedruntime.ResolveStart(command, report.PackageJSON)
+	}
 	needsTool := func(name string) bool { return name == "npm" }
 	if sharedruntime.PythonRuntime(runtime) {
-		resolve, needsTool = sharedruntime.ResolvePythonStart, sharedruntime.PythonPackageManager
+		resolve = func(command string) ([]string, string) {
+			return sharedruntime.ResolvePythonStart(command, &report.Python)
+		}
+		needsTool = sharedruntime.PythonPackageManager
 	}
 	command := strings.TrimSpace(app.StartCommand)
 	if command == "" {

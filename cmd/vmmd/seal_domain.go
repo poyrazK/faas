@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 
 	"filippo.io/age"
 
@@ -32,4 +33,16 @@ func loadSealDomain(secretsDir string, domain sealdomain.Domain) ([]*age.X25519I
 		return nil, nil
 	}
 	return ids, err
+}
+
+// unsealIdentities returns what vmmd opens runtime secrets (host) and
+// registry passwords (registry) with: each domain's identities first, then
+// the legacy fleet and host identities. A contracted vmmd (ADR
+// 20261022111812, contract step) has no legacy identities and needs both
+// domains, since nothing else would open what was re-sealed to them.
+func unsealIdentities(runtime, build, legacy []*age.X25519Identity, contracted bool) (host, registry []*age.X25519Identity, err error) {
+	if contracted && (len(runtime) == 0 || len(build) == 0) {
+		return nil, nil, errors.New("vmmd: FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED needs domains/runtime.age and domains/build.age staged next to host.age")
+	}
+	return slices.Concat(runtime, legacy), slices.Concat(build, legacy), nil
 }

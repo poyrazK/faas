@@ -811,6 +811,8 @@ func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, 
 		{"domains", func() (any, error) { return listDomainsForAccountExport(ctx, s.store, acct.ID) }},
 		{"crons", func() (any, error) { return listCronsForAccountExport(ctx, s.store, acct.ID) }},
 		{"api_keys", func() (any, error) { return listKeysForAccountExport(ctx, s.store, acct.ID) }},
+		{"edge_rules", func() (any, error) { return s.listEdgeRulesForAccountExport(ctx, acct) }},
+		{"edge_rule_lists", func() (any, error) { return listEdgeRuleListsForAccountExport(ctx, s.store, acct.ID) }},
 	}
 	for _, section := range sections {
 		value, err := section.load()

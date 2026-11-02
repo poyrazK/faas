@@ -234,7 +234,11 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		if app.Status == state.AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return gateway.App{}, false, nil
 		}
-		return gateway.App{ID: app.ID, AccountID: acct.ID, ResourceOwnerID: acct.ResourceOrgID, Plan: acct.Plan, AccountStatus: string(acct.Status),
+		edgeRuleScope, scopeErr := state.AppEdgeRuleScope(ctx, r.store, app)
+		if scopeErr != nil {
+			return gateway.App{}, false, scopeErr
+		}
+		return gateway.App{ID: app.ID, AccountID: acct.ID, ResourceOwnerID: acct.ResourceOrgID, EdgeRuleScope: edgeRuleScope, Plan: acct.Plan, AccountStatus: string(acct.Status),
 			AccountAbuseHeld: acct.AbuseHeld(), EnvironmentNotReady: true, DynamicRoute: true}, true, nil
 	}
 	if err != nil || !found {
@@ -593,6 +597,27 @@ func (r pgRouter) toPublicApp(ctx context.Context, app state.App) (gateway.App, 
 	return resolved, found, err
 }
 
+// previewProductionAppID resolves a PR preview's production app, whose
+// app-wide edge rules the preview applies too (ADR-091 amendment 2026-10-30).
+// A production app the account no longer holds leaves the preview with its
+// own rules; a failed read fails the host's resolution closed.
+func (r pgRouter) previewProductionAppID(ctx context.Context, app state.App) (string, error) {
+	if app.PreviewOfSlug == "" {
+		return "", nil
+	}
+	production, err := r.store.AppBySlug(ctx, app.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve the preview's production app: %w", err)
+	}
+	if production.AccountID != app.AccountID || production.Status == state.AppDeleted {
+		return "", nil
+	}
+	return production.ID, nil
+}
+
 func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
 	if app.Status == state.AppDeleted {
 		return gateway.App{}, false, nil
@@ -668,6 +693,14 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 		perInstanceConcurrency = app.ScalingPolicy.PerInstanceConcurrency
 	}
+	productionAppID, err := r.previewProductionAppID(ctx, app)
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	edgeRuleScope, err := state.AppEdgeRuleScope(ctx, r.store, app)
+	if err != nil {
+		return gateway.App{}, false, err
+	}
 	requestRateLimitRPS, requestRateLimitBurst := 0, 0
 	if app.RequestRateLimitRPS != nil {
 		requestRateLimitRPS = *app.RequestRateLimitRPS
@@ -679,6 +712,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		ID:                           app.ID,
 		AccountID:                    acct.ID,
 		ResourceOwnerID:              acct.ResourceOrgID,
+		EdgeRuleScope:                edgeRuleScope,
 		SecurityQuarantined:          securityQuarantined,
 		Visibility:                   api.NormalizeAppVisibility(app.Visibility),
 		AccountStatus:                string(acct.Status),
@@ -701,6 +735,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		Slug:                         app.Slug,
 		CanonicalHost:                app.Slug + r.appsSuffix,
 		IsPreview:                    app.PreviewOfSlug != "",
+		ProductionAppID:              productionAppID,
 		StreamingEnabled:             app.StreamingEnabled,
 		SessionAffinity:              app.Manifest.SessionAffinity,
 		VersionAffinityCookie:        app.Manifest.VersionAffinityCookie,
@@ -1053,7 +1088,9 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyAccountDeleted,
 		db.NotifyTrafficSecurityChanged,
 	}
-	notif, err := db.SubscribeWithReconnect(ctx, pool, channels, log)
+	// With resync: a LISTEN reconnect or a full hub buffer loses notifications
+	// (ADR-1344 §5 rule 3), and the route and app caches have no TTL.
+	notif, err := db.SubscribeWithResync(ctx, pool, channels, log)
 	if err != nil {
 		log.Error("gatewayd: subscribe invalidations", "err", err)
 		// subscribed stays open: /readyz must keep reporting 503 rather
@@ -1081,6 +1118,8 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		defer ticker.Stop()
 		heartbeat = ticker.C
 	}
+	resync := resyncFlusher{interval: resyncFlushInterval}
+	var resyncDue <-chan time.Time
 	// Reconnect wrapper owns its own cancel via the deferred goroutine.
 	for {
 		select {
@@ -1088,10 +1127,23 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 			return
 		case <-heartbeat:
 			touchEdgeListenerHeartbeat(ctx, pool, inv, gatewayNode, log)
+		case <-resyncDue:
+			resyncDue = nil
+			flushAfterMissedNotifications(inv, log)
+			resync.flushed(time.Now())
 		case n, ok := <-notif:
 			if !ok {
 				// Defensive — wrapper keeps open until ctx cancels.
 				return
+			}
+			if n.Channel == db.ResyncChannel {
+				if now, wait := resync.request(time.Now()); now {
+					flushAfterMissedNotifications(inv, log)
+					resync.flushed(time.Now())
+				} else if resyncDue == nil {
+					resyncDue = time.After(wait)
+				}
+				continue
 			}
 			if n.Channel == db.NotifyDeploymentRouteChanged {
 				payload, applied := handleDeploymentRouteInvalidation(ctx, inv, n.Payload, log)
@@ -1106,6 +1158,44 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 				ackEdgeRuleInvalidation(ctx, pool, n.Payload, gatewayNode, log)
 			}
 		}
+	}
+}
+
+// resyncFlushInterval bounds how often missed notifications flush the caches:
+// a cold burst that keeps overflowing the hub's buffer gets one flush at once
+// and one at the end of the interval, not a re-resolve of every host per drop.
+const resyncFlushInterval = 5 * time.Second
+
+// resyncFlusher rate-limits flushAfterMissedNotifications.
+type resyncFlusher struct {
+	interval time.Duration
+	last     time.Time
+}
+
+// request reports whether to flush now, or else how long until the next
+// flush may run.
+func (f *resyncFlusher) request(now time.Time) (bool, time.Duration) {
+	if f.last.IsZero() || now.Sub(f.last) >= f.interval {
+		return true, 0
+	}
+	return false, f.interval - now.Sub(f.last)
+}
+
+func (f *resyncFlusher) flushed(now time.Time) { f.last = now }
+
+// flushAfterMissedNotifications reloads every notification-driven cache after
+// deliveries may have been lost. Without it a missed app_changed,
+// domain_changed, app_delete or account_deleted kept the old require-authn,
+// basic-auth, allowlist and maintenance settings, a deleted app or a removed
+// domain on this gateway until restart: those caches have no TTL.
+func flushAfterMissedNotifications(inv invalidator, log *slog.Logger) {
+	log.Warn("gatewayd: invalidation notifications may have been missed; flushing routing caches")
+	inv.FlushRoutes()
+	inv.ResetEdgeRules()
+	inv.InvalidatePublicAuth()
+	inv.InvalidateResponseCacheAll()
+	if refresher, ok := inv.(interface{ RequestTrafficRevocationRefresh() }); ok {
+		refresher.RequestTrafficRevocationRefresh()
 	}
 }
 

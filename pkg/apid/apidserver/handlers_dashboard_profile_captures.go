@@ -44,19 +44,20 @@ func (s *server) buildProfileCapturesView(w http.ResponseWriter, r *http.Request
 		view.Error = "Recent captures could not be listed."
 	}
 	view.Captures = captures
-	if view.CSRF = s.issueProfileCaptureCSRF(w, acct); view.CSRF == "" {
+	if view.CSRF = s.issueProfileCaptureCSRF(w, r, acct); view.CSRF == "" {
 		view.Error = "Captures are temporarily unavailable."
 	}
 	return view
 }
 
-// issueProfileCaptureCSRF arms the capture forms of one page; "" when no
-// token could be issued, which hides or disables them.
-func (s *server) issueProfileCaptureCSRF(w http.ResponseWriter, acct state.Account) string {
+// issueProfileCaptureCSRF arms the capture forms of one page for the
+// signed-in actor; "" when no token could be issued, which hides or disables
+// them.
+func (s *server) issueProfileCaptureCSRF(w http.ResponseWriter, r *http.Request, acct state.Account) string {
 	if s.sessions == nil {
 		return ""
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileCaptureAction, acct.ID, profileCaptureCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileCaptureAction, actorAccount(r, acct).ID, profileCaptureCookie)
 	if err != nil {
 		return ""
 	}
@@ -167,7 +168,7 @@ func (s *server) dashboardProfileCapture(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	page := dashboard.ProfileCapturePage{AppSlug: app.Slug, Capture: capture, Refresh: !capture.Done(), CSRF: s.issueProfileCaptureCSRF(w, acct)}
+	page := dashboard.ProfileCapturePage{AppSlug: app.Slug, Capture: capture, Refresh: !capture.Done(), CSRF: s.issueProfileCaptureCSRF(w, r, acct)}
 	if capture.Status == api.ProfileCaptureReady {
 		page.Kinds = s.profileCaptureKinds(r, acct, app, store, capture)
 		if all, err := store.ListProfileCaptures(r.Context(), app.AccountID, app.ID); err == nil {

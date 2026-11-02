@@ -188,12 +188,15 @@ func (n *nodeCache) WithEgressSink(sink *egresssink.EgressSink) *nodeCache {
 // targets must come with mTLS; the wire helper refuses a nil TLS on a
 // non-unix scheme (issue #95).
 //
+// local, when non-nil, routes this gateway's own node to vmmd's local data
+// socket without TLS (ADR-20261030230157).
+//
 // m may be nil in tests (WatchEvictions + TouchComputeNodeChangedSubscriber
 // are nil-safe). Production passes deps.metrics which is always non-nil
 // after NewMetrics.
 //
 // PR scale-out readiness: m parameter added in 4-PR #2.
-func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m *gateway.Metrics) *nodeCache {
+func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m *gateway.Metrics, local *localVmmd) *nodeCache {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -214,6 +217,9 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 		if !nodeAllowsForwarding(n) {
 			return "", false
 		}
+		if target, ok := local.target(n); ok {
+			return target, true
+		}
 		return n.TargetURL, true
 	})
 	cache := gateway.NewNodeClientCache(
@@ -221,7 +227,7 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 			// Issue #120: route through pkg/overlay so the cross-box
 			// dial primitive lives in one place. The cache above is
 			// unrelated; only the underlying wire dial is swapped.
-			return overlay.Dial(ctx, overlay.New(target), vmmdTLS)
+			return overlay.Dial(ctx, overlay.New(target), local.tlsFor(target, vmmdTLS))
 		},
 		log,
 	)

@@ -91,6 +91,7 @@ type gatewaydEdgeRules struct {
 	store            edgeRuleStore
 	cache            *gateway.EdgeRuleCache
 	ownerSets        *edgeRuleOwnerSets
+	compiledLists    *edgeRuleCompiledLists
 	log              *slog.Logger
 	validate         validateCompiler
 	metrics          *gateway.Metrics
@@ -157,18 +158,19 @@ type validateCompiler interface {
 // gatewayd-internal Prometheus registry via run.go).
 func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate validateCompiler, metrics *gateway.Metrics) *gatewaydEdgeRules {
 	return &gatewaydEdgeRules{
-		store:     store,
-		cache:     gateway.NewEdgeRuleCache(gateway.EdgeRuleCacheCap),
-		ownerSets: newEdgeRuleOwnerSets(),
-		log:       log,
-		validate:  validate,
-		metrics:   metrics,
-		fences:    make(map[edgeRuleFenceKey]edgeRuleFence),
+		store:         store,
+		cache:         gateway.NewEdgeRuleCache(gateway.EdgeRuleCacheCap),
+		ownerSets:     newEdgeRuleOwnerSets(),
+		compiledLists: newEdgeRuleCompiledLists(),
+		log:           log,
+		validate:      validate,
+		metrics:       metrics,
+		fences:        make(map[edgeRuleFenceKey]edgeRuleFence),
 	}
 }
 
 // BeginConvergence fences the supplied hosts before the policy write. A TTL
-// prevents a crashed apid from leaving a hostname unavailable indefinitely.
+// bounds how long a crashed apid leaves a hostname marked as changing.
 // accountID is the mutating rule's owner; "" fences every app on the hosts.
 // appID narrows an app-wide (@app) fence to that app's hosts.
 func (g *gatewaydEdgeRules) BeginConvergence(accountID, appID string, hosts []string, generation int64) {
@@ -210,12 +212,15 @@ func (g *gatewaydEdgeRules) EndConvergence(accountID, appID string, hosts []stri
 	g.fencesChangedLocked()
 }
 
-// Converging is the request-path fail-closed check. ownerAccountID and
-// ownerAppID name the app the host resolved to ("" when no app claims it).
-// A fence only holds the owner's traffic: request-time matching ignores
-// another account's rules (OwnedEdgeRules), so that account's mutation —
-// even on match_host "*" — cannot change this host's policy and must not
-// 503 it. Unclaimed hosts and unscoped fences keep the fleet-wide hold.
+// Converging reports a pending (prepared, not yet applied) change to the
+// host's rules. ownerAccountID and ownerAppID name the app the host resolved
+// to ("" when no app claims it). A fence only covers the owner's traffic:
+// request-time matching ignores another account's rules (OwnedEdgeRules), so
+// that account's mutation — even on match_host "*" — cannot change this
+// host's policy. Unclaimed hosts and unscoped fences are covered fleet-wide.
+// The host keeps serving its current rules while a fence holds
+// (ADR-20261101141123); the handler consults this only when a route rule's
+// target does not resolve.
 func (g *gatewaydEdgeRules) Converging(host, ownerAccountID, ownerAppID string) bool {
 	if g == nil || g.fenceCount.Load() == 0 {
 		return false
@@ -349,6 +354,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		return nil, err
 	}
 	entry.SetOwner(owner)
+	entry.SetInheritedApp(gateway.EdgeRuleInheritedApp(ctx))
 	g.cache.PutIfGeneration(gateway.EdgeRuleCacheKey(host, appID), entry, generation)
 	return entry, nil
 }
@@ -362,6 +368,83 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 // the host are read as before, and owner is "". The owner's rules come from
 // its cached rule set when it has one (ADR-091 amendment 2026-10-27).
 func (g *gatewaydEdgeRules) hostStoreRules(ctx context.Context, host string) ([]state.EdgeRule, string, error) {
+	rules, owner, err := g.hostOwnStoreRules(ctx, host)
+	if err != nil {
+		return nil, "", err
+	}
+	if rules, err = g.scopeEdgeRules(ctx, gateway.EdgeRuleApp(ctx), rules); err != nil {
+		return nil, "", err
+	}
+	inherited, err := g.previewInheritedRules(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	return state.MergeEdgeRulesInOrder(rules, inherited), owner, nil
+}
+
+// scopeEdgeRules keeps the rules whose app shares the serving app's
+// edge-rule scope (ADR-091 amendment 2026-10-31, round 6): a company app and
+// its creator's personal apps share an account, so the owner filter alone let
+// a "*" or host-pattern rule on either side apply to the other. The serving
+// app's own rules always stay. Without a serving app or a scope-aware store
+// the rules are kept as read.
+func (g *gatewaydEdgeRules) scopeEdgeRules(ctx context.Context, appID string, rules []state.EdgeRule) ([]state.EdgeRule, error) {
+	store, ok := g.store.(state.EdgeRuleScopeStore)
+	if !ok || appID == "" || len(rules) == 0 {
+		return rules, nil
+	}
+	ids := []string{appID}
+	seen := map[string]struct{}{appID: {}}
+	for _, r := range rules {
+		if _, dup := seen[r.AppID]; !dup {
+			seen[r.AppID] = struct{}{}
+			ids = append(ids, r.AppID)
+		}
+	}
+	if len(ids) == 1 {
+		return rules, nil
+	}
+	scopes, err := store.EdgeRuleScopes(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("edge rule scopes for app %s: %w", appID, err)
+	}
+	want, known := scopes[appID]
+	out := make([]state.EdgeRule, 0, len(rules))
+	for _, r := range rules {
+		if r.AppID == appID {
+			out = append(out, r)
+			continue
+		}
+		if scope, ok := scopes[r.AppID]; known && ok && scope == want {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// previewInheritedRules returns the production app's app-wide rules a PR
+// preview applies as well as its own (ADR-091 amendment 2026-10-30), or nil
+// for any other request.
+func (g *gatewaydEdgeRules) previewInheritedRules(ctx context.Context) ([]state.EdgeRule, error) {
+	production := gateway.EdgeRuleInheritedApp(ctx)
+	store, ok := g.store.(state.AppWideEdgeRuleStore)
+	if production == "" || !ok {
+		return nil, nil
+	}
+	appWide, err := store.AppWideEdgeRules(ctx, production)
+	if err != nil {
+		return nil, fmt.Errorf("production app-wide rules for preview: %w", err)
+	}
+	inherited := appWide[:0]
+	for _, rule := range appWide {
+		if state.EdgeRuleAppliesToPreviews(rule) {
+			inherited = append(inherited, rule)
+		}
+	}
+	return inherited, nil
+}
+
+func (g *gatewaydEdgeRules) hostOwnStoreRules(ctx context.Context, host string) ([]state.EdgeRule, string, error) {
 	owner, appID := gateway.EdgeRuleOwner(ctx), gateway.EdgeRuleApp(ctx)
 	if owner != "" {
 		rules, ok, err := g.ownerStoreRules(ctx, host, owner, appID)
@@ -1139,11 +1222,13 @@ func (g *gatewaydEdgeRules) InvalidateAccountHosts(accountID, appID string, patt
 }
 
 // dropOwnerSets runs after the cache invalidation it belongs to: that moved
-// the cache generation, so a load still in flight cannot cache its set.
+// the cache generation, so a load still in flight cannot cache its set. The
+// account's compiled lists go with it: a list edit invalidates through here.
 func (g *gatewaydEdgeRules) dropOwnerSets(accountID string) {
 	if g.ownerSets != nil {
 		g.ownerSets.drop(accountID)
 	}
+	g.compiledLists.drop(accountID)
 }
 
 // warnPathGlobErrs logs every path-glob parse error the loader

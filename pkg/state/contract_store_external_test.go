@@ -19,11 +19,13 @@ type contractTestStore interface {
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
+	state.AgentClientStore
 	state.AppWorkPolicyStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
 	state.ComputeNodeReadinessStore
 	state.ComputeNodeWakeBreakerStore
+	state.ComputeNodeCPUPressureStore
 	state.ComputeNodeUsageBatcher
 	state.DeploymentAliasStore
 	state.DeploymentHostingFailureStore
@@ -44,6 +46,7 @@ type contractTestStore interface {
 	state.EventStorageUsageStore
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
+	state.EventSubscriptionReconcileStore
 	state.EventWorkBindingStore
 	state.FeatureFlagPromotionHoldReader
 	state.FeatureFlagStore
@@ -75,6 +78,7 @@ type contractTestStore interface {
 	state.MigrationSourceStore
 	state.NodeLeaseStore
 	state.NodeLifecycleCompletionStore
+	state.NodeMemoryReportStore
 	state.ObjectBucketAccessStore
 	state.ObjectBucketPlacementStore
 	state.ObjectBucketReservationResultStore
@@ -82,6 +86,7 @@ type contractTestStore interface {
 	state.ObjectBucketWriteFenceStore
 	state.ObjectReadAdmissionStore
 	state.ObjectCapacityStore
+	state.ObjectInventoryScanStore
 	state.ObjectMultipartCompletionStore
 	state.ObjectMultipartTransferStore
 	state.ObjectMultipartURLCapabilityStore

@@ -7,13 +7,16 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type linkEntry struct {
@@ -57,7 +60,7 @@ func buildLinkArchive(t *testing.T, entries []linkEntry) []byte {
 func extractLinks(t *testing.T, entries []linkEntry, maxTotal int64, lim extractLimit) (string, error) {
 	t.Helper()
 	dst := t.TempDir()
-	return dst, extractStream(dst, bytes.NewReader(buildLinkArchive(t, entries)), maxTotal, lim)
+	return dst, extractStream(t.Context(), dst, bytes.NewReader(buildLinkArchive(t, entries)), maxTotal, lim)
 }
 
 func TestExtractStreamCopiesInTreeLinks(t *testing.T) {
@@ -127,5 +130,39 @@ func TestExtractStreamLinkCopiesCountAgainstTheCaps(t *testing.T) {
 	}, 0, extractLimit{MaxEntries: 4, MaxFileBytes: 1 << 20})
 	if !errors.Is(err, ErrBadArchive) {
 		t.Fatalf("entry cap: err = %v, want ErrBadArchive", err)
+	}
+}
+
+// Two links per level to the level below doubled the copied tree at each
+// level, and only files counted: 44 archive entries made 65,520 directories,
+// and a few levels more would exhaust the control plane's disk (bug hunt
+// 2026-10-28 B39). Directories now count against the entry cap, and a
+// cancelled fetch stops the copy.
+func TestExtractStreamLinkFanOutIsBounded(t *testing.T) {
+	fanOut := []linkEntry{{name: "o-sha/l0/f", body: "x"}}
+	for level := 1; level <= 14; level++ {
+		below := "../l" + strconv.Itoa(level-1)
+		dir := "o-sha/l" + strconv.Itoa(level)
+		fanOut = append(fanOut, linkEntry{name: dir + "/a", link: below}, linkEntry{name: dir + "/b", link: below})
+	}
+	started := time.Now()
+	dst, err := extractLinks(t, fanOut, 0, defaultExtractLimits())
+	if !errors.Is(err, ErrBadArchive) {
+		t.Fatalf("fan-out archive: err = %v, want ErrBadArchive", err)
+	}
+	created := 0
+	_ = filepath.WalkDir(dst, func(string, fs.DirEntry, error) error { created++; return nil })
+	if limit := defaultExtractLimits().MaxEntries + 64; created > limit {
+		t.Fatalf("fan-out archive created %d entries, want at most %d", created, limit)
+	}
+	if elapsed := time.Since(started); elapsed > 30*time.Second {
+		t.Fatalf("fan-out archive took %s", elapsed)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err = extractStream(ctx, t.TempDir(), bytes.NewReader(buildLinkArchive(t, fanOut[:5])), 0, defaultExtractLimits())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled fetch: err = %v, want context.Canceled", err)
 	}
 }

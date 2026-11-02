@@ -219,7 +219,14 @@ func TestRouteHealthAutomaticRecoveryNegativeEvidenceAndContext(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := s.MarkDeploymentLive(t.Context(), other.ID); err != nil {
+				if scenario == "ambiguous" {
+					// A newer canary going live supersedes the one in flight
+					// (ADR-20261030102813), so two serving canaries only come
+					// from a race or an older writer: build that state directly.
+					if _, err := pool.Exec(t.Context(), "UPDATE deployments SET status='live', traffic_percent=1 WHERE id=$1", other.ID); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := s.MarkDeploymentLive(t.Context(), other.ID); err != nil {
 					t.Fatal(err)
 				}
 

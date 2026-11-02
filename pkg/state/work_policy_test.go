@@ -274,4 +274,30 @@ func assertKeyedInvocationLifecycle(t *testing.T, ctx context.Context, store sta
 	if got, _ := store.InvocationByID(ctx, neverDue.ID); got.State != state.InvocationExpired {
 		t.Fatalf("future due row was not expired: %s", got.State)
 	}
+
+	// ADR-20261031101000: only work that never started expires. A row
+	// waiting out a retry keeps retrying past its deadline, so its failure
+	// ends in the dead-letter queue instead of vanishing.
+	retrying := workpolicy.Policy{Name: "retrying", MaxRunningPerKey: 1, ExpiresAfter: 300 * time.Millisecond}
+	started, err := store.EnqueueKeyedInvocation(ctx, makeInvocation(), retrying, "s:retrying")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimInvocationWithCap(ctx, started.ID, "", 30, 10)
+	if err != nil {
+		t.Fatalf("claim before the deadline: %v", err)
+	}
+	if err := store.FailInvocation(ctx, started.ID, "handler threw", time.Millisecond, 10, state.WithClaimAttempt(claimed.Attempts)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(350 * time.Millisecond)
+	if count, err := expirer.ExpirePendingKeyedInvocations(ctx, time.Now(), 64); err != nil || count != 0 {
+		t.Fatalf("expiry sweep over started work = %d, %v; want 0", count, err)
+	}
+	if got, _ := store.InvocationByID(ctx, started.ID); got.State != state.InvocationPending {
+		t.Fatalf("started row past its deadline = %s, want pending", got.State)
+	}
+	if again, err := store.ClaimInvocationWithCap(ctx, started.ID, "", 30, 10); err != nil || again.Attempts != 2 {
+		t.Fatalf("retry claim past the deadline = attempt %d, %v; want attempt 2", again.Attempts, err)
+	}
 }

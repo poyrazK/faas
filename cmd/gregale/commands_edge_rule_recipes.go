@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleRecipeUsage = "usage: gregale edge rule recipe <recipe> [--app <slug>] [--host <hostname>] [--set name=value]... [--enforce] [--alert-webhook-url <url> (--alert-webhook-secret-stdin|--alert-webhook-secret <s>) [--alert-threshold N]]"
+const edgeRuleRecipeUsage = "usage: gregale edge rule recipe apply <recipe> [--app <slug>] [--host <hostname>] [--set name=value]... [--enforce] [--alert-webhook-url <url> (--alert-webhook-secret-stdin|--alert-webhook-secret <s>) [--alert-threshold N]]"
 
 // edgeRuleRecipeJSON is the --json shape of one catalog entry.
 type edgeRuleRecipeJSON struct {

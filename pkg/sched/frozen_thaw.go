@@ -65,7 +65,7 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 	// honours the account's spend cap like any wake (ADR-1162, Hunt 18). It
 	// ran before the request gates; the ordinary gate answers the refusal
 	// and the reaper parks the frozen VMs.
-	if e.spendCapReached(ctx, app.AccountID) {
+	if e.spendCapReached(ctx, e.spendCapSubject(ctx, app)) {
 		return WakeResult{}, false, nil
 	}
 	thawer, ok := e.vmm.(FrozenVMM)
@@ -125,7 +125,7 @@ type frozenCandidate struct {
 // Rows whose shape no longer matches the app, or whose node is gone, stale
 // or leaving (draining, maintenance), are parked. Each node is read once however many candidates it holds.
 func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]frozenCandidate, error) {
-	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return nil, fmt.Errorf("sched: frozen thaw: list candidates: %w", err)
 	}

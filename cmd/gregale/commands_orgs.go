@@ -470,7 +470,7 @@ func cmdOrgsMembersChangeRole(args []string) int {
 		return 1
 	}
 	if *slug == "" || *userID == "" || *role == "" {
-		PrintUsage(os.Stderr, "usage: gregale org members change-role --org <slug> --user <user-id> --role <role>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org members update --org <slug> --user <user-id> --role <role>", "orgs")
 		return 1
 	}
 	if !strInSlice(*role, orgRoleForPatchVocab) {
@@ -589,7 +589,7 @@ func cmdOrgsTransferOwnership(args []string) int {
 		return 1
 	}
 	if *slug == "" || *to == "" {
-		PrintUsage(os.Stderr, "usage: gregale org transfer-ownership --org <slug> --to <user-id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org owner set --org <slug> --to <user-id>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -613,7 +613,7 @@ func cmdOrgsSeatUsage(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale org seat-usage --org <slug>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org usage --org <slug>", "orgs")
 		return 1
 	}
 	client, err := authedClient()

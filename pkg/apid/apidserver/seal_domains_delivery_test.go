@@ -195,7 +195,9 @@ func TestTriggerConfigs_FollowTheDeliveryDomain(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec = e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{
-				Config: json.RawMessage(`{"brokers":["c:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password_set":true}}`),
+				// Same brokers: moving them requires the password again
+				// (bug hunt 2026-10-28 H107).
+				Config: json.RawMessage(`{"brokers":["b:9092"],"topic":"orders2","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password_set":true}}`),
 			}, nil)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("update status = %d: %s", rec.Code, rec.Body.String())

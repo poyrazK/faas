@@ -16,7 +16,8 @@ func (s *PgStore) ProjectAppByWorkload(ctx context.Context, accountID, projectID
 		return App{}, fmt.Errorf("resolve project service: %w", mapErr(err))
 	}
 	if len(ids) == 0 {
-		return App{}, ErrNotFound
+		return App{}, projectServiceNotFound(ctx, s.pool, sqlc.ProjectServiceHasDeletedAppParams{
+			AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), WorkloadName: name})
 	}
 	if len(ids) != 1 {
 		return App{}, ErrConflict
@@ -29,4 +30,18 @@ func (s *PgStore) ProjectAppByWorkload(ctx context.Context, accountID, projectID
 		return App{}, ErrConflict
 	}
 	return app, nil
+}
+
+// projectServiceNotFound reports a project service name no live member holds:
+// ErrProjectServiceDeleted while a deleted member's row still holds it, else
+// ErrNotFound.
+func projectServiceNotFound(ctx context.Context, db sqlc.DBTX, arg sqlc.ProjectServiceHasDeletedAppParams) error {
+	deleted, err := sqlc.New().ProjectServiceHasDeletedApp(ctx, db, arg)
+	if err != nil {
+		return fmt.Errorf("resolve deleted project service: %w", mapErr(err))
+	}
+	if deleted {
+		return ErrProjectServiceDeleted
+	}
+	return ErrNotFound
 }

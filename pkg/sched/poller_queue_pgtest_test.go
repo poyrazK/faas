@@ -632,9 +632,17 @@ func TestNamedQueueReceiptFollowsPendingWorkPolicyTerminalState(t *testing.T) {
 			case "cancelled":
 				_, err = store.CancelPendingKeyedInvocations(ctx, app.ID, policy.Name, key, "")
 			case "expired":
-				if _, err = pool.Exec(ctx, `update invocations set work_expires_at=now()-interval '1 second' where id=$1`, old.ID); err == nil {
-					_, err = store.ExpirePendingKeyedInvocations(ctx, time.Now(), 64)
+				// ADR-20261031101000: delivered work no longer expires. The
+				// nacked item keeps its receipt and is redelivered until it
+				// succeeds or is dead-lettered.
+				if _, err = pool.Exec(ctx, `update invocations set work_expires_at=now()-interval '1 second' where id=$1`, old.ID); err != nil {
+					t.Fatal(err)
 				}
+				if n, err := store.ExpirePendingKeyedInvocations(ctx, time.Now(), 64); err != nil || n != 0 {
+					t.Fatalf("expiry sweep over delivered work = %d, %v; want 0", n, err)
+				}
+				assertQueueLinkedStates(t, ctx, pool, old.ID, recordID, "pending", "retry", "")
+				return
 			}
 			if err != nil {
 				t.Fatal(err)

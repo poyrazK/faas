@@ -29,6 +29,23 @@ func (q *Queries) AccountAgentLoad(ctx context.Context, db DBTX, accountID strin
 	return i, err
 }
 
+const agentCallbacksRevokedAt = `-- name: AgentCallbacksRevokedAt :one
+SELECT revoked_at FROM agent_callback_revocations
+ WHERE endpoint_id = $1::text::uuid AND thread_id = $2::text
+`
+
+type AgentCallbacksRevokedAtParams struct {
+	EndpointID string
+	ThreadID   string
+}
+
+func (q *Queries) AgentCallbacksRevokedAt(ctx context.Context, db DBTX, arg AgentCallbacksRevokedAtParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, agentCallbacksRevokedAt, arg.EndpointID, arg.ThreadID)
+	var revoked_at pgtype.Timestamptz
+	err := row.Scan(&revoked_at)
+	return revoked_at, err
+}
+
 const agentRunQueueStats = `-- name: AgentRunQueueStats :one
 SELECT count(*)::integer AS queued,
   coalesce(extract(epoch FROM now()-min(queued_at)), 0)::float8 AS oldest_seconds
@@ -588,7 +605,7 @@ const getAgentRunClaim = `-- name: GetAgentRunClaim :one
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=$1::text::uuid
@@ -618,6 +635,7 @@ type GetAgentRunClaimRow struct {
 	CheckoutCommit         pgtype.Text
 	CheckoutInstallationID pgtype.Int8
 	QueuedAt               pgtype.Timestamptz
+	PauseDuringModelCalls  bool
 }
 
 func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (GetAgentRunClaimRow, error) {
@@ -647,6 +665,7 @@ func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (
 		&i.CheckoutCommit,
 		&i.CheckoutInstallationID,
 		&i.QueuedAt,
+		&i.PauseDuringModelCalls,
 	)
 	return i, err
 }
@@ -718,9 +737,51 @@ func (q *Queries) GetAgentRunOutputs(ctx context.Context, db DBTX, arg GetAgentR
 	return i, err
 }
 
+const getAgentRunUsage = `-- name: GetAgentRunUsage :one
+SELECT method, samples, expected_samples, measured_ms, paused_ms, private_mb_ms, unpaused_private_mb_ms,
+       billable_mb_ms, peak_private_mb, cold_boot
+  FROM agent_run_usage WHERE run_id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type GetAgentRunUsageParams struct {
+	RunID     string
+	AccountID string
+}
+
+type GetAgentRunUsageRow struct {
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+}
+
+func (q *Queries) GetAgentRunUsage(ctx context.Context, db DBTX, arg GetAgentRunUsageParams) (GetAgentRunUsageRow, error) {
+	row := db.QueryRow(ctx, getAgentRunUsage, arg.RunID, arg.AccountID)
+	var i GetAgentRunUsageRow
+	err := row.Scan(
+		&i.Method,
+		&i.Samples,
+		&i.ExpectedSamples,
+		&i.MeasuredMs,
+		&i.PausedMs,
+		&i.PrivateMbMs,
+		&i.UnpausedPrivateMbMs,
+		&i.BillableMbMs,
+		&i.PeakPrivateMb,
+		&i.ColdBoot,
+	)
+	return i, err
+}
+
 const getAgentVersion = `-- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
  WHERE agent_id=$1::text::uuid AND account_id=$2::text::uuid AND version=$3::integer
 `
 
@@ -731,18 +792,19 @@ type GetAgentVersionParams struct {
 }
 
 type GetAgentVersionRow struct {
-	Version            int32
-	HarnessPreset      pgtype.Text
-	HarnessImage       pgtype.Text
-	HarnessRun         []string
-	HarnessModels      []byte
-	PromptTemplate     string
-	RamMb              pgtype.Int4
-	TimeoutSec         int32
-	CreatedAt          pgtype.Timestamptz
-	ModelIntegrations  []byte
-	AiBudgetMillicents pgtype.Int8
-	Deliveries         []byte
+	Version               int32
+	HarnessPreset         pgtype.Text
+	HarnessImage          pgtype.Text
+	HarnessRun            []string
+	HarnessModels         []byte
+	PromptTemplate        string
+	RamMb                 pgtype.Int4
+	TimeoutSec            int32
+	CreatedAt             pgtype.Timestamptz
+	ModelIntegrations     []byte
+	AiBudgetMillicents    pgtype.Int8
+	Deliveries            []byte
+	PauseDuringModelCalls bool
 }
 
 func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVersionParams) (GetAgentVersionRow, error) {
@@ -761,6 +823,7 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 		&i.ModelIntegrations,
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
+		&i.PauseDuringModelCalls,
 	)
 	return i, err
 }
@@ -988,44 +1051,47 @@ func (q *Queries) InsertAgentRunOutputs(ctx context.Context, db DBTX, arg Insert
 
 const insertAgentVersion = `-- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
  VALUES ($1::text::uuid,$2::integer,$3::text::uuid,
   $4::text,$5::text,$6::text[],$7::jsonb,
   $8::text,$9::integer,$10::integer,
-  $11::jsonb,$12::bigint,$13::jsonb)
+  $11::jsonb,$12::bigint,$13::jsonb,
+  $14::boolean)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls
 `
 
 type InsertAgentVersionParams struct {
-	AgentID            string
-	Version            int32
-	AccountID          string
-	HarnessPreset      pgtype.Text
-	HarnessImage       pgtype.Text
-	HarnessRun         []string
-	HarnessModels      []byte
-	PromptTemplate     string
-	RamMb              pgtype.Int4
-	TimeoutSec         int32
-	ModelIntegrations  []byte
-	AiBudgetMillicents pgtype.Int8
-	Deliveries         []byte
+	AgentID               string
+	Version               int32
+	AccountID             string
+	HarnessPreset         pgtype.Text
+	HarnessImage          pgtype.Text
+	HarnessRun            []string
+	HarnessModels         []byte
+	PromptTemplate        string
+	RamMb                 pgtype.Int4
+	TimeoutSec            int32
+	ModelIntegrations     []byte
+	AiBudgetMillicents    pgtype.Int8
+	Deliveries            []byte
+	PauseDuringModelCalls bool
 }
 
 type InsertAgentVersionRow struct {
-	Version            int32
-	HarnessPreset      pgtype.Text
-	HarnessImage       pgtype.Text
-	HarnessRun         []string
-	HarnessModels      []byte
-	PromptTemplate     string
-	RamMb              pgtype.Int4
-	TimeoutSec         int32
-	CreatedAt          pgtype.Timestamptz
-	ModelIntegrations  []byte
-	AiBudgetMillicents pgtype.Int8
-	Deliveries         []byte
+	Version               int32
+	HarnessPreset         pgtype.Text
+	HarnessImage          pgtype.Text
+	HarnessRun            []string
+	HarnessModels         []byte
+	PromptTemplate        string
+	RamMb                 pgtype.Int4
+	TimeoutSec            int32
+	CreatedAt             pgtype.Timestamptz
+	ModelIntegrations     []byte
+	AiBudgetMillicents    pgtype.Int8
+	Deliveries            []byte
+	PauseDuringModelCalls bool
 }
 
 func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAgentVersionParams) (InsertAgentVersionRow, error) {
@@ -1043,6 +1109,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		arg.ModelIntegrations,
 		arg.AiBudgetMillicents,
 		arg.Deliveries,
+		arg.PauseDuringModelCalls,
 	)
 	var i InsertAgentVersionRow
 	err := row.Scan(
@@ -1058,6 +1125,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		&i.ModelIntegrations,
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
+		&i.PauseDuringModelCalls,
 	)
 	return i, err
 }
@@ -1525,6 +1593,56 @@ func (q *Queries) RecordAgentRunBoot(ctx context.Context, db DBTX, arg RecordAge
 	return result.RowsAffected(), nil
 }
 
+const recordAgentRunUsage = `-- name: RecordAgentRunUsage :execrows
+INSERT INTO agent_run_usage (run_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
+    private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot)
+SELECT r.id, r.account_id, $1::smallint, $2::integer, $3::integer,
+       $4::bigint, $5::bigint, $6::bigint,
+       $7::bigint, $8::bigint, $9::bigint,
+       $10::boolean
+  FROM agent_runs r
+ WHERE r.id=$11::text::uuid AND r.lease_token=$12::text AND r.state='running'
+ON CONFLICT (run_id) DO NOTHING
+`
+
+type RecordAgentRunUsageParams struct {
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+	RunID               string
+	LeaseToken          string
+}
+
+// ADR-20261027090011: vmmd's measured memory of the run VM. Only the first
+// record of a run is kept.
+func (q *Queries) RecordAgentRunUsage(ctx context.Context, db DBTX, arg RecordAgentRunUsageParams) (int64, error) {
+	result, err := db.Exec(ctx, recordAgentRunUsage,
+		arg.Method,
+		arg.Samples,
+		arg.ExpectedSamples,
+		arg.MeasuredMs,
+		arg.PausedMs,
+		arg.PrivateMbMs,
+		arg.UnpausedPrivateMbMs,
+		arg.BillableMbMs,
+		arg.PeakPrivateMb,
+		arg.ColdBoot,
+		arg.RunID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const renewAgentRunLease = `-- name: RenewAgentRunLease :one
 UPDATE agent_runs SET lease_expires_at=now()+make_interval(secs=>$1::double precision), updated_at=now()
  WHERE id=$2::text::uuid AND lease_token=$3::text AND state IN ('starting','running','delivering')
@@ -1633,6 +1751,27 @@ func (q *Queries) ResolveGitHubInstallation(ctx context.Context, db DBTX, arg Re
 	var installation_id int64
 	err := row.Scan(&installation_id)
 	return installation_id, err
+}
+
+const revokeAgentCallbacks = `-- name: RevokeAgentCallbacks :one
+INSERT INTO agent_callback_revocations (endpoint_id, thread_id, account_id, revoked_at)
+VALUES ($1::text::uuid, $2::text, $3::text::uuid, clock_timestamp())
+ON CONFLICT (endpoint_id, thread_id) DO UPDATE SET revoked_at = clock_timestamp(), account_id = excluded.account_id
+RETURNING revoked_at
+`
+
+type RevokeAgentCallbacksParams struct {
+	EndpointID string
+	ThreadID   string
+	AccountID  string
+}
+
+// ADR-20261030125501 §3: revoke every callback URL of a thread issued until now.
+func (q *Queries) RevokeAgentCallbacks(ctx context.Context, db DBTX, arg RevokeAgentCallbacksParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, revokeAgentCallbacks, arg.EndpointID, arg.ThreadID, arg.AccountID)
+	var revoked_at pgtype.Timestamptz
+	err := row.Scan(&revoked_at)
+	return revoked_at, err
 }
 
 const settleCapturedEmailDeliveries = `-- name: SettleCapturedEmailDeliveries :many

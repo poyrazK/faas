@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -1148,6 +1149,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// credentialMatcher checks consumer keys and fork tokens against their
+	// stored hashes through apid (ADR 20261029202403). Nil compares plain
+	// hashes locally (unit tests).
+	credentialMatcher gateway.CredentialMatcher
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
@@ -1625,6 +1630,19 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return fmt.Errorf("gatewayd: load schedd TLS: %w", err)
 	}
 	deps := defaultDeps()
+	// Credentials are resolved and matched by apid, which alone holds the key
+	// their stored hashes are computed with (ADR 20261029202403).
+	credentialAuth, err := dialCredentialAuth(ctx, cfg, osGetenv)
+	if err != nil {
+		return fmt.Errorf("gatewayd: dial apid credential auth: %w", err)
+	}
+	defer func() { _ = credentialAuth.Close() }()
+	credentialMatcher := apidgrpc.NewCredentialMatcher(credentialAuth)
+	deps.credentialMatcher = credentialMatcher
+	// Operation capabilities and dev-bridge tokens are keyed under rings this
+	// node never holds; apid matches them (amendment 1, decision 2).
+	credhash.SetRemote(credhash.FamilyScheduler, credentialMatcher.Remote())
+	credhash.SetRemote(credhash.FamilyDevBridge, credentialMatcher.Remote())
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
 	// over (ADR-1736). Requests and their sinks keep ctx.
@@ -1803,7 +1821,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// ADR-732: route a fork request only when the fork, its token and
 		// its instance all check out (gateway.ForkTargetFromState), and the
 		// fork's creator still holds the app (forkTargetLoader).
-		WithForkTargetLoader(forkTargetLoader(pgStore, pgStore, time.Now)).
+		WithForkTargetLoader(forkTargetLoader(pgStore, pgStore, time.Now, credentialMatcher)).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
 			if err != nil {
@@ -2244,7 +2262,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(gatewayOps, pool)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
-	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).
+	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics, newLocalVmmd(osGetenv(localVmmdEnv) == "1", cfg.NodeName)).
 		WithEvents(eventsPlatform).WithActivityTracker(runtimeActivity)
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as
 	// public requests. This assignment happens after nodeCache creation so
@@ -2330,7 +2348,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	deps.apiAuthLimiter = middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
 	deps.audit = audit.New(pgStore, log, nil, "gatewayd")
 	deps.authMw = authmw.New(
-		storeAsAuthenticator(pgStore),
+		storeAsAuthenticator(pgStore, apidgrpc.CredentialLookup{Apid: credentialAuth, Fallback: pgStore, Log: log}),
 		sessions,
 		storeAsSessionLookup(pgStore),
 		auditorAsAuthAuditor(deps.audit),
@@ -2984,6 +3002,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// PgStore used by apid. The gateway keeps the hot-path policy and the
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
+	if deps.credentialMatcher != nil {
+		handler.WithCredentialMatcher(deps.credentialMatcher)
+	}
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	handler.WithAPIMonetization(deps.apiMonetization)
 	handler.WithAPIMonetizationFlags(deps.platformFlags)
@@ -3347,7 +3368,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if journalClient != nil {
 		journalRPC = journalClient
 	}
-	journalQueue := gateway.NewRequestIDJournalQueue(newRequestIDJournalWriter(journalRPC, log).Write, deps.metrics, log)
+	journalWrite := newRequestIDJournalWriter(journalRPC, log).Write
+	// ADR-20261101085552: with the switch on, the journal stays on this node
+	// and apid asks for a request ID over a lookup stream on the same apid
+	// connection, instead of the control plane storing a row per request.
+	if osGetenv("FAAS_REQUEST_ID_JOURNAL_LOCAL") == "1" {
+		local, stop, err := startLocalRequestIDJournal(ctx, journalClient, cfg.NodeName, deps.metrics, log)
+		if err != nil {
+			return err
+		}
+		defer stop()
+		journalWrite = gateway.LocalRequestIDJournalWriter(local)
+	}
+	journalQueue := gateway.NewRequestIDJournalQueue(journalWrite, deps.metrics, log)
 	go journalQueue.Run(ctx)
 	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {
@@ -3389,6 +3422,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			FlushInterval:  5 * time.Second,
 			FlushBatchSize: 256,
 			MaxRetries:     3,
+			MinuteCollapse: osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
 			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
 			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
 			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
@@ -3463,6 +3497,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					Country:                              row.Country,
 					WakeId:                               row.WakeID,
 					TraceInferred:                        row.TraceInferred,
+					PlatformRefusal:                      row.PlatformRefusal,
 					InstanceId:                           row.InstanceID,
 					GuestDurationMs:                      int32(row.GuestDurationMS),
 					GuestRuntime:                         row.GuestRuntime,
@@ -4457,6 +4492,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		sessionDrains = append(sessionDrains, drainServiceTCP)
 	}
+	if err := validateDatabaseRoute(cfg); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.DatabaseRouteListen) != "" {
+		if err := startDatabaseRoute(ctx, deps, cfg, errc, log); err != nil {
+			return err
+		}
+	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
 			return err
@@ -4546,6 +4589,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					}
 					dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
 					log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
+				}
+				// ADR-1027: app guests reach managed databases through the
+				// private route; rehearsal guests see private services only.
+				if dnsPort == gateway.ServiceDiscoveryDNSPort {
+					if err := withDatabaseRouteDNS(dnsHandler, cfg, log); err != nil {
+						return err
+					}
 				}
 				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
 				listenPacket := deps.listenPacket

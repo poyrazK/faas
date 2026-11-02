@@ -60,7 +60,7 @@ func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string
 	if !ok {
 		return ProfileCaptureOutcome{}, errors.New("sched: vmm router does not support profile captures")
 	}
-	rows, err := e.store.ListInstancesForApp(ctx, appID)
+	rows, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return ProfileCaptureOutcome{}, fmt.Errorf("sched: CaptureAppProfile list instances: %w", err)
 	}
@@ -152,8 +152,9 @@ func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, c
 	if err != nil {
 		return false, "", err
 	}
-	// An organization's app counts under the organization: its plan and its
-	// pool, as apid counts manual captures (ADR-1155).
+	// An organization's app counts under the organization: its plan, not the
+	// creator's (bug hunt 2026-10-28 B37), and its pool, as apid counts manual
+	// captures (ADR-1155).
 	owner, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return false, "", err

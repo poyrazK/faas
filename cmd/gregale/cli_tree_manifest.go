@@ -105,6 +105,29 @@ func (d cliTreeDiscovery) treePositions(noun string) []cliCompletionPosition {
 	return positions
 }
 
+// runsToday returns today's path that a tree path runs: the path the table
+// names for it, or the one under the longest tree path that prefixes it
+// (`mcp server tasks` runs `mcp tasks`, `realtime drain` runs `realtime
+// drain`), so a verb the table adds under it is listed beside today's
+// command and verbs. It reads the discovery's commands: the manifest
+// lookups of rewriteTreePath made rendering the reference ten times slower.
+func (d cliTreeDiscovery) runsToday(words []string) (string, bool) {
+	path := strings.Join(words, " ")
+	if old, ok := cliTreeOldPath(path); ok {
+		return old, true
+	}
+	if len(words) < 2 || words[0] == appSlugFallback {
+		return "", false
+	}
+	if alias, used, ok := matchCliTreeAlias(words); ok {
+		path = strings.Join(append(strings.Fields(alias.Old), words[used:]...), " ")
+	}
+	if _, ok := d.subAt(path); !ok {
+		return "", false
+	}
+	return path, true
+}
+
 // cliTreeRenamesPath reports a path of today's that the table gives a tree
 // name of its own.
 func cliTreeRenamesPath(old string) bool {
@@ -113,12 +136,8 @@ func cliTreeRenamesPath(old string) bool {
 
 // cliTreeOldPath returns today's path for a tree path the table names.
 func cliTreeOldPath(path string) (string, bool) {
-	for _, alias := range cliTreeAliases {
-		if alias.New == path {
-			return alias.Old, true
-		}
-	}
-	return "", false
+	alias, ok := cliTreeAliasIndex()[path]
+	return alias.Old, ok
 }
 
 // subAt returns today's command or verb at path as a verb, so a top-level
@@ -150,15 +169,21 @@ func (d cliTreeDiscovery) treeSubs(prefix []string) []cliSub {
 	name := strings.Join(prefix, " ")
 	renamed := map[string]bool{}
 	for _, alias := range cliTreeAliases {
-		if alias.New != alias.Old {
+		// A path the table places where it already is (`mcp readiness`)
+		// is not listed again under another noun (`mcp server`).
+		if alias.New != alias.Old || strings.Contains(alias.New, " ") {
 			renamed[alias.Old] = true
 		}
+	}
+	for _, fold := range cliTreeFlagFolds {
+		renamed[fold.Old] = true
 	}
 	var subs []cliSub
 	seen := map[string]bool{}
 	add := func(sub cliSub) {
 		if !seen[sub.Name] {
 			seen[sub.Name] = true
+			sub.Flags = append(slices.Clone(sub.Flags), d.foldFlags(name+" "+sub.Name, sub.Flags)...)
 			subs = append(subs, sub)
 		}
 	}
@@ -171,7 +196,7 @@ func (d cliTreeDiscovery) treeSubs(prefix []string) []cliSub {
 		}
 		head := path[len(prefix)]
 		child := append(slices.Clone(prefix), head)
-		if old, ok := cliTreeOldPath(strings.Join(child, " ")); ok {
+		if old, ok := d.runsToday(child); ok {
 			if sub, ok := d.subAt(old); ok {
 				sub = renameCliSub(sub, old, strings.Join(child, " "))
 				sub.Name, sub.Aliases = head, nil
@@ -196,7 +221,7 @@ func (d cliTreeDiscovery) treeSubs(prefix []string) []cliSub {
 			add(cliSub{Name: head, Short: strings.Join(verbs, " · "), Subcommands: group})
 		}
 	}
-	if old, ok := cliTreeOldPath(name); ok {
+	if old, ok := d.runsToday(prefix); ok {
 		if node, ok := d.subAt(old); ok && !node.SubcommandsAfterPositionals {
 			for _, sub := range node.Subcommands {
 				verb, ok := cliTreeVerbFor(sub.Name, node.Subcommands)
@@ -209,6 +234,19 @@ func (d cliTreeDiscovery) treeSubs(prefix []string) []cliSub {
 				add(sub)
 			}
 		}
+	}
+	// A tree path that exists only through its flag folds (`edge cache
+	// set --method GET`) is listed with the folds' flags.
+	for _, fold := range cliTreeFlagFolds {
+		path := strings.Fields(fold.New)
+		if !fold.Only || len(path) != len(prefix)+1 || !slices.Equal(path[:len(prefix)], prefix) || seen[path[len(prefix)]] {
+			continue
+		}
+		sub := cliSub{Name: path[len(prefix)], Short: fold.Short}
+		if target, ok := d.subAt(fold.Old); ok {
+			sub.Short, sub.Positionals = target.Short, target.Positionals
+		}
+		add(sub)
 	}
 	if name == appSlugFallback {
 		for _, sub := range d.appTreeSubs() {
