@@ -31110,7 +31110,9 @@ func (s *PgStore) ListRequestTelemetryByPlatformTenant(ctx context.Context, arg 
 // dependency view. The handler performs all redaction and aggregation after
 // this tenant-scoped query returns.
 func (s *PgStore) ListRequestTelemetryDependencySpans(ctx context.Context, arg sqlc.ListRequestTelemetryDependencySpansParams) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {
-	return s.appErrorsQueries().ListRequestTelemetryDependencySpans(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {
+		return s.appErrorsQueries().ListRequestTelemetryDependencySpans(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryCoverage backs the debugger coverage endpoint. The
@@ -31182,44 +31184,58 @@ func (s *PgStore) RequestTelemetryErrorsByRoute(ctx context.Context, arg sqlc.Re
 // request analytics summary. The SQL weights collapsed telemetry rows by
 // their count column and is bounded by the caller's retention window.
 func (s *PgStore) RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsSummary(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsSummary(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByDimension backs the bounded top-N customer
 // analytics grouping surface.
 func (s *PgStore) RequestTelemetryAnalyticsByDimension(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByDimension(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByDimension(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByRoute backs the bounded top-route portion of
 // the customer-facing request analytics response.
 func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByDeployment returns a bounded request-weighted
 // deployment split for the caller's analytics window. TotalRequests is the
 // full pre-limit count used to calculate the visible __other__ share.
 func (s *PgStore) RequestTelemetryAnalyticsByDeployment(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByDeployment(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByDeployment(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByRouteDeployment backs the bounded per-route
 // deployment allocation and CPU-comparison surface.
 func (s *PgStore) RequestTelemetryAnalyticsByRouteDeployment(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByRouteDeployment(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByRouteDeployment(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsTimeseries backs the zero-filled hourly customer
 // analytics chart. The SQL query weights collapsed telemetry rows by count.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsTimeseriesGrouped backs zero-filled hourly series
 // for a bounded top-N analytics dimension.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseriesGrouped(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseriesGrouped(ctx, db, arg)
+	})
 }
 
 // --- ADR-127 PR-B — regression observation persistence + dashboard reads ---

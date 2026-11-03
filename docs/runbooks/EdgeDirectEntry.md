@@ -99,13 +99,14 @@ means Cloudflare is not presenting the zone's client certificate.
 ## 7. edgednsd, dry run first
 
 `edgednsd` runs on the control plane. It keeps each managed name's proxied A
-records pointed at the compute nodes whose edges are ready. Give it two files
-on the controller, both kept out of the repository:
+records pointed at the compute nodes whose edges are ready. It logs in to
+Postgres like the other control-plane daemons, and needs one secret: a
+Cloudflare token with Zone > DNS: Edit on the apps zone only. Store it as the
+deploy environment's `EDGEDNSD_CF_TOKEN` secret; CD hands it to the role:
 
-- `faas_edgednsd_env_src`: `DATABASE_URL` for a `faas_runtime` member that may
-  read `compute_nodes`;
-- `faas_edgednsd_cf_token_src`: a Cloudflare token with Zone > DNS: Edit on
-  the apps zone only.
+```bash
+gh secret set EDGEDNSD_CF_TOKEN --env production-us --repo poyrazK/faas
+```
 
 In the manifest, add each compute host's address and the pilot name:
 
