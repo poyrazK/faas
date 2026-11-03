@@ -42943,6 +42943,7 @@ CREATE TABLE public.job_runs (
     exclusive_generation bigint,
     process_user text,
     process_workdir text,
+    logs_cleared_finished_at timestamp with time zone,
     CONSTRAINT job_runs_aggregate_status_check CHECK ((aggregate_status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))),
     CONSTRAINT job_runs_command_shape_check CHECK (((command IS NULL) OR ((cardinality(command) >= 0) AND (cardinality(command) <= 64)))),
     CONSTRAINT job_runs_counters_check CHECK (((tasks >= 0) AND (tasks_succeeded >= 0) AND (tasks_failed >= 0) AND (tasks_cancelled >= 0) AND (tasks_running >= 0) AND (dead_letter_count >= 0) AND (dead_letter_count <= tasks) AND (dead_letter_count <= tasks_failed) AND ((((tasks_succeeded + tasks_failed) + tasks_cancelled) + tasks_running) <= tasks))),
@@ -75314,6 +75315,13 @@ CREATE INDEX job_runs_flexible_expiry_idx ON public.job_runs USING btree (latest
 --
 
 CREATE INDEX job_runs_job_idx ON public.job_runs USING btree (job_id, created_at DESC);
+
+
+--
+-- Name: job_runs_log_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX job_runs_log_retention_idx ON public.job_runs USING btree (finished_at, id) WHERE ((finished_at IS NOT NULL) AND (logs_cleared_finished_at IS DISTINCT FROM finished_at));
 
 
 --
