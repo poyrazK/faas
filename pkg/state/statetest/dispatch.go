@@ -27,7 +27,6 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
-	"DeleteProjectIfNoStages":                true,
 	"DefaultCustomDomain":                    true,
 	"DefaultCustomDomains":                   true,
 	"DeploymentWorkerDrainStatus":            true,
@@ -35,6 +34,7 @@ var memDispatched = map[string]bool{
 	"MCPTaskPromotionHold":                   true,
 	"MCPTaskPromotionHolds":                  true,
 	"DeleteAppPermanently":                   true,
+	"DeleteProjectIfNoStages":                true,
 	"ListApplicationStandardRebinds":         true,
 	"RecordApplicationStandardRebind":        true,
 	"RestoreApp":                             true,
@@ -290,13 +290,6 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
-}
-
-func (s *Mem) DeleteProjectIfNoStages(ctx context.Context, accountID, projectID string) error {
-	if o, ok := s.over.(state.CheckedProjectDeleteStore); ok {
-		return o.DeleteProjectIfNoStages(ctx, accountID, projectID)
-	}
-	return s.MemStore.DeleteProjectIfNoStages(ctx, accountID, projectID)
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -565,6 +558,13 @@ func (s *Mem) ListFinancialPriceSnapshots(p0 context.Context, p1 string, p2 time
 		return o.ListFinancialPriceSnapshots(p0, p1, p2)
 	}
 	return s.MemStore.ListFinancialPriceSnapshots(p0, p1, p2)
+}
+
+func (s *Mem) DeleteProjectIfNoStages(ctx context.Context, accountID, projectID string) error {
+	if o, ok := s.over.(state.CheckedProjectDeleteStore); ok {
+		return o.DeleteProjectIfNoStages(ctx, accountID, projectID)
+	}
+	return s.MemStore.DeleteProjectIfNoStages(ctx, accountID, projectID)
 }
 
 func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
