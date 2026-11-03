@@ -2470,40 +2470,71 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	if l == nil {
 		return nil, false, nil
 	}
-	l.triggerPollersMu.Lock()
-	defer l.triggerPollersMu.Unlock()
-	if l.triggerPollers == nil {
-		l.triggerPollers = map[string]triggerSource{}
-	}
 	id, fingerprint := t.ID.String(), triggerPollerFingerprint(t)
-	if p, ok := l.triggerPollers[id]; ok {
-		if built, tracked := l.triggerPollerConfigs[id]; !tracked || built == fingerprint {
-			return p, true, nil
-		}
+	l.triggerPollersMu.Lock()
+	p, ok := l.triggerPollers[id]
+	built, tracked := l.triggerPollerConfigs[id]
+	if ok && (!tracked || built == fingerprint) && !triggerSourceClosed(p) {
+		l.triggerPollersMu.Unlock()
+		return p, true, nil
+	}
+	var stale triggerSource
+	if ok {
 		// The trigger changed since its poller was built: a rotated
 		// credential, a new topic or URL. Kafka joins its consumer group
-		// when the reader is built, so the old reader must leave.
-		l.closeTriggerPollerLocked(id)
+		// when the reader is built, so the old reader must leave. A poller
+		// whose broker connection closed for good is rebuilt on a new one.
+		stale = l.forgetTriggerPollerLocked(id)
 	}
-	// Build without the shared lock (ADR-20261027162741): a broker connect
-	// can take seconds while other lanes look up their pollers.
 	l.triggerPollersMu.Unlock()
+	// Close and build without the shared lock (ADR-20261027162741,
+	// ADR-20261101104512): a broker connect, or a Kafka reader leaving its
+	// group, can take seconds while other lanes look up their pollers.
+	l.closeTriggerPoller(id, stale)
 	src, registered, err := l.buildTriggerPoller(t)
-	l.triggerPollersMu.Lock()
 	if err != nil || !registered {
 		return nil, registered, err
 	}
+	l.triggerPollersMu.Lock()
 	if existing, ok := l.triggerPollers[id]; ok {
 		// Another caller built this trigger's poller meanwhile; keep it.
-		_ = src.Close()
+		l.triggerPollersMu.Unlock()
+		l.closeTriggerPoller(id, src)
 		return existing, true, nil
+	}
+	if l.triggerPollers == nil {
+		l.triggerPollers = map[string]triggerSource{}
 	}
 	l.triggerPollers[id] = src
 	if l.triggerPollerConfigs == nil {
 		l.triggerPollerConfigs = map[string]string{}
 	}
 	l.triggerPollerConfigs[id] = fingerprint
+	l.triggerPollersMu.Unlock()
 	return src, true, nil
+}
+
+// triggerSourceClosed reports whether a poller's broker connection closed
+// for good (a NATS connection nats.go gave up on), so it must be rebuilt.
+func triggerSourceClosed(p triggerSource) bool {
+	closer, ok := p.(interface{ Closed() bool })
+	return ok && closer.Closed()
+}
+
+// cachedTriggerPoller returns t's poller only if one is cached for its
+// current config; it never builds one.
+func (l *Loop) cachedTriggerPoller(t sqlc.Trigger) triggerSource {
+	id := t.ID.String()
+	l.triggerPollersMu.Lock()
+	defer l.triggerPollersMu.Unlock()
+	p, ok := l.triggerPollers[id]
+	if !ok || p == nil || triggerSourceClosed(p) {
+		return nil
+	}
+	if built, tracked := l.triggerPollerConfigs[id]; tracked && built != triggerPollerFingerprint(t) {
+		return nil
+	}
+	return p
 }
 
 // buildTriggerPoller opens a trigger's credentials and builds its poller.
@@ -2536,16 +2567,25 @@ func triggerPollerFingerprint(t sqlc.Trigger) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// closeTriggerPollerLocked closes and forgets a cached poller. Caller
-// holds triggerPollersMu.
-func (l *Loop) closeTriggerPollerLocked(id string) {
-	if p := l.triggerPollers[id]; p != nil {
-		if err := p.Close(); err != nil && l.log != nil {
-			l.log.Warn("sched trigger tick: close poller", "trigger_id", id, "err", err)
-		}
-	}
+// forgetTriggerPollerLocked drops a cached poller and returns it for the
+// caller to close once it has released triggerPollersMu: closing a Kafka
+// reader waits for it to leave its consumer group. Caller holds
+// triggerPollersMu.
+func (l *Loop) forgetTriggerPollerLocked(id string) triggerSource {
+	p := l.triggerPollers[id]
 	delete(l.triggerPollers, id)
 	delete(l.triggerPollerConfigs, id)
+	return p
+}
+
+// closeTriggerPoller closes a poller forgetTriggerPollerLocked returned.
+func (l *Loop) closeTriggerPoller(id string, p triggerSource) {
+	if p == nil {
+		return
+	}
+	if err := p.Close(); err != nil && l.log != nil {
+		l.log.Warn("sched trigger tick: close poller", "trigger_id", id, "err", err)
+	}
 }
 
 // evictTriggerPollers closes the pollers of triggers that are no longer
@@ -2554,24 +2594,33 @@ func (l *Loop) closeTriggerPollerLocked(id string) {
 // Only pollers this loop built are evicted.
 func (l *Loop) evictTriggerPollers(enabled []sqlc.Trigger) {
 	l.triggerPollersMu.Lock()
-	defer l.triggerPollersMu.Unlock()
 	if len(l.triggerPollerConfigs) == 0 {
+		l.triggerPollersMu.Unlock()
 		return
 	}
 	live := make(map[string]bool, len(enabled))
 	for i := range enabled {
 		live[enabled[i].ID.String()] = true
 	}
+	evicted := map[string]triggerSource{}
 	for id := range l.triggerPollerConfigs {
 		// A lane still delivering keeps its poller until a later tick.
 		if !live[id] && !l.brokerLaneActive(id) {
-			l.closeTriggerPollerLocked(id)
+			evicted[id] = l.forgetTriggerPollerLocked(id)
 		}
+	}
+	l.triggerPollersMu.Unlock()
+	for id, p := range evicted {
+		l.closeTriggerPoller(id, p)
 	}
 }
 
 // BrokerLag implements BrokerLagReader on Loop. It queries active broker
 // pollers for queue lag / backlog stats across all enabled triggers for the app.
+// It reads only the pollers the trigger tick keeps: building one here, for
+// a trigger the tick skips (another node's, a suspended account's, one whose
+// capability is off), made a Kafka reader join its group only for the tick
+// to evict it again (ADR-20261101104512).
 func (l *Loop) BrokerLag(ctx context.Context, appID string) (int64, bool, error) {
 	if l == nil || l.engine == nil {
 		return 0, false, nil
@@ -2593,11 +2642,7 @@ func (l *Loop) BrokerLag(ctx context.Context, appID string) (int64, bool, error)
 		if !t.Enabled {
 			continue
 		}
-		poller, registered, err := l.pollerForTrigger(t)
-		if err != nil || !registered || poller == nil {
-			continue
-		}
-		if ss, ok := poller.(triggerStatsSource); ok {
+		if ss, ok := l.cachedTriggerPoller(t).(triggerStatsSource); ok {
 			stats := ss.BrokerStats(ctx, t)
 			if stats.Available {
 				haveStats = true

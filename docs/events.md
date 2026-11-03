@@ -5,6 +5,10 @@ recover failed deliveries. Events are a preview; this page moved out of
 [event-driven workloads](event-driven.md) so that page can be published
 (#5709), and it is published when events reach beta.
 
+To consume records from a broker you run (Kafka, NATS JetStream, Redis
+Streams), use a broker trigger; its delivery guarantees, retries, ordering,
+limits and TLS are on [broker triggers](broker-triggers.md).
+
 ## Event workflow starts
 
 A workflow can start directly from an internal event without an adapter handler:
