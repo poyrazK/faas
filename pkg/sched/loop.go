@@ -145,8 +145,12 @@ type Loop struct {
 	flowCounts            FlowCounter
 	flowReaderUnavailable sync.Once
 	ops                   *wire.OpsMetrics // issue #171 shared registry; nil safe
-	primeMetrics          *snapshotPrimeMetrics
-	cronMetrics           *commandCronMetrics
+	// ownedApps is the previous reaper tick's owned app set, for
+	// forgetDepartedApps (ADR 20261103131546).
+	ownedAppsMu  sync.Mutex
+	ownedApps    map[string]struct{}
+	primeMetrics *snapshotPrimeMetrics
+	cronMetrics  *commandCronMetrics
 	// cronResume asks the main loop to continue a cron sweep that used its
 	// slice; cronSweepTried holds the crons the minute's sweep already
 	// dispatched (runCronSweep).
@@ -1360,11 +1364,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-scaleupTick(scaleupT):
 			l.runScaleUp(ctx)
 		case <-targetsTick(targetsT):
-			l.runTargets(ctx)
+			l.submitWork(workTargets, "tick", func() { l.runTargets(ctx) })
 		case <-floorTick(floorT):
-			l.runFloor(ctx)
+			l.submitWork(workFloor, "tick", func() { l.runFloor(ctx) })
 		case <-prewarmTick(prewarmT):
-			l.runPrewarm(ctx)
+			l.submitWork(workPrewarm, "tick", func() { l.runPrewarm(ctx) })
 		case <-recentLoadTick(recentLoadT):
 			l.runRecentLoad(ctx)
 		case <-migratingWatchdogTick(migratingWatchdogT):
@@ -1382,28 +1386,24 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-jobsTick(workflowsDispatchT):
 			l.runWorkflowsDispatchTick(ctx)
 		case <-workflowRetentionFirst:
-			l.runWorkflowRetention(ctx)
+			l.submitWork(workWorkflowRetention, "tick", func() { l.runWorkflowRetention(ctx) })
 			workflowRetentionFirst = nil
 		case <-workerRecoveryT.C:
 			l.dispatchWorkerRecovery(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
-			l.runWorkflowRetention(ctx)
+			l.submitWork(workWorkflowRetention, "tick", func() { l.runWorkflowRetention(ctx) })
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
 			// exclusively come from retentionT (the 1h ticker).
-			l.runRetention(ctx)
-			l.runDeadLetterRetention(ctx)
-			l.runCronHistoryRetention(ctx)
+			l.dispatchRetention(ctx)
 			retentionFirst = nil
 		case <-retentionTick(retentionT):
-			l.runRetention(ctx)
-			l.runDeadLetterRetention(ctx)
-			l.runCronHistoryRetention(ctx)
+			l.dispatchRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
 			l.submitWork(workInvocationsRetention, "tick", func() { l.runInvocationsRetention(ctx) })
 		case <-triggersRetentionTick(triggersRetentionT):
-			l.runTriggersRetention(ctx)
+			l.submitWork(workTriggersRetention, "tick", func() { l.runTriggersRetention(ctx) })
 		case <-fireNowT.C:
 			// PR-D / issue #791: safety sweep. Picks up rows that
 			// missed a NotifyCronRunNow delivery (Postgres bounce,
@@ -1795,6 +1795,41 @@ func (l *Loop) runRetention(ctx context.Context) {
 
 // runDeadLetterRetention dispatches one unified Failed Events projection
 // retention sweep. Errors are logged and retried on the next hourly tick.
+// forgetDepartedApps deletes the metric series of every app that was in the
+// previous reaper tick's owned list and is not in apps: deleted, or now owned
+// by another scheduler (ADR 20261103131546). Series an app still emits come
+// back on its next observation.
+func (l *Loop) forgetDepartedApps(apps []state.App) {
+	if l.ops == nil {
+		return
+	}
+	current := make(map[string]struct{}, len(apps))
+	for _, app := range apps {
+		current[app.ID] = struct{}{}
+	}
+	l.ownedAppsMu.Lock()
+	previous := l.ownedApps
+	l.ownedApps = current
+	l.ownedAppsMu.Unlock()
+	for id := range previous {
+		if _, ok := current[id]; !ok {
+			l.ops.ForgetApp(id)
+		}
+	}
+}
+
+// dispatchRetention runs the hourly instance, dead-letter and cron-history
+// retention off the loop (ADR 20261103131546). They delete in repeated
+// batches; inline, a large backlog held the stats tick, cron and the
+// triggers behind them.
+func (l *Loop) dispatchRetention(ctx context.Context) {
+	l.submitWork(workRetention, "tick", func() {
+		l.runRetention(ctx)
+		l.runDeadLetterRetention(ctx)
+		l.runCronHistoryRetention(ctx)
+	})
+}
+
 func (l *Loop) runDeadLetterRetention(ctx context.Context) {
 	if l.deadLetterRetention == nil {
 		return
@@ -2604,6 +2639,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	apps = owned
+	l.forgetDepartedApps(apps)
 	accounts := newReaperAccounts(store)
 	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps,
 	// suspended accounts and accounts at their spend cap (ADR-1162) from the
@@ -3814,6 +3850,17 @@ func (h *httpGatewaySynth) SynthesizeRequest(ctx context.Context, appID, method,
 		return fmt.Errorf("sched: synth request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if h.mintInternalSvcToken != nil {
+		tok, mErr := h.mintInternalSvcToken(appID)
+		if mErr != nil {
+			return fmt.Errorf("sched: synth mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// ADR-119 — attach an Authorization: Bearer JWT when the app
 	// is in 'internal_only' mode. Same helper as Invoke + postBatch
 	// consult the same per-app mode lookup and mint the same JWT.
@@ -4104,6 +4151,17 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 	for key, value := range pkgtrace.InjectHeaders(dispatchCtx) {
 		req.Header.Set(key, value)
 	}
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if h.mintInternalSvcToken != nil {
+		tok, mErr := h.mintInternalSvcToken(appID)
+		if mErr != nil {
+			return inv, 0, fmt.Errorf("sched: invocation mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// Durable workflow steps are an authenticated internal delivery
 	// surface even when the customer app's public_auth_mode is open. The
 	// synth socket is DAC-protected, but the workflow contract also needs a
@@ -4251,6 +4309,9 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 		}
 		firstDue := schedule.NextFireAt(boundary)
 		if firstDue.After(now) {
+			continue
+		}
+		if l.scheduledJobHeld(ctx, job) {
 			continue
 		}
 		scheduledFor := now
@@ -4407,6 +4468,39 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 
 func scheduledTimePointer(at time.Time) *time.Time { return &at }
 
+// scheduledJobRunLookback bounds how many of a job's newest runs
+// scheduledJobHeld reads for a queued scheduled run.
+const scheduledJobRunLookback = 20
+
+// scheduledJobHeld leaves a due recurring job due instead of queueing another
+// run (ADR-1162 amendment 2026-11-03). The dispatcher defers the tasks of an
+// account at its spend cap or held by a strict budget without failing them,
+// so a job firing through the hold queued one run per scheduled time and all
+// of them ran when the hold lifted. Left due, the job runs once afterwards,
+// as after any time Gregale could not reach it, and its missed_runs policy
+// records what it missed. An overlap=allow job also leaves an occurrence due
+// while an earlier scheduled run has not started; skip and replace already
+// decide against queued runs. A read error is no hold.
+func (l *Loop) scheduledJobHeld(ctx context.Context, job state.Job) bool {
+	if l.engine.spendCapReached(ctx, job.AccountID) {
+		return true
+	}
+	if job.SchedulePolicy != nil && job.SchedulePolicy.Overlap != "allow" {
+		return false
+	}
+	runs, err := l.engine.Store().JobRunListByJob(ctx, job.ID, scheduledJobRunLookback, 0)
+	if err != nil {
+		l.log.Warn("schedd: list scheduled job runs failed", "job_id", job.ID, "err", err)
+		return false
+	}
+	for _, run := range runs {
+		if run.TriggerKind == "scheduled" && run.AggregateStatus == "queued" {
+			return true
+		}
+	}
+	return false
+}
+
 // stopPriorScheduledRuns implements overlap=replace. A replacement is only
 // admitted after every earlier scheduled run has a terminal receipt and its
 // VM stop has been confirmed by vmmd.
@@ -4555,7 +4649,14 @@ func (l *Loop) runCronTick(ctx context.Context) {
 // hold lifted (crons audit 2026-11-02). The sweep leaves such a cron due
 // instead: it runs once after the hold, as after any time Gregale could not
 // reach. A read error is no hold; the drain still defers the run.
+//
+// A billing subject at its monthly spend cap holds its crons the same way
+// (ADR-1162 amendment 2026-11-03): the drain defers their runs, so firing
+// through the cap queued one run per scheduled time too.
 func (l *Loop) cronAppBudgetHeld(ctx context.Context, app state.App) bool {
+	if l.engine.spendCapReached(ctx, l.engine.spendCapSubject(ctx, app)) {
+		return true
+	}
 	err := state.CheckFinancialBudgetAdmissionForScope(ctx, l.engine.Store(), app, "", "", l.engine.financialBudgetNow())
 	return errors.Is(err, state.ErrFinancialBudgetHeld)
 }

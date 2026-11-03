@@ -121,3 +121,53 @@ diverge:
 App tasks and environment-qualification runtimes do not check the cap at
 admission; they are bounded by their task timeouts. Snapshot storage, builds, CPU and managed Postgres remain unbilled.
 The pusher still reads raw usage rows rather than the financial ledger.
+
+## Amendment 2026-11-03: queued work waits at the cap
+
+Status: accepted (cost-control audit 2026-11-03).
+
+Decision 2 deferred queued job tasks at the cap but said nothing about other
+queued work. A review found three gaps:
+
+- **Invocations were dead-lettered.** The drain claimed a capped app's
+  pending invocations (crons, delayed tasks, webhooks, async invokes, event
+  deliveries) and treated the wake gate's 402 as a failed wake. Each retry
+  spent an attempt, and the row was dead-lettered with work the customer had
+  not lost.
+- **Scheduled work piled up.** A cron fired every scheduled time through the
+  cap, and a recurring job queued a run every scheduled time. The dispatcher
+  defers held work without failing it, so the whole backlog ran when the cap
+  lifted, often in the first hours of the next month. Strict budget holds
+  queue job runs the same way; the crons audit (2026-11-02) had fixed the
+  cron case for strict holds only.
+- **The billing page understated the cap.** The cap bar and the admin billing
+  view counted compute and egress, while the hold also counts the delivered
+  object-storage charge (ADR-20261027093220 decision 4). A page could show
+  headroom while the apps were parked.
+
+Decision:
+
+1. The drain checks the billing subject's cap before it claims a row. At the
+   cap the row moves back by a minute without spending an attempt, as a
+   budget hold does.
+2. The cron sweep skips an app whose billing subject is at its cap. The cron
+   stays due and runs once after the cap lifts.
+3. A due recurring job stays due while its account is at its cap. A job with
+   `overlap: allow` (the default) also stays due while an earlier scheduled
+   run has not started, so a strict hold or a full account queue holds one
+   unstarted run at most. `skip` and `replace` already decide against queued
+   runs. The job's `missed_runs` policy records what it missed, as after any
+   time the scheduler could not reach it.
+4. Every view that compares the month's spending with the cap counts the
+   delivered object-storage charge through the hold's own helper
+   (`meter.SpendCapObjectStorageCents`). The usage summary's
+   `overage_cents` stays compute and egress overage: it is a per-meter view.
+
+Consequences:
+
+- A capped account's crons and recurring jobs run once after the cap lifts,
+  not once per missed time. Customers who need every occurrence set a higher
+  cap.
+- An `overlap: allow` job whose runs queue for longer than its schedule
+  interval now has occurrences recorded as missed instead of runs queued
+  behind each other.

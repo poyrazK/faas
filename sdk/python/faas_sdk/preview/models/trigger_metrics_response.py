@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.trigger_consumer_status import TriggerConsumerStatus
+
 
 T = TypeVar("T", bound="TriggerMetricsResponse")
 
 
 @_attrs_define
 class TriggerMetricsResponse:
-    """Aggregated counters per state for one trigger. NOT a Prometheus
+    """Aggregated counters per state for one trigger, and the scheduler's
+    last observation of its broker consumer. NOT a Prometheus
     scrape — /v1/metrics is the Prometheus surface.
 
     """
@@ -22,6 +29,12 @@ class TriggerMetricsResponse:
     succeeded_count: int
     retry_count: int
     dead_letter_count: int
+    count_limit: int | Unset = UNSET
+    """Where each count stops; a count equal to it means at least that many."""
+    consumer: TriggerConsumerStatus | Unset = UNSET
+    """The scheduler's last observation of a trigger's broker consumer.
+    Absent until the trigger's first poll.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +50,12 @@ class TriggerMetricsResponse:
 
         dead_letter_count = self.dead_letter_count
 
+        count_limit = self.count_limit
+
+        consumer: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.consumer, Unset):
+            consumer = self.consumer.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -49,11 +68,17 @@ class TriggerMetricsResponse:
                 "dead_letter_count": dead_letter_count,
             }
         )
+        if count_limit is not UNSET:
+            field_dict["count_limit"] = count_limit
+        if consumer is not UNSET:
+            field_dict["consumer"] = consumer
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.trigger_consumer_status import TriggerConsumerStatus
+
         d = dict(src_dict)
         trigger_id = d.pop("trigger_id")
 
@@ -67,6 +92,15 @@ class TriggerMetricsResponse:
 
         dead_letter_count = d.pop("dead_letter_count")
 
+        count_limit = d.pop("count_limit", UNSET)
+
+        _consumer = d.pop("consumer", UNSET)
+        consumer: TriggerConsumerStatus | Unset
+        if isinstance(_consumer, Unset):
+            consumer = UNSET
+        else:
+            consumer = TriggerConsumerStatus.from_dict(_consumer)
+
         trigger_metrics_response = cls(
             trigger_id=trigger_id,
             pending_count=pending_count,
@@ -74,6 +108,8 @@ class TriggerMetricsResponse:
             succeeded_count=succeeded_count,
             retry_count=retry_count,
             dead_letter_count=dead_letter_count,
+            count_limit=count_limit,
+            consumer=consumer,
         )
 
         trigger_metrics_response.additional_properties = d
