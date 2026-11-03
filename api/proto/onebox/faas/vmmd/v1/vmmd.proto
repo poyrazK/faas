@@ -863,6 +863,12 @@ message AppSpec {
   // platform veth) and ignores the allowlist, private network, static
   // egress IP and operator bundle. Only schedd's fork coordinator sets it.
   bool quarantine = 35;
+  // identity_reload (ADR-20261031193635) restores an environment branch
+  // from its parent's credential-free capture: the resume hook asks the
+  // guest to reload the branch's identity through after_restore and to echo
+  // the digest vmmd served; any mismatch is after_restore_failed and the
+  // branch cold-boots. Ignored on cold boot.
+  bool identity_reload = 36;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's

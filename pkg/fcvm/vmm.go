@@ -3126,7 +3126,11 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		// restored guest follows the vmmd restoring it, not the one its
 		// snapshot booted under; an older vmmd omits the field.
 		EventPublishVerdict bool `json:"eventPublishVerdict,omitempty"`
-	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true})
+		// ADR-20261031193635: reload the environment branch's identity
+		// through after_restore and echo its digest in the timing frame.
+		IdentityReload bool `json:"identityReload,omitempty"`
+	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true,
+		IdentityReload: l.RestoreIdentity.pending()})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
@@ -3173,6 +3177,13 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	}
 	guest, err := readResumeCapabilities(conn)
 	if err != nil {
+		return err
+	}
+	guestIdentity := ""
+	if guest != nil {
+		guestIdentity = guest.IdentityDigest
+	}
+	if err := checkRestoreIdentityAck(l.RestoreIdentity, guestIdentity); err != nil {
 		return err
 	}
 	if validatePeer != nil {

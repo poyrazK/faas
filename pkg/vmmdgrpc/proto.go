@@ -392,6 +392,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		EgressAllowlist:             app.GetEgressAllowlist(),
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
 		Quarantine:                  app.GetQuarantine(),
+		IdentityReload:              app.GetIdentityReload(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),

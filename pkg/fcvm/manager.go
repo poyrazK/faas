@@ -3063,6 +3063,10 @@ type wakingInstance struct {
 	// qualification marks a held GitOps qualification candidate (ADR-568):
 	// it boots with its app's identity but takes no external action.
 	qualification bool
+	// restoreIdentity is set while an identity-reload restore runs
+	// (ADR-20261031193635); the runtime-config receiver records the served
+	// identity digest on it.
+	restoreIdentity *RestoreIdentityExpectation
 }
 
 // WorkloadTokenIdentity resolves the identity a workload-identity token is
@@ -3978,6 +3982,11 @@ type WakeRequest struct {
 	// (allowlist, private network, static egress IP, operator bundle) so
 	// no other path can add reachability.
 	Quarantine bool
+	// IdentityReload (ADR-20261031193635) restores an environment branch
+	// from its parent's credential-free capture: the resume hook asks the
+	// guest to reload the branch's identity and requires the digest it was
+	// served back. Meaningful only for a snapshot restore.
+	IdentityReload bool
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
 	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
 	// rewrites tenant source traffic to. Empty string = no
@@ -4797,6 +4806,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.AccountID = req.AccountID
 	lease.Networkless = req.ExecutionOnly
 	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
+	if req.IdentityReload && !req.ExecutionOnly {
+		lease.RestoreIdentity = newRestoreIdentityExpectation()
+	}
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
@@ -4811,7 +4823,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.waking = make(map[string]wakingInstance)
 	}
 	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID,
-		contained: req.RehearsalRunID != "", qualification: qualificationOnly}
+		contained: req.RehearsalRunID != "", qualification: qualificationOnly, restoreIdentity: lease.RestoreIdentity}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)

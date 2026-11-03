@@ -301,9 +301,15 @@ type AppSpec struct {
 	// quarantine chains (no guest-originated flow, inbound only from the
 	// platform veth) and ignores the allowlist, private network, static
 	// egress IP and operator bundle. Only schedd's fork coordinator sets it.
-	Quarantine    bool `protobuf:"varint,35,opt,name=quarantine,proto3" json:"quarantine,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Quarantine bool `protobuf:"varint,35,opt,name=quarantine,proto3" json:"quarantine,omitempty"`
+	// identity_reload (ADR-20261031193635) restores an environment branch
+	// from its parent's credential-free capture: the resume hook asks the
+	// guest to reload the branch's identity through after_restore and to echo
+	// the digest vmmd served; any mismatch is after_restore_failed and the
+	// branch cold-boots. Ignored on cold boot.
+	IdentityReload bool `protobuf:"varint,36,opt,name=identity_reload,json=identityReload,proto3" json:"identity_reload,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -577,6 +583,13 @@ func (x *AppSpec) GetQuietPauseAfterMs() int64 {
 func (x *AppSpec) GetQuarantine() bool {
 	if x != nil {
 		return x.Quarantine
+	}
+	return false
+}
+
+func (x *AppSpec) GetIdentityReload() bool {
+	if x != nil {
+		return x.IdentityReload
 	}
 	return false
 }
@@ -17413,7 +17426,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xf6\f\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x9f\r\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -17456,7 +17469,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x14quiet_pause_after_ms\x18  \x01(\x03R\x11quietPauseAfterMs\x12\x1e\n" +
 	"\n" +
 	"quarantine\x18# \x01(\bR\n" +
-	"quarantine\"\x92\b\n" +
+	"quarantine\x12'\n" +
+	"\x0fidentity_reload\x18$ \x01(\bR\x0eidentityReload\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

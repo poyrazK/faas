@@ -156,6 +156,9 @@ type Lease struct {
 	// captured secrets files from the fork's private drive1 copy before the
 	// guest resumes.
 	Quarantine bool
+	// RestoreIdentity (ADR-20261031193635) is set for an identity-reload
+	// restore; the resume hook checks the guest's acknowledgement against it.
+	RestoreIdentity *RestoreIdentityExpectation
 	// AppPort is the guest port the host routes the app's traffic and
 	// readiness probe to (WakeRequest.Port). Zero means api.DefaultAppPort.
 	AppPort int
