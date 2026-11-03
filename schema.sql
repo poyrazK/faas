@@ -5460,6 +5460,32 @@ $$;
 
 
 --
+-- Name: archive_workflow_events(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.archive_workflow_events() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Never wait for the parent while holding a run lock: an app purge can
+    -- already hold that parent and be waiting for this run's cascade.
+    PERFORM 1 FROM apps WHERE id = OLD.app_id FOR KEY SHARE SKIP LOCKED;
+    IF NOT FOUND THEN
+        IF EXISTS (SELECT 1 FROM apps WHERE id = OLD.app_id) THEN
+            RETURN NULL; -- A concurrent app mutation owns the parent; retry later.
+        END IF;
+        RETURN OLD; -- The parent is being deleted by this transaction's cascade.
+    END IF;
+    INSERT INTO workflow_event_archive (id, run_id, app_id, event_name, payload, received_at)
+    SELECT id, run_id, OLD.app_id, event_name, payload, received_at
+    FROM workflow_events WHERE run_id = OLD.id
+    ON CONFLICT (id) DO NOTHING;
+    RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: assert_clone_configuration_mutable(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5524,32 +5550,6 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source authority changed';
  END IF;
 END $_$;
-
-
---
--- Name: archive_workflow_events(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.archive_workflow_events() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-    -- Never wait for the parent while holding a run lock: an app purge can
-    -- already hold that parent and be waiting for this run's cascade.
-    PERFORM 1 FROM apps WHERE id = OLD.app_id FOR KEY SHARE SKIP LOCKED;
-    IF NOT FOUND THEN
-        IF EXISTS (SELECT 1 FROM apps WHERE id = OLD.app_id) THEN
-            RETURN NULL; -- A concurrent app mutation owns the parent; retry later.
-        END IF;
-        RETURN OLD; -- The parent is being deleted by this transaction's cascade.
-    END IF;
-    INSERT INTO workflow_event_archive (id, run_id, app_id, event_name, payload, received_at)
-    SELECT id, run_id, OLD.app_id, event_name, payload, received_at
-    FROM workflow_events WHERE run_id = OLD.id
-    ON CONFLICT (id) DO NOTHING;
-    RETURN OLD;
-END;
-$$;
 
 
 --
@@ -36513,20 +36513,6 @@ CREATE TABLE public.domain_doctor_observations (
 
 
 --
--- Name: workflow_event_archive; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.workflow_event_archive (
-    id uuid NOT NULL,
-    run_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    event_name text NOT NULL,
-    payload jsonb NOT NULL,
-    received_at timestamp with time zone NOT NULL
-);
-
-
---
 -- Name: workflow_event_code_refs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56831,6 +56817,20 @@ CREATE TABLE public.workflow_dispatch_cursors (
     CONSTRAINT workflow_dispatch_cursors_check CHECK ((((platform_tenant_id IS NULL) AND (scope_key = ANY (ARRAY['app'::text, 'unscoped'::text]))) OR ((platform_tenant_id IS NOT NULL) AND (scope_key = (platform_tenant_id)::text)))),
     CONSTRAINT workflow_dispatch_cursors_last_claimed_at_check CHECK (isfinite(last_claimed_at)),
     CONSTRAINT workflow_dispatch_cursors_platform_tenant_id_check CHECK (((platform_tenant_id IS NULL) OR (platform_tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid)))
+);
+
+
+--
+-- Name: workflow_event_archive; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_event_archive (
+    id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    event_name text NOT NULL,
+    payload jsonb NOT NULL,
+    received_at timestamp with time zone NOT NULL
 );
 
 
