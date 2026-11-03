@@ -84,7 +84,10 @@
 
     <h1>{{.Title}}</h1>
 
-    {{if index .Data "Error"}}
+    {{if index .Data "Refused"}}
+      <p>{{index .Data "Detail"}}</p>
+      <p class="fine">Nothing was authorized. Start the connection again from your agent.</p>
+    {{else if index .Data "Error"}}
       <p>
         This code was already used or has expired. Codes work exactly once.
         Run <code>gregale login</code> again for a new one.
@@ -97,7 +100,7 @@
         Authorizing issues a credential to inspect apps, logs, metrics and deployments. It stays valid while the agent uses it: it ends after a week unused, and 30 days after you authorize at the latest.
         {{with index .Data "MCPCapabilities"}}It also lets the agent:</p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul><p>{{end}}
         {{if index .Data "ReturnMCP"}}Next you review the agent and select its apps before connecting.{{else}}Return to the bridge to review the agent and select its apps before connecting.{{end}}
-        You can revoke the credential from your account's API keys page.
+        You can revoke it any time with <code>gregale mcp connection revoke</code>.
         {{else}}
         <code>gregale login</code> opened this page. Authorizing gives that
         terminal access as <strong>{{index .Data "AccountEmail"}}</strong> — this
@@ -116,6 +119,15 @@
         {{if index .Data "MCP"}}
         <input type="hidden" name="code" value="{{index .Data "Code"}}">
         {{if index .Data "ReturnMCP"}}<input type="hidden" name="return" value="mcp">{{end}}
+        {{with index .Data "MCPOrgs"}}
+        {{/* ADR-20261101225122: the connection acts in one organization. */}}
+        <label class="code-label" for="org">The agent acts in</label>
+        <select id="org" name="org">
+          <option value="">Your personal account</option>
+          {{range .}}<option value="{{.ID}}">{{.Name}} (your role: {{.Role}})</option>{{end}}
+        </select>
+        <p class="fine">In an organization, the agent can do only what your role allows and what the organization's agent policy permits.</p>
+        {{end}}
         {{else}}
         {{/* The code is typed, never pre-filled: a link alone cannot
             authorize someone else's terminal (device-code phishing). */}}

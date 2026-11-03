@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AccountAbuseHold } from './AccountAbuseHold.js';
 import type { AccountLimits } from './AccountLimits.js';
+import type { KeyOrg } from './KeyOrg.js';
 /**
  * Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count.
  */
@@ -44,6 +45,7 @@ export type AccountResponse = {
    * Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it.
    */
   key_scopes?: Array<string>;
+  key_org?: KeyOrg;
   abuse_hold?: AccountAbuseHold;
 };
 

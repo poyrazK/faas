@@ -2417,6 +2417,7 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .key_org import KeyOrg
 from .label_change import LabelChange
 from .label_change_set import LabelChangeSet
 from .labels_response import LabelsResponse
@@ -4006,6 +4007,9 @@ from .operator_runtime_config_source import OperatorRuntimeConfigSource
 from .operator_runtime_config_status import OperatorRuntimeConfigStatus
 from .org_activity_response import OrgActivityResponse
 from .org_activity_response_data import OrgActivityResponseData
+from .org_agent_policy_request import OrgAgentPolicyRequest
+from .org_agent_policy_request_allowed_scopes_item import OrgAgentPolicyRequestAllowedScopesItem
+from .org_agent_policy_response import OrgAgentPolicyResponse
 from .org_app_list_response import OrgAppListResponse
 from .org_app_summary import OrgAppSummary
 from .org_app_summary_type import OrgAppSummaryType
@@ -8595,6 +8599,7 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "KeyOrg",
     "LabelChange",
     "LabelChangeSet",
     "LabelsResponse",
@@ -10012,6 +10017,9 @@ __all__ = (
     "OperatorRuntimeConfigStatus",
     "OrgActivityResponse",
     "OrgActivityResponseData",
+    "OrgAgentPolicyRequest",
+    "OrgAgentPolicyRequestAllowedScopesItem",
+    "OrgAgentPolicyResponse",
     "OrgAppListResponse",
     "OrgAppSummary",
     "OrgAppSummaryType",
