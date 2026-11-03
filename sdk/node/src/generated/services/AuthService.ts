@@ -305,7 +305,7 @@ export class AuthService {
       mediaType: 'application/x-www-form-urlencoded',
       errors: {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        410: `Verification link expired, invalid, or already used.`,
+        410: `The posted token is expired, unknown, or was already used.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

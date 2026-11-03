@@ -13379,7 +13379,7 @@ paths:
               schema: { type: string }
         '403': { $ref: '#/components/responses/Forbidden' }
         '410':
-          description: Verification link expired, invalid, or already used.
+          description: The posted token is expired, unknown, or was already used.
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/reset:
