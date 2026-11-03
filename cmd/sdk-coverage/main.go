@@ -361,38 +361,39 @@ var routeExclude = map[string]bool{
 	// Mirror the exclusion across BOTH this list AND
 	// cmd/apid/spec_compliance_test.go::routeExclude; the two
 	// lists must move together.
-	"POST /v1/admin/instances/{id}/force-park":           true, // PR #1099 P2a — operator-only recovery primitive
-	"POST /v1/admin/apps/{slug}/force-cold-boot":         true, // PR #1099 P2b — operator-only recovery primitive
-	"POST /v1/admin/instances/{id}/force-restart":        true, // PR #1105 P2d — operator-only recovery primitive
-	"POST /v1/admin/builds/sweep-stuck":                  true, // PR #1099 P2c — operator-only recovery primitive
-	"GET /v1/admin/ops/jobs/runs":                        true, // operator-only active job-run projection
-	"GET /v1/admin/ops/data-repairs":                     true, // operator-only repair health projection
-	"GET /v1/admin/ops/jobs/runs/{id}":                   true, // operator-only job-run inspection
-	"POST /v1/admin/ops/jobs/runs/{id}/cancel":           true, // operator-only job-run cancellation
-	"GET /v1/admin/ops/deployments":                      true, // operator-only deployment incident projection
-	"GET /v1/admin/ops/deployments/{id}":                 true, // operator-only deployment inspection
-	"POST /v1/admin/ops/deployments/{id}/cancel":         true, // operator-only deployment cancellation
-	"POST /v1/admin/ops/deployments/{id}/retry":          true, // operator-only deployment retry
-	"GET /v1/admin/ops/github/recovery":                  true, // operator-only githubd queue projection
-	"POST /v1/admin/ops/github/deliveries/{id}/retry":    true, // operator-only githubd delivery recovery
-	"POST /v1/admin/ops/github/check-updates/{id}/retry": true, // operator-only githubd Check Run recovery
-	"POST /v1/admin/ops/accounts/{id}/suspend":           true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":           true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":   true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":              true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":        true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":           true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/retire":             true, // operator-only terminal node lifecycle control
-	"GET /v1/admin/operator-intents/{id}":                true, // PR #1099 P2.3 — operator-only intent polling endpoint
-	"GET /v1/admin/config":                               true, // operator-only runtime configuration catalog
-	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write
-	"GET /v1/admin/config-operations/{id}":               true, // operator-only runtime configuration operation polling
-	"GET /v1/admin/config/{key}/revisions":               true, // operator-only runtime configuration history
-	"GET /v1/admin/flags":                                true, // ADR-1700 operator-only platform flag catalog
-	"GET /v1/admin/flags/{key}":                          true, // ADR-1700 operator-only platform flag detail
-	"GET /v1/admin/flags/{key}/decision":                 true, // ADR-1700 operator-only platform flag inspector
-	"GET /v1/admin/accounts/{id}/flags":                  true, // ADR-1700 operator-only per-account platform flags
-	"GET /v1/admin/managed-postgres/usage/{account_id}":  true, // operator-only COGS/capacity view; public SDK is customer-scoped
+	"POST /v1/admin/instances/{id}/force-park":                true, // PR #1099 P2a — operator-only recovery primitive
+	"POST /v1/admin/apps/{slug}/force-cold-boot":              true, // PR #1099 P2b — operator-only recovery primitive
+	"POST /v1/admin/instances/{id}/force-restart":             true, // PR #1105 P2d — operator-only recovery primitive
+	"POST /v1/admin/builds/sweep-stuck":                       true, // PR #1099 P2c — operator-only recovery primitive
+	"GET /v1/admin/ops/jobs/runs":                             true, // operator-only active job-run projection
+	"GET /v1/admin/ops/data-repairs":                          true, // operator-only repair health projection
+	"GET /v1/admin/ops/jobs/runs/{id}":                        true, // operator-only job-run inspection
+	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                true, // operator-only job-run cancellation
+	"GET /v1/admin/ops/deployments":                           true, // operator-only deployment incident projection
+	"GET /v1/admin/ops/deployments/{id}":                      true, // operator-only deployment inspection
+	"POST /v1/admin/ops/deployments/{id}/cancel":              true, // operator-only deployment cancellation
+	"POST /v1/admin/ops/deployments/{id}/retry":               true, // operator-only deployment retry
+	"GET /v1/admin/ops/github/recovery":                       true, // operator-only githubd queue projection
+	"POST /v1/admin/ops/github/deliveries/{id}/retry":         true, // operator-only githubd delivery recovery
+	"POST /v1/admin/ops/github/check-updates/{id}/retry":      true, // operator-only githubd Check Run recovery
+	"POST /v1/admin/ops/accounts/{id}/suspend":                true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":                true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":        true, // operator-only tenant security control
+	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling": true, // operator-only support grant (ADR-20261101214152)
+	"POST /v1/admin/ops/nodes/{name}/drain":                   true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":             true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":                true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/retire":                  true, // operator-only terminal node lifecycle control
+	"GET /v1/admin/operator-intents/{id}":                     true, // PR #1099 P2.3 — operator-only intent polling endpoint
+	"GET /v1/admin/config":                                    true, // operator-only runtime configuration catalog
+	"PATCH /v1/admin/config/{key}":                            true, // operator-only runtime configuration write
+	"GET /v1/admin/config-operations/{id}":                    true, // operator-only runtime configuration operation polling
+	"GET /v1/admin/config/{key}/revisions":                    true, // operator-only runtime configuration history
+	"GET /v1/admin/flags":                                     true, // ADR-1700 operator-only platform flag catalog
+	"GET /v1/admin/flags/{key}":                               true, // ADR-1700 operator-only platform flag detail
+	"GET /v1/admin/flags/{key}/decision":                      true, // ADR-1700 operator-only platform flag inspector
+	"GET /v1/admin/accounts/{id}/flags":                       true, // ADR-1700 operator-only per-account platform flags
+	"GET /v1/admin/managed-postgres/usage/{account_id}":       true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
 	// device-code flow for programmatic auth; the dashboard cookie
@@ -552,6 +553,14 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
 	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
 	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
+	"GET /v1/orgs/{slug}/billing/costs":                                                                                "GetOrgFinancialCosts", // ADR-20261031211500
+	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                                     "PreviewOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets":                                                                              "ListOrgFinancialBudgets",
+	"POST /v1/orgs/{slug}/billing/budgets":                                                                             "CreateOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "GetOrgFinancialBudget",
+	"PUT /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "UpdateOrgFinancialBudget",
+	"DELETE /v1/orgs/{slug}/billing/budgets/{id}":                                                                      "DeleteOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}/revisions":                                                               "ListOrgFinancialBudgetRevisions",
 	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
 	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
 	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",

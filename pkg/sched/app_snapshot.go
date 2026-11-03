@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -20,8 +21,11 @@ type appLister interface {
 // full rows only when it changed: on production-us the pollers listed every
 // app with its manifest about 130 times a minute per schedd, while app rows
 // change a few dozen times an hour. A list is never older than the call that
-// returns it, so the pollers see what a direct read would. Callers get their
-// own deep copy; a store without state.AppsListVersionReader is read directly.
+// returns it, so the pollers see what a direct read would, except for the
+// columns the version skips (the scale stamps; ADR 20261103094355), which a
+// wake or park writes every few seconds on a busy node: read those through
+// AppScaleOutStamp before acting on them. Callers get their own deep copy; a
+// store without state.AppsListVersionReader is read directly.
 type AppSnapshot struct {
 	store   appLister
 	version state.AppsListVersionReader
@@ -62,6 +66,58 @@ func (s *AppSnapshot) read(ctx context.Context, nodeID string) ([]state.App, err
 }
 
 func (s *AppSnapshot) list(ctx context.Context, nodeID string) ([]state.App, error) {
+	apps, err := s.rows(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	return cloneApps(apps), nil
+}
+
+// AppsByID returns copies of the listed apps among ids, keyed by ID, from the
+// list ListAppsByNodeID(nodeID) (ListAllApps for ""). An ID the list does not
+// hold is absent. The floor reconciler reads the few apps that carry a floor
+// this way instead of copying the node's whole list (ADR 20261103094355).
+func (s *AppSnapshot) AppsByID(ctx context.Context, nodeID string, ids []string) (map[string]state.App, error) {
+	apps, err := s.rows(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	out := make(map[string]state.App, len(ids))
+	for i := range apps {
+		if _, ok := want[apps[i].ID]; ok {
+			app := apps[i]
+			deepCopyInPlace(reflect.ValueOf(&app).Elem())
+			out[app.ID] = app
+		}
+	}
+	return out, nil
+}
+
+// AppScaleOutStamp reads appID's last_scale_out_at from the store. A reused
+// list can carry an older stamp (state.AppsListVersion), so the scale-out
+// triggers read it here before admitting. A store that cannot read one app
+// reports no stamp: the caller keeps the one its list holds.
+func (s *AppSnapshot) AppScaleOutStamp(ctx context.Context, appID string) (*time.Time, error) {
+	reader, ok := s.store.(interface {
+		AppByID(context.Context, string) (state.App, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	app, err := reader.AppByID(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	return app.LastScaleOutAt, nil
+}
+
+// rows returns the list shared by every caller: callers copy what they hand
+// out. A reread replaces the entry's slice and never writes into the old one.
+func (s *AppSnapshot) rows(ctx context.Context, nodeID string) ([]state.App, error) {
 	if s.version == nil {
 		return s.read(ctx, nodeID)
 	}
@@ -91,7 +147,7 @@ func (s *AppSnapshot) list(ctx context.Context, nodeID string) ([]state.App, err
 		}
 		entry.apps, entry.version, entry.valid = apps, version, true
 	}
-	return cloneApps(entry.apps), nil
+	return entry.apps, nil
 }
 
 // cloneApps copies apps so that no caller shares mutable memory with the

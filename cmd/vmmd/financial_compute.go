@@ -12,6 +12,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// appAdmissionGuard checks the database cutover fence (base, nil when the
+// store has none) and the strict compute caps (bypass) before a wake or
+// resume. The two are independent and every wake waits for both, so they
+// are read at once; the fence's answer still comes first.
+func appAdmissionGuard(base, bypass func(context.Context, string) error) func(context.Context, string) error {
+	if base == nil {
+		return bypass
+	}
+	return func(ctx context.Context, appID string) error {
+		fenced := make(chan error, 1)
+		go func() { fenced <- base(ctx, appID) }()
+		bypassErr := bypass(ctx, appID)
+		if err := <-fenced; err != nil {
+			return err
+		}
+		return bypassErr
+	}
+}
+
 func wireFinancialCompute(ctx context.Context, mgr *fcvm.Manager, store state.Store, native bool) error {
 	if store == nil {
 		return nil
@@ -39,14 +58,7 @@ func wireFinancialCompute(ctx context.Context, mgr *fcvm.Manager, store state.St
 	mgr.WithFinancialComputeBypassGuard(bypass)
 	if !native {
 		base := managedPostgresAdmissionGuard(store)
-		mgr.WithAppAdmissionGuard(func(callCtx context.Context, appID string) error {
-			if base != nil {
-				if err := base(callCtx, appID); err != nil {
-					return err
-				}
-			}
-			return bypass(callCtx, appID)
-		})
+		mgr.WithAppAdmissionGuard(appAdmissionGuard(base, bypass))
 		return nil
 	}
 	identity, err := mgr.RuntimeAdmissionIdentity()

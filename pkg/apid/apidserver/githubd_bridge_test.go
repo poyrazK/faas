@@ -365,6 +365,16 @@ func TestEnqueueBuild_HappyPath(t *testing.T) {
 	if store.createDeploymentReturned.SourceRoot != "services/api" {
 		t.Errorf("deployment source_root = %q, want %q", store.createDeploymentReturned.SourceRoot, "services/api")
 	}
+	// builderd refuses a source outside its spool root, so the deployment
+	// must point at apid's spool copy, not githubd's staged file.
+	spooled := store.createDeploymentReturned.SourcePath
+	if filepath.Dir(spooled) != spoolRoot || !strings.HasSuffix(spooled, ".tar.gz") {
+		t.Errorf("deployment source_path = %q, want a .tar.gz directly under spool %q", spooled, spoolRoot)
+	}
+	staged, _ := os.ReadFile(path)
+	if got, err := os.ReadFile(spooled); err != nil || !bytes.Equal(got, staged) {
+		t.Errorf("spooled source differs from the staged archive (err %v)", err)
+	}
 	// Notify channel: build_queued fired exactly once.
 	if len(notif.channels) != 1 || notif.channels[0] != db.NotifyBuildQueued {
 		t.Errorf("notif.channels = %v, want [%s]", notif.channels, db.NotifyBuildQueued)
