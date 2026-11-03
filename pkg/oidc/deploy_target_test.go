@@ -129,3 +129,33 @@ func TestServeHTTP_PreflightFromPullRequestIsAllowed(t *testing.T) {
 		t.Fatalf("preflight from a pull request = %d; body=%s", rr.Code, rr.Body)
 	}
 }
+
+// A pull request's CI waited for its preview only with a stored account key:
+// the preview-read capability reads one app's preview status from any run,
+// pull requests included, and is bound to that app (ADR-20261102203228).
+func TestServeHTTP_PreviewReadFromPullRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name, app string
+		want      int
+	}{
+		{"bound app", "web", http.StatusOK},
+		{"no app named", "", http.StatusForbidden},
+		{"app of another repository", "billing", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, tokens := deployGateHandler(t, autoPolicyLogin, Claims{Ref: "refs/pull/7/merge", EventName: "pull_request"})
+			rr := exchangeFor(t, h, tc.app, CapabilityPreviewRead)
+			if rr.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", rr.Code, tc.want, rr.Body)
+			}
+			if tc.want != http.StatusOK {
+				return
+			}
+			for _, token := range tokens.tokens {
+				if token.AppID != "app-web" || len(token.Scopes) != 1 || token.Scopes[0] != "previews:read" {
+					t.Fatalf("bearer = app %q scopes %v, want app-web bound with only previews:read", token.AppID, token.Scopes)
+				}
+			}
+		})
+	}
+}

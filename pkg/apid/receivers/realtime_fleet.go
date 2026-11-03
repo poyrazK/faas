@@ -86,6 +86,8 @@ type realtimeFleetPresenceResponse struct {
 	Members     []realtime.PresenceMember `json:"members"`
 	OwnMemberID string                    `json:"own_member_id,omitempty"`
 	ObservedAt  *time.Time                `json:"observed_at,omitempty"`
+	// Renewed answers a renew: false sends the node back to an upsert.
+	Renewed bool `json:"renewed,omitempty"`
 }
 
 type realtimeFleetRelayRequest struct {
@@ -175,6 +177,8 @@ func (r *realtimeFleetReceiver) PresenceOperation(ctx context.Context, envelope 
 		if ownMemberID == "" {
 			return nil, status.Error(codes.Internal, "realtime presence upsert omitted the member")
 		}
+	case "renew":
+		return r.renewPresence(ctx, req)
 	case "delete":
 		if req.ConnectionID == "" {
 			return nil, status.Error(codes.InvalidArgument, "invalid realtime presence lease")
@@ -347,6 +351,32 @@ func (r *realtimeFleetReceiver) requireEnabledEndpoint(ctx context.Context, endp
 	default:
 		return nil
 	}
+}
+
+// renewPresence extends a live presence lease with one row update, using the
+// cached endpoint and node lookups relays use; it returns no snapshot
+// (ADR-1323, amendment of 2026-11-03).
+func (r *realtimeFleetReceiver) renewPresence(ctx context.Context, req realtimeFleetPresenceRequest) (*wrapperspb.BytesValue, error) {
+	renewer, ok := r.presence.(state.ManagedRealtimePresenceRenewer)
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "invalid realtime presence operation")
+	}
+	if req.ConnectionID == "" {
+		return nil, status.Error(codes.InvalidArgument, "invalid realtime presence lease")
+	}
+	node, err := r.relayLookup(ctx, req.EndpointID, req.NodeName)
+	if err != nil {
+		return nil, err
+	}
+	renewed, err := renewer.RenewManagedRealtimePresenceLease(ctx, req.EndpointID, req.Channel, node.ID, req.ConnectionID, time.Now().UTC().Add(state.ManagedRealtimePresenceLeaseTTL))
+	if err != nil {
+		return nil, realtimePresenceStoreStatus(err)
+	}
+	data, err := json.Marshal(realtimeFleetPresenceResponse{Members: []realtime.PresenceMember{}, Renewed: renewed})
+	if err != nil {
+		return nil, status.Error(codes.Internal, "encode realtime presence renewal")
+	}
+	return wrapperspb.Bytes(data), nil
 }
 
 // relayLookup checks a relay's endpoint and node, through relayLookups.

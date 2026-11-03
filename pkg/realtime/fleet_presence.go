@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -144,6 +145,20 @@ func (m *Manager) renewFleetPresence(ctx context.Context, c *connection, channel
 	memberID := member.memberID
 	presenceScope := member.presenceScope
 	m.mu.RUnlock()
+	if renewer, ok := m.cfg.FleetClient.(ManagedRealtimePresenceRenewClient); ok && !m.presenceRenewUnsupported.Load() {
+		renewCtx, cancel := context.WithTimeout(ctx, realtimeChannelRouteReportTimeout)
+		renewed, err := renewer.RenewPresence(renewCtx, c.info.EndpointID, channel, c.info.ID)
+		cancel()
+		switch {
+		case err == nil && renewed:
+			return
+		case errors.Is(err, ErrPresenceRenewUnsupported):
+			m.presenceRenewUnsupported.Store(true)
+		case err != nil:
+			m.reportFleetFailure(err)
+			return // the next renewal tries again, within the lease
+		}
+	}
 	principal := ""
 	if presenceScope == "principal" {
 		principal = c.info.Principal
@@ -152,6 +167,17 @@ func (m *Manager) renewFleetPresence(ctx context.Context, c *connection, channel
 		return
 	}
 }
+
+// ManagedRealtimePresenceRenewClient is an optional fleet client extension
+// that renews a live presence lease without a snapshot (ADR-1323, amendment
+// of 2026-11-03). Renewed false means the lease is gone; the node upserts it.
+type ManagedRealtimePresenceRenewClient interface {
+	RenewPresence(ctx context.Context, endpointID, channel, connectionID string) (bool, error)
+}
+
+// ErrPresenceRenewUnsupported is returned by a fleet client whose apid
+// predates renewals; the node then upserts as before.
+var ErrPresenceRenewUnsupported = errors.New("realtime: presence renewal unsupported")
 
 func (m *Manager) deleteFleetPresence(ctx context.Context, c *connection, channel string, memberID string) {
 	if m.cfg.FleetClient == nil {
