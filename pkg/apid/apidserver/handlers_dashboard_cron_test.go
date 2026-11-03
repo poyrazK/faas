@@ -375,6 +375,73 @@ func TestDashboard_AppDetail_FlashBanner_Error(t *testing.T) {
 	}
 }
 
+// The dashboard refuses a manual run the way the API does and says why: a
+// cron at its manual-run cap is busy, a disabled cron is refused before a
+// request is queued (crons audit 2026-11-03). Both used to land on the
+// generic failure banner, and a disabled cron's request failed only later.
+func TestDashboard_FireCronNow_NamesTheRefusal(t *testing.T) {
+	h, cookie, store, mgr := newAuthedDashboardServerFullFull(t, string(api.PlanPro), "runner@example.com")
+	acct, err := store.AccountByEmail(t.Context(), "runner@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{Slug: "runner", AccountID: acct.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cron, err := store.CreateCron(t.Context(), app.ID, "0 3 * * *", "/nightly", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := middleware.IssueForAuthenticated(mgr, "fire_cron", acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fire := func() string {
+		t.Helper()
+		form := url.Values{"csrf_token": {tok}}
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/dashboard/apps/runner/crons/"+cron.ID+"/fire-now", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.AddCookie(cookie)
+		r.AddCookie(&http.Cookie{Name: middleware.CookieNameAuthenticated, Value: tok})
+		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusFound {
+			t.Fatalf("POST fire-now = %d: %s", rec.Code, rec.Body)
+		}
+		return rec.Header().Get("Location")
+	}
+	for i := range api.CronFireNowActivePerCron {
+		if loc := fire(); !strings.Contains(loc, "?fired=1") {
+			t.Fatalf("manual run %d: Location = %q, want ?fired=1", i+1, loc)
+		}
+	}
+	if loc := fire(); !strings.Contains(loc, "?fired=busy") {
+		t.Fatalf("run over the cap: Location = %q, want ?fired=busy", loc)
+	}
+	disabled := false
+	if _, err := store.UpdateCronWithOptions(t.Context(), cron.ID, nil, nil, &disabled, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if loc := fire(); !strings.Contains(loc, "?fired=disabled") {
+		t.Fatalf("disabled cron: Location = %q, want ?fired=disabled", loc)
+	}
+	for flag, want := range map[string]string{
+		"busy":      "most manual runs waiting",
+		"disabled":  "This cron is disabled.",
+		"suspended": "suspended until the app is deployed again",
+		"plan":      "Your plan does not let this cron run.",
+	} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/runner?fired="+flag, nil)
+		r.AddCookie(cookie)
+		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("?fired=%s = %d, banner %q missing", flag, rec.Code, want)
+		}
+	}
+}
+
 // --- helpers ----------------------------------------------------------
 
 // newAuthedDashboardServerFullFull is a parameterised variant of

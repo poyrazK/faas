@@ -604,6 +604,10 @@ type RequireAuthnKey struct {
 	// Scopes are the key's authorization scopes. ADR-079: unlocking an app
 	// with a bearer key requires apps:read (or admin) on its account.
 	Scopes []string
+	// OrgID is the organization an org key was minted against ("" for a
+	// personal key), so a key_changed notification that names the
+	// organization drops only its keys from the gateway cache (H93).
+	OrgID string
 }
 
 // RequireAuthnAuditor is the narrow slice of cmd/gatewayd-internal/audit.go's
@@ -1512,7 +1516,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		preAuthLimiter: newPreAuthSourceLimiter(),
 		// The request bodies this gateway holds at once: spooled uploads
 		// on disk, validate-rule bodies in the heap.
-		bodySpoolBudget:  newRequestBodyBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
+		bodySpoolBudget:  newRequestBodySpoolBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
 		keyLookups:       newKeyLookupLimiter(),
 		bodyMemoryBudget: newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
@@ -3886,17 +3890,19 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 		h.rejectUnavailableEdgeRule(w, r, "validate", rule.ID, "schema_validator_not_configured")
 		return true
 	}
-	// Upgrade / streaming short-circuit: the body for an
-	// upgraded request is read by the proxy leg's hijacker,
-	// not buffered. Validate rules opt-in via
-	// rule.ApplyWhileStreaming; default false = skip.
-	if !rule.ApplyWhileStreaming && isUpgradeRequest(r) {
-		return false
-	}
 	// Path, query, and header parameters are checked before the body is
-	// read, so a rejected request never pays for buffering.
+	// read, so a rejected request never pays for buffering. They apply to
+	// upgrade requests too: they need no body.
 	if rule.Parameters != nil && h.validateEdgeRuleParameters(w, r, rec, rule) {
 		return true
+	}
+	// Upgrade short-circuit: a WebSocket handshake has no body, and
+	// rule.ApplyWhileStreaming opts in to checking it anyway. Any client
+	// can add Connection: Upgrade, and servers that do not speak the named
+	// protocol run the request as usual, so an upgrade request that carries
+	// a body has it validated like any other (ADR-20261103090000).
+	if !rule.ApplyWhileStreaming && isUpgradeRequest(r) && !requestHasBody(r) {
+		return false
 	}
 	if rule.NoBodySchema {
 		h.recordEdgeRuleValidateMatch(r, rule)
@@ -4001,7 +4007,7 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 // The hold lasts until the request finishes, since the buffered bytes are
 // forwarded.
 func (h *Handler) holdValidateBody(r *http.Request, cap int64) (*requestBodyLease, bool) {
-	lease, _ := h.bodyMemoryBudget.lease("")
+	lease, _ := h.bodyMemoryBudget.lease("", "")
 	want := cap
 	if r.ContentLength >= 0 && r.ContentLength < cap {
 		want = r.ContentLength
@@ -8257,7 +8263,8 @@ haveApp:
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
-				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
+				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
+				defer endTracking()
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -8274,7 +8281,8 @@ haveApp:
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
-				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
+				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
+				defer endTracking()
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}

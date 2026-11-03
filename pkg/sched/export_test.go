@@ -90,6 +90,7 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const DueWalkHeadPages = dueWalkHeadPages
 const WorkAppReconcile = workAppReconcile
 const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
@@ -186,10 +187,14 @@ type NATSBroker = natsBroker
 // NewNATSBrokerPool is a broker pool that dials with dial instead of
 // connecting to NATS.
 func NewNATSBrokerPool(dial func(rawURL string) (*NATSBroker, error)) *natsBrokerPool {
-	return &natsBrokerPool{dial: dial, brokers: map[string]*natsBroker{}}
+	return newNATSBrokerPool(dial, time.Hour)
 }
 
-func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) { return p.forURL(rawURL) }
+// ForURL acquires rawURL's broker and keeps the reference.
+func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) {
+	broker, _, err := p.acquire(rawURL)
+	return broker, err
+}
 
 // NewRedisStreamPoller wraps an already connected client, as newRedisPoller
 // does after its ping and group creation; the egress dialer refuses the
@@ -580,10 +585,14 @@ func (r *Loop) ProcessFireNowRequest(p0 context.Context, p1 state.FireNowRequest
 func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time) error {
 	return r.recoverPrimeCandidate(p0, p1, p2)
 }
-func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
-func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
-func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
-func (r *Loop) RunCronTick(p0 context.Context)      { r.runCronTick(p0) }
+func (r *Loop) RunInstanceStats(p0 context.Context)     { r.runInstanceStats(p0) }
+func (r *Loop) RunPrimeRecovery(p0 context.Context)     { r.runPrimeRecovery(p0) }
+func (r *Loop) RunReaper(p0 context.Context)            { r.runReaper(p0) }
+func (r *Loop) RunCronTick(p0 context.Context)          { r.runCronTick(p0) }
+func (r *Loop) RunScheduledJobsTick(p0 context.Context) { r.runScheduledJobsTick(p0) }
+
+// DrainEngine is the engine a drain wakes apps through.
+func DrainEngine(d *Drain) *Engine { return d.engine }
 func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
 	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
 }
@@ -1197,6 +1206,15 @@ func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
 	}
 	return due
 }
+
+// NextLogFollowPoll exposes the follow stream's discovery backoff (O20).
+var NextLogFollowPoll = nextLogFollowPoll
+
+// Bounds of the follow stream's discovery poll.
+const (
+	LogFollowPollMin = logFollowPollMin
+	LogFollowPollMax = logFollowPollMax
+)
 
 // FailInterruptedFireNowRequests runs the interrupted manual-run sweep once.
 func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {

@@ -119,6 +119,18 @@ ADR-20261026201726 amendment 2026-11-02 (2)):
   `404`; the webhook delivery example no longer names the unemitted
   `cron.fired` event.
 
+Audit round 4, 2026-11-03 (branch `fix/crons-audit-round4`,
+ADR-20261026201726 amendment 2026-11-03, ADR-20261031162858 amendment 2):
+
+- Company members other than an app's creator list its crons by slug; the
+  404 also failed their `gregale.yaml` deploys, which list crons first.
+- A `gregale.yaml` deploy no longer checks its crons against the deployer's
+  own plan; the company's plan applies, checked by apid.
+- A `deploy:write` key can follow the manual run it starts
+  (`gregale cron run --wait`).
+- Deployment cron staging applies the cron API's path and timezone rules.
+- The dashboard refuses a disabled cron's manual run and names each refusal.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of
@@ -438,6 +450,16 @@ to the 2026-11 release, and `FaasGeoIPDatabaseStale` warns when it is more
 than 75 days old. The challenge-pass docs now say a pass is shared by its
 /24 or /48 and User-Agent, and the CLI warns when a gate is scoped by
 headers, cookies or query values the client chooses.
+
+2026-11-03: a fifth review found the scheduler's synth routes
+(`/v1/synthesize`, `/v1/invocations:dispatch`, `:dispatch_batch`) reachable
+from the internet on every app host: anyone with an app ID could wake it or
+invoke it and read the response, past its public auth and edge rules. schedd
+now sends an app-bound scheduler token on every synth request, the gateway
+refuses one without it, and the public edge refuses these paths unless the
+local scheduler sent them (ADR-20261103090000). The same record has
+`validate` check bodies sent with `Connection: Upgrade`, and keeps requests
+with `X-API-Key` or `Proxy-Authorization` out of the shared cache.
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

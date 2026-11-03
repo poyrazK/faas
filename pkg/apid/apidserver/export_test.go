@@ -602,6 +602,11 @@ func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
 }
 
 func (s *server) InboundWebhookURLForTest(token string) string { return s.inboundWebhookURL(token) }
+
+// ProfilePlanForTest exposes the plan profiling judges app by (ADR-1155).
+func (s *server) ProfilePlanForTest(ctx context.Context, fallback api.Plan, app state.App) api.Plan {
+	return s.profilePlan(ctx, fallback, app)
+}
 func (s *server) IsWebDashboardOriginForTest(origin *url.URL) bool {
 	return s.isWebDashboardOrigin(origin)
 }
@@ -1470,6 +1475,12 @@ func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }
 
+// SourceRefManifestEventIntent is the declared subscription set a
+// production deploy records for go-live (ADR-20261101030512); nil records none.
+func SourceRefManifestEventIntent(staged sourceRefManifestStaged) []string {
+	return staged.eventSubscriptionIntent
+}
+
 // WithEventSubscriptionReconcile marks ctx as a production deploy whose
 // manifest replaces the app's event subscriptions (ADR-20261031130000).
 func WithEventSubscriptionReconcile(ctx context.Context) context.Context {
@@ -2070,6 +2081,17 @@ var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
 // amendment 1).
 func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
 	return newOIDCAccountLookup(store, repos)
+}
+
+// Inline security alerts (bug hunt H99).
+func (r *server) AlertPasswordChangedInline(ctx context.Context, acct state.Account, method string) {
+	r.alertPasswordChangedInline(ctx, acct, method)
+}
+func (r *server) AlertMFAEnabledInline(ctx context.Context, acct state.Account) {
+	r.alertMFAEnabledInline(ctx, acct)
+}
+func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account, method string) {
+	r.alertMFADisabledInline(ctx, acct, method)
 }
 
 // ResolveSourceReleaseCommand exposes the release command precedence of a

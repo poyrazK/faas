@@ -51,7 +51,10 @@ func TestSynthIngressPolicyLookupFailureBeforeDispatch(t *testing.T) {
 			}
 			mode = state.AppPublicAuthModeInternalOnly
 			server.WithInternalSvcVerifier(&testInternalSvcVerifier{})
-			if changed := request(); changed.Code != http.StatusForbidden || len(dispatcher.calls) != 1 || lookups != 3 {
+			// With a verifier, the scheduler-token gate refuses the
+			// tokenless request before the policy lookup
+			// (ADR-20261103090000).
+			if changed := request(); changed.Code != http.StatusForbidden || len(dispatcher.calls) != 1 || lookups != 2 {
 				t.Fatalf("fresh policy = %d %s, calls=%v lookups=%d", changed.Code, changed.Body, dispatcher.calls, lookups)
 			}
 		})

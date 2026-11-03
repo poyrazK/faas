@@ -1804,6 +1804,8 @@ type AppWebhook struct {
 	ReceiverRecoveryProbeDeliveryID pgtype.UUID
 	ReceiverCooldownUntil           pgtype.Timestamptz
 	CreatedByAccountID              pgtype.UUID
+	PreviousSecretSealed            []byte
+	PreviousSecretExpiresAt         pgtype.Timestamptz
 }
 
 type AppWebhookDelivery struct {
@@ -4058,6 +4060,17 @@ type DeploymentDependencyGate struct {
 	DeadlineAt   pgtype.Timestamptz
 	Status       string
 	Blocker      string
+}
+
+// Event subscriptions a production manifest deploy declares, applied when the deployment serves all production traffic; written only by apid (ADR-20261101030512).
+type DeploymentEventSubscriptionIntent struct {
+	DeploymentID            pgtype.UUID
+	AppID                   pgtype.UUID
+	DeclaredSubscriptionIds []pgtype.UUID
+	Status                  string
+	Reason                  string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
 }
 
 type DeploymentImagePreparation struct {
@@ -6496,17 +6509,19 @@ type IdempotencyKey struct {
 }
 
 type InboundWebhookEndpoint struct {
-	ID                  pgtype.UUID
-	AppID               pgtype.UUID
-	AccountID           pgtype.UUID
-	Name                string
-	Provider            string
-	TokenHash           []byte
-	SigningSecretSealed []byte
-	DeliveryPath        string
-	Enabled             bool
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                             pgtype.UUID
+	AppID                          pgtype.UUID
+	AccountID                      pgtype.UUID
+	Name                           string
+	Provider                       string
+	TokenHash                      []byte
+	SigningSecretSealed            []byte
+	DeliveryPath                   string
+	Enabled                        bool
+	CreatedAt                      pgtype.Timestamptz
+	UpdatedAt                      pgtype.Timestamptz
+	PreviousSigningSecretSealed    []byte
+	PreviousSigningSecretExpiresAt pgtype.Timestamptz
 }
 
 type IncidentNote struct {

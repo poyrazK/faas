@@ -8,9 +8,10 @@ import (
 	"testing"
 )
 
-// adr: 831 — amendment 17: gateways sign challenges with the fleet key when
-// Ansible delivers one, else with their own session key.
-func TestEdgeChallengeSecret(t *testing.T) {
+// gatewayd-internal holds no session key (ADR-20261102191500): edge
+// challenges and traffic deadlines are keyed by the gateway fleet key, and
+// a gateway without it refuses to start rather than sign with a per-host key.
+func TestLoadGatewayFleetKey(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {
 		path := filepath.Join(dir, name)
@@ -19,34 +20,35 @@ func TestEdgeChallengeSecret(t *testing.T) {
 		}
 		return path
 	}
+	env := func(vars map[string]string) func(string) string {
+		return func(key string) string { return vars[key] }
+	}
 	fleetHex := strings.Repeat("ab", 32)
-	session := []byte("session-key-of-this-host-32bytes")
-	lookup := func(path string) func(string) string {
-		return func(key string) string {
-			if key == "FAAS_EDGE_CHALLENGE_KEY_FILE" {
-				return path
-			}
-			return ""
-		}
-	}
+	want := bytes.Repeat([]byte{0xab}, 32)
 
-	if got, source, err := edgeChallengeSecret(lookup(""), session); err != nil || !bytes.Equal(got, session) || source != edgeChallengeKeySession {
-		t.Fatalf("unset = %x, %q, %v; want the session key", got, source, err)
+	if _, err := loadGatewayFleetKey(env(nil)); err == nil || !strings.Contains(err.Error(), gatewayFleetKeyEnv) {
+		t.Fatalf("no key file = %v; want a refusal naming %s", err, gatewayFleetKeyEnv)
 	}
-	got, source, err := edgeChallengeSecret(lookup(write("fleet.key", fleetHex+"\n")), session)
-	if err != nil || source != edgeChallengeKeyFleet || len(got) != 32 || got[0] != 0xab {
-		t.Fatalf("fleet key = %x, %q, %v", got, source, err)
-	}
-	for name, path := range map[string]string{
-		"missing file": filepath.Join(dir, "absent.key"),
-		"not hex":      write("not-hex.key", strings.Repeat("zz", 32)),
-		"too short":    write("short.key", strings.Repeat("ab", 16)),
-		"empty":        write("empty.key", "\n"),
+	path := write("fleet.key", fleetHex+"\n")
+	for name, vars := range map[string]map[string]string{
+		"fleet key file":       {gatewayFleetKeyEnv: path},
+		"legacy edge key file": {gatewayFleetKeyLegacyEnv: path},
+		"fleet key wins":       {gatewayFleetKeyEnv: path, gatewayFleetKeyLegacyEnv: write("other.key", strings.Repeat("cd", 32))},
 	} {
-		if _, _, err := edgeChallengeSecret(lookup(path), session); err == nil {
-			t.Errorf("%s: accepted", name)
-		} else if strings.Contains(err.Error(), "zz") {
-			t.Errorf("%s: error repeats the file's content: %v", name, err)
+		got, err := loadGatewayFleetKey(env(vars))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s = %x, %v; want %x", name, got, err, want)
 		}
+	}
+	for name, content := range map[string]string{"short": "abcd", "not hex": strings.Repeat("zz", 32)} {
+		if _, err := loadGatewayFleetKey(env(map[string]string{gatewayFleetKeyEnv: write(name, content)})); err == nil {
+			t.Fatalf("%s key file accepted", name)
+		}
+	}
+	if _, err := loadGatewayFleetKey(env(map[string]string{gatewayFleetKeyEnv: filepath.Join(dir, "missing")})); err == nil {
+		t.Fatal("missing key file accepted")
+	}
+	if signer, err := newTrafficDeadlineSigner(want); err != nil || signer == nil {
+		t.Fatalf("deadline signer = %v, %v", signer, err)
 	}
 }

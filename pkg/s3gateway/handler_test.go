@@ -1206,7 +1206,7 @@ func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
 }
 
 func TestGatewayPublicMultipartLifecycle(t *testing.T) {
-	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+	handler, store, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/upload/") {
 			if _, err := io.Copy(io.Discard, r.Body); err != nil {
 				return nil, err
@@ -1281,10 +1281,19 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 		}
 	}
 
+	// ListParts is admitted and its page counted as egress like the other
+	// listings (bug hunt 33: it skipped both).
 	recorder = httptest.NewRecorder()
+	store.admitted = nil
+	served, listMetrics := handler.requestMetrics, &readEgressMetrics{}
+	handler.requestMetrics = listMetrics
 	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, nil, "UNSIGNED-PAYLOAD"))
+	handler.requestMetrics = served
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<PartNumber>1</PartNumber>") || !strings.Contains(recorder.Body.String(), "<PartNumber>2</PartNumber>") {
 		t.Fatalf("list parts = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Contains(store.admitted, "__list__") || listMetrics.delivered != int64(recorder.Body.Len()) {
+		t.Fatalf("list parts admitted %v, recorded %d of %d bytes", store.admitted, listMetrics.delivered, recorder.Body.Len())
 	}
 
 	completeBody := []byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"etag-1"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>"etag-2"</ETag></Part></CompleteMultipartUpload>`)

@@ -7301,7 +7301,7 @@ func (e *Engine) ParkWithReason(ctx context.Context, instanceID, reason string) 
 // rejection. Terminal rows release their reservation; snapshotting and
 // migrating rows keep RAM but no longer consume an app serving slot.
 func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, error) {
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.admissionRepairRows(ctx, appID)
 	if err != nil {
 		return 0, err
 	}
@@ -7335,6 +7335,40 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 		}
 	}
 	return repaired, nil
+}
+
+// admissionRepairRows returns the instance rows reconcileAppAdmission
+// judges: the rows this ledger holds for appID, read by ID (ADR
+// 20261103131546). Only a held row can be released or moved to snapshot
+// accounting; reading the app's whole wake history, as before, read every
+// retained wake of the busiest apps on each wake refused at their cap. A
+// store without InstancesByIDsReader reads the history.
+func (e *Engine) admissionRepairRows(ctx context.Context, appID string) ([]state.Instance, error) {
+	reader, ok := e.store.(state.InstancesByIDsReader)
+	if !ok {
+		return e.store.ListInstancesForApp(ctx, appID)
+	}
+	held := e.ledger.InstancesForApp(appID)
+	if len(held) == 0 {
+		return nil, nil
+	}
+	rows, err := reader.InstancesByIDs(ctx, held)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]state.Instance, 0, len(rows))
+	for _, id := range held {
+		if ins, ok := rows[id]; ok && ins.AppID == appID {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
+}
+
+// deletedAppCleanupStates are the states ReconcileLifecycleInstance acts on:
+// live rows and rows an account deletion is evicting.
+func deletedAppCleanupStates() []string {
+	return append(state.LiveStates(), string(state.StateEvictingAccountDeleting))
 }
 
 // appMustPark reports whether no instance of app may stay live: the app is
@@ -7667,7 +7701,14 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 	if !e.ownsApp(app) {
 		return 0, nil
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	// ADR 20261103131546: only live and account-deleting rows are acted on,
+	// so a store that can reads those instead of the app's wake history.
+	var instances []state.Instance
+	if reader, ok := e.store.(state.AppInstancesInStatesReader); ok {
+		instances, err = reader.ListAppInstancesInStates(ctx, appID, deletedAppCleanupStates())
+	} else {
+		instances, err = e.store.ListInstancesForApp(ctx, appID)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("sched: deleted-app reconcile: list app %s: %w", appID, err)
 	}

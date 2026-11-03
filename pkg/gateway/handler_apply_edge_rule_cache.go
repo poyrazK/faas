@@ -241,8 +241,19 @@ func (h *Handler) metricsIncCacheOutcome(appID, outcome string) {
 // preview request whose gate credential was withheld from the app still
 // carried one (ADR-20261102100001).
 func hasCacheCredentials(r *http.Request) bool {
-	return r != nil && (len(r.Header.Values("Authorization")) != 0 || hasSessionCookie(r) ||
-		authenticatedFrom(r.Context()).CredentialWithheld)
+	if r == nil {
+		return false
+	}
+	// APIs commonly take keys in X-API-Key (or behind a proxy that
+	// authenticates with Proxy-Authorization). The key was not part of the
+	// cache key, so a keyed caller's response was served to anonymous ones
+	// unless the app marked it private (ADR-20261103090000).
+	for _, name := range []string{"Authorization", "Proxy-Authorization", "X-API-Key"} {
+		if len(r.Header.Values(name)) != 0 {
+			return true
+		}
+	}
+	return hasSessionCookie(r) || authenticatedFrom(r.Context()).CredentialWithheld
 }
 
 // hasSessionCookie treats any remaining Cookie field as session state. The
