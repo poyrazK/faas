@@ -10020,6 +10020,15 @@ type ObjectStorageCapacityReconciliation struct {
 	ScannedVersions   int64
 }
 
+// Object-storage ceilings support granted a billing subject in place of its paid plan's; written only by apid (ADR-20261101214152).
+type ObjectStorageCeilingGrant struct {
+	OwnerID   pgtype.UUID
+	MaxBytes  int64
+	Reason    string
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+}
+
 type ObjectStorageCustomerUsageReportsV2 struct {
 	AccountID          pgtype.UUID
 	BackendID          string
