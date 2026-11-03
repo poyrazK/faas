@@ -19625,34 +19625,6 @@ END $$;
 
 
 --
--- Name: issue_window_weight(timestamp with time zone, bigint, jsonb, timestamp with time zone, timestamp with time zone, boolean, boolean); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.issue_window_weight(sample_time timestamptz, total bigint, buckets jsonb,
- window_start timestamptz, window_end timestamptz, start_inclusive boolean, end_inclusive boolean)
-RETURNS bigint LANGUAGE plpgsql STABLE PARALLEL SAFE AS $$
-DECLARE result bigint;
-BEGIN
- -- A whole second is inside the window, so no histogram needs loading.
- IF (date_trunc('second',sample_time) > window_start OR
-    (start_inclusive AND date_trunc('second',sample_time) = window_start))
-    AND date_trunc('second',sample_time) + interval '1 second' <= window_end THEN RETURN total; END IF;
- IF jsonb_array_length(buckets) = 0 THEN
-  IF (sample_time > window_start OR (start_inclusive AND sample_time = window_start))
-   AND (sample_time < window_end OR (end_inclusive AND sample_time = window_end)) THEN RETURN total; END IF;
-  RETURN 0;
- END IF;
- SELECT COALESCE(sum((b->>1)::bigint),0)::bigint INTO result
- FROM jsonb_array_elements(buckets) b
- WHERE ((b->>0)::numeric > extract(epoch FROM window_start)*1000 OR
-        (start_inclusive AND (b->>0)::numeric = extract(epoch FROM window_start)*1000))
-   AND ((b->>0)::numeric < extract(epoch FROM window_end)*1000 OR
-        (end_inclusive AND (b->>0)::numeric = extract(epoch FROM window_end)*1000));
- RETURN result;
-END $$;
-
-
---
 -- Name: issue_slack_revoke_mfa_links(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19748,6 +19720,34 @@ CREATE FUNCTION public.issue_tracker_source_bump(target uuid) RETURNS void
  INSERT INTO issue_tracker_source_guards(issue_id) SELECT id FROM app_issues WHERE id=target
  ON CONFLICT(issue_id) DO UPDATE SET revision=nextval('issue_tracker_source_revision_seq');
 $$;
+
+
+--
+-- Name: issue_window_weight(timestamp with time zone, bigint, jsonb, timestamp with time zone, timestamp with time zone, boolean, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_window_weight(sample_time timestamp with time zone, total bigint, buckets jsonb, window_start timestamp with time zone, window_end timestamp with time zone, start_inclusive boolean, end_inclusive boolean) RETURNS bigint
+    LANGUAGE plpgsql STABLE PARALLEL SAFE
+    AS $$
+DECLARE result bigint;
+BEGIN
+ -- A whole second is inside the window, so no histogram needs loading.
+ IF (date_trunc('second',sample_time) > window_start OR
+    (start_inclusive AND date_trunc('second',sample_time) = window_start))
+    AND date_trunc('second',sample_time) + interval '1 second' <= window_end THEN RETURN total; END IF;
+ IF jsonb_array_length(buckets) = 0 THEN
+  IF (sample_time > window_start OR (start_inclusive AND sample_time = window_start))
+   AND (sample_time < window_end OR (end_inclusive AND sample_time = window_end)) THEN RETURN total; END IF;
+  RETURN 0;
+ END IF;
+ SELECT COALESCE(sum((b->>1)::bigint),0)::bigint INTO result
+ FROM jsonb_array_elements(buckets) b
+ WHERE ((b->>0)::numeric > extract(epoch FROM window_start)*1000 OR
+        (start_inclusive AND (b->>0)::numeric = extract(epoch FROM window_start)*1000))
+   AND ((b->>0)::numeric < extract(epoch FROM window_end)*1000 OR
+        (end_inclusive AND (b->>0)::numeric = extract(epoch FROM window_end)*1000));
+ RETURN result;
+END $$;
 
 
 --

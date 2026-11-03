@@ -199,7 +199,7 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 
 	// Issues have their own retention and quotas. Do not gate them on the
 	// legacy aggregate or its optional per-request detail row.
-	a.enqueueHTTPIssue(req)
+	a.enqueueHTTPIssue(req) //nolint:contextcheck // Bounded issue delivery must outlive the request stream.
 
 	// ---- 4. IncrementAppError (dedupe-merge INSERT) ----
 	//

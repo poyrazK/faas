@@ -81,11 +81,11 @@ func recordHTTPIssue(ctx context.Context, store AppErrorsStore, req *apidpb.Incr
 	now := time.Now().UTC()
 	buckets, err := httpIssueTimeBuckets(req, count, now)
 	if err != nil {
-		return httpIssueSkipped, fmt.Errorf("%w: %v", state.ErrInvalidArgument, err)
+		return httpIssueSkipped, fmt.Errorf("%w: %w", state.ErrInvalidArgument, err)
 	}
 	normalized, fp, title, err := issues.Normalize(event, now, lim)
 	if err != nil {
-		return httpIssueSkipped, fmt.Errorf("%w: %v", state.ErrInvalidArgument, err)
+		return httpIssueSkipped, fmt.Errorf("%w: %w", state.ErrInvalidArgument, err)
 	}
 	if len(buckets) != 0 && normalized.OccurredAt.Before(event.OccurredAt) {
 		normalized.OccurredAt = normalized.OccurredAt.Truncate(time.Millisecond)

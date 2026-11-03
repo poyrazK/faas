@@ -39,12 +39,27 @@ BEGIN
  RETURN OLD;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER issue_event_usage_insert AFTER INSERT ON issue_events
- REFERENCING NEW TABLE AS inserted_issue_events FOR EACH STATEMENT EXECUTE FUNCTION issue_event_usage_insert();
-CREATE TRIGGER issue_event_usage_delete AFTER DELETE ON issue_events
- REFERENCING OLD TABLE AS deleted_issue_events FOR EACH STATEMENT EXECUTE FUNCTION issue_event_usage_delete();
-CREATE TRIGGER issue_event_usage_app_delete AFTER DELETE ON apps
- FOR EACH ROW EXECUTE FUNCTION issue_event_usage_app_delete();
+-- Preserve existing triggers on a ledger replay instead of recreating or
+-- replacing a possibly newer definition.
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'issue_events'::regclass
+                AND tgname = 'issue_event_usage_insert' AND NOT tgisinternal) THEN
+  CREATE TRIGGER issue_event_usage_insert AFTER INSERT ON issue_events
+   REFERENCING NEW TABLE AS inserted_issue_events FOR EACH STATEMENT EXECUTE FUNCTION issue_event_usage_insert();
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'issue_events'::regclass
+                AND tgname = 'issue_event_usage_delete' AND NOT tgisinternal) THEN
+  CREATE TRIGGER issue_event_usage_delete AFTER DELETE ON issue_events
+   REFERENCING OLD TABLE AS deleted_issue_events FOR EACH STATEMENT EXECUTE FUNCTION issue_event_usage_delete();
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'apps'::regclass
+                AND tgname = 'issue_event_usage_app_delete' AND NOT tgisinternal) THEN
+  CREATE TRIGGER issue_event_usage_app_delete AFTER DELETE ON apps
+   FOR EACH ROW EXECUTE FUNCTION issue_event_usage_app_delete();
+ END IF;
+END $$;
+-- +goose StatementEnd
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
 DROP TRIGGER IF EXISTS issue_event_usage_app_delete ON apps;
