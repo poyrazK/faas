@@ -3176,6 +3176,22 @@ where trigger_id = $1
 order by received_at desc
 limit $2;
 
+-- name: TriggerRecordInScope :one
+-- The operator record verbs (POST /v1/triggers/{id}/records/{rid}/retry and
+-- /drop) address a record through its trigger's URL. The record must belong
+-- to that trigger and the trigger to the caller's app; any other record
+-- answers "no such record". A record's trigger and a trigger's app never
+-- change, so the check needs no row lock and keeps the replay lock order.
+select exists(select 1 from trigger_records r join triggers t on t.id=r.trigger_id
+  where r.id=sqlc.arg(id)::uuid and r.trigger_id=sqlc.arg(trigger_id)::uuid
+    and t.app_id=sqlc.arg(app_id)::uuid);
+
+-- name: DropTriggerRecordByOperator :execrows
+-- Deletes one record of the addressed trigger on the caller's app.
+delete from trigger_records r using triggers t
+where r.id=sqlc.arg(id)::uuid and r.trigger_id=sqlc.arg(trigger_id)::uuid
+  and t.id=r.trigger_id and t.app_id=sqlc.arg(app_id)::uuid;
+
 -- name: TriggerRecordIDByItemIdentifier :one
 -- Audit round 2 finding #1 (PR #910): deadLetterAll() is invoked
 -- with broker-side handles (kafka offset, NATS seq, SQS receipt
