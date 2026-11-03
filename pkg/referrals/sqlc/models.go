@@ -14,6 +14,7 @@ type Account struct {
 	Plan            string
 	Status          string
 	EmailVerifiedAt pgtype.Timestamptz
+	MfaEnrolledAt   pgtype.Timestamptz
 }
 
 type App struct {
@@ -62,6 +63,21 @@ type ReferralLink struct {
 	ShareCode pgtype.Text
 }
 
+type SalesLead struct {
+	ID        pgtype.UUID
+	OwnerID   pgtype.UUID
+	Name      string
+	Email     string
+	Company   string
+	Stage     string
+	Note      string
+	Version   int64
+	CreatedBy pgtype.UUID
+	UpdatedBy pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type SalesReferralOverview struct {
 	AccountID           pgtype.UUID
 	OwnerID             pgtype.UUID
@@ -81,4 +97,17 @@ type SalesReferralOverview struct {
 	RewardStatus        string
 	RewardCents         int64
 	ReferredRewardCents int64
+}
+
+type SalesTask struct {
+	ID          pgtype.UUID
+	LeadID      pgtype.UUID
+	Title       string
+	DueOn       pgtype.Date
+	CompletedAt pgtype.Timestamptz
+	Version     int64
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }

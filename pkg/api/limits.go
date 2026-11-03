@@ -35,6 +35,18 @@ const (
 	ReferralReadTimeout            = 10 * time.Second
 )
 
+// Sales workspace input and pagination bounds.
+const (
+	SalesPageSize           = ReferralPageSize
+	SalesNameMaxBytes       = 120
+	SalesFieldMaxBytes      = 200
+	SalesEmailMaxBytes      = 254
+	SalesSearchMaxBytes     = 100
+	SalesTaskMinYear        = 2000
+	SalesTaskMaxYear        = 2100
+	SalesTaskRefreshSeconds = 60
+)
+
 // Shared traffic counters bound each admission round trip and aggregate replay.
 const (
 	TrafficCounterOperationTimeout = 100 * time.Millisecond

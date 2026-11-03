@@ -55151,6 +55151,35 @@ CREATE TABLE public.safe_release_worker_lease (
 
 
 --
+-- Name: sales_leads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_leads (
+    id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    name text NOT NULL,
+    email text NOT NULL,
+    company text DEFAULT ''::text NOT NULL,
+    stage text DEFAULT 'new'::text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_leads_company_check CHECK ((octet_length(company) <= 200)),
+    CONSTRAINT sales_leads_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_leads_email_check CHECK (((email = lower(btrim(email))) AND ((octet_length(email) >= 3) AND (octet_length(email) <= 254)))),
+    CONSTRAINT sales_leads_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_leads_name_check CHECK (((name = btrim(name)) AND ((octet_length(name) >= 1) AND (octet_length(name) <= 120)))),
+    CONSTRAINT sales_leads_note_check CHECK ((octet_length(note) <= 2000)),
+    CONSTRAINT sales_leads_stage_check CHECK ((stage = ANY (ARRAY['new'::text, 'contacted'::text, 'qualified'::text, 'demo'::text, 'won'::text, 'lost'::text]))),
+    CONSTRAINT sales_leads_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_leads_version_check CHECK ((version > 0))
+);
+
+
+--
 -- Name: sales_referral_overview; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -55195,6 +55224,31 @@ CREATE VIEW public.sales_referral_overview AS
      JOIN public.accounts a ON ((a.id = r.account_id)))
      JOIN public.accounts owner ON ((owner.id = l.owner_id)))
      LEFT JOIN public.invoices i ON (((i.id = r.first_paid_invoice_id) AND (i.account_id = r.account_id))));
+
+
+--
+-- Name: sales_tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_tasks (
+    id uuid NOT NULL,
+    lead_id uuid NOT NULL,
+    title text NOT NULL,
+    due_on date NOT NULL,
+    completed_at timestamp with time zone,
+    version bigint DEFAULT 1 NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_tasks_completed_at_check CHECK (((completed_at IS NULL) OR isfinite(completed_at))),
+    CONSTRAINT sales_tasks_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_tasks_due_on_check CHECK ((isfinite(due_on) AND ((due_on >= '2000-01-01'::date) AND (due_on <= '2100-12-31'::date)))),
+    CONSTRAINT sales_tasks_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_tasks_title_check CHECK (((title = btrim(title)) AND ((octet_length(title) >= 1) AND (octet_length(title) <= 200)))),
+    CONSTRAINT sales_tasks_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_tasks_version_check CHECK ((version > 0))
+);
 
 
 --
@@ -69068,6 +69122,30 @@ ALTER TABLE ONLY public.safe_release_worker_lease
 
 
 --
+-- Name: sales_leads sales_leads_owner_id_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_owner_id_email_key UNIQUE (owner_id, email);
+
+
+--
+-- Name: sales_leads sales_leads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_tasks sales_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_tasks
+    ADD CONSTRAINT sales_tasks_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: saved_route_requirements saved_route_requirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79478,6 +79556,27 @@ CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations
 --
 
 CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verifications USING btree (next_attempt_at, created_at, operation_id) WHERE (phase = 'pending'::text);
+
+
+--
+-- Name: sales_leads_owner_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_leads_owner_page ON public.sales_leads USING btree (owner_id, id);
+
+
+--
+-- Name: sales_tasks_due_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_tasks_due_page ON public.sales_tasks USING btree (due_on, id);
+
+
+--
+-- Name: sales_tasks_lead; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_tasks_lead ON public.sales_tasks USING btree (lead_id);
 
 
 --
@@ -102170,6 +102269,54 @@ ALTER TABLE ONLY public.runtime_upgrade_verifications
 
 ALTER TABLE ONLY public.runtime_upgrade_verifications
     ADD CONSTRAINT runtime_upgrade_verifications_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.runtime_upgrade_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_leads sales_leads_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_leads sales_leads_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_leads sales_leads_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_tasks sales_tasks_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_tasks
+    ADD CONSTRAINT sales_tasks_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_tasks sales_tasks_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_tasks
+    ADD CONSTRAINT sales_tasks_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.sales_leads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_tasks sales_tasks_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_tasks
+    ADD CONSTRAINT sales_tasks_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

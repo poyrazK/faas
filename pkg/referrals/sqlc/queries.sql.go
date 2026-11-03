@@ -49,6 +49,99 @@ func (q *Queries) AttributeSignup(ctx context.Context, db DBTX, arg AttributeSig
 	return result.RowsAffected(), nil
 }
 
+const createProspect = `-- name: CreateProspect :one
+INSERT INTO sales_leads(id,owner_id,name,email,company,stage,note,created_by,updated_by)
+SELECT $1,a.id,$2,$3,$4,$5,$6,$7,$7
+FROM accounts a WHERE a.id=$8 AND a.status='active' AND a.email_verified_at IS NOT NULL AND a.mfa_enrolled_at IS NOT NULL
+ AND (a.id=$7::uuid OR $9::boolean)
+RETURNING id
+`
+
+type CreateProspectParams struct {
+	ID        pgtype.UUID
+	Name      string
+	Email     string
+	Company   string
+	Stage     string
+	Note      string
+	ActorID   pgtype.UUID
+	OwnerID   pgtype.UUID
+	AllOwners bool
+}
+
+func (q *Queries) CreateProspect(ctx context.Context, db DBTX, arg CreateProspectParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, createProspect,
+		arg.ID,
+		arg.Name,
+		arg.Email,
+		arg.Company,
+		arg.Stage,
+		arg.Note,
+		arg.ActorID,
+		arg.OwnerID,
+		arg.AllOwners,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createSalesTask = `-- name: CreateSalesTask :one
+INSERT INTO sales_tasks(id,lead_id,title,due_on,created_by,updated_by)
+SELECT $1,l.id,$2,$3,$4,$4
+FROM sales_leads l WHERE l.id=$5
+ AND (l.owner_id=$4::uuid OR $6::boolean)
+RETURNING id
+`
+
+type CreateSalesTaskParams struct {
+	ID        pgtype.UUID
+	Title     string
+	DueOn     pgtype.Date
+	ActorID   pgtype.UUID
+	LeadID    pgtype.UUID
+	AllOwners bool
+}
+
+func (q *Queries) CreateSalesTask(ctx context.Context, db DBTX, arg CreateSalesTaskParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, createSalesTask,
+		arg.ID,
+		arg.Title,
+		arg.DueOn,
+		arg.ActorID,
+		arg.LeadID,
+		arg.AllOwners,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const deleteProspect = `-- name: DeleteProspect :execrows
+DELETE FROM sales_leads WHERE id=$1 AND version=$2
+ AND (owner_id=$3::uuid OR $4::boolean)
+`
+
+type DeleteProspectParams struct {
+	ID        pgtype.UUID
+	Version   int64
+	ActorID   pgtype.UUID
+	AllOwners bool
+}
+
+func (q *Queries) DeleteProspect(ctx context.Context, db DBTX, arg DeleteProspectParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteProspect,
+		arg.ID,
+		arg.Version,
+		arg.ActorID,
+		arg.AllOwners,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const ensureLink = `-- name: EnsureLink :one
 INSERT INTO referral_links(code,owner_id,kind,share_code) VALUES ($1,$2,$3,$4)
 ON CONFLICT (owner_id,kind) DO UPDATE SET share_code=COALESCE(referral_links.share_code,EXCLUDED.share_code)
@@ -98,6 +191,91 @@ func (q *Queries) GetLink(ctx context.Context, db DBTX, shareCode pgtype.Text) (
 		&i.ShareCode,
 	)
 	return i, err
+}
+
+const listProspects = `-- name: ListProspects :many
+SELECT l.id, l.owner_id, l.name, l.email, l.company, l.stage, l.note, l.version, l.created_by, l.updated_by, l.created_at, l.updated_at,a.email AS owner_email,
+ EXISTS(SELECT 1 FROM sales_referral_overview v WHERE v.owner_id=l.owner_id AND v.kind='sales' AND lower(v.email)=l.email) AS registered,
+ EXISTS(SELECT 1 FROM sales_referral_overview v WHERE v.owner_id=l.owner_id AND v.kind='sales' AND lower(v.email)=l.email AND v.paid) AS paid
+FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
+WHERE (l.owner_id=$1::uuid OR $2::boolean)
+ AND ($3::text='' OR l.owner_id::text=$3::text)
+ AND ($4::text='' OR l.stage=$4::text)
+ AND position(lower($5::text) in lower(l.name||' '||l.email||' '||l.company))>0
+ AND ($6::uuid='00000000-0000-0000-0000-000000000000'::uuid OR l.id<$6::uuid)
+ORDER BY l.id DESC LIMIT $7::integer
+`
+
+type ListProspectsParams struct {
+	ActorID     pgtype.UUID
+	AllOwners   bool
+	OwnerFilter string
+	Stage       string
+	Search      string
+	AfterID     pgtype.UUID
+	RowLimit    int32
+}
+
+type ListProspectsRow struct {
+	ID         pgtype.UUID
+	OwnerID    pgtype.UUID
+	Name       string
+	Email      string
+	Company    string
+	Stage      string
+	Note       string
+	Version    int64
+	CreatedBy  pgtype.UUID
+	UpdatedBy  pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+	OwnerEmail string
+	Registered bool
+	Paid       bool
+}
+
+func (q *Queries) ListProspects(ctx context.Context, db DBTX, arg ListProspectsParams) ([]ListProspectsRow, error) {
+	rows, err := db.Query(ctx, listProspects,
+		arg.ActorID,
+		arg.AllOwners,
+		arg.OwnerFilter,
+		arg.Stage,
+		arg.Search,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProspectsRow{}
+	for rows.Next() {
+		var i ListProspectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Email,
+			&i.Company,
+			&i.Stage,
+			&i.Note,
+			&i.Version,
+			&i.CreatedBy,
+			&i.UpdatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OwnerEmail,
+			&i.Registered,
+			&i.Paid,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listReferrals = `-- name: ListReferrals :many
@@ -161,6 +339,86 @@ func (q *Queries) ListReferrals(ctx context.Context, db DBTX, arg ListReferralsP
 	return items, nil
 }
 
+const listSalesTasks = `-- name: ListSalesTasks :many
+SELECT t.id,t.lead_id,t.title,t.due_on,t.completed_at,t.version,l.name AS lead_name,l.email AS lead_email,l.owner_id,a.email AS owner_email
+FROM sales_tasks t JOIN sales_leads l ON l.id=t.lead_id JOIN accounts a ON a.id=l.owner_id
+WHERE (l.owner_id=$1::uuid OR $2::boolean)
+ AND ($3::text='' OR l.owner_id::text=$3::text)
+ AND ($4::text='all' OR ($4::text='done')=(t.completed_at IS NOT NULL))
+ AND ($5::text='all'
+  OR ($5::text='overdue' AND t.completed_at IS NULL AND t.due_on<$6::date)
+  OR ($5::text='today' AND t.due_on=$6::date)
+  OR ($5::text='upcoming' AND t.due_on>$6::date))
+ AND (t.due_on,t.id)>($7::date,$8::uuid)
+ORDER BY t.due_on,t.id LIMIT $9::integer
+`
+
+type ListSalesTasksParams struct {
+	ActorID     pgtype.UUID
+	AllOwners   bool
+	OwnerFilter string
+	Status      string
+	DueFilter   string
+	OnDate      pgtype.Date
+	AfterDate   pgtype.Date
+	AfterID     pgtype.UUID
+	RowLimit    int32
+}
+
+type ListSalesTasksRow struct {
+	ID          pgtype.UUID
+	LeadID      pgtype.UUID
+	Title       string
+	DueOn       pgtype.Date
+	CompletedAt pgtype.Timestamptz
+	Version     int64
+	LeadName    string
+	LeadEmail   string
+	OwnerID     pgtype.UUID
+	OwnerEmail  string
+}
+
+func (q *Queries) ListSalesTasks(ctx context.Context, db DBTX, arg ListSalesTasksParams) ([]ListSalesTasksRow, error) {
+	rows, err := db.Query(ctx, listSalesTasks,
+		arg.ActorID,
+		arg.AllOwners,
+		arg.OwnerFilter,
+		arg.Status,
+		arg.DueFilter,
+		arg.OnDate,
+		arg.AfterDate,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSalesTasksRow{}
+	for rows.Next() {
+		var i ListSalesTasksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.Title,
+			&i.DueOn,
+			&i.CompletedAt,
+			&i.Version,
+			&i.LeadName,
+			&i.LeadEmail,
+			&i.OwnerID,
+			&i.OwnerEmail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const ownLink = `-- name: OwnLink :one
 SELECT code, owner_id, kind, active, created_at, share_code FROM referral_links WHERE owner_id=$1 AND kind=$2
 `
@@ -182,6 +440,51 @@ func (q *Queries) OwnLink(ctx context.Context, db DBTX, arg OwnLinkParams) (Refe
 		&i.ShareCode,
 	)
 	return i, err
+}
+
+const prospectCounts = `-- name: ProspectCounts :many
+SELECT stage,count(*)::bigint AS count FROM sales_leads l
+WHERE (l.owner_id=$1::uuid OR $2::boolean)
+ AND ($3::text='' OR l.owner_id::text=$3::text)
+ AND position(lower($4::text) in lower(l.name||' '||l.email||' '||l.company))>0
+GROUP BY stage ORDER BY stage
+`
+
+type ProspectCountsParams struct {
+	ActorID     pgtype.UUID
+	AllOwners   bool
+	OwnerFilter string
+	Search      string
+}
+
+type ProspectCountsRow struct {
+	Stage string
+	Count int64
+}
+
+func (q *Queries) ProspectCounts(ctx context.Context, db DBTX, arg ProspectCountsParams) ([]ProspectCountsRow, error) {
+	rows, err := db.Query(ctx, prospectCounts,
+		arg.ActorID,
+		arg.AllOwners,
+		arg.OwnerFilter,
+		arg.Search,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProspectCountsRow{}
+	for rows.Next() {
+		var i ProspectCountsRow
+		if err := rows.Scan(&i.Stage, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const recordReferralPayment = `-- name: RecordReferralPayment :exec
@@ -254,6 +557,72 @@ func (q *Queries) ReferralSummary(ctx context.Context, db DBTX, arg ReferralSumm
 	return items, nil
 }
 
+const salesTaskCounts = `-- name: SalesTaskCounts :one
+SELECT count(*)::bigint AS open,
+ count(*) FILTER(WHERE t.due_on=$1::date)::bigint AS today,
+ count(*) FILTER(WHERE t.due_on<$1::date)::bigint AS overdue
+FROM sales_tasks t JOIN sales_leads l ON l.id=t.lead_id
+WHERE t.completed_at IS NULL AND (l.owner_id=$2::uuid OR $3::boolean)
+ AND ($4::text='' OR l.owner_id::text=$4::text)
+`
+
+type SalesTaskCountsParams struct {
+	OnDate      pgtype.Date
+	ActorID     pgtype.UUID
+	AllOwners   bool
+	OwnerFilter string
+}
+
+type SalesTaskCountsRow struct {
+	Open    int64
+	Today   int64
+	Overdue int64
+}
+
+func (q *Queries) SalesTaskCounts(ctx context.Context, db DBTX, arg SalesTaskCountsParams) (SalesTaskCountsRow, error) {
+	row := db.QueryRow(ctx, salesTaskCounts,
+		arg.OnDate,
+		arg.ActorID,
+		arg.AllOwners,
+		arg.OwnerFilter,
+	)
+	var i SalesTaskCountsRow
+	err := row.Scan(&i.Open, &i.Today, &i.Overdue)
+	return i, err
+}
+
+const salesTeam = `-- name: SalesTeam :many
+SELECT id,email FROM accounts
+WHERE lower(email)=ANY($1::text[]) AND status='active'
+ AND email_verified_at IS NOT NULL AND mfa_enrolled_at IS NOT NULL
+ORDER BY lower(email),id
+`
+
+type SalesTeamRow struct {
+	ID    pgtype.UUID
+	Email string
+}
+
+func (q *Queries) SalesTeam(ctx context.Context, db DBTX, emails []string) ([]SalesTeamRow, error) {
+	rows, err := db.Query(ctx, salesTeam, emails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SalesTeamRow{}
+	for rows.Next() {
+		var i SalesTeamRow
+		if err := rows.Scan(&i.ID, &i.Email); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setLinkActive = `-- name: SetLinkActive :execrows
 UPDATE referral_links SET active=$1
 WHERE share_code=$2 AND (owner_id=$3::uuid OR $4::boolean)
@@ -310,4 +679,79 @@ func (q *Queries) UpdateLead(ctx context.Context, db DBTX, arg UpdateLeadParams)
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateProspect = `-- name: UpdateProspect :one
+UPDATE sales_leads l SET name=$1,email=$2,company=$3,stage=$4,note=$5,
+ owner_id=$6,updated_by=$7,updated_at=now(),version=version+1
+WHERE l.id=$8 AND l.version=$9
+ AND ($6::uuid=$7::uuid OR $10::boolean)
+ AND (l.owner_id=$7::uuid OR $10::boolean)
+ AND EXISTS(SELECT 1 FROM accounts a WHERE a.id=$6 AND a.status='active' AND a.email_verified_at IS NOT NULL AND a.mfa_enrolled_at IS NOT NULL)
+RETURNING id
+`
+
+type UpdateProspectParams struct {
+	Name      string
+	Email     string
+	Company   string
+	Stage     string
+	Note      string
+	OwnerID   pgtype.UUID
+	ActorID   pgtype.UUID
+	ID        pgtype.UUID
+	Version   int64
+	AllOwners bool
+}
+
+func (q *Queries) UpdateProspect(ctx context.Context, db DBTX, arg UpdateProspectParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, updateProspect,
+		arg.Name,
+		arg.Email,
+		arg.Company,
+		arg.Stage,
+		arg.Note,
+		arg.OwnerID,
+		arg.ActorID,
+		arg.ID,
+		arg.Version,
+		arg.AllOwners,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const updateSalesTask = `-- name: UpdateSalesTask :one
+UPDATE sales_tasks t SET title=$1,due_on=$2,
+ completed_at=CASE WHEN $3::boolean THEN COALESCE(t.completed_at,now()) ELSE NULL END,
+ updated_by=$4,updated_at=now(),version=t.version+1
+FROM sales_leads l WHERE l.id=t.lead_id AND t.id=$5 AND t.version=$6
+ AND (l.owner_id=$4::uuid OR $7::boolean)
+RETURNING t.id
+`
+
+type UpdateSalesTaskParams struct {
+	Title     string
+	DueOn     pgtype.Date
+	Done      bool
+	ActorID   pgtype.UUID
+	ID        pgtype.UUID
+	Version   int64
+	AllOwners bool
+}
+
+func (q *Queries) UpdateSalesTask(ctx context.Context, db DBTX, arg UpdateSalesTaskParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, updateSalesTask,
+		arg.Title,
+		arg.DueOn,
+		arg.Done,
+		arg.ActorID,
+		arg.ID,
+		arg.Version,
+		arg.AllOwners,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }

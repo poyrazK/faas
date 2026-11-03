@@ -41,7 +41,7 @@ func (s *Service) encodeCursor(after, audience string) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(gcm.Seal(nonce, nonce, []byte(after), []byte(audience))), nil
 }
 
-func (s *Service) decodeCursor(value, audience string) (string, error) {
+func (s *Service) openCursor(value, audience string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
@@ -60,8 +60,16 @@ func (s *Service) decodeCursor(value, audience string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err = uuid.Parse(string(plain)); err != nil {
+	return string(plain), nil
+}
+
+func (s *Service) decodeCursor(value, audience string) (string, error) {
+	plain, err := s.openCursor(value, audience)
+	if err != nil || plain == "" {
+		return plain, err
+	}
+	if _, err = uuid.Parse(plain); err != nil {
 		return "", err
 	}
-	return string(plain), nil
+	return plain, nil
 }

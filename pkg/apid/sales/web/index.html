@@ -5,6 +5,7 @@
   <meta name="robots" content="noindex,nofollow"><title>{{if .Staff}}Sales workspace{{else}}Your referrals{{end}} · Gregale</title>
   <link rel="stylesheet" href="/dashboard/referral-assets/portal.css">
   <script nonce="{{.Nonce}}" src="/dashboard/referral-assets/portal.js" defer></script>
+  {{if .Staff}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/pipeline.js" defer></script>{{end}}
 </head>
 <body data-staff="{{.Staff}}">
   <a class="skip" href="#main">Skip to content</a>
@@ -13,6 +14,7 @@
     <span class="eyebrow rail-label">{{if .Staff}}SALES WORKSPACE{{else}}REFERRAL PROGRAM{{end}}</span>
     <nav aria-label="Workspace">
       <a href="#overview" class="nav-item active" aria-current="page"><span>◈</span> Overview</a>
+      {{if .Staff}}<a href="#pipeline" class="nav-item"><span>◇</span> Lead pipeline</a><a href="#tasks" class="nav-item"><span>✓</span> Task inbox <span id="task-nav-count" class="task-nav-count" hidden></span></a>{{end}}
       <a href="#referrals" class="nav-item"><span>↗</span> {{if .Staff}}Customers & referrals{{else}}Your referrals{{end}}</a>
       {{if .Staff}}<a href="#kit" class="nav-item"><span>▤</span> Sales kit</a>{{end}}
       <a href="/dashboard/" class="nav-item"><span>←</span> Product console</a>
@@ -31,6 +33,21 @@
         <article class="panel terms-panel"><span class="eyebrow">PROGRAM TERMS</span><h2>A clear path to a reward.</h2><ol class="steps"><li><span>01</span><div><strong>A new customer enters your code</strong><p>Existing accounts and self-referrals do not qualify.</p></div></li><li><span>02</span><div><strong>The first invoice is paid</strong><p id="conversion-terms">Loading program terms…</p></div></li><li><span>03</span><div><strong>The reward passes its hold</strong><p id="reward-terms">Loading reward terms…</p></div></li></ol></article>
       </div>
     </section>
+    {{if .Staff}}
+    <section id="pipeline" class="page-section">
+      <div class="section-heading"><div><p class="eyebrow">BEFORE THE FIRST SIGNUP</p><h2>Lead pipeline</h2><p class="muted">Keep each prospect, owner, and next conversation in one place.</p></div><button id="new-prospect" class="button primary" disabled>+ Add lead</button></div>
+      <p id="pipeline-error" class="error" role="alert" hidden></p><p id="pipeline-status" class="muted" role="status"></p>
+      <div id="pipeline-summary" class="pipeline-summary" aria-label="Leads by stage"></div>
+      <div class="filters"><label class="search-label"><span>⌕</span><input id="prospect-search" type="search" maxlength="100" placeholder="Search name, email or company" aria-label="Search leads"></label><label>Stage<select id="prospect-stage"><option value="">All stages</option></select></label><label id="prospect-owner-label" hidden>Owner<select id="prospect-owner"><option value="">All salespeople</option></select></label></div>
+      <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Prospect</th><th>Email</th><th>Owner</th><th>Stage</th><th>Referral match</th><th>Actions</th></tr></thead><tbody id="prospect-rows"><tr><td colspan="6" class="empty">Loading leads…</td></tr></tbody></table></div><div class="table-footer"><span id="prospect-page-info">25 leads per page</span><div><button id="prospect-first" class="button secondary small" hidden>First page</button><button id="prospect-next" class="button secondary small" disabled>Next page →</button></div></div></div>
+    </section>
+    <section id="tasks" class="page-section">
+      <div class="section-heading"><div><p class="eyebrow">THE NEXT CONVERSATION</p><h2>Follow-up task inbox</h2><p class="muted">Add tasks from a lead’s row. Reminders appear here; nothing is sent to prospects.</p></div><button id="tasks-refresh" class="button secondary" disabled>Refresh tasks</button></div>
+      <p id="tasks-error" class="error" role="alert" hidden></p><div id="task-summary" class="task-summary" aria-live="polite"></div><p id="task-reminder" class="muted" role="status"></p>
+      <div class="filters"><label>Status<select id="task-status"><option value="open">Open</option><option value="done">Completed</option><option value="all">All tasks</option></select></label><label>Due<select id="task-due"><option value="all">Any date</option><option value="overdue">Overdue</option><option value="today">Due today</option><option value="upcoming">Upcoming</option></select></label><label id="task-owner-label" hidden>Owner<select id="task-owner"><option value="">All salespeople</option></select></label></div>
+      <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Task / lead</th><th>Owner</th><th>Due date</th><th>Status</th><th>Actions</th></tr></thead><tbody id="task-rows"><tr><td colspan="5" class="empty">Loading follow-up tasks…</td></tr></tbody></table></div><div class="table-footer"><span id="task-page-info">Tasks are ordered by due date</span><div><button id="task-first" class="button secondary small" hidden>First page</button><button id="task-next" class="button secondary small" disabled>Next page →</button></div></div></div>
+    </section>
+    {{end}}
     <section id="referrals" class="page-section">
       <div class="section-heading"><div><p class="eyebrow">FROM INTRODUCTION TO ACTIVATION</p><h2>{{if .Staff}}Your customer pipeline{{else}}Your referrals{{end}}</h2><p id="scope-label" class="muted">Loading your permitted view…</p></div><button id="export" class="button secondary" disabled>↓ Export this page</button></div>
       {{if .Staff}}<div class="filters"><label class="search-label"><span>⌕</span><input id="search" type="search" placeholder="Search customers on this page" aria-label="Search customers on this page"></label><label>Stage <select id="stage"><option value="">All stages</option><option>new</option><option>contacted</option><option>qualified</option><option>lost</option></select></label></div>{{end}}
@@ -40,4 +57,17 @@
     <footer class="footer"><span>gregale · {{if .Staff}}sales workspace{{else}}referral program{{end}}</span><span id="observed">Waiting for data</span></footer>
   </main>
   {{if .Staff}}<dialog id="lead-dialog"><form id="lead-form"><div class="dialog-heading"><h2>Customer follow-up</h2><button type="button" id="close-dialog" class="text-button" aria-label="Close">✕</button></div><p id="lead-email" class="muted"></p><label>Stage<select id="lead-stage" required><option>new</option><option>contacted</option><option>qualified</option><option>lost</option></select></label><label>Next follow-up<input type="date" id="lead-follow-up"></label><label>Internal notes<textarea id="lead-note" rows="5" maxlength="2000" placeholder="Context and next steps for this conversation"></textarea></label><p class="muted">Notes are visible to the assigned rep and sales managers. Keep credentials and sensitive payment details out of notes.</p><p id="lead-error" role="alert"></p><button id="save-lead" class="button primary" type="submit">Save follow-up</button></form></dialog>{{end}}
+  {{if .Staff}}
+  <dialog id="prospect-dialog" aria-labelledby="prospect-dialog-title"><form id="prospect-form"><div class="dialog-heading"><h2 id="prospect-dialog-title">Add lead</h2><button type="button" id="prospect-close" class="text-button" aria-label="Close lead">✕</button></div>
+    <label>Name<input id="prospect-name" required maxlength="120" autocomplete="name"></label><label>Email<input id="prospect-email" required type="email" maxlength="254" autocomplete="email"></label><label>Company<input id="prospect-company" maxlength="200" autocomplete="organization"></label>
+    <div class="form-pair"><label>Stage<select id="prospect-edit-stage"></select></label><label>Assigned salesperson<select id="prospect-edit-owner" required></select></label></div>
+    <label>Notes<textarea id="prospect-note" rows="3" maxlength="2000"></textarea></label><p class="muted">Reassignment moves this lead and its tasks. Historical referral credit stays with the original referrer. Won/lost stages do not change invoices or rewards.</p>
+    <p id="prospect-form-error" role="alert" class="form-error"></p><div class="dialog-actions"><button id="prospect-save" type="submit" class="button primary">Save lead</button><button id="prospect-delete" type="button" class="text-button" hidden>Delete lead</button></div>
+  </form></dialog>
+  <dialog id="task-dialog" aria-labelledby="task-dialog-title"><form id="task-form"><div class="dialog-heading"><h2 id="task-dialog-title">Add follow-up task</h2><button type="button" id="task-close" class="text-button" aria-label="Close task">✕</button></div>
+    <p id="task-lead-name" class="muted"></p><label>Task title<input id="task-title" required maxlength="200" placeholder="For example, schedule a demo"></label><label>Due date<input id="task-date" type="date" required min="2000-01-01" max="2100-12-31"></label><label id="task-done-label" hidden><input id="task-done" type="checkbox"> Completed</label>
+    <p id="task-form-error" role="alert" class="form-error"></p><button id="task-save" type="submit" class="button primary">Save task</button>
+  </form></dialog>
+  {{end}}
+
 </body></html>

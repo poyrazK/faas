@@ -14507,6 +14507,21 @@ type SafeReleaseWorkerLease struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+type SalesLead struct {
+	ID        pgtype.UUID
+	OwnerID   pgtype.UUID
+	Name      string
+	Email     string
+	Company   string
+	Stage     string
+	Note      string
+	Version   int64
+	CreatedBy pgtype.UUID
+	UpdatedBy pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type SalesReferralOverview struct {
 	AccountID           pgtype.UUID
 	OwnerID             pgtype.UUID
@@ -14526,6 +14541,19 @@ type SalesReferralOverview struct {
 	RewardStatus        string
 	RewardCents         interface{}
 	ReferredRewardCents int64
+}
+
+type SalesTask struct {
+	ID          pgtype.UUID
+	LeadID      pgtype.UUID
+	Title       string
+	DueOn       pgtype.Date
+	CompletedAt pgtype.Timestamptz
+	Version     int64
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }
 
 type SavedRouteRequirement struct {

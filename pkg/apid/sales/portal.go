@@ -57,7 +57,7 @@ func (s *Service) Asset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("file")
-	if name != "portal.css" && name != "portal.js" {
+	if name != "portal.css" && name != "portal.js" && name != "pipeline.js" {
 		http.NotFound(w, r)
 		return
 	}

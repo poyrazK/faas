@@ -19993,5 +19993,39 @@
       "updated_by"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "sales_leads",
+    "columns": [
+      "company",
+      "created_at",
+      "created_by",
+      "email",
+      "id",
+      "name",
+      "note",
+      "owner_id",
+      "stage",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_tasks",
+    "columns": [
+      "completed_at",
+      "created_at",
+      "created_by",
+      "due_on",
+      "id",
+      "lead_id",
+      "title",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
   }
 ]
