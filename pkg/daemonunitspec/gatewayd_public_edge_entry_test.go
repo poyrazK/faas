@@ -98,14 +98,14 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 			}
 		})
 	}
-	// ADR-20261103163954: with no front the edge serves clients directly, so
-	// it gets the front switch and no client CA.
+	// ADR-20261103163954 §2: with no front the edge serves clients directly
+	// and still verifies the zone's client certificate when given, so it
+	// keeps every setting and gains the front switch.
 	t.Run("entry=both front=none", func(t *testing.T) {
 		output := render(t, map[string]any{"faas_edge_entry": "both", "faas_edge_public_front": "none"})
 		for _, line := range append(want, noFront) {
-			wantLine := !strings.Contains(line, "client_ca")
-			if got := strings.Contains(output, line); got != wantLine {
-				t.Errorf("%q rendered = %v, want %v:\n%s", line, got, wantLine, output)
+			if !strings.Contains(output, line) {
+				t.Errorf("%q not rendered:\n%s", line, output)
 			}
 		}
 	})

@@ -31,10 +31,11 @@ faas_edge_public_tls_key: /etc/faas/secrets/edge-tls/origin.key
 faas_edge_public_tls_client_ca: /etc/faas/secrets/edge-tls/origin-pull-ca.pem
 # ADR-20261103163954: what stands in front of the edge's TLS listener.
 # "cloudflare", the default, requires the zone's client certificate above.
-# "none" serves clients directly: no client certificate, so the client CA is
-# neither needed nor loaded, and faas_edge_public_tls_cert must be publicly
-# trusted. The manifest's public_edge.front and the firewall follow in a later
-# step; until then "none" is for a hand-run pilot only.
+# "none" serves clients directly: it verifies that certificate only when
+# given (so a proxied record still works, the way back under attack), and
+# faas_edge_public_tls_cert must be publicly trusted. The manifest's
+# public_edge.front and the firewall follow in a later step; until then
+# "none" is for a hand-run pilot only.
 faas_edge_public_front: cloudflare
 
 # Cloudflare Tunnel connector, pinned by version and per-architecture SHA-256

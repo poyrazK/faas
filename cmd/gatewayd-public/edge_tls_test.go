@@ -1,8 +1,9 @@
 // adr: 20261102081618, 20261103163954
 // edge_tls_test.go pins the compute edge's public TLS listener. Behind
 // Cloudflare it serves only peers holding the zone's client certificate, and
-// trusts their CF-Connecting-IP. With no front it serves any client, over
-// HTTP/2 or HTTP/1.1, and takes the client address from the connection.
+// trusts their CF-Connecting-IP. With no front it serves any client that
+// names an app host, over HTTP/2 or HTTP/1.1, takes the client address from
+// the connection, and still trusts a peer holding the zone's certificate.
 package main
 
 import (
@@ -19,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
@@ -50,7 +53,7 @@ func TestEdgeTLSConfigFromEnv(t *testing.T) {
 		out[name] = value
 		return out
 	}
-	direct := with(without(full, edgeTLSClientCAEnv), edgeTLSFrontEnv, "none")
+	direct := with(full, edgeTLSFrontEnv, "none")
 	for _, tc := range []struct {
 		name        string
 		mode        publicEdgeMode
@@ -67,7 +70,7 @@ func TestEdgeTLSConfigFromEnv(t *testing.T) {
 		{name: "behind Cloudflare by name", mode: edgeModeCompute, env: with(full, edgeTLSFrontEnv, "cloudflare"), wantEnabled: true},
 		{name: "the default front alone", mode: edgeModeCompute, env: map[string]string{edgeTLSFrontEnv: "cloudflare"}},
 		{name: "no front", mode: edgeModeCompute, env: direct, wantEnabled: true, wantDirect: true},
-		{name: "no front with a client CA", mode: edgeModeCompute, env: with(full, edgeTLSFrontEnv, "none"), wantErr: edgeTLSClientCAEnv},
+		{name: "no front without the client CA", mode: edgeModeCompute, env: without(direct, edgeTLSClientCAEnv), wantErr: edgeTLSClientCAEnv},
 		{name: "no front without an address", mode: edgeModeCompute, env: map[string]string{edgeTLSFrontEnv: "none"}, wantErr: edgeTLSAddrEnv},
 		{name: "no front on a control-plane edge", mode: edgeModeControlPlane, env: direct, wantErr: "for a compute edge"},
 		{name: "an unknown front", mode: edgeModeCompute, env: with(full, edgeTLSFrontEnv, "akamai"), wantErr: edgeTLSFrontEnv},
@@ -177,7 +180,7 @@ func TestEdgeTLSListenerServesOnlyTheZone(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := edgeTLSConfig{addr: "127.0.0.1:0", certFile: certFile, keyFile: keyFile, clientCAFile: clientCAFile}
-	ln, err := openEdgeTLSListener(cfg)
+	ln, err := openEdgeTLSListener(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,12 +243,17 @@ func TestEdgeTLSListenerServesOnlyTheZone(t *testing.T) {
 	}
 }
 
-func TestEdgeTLSListenerWithNoFrontServesAnyClient(t *testing.T) {
+func TestEdgeTLSListenerWithNoFront(t *testing.T) {
 	dir := t.TempDir()
-	publicCA := newTestCA(t, "public")
+	publicCA, zoneCA := newTestCA(t, "public"), newTestCA(t, "zone")
 	certFile, keyFile := writePEMPair(t, dir, publicCA.issue(t, x509.ExtKeyUsageServerAuth, "*.gregale.dev"))
-	cfg := edgeTLSConfig{addr: "127.0.0.1:0", certFile: certFile, keyFile: keyFile, front: edgeFrontNone}
-	ln, err := openEdgeTLSListener(cfg)
+	clientCAFile := filepath.Join(dir, "client-ca.pem")
+	if err := os.WriteFile(clientCAFile, zoneCA.pem(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := edgeTLSConfig{addr: "127.0.0.1:0", certFile: certFile, keyFile: keyFile, clientCAFile: clientCAFile, front: edgeFrontNone}
+	appHost := func(name string) bool { return strings.HasSuffix(name, ".gregale.dev") }
+	ln, err := openEdgeTLSListener(cfg, appHost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +262,7 @@ func TestEdgeTLSListenerWithNoFrontServesAnyClient(t *testing.T) {
 		proto            int
 		clientIP, scheme string
 	}
-	seen := make(chan seenRequest, 2)
+	seen := make(chan seenRequest, 4)
 	// The production chain: cloudflareClientIP, then the gateway's forwarding
 	// context. A direct client is no trusted ingress peer.
 	srv := &http.Server{Handler: cloudflareClientIP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -265,46 +273,86 @@ func TestEdgeTLSListenerWithNoFrontServesAnyClient(t *testing.T) {
 	srv.Protocols.SetHTTP1(true)
 	srv.Protocols.SetUnencryptedHTTP2(true)
 	cfg.attach(srv, quietEdgeLog(), prometheus.NewCounter(prometheus.CounterOpts{Name: "failures"}))
+	if srv.HTTP2 == nil || srv.HTTP2.MaxConcurrentStreams != api.EdgeHTTP2MaxConcurrentStreams || srv.HTTP2.MaxReadFrameSize != api.EdgeHTTP2MaxReadFrameSize {
+		t.Fatalf("HTTP/2 config = %+v, want the edge's explicit limits", srv.HTTP2)
+	}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
 
 	roots := x509.NewCertPool()
 	roots.AddCert(publicCA.cert)
+	zoneCert := zoneCA.issue(t, x509.ExtKeyUsageClientAuth)
+	otherCert := newTestCA(t, "another zone").issue(t, x509.ExtKeyUsageClientAuth)
+	get := func(serverName string, nextProto []string, clientCert *tls.Certificate) (*http.Response, error) {
+		tlsCfg := &tls.Config{RootCAs: roots, ServerName: serverName, NextProtos: nextProto}
+		if serverName == "" {
+			// No server name: skip the name check on our side so the
+			// edge's refusal is what fails the handshake.
+			tlsCfg.InsecureSkipVerify = true //nolint:gosec // the test's own server
+		}
+		if clientCert != nil {
+			tlsCfg.Certificates = []tls.Certificate{*clientCert}
+		}
+		transport := &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: slices.Contains(nextProto, "h2")}
+		client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+		req, err := http.NewRequest(http.MethodGet, "https://"+ln.Addr().String()+"/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = "shop.gregale.dev"
+		req.Header.Set("CF-Connecting-IP", "203.0.113.9")
+		req.Header.Set("X-Forwarded-For", "198.51.100.1")
+		return client.Do(req)
+	}
+
 	for _, tc := range []struct {
-		name      string
-		nextProto []string
-		wantProto int
+		name         string
+		nextProto    []string
+		clientCert   *tls.Certificate
+		wantProto    int
+		wantClientIP string
 	}{
-		{name: "HTTP/2", nextProto: []string{"h2", "http/1.1"}, wantProto: 2},
-		{name: "HTTP/1.1", nextProto: []string{"http/1.1"}, wantProto: 1},
+		// A direct client: no certificate, its headers ignored.
+		{name: "HTTP/2", nextProto: []string{"h2", "http/1.1"}, wantProto: 2, wantClientIP: "127.0.0.1"},
+		{name: "HTTP/1.1", nextProto: []string{"http/1.1"}, wantProto: 1, wantClientIP: "127.0.0.1"},
+		// Cloudflare, for a host sent back behind it: its certificate
+		// verified, CF-Connecting-IP trusted.
+		{name: "Cloudflare's certificate", nextProto: []string{"http/1.1"}, clientCert: &zoneCert, wantProto: 1, wantClientIP: "203.0.113.9"},
+		// Another zone's certificate does not chain to our CA: served as
+		// any client, trusted for nothing.
+		{name: "another zone's certificate", nextProto: []string{"http/1.1"}, clientCert: &otherCert, wantProto: 1, wantClientIP: "127.0.0.1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tlsCfg := &tls.Config{RootCAs: roots, ServerName: "shop.gregale.dev", NextProtos: tc.nextProto}
-			transport := &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: tc.wantProto == 2}
-			client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
-			req, err := http.NewRequest(http.MethodGet, "https://"+ln.Addr().String()+"/", nil)
+			resp, err := get("shop.gregale.dev", tc.nextProto, tc.clientCert)
 			if err != nil {
-				t.Fatal(err)
-			}
-			req.Host = "shop.gregale.dev"
-			req.Header.Set("CF-Connecting-IP", "203.0.113.9")
-			req.Header.Set("X-Forwarded-For", "198.51.100.1")
-			resp, err := client.Do(req)
-			if err != nil {
-				t.Fatalf("a client with no certificate: %v", err)
+				t.Fatalf("request: %v", err)
 			}
 			_ = resp.Body.Close()
 			if resp.ProtoMajor != tc.wantProto {
 				t.Fatalf("response protocol = HTTP/%d, want HTTP/%d", resp.ProtoMajor, tc.wantProto)
 			}
 			got := <-seen
-			if got.proto != tc.wantProto {
-				t.Fatalf("request protocol = HTTP/%d, want HTTP/%d", got.proto, tc.wantProto)
-			}
-			if got.clientIP != "127.0.0.1" || got.scheme != "https" {
-				t.Fatalf("client = %s over %s, want the peer 127.0.0.1 over https (the client's headers ignored)", got.clientIP, got.scheme)
+			if got.proto != tc.wantProto || got.clientIP != tc.wantClientIP || got.scheme != "https" {
+				t.Fatalf("request = HTTP/%d from %s over %s, want HTTP/%d from %s over https", got.proto, got.clientIP, got.scheme, tc.wantProto, tc.wantClientIP)
 			}
 		})
+	}
+
+	for name, serverName := range map[string]string{
+		"no server name":               "",
+		"a name outside the app hosts": "node.example.net",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if resp, err := get(serverName, []string{"http/1.1"}, nil); err == nil {
+				_ = resp.Body.Close()
+				t.Fatal("request served, want a failed handshake")
+			}
+		})
+	}
+	select {
+	case got := <-seen:
+		t.Fatalf("a refused handshake reached the handler: %+v", got)
+	default:
 	}
 }
 

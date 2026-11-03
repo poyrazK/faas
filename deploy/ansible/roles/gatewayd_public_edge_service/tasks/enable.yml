@@ -102,9 +102,10 @@
 - name: gatewayd_public_edge_service — find the direct-entry TLS material
   ansible.builtin.stat:
     path: "{{ item }}"
-  loop: >-
-    {{ [faas_edge_public_tls_cert, faas_edge_public_tls_key]
-       + ([] if (faas_edge_public_front | string | lower) == 'none' else [faas_edge_public_tls_client_ca]) }}
+  loop:
+    - "{{ faas_edge_public_tls_cert }}"
+    - "{{ faas_edge_public_tls_key }}"
+    - "{{ faas_edge_public_tls_client_ca }}"
   register: faas_edge_public_tls_files
   when: faas_edge_entry == 'both'
 
@@ -116,9 +117,9 @@
       public_edge.entry both needs
       {{ faas_edge_public_tls_files.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}
       on this node: the certificate and key (the zone's Origin CA pair behind
-      Cloudflare, a publicly trusted pair with no front) and, behind
-      Cloudflare, the zone's Authenticated Origin Pulls CA
-      (ADR-20261102081618 §2, ADR-20261103163954).
+      Cloudflare, a publicly trusted pair with no front) and the zone's
+      Authenticated Origin Pulls CA (ADR-20261102081618 §2,
+      ADR-20261103163954 §2).
   when: faas_edge_entry == 'both'
 
 - name: gatewayd_public_edge_service — install apps domain and control-plane target drop-in
