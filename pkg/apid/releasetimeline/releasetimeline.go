@@ -86,7 +86,7 @@ func Build(in Inputs) api.ReleaseTimeline {
 		at, _ := time.Parse(time.RFC3339Nano, kept.DecidedAt)
 		b.add(at, api.ReleaseEventWatchRegressed, regressionKeptText(kept), "", nil, kept)
 	} else if watched && !in.Now.Before(watchUntil) && out.Phase != api.ReleasePhaseRolledBack {
-		b.add(watchUntil, api.ReleaseEventWatchPassed, fmt.Sprintf("Post-release watch passed: no regression in %s", minutes(in.WatchWindow)), "", nil, nil)
+		b.add(watchUntil, api.ReleaseEventWatchPassed, watchPassedText(in, watchUntil), "", nil, nil)
 	}
 	if in.ReplacedBy != nil && !in.ReplacedBy.At.IsZero() {
 		b.add(in.ReplacedBy.At, api.ReleaseEventSuperseded, "Replaced by "+revisionName(in.ReplacedBy.Revision, in.ReplacedBy.ID), "", nil, nil)
@@ -99,13 +99,36 @@ func Build(in Inputs) api.ReleaseTimeline {
 	return out
 }
 
-// watchEnd is when the post-release watch stops judging the release.
+// watchEnd is when the post-release watch stops judging the release: at the
+// end of its window, or when a newer release replaced it before then, since
+// the watch judges only the newest release to have served (ADR-1445
+// amendment 5).
 func watchEnd(in Inputs) (time.Time, bool) {
 	d := in.Deployment
 	if !in.Watched || d.RolloutCompletedAt == nil || in.WatchWindow <= 0 || in.Stable == nil {
 		return time.Time{}, false
 	}
-	return d.RolloutCompletedAt.UTC().Add(in.WatchWindow), true
+	end := d.RolloutCompletedAt.UTC().Add(in.WatchWindow)
+	if replacedDuringWatch(in, end) {
+		end = in.ReplacedBy.At.UTC()
+	}
+	return end, true
+}
+
+func replacedDuringWatch(in Inputs, end time.Time) bool {
+	return in.ReplacedBy != nil && !in.ReplacedBy.At.IsZero() && in.ReplacedBy.At.Before(end)
+}
+
+// watchPassedText says how long the watch judged the release without finding
+// a regression; a release replaced early was not judged for the whole window.
+func watchPassedText(in Inputs, watchUntil time.Time) string {
+	full := in.Deployment.RolloutCompletedAt.UTC().Add(in.WatchWindow)
+	if !replacedDuringWatch(in, full) {
+		return fmt.Sprintf("Post-release watch passed: no regression in %s", minutes(in.WatchWindow))
+	}
+	judged := watchUntil.Sub(in.Deployment.RolloutCompletedAt.UTC())
+	return fmt.Sprintf("Post-release watch ended when %s replaced it: no regression in %s",
+		revisionName(in.ReplacedBy.Revision, in.ReplacedBy.ID), minutes(judged))
 }
 
 // phase is the first matching phase of ADR-20261022120744's table.

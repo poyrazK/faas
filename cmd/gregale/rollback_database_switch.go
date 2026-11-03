@@ -17,7 +17,7 @@ import (
 // Rollbacks that restore the database (ADR-20261023181931).
 
 const rollbackSwitchesUsage = "usage: gregale rollback switches <slug> [--json]"
-const rollbackSwitchUsage = "usage: gregale release rollback status <slug> <switch-id> [--cancel] [--wait] [--timeout 60m] [--poll-interval 2s] [--json]"
+const rollbackSwitchUsage = "usage: gregale rollback status <slug> <switch-id> [--cancel] [--wait] [--timeout 60m] [--poll-interval 2s] [--json]"
 
 // databaseSwitchDefaultTimeout bounds waiting for a switch when --timeout is
 // not given: the restore alone can take minutes.
@@ -232,6 +232,11 @@ func cmdRollbackSwitch(args []string) int {
 	if hasHelpFlag(args) {
 		PrintUsage(osStdout, rollbackSwitchUsage, "rollback")
 		return 0
+	}
+	// The tree's `release rollback status` runs this command; with
+	// --operation it reads a rollback operation, as `rollback status` does.
+	if rollbackStatusNamesOperation(args) {
+		return cmdRollbackStatus(args)
 	}
 	fs := newFlagSet("rollback switch", flag.ContinueOnError)
 	cancelSwitch := fs.Bool("cancel", false, "cancel the switch")

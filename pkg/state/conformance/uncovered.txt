@@ -37,7 +37,6 @@ ApplyRegressionAction
 AppsForProject
 AuthDefaultFlippedAt
 AuthenticateOIDCBearer
-AutoRollbackDeploymentsTx
 BeginCrashCapturePurge
 BeginCrashCaptureStage
 BeginServiceRolloutCutover
