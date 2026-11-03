@@ -1172,3 +1172,8 @@ const (
 	LogFollowPollMin = logFollowPollMin
 	LogFollowPollMax = logFollowPollMax
 )
+
+// FailInterruptedFireNowRequests runs the interrupted manual-run sweep once.
+func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
+	r.failInterruptedFireNowRequests(ctx)
+}

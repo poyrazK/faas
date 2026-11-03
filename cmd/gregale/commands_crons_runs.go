@@ -123,8 +123,8 @@ func cmdCronsRuns(args []string) int {
 	for _, r := range resp.Runs {
 		renderCronRun(osStdout, r)
 	}
-	if missing := cronRunsRouteMissing(resp.Runs); missing > 0 {
-		printCronRouteMissingHint(context.Background(), client, id, missing, len(resp.Runs))
+	if missing, answered := cronRunsRouteMissing(resp.Runs); missing > 0 {
+		printCronRouteMissingHint(context.Background(), client, id, missing, len(resp.Runs), answered)
 	}
 	return 0
 }
