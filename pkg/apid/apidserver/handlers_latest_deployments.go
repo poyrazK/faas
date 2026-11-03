@@ -57,10 +57,7 @@ func (s *server) listLatestDeploymentsByApp(w http.ResponseWriter, r *http.Reque
 	})
 
 	response := api.LatestDeploymentsByAppResponse{
-		Items: make([]api.DeploymentResponse, 0, len(deployments)),
-	}
-	for _, deployment := range deployments {
-		response.Items = append(response.Items, s.deploymentResponse(r.Context(), deployment, appByID[deployment.AppID]))
+		Items: s.deploymentResponses(r.Context(), deployments, func(d state.Deployment) state.App { return appByID[d.AppID] }),
 	}
 	writeJSON(w, http.StatusOK, response)
 }
