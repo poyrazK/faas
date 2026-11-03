@@ -174,9 +174,11 @@ func (c edgeTLSConfig) serverConfig(appHost func(name string) bool) (*tls.Config
 }
 
 // openEdgeTLSListener claims the listener's TCP socket, which a hand-off
-// passes on like the others, and serves TLS on it. appHost names the server
-// names a listener with no front completes a handshake for.
-func openEdgeTLSListener(c edgeTLSConfig, appHost func(name string) bool) (net.Listener, error) {
+// passes on like the others, and serves TLS on it, within the per-address
+// limits when they apply. appHost names the server names a listener with no
+// front completes a handshake for; failed counts a handshake the limits' gate
+// saw fail. Handshakes in the gate end with ctx.
+func openEdgeTLSListener(ctx context.Context, c edgeTLSConfig, appHost func(name string) bool, limits edgeClientLimits, failed func(net.Addr, error)) (net.Listener, error) {
 	cfg, err := c.serverConfig(appHost)
 	if err != nil {
 		return nil, err
@@ -185,20 +187,21 @@ func openEdgeTLSListener(c edgeTLSConfig, appHost func(name string) bool) (net.L
 	if err != nil {
 		return nil, fmt.Errorf("gatewayd-public: listen edge TLS %s: %w", c.addr, err)
 	}
-	return tls.NewListener(ln, cfg), nil
+	return limits.tlsListener(ctx, ln, cfg, c.direct(), failed), nil
 }
 
 // attach makes srv trust the TLS listener's connections and count its failed
 // handshakes. With no front it lets srv serve HTTP/2 over TLS, with explicit
 // limits rather than library defaults; srv.MaxHeaderBytes caps an HTTP/2
-// header list as it does an HTTP/1.1 header. srv keeps its defaults while the
-// listener is off.
-func (c edgeTLSConfig) attach(srv *http.Server, log *slog.Logger, failures prometheus.Counter) {
+// header list as it does an HTTP/1.1 header. It returns the handshake counter,
+// nil while the listener is off, when srv keeps its defaults.
+func (c edgeTLSConfig) attach(srv *http.Server, log *slog.Logger, failures prometheus.Counter) *edgeServerErrors {
 	if !c.enabled() {
-		return
+		return nil
 	}
+	errs := newEdgeServerErrors(log, failures)
 	srv.ConnContext = markVerifiedIngress
-	srv.ErrorLog = stdlog.New(newEdgeServerErrors(log, failures), "", 0)
+	srv.ErrorLog = stdlog.New(errs, "", 0)
 	if c.direct() {
 		if srv.Protocols != nil {
 			srv.Protocols.SetHTTP2(true)
@@ -210,6 +213,7 @@ func (c edgeTLSConfig) attach(srv *http.Server, log *slog.Logger, failures prome
 			MaxEncoderHeaderTableSize: api.EdgeHTTP2MaxHeaderTableSize,
 		}
 	}
+	return errs
 }
 
 // markVerifiedIngress is the public server's ConnContext. Only the TLS
@@ -244,11 +248,21 @@ func (e *edgeServerErrors) Write(p []byte) (int, error) {
 		e.log.Warn("gatewayd-public: public server", "err", msg)
 		return len(p), nil
 	}
+	e.handshake(msg)
+	return len(p), nil
+}
+
+// handshakeFailed counts a handshake the client limits' gate saw fail, before
+// the server had the connection, the way net/http reports its own.
+func (e *edgeServerErrors) handshakeFailed(remote net.Addr, err error) {
+	e.handshake(fmt.Sprintf("http: TLS handshake error from %s: %v", remote, err))
+}
+
+func (e *edgeServerErrors) handshake(msg string) {
 	e.failures.Inc()
 	now := e.now().UnixNano()
 	last := e.lastLog.Load()
 	if now-last >= int64(time.Minute) && e.lastLog.CompareAndSwap(last, now) {
 		e.log.Warn("gatewayd-public: edge TLS handshake failed", "err", msg)
 	}
-	return len(p), nil
 }

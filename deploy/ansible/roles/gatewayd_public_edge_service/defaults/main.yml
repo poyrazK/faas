@@ -16,6 +16,10 @@ faas_edge_placement_routing: false
 # app runs on, by ready instances. The manifest's
 # public_edge.placement_node_set sets it.
 faas_edge_placement_node_set: false
+# ADR-20261103163954 §4: per-client-address limits on requests and, with
+# faas_edge_public_front none, on connections and TLS handshakes. The values
+# are in pkg/api/limits.go.
+faas_edge_client_limits: false
 # ADR-20261102081618: how Cloudflare reaches this edge. "tunnel", the default,
 # is the connector only; "both" also opens the edge's TLS listener on
 # faas_edge_public_tls_port for proxied address records. The manifest's
