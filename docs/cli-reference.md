@@ -14963,7 +14963,7 @@ Break down past requests by route, country, referrer or status
 |---|---|---|
 | `--since <WINDOW>` | lookback window |  |
 | `--until <TIMESTAMP>` | exclusive RFC3339 end |  |
-| `--by <DIMENSION>` | grouping dimension | one of `route` · `country` · `referrer_host` · `ua_family` · `status` |
+| `--by <DIMENSION>` | grouping dimension | one of `route` · `country` · `referrer_host` · `ua_family` · `status` · `consumer_id` |
 
 
 ## debug

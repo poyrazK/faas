@@ -12441,6 +12441,12 @@ type RequestAnalyticsResponse struct {
 	ComputeCost           *RequestAnalyticsComputeCost             `json:"compute_cost,omitempty"`
 	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdown `json:"deployment_costs,omitempty"`
 	AsOf                  string                                   `json:"as_of"`
+	// TelemetryComplete says whether every gateway delivered the window's
+	// request telemetry, judged up to RequestAnalyticsSettleLag before as_of
+	// (the newest minutes are still arriving); nil when it was not judged.
+	// TelemetryGaps names each reason requests may be missing.
+	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
+	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
 }
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
@@ -12481,6 +12487,9 @@ type RequestAnalyticsTimeseriesResponse struct {
 	Points        []RequestAnalyticsTimeseriesPoint  `json:"points"`
 	Series        []RequestAnalyticsTimeseriesSeries `json:"series,omitempty"`
 	AsOf          string                             `json:"as_of"`
+	// TelemetryComplete and TelemetryGaps match RequestAnalyticsResponse.
+	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
+	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
 }
 
 // DebugRegressionItem is one row of debug_regression_observations

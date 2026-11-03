@@ -4090,7 +4090,7 @@ paths:
           in: query
           required: false
           schema: {type: string, format: date-time}
-          description: "Optional RFC3339 upper-bound timestamp for the historical window."
+          description: "Optional RFC3339 upper-bound timestamp for the historical window. It must be within the plan's telemetry retention, counted back from now."
         - name: group_by
           in: query
           required: false
@@ -4220,7 +4220,7 @@ paths:
           in: query
           required: false
           schema: {type: string, format: date-time}
-          description: "Exclusive end timestamp; omitted means current server time."
+          description: "Exclusive end timestamp; omitted means current server time. It must be within the plan's telemetry retention, counted back from now."
         - name: route
           in: query
           required: false
@@ -38424,6 +38424,23 @@ components:
         deployment_costs:
           $ref: '#/components/schemas/RequestAnalyticsDeploymentCostBreakdown'
         as_of: {type: string, format: date-time, description: "RFC3339Nano UTC assembly timestamp."}
+        telemetry_complete:
+          type: boolean
+          description: |
+            True when every gateway delivered this window's request telemetry, so the totals include every request.
+            Judged up to two minutes before `as_of`, because the newest minutes are still arriving. Absent when it could not be judged.
+        telemetry_gaps:
+          type: array
+          description: "Why requests in this window may be missing from the totals. Empty or absent when the window is complete."
+          items: {$ref: '#/components/schemas/RequestAnalyticsTelemetryGap'}
+    RequestAnalyticsTelemetryGap:
+      type: string
+      description: |
+        One reason request analytics may be missing requests: a gateway with no or a stale delivery report
+        (`telemetry_coverage_missing`, `telemetry_coverage_stale`), telemetry switched off or sampled
+        (`telemetry_disabled`, `telemetry_sampled`), requests still waiting to be delivered
+        (`telemetry_ingestion_pending`), or requests lost or a gateway restarted during the window (`telemetry_window_incomplete`).
+      enum: [telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
     RequestAnalyticsTimeseriesPoint:
       type: object
       description: "One UTC-aligned hourly request analytics bucket."
@@ -38471,6 +38488,13 @@ components:
           type: array
           items: {$ref: '#/components/schemas/RequestAnalyticsTimeseriesSeries'}
         as_of: {type: string, format: date-time, description: "UTC time when the series response was assembled."}
+        telemetry_complete:
+          type: boolean
+          description: "Same as on the analytics overview: true when every gateway delivered the series window, judged up to two minutes before `as_of`."
+        telemetry_gaps:
+          type: array
+          description: "Why requests in the series window may be missing. Empty or absent when the window is complete."
+          items: {$ref: '#/components/schemas/RequestAnalyticsTelemetryGap'}
     DailyUsagePoint:
       description: "One day in the account's trailing 30 UTC calendar day usage trend."
       type: object

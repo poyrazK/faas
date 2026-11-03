@@ -399,8 +399,17 @@ A matched request without a valid pass never reaches your app:
 - Requests with a verified API key, consumer key or JWT are never
   challenged, so API clients keep working.
 
-The pass lasts an hour by default and is tied to the browser's address
-range and User-Agent, so it cannot be copied to another machine. It covers
+The pass lasts an hour by default (`pass_ttl_seconds`, 5 minutes to 24
+hours) and is tied to the browser's address range (the IPv4 /24 or IPv6 /48
+it comes from) and its User-Agent. A pass copied out of the network it was
+earned on is refused, but the gateway keeps no record of passes: until it
+expires, a pass works for any client in the same address range that sends
+the same User-Agent, such as other machines behind one office or carrier
+NAT, or a bot farm in one hosting range that solved once. A challenge
+raises the cost of automation; it does not tell people apart. Keep
+`pass_ttl_seconds` short on paths under attack, and pair the rule with a
+`throttle` rule keyed by client address when one range keeps coming back.
+It covers
 the whole host: one pass lets the browser through every challenge rule on
 that host, including paths a route rule sends to another of your apps, but
 not on your other hosts.
