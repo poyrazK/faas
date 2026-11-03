@@ -60,6 +60,12 @@ func (s *server) RollbackTargetProblemForTest(ctx context.Context, app state.App
 	return s.rollbackTargetApprovalProblem(ctx, app, target)
 }
 
+// ApprovalTrafficProblemForTest holds giving d traffic to the release
+// guards (`traffic`, promote, a rollback to it, graph activation).
+func (s *server) ApprovalTrafficProblemForTest(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
+	return s.approvalTrafficProblem(ctx, app, d)
+}
+
 // RenderReleaseSafetyForTest renders the release safety dashboard page for
 // acct's app slug.
 func (s *server) RenderReleaseSafetyForTest(acct state.Account, slug string) *httptest.ResponseRecorder {
