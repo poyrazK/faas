@@ -15,8 +15,10 @@ import (
 // publicCacheControl lets a CDN or browser keep a public object for a bounded
 // time and then revalidate it, so deleting or replacing it takes effect within
 // PublicObjectReadMaxAgeSeconds (H9-S144). Mount paths are mutable keys; the
-// earlier one-year immutable lifetime kept deleted files public.
-var publicCacheControl = "public, max-age=" + strconv.Itoa(api.PublicObjectReadMaxAgeSeconds) + ", must-revalidate"
+// earlier one-year immutable lifetime kept deleted files public. no-transform
+// keeps Cloudflare from rewriting the body, which it does to HTML (H9-S161:
+// a 116-byte object grew to 1,054 bytes); the S3 path already sends it.
+var publicCacheControl = "public, max-age=" + strconv.Itoa(api.PublicObjectReadMaxAgeSeconds) + ", must-revalidate, no-transform"
 
 // keyedLimiters holds one token bucket per key, bounded to max keys; when
 // full it starts over rather than grow, which at worst lets a key burst again.

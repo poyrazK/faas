@@ -600,7 +600,8 @@ gregale webhook deliver checkout-api https://customer.example/webhook \
 The destination may also be the registered webhook id. The equivalent API is
 `POST /v1/apps/checkout-api/outbox`; the first-party SDKs expose matching
 delivery methods. Explicit delivery uses the registered destination's HMAC
-secret, delivery format, timeout, and retry policy. It appears in the existing
+secret, delivery format, and retry policy; every attempt has a 10-second
+timeout. It appears in the existing
 delivery history and unified DLQ, where dead deliveries can be inspected and
 replayed. The subscription's platform-event filter does not block an explicit
 delivery to that destination.
@@ -610,6 +611,50 @@ ordinary app webhooks. Receivers should verify the signature, reject stale
 timestamps, and deduplicate the durable delivery id.
 Use `--idempotency-key` when retrying a `gregale webhook deliver` call whose outcome
 is unknown; a new key can enqueue a second delivery.
+
+### Outbox backlog
+
+An account holds a bounded number of undelivered webhook deliveries (pending
+or in flight), counted across all its subscriptions:
+
+| Plan | Deliveries | Payload bytes |
+|------|-----------:|--------------:|
+| Free | 1,000 | 16 MiB |
+| Hobby | 5,000 | 64 MiB |
+| Pro | 25,000 | 256 MiB |
+| Scale | 50,000 | 512 MiB |
+
+At either cap an explicit delivery is refused with `429 webhook_outbox_full`,
+the limit, the observed value, and `Retry-After: 60`; nothing is queued.
+Platform events (deployment, rollout, alert) still fan out and count toward
+the backlog.
+
+Deliveries drain fairly between accounts: one account has at most 16
+requests in flight across the platform, and a subscription at most 4. A
+receiver that times out pauses its subscription for a minute, as a `429` or
+`503` with `Retry-After` does; then one probe delivery decides whether it
+reopens. A suspended or deleted account's deliveries, and an app's after
+the app is deleted, wait without being sent.
+
+## Inbound webhooks
+
+An inbound webhook endpoint verifies each provider delivery's signature and
+accepts it into the app's queue, where it runs like a queue message.
+
+### Inbound webhook backlog
+
+Accepted deliveries meet the same caps as a queue send: pending messages per
+app and backlog bytes per account (see [queue limits](#queue-limits)). While
+either is full, a verified delivery gets `429 inbound_webhook_backlog_full`
+with `Retry-After: 60` and nothing is accepted, so the provider retries the
+same event later.
+
+### Inbound webhook rate limit
+
+An account's endpoints accept a bounded number of verified deliveries a
+minute: Free 60, Hobby 1,200, Pro 3,000, Scale 6,000. Past it a delivery gets
+`429 inbound_webhook_rate_limited` with `Retry-After`. Deliveries that fail
+signature verification are limited separately, per client IP.
 
 ## Deployment lifecycle webhooks
 

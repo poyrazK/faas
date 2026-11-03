@@ -342,6 +342,9 @@ or queue with the bucket's notification configuration:
 gregale bucket notifications set my-api BUCKET_ID notifications.json
 ```
 
+Notifications and compute triggers run app code, so they need a paid plan;
+Free answers `402`, like other triggers.
+
 ## Browser access (CORS)
 
 To let your own sites use signed URLs and upload routes from the browser, set
