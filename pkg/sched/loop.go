@@ -111,9 +111,9 @@ type Loop struct {
 	// seal-domain identity first, then the fleet and host identities
 	// (current and previous during a rotation).
 	triggerSecretIdentities []*age.X25519Identity
-	// rateLimiter is the per-app wake rate limiter (shared with
-	// cron dispatch via pkg/sched/rate_limit.go).
-	rateLimiter *WakeRateLimiter
+	// recordRate caps the records each app's broker triggers take per
+	// second (ADR-20261101093015); nil leaves broker polls uncapped.
+	recordRate *TriggerRecordRateLimiter
 	// triggerWakeup is the channel-side wakeup signal the schedd's
 	// pg_notify subscriber delivers on every NotifyTriggerReady +
 	// NotifyTriggerChanged payload (commit #16). The Loop's run
