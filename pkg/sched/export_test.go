@@ -226,7 +226,11 @@ var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
 var ReaperAbortedCanary = reaperAbortedCanary
 var RequireWorkerBlocker = requireWorkerBlocker
-var ResolvePriority = resolvePriority
+
+func ResolvePriority(snapshot []InstanceInfo, instanceID string) (string, bool) {
+	return resolvePriority(indexInstanceInfos(snapshot), instanceID)
+}
+
 var RowState = rowState
 var RunningInstance = runningInstance
 var RunningTransitions = runningTransitions
