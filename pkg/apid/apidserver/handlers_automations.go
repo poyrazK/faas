@@ -289,6 +289,9 @@ func automationRevisionResponse(revision state.AutomationRevision) (api.Automati
 }
 func (s *server) automationList(ctx context.Context, app state.App, account state.Account) (api.ListAutomationsResponse, error) {
 	response := api.ListAutomationsResponse{AppSlug: app.Slug, RuntimeEnabled: s.workflowRuntimeEnabled, UnavailableReason: workflowScheduleUnavailableReason(s.workflowRuntimeEnabled, app, account), MaxDefinitions: account.Plan.WorkflowMaxPerApp(), Automations: []api.AutomationResponse{}}
+	if response.UnavailableReason == "" && !s.capabilityEnabledFor("workflows", account, app) {
+		response.UnavailableReason = "workflows_not_released"
+	}
 	store, ok := s.store.(state.AutomationStore)
 	if !ok {
 		return response, errors.New("automation storage unavailable")

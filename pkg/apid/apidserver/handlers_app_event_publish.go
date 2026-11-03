@@ -73,7 +73,15 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrInternal("event acceptance store"))
 		return
 	}
+	fits := api.WorkflowEventEnvelopeFits(payload)
 	accepted, err := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
+	// Preserve a retained duplicate even if it predates the envelope bound.
+	// Invalid oversized numbers can also make PostgreSQL's lookup fail while
+	// decoding jsonb, so report the size limit rather than a transient error.
+	if !fits && err != nil && !errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.ErrWorkflowEventEnvelopeTooLarge())
+		return
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		if !s.appEvents.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
 			return

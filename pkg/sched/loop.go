@@ -254,6 +254,7 @@ type Loop struct {
 	tenantWorkflowScheduleMinute      int64
 	tenantWorkflowScheduleAfterApp    string
 	tenantWorkflowScheduleAfterTenant string
+	tenantWorkflowScheduleFairAfter   *state.FairTenantScheduleCursor
 	tenantWorkflowScheduleComplete    bool
 	tenantWorkflowScheduleFailed      bool
 	workflowOrch                      *WorkflowOrchestrator

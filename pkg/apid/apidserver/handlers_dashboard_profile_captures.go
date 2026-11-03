@@ -23,10 +23,10 @@ const profileCaptureAction = "profile_capture"
 const profileCaptureCookie = "faas_csrf_profile_capture"
 
 // profileCapturesView builds the profiles-page capture panel; nil hides it
-// when on-demand profiling is unavailable to this account.
+// when on-demand profiling is unavailable to the app's owner.
 func (s *server) profileCapturesView(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) *dashboard.ProfileCapturesView {
 	store, ok := s.profileCaptures.CaptureStore()
-	if !ok || !api.MustLimitsFor(acct.Plan).Profiling.Enabled {
+	if !ok || !api.MustLimitsFor(s.profilePlan(r.Context(), acct.Plan, app)).Profiling.Enabled {
 		return nil
 	}
 	return s.buildProfileCapturesView(w, r, acct, app, store)
@@ -249,7 +249,7 @@ func (s *server) requestProfileCaptureID(ctx context.Context, acct state.Account
 // failure hides the banner rather than the page.
 func (s *server) announcedProfileCaptures(ctx context.Context, log *slog.Logger, acct state.Account, app state.App) *dashboard.AnnouncedProfileCapturesView {
 	store, ok := s.profileCaptures.CaptureStore()
-	if !ok || !api.MustLimitsFor(acct.Plan).Profiling.Enabled {
+	if !ok || !api.MustLimitsFor(s.profilePlan(ctx, acct.Plan, app)).Profiling.Enabled {
 		return nil
 	}
 	captures, err := store.ListProfileCaptures(ctx, app.AccountID, app.ID)
