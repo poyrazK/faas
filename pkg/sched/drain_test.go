@@ -216,10 +216,20 @@ func seedDrainInvocation(t *testing.T, store state.Store, source state.Invocatio
 		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
 	}
 	app := apps[0]
-	inv, err := store.EnqueueInvocation(ctx, state.Invocation{
+	seed := state.Invocation{
 		AppID: app.ID, AccountID: app.AccountID, Source: source,
 		Method: "POST", Path: "/x", DueAt: time.Now().Add(-time.Second),
-	})
+	}
+	if source == state.InvocationCron {
+		// A cron run carries its cron's id; the drain cancels one whose cron
+		// is gone instead of delivering it.
+		cron, err := store.CreateCron(ctx, app.ID, "0 * * * *", "/x", true)
+		if err != nil {
+			t.Fatalf("CreateCron: %v", err)
+		}
+		seed.CronID = &cron.ID
+	}
+	inv, err := store.EnqueueInvocation(ctx, seed)
 	if err != nil {
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}

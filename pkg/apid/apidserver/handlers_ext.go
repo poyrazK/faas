@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/buildlog"
+	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
@@ -2453,7 +2454,20 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	response := s.deploymentResponse(r.Context(), target, app)
 	response.RollbackOperation = operation
+	s.warnRollbackCrons(r.Context(), w, app, target)
 	writeJSON(w, http.StatusAccepted, response)
+}
+
+// warnRollbackCrons tells the caller which crons outlive a rollback
+// (cronrun.RollbackNotice); the CLI prints a Warning header as a notice.
+func (s *server) warnRollbackCrons(ctx context.Context, w http.ResponseWriter, app state.App, target state.Deployment) {
+	crons, err := s.store.ListCronsForApp(ctx, app.ID)
+	if err != nil {
+		return
+	}
+	if notice := cronrun.RollbackNotice(crons, target.CreatedAt); notice != "" {
+		w.Header().Add("Warning", `299 - "`+notice+`"`)
+	}
 }
 
 // zeroTrafficRollbackCandidates lists, newest first, the app's live
