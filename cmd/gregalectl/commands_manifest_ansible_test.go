@@ -654,6 +654,56 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 	}
 }
 
+// ADR-20261103163954 §6: front: none puts the compute edges' entry on their
+// entry addresses with the client limits on, and makes edgednsd's names
+// DNS-only at those addresses, apart from the proxied ones.
+func TestRenderManifestAnsibleFiles_EdgeWithNoFront(t *testing.T) {
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n      entry_ipv4: 198.51.100.2\n", 1) +
+		"public_edge:\n  compute_nodes: true\n  entry: both\n  front: none\n  dns:\n    zone_id: zone-1\n    names: [pilot.example.dev, \"*.example.dev\"]\n    proxied: [\"*.example.dev\", attacked.example.dev]\n"
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var controlVars, computeVars string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			controlVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	for _, want := range []string{
+		"faas_edge_entry: \"both\"\n",
+		"faas_edge_public_front: \"none\"\n",
+		"faas_edge_client_limits: true\n",
+		"faas_public_entry_addrs: [\"198.51.100.2\"]\n",
+	} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute host vars missing %q:\n%s", want, computeVars)
+		}
+	}
+	wantDNS := "faas_edgednsd_names: [\"zone-1:pilot.example.dev:dns-only\", \"zone-1:*.example.dev\", \"zone-1:attacked.example.dev\"]\n" +
+		"faas_edgednsd_node_addresses: [\"fsn-2.faas=198.51.100.2\"]\n"
+	if !strings.Contains(controlVars, wantDNS) {
+		t.Errorf("control plane edgednsd vars missing\n%s\nin:\n%s", wantDNS, controlVars)
+	}
+	for _, line := range []string{"faas_edge_public_front", "faas_public_entry_addrs", "faas_edge_client_limits"} {
+		if strings.Contains(controlVars, line) {
+			t.Errorf("%s rendered on the control plane:\n%s", line, controlVars)
+		}
+	}
+}
+
 // ADR-1141 amendment 2026-10-24: workload_identity.source_dir reaches both
 // roles' hosts, so the control plane installs the JWKS and each compute node
 // the signing key. Without it nothing renders and issuance stays off.
