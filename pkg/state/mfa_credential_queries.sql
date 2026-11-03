@@ -1,15 +1,29 @@
 -- Enrollment and policy changes invalidate saved disable-email links, including
 -- while issuance/delivery gates are off. Burns of recovery codes keep the factor.
+-- Durable links follow mfa_revision; the legacy inline requests carry no
+-- revision, so each statement consumes them too (bug hunt 2026-10-28 H98).
 -- name: SetMFASecret :execrows
+WITH legacy AS (
+    UPDATE mfa_disable_requests SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL
+)
 UPDATE accounts SET mfa_secret_encrypted=$2,mfa_recovery_codes_hash=$3,mfa_revision=mfa_revision+1 WHERE id=$1;
 
 -- name: MarkMFAEnrolled :execrows
+WITH legacy AS (
+    UPDATE mfa_disable_requests SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL
+)
 UPDATE accounts SET mfa_enrolled_at=clock_timestamp(),mfa_required=false,mfa_revision=mfa_revision+1 WHERE id=$1;
 
 -- name: ClearMFA :execrows
+WITH legacy AS (
+    UPDATE mfa_disable_requests SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL
+)
 UPDATE accounts SET mfa_secret_encrypted=NULL,mfa_recovery_codes_hash=NULL,mfa_enrolled_at=NULL,mfa_revision=mfa_revision+1 WHERE id=$1;
 
 -- name: SetMFARequired :execrows
+WITH legacy AS (
+    UPDATE mfa_disable_requests SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL
+)
 UPDATE accounts SET mfa_required=$2,mfa_revision=mfa_revision+1 WHERE id=$1 AND mfa_required<>$2;
 
 -- Keep legacy reissuance mutually exclusive with saved durable credentials.

@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
@@ -32,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -2026,6 +2028,8 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
 			return
 		}
+		// The 503 alone left no trace of why a delete failed (Hunt 31 H31-13).
+		s.log.Warn("apid: delete app failed", "app_id", app.ID, "account_id", acct.ID, "err", err)
 		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not delete app")))
 		return
 	}
@@ -2449,7 +2453,20 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	response := s.deploymentResponse(r.Context(), target, app)
 	response.RollbackOperation = operation
+	s.warnRollbackCrons(r.Context(), w, app, target)
 	writeJSON(w, http.StatusAccepted, response)
+}
+
+// warnRollbackCrons tells the caller which crons outlive a rollback
+// (cronrun.RollbackNotice); the CLI prints a Warning header as a notice.
+func (s *server) warnRollbackCrons(ctx context.Context, w http.ResponseWriter, app state.App, target state.Deployment) {
+	crons, err := s.store.ListCronsForApp(ctx, app.ID)
+	if err != nil {
+		return
+	}
+	if notice := cronrun.RollbackNotice(crons, target.CreatedAt); notice != "" {
+		w.Header().Add("Warning", `299 - "`+notice+`"`)
+	}
 }
 
 // zeroTrafficRollbackCandidates lists, newest first, the app's live
@@ -2523,25 +2540,42 @@ func rollbackEnvironmentAmbiguousProblem(appSlug string) *api.Problem {
 		WithDocs("https://gregale.dev/docs/deploys#rollback")
 }
 
+// trafficSplit describes a scope whose traffic more than one deployment
+// shares: earlier is the oldest of them as a retypeable ref, and canary is
+// set while a canary rollout owns the weights.
+type trafficSplit struct {
+	earlier string
+	canary  bool
+}
+
 // trafficSplitEarlierRelease reports whether more than one deployment of the
-// scope serves a share of traffic, and the oldest of them as a retypeable
-// ref. A plain rollback then has no single previous release: the latest
-// superseded row is one nobody serves, so `rollback` re-activated a release
-// the customer had rolled away from while the split stayed in place (H10-10).
-// A split in another environment does not block this one's rollback.
-func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID, scope string) (string, bool) {
+// scope serves a share of traffic. A plain rollback then has no single
+// previous release: the latest superseded row is one nobody serves, so
+// `rollback` re-activated a release the customer had rolled away from while
+// the split stayed in place (H10-10). A split in another environment does not
+// block this one's rollback.
+func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID, scope string) (trafficSplit, bool) {
 	deployments, err := s.store.LiveDeployments(ctx, appID)
 	if err != nil {
-		return "", false
+		return trafficSplit{}, false
 	}
 	var rows []state.Deployment
+	var split trafficSplit
 	for _, d := range deployments {
-		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 && recoveryScope(d.Scope) == recoveryScope(scope) {
+		if d.Status != state.DeployLive || recoveryScope(d.Scope) != recoveryScope(scope) {
+			continue
+		}
+		// The same test the store applies before refusing a traffic change
+		// with ErrTrafficChangeDuringCanary.
+		if d.CanaryTotalSteps > 0 && (d.RolloutState == "pending" || d.RolloutState == "rolling_out") {
+			split.canary = true
+		}
+		if d.TrafficPercent > 0 && d.TrafficPercent < 100 {
 			rows = append(rows, d)
 		}
 	}
 	if len(rows) < 2 {
-		return "", false
+		return trafficSplit{}, false
 	}
 	earliest := rows[0]
 	for _, d := range rows[1:] {
@@ -2549,16 +2583,27 @@ func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID, scope st
 			earliest = d
 		}
 	}
+	split.earlier = earliest.ID
 	if earliest.Revision > 0 {
-		return fmt.Sprintf("v%d", earliest.Revision), true
+		split.earlier = fmt.Sprintf("v%d", earliest.Revision)
 	}
-	return earliest.ID, true
+	return split, true
 }
 
-func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
+// rollbackDuringTrafficSplitProblem names the way back from a split. During a
+// canary the traffic routes refuse every weight change, so promoting the
+// earlier release is refused too; aborting the rollout is what hands its
+// traffic back to the release it replaced.
+func rollbackDuringTrafficSplitProblem(appSlug string, split trafficSplit) *api.Problem {
+	if split.canary {
+		return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
+			"A release is still rolling out",
+			fmt.Sprintf("the newest release is still rolling out, so traffic is split and there is no single previous release to roll back to. Stop the rollout and return its traffic to the release it replaced: gregale rollouts recover %s --action abort", appSlug)).
+			WithDocs("https://gregale.dev/docs/deploys#rollback")
+	}
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"Traffic is split between deployments",
-		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, earlier)).
+		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, split.earlier)).
 		WithDocs("https://gregale.dev/docs/deploys#rollback")
 }
 
@@ -2720,8 +2765,8 @@ func (s *server) planRollback(r *http.Request, acct state.Account, app state.App
 		if !ok {
 			return rollbackPlan{}, rollbackEnvironmentAmbiguousProblem(app.Slug)
 		}
-		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID, scope); split {
-			return rollbackPlan{}, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
+		if split, ok := s.trafficSplitEarlierRelease(ctx, app.ID, scope); ok {
+			return rollbackPlan{}, rollbackDuringTrafficSplitProblem(app.Slug, split)
 		}
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID, scope)
 		if err != nil {
@@ -3240,10 +3285,11 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
 		return
 	}
-	// Route rules name their target by slug: fence their hosts, rename, and
-	// point them at the new slug before the fence lifts (ADR-091 amendment
-	// 2026-10-30).
-	routeEdit := s.edgeRules.RouteTargetRenameEdit(acct.ID, oldSlug)
+	// Route rules name their target by slug, and host rules may name the
+	// app's platform hostname: fence their hosts, rename, and point them at
+	// the new slug and hostname before the fence lifts (ADR-091 amendments
+	// 2026-10-30 and 2026-11-02).
+	routeEdit := s.edgeRules.RenameEdit(acct.ID, oldSlug, req.NewSlug)
 	convergences, release, prob := s.edgeRules.PrepareReferencedEdit(r.Context(), routeEdit)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -3259,13 +3305,17 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if retargeted, err := s.edgeRules.RetargetRouteRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
 		s.log.Error("app renamed but its route rules still name the old slug", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "retargeted", retargeted, "err", err)
 	}
+	if moved, err := s.edgeRules.RetargetPlatformHostRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
+		s.log.Error("app renamed but rules on its old hostname did not move", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "moved", moved, "err", err)
+	}
 	if prob := s.edgeRules.ApplyReferencedEdit(r.Context(), w, routeEdit, updated.ID, convergences); prob != nil {
 		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)
 	}
 	s.notifyAppRenamed(r.Context(), acct, updated, oldSlug, req.NewSlug)
-	// A rename moves the app's public hostname and frees the old one for any
-	// tenant; it belongs in the account's audit trail, not only the daemon
-	// log (production-us hunt #9: four renames left no audit event).
+	// A rename moves the app's public hostname; the old slug stays held for
+	// this account for api.AppSlugHoldDuration (app_slug_holds, bug hunt
+	// 2026-10-28 H80). It belongs in the account's audit trail, not only the
+	// daemon log (production-us hunt #9: four renames left no audit event).
 	s.audit.Emit(r.Context(), "app.renamed", &acct.ID, map[string]any{"app_id": updated.ID, "from": oldSlug, "to": req.NewSlug})
 	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
@@ -4146,15 +4196,10 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 const defaultCronTimezone = "UTC"
 
 func normalizeCronTimezone(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if strings.TrimSpace(raw) == "" {
 		return defaultCronTimezone, nil
 	}
-	loc, err := time.LoadLocation(raw)
-	if err != nil {
-		return "", err
-	}
-	return loc.String(), nil
+	return cronexpr.NormalizeCustomerTimezone(raw)
 }
 
 func validCronRetryPolicy(retryMax, backoffSeconds int) bool {
@@ -4282,6 +4327,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, api.ErrPlanCronQuota(acct.Plan, string(qe.Scope), qe.Limit, qe.Observed))
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such app")
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.ErrCronConflict())
 		default:
 			api.WriteProblem(w, api.ErrCapacity("could not create cron"))
 		}
@@ -4317,8 +4364,17 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// ?slug= (an app slug or id, sent by `gregale crons list --app`) scopes
 	// the list to one app; without it, every cron on the account's apps.
 	// The filter used to be ignored, so `--app X` listed other apps' crons.
+	ref := r.URL.Query().Get("slug")
+	// deploy:write reads one app's crons, which a function-set deploy
+	// reconciles and may already update; the account's whole list keeps
+	// apps:read (ADR-20261031162858 amendment 1).
+	if ref == "" && !middleware.HasScope(r, api.ScopesReadSurface...) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Insufficient scope", "listing every app's crons requires one of: admin,apps:read; deploy:write lists one app's with ?slug="))
+		return
+	}
 	var apps []state.App
-	if ref := r.URL.Query().Get("slug"); ref != "" {
+	if ref != "" {
 		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
 		if !ok {
 			s.notFound(w, "no such app")
@@ -4472,6 +4528,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		timezonePatch = &timezone
 	}
 	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.ErrCronConflict())
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
@@ -6050,21 +6110,32 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// (it's a real "event happened" — the second delivery is a
 		// different event in time). The dedupe happens upstream
 		// (the ingress dedupe has provider-specific retry semantics).
+		invoiceKnown := true
 		if ev.ProviderRefundID != "" && ev.ChargeID != "" && ev.AmountCents > 0 {
 			provider := providerName(s.billingProvider)
 			inv, err := s.store.GetInvoiceByProviderID(ctx, acct.ID, provider, ev.ChargeID)
-			if err != nil {
+			switch {
+			case errors.Is(err, state.ErrNotFound):
+				// A refund for an order apid never projected is recorded in
+				// the audit log and acknowledged: failing it would have the
+				// provider retry it forever, and Polar disables an endpoint
+				// after repeated failures (ADR-20261101143527).
+				invoiceKnown = false
+				s.log.Warn("apid: refund for an unknown invoice", "account", acct.ID,
+					"charge_id", logsanitize.Field(ev.ChargeID), "provider_refund_id", logsanitize.Field(ev.ProviderRefundID))
+			case err != nil:
 				return fmt.Errorf("load refunded invoice: %w", err)
-			}
-			if err := s.store.RecordInvoiceRefund(ctx, state.InvoiceRefund{
-				InvoiceID:        inv.ID,
-				ProviderRefundID: ev.ProviderRefundID,
-				IdempotencyKey:   "webhook-" + ev.ProviderRefundID,
-				AmountCents:      ev.AmountCents,
-				Source:           "webhook",
-				Status:           normalizedRefundStatus(ev.RefundStatus),
-			}); err != nil {
-				return fmt.Errorf("record refund webhook: %w", err)
+			default:
+				if err := s.store.RecordInvoiceRefund(ctx, state.InvoiceRefund{
+					InvoiceID:        inv.ID,
+					ProviderRefundID: ev.ProviderRefundID,
+					IdempotencyKey:   "webhook-" + ev.ProviderRefundID,
+					AmountCents:      ev.AmountCents,
+					Source:           "webhook",
+					Status:           normalizedRefundStatus(ev.RefundStatus),
+				}); err != nil {
+					return fmt.Errorf("record refund webhook: %w", err)
+				}
 			}
 		}
 		s.audit.Emit(ctx, "refund.processed", &acct.ID, map[string]any{
@@ -6074,6 +6145,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			"charge_id":          ev.ChargeID,
 			"amount_cents":       ev.AmountCents,
 			"currency":           ev.Currency,
+			"invoice_known":      invoiceKnown,
 		})
 	}
 	return nil

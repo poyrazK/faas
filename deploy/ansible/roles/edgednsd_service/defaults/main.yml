@@ -3,11 +3,15 @@
 # turns it on (faas_edgednsd_managed in bootstrap.yml) and renders the names
 # and the node addresses.
 faas_edgednsd_enabled: true
-# Operator-provisioned files on the controller, never in the repository:
-# DATABASE_URL for a faas_runtime member that may read compute_nodes, and the
-# zone's Cloudflare token with Zone > DNS: Edit and nothing else.
-faas_edgednsd_env_src: ""
+# The zone's Cloudflare token, with Zone > DNS: Edit and nothing else. CD
+# stages it from the EDGEDNSD_CF_TOKEN secret (scripts/ci/edgednsd_vars.sh);
+# a workstation converge may name a file on the controller instead.
+faas_edgednsd_cf_token: ""
 faas_edgednsd_cf_token_src: ""
+# Optional env file on the controller, e.g. a DATABASE_URL for another login.
+# Without it edgednsd logs in like the other control-plane daemons, by peer
+# authentication as faas over the local socket.
+faas_edgednsd_env_src: ""
 # "<zone id>:<host>" per managed name, e.g. a pilot host, later the app
 # wildcard.
 faas_edgednsd_names: []

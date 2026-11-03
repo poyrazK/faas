@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/resourcelabels"
 	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
 	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
@@ -1100,7 +1101,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			buildDependencies = run.BuildDependencies(app.ID)
 		}
 		readinessCheck, livenessCheck := projectReadinessOverrides(app.Manifest, acct.Plan)
-		enqRes, enqErr := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
+		enqParams := apidsource.EnqueueParams{
 			TrafficPercentExplicit:    safe,
 			OperationID:               operationID,
 			BuildDependencies:         buildDependencies,
@@ -1143,7 +1144,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ReleaseCommandShell: releaseCommand.shell,
 			ServiceRollout:      !safe && app.Manifest.ExecutionMode == api.ExecutionModeService,
 			Workflows:           marshalWorkflowDefinitions(workflowDefinitions),
-		})
+		}
+		// A project apply into production gets the same default canary and
+		// first-wake rollback as a single-app deploy (ADR-1446 amendment 1).
+		// An atomic project release stages dark and cuts every app over
+		// together, so it keeps its own coordinated rollout.
+		if !safe {
+			release.ApplyDefaultToEnqueue(ctx, s.store, s.log, app, acct.Plan, environment, &enqParams)
+		}
+		enqRes, enqErr := apidsource.Enqueue(deployCtx, s.store, s.notif, enqParams)
 		if app.Manifest.ProjectImage != "" {
 			_ = os.Remove(staged)
 		}

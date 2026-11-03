@@ -190,8 +190,8 @@ func TestSpansRequestTelemetryAdmitsCompanyAppOfFreeCreator(t *testing.T) {
 	if out := r.HandleOne(context.Background(), row(w.companyApp)); out.GetOutcome() != RtOutcomeInserted {
 		t.Fatalf("company app row outcome = %q, want inserted", out.GetOutcome())
 	}
-	if out := r.HandleOne(context.Background(), row(w.personalApp)); out.GetOutcome() != rtOutcomeRateLimited {
-		t.Fatalf("Free personal app row outcome = %q, want rate_limited", out.GetOutcome())
+	if out := r.HandleOne(context.Background(), row(w.personalApp)); out.GetOutcome() != rtOutcomeNotRetained {
+		t.Fatalf("Free personal app row outcome = %q, want not_retained", out.GetOutcome())
 	}
 }
 

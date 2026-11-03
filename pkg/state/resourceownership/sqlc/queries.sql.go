@@ -57,7 +57,7 @@ func (q *Queries) ErasureBlocked(ctx context.Context, db DBTX, dollar_1 pgtype.U
 }
 
 const listOrgAccounts = `-- name: ListOrgAccounts :many
-SELECT id, resource_ownership_enabled, plan, status, personal_org, deleted_pending, provider_customer_id, stripe_subscription_item, created_at, updated_at, past_due_at, last_quota_warning_at, suspended_reason, abuse_hold_at, abuse_hold_reason, billing_email, business_name, billing_address, tax_id FROM orgs WHERE NOT personal_org ORDER BY id
+SELECT id, resource_ownership_enabled, plan, status, personal_org, deleted_pending, provider_customer_id, stripe_subscription_item, created_at, updated_at, past_due_at, last_quota_warning_at, suspended_reason, abuse_hold_at, abuse_hold_reason, billing_email, business_name, billing_address, tax_id, deletion_requested_at FROM orgs WHERE NOT personal_org ORDER BY id
 `
 
 func (q *Queries) ListOrgAccounts(ctx context.Context, db DBTX) ([]Org, error) {
@@ -89,6 +89,7 @@ func (q *Queries) ListOrgAccounts(ctx context.Context, db DBTX) ([]Org, error) {
 			&i.BusinessName,
 			&i.BillingAddress,
 			&i.TaxID,
+			&i.DeletionRequestedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -178,7 +179,7 @@ func (q *Queries) MarkDunning(ctx context.Context, db DBTX, arg MarkDunningParam
 }
 
 const orgAccount = `-- name: OrgAccount :one
-SELECT id, resource_ownership_enabled, plan, status, personal_org, deleted_pending, provider_customer_id, stripe_subscription_item, created_at, updated_at, past_due_at, last_quota_warning_at, suspended_reason, abuse_hold_at, abuse_hold_reason, billing_email, business_name, billing_address, tax_id FROM orgs WHERE id = $1 AND NOT personal_org
+SELECT id, resource_ownership_enabled, plan, status, personal_org, deleted_pending, provider_customer_id, stripe_subscription_item, created_at, updated_at, past_due_at, last_quota_warning_at, suspended_reason, abuse_hold_at, abuse_hold_reason, billing_email, business_name, billing_address, tax_id, deletion_requested_at FROM orgs WHERE id = $1 AND NOT personal_org
 `
 
 func (q *Queries) OrgAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Org, error) {
@@ -204,12 +205,13 @@ func (q *Queries) OrgAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Org,
 		&i.BusinessName,
 		&i.BillingAddress,
 		&i.TaxID,
+		&i.DeletionRequestedAt,
 	)
 	return i, err
 }
 
 const orgByBillingCustomer = `-- name: OrgByBillingCustomer :one
-SELECT o.id, o.resource_ownership_enabled, o.plan, o.status, o.personal_org, o.deleted_pending, o.provider_customer_id, o.stripe_subscription_item, o.created_at, o.updated_at, o.past_due_at, o.last_quota_warning_at, o.suspended_reason, o.abuse_hold_at, o.abuse_hold_reason, o.billing_email, o.business_name, o.billing_address, o.tax_id FROM orgs o JOIN billing_identities b ON b.account_id=o.id
+SELECT o.id, o.resource_ownership_enabled, o.plan, o.status, o.personal_org, o.deleted_pending, o.provider_customer_id, o.stripe_subscription_item, o.created_at, o.updated_at, o.past_due_at, o.last_quota_warning_at, o.suspended_reason, o.abuse_hold_at, o.abuse_hold_reason, o.billing_email, o.business_name, o.billing_address, o.tax_id, o.deletion_requested_at FROM orgs o JOIN billing_identities b ON b.account_id=o.id
 WHERE NOT o.personal_org AND b.provider=$1 AND b.customer_id=$2
 `
 
@@ -241,12 +243,13 @@ func (q *Queries) OrgByBillingCustomer(ctx context.Context, db DBTX, arg OrgByBi
 		&i.BusinessName,
 		&i.BillingAddress,
 		&i.TaxID,
+		&i.DeletionRequestedAt,
 	)
 	return i, err
 }
 
 const orgByLegacyCustomer = `-- name: OrgByLegacyCustomer :one
-SELECT id, resource_ownership_enabled, plan, status, personal_org, deleted_pending, provider_customer_id, stripe_subscription_item, created_at, updated_at, past_due_at, last_quota_warning_at, suspended_reason, abuse_hold_at, abuse_hold_reason, billing_email, business_name, billing_address, tax_id FROM orgs WHERE NOT personal_org AND provider_customer_id=$1
+SELECT id, resource_ownership_enabled, plan, status, personal_org, deleted_pending, provider_customer_id, stripe_subscription_item, created_at, updated_at, past_due_at, last_quota_warning_at, suspended_reason, abuse_hold_at, abuse_hold_reason, billing_email, business_name, billing_address, tax_id, deletion_requested_at FROM orgs WHERE NOT personal_org AND provider_customer_id=$1
 `
 
 func (q *Queries) OrgByLegacyCustomer(ctx context.Context, db DBTX, providerCustomerID pgtype.Text) (Org, error) {
@@ -272,6 +275,7 @@ func (q *Queries) OrgByLegacyCustomer(ctx context.Context, db DBTX, providerCust
 		&i.BusinessName,
 		&i.BillingAddress,
 		&i.TaxID,
+		&i.DeletionRequestedAt,
 	)
 	return i, err
 }

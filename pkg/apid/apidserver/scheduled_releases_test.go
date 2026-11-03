@@ -211,6 +211,29 @@ func TestScheduleValidationFreezePreviewAndCancel(t *testing.T) {
 	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeScheduledReleaseNotFound)
 }
 
+// A release scheduled for after a freeze is built, and runs its release
+// command, during it, so a freeze active now refuses it unless it is
+// overridden (ADR-20261019071733 amendment 8).
+func TestScheduledReleaseIsRefusedByAFreezeActiveNow(t *testing.T) {
+	f := newScheduleFixture(t, "sched-now-frozen")
+	e := f.e
+	now := time.Now().UTC()
+	if rec := guardDo(t, e, http.MethodPost, "/v1/freezes", api.CreateReleaseFreezeRequest{App: "sched-now-frozen", Kind: "window", Reason: "incident 4712",
+		StartsAt: now.Add(-time.Minute).Format(time.RFC3339), EndsAt: now.Add(time.Hour).Format(time.RFC3339)}, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("create freeze = %d %s", rec.Code, rec.Body)
+	}
+	release := now.Add(3 * time.Hour).Format(time.RFC3339)
+	rec := e.Do(t, http.MethodPost, "/v1/apps/sched-now-frozen/deployments", api.CreateDeploymentRequest{Image: imageRef('f'), ReleaseAt: release}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeReleaseFrozen)
+	if p := decodeProblem(t, rec.Body.Bytes()); !strings.Contains(p.Hint, "runs its release command now") {
+		t.Fatalf("frozen schedule hint = %q", p.Hint)
+	}
+	if rec := guardDo(t, e, http.MethodPost, "/v1/apps/sched-now-frozen/deployments",
+		api.CreateDeploymentRequest{Image: imageRef('9'), ReleaseAt: release, OverrideFreeze: "hotfix migration"}, nil); rec.Code != http.StatusAccepted {
+		t.Fatalf("overridden schedule = %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestApprovalPolicyKeepsParkedReleasesBehindACanary(t *testing.T) {
 	f := newScheduleFixture(t, "sched-approved")
 	e := f.e

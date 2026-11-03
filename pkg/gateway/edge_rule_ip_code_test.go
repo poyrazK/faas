@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -100,6 +101,53 @@ func TestEdgeRuleGeoDenyUsesGeoDeniedCode(t *testing.T) {
 			}
 			if rec.Code != http.StatusForbidden || problem.Code != api.CodeGeoDenied {
 				t.Fatalf("status %d code %q, want 403 %q", rec.Code, problem.Code, api.CodeGeoDenied)
+			}
+		})
+	}
+}
+
+type unresolvedCountry struct{ err error }
+
+func (u unresolvedCountry) Lookup(net.IP) (string, bool, error) { return "", false, u.err }
+
+// An address the database places in no country is in no deny list and in no
+// allow list; only a failed lookup is "unavailable" (ADR-091 amendment
+// 2026-11-02, later). Deny-only rules used to answer it 503.
+func TestEdgeRuleGeoUnresolvedCountry(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		rule        EdgeRuleGeoResolved
+		err         error
+		wantHandled bool
+		wantStatus  int
+		wantCode    string
+	}{
+		{name: "deny list lets it through", rule: EdgeRuleGeoResolved{Deny: map[string]struct{}{"XX": {}}}},
+		{name: "allow list refuses it", rule: EdgeRuleGeoResolved{Allow: map[string]struct{}{"YY": {}}}, wantHandled: true, wantStatus: http.StatusForbidden, wantCode: api.CodeGeoDenied},
+		{name: "failed lookup is unavailable", rule: EdgeRuleGeoResolved{Deny: map[string]struct{}{"XX": {}}}, err: errors.New("corrupt database"), wantHandled: true, wantStatus: http.StatusServiceUnavailable, wantCode: api.CodeCapacity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+			rule := tc.rule
+			rule.ID, rule.AccountID, rule.AppID = "rule-geo", "acct-1", "app-1"
+			h.WithEdgeRules(geoCodeMatcher{geo: &rule}, nil, nil)
+			h.WithGeoReader(unresolvedCountry{err: tc.err})
+			req := httptest.NewRequest(http.MethodGet, "http://geo.example.com/", nil)
+			req.Header.Set("X-Forwarded-For", "10.0.0.9")
+			rec := httptest.NewRecorder()
+			handled := h.applyEdgeRuleGeo(rec, req, App{ID: "app-1", AccountID: "acct-1"})
+			if handled != tc.wantHandled {
+				t.Fatalf("handled = %v, want %v (status %d body %s)", handled, tc.wantHandled, rec.Code, rec.Body.String())
+			}
+			if !handled {
+				return
+			}
+			var problem api.Problem
+			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+				t.Fatalf("decode %q: %v", rec.Body.String(), err)
+			}
+			if rec.Code != tc.wantStatus || problem.Code != tc.wantCode {
+				t.Fatalf("status %d code %q, want %d %q", rec.Code, problem.Code, tc.wantStatus, tc.wantCode)
 			}
 		})
 	}

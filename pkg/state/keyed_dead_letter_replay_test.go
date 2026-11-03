@@ -129,7 +129,7 @@ func (f *keyedDLQFixture) replay(work keyedDLQWork, eventID, surface string) err
 	switch surface {
 	case "direct":
 		if work.broker {
-			return f.store.RetryTriggerRecordByOperator(f.ctx, work.id)
+			return f.store.RetryTriggerRecordByOperator(f.ctx, f.appID, f.triggerID, work.id)
 		}
 		_, err := f.store.RetryQueueDeadLetter(f.ctx, f.accountID, work.id)
 		return err
@@ -372,7 +372,7 @@ func TestPgKeyedDeadLetterReplaySerializesWithClaimLane(t *testing.T) {
 				f := newKeyedDLQFixture(t)
 				old := f.admit(t, "old", broker, "s:order-one")
 				eventID, _ := f.deadLetter(t, old)
-				holdID, receiptID := old.id, old.id
+				holdID, receiptID, receiptTriggerID := old.id, old.id, f.triggerID
 				if broker {
 					holdID = f.admit(t, "anchor", false, "s:order-one").id
 				} else if surface == "receipt" {
@@ -380,7 +380,8 @@ func TestPgKeyedDeadLetterReplaySerializesWithClaimLane(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					receiptID, err = f.store.InsertTriggerRecord(f.ctx, trigger.ID.String(), old.id, []byte(`{}`), nil, nil)
+					receiptTriggerID = trigger.ID.String()
+					receiptID, err = f.store.InsertTriggerRecord(f.ctx, receiptTriggerID, old.id, []byte(`{}`), nil, nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -389,7 +390,7 @@ func TestPgKeyedDeadLetterReplaySerializesWithClaimLane(t *testing.T) {
 				result := make(chan error, 1)
 				go func() {
 					if surface == "receipt" {
-						result <- f.store.RetryTriggerRecordByOperator(f.ctx, receiptID)
+						result <- f.store.RetryTriggerRecordByOperator(f.ctx, f.appID, receiptTriggerID, receiptID)
 					} else {
 						result <- f.replay(old, eventID, surface)
 					}

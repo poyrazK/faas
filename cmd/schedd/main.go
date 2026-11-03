@@ -1322,7 +1322,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var privateNetworkPolicySubscriber *sched.PrivateNetworkPolicySubscriber
 	var privateNetworkPeeringSubscriber *sched.PrivateNetworkPeeringSubscriber
 	var privateNetworkFabricDeletionSubscriber *sched.PrivateNetworkFabricDeletionSubscriber
-	if api.PrivateNetworkEnabled() {
+	if api.PrivateNetworkEnabled() && !privateNetworkReconcilersRun(cfg.Role) {
+		log.Info("schedd: private network reconciler left to the central scheduler", "role", cfg.Role)
+	} else if api.PrivateNetworkEnabled() {
 		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
 		if !ok {
 			log.Warn("schedd: private network reconciler unavailable; state store lacks reconcile extension")
@@ -2896,6 +2898,17 @@ func triggersRetention(store state.Store, log *slog.Logger, value string) *sched
 		return nil
 	}
 	return sched.NewTriggersRetention(store, log)
+}
+
+// privateNetworkReconcilersRun reports whether a schedd with this role runs
+// the private-network reconcilers and their notify subscribers. They sweep
+// every attachment and push it to every live node through the vmmd router,
+// so one scheduler per fleet runs them: the control-plane or single-box one.
+// A node-local schedd (ADR-062) reads the same host-wide
+// FAAS_PRIVATE_NETWORK_ENABLED, and its unclaimed sweeps would race the
+// central one's attachment status writes.
+func privateNetworkReconcilersRun(r role.Role) bool {
+	return r != role.RoleComputeOnly
 }
 
 // subscribeWithReconnect drains a pg_notify-style feed via the

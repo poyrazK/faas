@@ -51,12 +51,14 @@ func (s *PgStore) OIDCDeployTargetForSubject(ctx context.Context, accountID, iss
 		           select project.production_branch
 		             from projects project
 		            where project.account_id = $1::uuid
+		              and project.install_id is not null
 		              and lower(project.repo_full_name) = lower($2)
 		           union all
 		           select deploy.branch
 		             from github_deploy_branches deploy
 		             join projects project on project.id = deploy.project_id
 		            where project.account_id = $1::uuid
+		              and project.install_id is not null
 		              and lower(project.repo_full_name) = lower($2)
 		         ) refs
 		         where coalesce(branch, '') <> ''
@@ -67,7 +69,7 @@ func (s *PgStore) OIDCDeployTargetForSubject(ctx context.Context, accountID, iss
 		   and a.slug = $3
 		   and a.status <> 'deleted'
 		   and a.deleted_at is null
-		   and (lower(a.github_repo_full_name) = lower($2) or lower(p.repo_full_name) = lower($2))
+		   and (lower(a.github_repo_full_name) = lower($2) or (p.install_id is not null and lower(p.repo_full_name) = lower($2)))
 		 limit 1`,
 		accountID, identity.FullName, appSlug).Scan(&target.AppID, &target.Branches)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -100,7 +102,7 @@ func (m *MemStore) OIDCDeployTargetForSubject(_ context.Context, accountID, issu
 		}
 	}
 	for id, project := range m.projects {
-		if project.AccountID != accountID || !strings.EqualFold(project.RepoFullName, repo) {
+		if project.AccountID != accountID || project.InstallID == 0 || !strings.EqualFold(project.RepoFullName, repo) {
 			continue
 		}
 		add(project.ProductionBranch)
@@ -113,7 +115,7 @@ func (m *MemStore) OIDCDeployTargetForSubject(_ context.Context, accountID, issu
 			continue
 		}
 		bound := strings.EqualFold(m.githubBindings[id].RepoFullName, repo)
-		if project, ok := m.projects[app.ProjectID]; ok && strings.EqualFold(project.RepoFullName, repo) {
+		if project, ok := m.projects[app.ProjectID]; ok && project.InstallID != 0 && strings.EqualFold(project.RepoFullName, repo) {
 			bound = true
 		}
 		if !bound {

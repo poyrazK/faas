@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var auditTraceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var auditTraceIDPattern = lazyregexp.New(`^[0-9a-f]{32}$`)
 
 // The FK-free audit table retains trace_id inside data, unlike events which
 // has a dedicated column. Preserve a caller's explicit ID in that payload.

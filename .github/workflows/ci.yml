@@ -233,6 +233,14 @@ jobs:
           # PR-4a compares the PR head against the event's base SHA and
           # scans every commit subject for fix-shaped changes.
           fetch-depth: 0
+      # The restored Go/lint cache and the full build ran the runner out of
+      # disk (run 41565131421). This job uses none of the preinstalled
+      # Android, .NET, GHC or CodeQL toolchains.
+      - name: free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -659,7 +667,9 @@ jobs:
     # bounds. On 2026-10-27 the apidserver package alone reached the old 45m
     # package timeout (2705 s, run 40420329172) inside a 66-minute job, so
     # the bounds are 60m and 90 minutes until apidserver gets its own shards.
-    timeout-minutes: 90
+    # On 2026-11-03 apidserver took 3582 s (18 s under 60m) and the job hit
+    # 90 minutes (run 41565131421), so the bounds are now 90m and 120.
+    timeout-minutes: 120
     permissions:
       contents: read
       id-token: write
@@ -708,6 +718,14 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
+      # The restored cache, the postgres image and the apid race build filled
+      # the runner disk mid-test (run 41541035516). This job uses none of the
+      # preinstalled Android, .NET, GHC or CodeQL toolchains.
+      - name: free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -774,7 +792,7 @@ jobs:
           # the aggregate still requires every complete state shard below.
           STATEPKG=$(go list ./pkg/state)
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
-          go test -json -race -count=1 -p 4 -timeout=60m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -json -race -count=1 -p 4 -timeout=90m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
 
       - name: application-standard ledger recovery tests
@@ -1633,8 +1651,10 @@ jobs:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
     # Bounded-memory cold builds reached 14 min before the contracts finished.
-    # Whole green runs took 29-34 minutes on 2026-10-12/13.
-    timeout-minutes: 50
+    # Whole green runs took 29-34 minutes on 2026-10-12/13, and 41-49 by
+    # 2026-11-03 (UDP control-plane and container contract steps 16-24 min
+    # each); run 41565131421 hit the old 50-minute cap mid-way.
+    timeout-minutes: 75
     permissions:
       contents: read
     # The UDP contract race-builds cmd/apid; cold, that exhausted hosted-runner
@@ -1770,6 +1790,8 @@ jobs:
         run: make adr-number-uniqueness-check
       - name: ADR number gate checker tests
         run: make adr-number-uniqueness-check-test
+      - name: Cloudflare range check tests
+        run: make cloudflare-ranges-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
       # The two encoding/quoting gates run in `make lint`, but the tests that

@@ -633,6 +633,11 @@ const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonSc
 // arrive (ADR-20261031110037).
 const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 
+// ManagedPostgresStorageOverageMillicentsPerGiBMonth prices storage a subject
+// with overage on holds past its plan's pool: $0.50 per GiB-month, averaged
+// over the UTC month (ADR-20261102072425; ADR-20261031110037 amendment 2).
+const ManagedPostgresStorageOverageMillicentsPerGiBMonth = 50_000
+
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.
@@ -2389,6 +2394,34 @@ const (
 	RealtimeResumeCommandBurst      = 40
 )
 
+// A realtime node reads a subscription ticket a new connection presents from
+// the control plane before it can tell a real ticket from a made-up one, so
+// these reads are bounded per endpoint and per node; a connection past them
+// gets 503 with Retry-After. Known tickets come from the node's access cache,
+// and an endpoint holds at most RealtimeTicketMaxPerEndpoint (1,024) live
+// tickets, so the endpoint burst admits all of them reconnecting at once
+// within seconds (ADR-1117, amendment of 2026-11-02).
+const (
+	RealtimeTicketReadsPerEndpointPerSecond = 50
+	RealtimeTicketReadBurstPerEndpoint      = 500
+	RealtimeTicketReadsPerNodePerSecond     = 200
+	RealtimeTicketReadBurstPerNode          = 1_000
+)
+
+// A client message on a plain (v1) realtime WebSocket is written to the
+// node's callback spool, with two fsyncs, and delivered to the endpoint's
+// message callback. A connection may send RealtimeClientMessagesPerSecond
+// (bursts of RealtimeClientMessageBurst), and a node writes at most
+// RealtimeNodeClientMessagesPerSecond: past either, the node stops reading
+// the socket until it may, so TCP slows the client and nothing is dropped
+// (ADR-1323, amendment of 2026-11-02).
+const (
+	RealtimeClientMessagesPerSecond     = 20
+	RealtimeClientMessageBurst          = 40
+	RealtimeNodeClientMessagesPerSecond = 2_000
+	RealtimeNodeClientMessageBurst      = 4_000
+)
+
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (
@@ -2521,6 +2554,12 @@ const (
 	// App metadata and deployment artifacts remain available during this
 	// period, after which the grace sweeper permanently removes the app.
 	AppDeleteGraceDays = 7
+	// AppSlugHoldDuration is how long a renamed or purged app's slug stays
+	// held for its account: other accounts cannot create or rename an app to
+	// it, so they cannot take over links, webhooks and OAuth redirects still
+	// pointing at the old host (bug hunt 2026-10-28 H80, ADR-20261101091049).
+	// The app_slug_holds triggers spell it "interval '90 days'".
+	AppSlugHoldDuration = 90 * 24 * time.Hour
 	// Bounds for operator-specified object-storage safety policies; no customer
 	// allowance or price is inferred when the policy is missing.
 	MaxObjectStoragePolicyValue         int64 = 1 << 60
@@ -3464,6 +3503,10 @@ func EventSettledRetentionMax() time.Duration {
 // before month-close pricing. A zero field changes nothing: the operator
 // policy applies unchanged and no usage is included.
 type ObjectStoragePlanLimits struct {
+	// MaxAccountBytes is the plan's storage ceiling (ADR-20261101214152):
+	// Free 1 GiB, Hobby 2× its included storage, Pro and Scale 5×. Support can
+	// grant a paid account another (ObjectStorageLimitsFor), and the account's
+	// spend cap tightens it (WithSpendCap).
 	MaxAccountBytes       int64
 	MaxMonthlyRequests    int64
 	MaxMonthlyEgressBytes int64
@@ -3549,12 +3592,26 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
-// WithSpendCap returns the limits with the storage ceiling a paid account's
-// spend cap pays for: the plan's included storage plus the GiB-months the cap
-// buys at ObjectStorageMillicentsPerGiBMonth (ADR-20261101214152). Hobby's
-// default $2 cap gives 76 GiB, Pro's $10 383 GiB, Scale's $30 1,200 GiB. A nil
-// cap (none, or a cleared one) keeps the limits; a plan ceiling that is
-// already tighter, as Free's, stays.
+// ObjectStorageLimitsFor returns a billing subject's object-storage limits on
+// plan (ADR-20261101214152): the plan's, with the ceiling support granted the
+// subject (grantBytes, nil for none) in place of a paid plan's, tightened by
+// what the subject's spend cap pays for. Free ignores a grant: its storage is
+// never billed.
+func ObjectStorageLimitsFor(plan Plan, grantBytes, capCents *int64) ObjectStoragePlanLimits {
+	limits, _ := LimitsFor(plan)
+	l := limits.ObjectStorage
+	if grantBytes != nil && *grantBytes > 0 && plan.IsPaid() {
+		l.MaxAccountBytes = *grantBytes
+	}
+	return l.WithSpendCap(capCents)
+}
+
+// WithSpendCap returns the limits with the storage ceiling tightened to what
+// a paid account's spend cap pays for: the plan's included storage plus the
+// GiB-months the cap buys at ObjectStorageMillicentsPerGiBMonth
+// (ADR-20261101214152). The default caps pay for more than the plan
+// ceilings, so they only bind when the customer lowers them: a $0 cap stops at
+// the included storage. A nil cap (none, or a cleared one) keeps the limits.
 func (l ObjectStoragePlanLimits) WithSpendCap(capCents *int64) ObjectStoragePlanLimits {
 	if capCents == nil || *capCents < 0 || l.IncludedBytes <= 0 {
 		return l
@@ -5705,7 +5762,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6146,7 +6203,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -6552,7 +6609,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -7871,6 +7928,16 @@ const (
 	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
 	EdgeWAFInlineMsPerAppPerSecond = 500
 	EdgeWAFInlineMsPerAppBurst     = 1000
+	// EdgeWAFMaxInspectHeaderBytes and EdgeWAFMaxInspectHeaderValueBytes
+	// bound the request headers a WAF check scores. A check's cost grows
+	// faster than its input (a 32 KiB cookie measured about 1,000 times an
+	// empty request's), a check cannot be stopped once it holds a slot, and
+	// the edge accepts 1 MiB of headers, so one client sending large headers
+	// could hold every slot and leave other apps' checks to fail open. A
+	// longer value is cut, and headers past the total are not scored
+	// (ADR-831 amendment 19).
+	EdgeWAFMaxInspectHeaderBytes      = 16 << 10
+	EdgeWAFMaxInspectHeaderValueBytes = 4 << 10
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
@@ -7965,6 +8032,13 @@ const (
 	EdgePenaltyBoxMaxPerApp  = 10000
 	EdgePenaltyBoxMaxEntries = 200000
 	EdgePenaltyHitsMaxPerApp = 10000
+	// EdgePenaltyCrossSiteMaxSeconds caps a box every counted rejection of
+	// which said it came from a page on another site (Sec-Fetch-Site:
+	// cross-site). A browser sends that for requests another site's page
+	// makes it send, which must not box a real visitor for long; any other
+	// client can send it too, so it shortens the box instead of preventing
+	// it (ADR-20261022105846 amendment 3).
+	EdgePenaltyCrossSiteMaxSeconds = 60
 
 	// --- ADR-20261021220456: attack mode ------------------------------
 
@@ -13969,10 +14043,22 @@ const (
 )
 
 // RouteAnalyticsQueryTimeout bounds each routes analytics read over retained
-// request telemetry (route advice, the awake report and the insights
-// evaluator that reuses them): Postgres cancels the statement past it and the
-// caller is told to narrow the window (ADR-20261026143210).
+// request telemetry (route advice, the awake report, the insights evaluator
+// that reuses them, request analytics, its timeseries and route customers):
+// Postgres cancels the statement past it and the caller is told to narrow the
+// window (ADR-20261026143210).
 const RouteAnalyticsQueryTimeout = 10 * time.Second
+
+// DashboardRequestAnalyticsTimeout bounds the whole request analytics panel
+// on the dashboard app page, which runs several of those reads on every
+// render; past it the panel is left out and the page renders without it.
+const DashboardRequestAnalyticsTimeout = 5 * time.Second
+
+// RequestAnalyticsSettleLag is how far before now request analytics stops
+// judging telemetry completeness: gateways hold a minute's rows until it
+// closes and flush every few seconds, so the newest minutes are always still
+// arriving. Route removal excludes the same two minutes.
+const RequestAnalyticsSettleLag = 2 * time.Minute
 
 // RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
@@ -14315,6 +14401,9 @@ const (
 	AppHealthWorkerRecordScan       = 1000
 	AppHealthWorkerBacklogAgeWarn   = 10 * time.Minute
 	AppHealthWorkerDeadLetterWindow = time.Hour
+	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
+	// app health counts the guest's reports within it (ADR-20261102124306).
+	AppHealthMemoryPressureWindow = 24 * time.Hour
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
@@ -14526,6 +14615,17 @@ const (
 	DataAPIStorageTransfers          = 4
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
+	// Change hooks (ADR-20261022121642), mirrored in the runtime's limits:
+	// events and body bytes per runtime publication, the largest event data
+	// before its rows are dropped, the relay's claim lease, how long one
+	// publication may take, and the relay's idle poll range.
+	DataAPIChangeEventsBatchMaxEvents = 100
+	DataAPIChangeEventsBatchMaxBytes  = 1 << 20
+	DataAPIChangeEventDataMaxBytes    = 64 << 10
+	DataAPIChangeEventsLease          = 60 * time.Second
+	DataAPIChangeEventsPublishTimeout = 10 * time.Second
+	DataAPIChangeEventsIdleMin        = time.Second
+	DataAPIChangeEventsIdleMax        = 30 * time.Second
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour

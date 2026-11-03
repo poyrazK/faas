@@ -2227,3 +2227,26 @@ native x86_64 KVM database nodes.
 - Separating storage from compute (Neon-style pageserver): the best long-term
   economics, but out of reach today; the volume abstraction keeps it possible.
 - Memory snapshots for wake: RNG replay, volume consistency and disk cost.
+
+## Amendment: connection admission (2026-11-02)
+
+Bug hunt 34 found that the "rate-limits per database and per source" above
+was only concurrency caps: 512 handshakes in flight per instance and 32 per
+address, each held up to the 15 s handshake timeout before the client sent a
+byte. About sixteen addresses holding idle connections filled every slot and
+locked every database on the node out. pgproxyd now:
+
+- allows `startup_timeout` (default 5 s) for TLS and the startup message, and
+  the 15 s handshake timeout only for authentication and the wake;
+- lets connections from `trusted_sources` (the platform's compute node
+  networks, `pgproxyd_trusted_sources` in Ansible) skip both handshake caps,
+  so strangers cannot lock the apps out; they still count against
+  `MaxConnections`;
+- refuses a source for the rest of the minute after `max_auth_failures`
+  (default 10) failed logins to one database (`53300`), without a SCRAM
+  exchange. Keying by database and source keeps one attacker from locking a
+  database out for everyone.
+
+Clients outside the trusted networks still share the handshake caps, so a
+large botnet can still crowd them out; that is the residual risk until a
+SYN-proxy or per-network caps are in front of the listener.

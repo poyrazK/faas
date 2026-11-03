@@ -220,3 +220,15 @@ company triggers go through the reviewed queue-binding APIs
 ADR-20261029100110. Managed PostgreSQL cutover preparation keeps the
 creator-only fallback. Background workers that read the creator's account
 instead of `state.AppResourceAccount` are not covered here.
+
+## Amendment 5 (2026-11-02): the cron routes amendment 4 missed
+
+Amendment 4 mapped the cron routes, but three were left out, and a member who
+did not create a company app was refused them: a cron's status
+(`GET /v1/crons/{id}/status`, read permission), its labels
+(`PATCH /v1/crons/{id}/labels`, configure permission), and a manual run's
+request (`GET /v1/cron-fire-now-requests/{request_id}`, read permission). The
+last one broke `gregale cron run --wait` for every member but the app's
+creator: the request is stored under the company's account, and the member
+polling it got 404. appaccess now resolves a run request to its cron's app,
+so the request is read with the cron's permission.

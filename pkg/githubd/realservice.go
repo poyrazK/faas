@@ -1060,6 +1060,22 @@ func (s *RealService) GetBranchHead(ctx context.Context, accountID string, insta
 	return sha, true, nil
 }
 
+// GetInstallationRepository returns the repository the account's
+// installation sees under repoFullName, with its immutable IDs; found=false
+// when it sees none or is not the account's (ADR-20261101160300,
+// amendment 2). One GitHub request,
+// unlike listing every repository of the installation.
+func (s *RealService) GetInstallationRepository(ctx context.Context, accountID string, installationID int64, repoFullName string) (githubdgrpc.InstallationRepository, bool, error) {
+	repo, err := s.repositoryForInstallation(ctx, accountID, installationID, repoFullName)
+	if errors.Is(err, ErrRepositoryNotVisible) || errors.Is(err, state.ErrNotFound) {
+		return githubdgrpc.InstallationRepository{}, false, nil
+	}
+	if err != nil {
+		return githubdgrpc.InstallationRepository{}, false, err
+	}
+	return githubdgrpc.InstallationRepository{ID: repo.ID, OwnerID: repo.Owner.ID, FullName: repo.FullName}, true, nil
+}
+
 func isCanonicalCommitSHA(s string) bool {
 	if len(s) != 40 {
 		return false
