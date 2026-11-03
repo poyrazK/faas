@@ -126,7 +126,6 @@ func goBlock(t *testing.T, src, header string) string {
 }
 
 var (
-	callPattern = regexp.MustCompile(`\.(\w+)\(`)
 	// tokenPattern finds, in order, inline DELETE statements and calls.
 	// An "update <table> set <col> = null" clears that table's references
 	// without deleting its rows; it is recorded as "~<table>".
