@@ -1,4 +1,4 @@
--- filename: 20261103094121000_events_newest_first_idx.sql
+-- filename: 20261103162447119_events_newest_first_idx.sql
 -- migration-compat: expand
 -- ADR-20261103094121: the operator events list (GET /v1/admin/obs/events,
 -- ListAllEventsPaged) reads events newest first. events had no b-tree on
