@@ -34,7 +34,17 @@ func reclaimDependencyCaches(driveDir string, need int64, now time.Time) {
 // queue after a short wait. Its deployment stays in flight; another builder,
 // or this one once space frees, takes it. It reports whether the claim went
 // back to the queue.
+//
+// A build that has waited api.BuildDiskCapacityMaxWait since it was enqueued
+// is not requeued again, so it fails with the disk-full error (bug hunt
+// H83): a builder whose disk stays short used to hold every source deploy in
+// "building" until the deployment watchdog's six-hour bound.
 func (b *Builderd) requeueForBuildCapacity(ctx context.Context, claim state.Build, cause error) bool {
+	if !claim.EnqueuedAt.IsZero() && time.Since(claim.EnqueuedAt) >= api.BuildDiskCapacityMaxWait {
+		b.log.Warn("builderd: no build disk capacity within the wait bound; failing the build",
+			"build", claim.ID, "deployment", claim.DeploymentID, "waited", time.Since(claim.EnqueuedAt).Round(time.Second), "err", cause)
+		return false
+	}
 	b.log.Warn("builderd: no build disk capacity; returning the build to the queue",
 		"build", claim.ID, "deployment", claim.DeploymentID, "err", cause)
 	b.emitBuildLog(ctx, claim.ID, "waiting for build capacity on the builder\n")
