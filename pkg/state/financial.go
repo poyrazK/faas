@@ -180,6 +180,40 @@ func MonthBilledComputeMBSeconds(current api.Plan, snapshots []FinancialPriceSna
 	return billed, nil
 }
 
+// MonthPlanAt returns the plan whose compute activation applies to usage up to
+// through, by the rule MonthComputeIncludedMBSeconds uses: the latest recorded
+// activation before through, or the earliest when none is. With no recorded
+// activation it is current. The provider pusher bills no hour whose plan is
+// Free (ADR-20261101143527).
+func MonthPlanAt(current api.Plan, snapshots []FinancialPriceSnapshot, through time.Time) api.Plan {
+	var active *FinancialPriceSnapshot
+	for i := range snapshots {
+		s := &snapshots[i]
+		if s.Price.Meter != "compute" || s.Plan == "" {
+			continue
+		}
+		switch {
+		case active == nil:
+			active = s
+		case s.EffectiveFrom.Before(through) && (!active.EffectiveFrom.Before(through) || laterActivation(s, active)):
+			active = s
+		case !active.EffectiveFrom.Before(through) && !s.EffectiveFrom.Before(through) && laterActivation(active, s):
+			active = s // none applies yet: the earliest covers the month before it
+		}
+	}
+	if active == nil {
+		return current
+	}
+	return active.Plan
+}
+
+func laterActivation(a, b *FinancialPriceSnapshot) bool {
+	if c := a.EffectiveFrom.Compare(b.EffectiveFrom); c != 0 {
+		return c > 0
+	}
+	return a.RecordedAt.After(b.RecordedAt)
+}
+
 // withCurrentPlan adds current as an activation just before now when the
 // latest recorded activation is another plan's.
 func withCurrentPlan(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time) []FinancialPriceSnapshot {

@@ -198,11 +198,24 @@ func TestOverageBillerRetryAfterALostResponseKeepsItsStartingPoint(t *testing.T)
 	if _, err := f.biller(t, true, november).Deliver(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.published) != 2 || f.published[0].DeliveredMillicents != 0 || f.published[1].DeliveredMillicents != 0 ||
-		f.published[1].TargetMillicents != 2*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
-		t.Fatalf("published %+v; want both steps to start from 0, so the provider keeps one", f.published)
+	// The step was reserved before it was sent (ADR-20261101143527): the
+	// retry resends it unchanged, so the provider keeps one copy and the
+	// recorded charge is the one it holds.
+	if len(f.published) != 2 || f.published[1] != f.published[0] || f.published[0].DeliveredMillicents != 0 || f.published[0].TargetMillicents != hour {
+		t.Fatalf("published %+v; want the reserved step resent unchanged, so the provider keeps one", f.published)
 	}
-	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != 2*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); !delivery.Live || delivery.Millicents != hour {
+		t.Fatalf("recorded %+v", delivery)
+	}
+	// The usage that grew meanwhile is charged from what was recorded, not
+	// dropped as a duplicate of the first step.
+	if _, err := f.biller(t, true, november).Deliver(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.published) != 3 || f.published[2].DeliveredMillicents != hour || f.published[2].TargetMillicents != 2*hour {
+		t.Fatalf("published %+v; want the growth charged from %d", f.published, hour)
+	}
+	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); delivery.Millicents != 2*hour {
 		t.Fatalf("recorded %+v", delivery)
 	}
 }

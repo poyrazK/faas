@@ -8043,8 +8043,11 @@ type Org struct {
 	ProviderCustomerID       string
 	StripeSubscriptionItem   string
 	DeletedPending           bool
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	// DeletionRequestedAt is when DeletedPending turned on (ADR-20261101143527);
+	// meterd delivers the organization's usage from before it.
+	DeletionRequestedAt *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // OrgMembership is the (org, account) join row. The pair is the PK;
