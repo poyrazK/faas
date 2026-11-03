@@ -11,6 +11,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 WEBHOOK_SIGNATURE_HEADER = "X-Faas-Webhook-Signature"
+# A second signature, made with the secret a rotation replaced, sent for 24
+# hours after the rotation. A receiver still holding the old secret verifies
+# against it.
+WEBHOOK_PREVIOUS_SIGNATURE_HEADER = "X-Faas-Webhook-Signature-Previous"
 WEBHOOK_TIMESTAMP_HEADER = "X-Faas-Webhook-Timestamp"
 WEBHOOK_DELIVERY_ID_HEADER = "X-Faas-Delivery-Id"
 DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE = timedelta(minutes=5)
@@ -100,13 +104,23 @@ def verify_webhook(
     supplied = bytes.fromhex(match.group(1))
     canonical = timestamp_header.encode("ascii") + b"." + delivery_id.encode("utf-8") + b"." + bytes(body)
     expected = hmac.new(key, canonical, hashlib.sha256).digest()
-    if not hmac.compare_digest(supplied, expected):
+    if not hmac.compare_digest(supplied, expected) and not _previous_signature_matches(headers, expected):
         raise WebhookVerificationError("bad_signature")
 
     return VerifiedWebhook(
         delivery_id=delivery_id,
         timestamp=datetime.fromtimestamp(timestamp_seconds, timezone.utc),
     )
+
+
+def _previous_signature_matches(headers: Mapping[str, str | Sequence[str]], expected: bytes) -> bool:
+    """True when the previous-secret signature sent during a rotation's overlap equals expected."""
+    try:
+        header = _single_header(headers, WEBHOOK_PREVIOUS_SIGNATURE_HEADER)
+    except WebhookVerificationError:
+        return False
+    match = re.fullmatch(r"sha256=([0-9a-fA-F]{64})", header)
+    return match is not None and hmac.compare_digest(bytes.fromhex(match.group(1)), expected)
 
 
 def _single_header(headers: Mapping[str, str | Sequence[str]], name: str) -> str:

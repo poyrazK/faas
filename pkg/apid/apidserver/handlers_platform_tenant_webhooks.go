@@ -283,7 +283,9 @@ func (s *server) rotatePlatformTenantWebhookSecret(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, prob)
 		return
 	}
-	updated, err := s.store.UpdateAppWebhook(r.Context(), row.ID, state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed})
+	updated, err := s.store.UpdateAppWebhook(r.Context(), row.ID, state.UpdateAppWebhookParams{
+		WebhookSecretSealed: &sealed, PreviousSecretUntil: webhookSecretOverlapUntil(),
+	})
 	if err != nil {
 		s.log.WarnContext(r.Context(), "rotate platform tenant webhook secret", slog.String("err", err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("could not rotate platform tenant webhook secret"))

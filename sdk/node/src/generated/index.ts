@@ -3038,6 +3038,7 @@ export type { TrafficRuntimeFeatureStatus } from './models/TrafficRuntimeFeature
 export type { TrafficRuntimeStatus } from './models/TrafficRuntimeStatus.js';
 export type { TransferOwnershipRequest } from './models/TransferOwnershipRequest.js';
 export type { Trigger } from './models/Trigger.js';
+export type { TriggerConsumerStatus } from './models/TriggerConsumerStatus.js';
 export type { TriggerDeadLetter } from './models/TriggerDeadLetter.js';
 export type { TriggerDeadLetterReason } from './models/TriggerDeadLetterReason.js';
 export type { TriggerKind } from './models/TriggerKind.js';

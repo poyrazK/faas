@@ -3850,6 +3850,17 @@ func (h *httpGatewaySynth) SynthesizeRequest(ctx context.Context, appID, method,
 		return fmt.Errorf("sched: synth request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if h.mintInternalSvcToken != nil {
+		tok, mErr := h.mintInternalSvcToken(appID)
+		if mErr != nil {
+			return fmt.Errorf("sched: synth mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// ADR-119 — attach an Authorization: Bearer JWT when the app
 	// is in 'internal_only' mode. Same helper as Invoke + postBatch
 	// consult the same per-app mode lookup and mint the same JWT.
@@ -4140,6 +4151,17 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 	for key, value := range pkgtrace.InjectHeaders(dispatchCtx) {
 		req.Header.Set(key, value)
 	}
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if h.mintInternalSvcToken != nil {
+		tok, mErr := h.mintInternalSvcToken(appID)
+		if mErr != nil {
+			return inv, 0, fmt.Errorf("sched: invocation mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// Durable workflow steps are an authenticated internal delivery
 	// surface even when the customer app's public_auth_mode is open. The
 	// synth socket is DAC-protected, but the workflow contract also needs a
@@ -4287,6 +4309,9 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 		}
 		firstDue := schedule.NextFireAt(boundary)
 		if firstDue.After(now) {
+			continue
+		}
+		if l.scheduledJobHeld(ctx, job) {
 			continue
 		}
 		scheduledFor := now
@@ -4443,6 +4468,39 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 
 func scheduledTimePointer(at time.Time) *time.Time { return &at }
 
+// scheduledJobRunLookback bounds how many of a job's newest runs
+// scheduledJobHeld reads for a queued scheduled run.
+const scheduledJobRunLookback = 20
+
+// scheduledJobHeld leaves a due recurring job due instead of queueing another
+// run (ADR-1162 amendment 2026-11-03). The dispatcher defers the tasks of an
+// account at its spend cap or held by a strict budget without failing them,
+// so a job firing through the hold queued one run per scheduled time and all
+// of them ran when the hold lifted. Left due, the job runs once afterwards,
+// as after any time Gregale could not reach it, and its missed_runs policy
+// records what it missed. An overlap=allow job also leaves an occurrence due
+// while an earlier scheduled run has not started; skip and replace already
+// decide against queued runs. A read error is no hold.
+func (l *Loop) scheduledJobHeld(ctx context.Context, job state.Job) bool {
+	if l.engine.spendCapReached(ctx, job.AccountID) {
+		return true
+	}
+	if job.SchedulePolicy != nil && job.SchedulePolicy.Overlap != "allow" {
+		return false
+	}
+	runs, err := l.engine.Store().JobRunListByJob(ctx, job.ID, scheduledJobRunLookback, 0)
+	if err != nil {
+		l.log.Warn("schedd: list scheduled job runs failed", "job_id", job.ID, "err", err)
+		return false
+	}
+	for _, run := range runs {
+		if run.TriggerKind == "scheduled" && run.AggregateStatus == "queued" {
+			return true
+		}
+	}
+	return false
+}
+
 // stopPriorScheduledRuns implements overlap=replace. A replacement is only
 // admitted after every earlier scheduled run has a terminal receipt and its
 // VM stop has been confirmed by vmmd.
@@ -4591,7 +4649,14 @@ func (l *Loop) runCronTick(ctx context.Context) {
 // hold lifted (crons audit 2026-11-02). The sweep leaves such a cron due
 // instead: it runs once after the hold, as after any time Gregale could not
 // reach. A read error is no hold; the drain still defers the run.
+//
+// A billing subject at its monthly spend cap holds its crons the same way
+// (ADR-1162 amendment 2026-11-03): the drain defers their runs, so firing
+// through the cap queued one run per scheduled time too.
 func (l *Loop) cronAppBudgetHeld(ctx context.Context, app state.App) bool {
+	if l.engine.spendCapReached(ctx, l.engine.spendCapSubject(ctx, app)) {
+		return true
+	}
 	err := state.CheckFinancialBudgetAdmissionForScope(ctx, l.engine.Store(), app, "", "", l.engine.financialBudgetNow())
 	return errors.Is(err, state.ErrFinancialBudgetHeld)
 }

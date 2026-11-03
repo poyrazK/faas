@@ -75,6 +75,22 @@ Treat the `X-Gregale-*` fields as metadata only after checking that source.
 Stripe retries of the same event for the same endpoint return the same receipt
 ID with `duplicate: true` and do not enqueue a second delivery.
 
+## Backlog
+
+Accepted deliveries wait in the app's queue under the plan's queue caps, the
+same caps a queue send meets: pending messages per app and backlog bytes per
+account (see [queue limits](event-driven.md#queue-limits)). While either is
+full, a verified delivery gets `429 inbound_webhook_backlog_full` with
+`Retry-After: 60` and nothing is accepted, so the provider retries the same
+event later.
+
+## Rate limit
+
+An account's endpoints accept a bounded number of verified deliveries a
+minute: Free 60, Hobby 1,200, Pro 3,000, Scale 6,000. Past it a delivery gets
+`429 inbound_webhook_rate_limited` with `Retry-After`. Deliveries that fail
+signature verification are limited separately, per client IP.
+
 ## Start an automation
 
 An endpoint can start a published automation directly through its
@@ -126,5 +142,6 @@ DELETE /v1/apps/{slug}/inbound-webhooks/{id}
 
 `PATCH` can enable or disable ingress, change `delivery_path`, or rotate the
 provider `signing_secret`. Changing the secret does not change the endpoint
-URL. Deleting or disabling an endpoint affects only future ingress; already
+URL. For 24 hours after a rotation, deliveries signed with the old secret
+still verify, so you can update the provider after rotating. Deleting or disabling an endpoint affects only future ingress; already
 accepted deliveries remain in the invocation queue.
