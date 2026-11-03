@@ -47,6 +47,7 @@ type Service struct {
 	requested, enabled        func() bool
 
 	managedPostgresRestoreSlot *credentialConfig
+	managedPostgresPlanExcess  *credentialConfig
 }
 
 // NewFromEnv performs no DB, credential or socket configuration reads with

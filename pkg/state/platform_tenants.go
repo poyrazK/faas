@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // PlatformTenant is one end customer of an account that operates multiple apps.
@@ -242,7 +242,7 @@ func validatePlatformTenantApply(in ApplyPlatformTenantParams) error {
 	return nil
 }
 
-var platformTenantHostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
+var platformTenantHostnamePattern = lazyregexp.New(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
 func validPlatformTenantHostname(host string) bool {
 	return len(host) <= 253 && platformTenantHostnamePattern.MatchString(host) && net.ParseIP(host) == nil

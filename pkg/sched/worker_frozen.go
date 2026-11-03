@@ -65,7 +65,9 @@ func (e *Engine) workerFreezeRefusal(ctx context.Context, app state.App, ins sta
 			return "ineligible", "push_binding", nil
 		}
 	}
-	if e.ledger.FrozenCountForNode(ins.NodeID) >= api.FrozenMaxPerNode {
+	// FrozenMaxPerNode caps the node, every owner's frozen VMs together, as
+	// it does for frozen functions (ADR 20261101091815, ADR 20261102160622).
+	if e.nodeFrozenCount(ins.NodeID) >= api.FrozenMaxPerNode {
 		return "node_full", "node_full", nil
 	}
 	return "", "", nil

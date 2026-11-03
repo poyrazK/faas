@@ -35,6 +35,9 @@ func cloneDatabaseReservationTx(ctx context.Context, tx pgx.Tx, lease ProjectEnv
 	return op, source, resource, point, err
 }
 
+// A failed restore is still this operation's own target: it is returned, not
+// refused, so the worker ends the clone with target_database_failed instead of
+// retrying a conflict until the deadline.
 func validateCloneDatabaseReservation(op ProjectEnvironmentCloneOperation, source ProjectEnvironmentClonePostgresBinding, resource ProjectEnvironmentCloneResource, point time.Time, actual sqlc.ManagedPostgresDatabase) error {
 	if pgUUIDString(actual.ID) == "" || pgUUIDString(actual.ID) == source.DatabaseID || pgUUIDString(actual.AccountID) != op.AccountID ||
 		actual.Name != ProjectEnvironmentCloneDatabaseName(op, source.DatabaseID) || resource.TargetID != "" && resource.TargetID != pgUUIDString(actual.ID) ||
@@ -44,7 +47,7 @@ func validateCloneDatabaseReservation(op ProjectEnvironmentCloneOperation, sourc
 		actual.BackendID != source.BackendID || actual.BackendFingerprint != source.BackendFingerprint ||
 		pgUUIDString(actual.RestoreSourceDatabaseID) != source.DatabaseID || !actual.RestoreSourceResourceID.Valid || actual.RestoreSourceResourceID.String != source.DataResourceID ||
 		!actual.RestorePointInTime.Valid || !actual.RestorePointInTime.Time.Equal(point) || actual.DeletedAt.Valid ||
-		(actual.State != "provisioning" && actual.State != "ready") || actual.DesiredGeneration != 1 ||
+		(actual.State != "provisioning" && actual.State != "ready" && actual.State != "failed") || actual.DesiredGeneration != 1 ||
 		actual.ProviderResourceID.Valid && (actual.ProviderResourceID.String == source.ProviderResourceID || actual.ProviderResourceID.String == source.DataResourceID) ||
 		actual.State == "ready" && (!actual.ProviderResourceID.Valid || actual.ProviderResourceID.String == "" || actual.ObservedGeneration != 1 ||
 			!actual.DataResourceID.Valid || actual.DataResourceID.String == "" || actual.DataResourceID.String == source.DataResourceID || actual.DataResourceID.String == source.ProviderResourceID) {

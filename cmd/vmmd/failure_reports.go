@@ -119,11 +119,12 @@ func (l *memoryPressureLimiter) admit(instanceID string, now time.Time) bool {
 func (l *memoryPressureLimiter) done() { <-l.slots }
 
 // memoryPressureRelay forwards guest memory-pressure reports to schedd
-// (ADR-1155). They are advisory: a lost or rate-limited report only means no
-// automatic heap capture, and nothing is spooled.
+// (ADR-1155, ADR-20261102124306). They are advisory: a lost or rate-limited
+// report only means a missed episode in app health and no automatic heap
+// capture, and nothing is spooled.
 func memoryPressureRelay(sourceNodeID, target string, tlsConfig func() *tls.Config, log *slog.Logger) fcvm.MemoryPressureSink {
 	limiter := newMemoryPressureLimiter(api.ProfileMemoryPressureRelayMinInterval, api.ProfileMemoryPressureRelayInFlight)
-	return func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+	return func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int, profiling bool) {
 		if !limiter.admit(instanceID, time.Now()) {
 			return
 		}
@@ -146,6 +147,7 @@ func memoryPressureRelay(sourceNodeID, target string, tlsConfig func() *tls.Conf
 			ack, err := scheddpb.NewScheddClient(conn).ReportMemoryPressure(ctx, &scheddpb.ReportMemoryPressureRequest{
 				InstanceId: instanceID, SourceNodeId: sourceNodeID,
 				AvailableMb: clampMB(availableMB), TotalMb: clampMB(totalMB), AnonMb: clampMB(anonMB),
+				ProfilingActive: &profiling,
 			})
 			if err != nil {
 				log.Warn("vmmd: memory pressure relay failed", "instance_id", instanceID, "err", err)
