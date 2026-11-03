@@ -165,6 +165,8 @@ touch them. The tables below map each earlier name.
 | `gregale ai content-policy` | `gregale ai content-policy get` |
 | `gregale ai content-policy` | `gregale ai content-policy set` |
 | `gregale ai quality-alerts` | `gregale ai quality-alert list` |
+| `gregale ai request-policy` | `gregale ai request-policy get` |
+| `gregale ai request-policy` | `gregale ai request-policy set` |
 | `gregale ai tag-limits` | `gregale ai tag-limit get` |
 | `gregale ai tag-limits` | `gregale ai tag-limit set` |
 | `gregale alerts rotate-secret` | `gregale alert secret rotate` |

@@ -552,6 +552,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"ai tag-limit set", "ai tag-limits"},
 	{"ai app-limit get", "ai app-limit"},
 	{"ai app-limit set", "ai app-limit"},
+	{"ai request-policy get", "ai request-policy"},
+	{"ai request-policy set", "ai request-policy"},
 	{"api tenant activation get", "platform-tenants activation"},
 	{"api tenant activation wait", "platform-tenants activation"},
 	{"automation recovery-policy get", "automations recovery-policy"},
