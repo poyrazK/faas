@@ -1446,6 +1446,14 @@ func (r *server) RollbackOn5xxSweep(p0 context.Context, p1 time.Time) error {
 func (r *server) ConfigGuardSweep(p0 context.Context, p1 time.Time) error {
 	return r.configGuardSweep(p0, p1)
 }
+
+func (r *server) DatabaseSwitchReleaseGuard(ctx context.Context, sw state.DatabaseSwitch) (string, error) {
+	return r.databaseSwitchReleaseGuard(ctx, sw)
+}
+
+func (r *server) DatabaseSwitchPromoteRelease(ctx context.Context, sw state.DatabaseSwitch, id string) error {
+	return r.databaseSwitchPromoteRelease(ctx, sw, id)
+}
 func (r *server) SetConfigGuardTelemetry(t state.ConfigGuardTelemetryStore) {
 	r.configGuardTelemetry = t
 }

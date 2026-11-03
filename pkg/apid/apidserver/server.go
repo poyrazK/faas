@@ -178,6 +178,8 @@ type server struct {
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore
+	configGuardSweepMu   sync.Mutex
+	configGuardCursor    state.ConfigGuardCursor
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
 	postReleaseTelemetry rollbackOn5xxTelemetry

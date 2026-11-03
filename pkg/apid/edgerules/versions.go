@@ -169,6 +169,14 @@ func (s *Service) RollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("plan limits not loaded"))
 		return
 	}
+	// Read the replaced set under the same lock as its restore. Otherwise
+	// a concurrent edit can add a host that neither fleet phase covers.
+	unlock, err := s.LockEdgeRuleMutations(r.Context(), []string{app.ID})
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; nothing was rolled back"))
+		return
+	}
+	defer unlock(context.WithoutCancel(r.Context()))
 	target, err := store.GetEdgeRuleSetVersion(r.Context(), app.ID, req.Version)
 	if errors.Is(err, state.ErrNotFound) {
 		httpkit.NotFound(w, "no such edge-rule version")
@@ -188,7 +196,7 @@ func (s *Service) RollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	hosts := edgeRuleRollbackHosts(current, target.Rules)
-	convergence, err := s.PrepareEdgeRuleMutation(r.Context(), app.ID, "", "rolled_back", hosts...)
+	convergence, err := s.PrepareEdgeRuleMutationLocked(r.Context(), app.ID, "", "rolled_back", unlock, hosts...)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; nothing was rolled back"))
 		return

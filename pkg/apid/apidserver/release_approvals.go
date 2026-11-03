@@ -545,7 +545,8 @@ func (s *server) supersededRollbackTargetProblem(ctx context.Context, app state.
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(ctx, s.store, app, target.Scope, now)
 	if err != nil {
-		s.log.Warn("deploy freeze: could not read freezes; rolling back", "app", app.ID, "err", err)
+		s.log.Warn("deploy freeze: could not read freezes for a never-served rollback target", "app", app.ID, "err", err)
+		return api.ErrCapacity("could not read release freezes for this rollback target")
 	} else if len(active) > 0 {
 		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
 		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).

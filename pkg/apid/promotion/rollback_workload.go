@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -73,6 +74,9 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 			return "", "", fmt.Errorf("%w: previous target deployment is not a restorable target", state.ErrConflict)
 		}
 		if hasCurrent && current.ID == previous.ID {
+			if current.TrafficPercent != 100 || state.IsServiceRollout(current) {
+				return "", "", fmt.Errorf("%w: previous target is not the sole serving release", state.ErrConflict)
+			}
 			return "restored", previous.ID, nil
 		}
 		if candidate.ID == "" || !hasCurrent || current.ID != candidate.ID || candidate.Status != state.DeployLive {
@@ -81,7 +85,14 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 		if err := durable.TransferPromotionValidator(ctx, previous, previous.ID); err != nil {
 			return "", "", err
 		}
-		if err := store.MarkDeploymentLive(ctx, previous.ID); err != nil {
+		restore, ok := store.(state.RollbackTrafficStore)
+		if !ok {
+			return "", "", fmt.Errorf("guarded project rollback is unavailable")
+		}
+		if err := restore.RestoreDeploymentTrafficIfCurrent(ctx, appID, previous.ID, candidate.ID); err != nil {
+			if errors.Is(err, state.ErrCheckedRollbackChanged) {
+				return "", "", fmt.Errorf("%w: target changed after promotion", state.ErrConflict)
+			}
 			return "", "", fmt.Errorf("could not restore previous target deployment: %w", err)
 		}
 		return "restored", previous.ID, nil

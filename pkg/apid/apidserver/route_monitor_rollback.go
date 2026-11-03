@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -33,9 +34,12 @@ func (s *server) applyRouteMonitorRollback(ctx context.Context, target state.Rou
 	if !claimed {
 		return
 	}
-	outcome := api.RouteMonitorIncidentRollback{Status: "skipped", Reason: routemonitor.RollbackSkipTargetIneligible, DecidedAt: time.Now().UTC()}
+	var outcome *api.RouteMonitorIncidentRollback
 	defer func() {
-		if err := store.RecordRouteMonitorRollback(ctx, target.AccountID, target.AppID, claim.IncidentID, outcome); err != nil {
+		if outcome == nil {
+			return // Transient failure retries the claim; successful creation already linked it atomically.
+		}
+		if err := store.RecordRouteMonitorRollback(ctx, target.AccountID, target.AppID, claim.IncidentID, *outcome); err != nil && !errors.Is(err, state.ErrConflict) {
 			s.log.Warn("route monitor rollback outcome not recorded", "app_id", target.AppID, "incident_id", claim.IncidentID, "err", err)
 		}
 	}()
@@ -52,15 +56,17 @@ func (s *server) applyRouteMonitorRollback(ctx context.Context, target state.Rou
 		reason = "route monitor incident " + claim.IncidentID + ": error budget violated"
 	}
 	targetID, currentID := claim.TargetDeploymentID, claim.DeploymentID
-	operation, prepared, problem := s.prepareCheckedRollback(ctx, acct, app, api.RollbackRequest{
+	operation, prepared, problem := s.prepareCheckedRollback(state.WithRouteMonitorRollbackClaim(ctx, claim), acct, app, api.RollbackRequest{
 		TargetDeploymentID: &targetID, ExpectedCurrentDeploymentID: &currentID, Reason: reason,
 	})
 	if problem != nil {
 		s.log.Warn("route monitor rollback not requested", "app_id", app.ID, "incident_id", claim.IncidentID, "code", problem.Code)
-		outcome.RefusalCode = problem.Code
+		if problem.Status < 500 {
+			outcome = &api.RouteMonitorIncidentRollback{Status: "skipped", Reason: routemonitor.RollbackSkipTargetIneligible,
+				RefusalCode: problem.Code, DecidedAt: time.Now().UTC()}
+		}
 		return
 	}
-	outcome = api.RouteMonitorIncidentRollback{Status: "requested", OperationID: operation.ID, DecidedAt: time.Now().UTC()}
 	if s.notif != nil {
 		payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "deployment_id": prepared.ID})
 		if err := s.notif.Notify(ctx, db.NotifySnapshotPrime, string(payload)); err != nil {
