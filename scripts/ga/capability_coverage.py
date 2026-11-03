@@ -392,6 +392,8 @@ INFRA_RULES = [
     r"^edgednsd?(-.*)?$",
     # ADR-20261103163954: what stands in front of a compute edge's TLS listener.
     r"^edge-public-front$",
+    # ADR-20261103163954 §4: the compute edge's per-client-address limits.
+    r"^edge-client-limits$",
 ]
 
 

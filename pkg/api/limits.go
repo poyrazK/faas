@@ -17154,6 +17154,24 @@ const (
 	LabelSelectorMaxBytes = 4096
 )
 
+// A compute edge that serves clients directly (ADR-20261103163954 §4) bounds
+// what one client address may take from a node: open connections, new
+// connections a second, requests a second, and TLS handshakes in progress per
+// CPU. An address is an IPv4 address or an IPv6 /64. The state is per node and
+// in memory; at most EdgeClientTrackedAddrsMax addresses are tracked, and the
+// rest share one bucket. These are starting values for the pilot to tune; they
+// must allow carrier-grade NAT, where thousands of users share one address.
+const (
+	EdgeClientOpenConnsPerAddrMax      = 512
+	EdgeClientNewConnsPerSecondPerAddr = 100
+	EdgeClientNewConnsBurstPerAddr     = 400
+	EdgeClientRequestsPerSecondPerAddr = 500
+	EdgeClientRequestsBurstPerAddr     = 1000
+	EdgeClientTrackedAddrsMax          = 200_000
+	EdgeTLSHandshakesInFlightPerCPU    = 128
+	EdgeTLSHandshakeTimeout            = 10 * time.Second
+)
+
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
 // surface. A Limits value built without the field (zero) falls back to the
 // verified cap rather than refusing every pending hostname.
