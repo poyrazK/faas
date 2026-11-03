@@ -4330,7 +4330,25 @@ type UpdateAppWebhookParams struct {
 	DeliveryFormat      *AppWebhookDeliveryFormat
 	Enabled             *bool
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
+	// PreviousSecretUntil, set with WebhookSecretSealed, keeps the secret
+	// being replaced as the previous secret until this instant
+	// (ADR-20261101093517): deliveries carry a second signature made with
+	// it. A rotation inside the window replaces the previous secret with
+	// the one it retires. Ignored without WebhookSecretSealed.
+	PreviousSecretUntil *time.Time
 }
+
+// AppWebhookPreviousSecretStore reads the secret a rotation replaced while
+// its overlap window lasts (ADR-20261101093517). nil means none: never
+// rotated, rotated without overlap, or the window has passed.
+type AppWebhookPreviousSecretStore interface {
+	PreviousAppWebhookSecret(ctx context.Context, webhookID string, now time.Time) ([]byte, error)
+}
+
+var (
+	_ AppWebhookPreviousSecretStore = (*MemStore)(nil)
+	_ AppWebhookPreviousSecretStore = (*PgStore)(nil)
+)
 
 // AppWebhookScope is the closed storage vocabulary for outbound subscriptions.
 type AppWebhookScope string
@@ -4503,6 +4521,40 @@ type AppWebhookDelivery struct {
 	DeliveredAt      *time.Time // nil until status=succeeded
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+
+	// AdmissionMaxPending and AdmissionMaxBacklogBytes are the producer's
+	// caps on the account's undelivered deliveries (ADR-20261101093517):
+	// RecordAppWebhookDelivery counts the account's pending and in-flight
+	// rows and their payload bytes under a per-account lock and refuses
+	// with *AppWebhookOutboxFullError at either cap. Zero leaves that cap
+	// off. Admission input only; never stored.
+	AdmissionMaxPending      int   `json:"-"`
+	AdmissionMaxBacklogBytes int64 `json:"-"`
+}
+
+// AppWebhookOutboxFullError reports that an admission-capped
+// RecordAppWebhookDelivery found the account's undelivered deliveries at a
+// cap. It unwraps to ErrQuotaExceeded.
+type AppWebhookOutboxFullError struct {
+	Bytes    bool // the payload-bytes cap refused; otherwise the count cap
+	Limit    int64
+	Observed int64
+}
+
+func (e *AppWebhookOutboxFullError) Error() string { return ErrQuotaExceeded.Error() }
+func (e *AppWebhookOutboxFullError) Unwrap() error { return ErrQuotaExceeded }
+
+// appWebhookOutboxAdmission applies the caps to the account's undelivered
+// count and payload bytes. A delivery admitted just under the bytes cap may
+// pass it by its own size, as queue admission does.
+func appWebhookOutboxAdmission(in AppWebhookDelivery, pending, held int64) error {
+	if in.AdmissionMaxPending > 0 && pending >= int64(in.AdmissionMaxPending) {
+		return &AppWebhookOutboxFullError{Limit: int64(in.AdmissionMaxPending), Observed: pending}
+	}
+	if in.AdmissionMaxBacklogBytes > 0 && held >= in.AdmissionMaxBacklogBytes {
+		return &AppWebhookOutboxFullError{Bytes: true, Limit: in.AdmissionMaxBacklogBytes, Observed: held}
+	}
+	return nil
 }
 
 // AppWebhookAttemptMetadata records the wall-clock interval of a dispatch.
