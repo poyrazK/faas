@@ -3288,12 +3288,7 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, appRenameWriteProblem(err, req.NewSlug))
 		return
 	}
-	if retargeted, err := s.edgeRules.RetargetRouteRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
-		s.log.Error("app renamed but its route rules still name the old slug", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "retargeted", retargeted, "err", err)
-	}
-	if moved, err := s.edgeRules.RetargetPlatformHostRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
-		s.log.Error("app renamed but rules on its old hostname did not move", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "moved", moved, "err", err)
-	}
+	s.retargetEdgeRulesAfterRename(w, r, acct, updated.ID, oldSlug, req.NewSlug)
 	if prob := s.edgeRules.ApplyReferencedEdit(r.Context(), w, routeEdit, updated.ID, convergences); prob != nil {
 		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)
 	}
@@ -3305,6 +3300,21 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	s.audit.Emit(r.Context(), "app.renamed", &acct.ID, map[string]any{"app_id": updated.ID, "from": oldSlug, "to": req.NewSlug})
 	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
+}
+
+// retargetEdgeRulesAfterRename moves the account's edge rules that name the
+// old slug or its platform hostname. The rename itself has committed; rules
+// that could not be moved are reported to the caller (a Warning header) and
+// in the account's audit trail, not only the daemon log (ADR-091 amendment
+// 2026-11-03, review round 9).
+func (s *server) retargetEdgeRulesAfterRename(w http.ResponseWriter, r *http.Request, acct state.Account, appID, oldSlug, newSlug string) {
+	err := s.edgeRules.RetargetAfterRename(r.Context(), acct.ID, oldSlug, newSlug)
+	if err == nil {
+		return
+	}
+	s.log.Error("app renamed but some edge rules still name its old slug or hostname", "app_id", appID, "from", oldSlug, "to", newSlug, "err", err)
+	s.audit.Emit(r.Context(), "app.rename_edge_rules_incomplete", &acct.ID, map[string]any{"app_id": appID, "from": oldSlug, "to": newSlug})
+	w.Header().Set("Warning", `299 - "the app was renamed, but some edge rules still name `+oldSlug+`; review them with gregale edge rule list `+newSlug+`"`)
 }
 
 // --- instances -------------------------------------------------------------

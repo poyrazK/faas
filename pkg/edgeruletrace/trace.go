@@ -722,11 +722,20 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return stopped
 	}
 
-	// accessGatePhases match the client's original path before the rewritten
-	// one, as the gateway's matchEdgeGate does.
+	// accessGatePhases enforce the rule for the client's original path and
+	// the rule for the rewritten one, as the gateway's matchEdgeGates does:
+	// the rewritten-path rule runs as a second pass of the same phase.
 	accessGatePhases := map[string]bool{"jwt": true, "ip": true, "geo": true, "throttle": true, "challenge": true}
 	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "challenge", "respond", "async", "cache", "budget", "circuit_breaker", "retry"}
-	for _, phase := range phases {
+	var rewrittenGateRule *api.EdgeRuleResponse
+	nextPhase := func(i int) int {
+		if rewrittenGateRule != nil {
+			return i
+		}
+		return i + 1
+	}
+	for i := 0; i < len(phases); i = nextPhase(i) {
+		phase := phases[i]
 		if phase == "app_maintenance" {
 			if unavailable := unavailableTotalDeadlineRule(input, rules); unavailable != nil {
 				stopped := stop("incomplete", api.CodeTrafficPolicyUnavailable, "policy", "the named owner's invalid total deadline prevents host-policy verification; when that owner is resolved, the gateway refuses HTTP 503 before authentication, wake or forwarding", unavailable)
@@ -809,13 +818,15 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		if phase == "cors" {
 			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)
 		}
-		rule, tied := firstPhaseRule(rules, phase, input, requestPath, matchMethod, input.Headers)
-		if accessGatePhases[phase] && input.Path != requestPath {
-			// The gateway's access gates match the client's path first, then
-			// the rewritten one (ADR-091 amendment 2026-11-02, review round 8).
-			if public, publicTied := firstPhaseRule(rules, phase, input, input.Path, matchMethod, input.Headers); public != nil || publicTied {
-				rule, tied = public, publicTied
-			}
+		var rule *api.EdgeRuleResponse
+		var tied bool
+		switch {
+		case rewrittenGateRule != nil:
+			rule, rewrittenGateRule = rewrittenGateRule, nil
+		case accessGatePhases[phase] && input.Path != requestPath:
+			rule, tied, rewrittenGateRule = accessGateRules(rules, phase, input, requestPath, matchMethod)
+		default:
+			rule, tied = firstPhaseRule(rules, phase, input, requestPath, matchMethod, input.Headers)
 		}
 		if phase == "budget" && pinnedBudget != nil {
 			rule, tied = pinnedBudget, false
@@ -1395,6 +1406,27 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requ
 		return first, first.Priority == rule.Priority
 	}
 	return first, false
+}
+
+// accessGateRules picks an access gate's rules after a rewrite changed the
+// path, as the gateway's matchEdgeGates does (ADR-091 amendments 2026-11-02
+// and 2026-11-03): first the rule for the client's path, and second, when a
+// different rule matches the rewritten path, that rule. Either path's tie is
+// reported as one.
+func accessGateRules(rules []api.EdgeRuleResponse, phase string, input Input, rewrittenPath, method string) (first *api.EdgeRuleResponse, tied bool, second *api.EdgeRuleResponse) {
+	public, publicTied := firstPhaseRule(rules, phase, input, input.Path, method, input.Headers)
+	rewritten, rewrittenTied := firstPhaseRule(rules, phase, input, rewrittenPath, method, input.Headers)
+	switch {
+	case publicTied:
+		return public, true, nil
+	case public == nil:
+		return rewritten, rewrittenTied, nil
+	case rewrittenTied:
+		return rewritten, true, nil
+	case rewritten == nil || rewritten.ID == public.ID:
+		return public, false, nil
+	}
+	return public, false, rewritten
 }
 
 func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestPath string) (string, string, *ActionPreview) {

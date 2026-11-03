@@ -193,7 +193,19 @@ func cmdEdgeRulesList(args []string) int {
 			it.ID, it.Kind, it.Priority, terminalSafe(truncate(it.MatchHost, 32)), terminalSafe(it.MatchPath), enabled, label)
 	}
 	warnTemplatedEdgeRulePaths(osStderr, items)
+	warnUnenforceableEdgeRules(osStderr, items)
 	return 0
+}
+
+// warnUnenforceableEdgeRules flags rules the gateway cannot enforce: it
+// refuses every request to the hosts they cover with HTTP 503 naming the
+// rule (ADR-091 amendment 2026-11-03, review round 9).
+func warnUnenforceableEdgeRules(w io.Writer, items []api.EdgeRuleResponse) {
+	for _, it := range items {
+		if problem := api.EdgeRuleEnforcementProblem(it.Kind, it.Enabled, it.Action); problem != "" {
+			_, _ = fmt.Fprintf(w, "warning: edge rule %s cannot be enforced (%s); the gateway refuses its hosts' requests until you fix or delete it\n", it.ID, terminalSafe(problem))
+		}
+	}
 }
 
 // warnTemplatedEdgeRulePaths flags rules whose match path holds an OpenAPI

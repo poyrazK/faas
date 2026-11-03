@@ -356,6 +356,18 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /dashboard/apps/{slug}/edge-rule-lists":               authz.OrgActionManageAppSecurity,
 	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/update": authz.OrgActionManageAppSecurity,
 	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/delete": authz.OrgActionManageAppSecurity,
+	// With ?app=<slug>, the list and preset APIs manage a company app's own
+	// lists and presets (ADR-091 amendment 2026-11-03, review round 9).
+	"GET /v1/edge-rule-lists":           authz.OrgActionReadApp,
+	"GET /v1/edge-rule-lists/{name}":    authz.OrgActionReadApp,
+	"POST /v1/edge-rule-lists":          authz.OrgActionManageAppSecurity,
+	"PATCH /v1/edge-rule-lists/{name}":  authz.OrgActionManageAppSecurity,
+	"DELETE /v1/edge-rule-lists/{name}": authz.OrgActionManageAppSecurity,
+	"GET /v1/cors-presets":              authz.OrgActionReadApp,
+	"GET /v1/cors-presets/{id}":         authz.OrgActionReadApp,
+	"POST /v1/cors-presets":             authz.OrgActionManageAppSecurity,
+	"PATCH /v1/cors-presets/{id}":       authz.OrgActionManageAppSecurity,
+	"DELETE /v1/cors-presets/{id}":      authz.OrgActionManageAppSecurity,
 }
 
 // dashboardRead reports a read of a session-only dashboard app page, which

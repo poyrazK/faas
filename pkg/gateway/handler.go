@@ -3155,14 +3155,10 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	if h.applyMCPAliasPolicy(w, r, app) {
 		return true
 	}
-	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleJWTResolved {
+	rules := matchEdgeGates(r, func(ctx context.Context, path string) *EdgeRuleJWTResolved {
 		return h.edgeRules.MatchJWT(ctx, hostname(r.Host), path, r.Method)
 	})
-	if rule != nil && rule.Unavailable {
-		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_policy_unavailable")
-		return true
-	}
-	if rule == nil {
+	if len(rules) == 0 {
 		// Clean miss: no rule for this host. The match counter
 		// surfaces this on the §12 dashboard chip; an audit row
 		// here would be 100% noise (every request that doesn't
@@ -3174,6 +3170,22 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 			h.metrics.ObserveEdgeRuleMatch("jwt", "miss")
 		}
 		return false
+	}
+	for _, rule := range rules {
+		if h.applyEdgeRuleJWTRule(w, r, app, rule) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyEdgeRuleJWTRule enforces one matched jwt rule; it reports true when
+// it answered the request. A request matching two jwt rules (client and
+// rewritten path) presents one bearer token that must satisfy both.
+func (h *Handler) applyEdgeRuleJWTRule(w http.ResponseWriter, r *http.Request, app App, rule *EdgeRuleJWTResolved) bool {
+	if rule.Unavailable {
+		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_policy_unavailable")
+		return true
 	}
 	if rule.AccountID != app.AccountID {
 		h.jwtEmit(r.Context(), "jwt", "blocked", rule.ID, r.Host, &rule.AccountID, map[string]any{
@@ -3203,13 +3215,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// the JWT access rule does not require that claim's value. Copy the cached
 	// JWT rule before adding the extraction hint; matcher-owned values are
 	// immutable and shared across requests.
-	var extractClaims []string
-	if throttle := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
-		return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
-	}); throttle != nil &&
-		throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
-		extractClaims = append(extractClaims, throttle.JWTClaimName)
-	}
+	extractClaims := h.throttleJWTClaimNames(r, app)
 	if rule.PlatformTenantExternalRefClaim != "" {
 		extractClaims = append(extractClaims, rule.PlatformTenantExternalRefClaim)
 	}
@@ -3243,7 +3249,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// no extra parse cost on the hot path.
 	authenticated := authenticatedFrom(r.Context())
 	authenticated.JWTSubject = claims.Subject
-	authenticated.JWTClaims = claims.Custom
+	authenticated.JWTClaims = mergeJWTClaims(authenticated.JWTClaims, claims.Custom)
 	if h.applyPlatformTenantJWTClaim(w, r, app, rule, claims, &authenticated) {
 		return true
 	}
@@ -3402,15 +3408,26 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleIPResolved {
+	rules := matchEdgeGates(r, func(ctx context.Context, path string) *EdgeRuleIPResolved {
 		return h.edgeRules.MatchIP(ctx, hostname(r.Host), path, r.Method)
 	})
-	if rule == nil {
+	if len(rules) == 0 {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("ip", "miss")
 		}
 		return false
 	}
+	for _, rule := range rules {
+		if h.applyEdgeRuleIPRule(w, r, app, rule) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyEdgeRuleIPRule enforces one matched ip rule; it reports true when it
+// answered the request.
+func (h *Handler) applyEdgeRuleIPRule(w http.ResponseWriter, r *http.Request, app App, rule *EdgeRuleIPResolved) bool {
 	if rule.AccountID != app.AccountID {
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", &rule.AccountID, map[string]any{
@@ -4485,15 +4502,26 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleGeoResolved {
+	rules := matchEdgeGates(r, func(ctx context.Context, path string) *EdgeRuleGeoResolved {
 		return h.edgeRules.MatchGeo(ctx, hostname(r.Host), path, r.Method)
 	})
-	if rule == nil {
+	if len(rules) == 0 {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("geo", "miss")
 		}
 		return false
 	}
+	for _, rule := range rules {
+		if h.applyEdgeRuleGeoRule(w, r, app, rule) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyEdgeRuleGeoRule enforces one matched geo rule; it reports true when it
+// answered the request.
+func (h *Handler) applyEdgeRuleGeoRule(w http.ResponseWriter, r *http.Request, app App, rule *EdgeRuleGeoResolved) bool {
 	if rule.AccountID != app.AccountID {
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_blocked", &rule.AccountID, map[string]any{
@@ -4652,15 +4680,26 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	if h.edgeRules == nil || h.routeLimiter == nil {
 		return false
 	}
-	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
+	rules := matchEdgeGates(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
 		return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
 	})
-	if rule == nil {
+	if len(rules) == 0 {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("throttle", "miss")
 		}
 		return false
 	}
+	for _, rule := range rules {
+		if h.applyEdgeRuleThrottleRule(w, r, app, rule) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyEdgeRuleThrottleRule enforces one matched throttle rule; it reports true when it
+// answered the request.
+func (h *Handler) applyEdgeRuleThrottleRule(w http.ResponseWriter, r *http.Request, app App, rule *EdgeRuleThrottleResolved) bool {
 	if rule.AccountID != app.AccountID {
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.throttle_blocked", &rule.AccountID, map[string]any{

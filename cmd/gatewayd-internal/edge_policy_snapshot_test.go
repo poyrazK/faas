@@ -62,8 +62,14 @@ func TestPinnedHostPolicyRefusesInvalidationBetweenSelectorHostsAndCompileErrors
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gateway.ValidatePinnedHostPolicies(broken, "acc_test"); err == nil {
+	err = gateway.ValidatePinnedHostPolicies(broken, "acc_test")
+	if err == nil {
 		t.Fatal("owner compile failure admitted an empty protection policy")
+	}
+	// The refusal names the broken rule (ADR-091 amendment 2026-11-03).
+	var unenforceable *gateway.UnenforceableEdgeRuleError
+	if !errors.As(err, &unenforceable) || unenforceable.RuleID != "invalid" {
+		t.Fatalf("compile failure error = %v, want it to name rule invalid", err)
 	}
 	if err := gateway.ValidatePinnedHostPolicies(broken, "another-owner"); err != nil {
 		t.Fatalf("foreign broken policy blocked another tenant: %v", err)
