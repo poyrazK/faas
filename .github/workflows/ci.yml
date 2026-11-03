@@ -1649,8 +1649,10 @@ jobs:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
     # Bounded-memory cold builds reached 14 min before the contracts finished.
-    # Whole green runs took 29-34 minutes on 2026-10-12/13.
-    timeout-minutes: 50
+    # Whole green runs took 29-34 minutes on 2026-10-12/13, and 41-49 by
+    # 2026-11-03 (UDP control-plane and container contract steps 16-24 min
+    # each); run 41565131421 hit the old 50-minute cap mid-way.
+    timeout-minutes: 75
     permissions:
       contents: read
     # The UDP contract race-builds cmd/apid; cold, that exhausted hosted-runner
