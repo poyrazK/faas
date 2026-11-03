@@ -55,6 +55,7 @@ const (
 	workPrimeRecovery        workKind = "prime_recovery"
 	workWorkflowDispatch     workKind = "workflow_dispatch"
 	workWorkflowSchedules    workKind = "workflow_schedules"
+	workWorkflowRetention    workKind = "workflow_retention"
 	workWorkflowAgentRuns    workKind = "workflow_agent_runs"
 	workTriggerDispatch      workKind = "trigger_dispatch"
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
@@ -87,7 +88,7 @@ const (
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workWorkflowSchedules, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
+	workWorkflowDispatch, workWorkflowSchedules, workWorkflowRetention, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
 	workAppWake, workRuntimeConfigRestart, workWatchdog, workInvocationsRetention,
 }
@@ -148,6 +149,7 @@ var workSpecs = map[workKind]workSpec{
 	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
 	workWorkflowDispatch:     {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
 	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
+	workWorkflowRetention:    {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	workWorkflowAgentRuns:    {slots: 1, overflow: overflowDrop},
 	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
 	// Push-queue lanes (ADR-972) claim durable leases; a dropped lane is

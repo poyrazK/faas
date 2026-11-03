@@ -213,6 +213,9 @@ func (m *MemStore) workflowScheduleReplayResults(appID string, ids []string, exe
 		if err := m.insertWorkflowRunLocked(run); err != nil {
 			return nil, err
 		}
+		// The active count is cached for this batch. Include this admission
+		// before considering the next occurrence, just as preview reserves it.
+		active++
 		now := time.Now().UTC()
 		row.ReplayRunID, row.ReplayedAt = run.ID, &now
 		m.workflowScheduleOccurrences[row.ID] = row

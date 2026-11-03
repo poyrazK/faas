@@ -248,6 +248,8 @@ type Loop struct {
 	workflowScheduleMinute            int64
 	workflowFailurePolicyAfter        string
 	workflowFailurePolicyNextPass     time.Time
+	workflowFailurePolicyPassFailed   bool
+	workflowFailurePolicyUncertain    bool
 	workflowScheduleAfter             string
 	workflowScheduleComplete          bool
 	workflowScheduleFailed            bool
@@ -1382,12 +1384,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-jobsTick(workflowsDispatchT):
 			l.runWorkflowsDispatchTick(ctx)
 		case <-workflowRetentionFirst:
-			l.runWorkflowRetention(ctx)
+			l.dispatchWorkflowRetention(ctx)
 			workflowRetentionFirst = nil
 		case <-workerRecoveryT.C:
 			l.dispatchWorkerRecovery(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
-			l.runWorkflowRetention(ctx)
+			l.dispatchWorkflowRetention(ctx)
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
@@ -4527,13 +4529,36 @@ func (l *Loop) dispatchEventFanoutSweep(ctx context.Context) {
 	})
 }
 
-func (l *Loop) runWorkflowRetention(ctx context.Context) {
+func (l *Loop) dispatchWorkflowRetention(ctx context.Context) {
+	l.submitWork(workWorkflowRetention, "tick", func() {
+		if l.runWorkflowRetention(ctx) && ctx.Err() == nil {
+			l.dispatchWorkflowRetention(ctx)
+		}
+	})
+}
+
+func (l *Loop) runWorkflowRetention(ctx context.Context) bool {
 	if l.workflowRetention == nil {
-		return
+		return false
 	}
-	if err := l.workflowRetention.SweepOnce(ctx); err != nil {
-		l.log.Warn("workflow retention: sweep failed", "err", err)
+	more, err := l.workflowRetention.sweepOnce(ctx)
+	if err != nil {
+		if l.log != nil {
+			l.log.Warn("workflow retention: sweep failed", "err", err)
+		}
+		// Keep other full phases progressing, but do not hammer a persistently
+		// failing phase on every immediate continuation.
+		if more {
+			timer := time.NewTimer(time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return false
+			}
+		}
 	}
+	return more
 }
 
 // cronSweepSlice bounds one pass of the cron sweep, which runs on schedd's

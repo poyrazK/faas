@@ -35313,7 +35313,7 @@ paths:
       tags: [workflows]
       operationId: injectPlatformTenantSelfWorkflowEvent
       summary: Deliver an external event to this tenant's waiting workflow run.
-      description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404.
+      description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404. A matching retained event may be retried after the run finishes; reusing its key with different content conflicts.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -35332,7 +35332,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '409':
-          description: "code: workflow_not_running — only active runs accept events."
+          description: "code: workflow_not_running for a new event on an inactive run, or conflict when a retained event key has different content."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -35834,6 +35834,9 @@ paths:
       tags: [workflows]
       operationId: injectWorkflowEvent
       summary: Deliver an external event to a waiting workflow run.
+      description: A matching retained event may be retried after the run finishes. Reusing an event key with different content conflicts.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -35849,7 +35852,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '409':
-          description: "code: workflow_not_running — only running or awaiting_event runs accept events."
+          description: "code: workflow_not_running for a new event on an inactive run, or conflict when a retained event key has different content."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }

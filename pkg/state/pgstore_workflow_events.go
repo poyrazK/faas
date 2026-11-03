@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
+
+var errWorkflowFailurePolicyLatched = errors.New("workflow failure policy newly latched")
 
 func (s *PgStore) ListMatchingEventWorkflows(ctx context.Context, accountID, source, typ, after string, limit int) ([]PublishedEventRecipient, error) {
 	rows, err := sqlc.New().ListMatchingEventWorkflows(ctx, s.pool, sqlc.ListMatchingEventWorkflowsParams{
@@ -50,7 +53,8 @@ func (s *PgStore) AdmitEventWorkflow(ctx context.Context, outboxID int64, token,
 		return "", fmt.Errorf("%w: captured recipient is missing or invalid", ErrWorkflowEventDefinitionInvalid)
 	}
 	runID, _, err := admitEventWorkflowTx(ctx, queries, tx, outboxID, recipient, accepted.Payload)
-	if err != nil {
+	latched := errors.Is(err, errWorkflowFailurePolicyLatched)
+	if err != nil && !latched {
 		return "", err
 	}
 	if err := validateEventRoutingClaim(ctx, queries, tx, PublishedEventRoutingClaim{
@@ -60,6 +64,9 @@ func (s *PgStore) AdmitEventWorkflow(ctx context.Context, outboxID int64, token,
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
+	}
+	if latched {
+		return "", ErrWorkflowEventTargetUnavailable
 	}
 	return runID, nil
 }
@@ -110,11 +117,14 @@ func admitEventWorkflowTx(ctx context.Context, queries *sqlc.Queries, tx pgx.Tx,
 		}
 		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
 	}
-	paused, err := queries.AutomationFailurePaused(ctx, tx, sqlc.AutomationFailurePausedParams{AppID: mustPgUUID(recipient.AppID), Name: run.WorkflowName})
+	paused, latched, err := automationFailureBlocksAdmissionPG(ctx, tx, recipient.AppID, run.WorkflowName, time.Now().UTC())
 	if err != nil {
 		return "", false, err
 	}
 	if paused {
+		if latched {
+			return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventTargetUnavailable, errWorkflowFailurePolicyLatched)
+		}
 		return "", false, ErrWorkflowEventTargetUnavailable
 	}
 	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(recipient.AppID), ParkedMax: int64(plan.WorkflowMaxParkedRuns())})

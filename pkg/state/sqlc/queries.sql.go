@@ -74462,14 +74462,43 @@ func (q *Queries) PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64
 }
 
 const pruneUnownedWorkflowRuns = `-- name: PruneUnownedWorkflowRuns :execrows
-DELETE FROM workflow_runs r WHERE r.finished_at IS NOT NULL
-AND r.finished_at < clock_timestamp()-$1::bigint*interval '1 second'
-AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
-AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+DELETE FROM workflow_runs WHERE id IN (
+ SELECT r.id FROM workflow_runs r WHERE r.finished_at IS NOT NULL
+ AND r.finished_at < clock_timestamp()-$1::bigint*interval '1 second'
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
+ AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+ ORDER BY r.finished_at,r.id LIMIT $2::integer FOR UPDATE OF r SKIP LOCKED
+)
 `
 
-func (q *Queries) PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, retentionSeconds int64) (int64, error) {
-	result, err := db.Exec(ctx, pruneUnownedWorkflowRuns, retentionSeconds)
+type PruneUnownedWorkflowRunsParams struct {
+	RetentionSeconds int64
+	BatchSize        int32
+}
+
+func (q *Queries) PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, arg PruneUnownedWorkflowRunsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneUnownedWorkflowRuns, arg.RetentionSeconds, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneWorkflowEventArchive = `-- name: PruneWorkflowEventArchive :execrows
+DELETE FROM workflow_event_archive WHERE id IN (
+ SELECT id FROM workflow_event_archive
+ WHERE received_at < clock_timestamp()-$1::bigint*interval '1 second'
+ ORDER BY received_at,id LIMIT $2::integer FOR UPDATE SKIP LOCKED
+)
+`
+
+type PruneWorkflowEventArchiveParams struct {
+	RetentionSeconds int64
+	BatchSize        int32
+}
+
+func (q *Queries) PruneWorkflowEventArchive(ctx context.Context, db DBTX, arg PruneWorkflowEventArchiveParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneWorkflowEventArchive, arg.RetentionSeconds, arg.BatchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -95917,19 +95946,20 @@ func (q *Queries) RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, a
 const requeueFailedWorkflowStepForRetry = `-- name: RequeueFailedWorkflowStepForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,
-    finished_at=NULL,error=NULL
-WHERE run_id=$1::text::uuid
-  AND step_name=$2::text
+    finished_at=NULL,error=NULL,retry_base=$1::integer
+WHERE run_id=$2::text::uuid
+  AND step_name=$3::text
   AND status IN ('failed','dead')
 `
 
 type RequeueFailedWorkflowStepForRetryParams struct {
-	RunID    string
-	StepName string
+	RetryBase int32
+	RunID     string
+	StepName  string
 }
 
 func (q *Queries) RequeueFailedWorkflowStepForRetry(ctx context.Context, db DBTX, arg RequeueFailedWorkflowStepForRetryParams) (int64, error) {
-	result, err := db.Exec(ctx, requeueFailedWorkflowStepForRetry, arg.RunID, arg.StepName)
+	result, err := db.Exec(ctx, requeueFailedWorkflowStepForRetry, arg.RetryBase, arg.RunID, arg.StepName)
 	if err != nil {
 		return 0, err
 	}

@@ -15431,6 +15431,15 @@ type WorkflowEvent struct {
 	ReceivedAt pgtype.Timestamptz
 }
 
+type WorkflowEventArchive struct {
+	ID         pgtype.UUID
+	RunID      pgtype.UUID
+	AppID      pgtype.UUID
+	EventName  string
+	Payload    []byte
+	ReceivedAt pgtype.Timestamptz
+}
+
 type WorkflowEventCodeRef struct {
 	OutboxID     int64
 	DeploymentID pgtype.UUID

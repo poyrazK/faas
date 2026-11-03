@@ -14643,7 +14643,7 @@ FOR UPDATE;
 -- name: RequeueFailedWorkflowStepForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,
-    finished_at=NULL,error=NULL
+    finished_at=NULL,error=NULL,retry_base=sqlc.arg(retry_base)::integer
 WHERE run_id=sqlc.arg(run_id)::text::uuid
   AND step_name=sqlc.arg(step_name)::text
   AND status IN ('failed','dead');
@@ -19729,11 +19729,21 @@ ORDER BY deadline_at,id LIMIT sqlc.arg(page_limit)::integer;
 UPDATE workflow_steps SET status='skipped',skip_reason='dependency_failed',finished_at=clock_timestamp()
 WHERE run_id=sqlc.arg(run_id)::uuid AND status IN ('pending','awaiting_event');
 
+-- name: PruneWorkflowEventArchive :execrows
+DELETE FROM workflow_event_archive WHERE id IN (
+ SELECT id FROM workflow_event_archive
+ WHERE received_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
+ ORDER BY received_at,id LIMIT sqlc.arg(batch_size)::integer FOR UPDATE SKIP LOCKED
+);
+
 -- name: PruneUnownedWorkflowRuns :execrows
-DELETE FROM workflow_runs r WHERE r.finished_at IS NOT NULL
-AND r.finished_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
-AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
-AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id);
+DELETE FROM workflow_runs WHERE id IN (
+ SELECT r.id FROM workflow_runs r WHERE r.finished_at IS NOT NULL
+ AND r.finished_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
+ AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+ ORDER BY r.finished_at,r.id LIMIT sqlc.arg(batch_size)::integer FOR UPDATE OF r SKIP LOCKED
+);
 
 -- name: LockCustomerOperationArtifactQuota :exec
 SELECT pg_advisory_xact_lock(hashtextextended('operation-artifact-quota/' || sqlc.arg(account_id)::text, 0));
