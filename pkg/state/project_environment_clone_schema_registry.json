@@ -4891,6 +4891,19 @@
     ]
   },
   {
+    "table": "deployment_event_subscription_intents",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "created_at",
+      "declared_subscription_ids",
+      "deployment_id",
+      "reason",
+      "status",
+      "updated_at"
+    ]
+  },
+  {
     "table": "deployment_dependency_gates",
     "columns": [
       "blocker",
@@ -12581,6 +12594,17 @@
       "token"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "object_storage_ceiling_grants",
+    "columns": [
+      "granted_at",
+      "granted_by",
+      "max_bytes",
+      "owner_id",
+      "reason"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "object_storage_capacity_reconciliations",

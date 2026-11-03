@@ -221,9 +221,14 @@ const RequestTelemetryRetentionInterval = 1 * time.Hour
 //
 // The CASE uses acct.plan as a TEXT (the column type) so the
 // planner can short-circuit on the join key.
+//
+// request_telemetry is partitioned by month, and a ctid is unique only
+// within one partition. Matching on ctid alone deleted, for every expired
+// row, the rows at the same position in every other partition, retained or
+// not and whoever's they were. The pair (tableoid, ctid) names one row.
 const retentionRequestTelemetryPlanAwareBatchSQL = `DELETE FROM public.request_telemetry
-                                                   WHERE ctid IN (
-                                                       SELECT rt.ctid FROM public.request_telemetry rt
+                                                   WHERE (tableoid, ctid) IN (
+                                                       SELECT rt.tableoid, rt.ctid FROM public.request_telemetry rt
                                                        LEFT JOIN public.app_resource_accounts ac ON ac.app_id = rt.app_id
                                                        WHERE rt.received_at < now() - (CASE ac.plan
                                                            WHEN 'free'  THEN interval '0 days'

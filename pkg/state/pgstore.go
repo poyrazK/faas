@@ -7497,6 +7497,7 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.eventSubscriptionIntent = deploymentEventSubscriptionIntent(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -7506,6 +7507,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 
 func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.eventSubscriptionIntent = deploymentEventSubscriptionIntent(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -7899,6 +7901,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	}
 	if d.submissionAttemptID != "" {
 		if _, err := attachDeploymentSubmission(ctx, tx, created.AppID, d.submissionAttemptID, created.ID); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if d.eventSubscriptionIntent != nil {
+		if err := recordDeploymentEventSubscriptionIntentTx(ctx, tx, created, *d.eventSubscriptionIntent); err != nil {
 			return Deployment{}, 0, err
 		}
 	}
@@ -17083,6 +17090,12 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 	if err != nil {
 		return 0, err
 	}
+	// A pull lease that lapsed on its message's last attempt dead-letters
+	// (ADR-20261101093812); the sweep below requeues the rest.
+	leases, err := exhaustExpiredQueueLeasesTx(ctx, tx, now, limit-operations)
+	if err != nil {
+		return 0, err
+	}
 	var requeued int
 	err = tx.QueryRow(ctx, `
 		with expired as (
@@ -17119,14 +17132,14 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 			  from per_account as p
 			 where q.account_id = p.account_id
 		)
-		select count(*) from requeued`, now.UTC(), limit-operations).Scan(&requeued)
+		select count(*) from requeued`, now.UTC(), limit-operations-leases).Scan(&requeued)
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired commit: %w", err)
 	}
-	return requeued + operations, nil
+	return requeued + operations + leases, nil
 }
 
 func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
@@ -22267,25 +22280,28 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
 	// missing durable checkpoint therefore means the whole reported value is
-	// new usage. Counter regression means vmmd or the interface restarted: move
-	// the baseline back without turning unsigned wraparound into a huge charge.
+	// new usage. A counter below its checkpoint means vmmd or the interface
+	// restarted and counts from zero again, so its whole value is new usage
+	// too; dropping it lost each restart's first reading of egress
+	// (ADR-20261101113742). The baseline moves to the new value either way, and
+	// a delta is never negative.
 	netTxDelta, netRxDelta := int64(0), int64(0)
 	nextTx, nextRx := previousTx, previousRx
 	nextTxValid, nextRxValid := previousTxValid, previousRxValid
 	if netTxValid {
-		if !previousTxValid {
-			netTxDelta = netTxCumulative
-		} else if netTxCumulative >= previousTx {
+		if previousTxValid && netTxCumulative >= previousTx {
 			netTxDelta = netTxCumulative - previousTx
+		} else {
+			netTxDelta = netTxCumulative
 		}
 		nextTx = netTxCumulative
 		nextTxValid = true
 	}
 	if netRxValid {
-		if !previousRxValid {
-			netRxDelta = netRxCumulative
-		} else if netRxCumulative >= previousRx {
+		if previousRxValid && netRxCumulative >= previousRx {
 			netRxDelta = netRxCumulative - previousRx
+		} else {
+			netRxDelta = netRxCumulative
 		}
 		nextRx = netRxCumulative
 		nextRxValid = true
@@ -32285,17 +32301,44 @@ func pgUUIDString(id pgtype.UUID) string {
 // exp-backoff): the operator verb has no exp-backoff and no
 // last_error carry-over — the operator is signalling "re-drive this
 // record from clean". Returns state.ErrNotFound when the row does
-// not exist so the handler can emit a 404.
-func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) error {
-	tx, err := s.pool.Begin(ctx)
+// not exist, or belongs to another trigger or app, so the handler
+// can emit a 404.
+func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error {
+	params, err := triggerRecordScopeParams(appID, triggerID, recordID)
 	if err != nil {
 		return err
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: retry trigger record begin: %w", err)
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := retryTriggerReceiptTx(ctx, tx, id, "", ""); err != nil {
+	owned, err := sqlc.New().TriggerRecordInScope(ctx, tx, params)
+	if err != nil {
+		return fmt.Errorf("state: retry trigger record scope: %w", err)
+	}
+	if !owned {
+		return ErrNotFound
+	}
+	if err := retryTriggerReceiptTx(ctx, tx, recordID, "", appID); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: retry trigger record commit: %w", err)
+	}
+	return nil
+}
+
+// triggerRecordScopeParams parses the ids an operator record verb is
+// scoped by. A malformed id names no record of the trigger.
+func triggerRecordScopeParams(appID, triggerID, recordID string) (sqlc.TriggerRecordInScopeParams, error) {
+	app, appErr := parsePgUUID(appID)
+	trigger, triggerErr := parsePgUUID(triggerID)
+	record, recordErr := parsePgUUID(recordID)
+	if appErr != nil || triggerErr != nil || recordErr != nil {
+		return sqlc.TriggerRecordInScopeParams{}, ErrNotFound
+	}
+	return sqlc.TriggerRecordInScopeParams{ID: record, TriggerID: trigger, AppID: app}, nil
 }
 
 // RetryQueueDeadLetter (ADR-134 PR-C) is the queue counterpart to
@@ -32334,6 +32377,9 @@ func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocatio
 		return Invocation{}, err
 	}
 	if err := refreshEventReplayCapacity(ctx, tx, invocationID); err != nil {
+		return Invocation{}, err
+	}
+	if err := checkQueueReplayAdmissionTx(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}
 	row, err := sqlc.New().RetryProductionQueueDeadLetter(ctx, tx, sqlc.RetryProductionQueueDeadLetterParams{ID: id, AccountID: account})
@@ -32473,6 +32519,9 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		if err := refreshEventReplayCapacity(ctx, tx, ev.SourceID); err != nil {
 			return time.Time{}, mapErr(err)
 		}
+		if err := checkQueueReplayAdmissionTx(ctx, tx, args.EventID); err != nil {
+			return time.Time{}, err
+		}
 		n, updateErr := sqlc.New().ReplayProductionDeadLetterInvocation(ctx, tx, sqlc.ReplayProductionDeadLetterInvocationParams{
 			InvocationID: args.EventID, AccountID: args.AccountID, AppID: args.AppID,
 		})
@@ -32554,14 +32603,19 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 // (which preserves history); this verb preserves no DLQ row. The
 // record's parent trigger is untouched; this is a record-level
 // operation only.
-func (s *PgStore) DropTriggerRecordByOperator(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`delete from trigger_records where id = $1`,
-		id)
+//
+// The record must belong to triggerID, a trigger of appID; any other
+// record answers ErrNotFound.
+func (s *PgStore) DropTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error {
+	scope, err := triggerRecordScopeParams(appID, triggerID, recordID)
 	if err != nil {
-		return fmt.Errorf("state: drop trigger_record %s: %w", id, err)
+		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().DropTriggerRecordByOperator(ctx, s.pool, sqlc.DropTriggerRecordByOperatorParams(scope))
+	if err != nil {
+		return fmt.Errorf("state: drop trigger_record %s: %w", recordID, err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil

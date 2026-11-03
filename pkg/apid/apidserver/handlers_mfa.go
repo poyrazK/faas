@@ -237,6 +237,7 @@ func (s *server) confirmInlineMFA(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrCapacity("could not finalize enrollment"))
 		return
 	}
+	s.alertMFAEnabledInline(r.Context(), acct)
 	s.finishMFAConfirmation(w, r, acct)
 }
 
@@ -581,6 +582,7 @@ func (s *server) completeInlineMFADisable(w http.ResponseWriter, r *http.Request
 	if !hasPassword {
 		method = "recovery_code"
 	}
+	s.alertMFADisabledInline(r.Context(), acct, method)
 	s.audit.Emit(r.Context(), "account.mfa_disabled", &acct.ID, map[string]any{"method": method})
 	writeJSON(w, http.StatusOK, api.MFADisableResponse{})
 }
@@ -726,6 +728,7 @@ func (s *server) confirmInlineMFADisableEmail(w http.ResponseWriter, r *http.Req
 	// An email-assisted MFA reset ends interactive sign-in keys as well
 	// (bug hunt 2026-10-28 H71).
 	s.revokeInteractiveSignInKeys(r, acct, "mfa_reset_email")
+	s.alertMFADisabledInline(r.Context(), acct, "email")
 	s.audit.Emit(r.Context(), "account.mfa_disabled", &acct.ID, map[string]any{"method": "email"})
 	writeJSON(w, http.StatusOK, api.MFADisableEmailConfirmResponse{})
 }
@@ -779,7 +782,11 @@ func (s *server) disableByPassword(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid credentials", "password not set on this account"))
 		return false
 	}
-	ok, err := auth.Verify(hash, presented)
+	ok, err := auth.VerifyContext(r.Context(), hash, presented)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return false
+	}
 	if err != nil || !ok {
 		s.audit.Emit(r.Context(), "account.mfa_disable_failed", &acct.ID, map[string]any{"reason": "password_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,

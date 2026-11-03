@@ -34,6 +34,18 @@ type Principal struct {
 	Runtime      string    `json:"runtime"`
 	Plan         api.Plan  `json:"plan"`
 	StartedAt    time.Time `json:"started_at"`
+	// Pool is the app's resource owner (an organization, or the account),
+	// whose plan Plan is and whose upload quota the upload counts in. An
+	// older vmmd leaves it empty: the account's.
+	Pool string `json:"pool,omitempty"`
+}
+
+// quotaKey is the pool an upload counts in.
+func (p Principal) quotaKey() string {
+	if p.Pool != "" {
+		return p.Pool
+	}
+	return p.AccountID
 }
 
 // Upload is the guest's contribution. It contains no tenant or deployment
@@ -106,6 +118,9 @@ func validPrincipal(p Principal) bool {
 			return false
 		}
 	}
+	if _, err := uuid.Parse(p.Pool); p.Pool != "" && err != nil {
+		return false
+	}
 	if p.StartedAt.IsZero() || p.Generation == "" || len(p.Generation) > api.ProfileMaxGenerationBytes || api.ValidateScope(p.Scope) != nil {
 		return false
 	}
@@ -163,7 +178,7 @@ func (s *Service) Push(ctx context.Context, e Envelope) (result error) {
 			s.recordFailure(ctx, e.Principal)
 		}
 	}()
-	if !s.admit(e.Principal.AccountID, limits.Profiling.UploadsPerMinute, s.clock()) {
+	if !s.admit(e.Principal.quotaKey(), limits.Profiling.UploadsPerMinute, s.clock()) {
 		s.accepted.WithLabelValues("limited").Inc()
 		return status.Error(codes.ResourceExhausted, "profile upload quota exceeded")
 	}

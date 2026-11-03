@@ -197,13 +197,15 @@ func projectObsTenantUsage(r *http.Request, st state.Store, acct state.Account, 
 	}
 	usage.UsedGBHours = meter.GBHours(mbSeconds)
 	usage.UsedCPUHours = float64(cpuUsec) / 3_600_000_000.0
-	limits := api.MustLimitsFor(acct.Plan)
-	usage.IncludedGBHours = int64(limits.IncludedGBHours)
-	usage.OverageGBHours = usage.UsedGBHours - float64(usage.IncludedGBHours)
-	if usage.OverageGBHours < 0 {
-		usage.OverageGBHours = 0
+	// The billed figures, as the tenant's own usage pages show them
+	// (ADR-20261101113742).
+	compute, err := billing.ComputeOverageForMonth(r.Context(), st, acct, month, time.Now(), mbSeconds)
+	if err != nil {
+		return api.ObsTenantUsage{}, err
 	}
-	usage.OverageCents = int64(usage.OverageGBHours)
+	usage.IncludedGBHours = compute.IncludedMBSeconds / api.SecondsPerGBHour
+	usage.OverageGBHours = float64(compute.BilledMBSeconds) / float64(api.SecondsPerGBHour)
+	usage.OverageCents = api.OverageCentsForBillableMBSeconds(compute.BilledMBSeconds)
 	return usage, nil
 }
 

@@ -1,0 +1,23 @@
+# ADR-20261103112845: GitHub pushes never remove or strand project services; built Compose services listen on their container port
+
+- **Status:** accepted
+- **Date:** 2026-11-03
+- **Owner:** githubd, reconcile and reposcan maintainers
+- **Amends:** ADR-050 (push reconcile), ADR-20261025111824 (Compose postgres as a managed database)
+- **Decision:**
+  - **A push never removes a service.** githubd lists the project's apps whose service is not in the push's scan and was not renamed (`reconcile.RenamedWorkloads`), passes them to the reconcile as excluded, and does not build them. Each keeps serving its last release, and its GitHub check fails with: kept, a GitHub push does not remove services; deploy with `gregale deploy` or the dashboard to review and remove it. Removal stays with reviewed deploys, which show the plan first.
+  - **A push does not start a service without its Compose postgres.** For each Compose `postgres` service, githubd lists the services that expect its address (`projectsetup.ManagedConsumers`, as the reviewed plan does) and have no value for that variable in the deploy scope (`projectsetup.UnsetEnvKeys`). Those are not deployed by the push; their GitHub check fails and says to run a reviewed deploy, which creates and binds the managed database, or to set the variable. The next push deploys them. Creating databases stays in apid, the owner of customer resources.
+  - **A built Compose service listens on its container port.** The scan reads a built service's `ports:` as it reads an image service's: the container side of each mapping (`8080:3000` → 3000), TCP only, in declaration order. Reconcile stores the first as `ProjectImagePort` for Compose services built from source too, and project and GitHub deploys carry it as the deployment's `OverridePort`, which the runtime already honours (frozen runtime port, then `OverridePort`, then the inferred profile). A service without `ports:` keeps today's rule: one Dockerfile `EXPOSE`, else `PORT` (8080).
+- **Why:** An investigation of the multi-service path (2026-11-03) found:
+  - a push applied every removal without review: adding `profiles: [debug]` to a production service, or a merge that dropped one by mistake, soft-deleted the app with its domains, variables and crons (restorable for 7 days, which the docs did not say);
+  - a `postgres` service added through a push was never created, so its consumers deployed without `DATABASE_URL` and crashed;
+  - a built service that listens on a fixed port with no Dockerfile `EXPOSE`, common in Compose projects where Docker maps the port, was probed on 8080 and failed readiness, while the same service as an `image:` worked.
+- **Consequences:**
+  - A service removed in Compose stays deployed until a reviewed deploy; its check is red on every push until then.
+  - A push with a new `postgres` service deploys the rest of the project; the waiting services follow once the database is bound or the variable set.
+  - An existing built Compose app whose first `ports:` target is set records it on its next deploy (`image_port` change). Docker routes to that same port locally, so the app already listens there.
+  - Other deploy paths of a project app (a single-app `gregale deploy` from its directory, source refs) do not pass the port yet; they keep the build's `EXPOSE` or `PORT`.
+- **Rejected alternatives:**
+  - **githubd creates the managed database.** githubd would become a writer of customer resources apid owns, and a push has no reviewed plan to confirm the database and its cost.
+  - **Remove on push and only warn.** A warning on a check does not bring back an app's domains and variables before customers notice.
+  - **Hold every service of a push that drops one.** One stale service would block every other service's deploys.

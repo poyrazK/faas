@@ -605,8 +605,10 @@ type MemStore struct {
 	deploymentPolicyStates       map[string]deploymentPolicyState
 	deploymentCronStates         map[string]deploymentPolicyState
 	deploymentCronActivations    map[string]cronActivation
-	deploymentCronOutcomes       map[string]cronOutcome
-	deploymentCronBefore         map[string][]Cron
+	// eventSubscriptionIntents is keyed by deployment id (ADR-20261101030512).
+	eventSubscriptionIntents map[string]memEventSubscriptionIntent
+	deploymentCronOutcomes   map[string]cronOutcome
+	deploymentCronBefore     map[string][]Cron
 	// deploymentServingEndedAt mirrors deployments.serving_ended_at; see
 	// putDeploymentLocked.
 	deploymentServingEndedAt map[string]time.Time
@@ -1289,6 +1291,9 @@ type MemStore struct {
 	// accounts.overage_cap_cents (migration 00049, issue #279). Keyed
 	// by account id; the second value is `ok` (false = NULL).
 	overageCapCents map[string]int64
+	// objectStorageCeilingGrants mirrors object_storage_ceiling_grants by
+	// owner id (ADR-20261101214152); nil until the first grant.
+	objectStorageCeilingGrants map[string]ObjectStorageCeilingGrant
 	// gdprRequests is the in-memory mirror of the gdpr_requests ledger
 	// row. MemStore does not auto-cascade on DeleteAccount (the
 	// production pgstore does), but AppendGdprRequest rows here are
@@ -8266,6 +8271,7 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // it has always lacked.
 func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.eventSubscriptionIntent = deploymentEventSubscriptionIntent(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -8275,6 +8281,7 @@ func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployme
 
 func (m *MemStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.eventSubscriptionIntent = deploymentEventSubscriptionIntent(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -8622,6 +8629,9 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	}
 	if d.submissionAttemptID != "" {
 		m.saveDeploymentSubmissionLocked(d.submissionAttemptID, d)
+	}
+	if d.eventSubscriptionIntent != nil {
+		m.recordDeploymentEventSubscriptionIntentLocked(d, *d.eventSubscriptionIntent)
 	}
 	if dependencyGate != nil {
 		m.deploymentDependencyGates[d.ID] = *dependencyGate
@@ -14723,20 +14733,45 @@ func (m *MemStore) ListTriggerRecordsForTrigger(_ context.Context, triggerID str
 	return out, nil
 }
 
-func (m *MemStore) RetryTriggerRecordByOperator(_ context.Context, id string) error {
+func (m *MemStore) RetryTriggerRecordByOperator(_ context.Context, appID, triggerID, recordID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	id, ok := m.triggerRecordInScopeLocked(appID, triggerID, recordID)
+	if !ok {
+		return ErrNotFound
+	}
 	return m.retryTriggerReceiptLocked(id, time.Now().UTC())
 }
 
-func (m *MemStore) DropTriggerRecordByOperator(_ context.Context, id string) error {
+func (m *MemStore) DropTriggerRecordByOperator(_ context.Context, appID, triggerID, recordID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.records[id]; !ok {
+	id, ok := m.triggerRecordInScopeLocked(appID, triggerID, recordID)
+	if !ok {
 		return ErrNotFound
 	}
 	delete(m.records, id)
 	return nil
+}
+
+// triggerRecordInScopeLocked mirrors TriggerRecordInScope: the record must
+// belong to triggerID and the trigger to appID. It returns the record's key.
+func (m *MemStore) triggerRecordInScopeLocked(appID, triggerID, recordID string) (string, bool) {
+	id := recordID
+	r, ok := m.records[id]
+	if !ok {
+		for key, candidate := range m.records {
+			if sameMemUUID(key, recordID) {
+				id, r, ok = key, candidate, true
+				break
+			}
+		}
+	}
+	if !ok || !sameMemUUID(r.TriggerID.String(), triggerID) {
+		return "", false
+	}
+	t, ok := m.triggers[r.TriggerID.String()]
+	return id, ok && sameMemUUID(t.AppID.String(), appID)
 }
 
 // --- Invocations (Move 1 event-shaped queue: async_invoke / queue /
@@ -15070,6 +15105,12 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 	}
 	for _, id := range ids {
 		inv := m.invocations[id]
+		// A pull lease that lapsed on its message's last attempt
+		// dead-letters (ADR-20261101093812).
+		if m.queueLeaseExhaustedLocked(inv) {
+			m.setInvocationLocked(id, exhaustQueueLease(inv, now))
+			continue
+		}
 		quotaReserved := inv.QuotaReserved
 		inv.State = InvocationPending
 		inv.QuotaReserved = false
@@ -19950,19 +19991,21 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 	checkpoint := m.networkUsageCheckpoints[instanceID]
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
-		if !checkpoint.netTxValid {
-			netTxDelta = netTxCumulative
-		} else if netTxCumulative >= checkpoint.netTx {
+		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
+		if checkpoint.netTxValid && netTxCumulative >= checkpoint.netTx {
 			netTxDelta = netTxCumulative - checkpoint.netTx
+		} else {
+			netTxDelta = netTxCumulative
 		}
 		checkpoint.netTx = netTxCumulative
 		checkpoint.netTxValid = true
 	}
 	if netRxValid {
-		if !checkpoint.netRxValid {
-			netRxDelta = netRxCumulative
-		} else if netRxCumulative >= checkpoint.netRx {
+		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
+		if checkpoint.netRxValid && netRxCumulative >= checkpoint.netRx {
 			netRxDelta = netRxCumulative - checkpoint.netRx
+		} else {
+			netRxDelta = netRxCumulative
 		}
 		checkpoint.netRx = netRxCumulative
 		checkpoint.netRxValid = true
@@ -29226,6 +29269,7 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		limit = 200
 	}
 	replayed := 0
+	var capped error
 	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
 		if replayed >= limit || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
@@ -29239,12 +29283,18 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 			continue
 		}
+		if IsQueueCapError(err) {
+			if capped == nil {
+				capped = err
+			}
+			continue
+		}
 		if err != nil {
 			return replayed, err
 		}
 		replayed++
 	}
-	return replayed, nil
+	return replayedOrQueueCap(replayed, capped)
 }
 
 func (m *MemStore) DeleteDeadLetterEventForAccount(_ context.Context, accountID, eventID string) error {
@@ -29329,7 +29379,7 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		}
 		// ADR-20261031101000: replay resets attempts, so keyed work past its
 		// pending deadline would only expire again.
-		if inv.WorkPolicyName != "" && inv.WorkExpiresAt != nil && !inv.WorkExpiresAt.After(now) {
+		if KeyedReplayExpired(inv, now) {
 			return DeadLetterEvent{}, ErrKeyedReplayExpired
 		}
 		if _, err := m.retryQueueDeadLetterLocked(accountID, event.SourceID, now); err != nil {
@@ -29461,6 +29511,7 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 	}
 	events := m.deadLetterEventsLocked(appID)
 	replayed := 0
+	var capped error
 	for _, ev := range events {
 		if replayed >= limit || ev.AccountID != accountID || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
@@ -29469,11 +29520,17 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 				continue
 			}
+			if IsQueueCapError(err) {
+				if capped == nil {
+					capped = err
+				}
+				continue
+			}
 			return replayed, err
 		}
 		replayed++
 	}
-	return replayed, nil
+	return replayedOrQueueCap(replayed, capped)
 }
 
 // DeleteDeadLetterEvent purges only the unified ledger projection. The source

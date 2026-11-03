@@ -13630,7 +13630,8 @@ CREATE FUNCTION public.financial_preview_command_held(target_app uuid, target_de
     AS $$
  SELECT EXISTS (
   SELECT 1 FROM apps a
-  JOIN financial_budget_stops s ON s.account_id = a.account_id
+  LEFT JOIN orgs payer_org ON payer_org.id=a.org_id AND payer_org.resource_ownership_enabled AND NOT payer_org.personal_org
+  JOIN financial_budget_stops s ON s.account_id = COALESCE(payer_org.id, a.account_id)
   JOIN financial_budget_policies p ON p.account_id=s.account_id AND p.id=s.policy_id AND p.revision=s.revision
   LEFT JOIN deployments d ON d.id=target_deployment AND d.app_id=a.id
   LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
@@ -13642,7 +13643,7 @@ CREATE FUNCTION public.financial_preview_command_held(target_app uuid, target_de
     WHEN 'account' THEN true
     WHEN 'app' THEN (p.spec->'scope'->>'id')::uuid=a.id
     WHEN 'project' THEN (p.spec->'scope'->>'id')::uuid=a.project_id
-    WHEN 'environment' THEN environment.account_id=a.account_id AND environment.project_id=a.project_id
+    WHEN 'environment' THEN environment.project_id=a.project_id
       AND (owner.environment_id=environment.id OR owner.deployment_id IS NULL AND
         (environment.slug=CASE WHEN coalesce(nullif(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END))
     ELSE false END
@@ -14060,6 +14061,12 @@ CREATE FUNCTION public.guard_clone_checkpoint_instance_admission() RETURNS trigg
     AS $$
 DECLARE fenced boolean;
 BEGIN
+ -- An update that keeps these columns can be neither fenced nor in need of
+ -- the snapshot guard: skip the two fence catalogue reads.
+ IF TG_OP='UPDATE' AND (NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.mode,NEW.state)
+    IS NOT DISTINCT FROM (OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.mode,OLD.state) THEN
+  RETURN NEW;
+ END IF;
  IF (TG_OP='INSERT' OR (NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.mode,NEW.state) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.mode,OLD.state))
   AND current_setting('transaction_isolation')<>'read committed' THEN
   -- A snapshot older than the newest retirement request fails here (40001),
@@ -25397,8 +25404,9 @@ BEGIN
     LEFT JOIN jobs job ON job.id = NEW.job_id AND job.account_id = account.id
     LEFT JOIN instances instance ON instance.id = NEW.instance_id AND instance.app_id = app.id
     LEFT JOIN deployments deployment ON deployment.id = instance.deployment_id AND deployment.app_id = app.id
-    LEFT JOIN project_environments environment ON environment.account_id = account.id
-      AND environment.project_id = app.project_id AND environment.slug = deployment.scope
+    LEFT JOIN project_environments environment ON environment.project_id = app.project_id
+      AND environment.slug = deployment.scope
+      AND (environment.account_id = account.id OR app.org_id = account.id)
     WHERE account.id = NEW.account_id;
     -- Preserve canonical usage behavior for orphan fixtures and late samples
     -- after account deletion without recreating erased financial history.
@@ -35690,6 +35698,30 @@ CREATE TABLE public.deployment_dependency_gates (
     CONSTRAINT deployment_dependency_gates_pins_check CHECK (((jsonb_typeof(pins) = 'array'::text) AND ((jsonb_array_length(pins) >= 1) AND (jsonb_array_length(pins) <= 100)))),
     CONSTRAINT deployment_dependency_gates_status_check CHECK ((status = ANY (ARRAY['waiting'::text, 'ready'::text, 'failed'::text])))
 );
+
+
+--
+-- Name: deployment_event_subscription_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_event_subscription_intents (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    declared_subscription_ids uuid[] NOT NULL,
+    status text DEFAULT 'prepared'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_event_subscription_intents_reason_check CHECK ((char_length(reason) <= 64)),
+    CONSTRAINT deployment_event_subscription_intents_status_check CHECK ((status = ANY (ARRAY['prepared'::text, 'activated'::text, 'discarded'::text])))
+);
+
+
+--
+-- Name: TABLE deployment_event_subscription_intents; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deployment_event_subscription_intents IS 'Event subscriptions a production manifest deploy declares, applied when the deployment serves all production traffic; written only by apid (ADR-20261101030512).';
 
 
 --
@@ -47060,6 +47092,29 @@ CREATE TABLE public.object_storage_capacity_reconciliations (
     CONSTRAINT object_storage_capacity_reconciliations_scanned_versions_check CHECK (((scanned_versions >= 0) AND (scanned_versions <= 1000000))),
     CONSTRAINT object_storage_capacity_reconciliations_state_check CHECK ((state = ANY (ARRAY['waiting'::text, 'scanning'::text, 'completed'::text, 'cancelled'::text, 'blocked'::text, 'failed'::text])))
 );
+
+
+--
+-- Name: object_storage_ceiling_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_ceiling_grants (
+    owner_id uuid NOT NULL,
+    max_bytes bigint NOT NULL,
+    reason text NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_storage_ceiling_grants_granted_at_check CHECK (isfinite(granted_at)),
+    CONSTRAINT object_storage_ceiling_grants_max_bytes_check CHECK (((max_bytes > 0) AND (max_bytes <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_ceiling_grants_reason_check CHECK ((reason ~ '^[a-z0-9_]{1,64}$'::text))
+);
+
+
+--
+-- Name: TABLE object_storage_ceiling_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_storage_ceiling_grants IS 'Object-storage ceilings support granted a billing subject in place of its paid plan''s; written only by apid (ADR-20261101214152).';
 
 
 --
@@ -60582,6 +60637,14 @@ ALTER TABLE ONLY public.deployment_dependency_gates
 
 
 --
+-- Name: deployment_event_subscription_intents deployment_event_subscription_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_event_subscription_intents
+    ADD CONSTRAINT deployment_event_subscription_intents_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_image_preparations deployment_image_preparations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65395,6 +65458,14 @@ ALTER TABLE ONLY public.object_storage_bucket_usage
 
 ALTER TABLE ONLY public.object_storage_capacity_reconciliations
     ADD CONSTRAINT object_storage_capacity_reconciliations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_ceiling_grants object_storage_ceiling_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_ceiling_grants
+    ADD CONSTRAINT object_storage_ceiling_grants_pkey PRIMARY KEY (owner_id);
 
 
 --
@@ -72815,6 +72886,20 @@ CREATE INDEX deployment_audit_worker_drain_idx ON public.deployment_audit USING 
 
 
 --
+-- Name: deployment_event_subscription_intents_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_event_subscription_intents_app_idx ON public.deployment_event_subscription_intents USING btree (app_id);
+
+
+--
+-- Name: deployment_event_subscription_intents_prepared_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_event_subscription_intents_prepared_idx ON public.deployment_event_subscription_intents USING btree (updated_at, deployment_id) WHERE (status = 'prepared'::text);
+
+
+--
 -- Name: deployment_image_preparations_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -78086,6 +78171,13 @@ CREATE INDEX profile_captures_expires_idx ON public.profile_captures USING btree
 
 
 --
+-- Name: profile_captures_pool_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_pool_created_idx ON public.profile_captures USING btree (COALESCE((capture ->> 'pool'::text), (account_id)::text), created_at DESC);
+
+
+--
 -- Name: profile_captures_status_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -81887,56 +81979,56 @@ CREATE TRIGGER billing_identities_subscription_mail_revision_guard AFTER INSERT 
 -- Name: accounts binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER UPDATE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,plan');
+CREATE TRIGGER binding_promotion_revision AFTER UPDATE ON public.accounts FOR EACH ROW WHEN (((old.id IS DISTINCT FROM new.id) OR (old.plan IS DISTINCT FROM new.plan))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,plan');
 
 
 --
 -- Name: app_envs binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('account_id,app_id,scope,key,value');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('account_id,app_id,scope,key,value');
 
 
 --
 -- Name: app_runtime_config_changes binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.app_runtime_config_changes FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,changed_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.app_runtime_config_changes FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,changed_at');
 
 
 --
 -- Name: app_secret_runtime_processes binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.app_secret_runtime_processes FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,instance_id,workload_name,generation,active,started_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.app_secret_runtime_processes FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,instance_id,workload_name,generation,active,started_at');
 
 
 --
 -- Name: app_secret_runtime_reload_observations binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.app_secret_runtime_reload_observations FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,scope,key,instance_id,workload_name,secret_version,projection,signal,observed_at,error_code,application_ack_version,application_ack_status,application_ack_at,application_ack_error_code,application_ack_generation');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.app_secret_runtime_reload_observations FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,scope,key,instance_id,workload_name,secret_version,projection,signal,observed_at,error_code,application_ack_version,application_ack_status,application_ack_at,application_ack_error_code,application_ack_generation');
 
 
 --
 -- Name: app_secrets binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation,managed_object_storage_credential_id,delivery_version,secret_class');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation,managed_object_storage_credential_id,delivery_version,secret_class');
 
 
 --
 -- Name: app_tasks binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,account_id,deployment_id,deployment_scope,binding_verification,status,created_at,finished_at,stdout_tail,output_truncated,exit_code');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,account_id,deployment_id,deployment_scope,binding_verification,status,created_at,finished_at,stdout_tail,output_truncated,exit_code');
 
 
 --
 -- Name: apps binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,slug,status,manifest,type');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,slug,status,manifest,type');
 
 
 --
@@ -81950,105 +82042,259 @@ CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON pu
 -- Name: deployments binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,status,scope,rootfs_key,image_digest,traffic_percent,canary_total_steps,rollout_state,override_env_secrets,sidecars,secret_reload_signal');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,status,scope,rootfs_key,image_digest,traffic_percent,canary_total_steps,rollout_state,override_env_secrets,sidecars,secret_reload_signal');
 
 
 --
 -- Name: instances binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,deployment_id,kind,mode,state,started_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,deployment_id,kind,mode,state,started_at');
 
 
 --
 -- Name: managed_postgres_bindings binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,app_id,database_id,scope,environment_key,access,state,credential_generation,credential_ref,rotation_previous_generation,rotation_wake_id,rotation_cleanup_ready');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,app_id,database_id,scope,environment_key,access,state,credential_generation,credential_ref,rotation_previous_generation,rotation_wake_id,rotation_cleanup_ready');
 
 
 --
 -- Name: managed_postgres_databases binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,name,state');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,name,state');
 
 
 --
 -- Name: notification_outbox binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.notification_outbox FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('channel,payload,state,attempts,created_at,delivered_at,last_error');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.notification_outbox FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('channel,payload,state,attempts,created_at,delivered_at,last_error');
 
 
 --
 -- Name: object_buckets binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,app_id,name,state');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,app_id,name,state');
 
 
 --
 -- Name: object_storage_s3_credentials binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,bucket_id,permission,status,managed_app_id,managed_scope,managed_prefix,rotation_parent_id,rotation_wake_id,secret_sealed,kid,created_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,bucket_id,permission,status,managed_app_id,managed_scope,managed_prefix,rotation_parent_id,rotation_wake_id,secret_sealed,kid,created_at');
 
 
 --
 -- Name: outbound_app_bindings binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.outbound_app_bindings FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,account_id,integration_id,allowed_methods,allowed_path_prefixes,daily_request_limit');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.outbound_app_bindings FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,account_id,integration_id,allowed_methods,allowed_path_prefixes,daily_request_limit');
 
 
 --
 -- Name: outbound_integration_credentials binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.outbound_integration_credentials FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('integration_id,account_id,authorization_sealed,updated_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.outbound_integration_credentials FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('integration_id,account_id,authorization_sealed,updated_at');
 
 
 --
 -- Name: outbound_integration_probe_policies binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.outbound_integration_probe_policies FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('integration_id,account_id,method,path,expected_status');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.outbound_integration_probe_policies FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('integration_id,account_id,method,path,expected_status');
 
 
 --
 -- Name: outbound_integrations binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.outbound_integrations FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,name,enabled,allowed_methods,allowed_path_prefixes,credential_source,origin,provider_auth_mode,owner_kind,token_hash,daily_request_limit,rate_per_second,burst,max_in_flight,request_timeout_ms,max_retries,response_cache_ttl_seconds,circuit_breaker_failure_threshold,circuit_breaker_open_seconds,retry_budget_per_minute');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.outbound_integrations FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,name,enabled,allowed_methods,allowed_path_prefixes,credential_source,origin,provider_auth_mode,owner_kind,token_hash,daily_request_limit,rate_per_second,burst,max_in_flight,request_timeout_ms,max_retries,response_cache_ttl_seconds,circuit_breaker_failure_threshold,circuit_breaker_open_seconds,retry_budget_per_minute');
 
 
 --
 -- Name: queue_binding_canaries binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.queue_binding_canaries FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,binding_id,trigger_id,deployment_id,snapshot,published_at,expires_at,cancelled,completed_deployment_id,completed_attempt,completed_generation');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.queue_binding_canaries FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,binding_id,trigger_id,deployment_id,snapshot,published_at,expires_at,cancelled,completed_deployment_id,completed_attempt,completed_generation');
 
 
 --
 -- Name: queue_bindings binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,app_id,name,queue_name,mode,enabled,retired_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,app_id,name,queue_name,mode,enabled,retired_at');
 
 
 --
 -- Name: trigger_consumer_health binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.trigger_consumer_health FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('trigger_id,last_error_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.trigger_consumer_health FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('trigger_id,last_error_at');
 
 
 --
 -- Name: triggers binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.triggers FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,kind,source,config,enabled,created_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE ON public.triggers FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,kind,source,config,enabled,created_at');
+
+
+--
+-- Name: app_envs binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.app_envs FOR EACH ROW WHEN ((((((old.account_id IS DISTINCT FROM new.account_id) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.scope IS DISTINCT FROM new.scope)) OR (old.key IS DISTINCT FROM new.key)) OR (old.value IS DISTINCT FROM new.value))) EXECUTE FUNCTION public.capture_binding_promotion_revision('account_id,app_id,scope,key,value');
+
+
+--
+-- Name: app_runtime_config_changes binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.app_runtime_config_changes FOR EACH ROW WHEN (((old.app_id IS DISTINCT FROM new.app_id) OR (old.changed_at IS DISTINCT FROM new.changed_at))) EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,changed_at');
+
+
+--
+-- Name: app_secret_runtime_processes binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.app_secret_runtime_processes FOR EACH ROW WHEN (((((((old.app_id IS DISTINCT FROM new.app_id) OR (old.instance_id IS DISTINCT FROM new.instance_id)) OR (old.workload_name IS DISTINCT FROM new.workload_name)) OR (old.generation IS DISTINCT FROM new.generation)) OR (old.active IS DISTINCT FROM new.active)) OR (old.started_at IS DISTINCT FROM new.started_at))) EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,instance_id,workload_name,generation,active,started_at');
+
+
+--
+-- Name: app_secret_runtime_reload_observations binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.app_secret_runtime_reload_observations FOR EACH ROW WHEN ((((((((((((((((old.app_id IS DISTINCT FROM new.app_id) OR (old.scope IS DISTINCT FROM new.scope)) OR (old.key IS DISTINCT FROM new.key)) OR (old.instance_id IS DISTINCT FROM new.instance_id)) OR (old.workload_name IS DISTINCT FROM new.workload_name)) OR (old.secret_version IS DISTINCT FROM new.secret_version)) OR (old.projection IS DISTINCT FROM new.projection)) OR (old.signal IS DISTINCT FROM new.signal)) OR (old.observed_at IS DISTINCT FROM new.observed_at)) OR (old.error_code IS DISTINCT FROM new.error_code)) OR (old.application_ack_version IS DISTINCT FROM new.application_ack_version)) OR (old.application_ack_status IS DISTINCT FROM new.application_ack_status)) OR (old.application_ack_at IS DISTINCT FROM new.application_ack_at)) OR (old.application_ack_error_code IS DISTINCT FROM new.application_ack_error_code)) OR (old.application_ack_generation IS DISTINCT FROM new.application_ack_generation))) EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,scope,key,instance_id,workload_name,secret_version,projection,signal,observed_at,error_code,application_ack_version,application_ack_status,application_ack_at,application_ack_error_code,application_ack_generation');
+
+
+--
+-- Name: app_secrets binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.app_secrets FOR EACH ROW WHEN ((((((((((((((old.account_id IS DISTINCT FROM new.account_id) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.scope IS DISTINCT FROM new.scope)) OR (old.key IS DISTINCT FROM new.key)) OR (old.ciphertext IS DISTINCT FROM new.ciphertext)) OR (old.kid IS DISTINCT FROM new.kid)) OR (old.value_hash IS DISTINCT FROM new.value_hash)) OR (old.managed_postgres_binding_id IS DISTINCT FROM new.managed_postgres_binding_id)) OR (old.managed_credential_ref IS DISTINCT FROM new.managed_credential_ref)) OR (old.managed_credential_generation IS DISTINCT FROM new.managed_credential_generation)) OR (old.managed_object_storage_credential_id IS DISTINCT FROM new.managed_object_storage_credential_id)) OR (old.delivery_version IS DISTINCT FROM new.delivery_version)) OR (old.secret_class IS DISTINCT FROM new.secret_class))) EXECUTE FUNCTION public.capture_binding_promotion_revision('account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation,managed_object_storage_credential_id,delivery_version,secret_class');
+
+
+--
+-- Name: app_tasks binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.app_tasks FOR EACH ROW WHEN (((((((((((((old.id IS DISTINCT FROM new.id) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.deployment_id IS DISTINCT FROM new.deployment_id)) OR (old.deployment_scope IS DISTINCT FROM new.deployment_scope)) OR (old.binding_verification IS DISTINCT FROM new.binding_verification)) OR (old.status IS DISTINCT FROM new.status)) OR (old.created_at IS DISTINCT FROM new.created_at)) OR (old.finished_at IS DISTINCT FROM new.finished_at)) OR (old.stdout_tail IS DISTINCT FROM new.stdout_tail)) OR (old.output_truncated IS DISTINCT FROM new.output_truncated)) OR (old.exit_code IS DISTINCT FROM new.exit_code))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,account_id,deployment_id,deployment_scope,binding_verification,status,created_at,finished_at,stdout_tail,output_truncated,exit_code');
+
+
+--
+-- Name: apps binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.apps FOR EACH ROW WHEN (((((((old.id IS DISTINCT FROM new.id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.slug IS DISTINCT FROM new.slug)) OR (old.status IS DISTINCT FROM new.status)) OR (old.manifest IS DISTINCT FROM new.manifest)) OR (old.type IS DISTINCT FROM new.type))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,slug,status,manifest,type');
+
+
+--
+-- Name: deployments binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.deployments FOR EACH ROW WHEN (((((((((((((old.id IS DISTINCT FROM new.id) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.status IS DISTINCT FROM new.status)) OR (old.scope IS DISTINCT FROM new.scope)) OR (old.rootfs_key IS DISTINCT FROM new.rootfs_key)) OR (old.image_digest IS DISTINCT FROM new.image_digest)) OR (old.traffic_percent IS DISTINCT FROM new.traffic_percent)) OR (old.canary_total_steps IS DISTINCT FROM new.canary_total_steps)) OR (old.rollout_state IS DISTINCT FROM new.rollout_state)) OR (old.override_env_secrets IS DISTINCT FROM new.override_env_secrets)) OR (old.sidecars IS DISTINCT FROM new.sidecars)) OR (old.secret_reload_signal IS DISTINCT FROM new.secret_reload_signal))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,status,scope,rootfs_key,image_digest,traffic_percent,canary_total_steps,rollout_state,override_env_secrets,sidecars,secret_reload_signal');
+
+
+--
+-- Name: instances binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.instances FOR EACH ROW WHEN ((((((((old.id IS DISTINCT FROM new.id) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.deployment_id IS DISTINCT FROM new.deployment_id)) OR (old.kind IS DISTINCT FROM new.kind)) OR (old.mode IS DISTINCT FROM new.mode)) OR (old.state IS DISTINCT FROM new.state)) OR (old.started_at IS DISTINCT FROM new.started_at))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,deployment_id,kind,mode,state,started_at');
+
+
+--
+-- Name: managed_postgres_bindings binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.managed_postgres_bindings FOR EACH ROW WHEN ((((((((((((((old.id IS DISTINCT FROM new.id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.database_id IS DISTINCT FROM new.database_id)) OR (old.scope IS DISTINCT FROM new.scope)) OR (old.environment_key IS DISTINCT FROM new.environment_key)) OR (old.access IS DISTINCT FROM new.access)) OR (old.state IS DISTINCT FROM new.state)) OR (old.credential_generation IS DISTINCT FROM new.credential_generation)) OR (old.credential_ref IS DISTINCT FROM new.credential_ref)) OR (old.rotation_previous_generation IS DISTINCT FROM new.rotation_previous_generation)) OR (old.rotation_wake_id IS DISTINCT FROM new.rotation_wake_id)) OR (old.rotation_cleanup_ready IS DISTINCT FROM new.rotation_cleanup_ready))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,app_id,database_id,scope,environment_key,access,state,credential_generation,credential_ref,rotation_previous_generation,rotation_wake_id,rotation_cleanup_ready');
+
+
+--
+-- Name: managed_postgres_databases binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.managed_postgres_databases FOR EACH ROW WHEN (((((old.id IS DISTINCT FROM new.id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.name IS DISTINCT FROM new.name)) OR (old.state IS DISTINCT FROM new.state))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,name,state');
+
+
+--
+-- Name: notification_outbox binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.notification_outbox FOR EACH ROW WHEN ((((((((old.channel IS DISTINCT FROM new.channel) OR (old.payload IS DISTINCT FROM new.payload)) OR (old.state IS DISTINCT FROM new.state)) OR (old.attempts IS DISTINCT FROM new.attempts)) OR (old.created_at IS DISTINCT FROM new.created_at)) OR (old.delivered_at IS DISTINCT FROM new.delivered_at)) OR (old.last_error IS DISTINCT FROM new.last_error))) EXECUTE FUNCTION public.capture_binding_promotion_revision('channel,payload,state,attempts,created_at,delivered_at,last_error');
+
+
+--
+-- Name: object_buckets binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.object_buckets FOR EACH ROW WHEN ((((((old.id IS DISTINCT FROM new.id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.name IS DISTINCT FROM new.name)) OR (old.state IS DISTINCT FROM new.state))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,app_id,name,state');
+
+
+--
+-- Name: object_storage_s3_credentials binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.object_storage_s3_credentials FOR EACH ROW WHEN ((((((((((((((old.id IS DISTINCT FROM new.id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.bucket_id IS DISTINCT FROM new.bucket_id)) OR (old.permission IS DISTINCT FROM new.permission)) OR (old.status IS DISTINCT FROM new.status)) OR (old.managed_app_id IS DISTINCT FROM new.managed_app_id)) OR (old.managed_scope IS DISTINCT FROM new.managed_scope)) OR (old.managed_prefix IS DISTINCT FROM new.managed_prefix)) OR (old.rotation_parent_id IS DISTINCT FROM new.rotation_parent_id)) OR (old.rotation_wake_id IS DISTINCT FROM new.rotation_wake_id)) OR (old.secret_sealed IS DISTINCT FROM new.secret_sealed)) OR (old.kid IS DISTINCT FROM new.kid)) OR (old.created_at IS DISTINCT FROM new.created_at))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,bucket_id,permission,status,managed_app_id,managed_scope,managed_prefix,rotation_parent_id,rotation_wake_id,secret_sealed,kid,created_at');
+
+
+--
+-- Name: outbound_app_bindings binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.outbound_app_bindings FOR EACH ROW WHEN (((((((old.app_id IS DISTINCT FROM new.app_id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.integration_id IS DISTINCT FROM new.integration_id)) OR (old.allowed_methods IS DISTINCT FROM new.allowed_methods)) OR (old.allowed_path_prefixes IS DISTINCT FROM new.allowed_path_prefixes)) OR (old.daily_request_limit IS DISTINCT FROM new.daily_request_limit))) EXECUTE FUNCTION public.capture_binding_promotion_revision('app_id,account_id,integration_id,allowed_methods,allowed_path_prefixes,daily_request_limit');
+
+
+--
+-- Name: outbound_integration_credentials binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.outbound_integration_credentials FOR EACH ROW WHEN (((((old.integration_id IS DISTINCT FROM new.integration_id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.authorization_sealed IS DISTINCT FROM new.authorization_sealed)) OR (old.updated_at IS DISTINCT FROM new.updated_at))) EXECUTE FUNCTION public.capture_binding_promotion_revision('integration_id,account_id,authorization_sealed,updated_at');
+
+
+--
+-- Name: outbound_integration_probe_policies binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.outbound_integration_probe_policies FOR EACH ROW WHEN ((((((old.integration_id IS DISTINCT FROM new.integration_id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.method IS DISTINCT FROM new.method)) OR (old.path IS DISTINCT FROM new.path)) OR (old.expected_status IS DISTINCT FROM new.expected_status))) EXECUTE FUNCTION public.capture_binding_promotion_revision('integration_id,account_id,method,path,expected_status');
+
+
+--
+-- Name: outbound_integrations binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.outbound_integrations FOR EACH ROW WHEN ((((((((((((((((((((((old.id IS DISTINCT FROM new.id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.name IS DISTINCT FROM new.name)) OR (old.enabled IS DISTINCT FROM new.enabled)) OR (old.allowed_methods IS DISTINCT FROM new.allowed_methods)) OR (old.allowed_path_prefixes IS DISTINCT FROM new.allowed_path_prefixes)) OR (old.credential_source IS DISTINCT FROM new.credential_source)) OR (old.origin IS DISTINCT FROM new.origin)) OR (old.provider_auth_mode IS DISTINCT FROM new.provider_auth_mode)) OR (old.owner_kind IS DISTINCT FROM new.owner_kind)) OR (old.token_hash IS DISTINCT FROM new.token_hash)) OR (old.daily_request_limit IS DISTINCT FROM new.daily_request_limit)) OR (old.rate_per_second IS DISTINCT FROM new.rate_per_second)) OR (old.burst IS DISTINCT FROM new.burst)) OR (old.max_in_flight IS DISTINCT FROM new.max_in_flight)) OR (old.request_timeout_ms IS DISTINCT FROM new.request_timeout_ms)) OR (old.max_retries IS DISTINCT FROM new.max_retries)) OR (old.response_cache_ttl_seconds IS DISTINCT FROM new.response_cache_ttl_seconds)) OR (old.circuit_breaker_failure_threshold IS DISTINCT FROM new.circuit_breaker_failure_threshold)) OR (old.circuit_breaker_open_seconds IS DISTINCT FROM new.circuit_breaker_open_seconds)) OR (old.retry_budget_per_minute IS DISTINCT FROM new.retry_budget_per_minute))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,name,enabled,allowed_methods,allowed_path_prefixes,credential_source,origin,provider_auth_mode,owner_kind,token_hash,daily_request_limit,rate_per_second,burst,max_in_flight,request_timeout_ms,max_retries,response_cache_ttl_seconds,circuit_breaker_failure_threshold,circuit_breaker_open_seconds,retry_budget_per_minute');
+
+
+--
+-- Name: queue_binding_canaries binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.queue_binding_canaries FOR EACH ROW WHEN (((((((((((((old.id IS DISTINCT FROM new.id) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.binding_id IS DISTINCT FROM new.binding_id)) OR (old.trigger_id IS DISTINCT FROM new.trigger_id)) OR (old.deployment_id IS DISTINCT FROM new.deployment_id)) OR (old.snapshot IS DISTINCT FROM new.snapshot)) OR (old.published_at IS DISTINCT FROM new.published_at)) OR (old.expires_at IS DISTINCT FROM new.expires_at)) OR (old.cancelled IS DISTINCT FROM new.cancelled)) OR (old.completed_deployment_id IS DISTINCT FROM new.completed_deployment_id)) OR (old.completed_attempt IS DISTINCT FROM new.completed_attempt)) OR (old.completed_generation IS DISTINCT FROM new.completed_generation))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,binding_id,trigger_id,deployment_id,snapshot,published_at,expires_at,cancelled,completed_deployment_id,completed_attempt,completed_generation');
+
+
+--
+-- Name: queue_bindings binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.queue_bindings FOR EACH ROW WHEN (((((((((old.id IS DISTINCT FROM new.id) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.name IS DISTINCT FROM new.name)) OR (old.queue_name IS DISTINCT FROM new.queue_name)) OR (old.mode IS DISTINCT FROM new.mode)) OR (old.enabled IS DISTINCT FROM new.enabled)) OR (old.retired_at IS DISTINCT FROM new.retired_at))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,account_id,app_id,name,queue_name,mode,enabled,retired_at');
+
+
+--
+-- Name: trigger_consumer_health binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.trigger_consumer_health FOR EACH ROW WHEN (((old.trigger_id IS DISTINCT FROM new.trigger_id) OR (old.last_error_at IS DISTINCT FROM new.last_error_at))) EXECUTE FUNCTION public.capture_binding_promotion_revision('trigger_id,last_error_at');
+
+
+--
+-- Name: triggers binding_promotion_revision_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision_update AFTER UPDATE ON public.triggers FOR EACH ROW WHEN ((((((((old.id IS DISTINCT FROM new.id) OR (old.app_id IS DISTINCT FROM new.app_id)) OR (old.kind IS DISTINCT FROM new.kind)) OR (old.source IS DISTINCT FROM new.source)) OR (old.config IS DISTINCT FROM new.config)) OR (old.enabled IS DISTINCT FROM new.enabled)) OR (old.created_at IS DISTINCT FROM new.created_at))) EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,kind,source,config,enabled,created_at');
 
 
 --
@@ -91639,6 +91885,22 @@ ALTER TABLE ONLY public.deployment_cron_outcomes
 
 ALTER TABLE ONLY public.deployment_dependency_gates
     ADD CONSTRAINT deployment_dependency_gates_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_event_subscription_intents deployment_event_subscription_intents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_event_subscription_intents
+    ADD CONSTRAINT deployment_event_subscription_intents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_event_subscription_intents deployment_event_subscription_intents_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_event_subscription_intents
+    ADD CONSTRAINT deployment_event_subscription_intents_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

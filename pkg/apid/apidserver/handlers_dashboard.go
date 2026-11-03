@@ -1085,6 +1085,10 @@ func dashboardWorkflowError(err *string) string {
 //
 //	?fired=1       → "ok"     (green banner: "Fire-now enqueued…")
 //	?fired=error   → "error"  (red banner: "Fire-now failed…")
+//	?fired=disabled|busy|suspended|plan → the same value (red banner naming
+//	                 the refusal: a disabled cron, too many manual runs
+//	                 waiting, a suspended cron, or a plan that does not let
+//	                 it run)
 //	?fired= (any other) → ""  (no banner — future variants can grow here)
 //
 // Empty output is the conservative default: a stale "?fired="
@@ -1094,8 +1098,8 @@ func firedFlash(r *http.Request) string {
 	switch r.URL.Query().Get("fired") {
 	case "1":
 		return "ok"
-	case "error":
-		return "error"
+	case "error", "disabled", "busy", "suspended", "plan":
+		return r.URL.Query().Get("fired")
 	default:
 		return ""
 	}
@@ -1441,8 +1445,14 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 	}
 	perApp := usageAppData(rows, apps, used)
 	daily, dailySparkline := usageDailyView(dailyRows, apps)
-	limits := api.MustLimitsFor(acct.Plan)
-	included := int64(limits.IncludedGBHours)
+	// The month's allowance and billed overage follow its plan history, as
+	// the bill does (ADR-20261101113742).
+	compute, err := s.monthComputeView(r.Context(), acct, month, mbSec)
+	if err != nil {
+		renderProblem(w, log, err)
+		return
+	}
+	included := compute.IncludedGBHours
 	pct := 0.0
 	if included > 0 {
 		pct = used / float64(included) * 100
@@ -1457,7 +1467,7 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		Month:                 month.Format("2006-01"),
 		UsedGBHours:           used,
 		IncludedGBHours:       included,
-		OverageGBHours:        max(0, used-float64(included)),
+		OverageGBHours:        compute.OverageGBHours,
 		UsedPct:               pct,
 		Requests:              requests,
 		UsedEgressGB:          usedEgressGB,
@@ -2110,15 +2120,6 @@ func hexPrefix(hash []byte) string {
 		return "000000000000"
 	}
 	return strconv.FormatUint(uint64(hash[0])<<40|uint64(hash[1])<<32|uint64(hash[2])<<24|uint64(hash[3])<<16|uint64(hash[4])<<8|uint64(hash[5]), 16)
-}
-
-// max returns the larger of two non-negative floats. Inline because
-// math.Max forces a non-int return type we don't use anywhere else.
-func max(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // renderAuditEvents renders /dashboard/audit-events — the

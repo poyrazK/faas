@@ -10704,7 +10704,7 @@ Create a broker trigger
 | `--enabled` | enable the trigger |  |
 | `--disabled` | disable the trigger |  |
 | `--batch-size <N>` | maximum records per dispatch batch |  |
-| `--batch-window-ms <N>` | maximum batch dwell time in milliseconds |  |
+| `--batch-window-ms <N>` | accepted but not applied: a batch is what one poll returns |  |
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
@@ -10722,7 +10722,7 @@ Update one trigger
 | `--disabled` | disable the trigger |  |
 | `--config <JSON>` | replace JSON config (inline \| @file \| -) |  |
 | `--batch-size <N>` | maximum records per dispatch batch |  |
-| `--batch-window-ms <N>` | maximum batch dwell time in milliseconds |  |
+| `--batch-window-ms <N>` | accepted but not applied: a batch is what one poll returns |  |
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
@@ -19212,17 +19212,19 @@ Show subscription status
 
 Explain retained usage costs and source coverage
 
-`gregale billing costs [--month <YYYY-MM>] [--json]`
+`gregale billing costs [--month <YYYY-MM>] [--org <SLUG>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--month <YYYY-MM>` | UTC usage month (defaults to current) |  |
+| `--org <SLUG>` | Read the costs of an organization that owns its resources |  |
 | `--json` | Print the machine-readable cost report |  |
 
 Examples:
 
 ```sh
 gregale billing costs --month 2026-10 --json
+gregale billing costs --org acme
 ```
 
 ### billing forecast
@@ -19250,31 +19252,40 @@ Manage monitored alerts, preview stopping and budget drafts
 
 List account budget policies and monitoring status
 
-`gregale billing budgets list [--json]`
+`gregale billing budgets list [--org <SLUG>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--json` | Print JSON |  |
+
+Examples:
+
+```sh
+gregale billing budgets list --org acme
+```
 
 #### billing budgets get
 
 Read a budget, including a deletion tombstone
 
-`gregale billing budgets get [--json] ID`
+`gregale billing budgets get [--org <SLUG>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--json` | Print JSON |  |
 
 #### billing budgets create
 
 Save a draft or activate monitored alerts or preview stopping
 
-`gregale billing budgets create [--file <PATH>] [--key <KEY>] [--json]`
+`gregale billing budgets create [--file <PATH>] [--org <SLUG>] [--key <KEY>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--file <PATH>` | Budget spec JSON file (required) |  |
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--key <KEY>` | Stable operation key for retries |  |
 | `--json` | Print JSON |  |
 
@@ -19288,12 +19299,13 @@ gregale billing budgets create --file budget.json --key previews-october --json
 
 Replace a budget policy at its expected revision
 
-`gregale billing budgets update [--file <PATH>] [--expected-revision <N>] [--key <KEY>] [--json] ID`
+`gregale billing budgets update [--file <PATH>] [--expected-revision <N>] [--org <SLUG>] [--key <KEY>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--file <PATH>` | Budget spec JSON file (required) |  |
 | `--expected-revision <N>` | Current revision (required) |  |
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--key <KEY>` | Stable operation key for retries |  |
 | `--json` | Print JSON |  |
 
@@ -19301,11 +19313,12 @@ Replace a budget policy at its expected revision
 
 Tombstone a policy and retain its audit
 
-`gregale billing budgets delete [--expected-revision <N>] [--key <KEY>] [--json] ID`
+`gregale billing budgets delete [--expected-revision <N>] [--org <SLUG>] [--key <KEY>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--expected-revision <N>` | Current revision (required) |  |
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--key <KEY>` | Stable operation key for retries |  |
 | `--json` | Print JSON |  |
 
@@ -19313,12 +19326,13 @@ Tombstone a policy and retain its audit
 
 Page through immutable policy revisions
 
-`gregale billing budgets history [--after-revision <N>] [--limit <N>] [--json] ID`
+`gregale billing budgets history [--after-revision <N>] [--limit <N>] [--org <SLUG>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--after-revision <N>` | Continue after this revision |  |
 | `--limit <N>` | Page size (1..100) |  |
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--json` | Print JSON |  |
 
 #### billing budgets channels

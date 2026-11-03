@@ -372,7 +372,11 @@ func boot() error {
 	if err != nil {
 		return err
 	}
-	if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
+	if manifest.EffectivePort() == api.ProfileBridgePort() {
+		// The bridge would take the app's own port; an older imaged may
+		// still have stamped collectors for it (ADR-1155).
+		slog.Default().Warn("profile bridge skipped: the app listens on its port", "port", manifest.EffectivePort())
+	} else if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
 		slog.Default().Warn("profile bridge unavailable", "err", err)
 	}
 	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
@@ -619,7 +623,10 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
-	env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	if m.EffectivePort() != api.ProfileBridgePort() {
+		// Collectors would poll the app's own port where the bridge belongs.
+		env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)

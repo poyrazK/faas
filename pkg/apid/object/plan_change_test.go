@@ -4,14 +4,17 @@ package object
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// A downgrade is checked against the target plan's storage ceiling, with the
-// spend cap the account would hold after the change: a default cap follows
-// the plan, Free has none, and a cap the customer chose stays.
+// A downgrade is checked against the target plan's storage ceiling, or the one
+// support granted, with the spend cap the account would hold after the
+// change: a default cap follows the plan, Free has none, and a cap the
+// customer chose stays.
 func TestPlanChangeStorageUsesTheCapAfterTheChange(t *testing.T) {
 	st, registry, bucket, _ := receiptRecoveryFixture(t, "http://127.0.0.1:9")
 	svc := Service{Host: receiptRecoveryHost{store: st, registry: registry}}
@@ -29,22 +32,38 @@ func TestPlanChangeStorageUsesTheCapAfterTheChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	proDefault, _ := api.PlanPro.DefaultOverageCapCents()
+	var grants state.ObjectStorageCeilingGrantStore = st
 	for _, tc := range []struct {
 		name    string
 		cap     int64
+		grant   int64
 		target  api.Plan
 		task    string
 		ceiling int64
 	}{
-		{"a default cap follows the plan", proDefault, api.PlanHobby,
-			"delete 24 GiB of object storage: the hobby plan stores at most 76 GiB and you store 100 GiB, or raise your spend cap", 76 * gib},
-		{"free stops at its own ceiling", proDefault, api.PlanFree,
-			"delete 99 GiB of object storage: the free plan stores at most 1 GiB and you store 100 GiB", gib},
-		{"a cap the customer chose stays", 5_000, api.PlanHobby, "", 10*gib + 1_666*gib},
+		{name: "a default cap follows the plan, whose ceiling binds", cap: proDefault, target: api.PlanHobby,
+			task: "delete 80 GiB of object storage: the hobby plan stores at most 20 GiB and you store 100 GiB, or ask support for a higher storage ceiling", ceiling: 20 * gib},
+		{name: "free stops at its own ceiling", cap: proDefault, target: api.PlanFree,
+			task: "delete 99 GiB of object storage: the free plan stores at most 1 GiB and you store 100 GiB", ceiling: gib},
+		{name: "a cap the customer chose stays and can bind", cap: 0, target: api.PlanHobby,
+			task: "delete 90 GiB of object storage: the hobby plan stores at most 10 GiB and you store 100 GiB, or raise your spend cap", ceiling: 10 * gib},
+		{name: "a support grant replaces the plan's ceiling", cap: 5_000, grant: 150 * gib, target: api.PlanHobby, ceiling: 150 * gib},
+		{name: "free ignores a support grant", cap: proDefault, grant: 150 * gib, target: api.PlanFree,
+			task: "delete 99 GiB of object storage: the free plan stores at most 1 GiB and you store 100 GiB", ceiling: gib},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := st.UpdateAccountOverageCapCents(ctx, account.ID, &tc.cap); err != nil {
 				t.Fatal(err)
+			}
+			if err := grants.ClearObjectStorageCeilingGrant(ctx, account.ID); err != nil {
+				t.Fatal(err)
+			}
+			if tc.grant > 0 {
+				if err := grants.SetObjectStorageCeilingGrant(ctx, state.ObjectStorageCeilingGrant{
+					OwnerID: account.ID, MaxBytes: tc.grant, Reason: "support_ticket", GrantedBy: uuid.NewString(), GrantedAt: time.Now(),
+				}); err != nil {
+					t.Fatal(err)
+				}
 			}
 			got, err := svc.PlanChangeStorage(ctx, account, tc.target)
 			if err != nil {

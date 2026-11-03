@@ -7,7 +7,7 @@
 - **Decision:**
   1. A credential bound to one app (a per-app deploy token, or an OIDC bearer exchanged for that app) may read `GET /v1/preview/{slug}` and `GET /v1/preview/{slug}/environment` for previews whose production app is that app, authorized against the production app. Other apps' previews answer 404.
   2. A new OIDC capability, `preview-read`, issues a bearer whose only scope is `previews:read`, accepted by those two routes and nothing else. Under a trust policy Gregale created it is issued to any run of the repository, `pull_request` included, for an app bound to the repository, and is bound to that app. Under a policy the account wrote it follows that policy, as the other capabilities do. `previews:read` is not an API-key scope.
-  3. Migration `20261102203228267` widens the exchanged-token scope check to admit `previews:read` (added `NOT VALID`, validated, old check dropped).
+  3. Migration `20261103161454390` widens the exchanged-token scope check to admit `previews:read` (added `NOT VALID`, validated, old check dropped).
 - **Consequences:** A pull request workflow can wait for its preview with `id-token: write` and no stored secret. The bearer reads preview status only: not the production app, its logs, settings or deployments. The status names the PR's workloads, commit and phase, which the PR's own check already shows.
 - **Rejected alternatives:**
   - **Give the bearer `apps:read`.** On `/v1/apps/{slug}` it would read the production app's logs and settings from unreviewed code.

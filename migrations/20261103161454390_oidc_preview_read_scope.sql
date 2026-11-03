@@ -1,4 +1,4 @@
--- filename: 20261102203228267_oidc_preview_read_scope.sql
+-- filename: 20261103161454390_oidc_preview_read_scope.sql
 -- migration-compat: expand
 -- ADR-20261102203228: the OIDC preview-read capability issues bearers that
 -- read the PR preview status of one app and nothing else, so pull request CI

@@ -2,14 +2,34 @@
 -- name: FinancialBudgetAccountLock :one
 SELECT id FROM resource_namespaces WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE;
 
+-- A budget covers what its billing subject pays for (ADR-20261031211500): an
+-- organization that owns its resources pays for its apps and projects, and the
+-- member who created one does not. Usage evidence is recorded under the same
+-- subject, so a scope billed elsewhere would read no spending.
 -- name: FinancialBudgetScopeOwned :one
 SELECT CASE sqlc.arg(scope_kind)::text
   WHEN 'account' THEN EXISTS(SELECT 1 FROM resource_namespaces WHERE id = sqlc.arg(account_id)::uuid)
-  WHEN 'app' THEN EXISTS(SELECT 1 FROM apps WHERE id = sqlc.narg(scope_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND status != 'deleted')
+  WHEN 'app' THEN EXISTS(SELECT 1 FROM apps a
+    LEFT JOIN orgs o ON o.id = a.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
+    WHERE a.id = sqlc.narg(scope_id)::uuid AND a.status != 'deleted'
+      AND CASE WHEN o.id IS NULL THEN a.account_id = sqlc.arg(account_id)::uuid ELSE o.id = sqlc.arg(account_id)::uuid END)
   WHEN 'job' THEN EXISTS(SELECT 1 FROM jobs WHERE id = sqlc.narg(scope_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND status != 'deleted')
-  WHEN 'project' THEN EXISTS(SELECT 1 FROM projects WHERE id = sqlc.narg(scope_id)::uuid AND account_id = sqlc.arg(account_id)::uuid)
-  WHEN 'environment' THEN EXISTS(SELECT 1 FROM project_environments WHERE id = sqlc.narg(scope_id)::uuid AND account_id = sqlc.arg(account_id)::uuid)
+  WHEN 'project' THEN EXISTS(SELECT 1 FROM projects p
+    LEFT JOIN orgs o ON o.id = p.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
+    WHERE p.id = sqlc.narg(scope_id)::uuid
+      AND CASE WHEN o.id IS NULL THEN p.account_id = sqlc.arg(account_id)::uuid ELSE o.id = sqlc.arg(account_id)::uuid END)
+  WHEN 'environment' THEN EXISTS(SELECT 1 FROM project_environments e
+    JOIN projects p ON p.id = e.project_id
+    LEFT JOIN orgs o ON o.id = p.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
+    WHERE e.id = sqlc.narg(scope_id)::uuid
+      AND CASE WHEN o.id IS NULL THEN e.account_id = sqlc.arg(account_id)::uuid ELSE o.id = sqlc.arg(account_id)::uuid END)
   ELSE false END::boolean AS owned;
+
+-- The subjects meterd evaluates: one read per pass instead of one per account.
+-- name: FinancialBudgetMonitoredSubjects :many
+SELECT DISTINCT account_id FROM financial_budget_policies
+WHERE deleted_at IS NULL AND spec->>'enabled' = 'true' AND spec->>'mode' = 'monitored'
+ORDER BY account_id;
 
 -- name: FinancialBudgetCount :one
 SELECT count(*)::bigint FROM financial_budget_policies WHERE account_id = sqlc.arg(account_id)::uuid AND deleted_at IS NULL;
@@ -56,10 +76,12 @@ ORDER BY revision LIMIT sqlc.arg(page_size)::integer;
 
 -- name: FinancialBudgetAppActionEligible :one
 SELECT EXISTS(
-  SELECT 1 FROM apps WHERE id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
-    AND status != 'deleted'
+  SELECT 1 FROM apps a
+  LEFT JOIN orgs o ON o.id = a.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
+  WHERE a.id = sqlc.arg(app_id)::uuid AND a.status != 'deleted'
+    AND CASE WHEN o.id IS NULL THEN a.account_id = sqlc.arg(account_id)::uuid ELSE o.id = sqlc.arg(account_id)::uuid END
     AND CASE sqlc.arg(action)::text
-      WHEN 'stop_previews' THEN preview_of_slug IS NOT NULL AND preview_of_slug != ''
-      WHEN 'suspend_background' THEN workload_class IN ('worker','job')
+      WHEN 'stop_previews' THEN a.preview_of_slug IS NOT NULL AND a.preview_of_slug != ''
+      WHEN 'suspend_background' THEN a.workload_class IN ('worker','job')
       ELSE true END
 )::boolean AS eligible;

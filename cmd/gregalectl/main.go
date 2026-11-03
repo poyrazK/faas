@@ -61,7 +61,7 @@ Commands:
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
   compute-nodes  Compute-node state and release readiness (add|list|show|release-status|drain|activate|retire)
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart|wait)
-  accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
+  accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions|object-storage-ceiling)
   billing      Operator billing catalog, reconciliation, and webhook diagnostics
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
   audit        Correlate operator intents and events by trace ID (audit trace)

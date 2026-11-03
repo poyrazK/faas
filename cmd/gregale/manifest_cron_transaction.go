@@ -74,6 +74,17 @@ func cronResponseMatchesRequest(cron api.CronResponse, req api.CreateCronRequest
 	return cron.Enabled == enabled && cron.Timezone == timezone && cron.SkipIfRunning == skip
 }
 
+// largestCronLimitPerApp is the most crons any plan allows on one app.
+func largestCronLimitPerApp() int {
+	largest := 0
+	for _, plan := range api.Plans {
+		if limits, ok := api.LimitsFor(plan); ok && limits.CronLimitPerApp > largest {
+			largest = limits.CronLimitPerApp
+		}
+	}
+	return largest
+}
+
 func reconcileManifestCronsWithRollback(ctx context.Context, client manifestCronClient, slug string, m *gregalemanifest.Manifest) (*manifestCronTransaction, error) {
 	txn := &manifestCronTransaction{}
 	manage := m.Triggers != nil && len(m.Triggers) == 0
@@ -92,13 +103,14 @@ func reconcileManifestCronsWithRollback(ctx context.Context, client manifestCron
 	if err != nil {
 		return txn, fmt.Errorf("list existing crons: %w", err)
 	}
-	if acct, err := client.Whoami(ctx); err == nil {
-		if l, ok := api.LimitsFor(api.Plan(acct.Plan)); ok {
-			if len(matching) > l.CronLimitPerApp {
-				return txn, fmt.Errorf("cron quota exceeded: %d triggers in manifest, plan allows %d; raise plan or drop triggers",
-					len(matching), l.CronLimitPerApp)
-			}
-		}
+	// The app's plan is its owner's: a company app follows the company's
+	// plan, not the deployer's own, which refused a Free member's deploy to
+	// a Pro company app (crons audit 2026-11-03). apid checks each cron
+	// against the owner's plan and a refusal rolls the set back, so only a
+	// count no plan allows is refused here.
+	if limit := largestCronLimitPerApp(); len(matching) > limit {
+		return txn, fmt.Errorf("cron quota exceeded: %d triggers in manifest for %s, no plan allows more than %d per app; drop triggers",
+			len(matching), slug, limit)
 	}
 
 	desiredByKey := make(map[string]api.CreateCronRequest, len(matching))
