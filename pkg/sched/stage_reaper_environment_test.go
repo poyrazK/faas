@@ -164,8 +164,10 @@ func TestReaperEnvironmentSelectorsNeverCountSiblingReplicas(t *testing.T) {
 
 type unavailableReaperPolicyStore struct{ MemStore *state.MemStore }
 
-func (s unavailableReaperPolicyStore) RuntimeAppValuesForDeployment(context.Context, string, string, string) (state.RuntimeAppValuesSnapshot, error) {
-	return state.RuntimeAppValuesSnapshot{}, state.ErrConflict
+// The reaper resolves a deployment's scope and environment from its scaling
+// state (ADR 20261102205122), so that read failing is the policy read failing.
+func (s unavailableReaperPolicyStore) RuntimeScalingStateForDeployment(context.Context, string, string, string) (state.RuntimeScalingState, error) {
+	return state.RuntimeScalingState{}, state.ErrConflict
 }
 
 func TestReaperPolicyFailureAndLostLifetimeDoNotAuthorizeScaleIn(t *testing.T) {
@@ -248,6 +250,16 @@ type stageReaperPrewarmStore struct{ MemStore *state.MemStore }
 
 func (s stageReaperPrewarmStore) ActivePrewarmFloor(context.Context, string, time.Time) (int, error) {
 	return 3, nil
+}
+
+// ActivePrewarmFloors is the reaper's bulk read (ADR 20261102160622); it must
+// report the same floor or the reaper never sees the per-app override.
+func (s stageReaperPrewarmStore) ActivePrewarmFloors(_ context.Context, appIDs []string, _ time.Time) (map[string]int, error) {
+	floors := make(map[string]int, len(appIDs))
+	for _, id := range appIDs {
+		floors[id] = 3
+	}
+	return floors, nil
 }
 
 func TestRunReaperPrewarmAppliesAgainstPinnedProductionFloor(t *testing.T) {

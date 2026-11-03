@@ -5,11 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // RuntimeRelease identifies published drive0 bytes, independently of source wishes,
@@ -33,8 +33,8 @@ func (r RuntimeRelease) Identity() string {
 	return hex.EncodeToString(sum[:])
 }
 
-var runtimeSHA = regexp.MustCompile(`^[a-f0-9]{64}$`)
-var runtimeRef = regexp.MustCompile(`^[^\s@]+@sha256:[a-f0-9]{64}$`)
+var runtimeSHA = lazyregexp.New(`^[a-f0-9]{64}$`)
+var runtimeRef = lazyregexp.New(`^[^\s@]+@sha256:[a-f0-9]{64}$`)
 
 func (r RuntimeRelease) Validate() error {
 	switch r.Runtime {

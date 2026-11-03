@@ -13,6 +13,7 @@ type Metrics struct {
 	changes       *prometheus.CounterVec
 	probeFailures *prometheus.CounterVec
 	nodeIn        *prometheus.GaugeVec
+	errors        *prometheus.CounterVec
 }
 
 // NewMetrics registers the series with reg.
@@ -34,8 +35,15 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "edge_dns_node_in",
 			Help: "1 while a compute node's address is in the managed names' records, 0 while it is withdrawn (ADR-20261102081618).",
 		}, []string{"node"}),
+		errors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "edge_dns_errors_total",
+			Help: "Cloudflare DNS calls edgednsd could not complete, by op (read, create, delete); while they fail the records stay as they are (ADR-20261102081618).",
+		}, []string{"op"}),
 	}
-	reg.MustRegister(m.records, m.changes, m.probeFailures, m.nodeIn)
+	for _, op := range []string{"read", "create", "delete"} {
+		m.errors.WithLabelValues(op)
+	}
+	reg.MustRegister(m.records, m.changes, m.probeFailures, m.nodeIn, m.errors)
 	return m
 }
 
@@ -48,6 +56,12 @@ func (m *Metrics) setRecords(name string, n int) {
 func (m *Metrics) changed(name, action string, dryRun bool) {
 	if m != nil {
 		m.changes.WithLabelValues(name, action, strconv.FormatBool(dryRun)).Inc()
+	}
+}
+
+func (m *Metrics) errored(op string) {
+	if m != nil {
+		m.errors.WithLabelValues(op).Inc()
 	}
 }
 

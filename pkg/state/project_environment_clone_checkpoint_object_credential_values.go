@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
-	"regexp"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Private sealed gateway material. No credential or app-secret rows are created
@@ -21,8 +21,8 @@ type ProjectEnvironmentCloneCheckpointObjectCredentialValueStore interface {
 	PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues(context.Context, ProjectEnvironmentCloneLease, ProjectEnvironmentCloneCheckpointObjectCredentialValues, ProjectEnvironmentCloneCheckpointReleaseObservation) (ProjectEnvironmentCloneCheckpointObjectCredentialValues, error)
 }
 
-var checkpointObjectAccessKeyRE = regexp.MustCompile(`^GRGA[A-Z2-7]{16}$`)
-var checkpointObjectPublicRegionRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+var checkpointObjectAccessKeyRE = lazyregexp.New(`^GRGA[A-Z2-7]{16}$`)
+var checkpointObjectPublicRegionRE = lazyregexp.New(`^[a-z][a-z0-9-]{0,62}$`)
 
 func ProjectEnvironmentCloneCheckpointObjectCredentialValuesSHA256(in ProjectEnvironmentCloneCheckpointObjectCredentialValues) string {
 	return cloneCheckpointSHA(in)

@@ -318,7 +318,7 @@ func cmdEnv(args []string) int {
 		// in commands_env_diff.go.
 		return envDiff(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
 	// `env list` named no verb (Hunt 14 H14-63).
 	parent, _ := lookupCliCommand("env")
 	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
@@ -1276,17 +1276,9 @@ func cmdPlan(args []string) int {
 		return printErr("Could not fetch account", err)
 	}
 	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] && !*yes {
-		if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
+		question := fmt.Sprintf("Downgrade from %s to %s: existing apps may exceed the new plan's limits. Continue?", acct.Plan, target)
+		if code := confirmYesNo(question, "--yes", "the plan downgrade"); code != 0 {
 			return code
-		}
-		fmt.Fprintf(os.Stderr,
-			"Downgrade from %s to %s: existing apps may exceed the new plan's limits. "+
-				"Continue? [y/N] ", acct.Plan, target)
-		var ans string
-		_, _ = fmt.Scanln(&ans)
-		if strings.ToLower(strings.TrimSpace(ans)) != "y" {
-			_, _ = fmt.Fprintln(osStdout, "aborted")
-			return 1
 		}
 	}
 	updated, err := client.ChangePlan(context.Background(), string(target))

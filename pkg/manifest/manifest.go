@@ -760,6 +760,16 @@ type PublicEdge struct {
 	// gatewayd-internal of the node that last served it, instead of its own
 	// (ADR-20261031105055). Needs compute_nodes. Off by default.
 	PlacementRouting bool `yaml:"placement_routing,omitempty"`
+	// PlacementNodeSet makes each compute edge spread an app host's requests
+	// over every node the app runs on, by ready instances
+	// (ADR-20261102081618 §5b). Needs placement_routing.
+	PlacementNodeSet bool `yaml:"placement_node_set,omitempty"`
+	// LocalFirst makes each compute node's gatewayd-internal serve the
+	// requests an edge forwarded from its own node's instances first, and
+	// name every node of the app for the edges (§5a, §5c, §5d). Needs
+	// placement_node_set: without the spread the edges would settle on one
+	// node.
+	LocalFirst bool `yaml:"local_first,omitempty"`
 	// Entry is how Cloudflare reaches the compute edges
 	// (ADR-20261102081618): "tunnel", the default, through the cell's
 	// Cloudflare Tunnel; "both" also opens each edge's TLS listener on port
@@ -801,6 +811,12 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 		return Errors{{"public_edge.entry", "direct comes one release after the move off the tunnel (ADR-20261102081618 step 6); use both"}}
 	default:
 		return Errors{{"public_edge.entry", fmt.Sprintf("%q is not tunnel or both", e.Entry)}}
+	}
+	if e.PlacementNodeSet && !e.PlacementRouting {
+		return Errors{{"public_edge.placement_node_set", "needs public_edge.placement_routing: it spreads the routed requests"}}
+	}
+	if e.LocalFirst && !e.PlacementNodeSet {
+		return Errors{{"public_edge.local_first", "needs public_edge.placement_node_set: without the spread the edges would settle on one node"}}
 	}
 	if !e.ComputeNodes {
 		if e.PlacementRouting {

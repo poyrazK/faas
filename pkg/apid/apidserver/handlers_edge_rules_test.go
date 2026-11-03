@@ -236,7 +236,7 @@ func TestCreateEdgeRule_HobbyJWT_Returns201(t *testing.T) {
 		MatchHost: "auth.example.com",
 		MatchPath: "/verify",
 		Kind:      string(state.EdgeRuleKindJWT),
-		Action:    json.RawMessage(`{"issuer":"https://idp.example.com/","jwks_url":"https://idp.example.com/.well-known/jwks.json","algorithms":["RS256"]}`),
+		Action:    json.RawMessage(`{"issuer":"https://idp.example.com/","jwks_url":"https://idp.example.com/.well-known/jwks.json","algorithms":["RS256"],"audience":["api"]}`),
 	}
 	rec := e.do(t, "POST", "/v1/apps/"+slug+"/edge-rules", req, nil)
 	if rec.Code != http.StatusCreated {
@@ -497,7 +497,7 @@ func TestCreateEdgeRule_JWTAcceptsAllSixAsymAlgs(t *testing.T) {
 				MatchHost: "auth.example.com",
 				MatchPath: "/verify",
 				Kind:      string(state.EdgeRuleKindJWT),
-				Action:    json.RawMessage(fmt.Sprintf(`{"issuer":"https://idp.example.com/","jwks_url":"https://idp.example.com/.well-known/jwks.json","algorithms":[%q]}`, alg)),
+				Action:    json.RawMessage(fmt.Sprintf(`{"issuer":"https://idp.example.com/","jwks_url":"https://idp.example.com/.well-known/jwks.json","algorithms":[%q],"audience":["api"]}`, alg)),
 			}
 			rec := e.do(t, "POST", "/v1/apps/"+slug+"/edge-rules", req, nil)
 			if rec.Code != http.StatusCreated {

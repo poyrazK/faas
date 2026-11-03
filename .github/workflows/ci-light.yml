@@ -327,6 +327,7 @@ jobs:
         run: |
           make deploy-action-cli-check
           make verify-action-ref-contents-check
+          make release-scripts-check
           make deploy-action-head-check
           make environment-preflight-action-check
       - name: release-safety tool tests (migration lint, SLO gate, deploy preflight, post-deploy watch)
@@ -352,6 +353,7 @@ jobs:
           bash scripts/ci/check_edge_store_test.sh
           bash scripts/ci/seal_domain_vars_test.sh
           bash scripts/ci/edge_challenge_key_vars_test.sh
+          bash scripts/ci/edgednsd_vars_test.sh
           bash scripts/ci/verify_unit_release_test.sh
       - name: release binaries link no forbidden package
         run: make daemon-deps-check

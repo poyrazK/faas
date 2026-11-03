@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -100,6 +101,14 @@ func TestSessionRoutesRefuseMFAPendingCookies(t *testing.T) {
 	// With the preview off, durable entity routes answer 404 before auth.
 	// Enable it so their MFA enforcement stays covered.
 	(*e.Srv()).Durable().Engine = &durableentity.Manager{}
+	// Outside the managed Postgres upgrade rollout those routes answer the
+	// missing-route 404 before auth (ADR-1027). Open it so their MFA
+	// enforcement stays covered.
+	upgrades, err := managedpg.ParseRollout("TEST", "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	*(*e.Srv()).PostgresUpgrades() = upgrades
 	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{
 		AccountID: (*e.Acct()).ID, Slug: "mfa-pending-app", Status: state.AppActive, RAMMB: 256,
 	}); err != nil {

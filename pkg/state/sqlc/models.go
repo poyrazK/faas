@@ -1390,6 +1390,17 @@ type AppMcpTaskCompatibility struct {
 	ObservedAt pgtype.Timestamptz
 }
 
+// ADR-20261102124306 per-app memory-pressure rollup written by schedd from guest reports.
+type AppMemoryPressure struct {
+	AppID             pgtype.UUID
+	WindowStartedAt   pgtype.Timestamptz
+	Episodes          int32
+	LowestAvailableMb int32
+	TotalMb           int32
+	PeakAnonMb        int32
+	LastAt            pgtype.Timestamptz
+}
+
 type AppOpenapiDoc struct {
 	AppID          pgtype.UUID
 	AccountID      pgtype.UUID
@@ -1657,6 +1668,13 @@ type AppSloHourly struct {
 	Hour  pgtype.Timestamptz
 	Good  int64
 	Total int64
+}
+
+type AppSlugHold struct {
+	Slug      string
+	AccountID pgtype.UUID
+	HeldUntil pgtype.Timestamptz
+	Reason    string
 }
 
 type AppTask struct {
@@ -2380,6 +2398,7 @@ type Build struct {
 	CancelledByDeploymentCascade bool
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
+	CoalescedWith                pgtype.UUID
 }
 
 type BuildExportPublication struct {
@@ -6279,6 +6298,7 @@ type GithubWebhookDelivery struct {
 	InstallationID pgtype.Int8
 	RepoFullName   pgtype.Text
 	CommitSha      pgtype.Text
+	SkipReason     string
 }
 
 type GithubWebhookSecret struct {
@@ -7811,6 +7831,7 @@ type JobRun struct {
 	ExclusiveGeneration         pgtype.Int8
 	ProcessUser                 pgtype.Text
 	ProcessWorkdir              pgtype.Text
+	LogsClearedFinishedAt       pgtype.Timestamptz
 }
 
 type JobRunAttachSession struct {
@@ -8373,13 +8394,41 @@ type ManagedPostgresLiveLogin struct {
 
 // Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).
 type ManagedPostgresOverageDelivery struct {
-	Provider            string
-	SubjectID           pgtype.UUID
-	PeriodStart         pgtype.Timestamptz
-	Live                bool
-	BilledUnitSeconds   int64
-	DeliveredMillicents int64
-	UpdatedAt           pgtype.Timestamptz
+	Provider                 string
+	SubjectID                pgtype.UUID
+	PeriodStart              pgtype.Timestamptz
+	Live                     bool
+	BilledUnitSeconds        int64
+	DeliveredMillicents      int64
+	UpdatedAt                pgtype.Timestamptz
+	BilledStorageByteSeconds int64
+}
+
+// A managed PostgreSQL overage step reserved before it is sent to the billing provider; written only by apid (ADR-20261101143527).
+type ManagedPostgresOveragePending struct {
+	Provider                 string
+	SubjectID                pgtype.UUID
+	PeriodStart              pgtype.Timestamptz
+	Live                     bool
+	StepAt                   pgtype.Timestamptz
+	UsedUnitSeconds          int64
+	AllowanceUnitSeconds     int64
+	BilledUnitSeconds        int64
+	FromMillicents           int64
+	TargetMillicents         int64
+	UsedStorageByteSeconds   int64
+	StoragePoolBytes         int64
+	BilledStorageByteSeconds int64
+	PreviousMillicents       int64
+	PreviousLive             bool
+}
+
+// Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
+type ManagedPostgresPlanExcessNotice struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	MailIntentID pgtype.UUID
 }
 
 type ManagedPostgresResize struct {
@@ -10428,6 +10477,8 @@ type Org struct {
 	AsyncQuotaPooledAt       pgtype.Timestamptz
 	// Monthly spend cap in cents for an organization that owns its resources; NULL = no cap (ADR-20261030093512).
 	OverageCapCents pgtype.Int8
+	// When the organization was marked for deletion; meterd delivers usage from before it (ADR-20261101143527).
+	DeletionRequestedAt pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only

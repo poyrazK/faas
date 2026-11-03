@@ -2,6 +2,7 @@ package edgerules
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -60,6 +61,32 @@ func (s *Service) appBoundUpdateHostProblem(ctx context.Context, appID, matchHos
 		return api.ErrCapacity("could not read the rule's app")
 	}
 	return s.AppBoundHostProblem(ctx, app, matchHost)
+}
+
+// appBoundRouteTargetProblem refuses a kind=route target other than the
+// credential's own app when the request's credential is bound to one app
+// (ADR-091 amendment 2026-11-02, review round 8). The match_host check above
+// kept such a rule on the app's own hosts, but its target could still be any
+// public app of the account: a leaked deploy token could serve another app on
+// this app's hosts, past that app's host-specific rules. The refusal does not
+// depend on whether the slug exists, so it reveals nothing about other slugs.
+func (s *Service) appBoundRouteTargetProblem(ctx context.Context, sourceAppID, targetSlug string) *api.Problem {
+	_, key, ok := authmw.AccountFromCtx(ctx)
+	if !ok || key == nil || key.AppID == "" {
+		return nil
+	}
+	if key.AppID == sourceAppID {
+		target, err := s.Host.Store().AppBySlug(ctx, targetSlug)
+		switch {
+		case err == nil && target.ID == key.AppID:
+			return nil
+		case err != nil && !errors.Is(err, state.ErrNotFound):
+			return api.ErrCapacity("could not check the route target")
+		}
+	}
+	return api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Route target outside the token's app",
+		fmt.Sprintf("this credential is bound to one app, so its route rules may serve only that app, not %q; "+
+			"use an account API key to route to another app", targetSlug))
 }
 
 func errAppBoundHost(slug, matchHost string) *api.Problem {

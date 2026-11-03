@@ -152,11 +152,12 @@ func loadDaemonRoleRequire(t *testing.T, repoRoot, daemon string) ([]string, err
 }
 
 // rolesFromAllowIdents maps "RoleSingleBox" → "single-box" etc., the
-// only three valid identifies at the call site today.
+// valid identifiers at the call site today.
 var rolesFromAllowIdents = map[string]string{
 	"RoleSingleBox":    "single-box",
 	"RoleControlPlane": "control-plane",
 	"RoleComputeOnly":  "compute-only",
+	"RoleDatabase":     "database",
 }
 
 // loadDaemonEnvKey walks every .go file in cmd/<daemon>/ and finds
@@ -290,6 +291,7 @@ var canonicalToIdent = map[Role]string{
 	RoleSingleBox:    "RoleSingleBox",
 	RoleControlPlane: "RoleControlPlane",
 	RoleComputeOnly:  "RoleComputeOnly",
+	RoleDatabase:     "RoleDatabase",
 }
 
 // daemonunitspecRegistry returns pkg/daemonunitspec.Registry's
@@ -322,13 +324,14 @@ func daemonunitspecRegistry() []string {
 }
 
 // cover ensures the canonicalToIdent / rolesFromAllowIdents maps are
-// kept in sync when a new role is added to pkg/role. Today we have
-// three; if a fourth lands, the cross-check must learn it.
+// kept in sync when a new role is added to pkg/role.
+// The cross-check must learn every role pkg/role adds.
 func TestRoleIdentMirrorsAreExhaustive(t *testing.T) {
 	want := map[Role]string{
 		RoleSingleBox:    "RoleSingleBox",
 		RoleControlPlane: "RoleControlPlane",
 		RoleComputeOnly:  "RoleComputeOnly",
+		RoleDatabase:     "RoleDatabase",
 	}
 	got := canonicalToIdent
 	if len(got) != len(want) {

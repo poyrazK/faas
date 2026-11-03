@@ -3981,14 +3981,19 @@ func (x *AgentRunUsage) GetColdBoot() bool {
 }
 
 type ReportMemoryPressureRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	SourceNodeId  string                 `protobuf:"bytes,2,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
-	AvailableMb   uint32                 `protobuf:"varint,3,opt,name=available_mb,json=availableMb,proto3" json:"available_mb,omitempty"`
-	TotalMb       uint32                 `protobuf:"varint,4,opt,name=total_mb,json=totalMb,proto3" json:"total_mb,omitempty"`
-	AnonMb        uint32                 `protobuf:"varint,5,opt,name=anon_mb,json=anonMb,proto3" json:"anon_mb,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId   string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	SourceNodeId string                 `protobuf:"bytes,2,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
+	AvailableMb  uint32                 `protobuf:"varint,3,opt,name=available_mb,json=availableMb,proto3" json:"available_mb,omitempty"`
+	TotalMb      uint32                 `protobuf:"varint,4,opt,name=total_mb,json=totalMb,proto3" json:"total_mb,omitempty"`
+	AnonMb       uint32                 `protobuf:"varint,5,opt,name=anon_mb,json=anonMb,proto3" json:"anon_mb,omitempty"`
+	// profiling_active says whether a profile collector was active in the
+	// guest (ADR-20261102124306); schedd queues a heap capture only then. An
+	// older vmmd leaves it unset, which means true: its guests reported only
+	// while profiling.
+	ProfilingActive *bool `protobuf:"varint,6,opt,name=profiling_active,json=profilingActive,proto3,oneof" json:"profiling_active,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ReportMemoryPressureRequest) Reset() {
@@ -4054,6 +4059,13 @@ func (x *ReportMemoryPressureRequest) GetAnonMb() uint32 {
 		return x.AnonMb
 	}
 	return 0
+}
+
+func (x *ReportMemoryPressureRequest) GetProfilingActive() bool {
+	if x != nil && x.ProfilingActive != nil {
+		return *x.ProfilingActive
+	}
+	return false
 }
 
 type ReportMemoryPressureAck struct {
@@ -6048,14 +6060,16 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x0ebillable_mb_ms\x18\b \x01(\x03R\fbillableMbMs\x12&\n" +
 	"\x0fpeak_private_mb\x18\t \x01(\x03R\rpeakPrivateMb\x12\x1b\n" +
 	"\tcold_boot\x18\n" +
-	" \x01(\bR\bcoldBoot\"\xbb\x01\n" +
+	" \x01(\bR\bcoldBoot\"\x80\x02\n" +
 	"\x1bReportMemoryPressureRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12$\n" +
 	"\x0esource_node_id\x18\x02 \x01(\tR\fsourceNodeId\x12!\n" +
 	"\favailable_mb\x18\x03 \x01(\rR\vavailableMb\x12\x19\n" +
 	"\btotal_mb\x18\x04 \x01(\rR\atotalMb\x12\x17\n" +
-	"\aanon_mb\x18\x05 \x01(\rR\x06anonMb\"I\n" +
+	"\aanon_mb\x18\x05 \x01(\rR\x06anonMb\x12.\n" +
+	"\x10profiling_active\x18\x06 \x01(\bH\x00R\x0fprofilingActive\x88\x01\x01B\x13\n" +
+	"\x11_profiling_active\"I\n" +
 	"\x17ReportMemoryPressureAck\x12\x16\n" +
 	"\x06queued\x18\x01 \x01(\bR\x06queued\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xac\x01\n" +
@@ -6503,6 +6517,7 @@ func file_onebox_faas_schedd_v1_schedd_proto_init() {
 		(*AgentRunEvent_Result)(nil),
 		(*AgentRunEvent_Usage)(nil),
 	}
+	file_onebox_faas_schedd_v1_schedd_proto_msgTypes[45].OneofWrappers = []any{}
 	file_onebox_faas_schedd_v1_schedd_proto_msgTypes[62].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
