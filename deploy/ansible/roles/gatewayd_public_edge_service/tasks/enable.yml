@@ -90,13 +90,21 @@
 # ADR-20261102081618: with public_edge.entry both the edge serves Cloudflare
 # directly, which needs TLS material the operator provisions on every compute
 # node. Fail here, before the drop-in points the edge at missing files.
+- name: gatewayd_public_edge_service — check what stands in front of the edge
+  ansible.builtin.assert:
+    that:
+      - (faas_edge_public_front | string | lower) in ['cloudflare', 'none']
+    fail_msg: >-
+      faas_edge_public_front is {{ faas_edge_public_front }}; want cloudflare
+      or none (ADR-20261103163954).
+  when: faas_edge_entry == 'both'
+
 - name: gatewayd_public_edge_service — find the direct-entry TLS material
   ansible.builtin.stat:
     path: "{{ item }}"
-  loop:
-    - "{{ faas_edge_public_tls_cert }}"
-    - "{{ faas_edge_public_tls_key }}"
-    - "{{ faas_edge_public_tls_client_ca }}"
+  loop: >-
+    {{ [faas_edge_public_tls_cert, faas_edge_public_tls_key]
+       + ([] if (faas_edge_public_front | string | lower) == 'none' else [faas_edge_public_tls_client_ca]) }}
   register: faas_edge_public_tls_files
   when: faas_edge_entry == 'both'
 
@@ -105,10 +113,12 @@
     that:
       - faas_edge_public_tls_files.results | rejectattr('stat.exists') | list | length == 0
     fail_msg: >-
-      public_edge.entry both needs {{ faas_edge_public_tls_cert }},
-      {{ faas_edge_public_tls_key }} and {{ faas_edge_public_tls_client_ca }}
-      on this node: the zone's Origin CA pair and its Authenticated Origin
-      Pulls CA (ADR-20261102081618 §2).
+      public_edge.entry both needs
+      {{ faas_edge_public_tls_files.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}
+      on this node: the certificate and key (the zone's Origin CA pair behind
+      Cloudflare, a publicly trusted pair with no front) and, behind
+      Cloudflare, the zone's Authenticated Origin Pulls CA
+      (ADR-20261102081618 §2, ADR-20261103163954).
   when: faas_edge_entry == 'both'
 
 - name: gatewayd_public_edge_service — install apps domain and control-plane target drop-in

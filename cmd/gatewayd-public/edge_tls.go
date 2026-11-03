@@ -1,14 +1,22 @@
 package main
 
-// adr: 20261102081618 — a compute edge's public TLS listener.
+// adr: 20261102081618, 20261103163954 — a compute edge's public TLS listener.
 //
-// Cloudflare connects straight to every compute node's public address
-// instead of through a tunnel. The listener presents the node's Origin CA
-// certificate and requires the zone's Authenticated Origin Pulls client
-// certificate, so only our Cloudflare zone gets a request through. Requests on
-// it are trusted ingress: the client address comes from CF-Connecting-IP, as
-// it does for the tunnel connector on loopback. Off unless
-// FAAS_EDGE_PUBLIC_TLS_ADDR is set.
+// Behind Cloudflare (ADR-20261102081618), Cloudflare connects straight to
+// every compute node's public address instead of through a tunnel. The
+// listener presents the node's Origin CA certificate and requires the zone's
+// Authenticated Origin Pulls client certificate, so only our Cloudflare zone
+// gets a request through. Requests on it are trusted ingress: the client
+// address comes from CF-Connecting-IP, as it does for the tunnel connector on
+// loopback.
+//
+// With no front (FAAS_EDGE_PUBLIC_FRONT=none, ADR-20261103163954) clients
+// connect directly. The listener presents a publicly trusted certificate,
+// asks for no client certificate and offers HTTP/2. Nothing on such a
+// connection is trusted ingress, so the client address is the peer's and a
+// client's CF-Connecting-IP or X-Forwarded-For is ignored.
+//
+// Off unless FAAS_EDGE_PUBLIC_TLS_ADDR is set.
 
 import (
 	"context"
@@ -40,18 +48,34 @@ const (
 	// edgeTLSClientCAEnv is the CA that signed the zone's Authenticated
 	// Origin Pulls certificate, PEM.
 	edgeTLSClientCAEnv = "FAAS_EDGE_PUBLIC_TLS_CLIENT_CA_FILE"
+	// edgeTLSFrontEnv names what stands in front of the listener:
+	// "cloudflare" (the default) or "none".
+	edgeTLSFrontEnv = "FAAS_EDGE_PUBLIC_FRONT"
+)
+
+// edgeFront is what stands in front of the edge's TLS listener.
+type edgeFront string
+
+const (
+	// edgeFrontCloudflare: Cloudflare's proxy, proven by the zone's client
+	// certificate (ADR-20261102081618).
+	edgeFrontCloudflare edgeFront = "cloudflare"
+	// edgeFrontNone: clients connect directly (ADR-20261103163954).
+	edgeFrontNone edgeFront = "none"
 )
 
 // edgeTLSConfig is the compute edge's public TLS listener. The zero value is
 // off.
 type edgeTLSConfig struct {
 	addr, certFile, keyFile, clientCAFile string
+	front                                 edgeFront
 }
 
-// edgeTLSConfigFromEnv reads the listener's settings. An address needs all
-// three files, and files without an address are a mistake too: either way the
-// edge would not serve what the operator meant. Only a compute edge takes
-// them.
+// edgeTLSConfigFromEnv reads the listener's settings. An address needs its
+// certificate and key, plus the client CA behind Cloudflare; settings without
+// an address are a mistake too: either way the edge would not serve what the
+// operator meant. A client CA with no front is refused, because it would turn
+// away every browser. Only a compute edge takes them.
 func edgeTLSConfigFromEnv(mode publicEdgeMode, getenv func(string) string) (edgeTLSConfig, error) {
 	c := edgeTLSConfig{
 		addr:         strings.TrimSpace(getenv(edgeTLSAddrEnv)),
@@ -59,19 +83,34 @@ func edgeTLSConfigFromEnv(mode publicEdgeMode, getenv func(string) string) (edge
 		keyFile:      strings.TrimSpace(getenv(edgeTLSKeyEnv)),
 		clientCAFile: strings.TrimSpace(getenv(edgeTLSClientCAEnv)),
 	}
-	if c == (edgeTLSConfig{}) {
-		return c, nil
+	switch front := edgeFront(strings.TrimSpace(getenv(edgeTLSFrontEnv))); front {
+	case "":
+	case edgeFrontCloudflare, edgeFrontNone:
+		c.front = front
+	default:
+		return edgeTLSConfig{}, fmt.Errorf("gatewayd-public: %s=%q, want %s or %s", edgeTLSFrontEnv, front, edgeFrontCloudflare, edgeFrontNone)
+	}
+	// Naming the default front alone leaves the listener off.
+	if c == (edgeTLSConfig{front: c.front}) && c.front != edgeFrontNone {
+		return edgeTLSConfig{}, nil
 	}
 	if mode != edgeModeCompute {
 		return edgeTLSConfig{}, fmt.Errorf("gatewayd-public: %s and its files are for a compute edge (%s=%s)", edgeTLSAddrEnv, publicEdgeModeEnv, edgeModeCompute)
 	}
-	var missing []string
-	for _, setting := range []struct{ env, value string }{
+	required := []struct{ env, value string }{
 		{edgeTLSAddrEnv, c.addr},
 		{edgeTLSCertEnv, c.certFile},
 		{edgeTLSKeyEnv, c.keyFile},
-		{edgeTLSClientCAEnv, c.clientCAFile},
-	} {
+	}
+	if c.front == edgeFrontNone {
+		if c.clientCAFile != "" {
+			return edgeTLSConfig{}, fmt.Errorf("gatewayd-public: %s is for a listener behind Cloudflare; with %s=%s it would refuse every client", edgeTLSClientCAEnv, edgeTLSFrontEnv, edgeFrontNone)
+		}
+	} else {
+		required = append(required, struct{ env, value string }{edgeTLSClientCAEnv, c.clientCAFile})
+	}
+	var missing []string
+	for _, setting := range required {
 		if setting.value == "" {
 			missing = append(missing, setting.env)
 		}
@@ -82,15 +121,26 @@ func edgeTLSConfigFromEnv(mode publicEdgeMode, getenv func(string) string) (edge
 	return c, nil
 }
 
+// direct reports whether clients reach the listener with no proxy in front.
+func (c edgeTLSConfig) direct() bool { return c.front == edgeFrontNone }
+
 func (c edgeTLSConfig) enabled() bool { return c.addr != "" }
 
-// serverConfig loads the certificate and the client CA. A connection whose
-// certificate does not chain to that CA fails its handshake, before any
-// request is read.
+// serverConfig loads the certificate and, behind Cloudflare, the client CA.
+// There, a connection whose certificate does not chain to that CA fails its
+// handshake, before any request is read. With no front, any client completes
+// the handshake and may speak HTTP/2.
 func (c edgeTLSConfig) serverConfig() (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(c.certFile, c.keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("gatewayd-public: edge TLS certificate: %w", err)
+	}
+	if c.direct() {
+		return &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{cert},
+			NextProtos:   []string{"h2", "http/1.1"},
+		}, nil
 	}
 	caPEM, err := os.ReadFile(c.clientCAFile)
 	if err != nil {
@@ -126,18 +176,24 @@ func openEdgeTLSListener(c edgeTLSConfig) (net.Listener, error) {
 }
 
 // attach makes srv trust the TLS listener's connections and count its failed
-// handshakes. srv keeps its defaults while the listener is off.
+// handshakes, and with no front lets it serve HTTP/2 over TLS. srv keeps its
+// defaults while the listener is off.
 func (c edgeTLSConfig) attach(srv *http.Server, log *slog.Logger, failures prometheus.Counter) {
 	if !c.enabled() {
 		return
 	}
 	srv.ConnContext = markVerifiedIngress
 	srv.ErrorLog = stdlog.New(newEdgeServerErrors(log, failures), "", 0)
+	if c.direct() && srv.Protocols != nil {
+		srv.Protocols.SetHTTP2(true)
+	}
 }
 
 // markVerifiedIngress is the public server's ConnContext. Only the TLS
-// listener yields *tls.Conn, and it verifies the client certificate before a
-// request is read; the gateway checks that certificate again per request.
+// listener yields *tls.Conn. Behind Cloudflare it verifies the client
+// certificate before a request is read; the gateway checks that certificate
+// again per request, so a direct client's connection, which has none, is
+// marked but trusts nothing.
 func markVerifiedIngress(ctx context.Context, c net.Conn) context.Context {
 	if _, ok := c.(*tls.Conn); ok {
 		return gateway.WithVerifiedIngress(ctx)
