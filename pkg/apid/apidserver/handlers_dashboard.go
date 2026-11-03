@@ -1098,7 +1098,7 @@ func firedFlash(r *http.Request) string {
 	switch r.URL.Query().Get("fired") {
 	case "1":
 		return "ok"
-	case "error", "disabled", "busy", "suspended", "plan":
+	case "error", "disabled", "busy", "suspended", "plan", "budget":
 		return r.URL.Query().Get("fired")
 	default:
 		return ""

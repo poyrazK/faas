@@ -32,5 +32,13 @@ export type UpdateCronRequest = {
   retry_backoff_seconds?: number | null;
   schedule_policy?: SchedulePolicy;
   failure_rules?: FailureRules;
+  /**
+   * Remove the cron's schedule policy. An omitted schedule_policy keeps it; cannot be sent with schedule_policy.
+   */
+  clear_schedule_policy?: boolean;
+  /**
+   * Remove the cron's failure rules. An omitted failure_rules keeps them; cannot be sent with failure_rules.
+   */
+  clear_failure_rules?: boolean;
 };
 

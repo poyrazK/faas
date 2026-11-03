@@ -132,6 +132,8 @@ If Gregale could not reach a scheduled time at all, for example during
 maintenance, the cron runs once as soon as it can. It does not replay every
 time it missed. The same holds while a strict compute budget holds the app:
 its crons queue nothing, and each runs once when the hold lifts.
+`gregale cron status` reports such a cron as `budget_held`, and a manual run
+is refused with `402 financial_budget_held` instead of waiting for the hold.
 
 ### Schedule changes take effect from the next time
 
@@ -169,7 +171,8 @@ schedule. A suspended cron cannot be run (`409 conflict`); deploy the app to
 resume it. The request goes `pending`, then `running` while the run is queued
 and delivered, then `succeeded` or `failed` with the run's error. A cron can
 have five manual runs waiting or running at once; another request gets
-`429 cron_fire_now_busy` until one finishes.
+`429 cron_fire_now_busy` until one finishes. A disabled cron cannot be run
+(`409 conflict`); enable it first.
 
 If the scheduler restarts while it handles a request, the request fails with
 a reason that says so; check `gregale cron runs` before running the cron
@@ -236,6 +239,11 @@ need more control:
   so a cron with failure rules can run more than once for one scheduled time;
   make such handlers idempotent. Without failure rules, a cron with a schedule
   policy is delivered once per scheduled time, like any other cron.
+
+`gregale cron update CRON_ID --clear-schedule-policy` and
+`--clear-failure-rules` remove them again (`clear_schedule_policy` and
+`clear_failure_rules` in the API). In Terraform, removing `schedule_policy` or
+`failure_rules_json` from a `gregale_cron` removes them from the cron.
 
 ## Command crons (preview)
 

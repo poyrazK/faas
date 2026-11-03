@@ -13691,6 +13691,17 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 			c.FailureRules = workpolicy.Clone(opts.FailureRules)
 			scheduleChanged = true
 		}
+		if opts.ClearSchedulePolicy && opts.SchedulePolicy != nil || opts.ClearFailureRules && opts.FailureRules != nil {
+			return Cron{}, ErrInvalidArgument
+		}
+		if opts.ClearSchedulePolicy && c.SchedulePolicy != nil {
+			c.SchedulePolicy = nil
+			scheduleChanged = true
+		}
+		if opts.ClearFailureRules && c.FailureRules != nil {
+			c.FailureRules = nil
+			scheduleChanged = true
+		}
 	}
 	if scheduleChanged || timezoneChanged {
 		c.ScheduleRevision++

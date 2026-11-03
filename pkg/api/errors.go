@@ -4472,6 +4472,15 @@ func ErrCronSuspendedRun(reason string) *Problem {
 		WithDocs(docsBase + "/crons#suspension")
 }
 
+// ErrCronDisabledRun is the 409 for a manual run of a disabled cron. The
+// scheduler refuses the run, so the request used to be accepted and fail a
+// moment later (crons audit 2026-11-03).
+func ErrCronDisabledRun() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron disabled",
+		"this cron is disabled; enable it with `gregale cron update CRON_ID --enable` before running it").
+		WithDocs(docsBase + "/crons#run-a-cron-now")
+}
+
 // ErrCronFireNowBusy is the 429 for a manual run of a cron that already
 // has limit runs waiting or running (ADR-20261026201726).
 func ErrCronFireNowBusy(limit, observed int) *Problem {

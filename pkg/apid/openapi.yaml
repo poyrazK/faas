@@ -104529,6 +104529,8 @@ components:
         retry_backoff_seconds: { type: [integer, "null"], minimum: 1, maximum: 3600, description: "Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed attempt." }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
+        clear_schedule_policy: { type: boolean, description: "Remove the cron's schedule policy. An omitted schedule_policy keeps it; cannot be sent with schedule_policy." }
+        clear_failure_rules: { type: boolean, description: "Remove the cron's failure rules. An omitted failure_rules keeps them; cannot be sent with failure_rules." }
 
     SchedulePolicy:
       description: >-
