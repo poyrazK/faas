@@ -3791,6 +3791,17 @@ func (h *httpGatewaySynth) SynthesizeRequest(ctx context.Context, appID, method,
 		return fmt.Errorf("sched: synth request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if h.mintInternalSvcToken != nil {
+		tok, mErr := h.mintInternalSvcToken(appID)
+		if mErr != nil {
+			return fmt.Errorf("sched: synth mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// ADR-119 — attach an Authorization: Bearer JWT when the app
 	// is in 'internal_only' mode. Same helper as Invoke + postBatch
 	// consult the same per-app mode lookup and mint the same JWT.
@@ -4080,6 +4091,17 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 	req.Header.Set("Content-Type", "application/json")
 	for key, value := range pkgtrace.InjectHeaders(dispatchCtx) {
 		req.Header.Set(key, value)
+	}
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if h.mintInternalSvcToken != nil {
+		tok, mErr := h.mintInternalSvcToken(appID)
+		if mErr != nil {
+			return inv, 0, fmt.Errorf("sched: invocation mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	// Durable workflow steps are an authenticated internal delivery
 	// surface even when the customer app's public_auth_mode is open. The

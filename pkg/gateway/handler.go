@@ -3886,17 +3886,19 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 		h.rejectUnavailableEdgeRule(w, r, "validate", rule.ID, "schema_validator_not_configured")
 		return true
 	}
-	// Upgrade / streaming short-circuit: the body for an
-	// upgraded request is read by the proxy leg's hijacker,
-	// not buffered. Validate rules opt-in via
-	// rule.ApplyWhileStreaming; default false = skip.
-	if !rule.ApplyWhileStreaming && isUpgradeRequest(r) {
-		return false
-	}
 	// Path, query, and header parameters are checked before the body is
-	// read, so a rejected request never pays for buffering.
+	// read, so a rejected request never pays for buffering. They apply to
+	// upgrade requests too: they need no body.
 	if rule.Parameters != nil && h.validateEdgeRuleParameters(w, r, rec, rule) {
 		return true
+	}
+	// Upgrade short-circuit: a WebSocket handshake has no body, and
+	// rule.ApplyWhileStreaming opts in to checking it anyway. Any client
+	// can add Connection: Upgrade, and servers that do not speak the named
+	// protocol run the request as usual, so an upgrade request that carries
+	// a body has it validated like any other (ADR-20261103090000).
+	if !rule.ApplyWhileStreaming && isUpgradeRequest(r) && !requestHasBody(r) {
+		return false
 	}
 	if rule.NoBodySchema {
 		h.recordEdgeRuleValidateMatch(r, rule)

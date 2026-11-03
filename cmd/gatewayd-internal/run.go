@@ -2573,6 +2573,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// resolved verifier now, after the cluster-key and environment fallback
 	// paths have run. Attaching the pre-load nil interface left workflow
 	// admission permanently unconfigured and made every step return HTTP 500.
+	if deps.internalSvcVerifier == nil {
+		// ADR-20261103090000: the synth routes require a schedd token
+		// only when one can be verified.
+		log.Warn("gatewayd-internal: no internal-service verifier; synth routes accept requests without a scheduler token, guarded only by the public edge")
+	}
 	deps.synth.WithInternalSvcVerifier(deps.internalSvcVerifier)
 	// The scheddClient reference is needed by AppLogsHandler (PR-2).
 	// It outlives `run` because we want the AppLogsHandler to keep a
