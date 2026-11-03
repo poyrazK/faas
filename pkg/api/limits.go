@@ -12323,6 +12323,15 @@ const MeterCatchUpMinutesPerTick = 15
 // reaches back, which drains no live counter.
 const MeterTelemetryDrainWindow = 24 * time.Hour
 
+// MeterFinalNetworkReadingRetention is how long schedd keeps serving an
+// instance's last host-interface byte counters after the instance leaves its
+// stats snapshot (it parked, froze off the node or was destroyed). vmmd
+// forgets the counters at teardown, and meterd checkpoints them only once a
+// minute, so without the retained reading the bytes sent since meterd's last
+// read were never metered (ADR-20261103121407). It spans meterd's stats
+// refresh TTL, one roll and the roll settle with margin.
+const MeterFinalNetworkReadingRetention = 5 * time.Minute
+
 // MeterRollSettle is how long after a minute closes meterd waits before
 // rolling it. Residency intervals are stamped inside their writer's
 // transaction and become visible at commit; a roll right at the boundary

@@ -222,6 +222,7 @@ func (m *MemStore) updateOrgResourcePlanLocked(org Org, plan api.Plan) error {
 		}
 	}
 	from := org.Plan
+	m.notePlanChangeLocked(org.ID, from, plan)
 	org.Plan = plan
 	if err := m.validateObjectBillingAdoptionLocked(org); err != nil {
 		return err

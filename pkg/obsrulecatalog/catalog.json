@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b9ddf0d6a83fe95b34c885983608a1b524b0235fcacd10864c31a87214e27edc",
+      "revision": "e8e9054abcbff73f1c5f3ce60fd2e51085adc7c919866fc4fe1b0af8757c459c",
       "files": [
         "faas.rules.yml"
       ],
@@ -1726,6 +1726,19 @@
           }
         },
         {
+          "id": "3b4fd57b0ae6e90b784e412a966613ac2d0c5f91279a2410db79a756402434ce",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdHeldUsageExpiring",
+          "definition": {
+            "expression_hash": "f66c46dd5b12b4079ecbba7616b1a9374edc32b1205ea6221eb22be61eeb487b",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b2d26914100a9493f2333300d5b228f7850adc832ede24237435dc9e44a63a56"
+          }
+        },
+        {
           "id": "3b6c839db3687636a676f26abf4aaf81d23df14b3515b929dde7f8a523e6cf9a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_crash_snapshots",
@@ -2828,6 +2841,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b950ec082afa47b55ee388ba591d8ec5a16d121c06b170f10252223d00637429"
+          }
+        },
+        {
+          "id": "6607612aae97265861207c04ea55052eb5f7825295d51e1eb267d60790da25ba",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdLedgerDrift",
+          "definition": {
+            "expression_hash": "12b0a049f863901e1b67c0dafe17f039baf91a1ddfd96ca802efb35bb2339ab9",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6602c41463ec9fe64554a39d1491f08450e5680c160dfe02b49b2c31829036a8"
           }
         },
         {
@@ -6695,7 +6721,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "f86c579f2272dae74801eb6fd31ba8346cb5f364c768d9a92d2e555a80d781ee",
+      "revision": "e3514060ba065190a752915f4b6900760a7c63991664f819f00422d021018930",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8499,6 +8525,19 @@
           }
         },
         {
+          "id": "3b4fd57b0ae6e90b784e412a966613ac2d0c5f91279a2410db79a756402434ce",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdHeldUsageExpiring",
+          "definition": {
+            "expression_hash": "f66c46dd5b12b4079ecbba7616b1a9374edc32b1205ea6221eb22be61eeb487b",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b2d26914100a9493f2333300d5b228f7850adc832ede24237435dc9e44a63a56"
+          }
+        },
+        {
           "id": "3b6c839db3687636a676f26abf4aaf81d23df14b3515b929dde7f8a523e6cf9a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_crash_snapshots",
@@ -9627,6 +9666,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b950ec082afa47b55ee388ba591d8ec5a16d121c06b170f10252223d00637429"
+          }
+        },
+        {
+          "id": "6607612aae97265861207c04ea55052eb5f7825295d51e1eb267d60790da25ba",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdLedgerDrift",
+          "definition": {
+            "expression_hash": "12b0a049f863901e1b67c0dafe17f039baf91a1ddfd96ca802efb35bb2339ab9",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6602c41463ec9fe64554a39d1491f08450e5680c160dfe02b49b2c31829036a8"
           }
         },
         {

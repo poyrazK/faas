@@ -149,6 +149,9 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	trafficAppsSuffix string
+	// planChangedAt is when each account's or org's plan last changed
+	// (PlanChangedAt, ADR-20261103121407).
+	planChangedAt map[string]time.Time
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                              map[string]int64
@@ -2585,11 +2588,13 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	} else {
 		m.overageCapCents[id] = *next
 	}
+	m.notePlanChangeLocked(id, a.Plan, plan)
 	a.Plan = plan
 	m.storeRouteCheckAccountLocked(id, a)
 	now := time.Now().UTC()
 	for orgID, org := range m.orgs {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			m.notePlanChangeLocked(orgID, org.Plan, plan)
 			org.Plan = plan
 			org.UpdatedAt = now
 			m.orgs[orgID] = org
@@ -27158,6 +27163,7 @@ func (m *MemStore) UpdateOrgPlan(ctx context.Context, id string, plan api.Plan) 
 	if !ok {
 		return ErrNotFound
 	}
+	m.notePlanChangeLocked(id, o.Plan, plan)
 	o.Plan = plan
 	o.UpdatedAt = time.Now().UTC()
 	m.orgs[id] = o
