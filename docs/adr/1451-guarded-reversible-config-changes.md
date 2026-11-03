@@ -99,3 +99,7 @@ Ship the revisions, the guard, the API and the CLI together. The guard is on by 
 - the CLI.
 
 A metal test on n2 deploys the hello fixture, sets a variable that makes it answer 500, and checks that the guard restores the previous value and the app serves again.
+
+## Amendment 1 (2026-11-03): a default-scope change is judged where production serves
+
+A config value in the default scope overlays every environment, but its guard opened only when the default scope had a live deployment, and judged only that scope's traffic. A project app serving production in the `production` scope so took a default-scope change there with no guard to undo it (release review 2026-11-03). A default-scope change now opens its guard when the default scope or the `production` scope has a live deployment, and the guard judges the traffic of both. A revert still writes the default scope, where the value was set.
