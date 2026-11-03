@@ -65,3 +65,25 @@ stage workflow alone is not a successful platform rollout.
 Do not silence this alert for an unexplained mixed-version fleet. If the
 versions are intentionally different, document the compatibility boundary
 and silence only for the planned rollout window.
+
+## After a failed node canary
+
+`cd-platform` ends each compute activation leg with a node canary (the
+"Prove the activated node serves and builds through production ingress" step
+of `cd-compute`). It deploys acceptance apps until the node it just activated
+serves one and has built one, so a failure stops the rollout with that node on
+the new release and every later node on the old one. This alert fires until
+the fleet is on one release again.
+
+1. Read the step log. `node canary deployment for <node> failed` carries the
+   failed deployment's receipt, CLI stderr and build log tail. `did not see
+   <node> serve and build` prints the last `gregalectl release-acceptance
+   verify-node` report: `instance` false means nothing placed on the node,
+   `build` false means no build on the node succeeded.
+2. If the node cannot serve or build, take it out of placement with
+   `gregalectl deploy rollback-node --node <node> --yes`. It drains the row
+   and leaves the host's files and services for forensics; the other nodes
+   keep serving on the old release.
+3. Fix forward with a new release, or re-run the failed leg once the cause
+   was transient (`gh run rerun <run-id> --failed`); a later
+   `join-node --resume` returns a rolled-back node to the desired state.

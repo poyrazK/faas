@@ -13,11 +13,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const analyticsCmdUsage = "usage: gregale analytics [<slug>] [--since 24h] [--until RFC3339] [--by route|country|referrer_host|ua_family|status]"
+const analyticsCmdUsage = "usage: gregale metric requests [<slug>] [--since 24h] [--until RFC3339] [--by route|country|referrer_host|ua_family|status|consumer_id]"
 const analyticsCmdDocsTopic = "analytics"
 
 var analyticsGroupBys = map[string]struct{}{
-	"route": {}, "country": {}, "referrer_host": {}, "ua_family": {}, "status": {},
+	"route": {}, "country": {}, "referrer_host": {}, "ua_family": {}, "status": {}, "consumer_id": {},
+}
+
+// analyticsValueFlags are the command's flags that take a value, so the
+// argument after one is never mistaken for the slug.
+var analyticsValueFlags = map[string]struct{}{
+	"since": {}, "until": {}, "by": {}, "app": {},
 }
 
 func cmdAnalytics(args []string) int {
@@ -42,14 +48,14 @@ func cmdAnalytics(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, analyticsCmdUsage+" (or run `gregale link <project-slug>`)", analyticsCmdDocsTopic)
+				PrintUsage(os.Stderr, analyticsCmdUsage+"\nOr run `gregale link <project-slug>` in this checkout.", analyticsCmdDocsTopic)
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
 		}
 	}
 	if _, ok := analyticsGroupBys[*by]; !ok {
-		PrintUsage(os.Stderr, analyticsCmdUsage+"\nerror: --by must be one of route, country, referrer_host, ua_family, status", analyticsCmdDocsTopic)
+		PrintUsage(os.Stderr, analyticsCmdUsage+"\nerror: --by must be one of route, country, referrer_host, ua_family, status, consumer_id", analyticsCmdDocsTopic)
 		return 1
 	}
 	client, err := authedClient()
@@ -71,17 +77,20 @@ func cmdAnalytics(args []string) int {
 
 // normalizeAnalyticsArgs permits the documented slug-first form while keeping
 // the traditional flags-first spelling. flag.FlagSet stops parsing at the
-// first positional, so move the one slug behind the known value flags.
+// first positional, so move the one slug behind the known value flags. A
+// value flag keeps its value with it in either spelling (-x or --x);
+// without --app here, `--app shop --since 7d` became app="--since".
 func normalizeAnalyticsArgs(args []string) []string {
 	flags := make([]string, 0, len(args))
 	positionals := make([]string, 0, 1)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if strings.HasPrefix(arg, "--since=") || strings.HasPrefix(arg, "--until=") || strings.HasPrefix(arg, "--by=") {
+		name := strings.TrimLeft(arg, "-")
+		if strings.HasPrefix(arg, "-") && strings.Contains(name, "=") {
 			flags = append(flags, arg)
 			continue
 		}
-		if arg == "--since" || arg == "--until" || arg == "--by" {
+		if _, value := analyticsValueFlags[name]; value && strings.HasPrefix(arg, "-") {
 			flags = append(flags, arg)
 			if i+1 >= len(args) {
 				// Preserve flag.FlagSet's native "needs an argument" error
@@ -111,6 +120,9 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	_, _ = fmt.Fprintf(w, "Latency:    p50=%dms p95=%dms p99=%dms\n", response.P50MS, response.P95MS, response.P99MS)
 	if len(response.Groups) == 0 {
 		_, _ = fmt.Fprintln(w, "Groups:     (none)")
+		// An empty clamped window most often means the requested range is
+		// older than the plan keeps, so the note matters most here.
+		renderRequestAnalyticsClampNote(w, response)
 		return
 	}
 	_, _ = fmt.Fprintln(w, "\nValue\tMethod\tRequests\tErrors\tp50\tp95\tp99")
@@ -122,6 +134,10 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	if response.GroupsTruncated {
 		_, _ = fmt.Fprintf(w, "\nShowing the top %d groups plus __other__.\n", response.GroupsLimit)
 	}
+	renderRequestAnalyticsClampNote(w, response)
+}
+
+func renderRequestAnalyticsClampNote(w io.Writer, response api.RequestAnalyticsResponse) {
 	if response.WindowClamped {
 		_, _ = fmt.Fprintln(w, "Note: requested window was clamped to plan telemetry retention.")
 	}

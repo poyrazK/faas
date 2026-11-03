@@ -112,8 +112,8 @@ func TestCmdWorkflowsRun_MissingArgs(t *testing.T) {
 	if code != 1 {
 		t.Errorf("cmdWorkflowsRun(no args) = %d, want 1", code)
 	}
-	if !strings.Contains(captured, "gregale workflows run") {
-		t.Errorf("usage must mention 'gregale workflows run'; got: %s", captured)
+	if !strings.Contains(captured, "gregale workflow run") {
+		t.Errorf("usage must mention 'gregale workflow run'; got: %s", captured)
 	}
 }
 
@@ -233,7 +233,7 @@ func TestCmdWorkflowsCancel_InvalidUUID(t *testing.T) {
 
 func TestCmdWorkflowsRetry_ValidationAndAPIJourney(t *testing.T) {
 	main.ResetJSONOut(t)
-	if code, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflowsRetry([]string{"bad-id", "charge-order"}) }); code != 1 || !strings.Contains(captured, "gregale workflows retry <run_id> <step_name>") {
+	if code, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflowsRetry([]string{"bad-id", "charge-order"}) }); code != 1 || !strings.Contains(captured, "gregale workflow retry <run_id> <step_name>") {
 		t.Fatalf("invalid run: exit=%d stderr=%q", code, captured)
 	}
 
@@ -264,7 +264,7 @@ func TestCmdWorkflowsEvents_DocumentedUsage(t *testing.T) {
 	if code != 1 {
 		t.Errorf("cmdWorkflowsEvents(not enough args) = %d, want 1", code)
 	}
-	if !strings.Contains(captured, "gregale workflows events <run_id> <event_name>") {
+	if !strings.Contains(captured, "gregale workflow events <run_id> <event_name>") {
 		t.Errorf("usage must show the documented form; got: %s", captured)
 	}
 }
@@ -314,7 +314,7 @@ func TestCmdWorkflowsEvents_TrailingMalformedPayloadFailsBeforeRequest(t *testin
 // production-us hunt #5: `workflows get <run>` and `workflows runs` were
 // refused with no hint; they are the natural names for status and list.
 func TestCmdWorkflowsAcceptsCommonAliases(t *testing.T) {
-	for alias, want := range map[string]string{"get": "workflows status", "show": "workflows status", "runs": "--app <slug>", "ls": "--app <slug>"} {
+	for alias, want := range map[string]string{"get": "workflow status", "show": "workflow status", "runs": "--app <slug>", "ls": "--app <slug>"} {
 		code, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflows([]string{alias}) })
 		if code != 1 || strings.Contains(captured, "unknown workflows subcommand") || !strings.Contains(captured, want) {
 			t.Errorf("workflows %s: code=%d stderr=%q, want the %q usage", alias, code, captured, want)
@@ -336,7 +336,7 @@ func TestCmdWorkflowsEvents_MissingArgs(t *testing.T) {
 	if code != 1 {
 		t.Errorf("cmdWorkflowsEvents(not enough args) = %d, want 1", code)
 	}
-	if !strings.Contains(captured, "gregale workflows events send") {
+	if !strings.Contains(captured, "gregale workflow events send") {
 		t.Errorf("usage must mention 'events send'; got: %s", captured)
 	}
 }

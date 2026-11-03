@@ -111,14 +111,14 @@ def sync_detailed(
 ) -> Response[OutboundAIReplay | Problem]:
     """Replay a captured AI call on other integrations or models.
 
-     Requires MFA and deploy-write scope (ADR-997). outboundd resends the captured request to each target
-    without streaming; the calls count against the targets' budgets. At most 100 replays per integration
-    per UTC day.
+     Requires MFA and deploy-write scope. The outbound gateway resends the captured request to each
+    target without streaming; the calls count against the targets' budgets. At most 100 replays per
+    integration per UTC day.
 
     Args:
         integration (UUID):
         request (UUID):
-        body (CreateOutboundAIReplayRequest): Replay a captured call on up to 5 targets (ADR-997).
+        body (CreateOutboundAIReplayRequest): Replay a captured call on up to 5 targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,14 +150,14 @@ def sync(
 ) -> OutboundAIReplay | Problem | None:
     """Replay a captured AI call on other integrations or models.
 
-     Requires MFA and deploy-write scope (ADR-997). outboundd resends the captured request to each target
-    without streaming; the calls count against the targets' budgets. At most 100 replays per integration
-    per UTC day.
+     Requires MFA and deploy-write scope. The outbound gateway resends the captured request to each
+    target without streaming; the calls count against the targets' budgets. At most 100 replays per
+    integration per UTC day.
 
     Args:
         integration (UUID):
         request (UUID):
-        body (CreateOutboundAIReplayRequest): Replay a captured call on up to 5 targets (ADR-997).
+        body (CreateOutboundAIReplayRequest): Replay a captured call on up to 5 targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,14 +184,14 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIReplay | Problem]:
     """Replay a captured AI call on other integrations or models.
 
-     Requires MFA and deploy-write scope (ADR-997). outboundd resends the captured request to each target
-    without streaming; the calls count against the targets' budgets. At most 100 replays per integration
-    per UTC day.
+     Requires MFA and deploy-write scope. The outbound gateway resends the captured request to each
+    target without streaming; the calls count against the targets' budgets. At most 100 replays per
+    integration per UTC day.
 
     Args:
         integration (UUID):
         request (UUID):
-        body (CreateOutboundAIReplayRequest): Replay a captured call on up to 5 targets (ADR-997).
+        body (CreateOutboundAIReplayRequest): Replay a captured call on up to 5 targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,14 +221,14 @@ async def asyncio(
 ) -> OutboundAIReplay | Problem | None:
     """Replay a captured AI call on other integrations or models.
 
-     Requires MFA and deploy-write scope (ADR-997). outboundd resends the captured request to each target
-    without streaming; the calls count against the targets' budgets. At most 100 replays per integration
-    per UTC day.
+     Requires MFA and deploy-write scope. The outbound gateway resends the captured request to each
+    target without streaming; the calls count against the targets' budgets. At most 100 replays per
+    integration per UTC day.
 
     Args:
         integration (UUID):
         request (UUID):
-        body (CreateOutboundAIReplayRequest): Replay a captured call on up to 5 targets (ADR-997).
+        body (CreateOutboundAIReplayRequest): Replay a captured call on up to 5 targets.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

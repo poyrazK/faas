@@ -166,7 +166,7 @@ func buildEnvDiffResponse(slug string, secrets []state.AppSecret, envs []state.A
 				if sec, ok := secretByKS[sk]; ok {
 					cells[sc] = api.EnvDiffCell{
 						Present:   true,
-						ValueHash: sec.ValueHash, // omitempty: pre-PR-C "" emits no field
+						ValueHash: displayValueHash(sec.AccountID, sec.ValueHash), // omitempty: pre-PR-C "" emits no field
 					}
 				}
 			case api.EnvDiffKindEnv:

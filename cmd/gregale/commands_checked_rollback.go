@@ -16,6 +16,28 @@ import (
 
 const rollbackStatusUsage = "usage: gregale rollback status <slug> --operation UUID [--wait] [--timeout 10m] [--poll-interval 2s]"
 
+// rollbackStatusNamesSwitch reports status arguments that name a database
+// switch (`<slug> <switch-id>`) rather than a rollback operation
+// (`--operation UUID`). One `status` reads both, so `rollback status` and
+// the tree's `release rollback status` mean the same (ADR-20261026145832).
+func rollbackStatusNamesSwitch(args []string) bool {
+	return !rollbackStatusNamesOperation(args) && len(args) >= 2 && !strings.HasPrefix(args[0], "-") && !strings.HasPrefix(args[1], "-")
+}
+
+// rollbackStatusNamesOperation reports status arguments that carry
+// --operation, which the switch form does not take.
+func rollbackStatusNamesOperation(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "="); strings.HasPrefix(arg, "-") && name == "operation" {
+			return true
+		}
+	}
+	return false
+}
+
 type rollbackOperationClient interface {
 	GetRollbackOperation(context.Context, string, string) (api.RollbackOperation, error)
 }
@@ -144,8 +166,11 @@ func outputRollbackOperation(r api.RollbackOperation) int {
 }
 func cmdRollbackStatus(args []string) int {
 	if hasHelpFlag(args) {
-		PrintUsage(osStdout, rollbackStatusUsage, "rollback")
+		PrintUsage(osStdout, rollbackStatusUsage+"\n       "+strings.TrimPrefix(rollbackSwitchUsage, "usage: "), "rollback")
 		return 0
+	}
+	if rollbackStatusNamesSwitch(args) {
+		return cmdRollbackSwitch(args)
 	}
 	fs := newFlagSet("rollback status", flag.ContinueOnError)
 	id := fs.String("operation", "", "rollback operation UUID")

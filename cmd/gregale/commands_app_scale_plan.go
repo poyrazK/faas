@@ -352,10 +352,9 @@ func applyAppScaleSavedPlan(slug string, plan appScaleSavedPlan) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	// The read pins the current revision; the plan applies only if it is
+	// still the one the plan was built on.
 	revision := int64(-1)
-	if plan.BaseWorkloadRevision != nil {
-		revision = *plan.BaseWorkloadRevision
-	}
 	appClient := environmentAppClient{Client: client, environment: plan.Environment, revision: &revision}
 	current, err := appClient.GetApp(context.Background(), slug)
 	if err != nil {

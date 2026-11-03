@@ -113,11 +113,26 @@ func (s *PgStore) ApplyRoutePolicy(ctx context.Context, accountID, appID, key st
 	if err := ValidateRoutePolicyApply(key, request); err != nil {
 		return api.RoutePolicyReceipt{}, false, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	type outcome struct {
+		receipt  api.RoutePolicyReceipt
+		replayed bool
+	}
+	result, err := retryTrafficSerialization(ctx, func() (outcome, error) {
+		receipt, replayed, err := s.applyRoutePolicyOnce(ctx, accountID, appID, key, request, planner)
+		return outcome{receipt, replayed}, err
+	})
+	return result.receipt, result.replayed, err
+}
+
+func (s *PgStore) applyRoutePolicyOnce(ctx context.Context, accountID, appID, key string, request api.RoutePolicyApplyRequest, planner RoutePolicyPlanner) (api.RoutePolicyReceipt, bool, error) {
+	// The applied rules pass the same traffic policy guard as rule writes
+	// (ADR-570). Route policy writes only throttle and budget rules, never
+	// routes, so the account's analysis covers every host it can change.
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
 	if err != nil {
 		return api.RoutePolicyReceipt{}, false, fmt.Errorf("begin route policy apply: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	snapshot, err := pgRoutePolicySnapshot(ctx, tx, accountID, appID, true)
 	if err != nil {
 		return api.RoutePolicyReceipt{}, false, fmt.Errorf("lock route policy snapshot: %w", err)

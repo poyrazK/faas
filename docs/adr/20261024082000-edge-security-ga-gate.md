@@ -73,6 +73,7 @@ Browser challenge (GA):
 | H3 | Solve time at the default difficulty on a low-end phone (2020 mid-range Android, current Chrome) | p95 at most 2 s | manual measurement, recorded in `docs/STATUS.md` | open: estimated at p95 0.88-1.12 s from throttled Chrome after ADR-831 amendment 15 (3.8-4.9 s before); the device measurement is pending |
 | H4 | Raised difficulty is capped and falls back | all pass | `TestChallengeLoadRaisesAndLowers` | met |
 | H5 | Browser navigations that get the page go on to solve it, on real traffic | at least 90% over 14 days | `gateway_edge_challenge_total` solved / issued, with bots removed using `challenged` events (`docs/runbooks/edge-challenge-solve-rate-review.md`, amendment 4) | open |
+| H6 | A visitor passes on a fleet of gateways, on apps that allow only declared routes or rewrite every path, and on hosts whose paths route to several apps | all pass; one challenge key fleet-wide | `TestChallengeSolvePassesRouteGates`, `TestChallengePassCoversTheHostForTheAccount`, `TestChallengeSolveRefusesForeignTokens`; `gateway_edge_challenge_key_info` and `FaasEdgeChallengeKeyMismatch` (ADR-831 amendment 17, amendment 5) | met in tests; the fleet key is open until every gateway holds it |
 
 Penalty box (preview):
 
@@ -203,3 +204,18 @@ A check of each open criterion against the data it needs found three gaps:
 
 Each review runs at least weekly, because events are kept 7 days. No
 target changes.
+
+## Amendment 5 (2026-10-27): the challenge across gateways and routing gates
+
+An end-to-end review found three ways a visitor could never pass a
+challenge, which no criterion covered because every test ran one gateway,
+one app and no routing rules: production gateways signed with different
+keys, the declared-route and rewrite gates took the solution post, and
+tokens bound to one app failed on hosts whose paths route to several apps.
+ADR-831 amendment 17 fixes all three and adds criterion H6.
+
+Before `edge_challenge` or `edge_attack_mode` is released to any account on
+a fleet of more than one gateway, the fleet's `gatewayd_edge_challenge_key`
+is delivered to every gateway and `FaasEdgeChallengeKeyMismatch` is quiet.
+Every gateway then reports one `gateway_edge_challenge_key_info` `key_id`
+with `source="fleet"`.

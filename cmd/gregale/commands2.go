@@ -14,7 +14,9 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -28,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issues"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 	"github.com/onebox-faas/faas/pkg/whycopy"
@@ -70,6 +73,7 @@ const (
 	subDomainsShow       = "show"
 	subDomainsStatus     = "status"
 	subDomainsDoctor     = "doctor"
+	subDomainsHost       = "host"
 
 	statusPending  = "pending"
 	statusVerified = "verified"
@@ -212,7 +216,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--function-concurrency N] [--revision-pin-ttl DURATION] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|fast|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--env SLUG] [--visibility public|internal] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--function-concurrency N] [--revision-pin-ttl DURATION] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|fast|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -486,6 +490,10 @@ func cmdApp(args []string) int {
 		}
 		if explicit["per-instance-concurrency"] {
 			policy.PerInstanceConcurrency = *perInstanceConcurrency
+		}
+		if explicit["min"] {
+			// The policy was copied from the app, so it holds the old floor.
+			policy.MinInstances = *min
 		}
 		req.ScalingPolicy = policy
 	}
@@ -779,12 +787,10 @@ func cmdApp(args []string) int {
 		req.OverflowNode = &v
 	}
 
-	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.RequestTimeoutS == nil && req.FunctionConcurrency == nil && req.RevisionPinTTLSeconds == nil && req.MinInstances == nil &&
-		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
-		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
-		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil && req.PlatformTenantRequired == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.PreAuthRateLimit == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
+	// Any update flag sets a field of req; none means a read. Listing fields
+	// by hand here missed --release-policy and --release-probe-paths, which
+	// then printed the settings and changed nothing.
+	if reflect.ValueOf(req).IsZero() {
 		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -1030,7 +1036,7 @@ func cmdAppsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale apps rm <slug> [--dry-run|-q|--quiet|--yes]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes]", "apps")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
@@ -1077,7 +1083,7 @@ func cmdAppsRm(args []string) int {
 // cmdAppsRestore implements `gregale apps restore <slug>`.
 func cmdAppsRestore(args []string) int {
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale apps restore <slug>", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app restore <slug>", "apps")
 		return 1
 	}
 	client, err := authedClient()
@@ -1287,20 +1293,32 @@ func materializeCommittedGitSource(prov zeroConfigProvenance, selectedSourceDir,
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
+	prefix := ""
 	switch {
 	case workspaceContextRoot != "":
 		err = gitArchiveHEAD(prov.Root, tmpPath)
 	case sourcePath == "":
 		err = gitArchiveHEAD(prov.Root, tmpPath)
 	default:
-		var relPath string
-		relPath, err = gitRelativePath(prov.Root, selectedSourceDir)
+		prefix, err = gitRelativePath(prov.Root, selectedSourceDir)
 		if err == nil {
-			err = gitArchiveHEADPath(prov.Root, relPath, tmpPath)
+			err = gitArchiveHEADPath(prov.Root, prefix, tmpPath)
 		}
 	}
 	if err != nil {
 		return "", "", nil, err
+	}
+	// Symlinks, submodules and Git LFS files become the bytes they stand
+	// for before anything reads the archive (ADR-20261026152731).
+	if prefix = path.Clean(filepath.ToSlash(prefix)); prefix == "." {
+		prefix = ""
+	}
+	warnings, err := normalizeGitArchive(gitArchiveSource{repoRoot: prov.Root, prefix: prefix, commit: "HEAD"}, tmpPath)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("prepare committed source: %w", err)
+	}
+	for _, warning := range warnings {
+		PrintWarn(osStderr, "%s", warning)
 	}
 
 	archivePath, archiveRoot, cleanup, err := materializeDeployArchive(tmpPath)
@@ -1381,10 +1399,57 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 	}
 	existing, err = client.GetApp(ctx, req.Slug)
 	if err != nil {
-		return fmt.Errorf("slug %q is already in use; pick a different --name", req.Slug)
+		return slugInUseError(ctx, client, req.Slug)
 	}
 	setResolved(existing)
 	return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+}
+
+// slugInUseError explains a CreateApp 409 that the follow-up GetApp cannot
+// resolve. The slug belongs to another account, or to one of the caller's
+// own deleted apps, which holds its slug until it is purged; the second case
+// gets a restore hint instead of a dead end (Hunt 14 H14-93). The lookup is
+// best effort: any error falls back to the generic message.
+func slugInUseError(ctx context.Context, client *Client, slug string) error {
+	cursor := ""
+	for page := 0; page < 4; page++ {
+		list, err := client.ListDeletedApps(ctx, cursor, 50)
+		if err != nil {
+			break
+		}
+		for _, app := range list.Apps {
+			if app.Slug != slug {
+				continue
+			}
+			if app.RestoreEligible {
+				return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug)
+			}
+			return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "))
+		}
+		if list.NextCursor == "" {
+			break
+		}
+		cursor = list.NextCursor
+	}
+	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+}
+
+func deletedAppUntil(t *time.Time, prefix string) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return prefix + t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+// usageTrafficCell labels the two ADR-046 byte counters, neither of which is
+// billed. tx_bytes is the HTTP response bytes the gateway sent to clients;
+// net_tx_bytes is what left the app's own network interface. Responses travel
+// over vmmd's stream bridge, not that interface, so net is not a superset of
+// tx: printing net alone as "egress" showed 0.000 GB for an app that had
+// served 0.69 GB of responses (Hunt 14 H14-95).
+func usageTrafficCell(txBytes, netTxBytes int64) string {
+	const gib = 1024 * 1024 * 1024
+	return fmt.Sprintf("responses %.2f GB · outbound %.2f GB", float64(txBytes)/gib, float64(netTxBytes)/gib)
 }
 
 // openPublicAuthAfterTokenRemoval is the public_auth change implied by
@@ -1626,6 +1691,13 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 		return []api.WorkflowSpec{}, nil
 	}
 	acct, err := client.Whoami(ctx)
+	if readRefused(err) {
+		// A deploy credential (deploy:write) may not read the account. apid
+		// checks the workflows against the plan when it creates the
+		// deployment, so the CLI's early check is only skipped
+		// (ADR-20261031162858 amendment 1).
+		return append([]api.WorkflowSpec{}, m.Workflows...), nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve account plan for workflow manifest: %w", err)
 	}
@@ -1653,6 +1725,11 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 		return nil, err
 	}
 	acct, err := client.Whoami(ctx)
+	if readRefused(err) {
+		// As for workflows: a deploy credential skips the early plan check
+		// and apid decides (ADR-20261031162858 amendment 1).
+		return m.ToSidecars()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve account plan for companion manifest: %w", err)
 	}
@@ -1685,7 +1762,7 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("trigger %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, trigger.App, slug)
 		}
 		if trigger.Kind != gregalemanifest.TriggerKindCron && trigger.Kind != gregalemanifest.TriggerKindRealtime {
-			return fmt.Errorf("trigger %d uses kind %q; deploy reconciles cron and realtime manifest triggers only; pass --no-triggers and create it with `gregale triggers add` after deployment", i+1, trigger.Kind)
+			return fmt.Errorf("trigger %d uses kind %q; deploy reconciles cron and realtime manifest triggers only; pass --no-triggers and create it with `gregale trigger add` after deployment", i+1, trigger.Kind)
 		}
 	}
 	for i, route := range m.AsyncRoutes {
@@ -1846,11 +1923,11 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
-	case "function-rust":
+	case "function-rust", "agent-infinity-rust":
 		// ADR-987: built from the template's Dockerfile; the handler value
 		// is vestigial, but the deploy API requires it to be non-empty.
 		return runtimeBinary, "handler", true
-	case "cron-worker", "event-worker", "queue-worker":
+	case "cron-worker", "event-worker", "queue-worker", "agent-stateless-node":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
 		return "", "", false
@@ -2408,10 +2485,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *safeDeploy {
 		if explicit["canary-preset"] || explicit["canary-stages"] || explicit["traffic-percent"] {
-			return printErr("Invalid rollout policy", fmt.Errorf("--safe cannot be combined with --canary-preset, --canary-stages, or --traffic-percent"))
+			return printErr("Invalid rollout policy", fmt.Errorf("%s cannot be combined with --canary-preset, --canary-stages, or --traffic-percent", safeFlagName(explicit)))
 		}
 		if (explicit["wait"] && !*waitDeploy) || (explicit["no-wait"] && *noWaitDeploy) {
-			return printErr("Invalid flags", fmt.Errorf("--safe cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete"))
+			return printErr("Invalid flags", fmt.Errorf("%s cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete (a deploy without --rollout follows the app's release policy and returns at 1%% with --no-wait)", safeFlagName(explicit)))
 		}
 		*canaryPreset = api.DefaultReleaseCanaryPreset
 		if !explicit["timeout"] {
@@ -2419,7 +2496,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 	if *safeDeploy && projectRequested {
-		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
+		return printErr("Invalid flags", fmt.Errorf("%s currently supports single-app deploys only; use --canary-preset with a project deploy", safeFlagName(explicit)))
 	}
 	releaseAt, releaseNotify, releaseAtErr := resolveDeployReleaseAt(*releaseAtFlag, *releaseNotifyFlag, explicit, *noTraffic,
 		projectRequested || *githubSnippet || *simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil)
@@ -3080,7 +3157,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// A plain `gregale deploy` of a repository whose root is no single app
 	// but a Compose project or several service roots deploys the project.
 	// Nothing is created before the project plan is reviewed (or --yes).
-	if !projectRequested && !existingApp && len(executions) == 0 && developerSync == nil &&
+	// --plan shows the project's split itself (printDeployWorkloadPlan).
+	if !projectRequested && !existingApp && len(executions) == 0 && developerSync == nil && !*simplePlan &&
 		!deployFunction && !deployApp && deployRuntime == "" && deployHandler == "" &&
 		*image == "" && *tarball == "" && *templateName == "" && *repo == "" && sourceDir != "" {
 		if reason := multiServiceSource(sourceDir); reason != "" {
@@ -3233,6 +3311,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *image != "" {
 			sourceKind = simpleapp.SourceImage
 		}
+		// ADR-20261026145832: deploy --plan is the one local plan. A source
+		// with several workloads shows its split, as `scan` does, without
+		// login or upload.
+		if *image == "" {
+			if scan, scanErr := reposcan.Scan(os.DirFS(sourceDir)); scanErr == nil && len(scan.Workloads) > 1 {
+				return printDeployWorkloadPlan(scan)
+			}
+		}
 		// A plan must refuse what the deploy would refuse. The deploy runs
 		// these manifest checks only after login, so --plan used to print
 		// an "apply this plan" for a manifest the deploy rejects (H10-67).
@@ -3290,7 +3376,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !deployFunction && !deployApp {
 			doctorShape = detectShape(sourceDir)
 		}
-		rep := runDoctorChecksForShape(sourceDir, doctorShape)
+		// --doctor-strict blocks on errors, so env-required compares the
+		// app's env and secret names first; a reference missing only from
+		// local files is a warning (CLI audit 2026-10-31).
+		var appEnv *doctorAppEnv
+		if *doctorStrict {
+			loaded := loadDoctorAppEnv(ctx, slug, sourceDir)
+			appEnv = &loaded
+		}
+		rep := runDoctorChecksForApp(sourceDir, doctorShape, appEnv)
 		if *doctorStrict && rep.HasErrors() {
 			if jsonOutput {
 				_ = json.NewEncoder(osStderr).Encode(struct {
@@ -3313,6 +3407,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// arch-mismatch scans so we don't double-walk the repo.
 		doctorPreflightRan = true
 	}
+	// localSourceWarning names credential-looking files a local-files
+	// upload (no Git archive) includes; the receipt repeats it for --json.
+	localSourceWarning := ""
 	if *image == "" && *tarball == "" {
 		if cwdErr != nil {
 			return printErr("Could not read current directory", cwdErr)
@@ -3374,6 +3471,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			whoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			if acct, werr := client.Whoami(whoCtx); werr == nil {
 				planCapMB = api.MustLimitsFor(api.Plan(acct.Plan)).SourceTarballMaxMB
+			} else if readRefused(werr) {
+				// A deploy credential may not read the account's plan. apid
+				// refuses an upload above the account's cap, so the pack is
+				// bounded only by the largest plan's (ADR-20261031162858
+				// amendment 1); the Free floor refused Pro and Scale sources.
+				planCapMB = largestSourceTarballMB()
 			} else {
 				PrintWarn(osStderr, "Whoami round-trip for per-plan cap failed (%v); using %d MB Free/Hobby floor", werr, planCapMB)
 			}
@@ -3415,7 +3518,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Could not prepare committed deploy source", buildOnlyErr)
 			}
 			gitArchiveBuildOnlyFiles = buildOnlyFiles
-			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles, gitArchiveExcludes...)
+			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles, dockerfileSource(sourceDir), gitArchiveExcludes...)
 			if packErr != nil {
 				return printErr("Could not pack committed HEAD", packErr)
 			}
@@ -3443,6 +3546,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if packErr != nil {
 				return printErr("Could not pack project source", packErr)
 			}
+			localSourceWarning = warnLocalCredentialFiles(sourceDir, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 			if n == 0 {
 				_ = os.Remove(path)
 				return printErr("No project source found in "+filepath.Base(sourceDir), errors.New("the selected directory contains no regular source files after deploy exclusions"))
@@ -3497,6 +3601,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if err != nil {
 					return printErr("Could not pack deploy source", err)
 				}
+				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
 				PrintProgress(os.Stderr, "packing %d file(s) from %s", n, filepath.Base(sourceDir))
@@ -3517,6 +3622,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if err != nil {
 					return printErr("Could not pack deploy source", err)
 				}
+				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
 				renderSecretScanWarnings(scanFindings, osStderr)
 				if fw == fwDocker {
@@ -3829,6 +3935,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not save project submission attempt; no apply was submitted", saveErr)
 		}
 		defer func() { _ = projectLock.Close() }()
+		projectSession.addWarning(localSourceWarning)
 		applyCtx = api.ContextWithDeploymentAttempt(applyCtx, projectSession.record.Project.AttemptID)
 		apply, err := client.ApplyProjectPlanWithInitialSecrets(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
 			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken,
@@ -3869,12 +3976,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return waitForSafeProjectRelease(ctx, client, projectSession, time.Duration(*waitTimeoutSeconds)*time.Second)
 			}
 		}
-		var projectWaitTimedOut bool
+		var projectWaitTimeouts []projectWaitTimeout
 		if waitForDeploy && !*safeProjectDeploy && len(apply.Builds) > 0 {
-			apply, projectWaitTimedOut = waitForProjectApply(ctx, client, apply,
+			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(ctx, client, apply,
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
-		return renderProjectDeployReceipt(plan, apply, projectSession, projectWaitTimedOut, nil)
+		return renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+	}
+
+	// A template or gregale.yaml that turns on a capability the account does
+	// not have stops here, before the app or an upload exists (#5756).
+	if err := refuseHiddenManifestCapabilities(ctx, *templateName, sourceDir); err != nil {
+		return printErr("Capability not enabled", err)
 	}
 
 	var workflowDefs []api.WorkflowSpec
@@ -3993,6 +4106,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Could not save deploy session", err)
 	}
 	defer func() { _ = sessionLock.Close() }()
+	savedSession.addWarning(localSourceWarning)
 	savedSession.record.SourceSHA256 = sourceSHA256
 	savedSession.record.SimpleAppPlan = newDeployReceipt(api.DeploymentResponse{}, nil, "", "", resolvedSimplePlan).SimpleAppPlan
 	if err := savedSession.save(); err != nil {
@@ -4087,6 +4201,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if err := deployManifestQueueBindings(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest queue bindings failed", err)
+	}
+	if err := deployManifestLabels(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest labels failed", err)
 	}
 
 	recordQueued := func(dep api.DeploymentResponse) int {
@@ -4356,7 +4473,54 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--acknowledge-releases] [--restore-databases] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+// rollbackValueFlags take a separate value argument, which is never the slug.
+var rollbackValueFlags = map[string]bool{"--to": true, "--expected-current": true, "--reason": true, "--timeout": true, "--poll-interval": true}
+
+// splitRollbackSlug takes the app from the one <slug> positional or --app,
+// wherever they appear, and returns the remaining flags in order. Rollback
+// read the slug only from the first argument, so `release rollback --app X`
+// and `rollback --to v41 X` failed although the reference documents
+// `[flags] <slug>` (CLI audit 2026-10-31).
+func splitRollbackSlug(args []string) (string, []string, error) {
+	var positional, flags []string
+	app := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--app":
+			if i+1 >= len(args) {
+				return "", nil, errors.New("--app requires an app slug")
+			}
+			i++
+			app = args[i]
+		case strings.HasPrefix(a, "--app="):
+			app = strings.TrimPrefix(a, "--app=")
+		case rollbackValueFlags[a]:
+			flags = append(flags, a)
+			if i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+		case strings.HasPrefix(a, "-"):
+			flags = append(flags, a)
+		default:
+			positional = append(positional, a)
+		}
+	}
+	if len(positional) > 1 {
+		return "", nil, fmt.Errorf("unexpected argument %q (rollback takes one <slug>; pass the target with --to)", positional[1])
+	}
+	merged, err := mergeAppFlag(positional, app, 1)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(merged) == 0 {
+		return "", flags, nil
+	}
+	return merged[0], flags, nil
+}
+
+const rollbackUsage = "usage: gregale rollback <slug>|--app <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--acknowledge-releases] [--restore-databases] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4386,7 +4550,14 @@ func cmdRollback(args []string) int {
 		PrintUsage(os.Stderr, rollbackUsage, "rollback")
 		return 1
 	}
-	slug := args[0]
+	slug, rest, slugErr := splitRollbackSlug(args)
+	if slugErr != nil {
+		return printErr("Invalid rollback", slugErr)
+	}
+	if slug == "" {
+		PrintUsage(os.Stderr, rollbackUsage, "rollback")
+		return 1
+	}
 	var to, current, reason string
 	interactive := false
 	checked := false
@@ -4396,7 +4567,6 @@ func cmdRollback(args []string) int {
 	var err error
 	wait, noWait := false, false
 	timeout, interval := 10*time.Minute, 2*time.Second
-	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
 		a := rest[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(rest).
 		switch {
@@ -4570,7 +4740,7 @@ func validateRollbackFlags(checked bool, to, current, reason string, wait bool, 
 
 func cmdPark(args []string) int {
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale park <slug>", "park-wake")
+		PrintUsage(os.Stderr, "usage: gregale app park <slug>", "park-wake")
 		return 1
 	}
 	client, err := authedClient()
@@ -4611,7 +4781,7 @@ func cmdWake(args []string) int {
 		}
 	}
 	if slug == "" || *waitTimeout <= 0 || *pollInterval < 100*time.Millisecond {
-		PrintUsage(os.Stderr, "usage: gregale wake [--wait] [--timeout D] [--poll-interval D] <slug>", "park-wake")
+		PrintUsage(os.Stderr, "usage: gregale app wake [--wait] [--timeout D] [--poll-interval D] <slug>", "park-wake")
 		return 1
 	}
 	client, err := authedClient()
@@ -4687,7 +4857,7 @@ func idleScaleToZeroWorker(ctx context.Context, client *Client, slug string) str
 	if lo, _ := workerReplicaBounds(app); lo != 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s is a worker pool with min 0: it starts replicas when it has work, not on wake. To keep one running, run `gregale workers scale %s --min 1`.", slug, slug)
+	return fmt.Sprintf("%s is a worker pool with min 0: it starts replicas when it has work, not on wake. To keep one running, run `gregale worker scale %s --min 1`.", slug, slug)
 }
 
 func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, timeout, pollInterval time.Duration) (api.InstanceResponse, error) {
@@ -4764,7 +4934,7 @@ func cmdTrafficSet(args []string) int {
 		return printErr("Invalid arguments", err)
 	}
 	if *deployment == "" || *percent < 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic set [<slug>|--app <slug>] --deployment <id|vN> --percent N", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic set [<slug>|--app <slug>] --deployment <id|vN> --percent N", "traffic")
 		return 1
 	}
 	client, err := authedClient()
@@ -4833,7 +5003,7 @@ func cmdTrafficPromote(args []string) int {
 		return printErr("Invalid arguments", err)
 	}
 	if strings.TrimSpace(*deployment) == "" {
-		PrintUsage(os.Stderr, "usage: gregale traffic promote [<slug>|--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic promote [<slug>|--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
 		return 1
 	}
 	var ifServingSet, policySet bool
@@ -4981,7 +5151,7 @@ func cmdTrafficStatus(args []string) int {
 		return printErr("Invalid arguments", err)
 	}
 	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
-		PrintUsage(os.Stderr, "usage: gregale traffic status <slug>", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic status <slug>", "traffic")
 		return 1
 	}
 	slug := strings.TrimSpace(positional[0])
@@ -5016,6 +5186,7 @@ func cmdTrafficStatus(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
 		return 0
 	}
+	defer printCanaryProgress(live)
 	if len(byScope) > 1 {
 		printScopedTrafficStatus(live, byScope)
 		return 0
@@ -5034,6 +5205,19 @@ func cmdTrafficStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
+}
+
+// printCanaryProgress names each rolling canary's current step. Traffic
+// changes are refused while a canary runs, and advancing it needs that step;
+// it appeared only in the refusal of a wrong guess (PulseWatch F17).
+func printCanaryProgress(live []api.DeploymentResponse) {
+	for _, d := range live {
+		if d.CanaryTotalSteps <= 0 || d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
+			continue
+		}
+		_, _ = fmt.Fprintf(osStdout, "Canary %s is rolling out at canary_step=%d (step %d of %d). Advance it with:\n  %s deployment advance %s --expected-step %d\n",
+			deploymentLabel(d), d.CanaryStep, d.CanaryStep+1, d.CanaryTotalSteps, recoveryCLI(), recoveryArgument(d.ID), d.CanaryStep)
+	}
 }
 
 // trafficScope names a deployment's traffic scope; an unscoped row is the
@@ -5104,7 +5288,7 @@ func explicitAppFlag(fs *flag.FlagSet) bool {
 // cmdTraffic dispatches the implemented traffic leaves.
 func cmdTraffic(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic <set|promote|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status> [args]", "traffic")
 		return 1
 	}
 	switch args[0] {
@@ -5115,7 +5299,7 @@ func cmdTraffic(args []string) int {
 	case "status":
 		return cmdTrafficStatus(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale traffic <set|promote|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status> [args]", "traffic")
 		return 1
 	}
 }
@@ -5125,7 +5309,7 @@ func cmdTraffic(args []string) int {
 func cmdDomains(args []string) int {
 	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|doctor> [args]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|wait|doctor|host> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
@@ -5146,16 +5330,16 @@ func cmdDomains(args []string) int {
 		}
 		if fs.NArg() == 1 {
 			if *domain != "" && *domain != fs.Arg(0) {
-				PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
+				PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 				return 1
 			}
 			*domain = fs.Arg(0)
 		} else if fs.NArg() != 0 {
-			PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 			return 1
 		}
 		if *domain == "" || *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -5172,11 +5356,11 @@ func cmdDomains(args []string) int {
 		fmt.Printf("Add these records to your DNS:\n\n")
 		printDomainDNSRecords(osStdout, d)
 		fmt.Printf("\nKeep them in place: the certificate is issued and renewed automatically.\n")
-		fmt.Printf("Then run 'gregale domains list' to see when verification completes.\n")
+		fmt.Printf("Then run 'gregale domain list' to see when verification completes.\n")
 		return 0
 	case subRm:
 		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale domains rm <domain>", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain delete <domain>", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -5192,7 +5376,7 @@ func cmdDomains(args []string) int {
 		return cmdDomainsVerify(args[1:])
 	case subDomainsSetDefault:
 		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale domains set-default <domain>", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain default set <domain>", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -5214,6 +5398,10 @@ func cmdDomains(args []string) int {
 		return cmdDomainsStatus(args[1:])
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
+	case subDomainsHost:
+		return cmdDomainsHost(args[1:])
+	case subWait:
+		return domainConditions.wait(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown domains subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "domains", parent, args[0])
@@ -5223,35 +5411,58 @@ func cmdDomains(args []string) int {
 func cmdCrons(args []string) int {
 	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons <list|next|add|info|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons <list|next|add|info|status|wait|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
 	case "next":
 		return cmdCronsNext(args[1:])
+	case subStatus:
+		return cronConditions.status(args[1:])
+	case subWait:
+		return cronConditions.wait(args[1:])
+	case subLabel:
+		return cmdCronLabel(args[1:])
 	case subList:
+		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
+			if delayedTasksHidden() {
+				return unknownCronFlag("--one-off")
+			}
+			return cmdDelayedTaskList(rest)
+		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
-		slug := fs.String("app", "", "app slug (required)")
+		slug := fs.String("app", "", "app slug (required without -l)")
+		selector := addSelectorFlag(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
-		if *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale crons list --app <slug>", "crons")
+		if *slug == "" && *selector == "" {
+			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
 			return 1
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		out, err := client.ListCrons(context.Background(), *slug)
+		var out []api.CronResponse
+		if *selector != "" {
+			// -l without --app selects across every app (ADR-20261031100025).
+			out, err = selectedCrons(context.Background(), client, *slug, *selector)
+		} else {
+			out, err = client.ListCrons(context.Background(), *slug)
+		}
 		if err != nil {
 			return printErr("Could not list crons", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
+		}
+		if len(out) == 0 && *selector != "" {
+			_, _ = fmt.Fprintf(osStdout, "No cron matches %s\n", *selector)
+			return 0
 		}
 		// The ID leads because `crons info|update|rm|runs` all require it
 		// and nothing else printed it (issue #3362).
@@ -5271,6 +5482,16 @@ func cmdCrons(args []string) int {
 		}
 		return 0
 	case subAdd:
+		if oneOff, ok := cronOneOffArgs(args[1:]); ok {
+			if delayedTasksHidden() {
+				return unknownCronFlag("--at")
+			}
+			return cmdCronsAddOneOff(args[1:], oneOff)
+		}
+		lock, addArgs, lockErr := takeLockFlags(args[1:])
+		if lockErr != nil {
+			return printErr("Invalid lock", lockErr)
+		}
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
 		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
 		slug := fs.String("app", "", "app slug (required)")
@@ -5287,11 +5508,14 @@ func cmdCrons(args []string) int {
 		failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 		retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
 		retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := fs.Parse(addArgs); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
+		}
+		if *interactive && lock != nil {
+			return printErr("Invalid interactive cron flags", errors.New("--lock is not part of the interactive flow; create the cron with flags"))
 		}
 		if *interactive {
 			invalid := false
@@ -5313,7 +5537,7 @@ func cmdCrons(args []string) int {
 			return cmdCronsAddInteractive(selected)
 		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron create --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N]", "crons")
 			return 1
 		}
 		pathSet := false
@@ -5381,16 +5605,25 @@ func cmdCrons(args []string) int {
 			req.RetryMax = *retryMax
 			req.RetryBackoffSeconds = *retryBackoff
 		}
-		return createCronAndRender(context.Background(), client, *slug, req)
+		return createCronAndRender(context.Background(), client, *slug, req, lock)
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
 	case subInfo:
+		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
+			if delayedTasksHidden() {
+				return unknownCronFlag("--one-off")
+			}
+			return cmdDelayedTaskGet(rest)
+		}
 		return cmdCronsInfo(args[1:])
 	case subRuns:
 		return cmdCronsRuns(args[1:])
 	case "occurrences":
 		return cmdCronsOccurrences(args[1:])
 	case "cancel":
+		if cronCancelsOneOff(args[1:]) && !delayedTasksHidden() {
+			return cmdDelayedTaskCancel(args[1:])
+		}
 		return cmdCronsCancel(args[1:])
 	case subRm:
 		return cmdCronsRm(args[1:])
@@ -5414,13 +5647,28 @@ func cmdCrons(args []string) int {
 // deploymentIDPattern — same 32-hex convention across the platform.
 var cronIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-func createCronAndRender(ctx context.Context, client *Client, slug string, req api.CreateCronRequest) int {
+func createCronAndRender(ctx context.Context, client *Client, slug string, req api.CreateCronRequest, lock *exclusiveLock) int {
 	c, err := client.CreateCron(ctx, slug, req)
 	if err != nil {
 		return printErr("Could not create cron", err)
 	}
+	var binding *api.ExclusiveTriggerBindingRecord
+	if lock != nil {
+		if binding, err = bindExclusiveLock(ctx, client, "cron", c.ID, lock); err != nil {
+			return printErr("Could not lock cron", err)
+		}
+	}
 	if jsonOutput {
+		if binding != nil {
+			return jsonOut(writeJSON(struct {
+				api.CronResponse
+				Lock *api.ExclusiveTriggerBindingRecord `json:"lock"`
+			}{c, binding}))
+		}
 		return jsonOut(writeJSON(c))
+	}
+	if binding != nil {
+		defer func() { _, _ = fmt.Fprintf(osStdout, "Runs one at a time per key under lock %s.\n", binding.Policy) }()
 	}
 	// HTTP crons fire a synthetic POST (spec §4); a cron aimed at a GET-only
 	// route failed every run with 404 while the receipt showed only the
@@ -5430,7 +5678,7 @@ func createCronAndRender(ctx context.Context, client *Client, slug string, req a
 		target = "command " + formatCronCommand(c)
 	}
 	PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
-	_, _ = fmt.Fprintf(osStdout, "  id: %s\nThe schedule is saved; this does not confirm a completed execution.\n\nTrigger now (POSIX shells):\n  %s crons run %s\n", c.ID, recoveryCLI(), recoveryArgument(c.ID))
+	_, _ = fmt.Fprintf(osStdout, "  id: %s\nThe schedule is saved; this does not confirm a completed execution.\n\nTrigger now (POSIX shells):\n  %s cron run %s\n", c.ID, recoveryCLI(), recoveryArgument(c.ID))
 	return 0
 }
 
@@ -5523,20 +5771,20 @@ func cmdCronsUpdate(args []string) int {
 		return printErr("Invalid app flag", errors.New("--app is only accepted with --interactive; use a task ID for explicit updates"))
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	id := fs.Arg(0)
 	if !cronIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id>   (id is 32 hex chars)", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update <id>   (id is 32 hex chars)", "crons")
 		return 1
 	}
 	if *enable && *disable {
-		PrintUsage(os.Stderr, "usage: gregale crons update --enable | --disable (mutually exclusive)", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update --enable | --disable (mutually exclusive)", "crons")
 		return 1
 	}
 	if *skipIfRunning && *allowOverlap {
-		PrintUsage(os.Stderr, "usage: gregale crons update --skip-if-running | --allow-overlap (mutually exclusive)", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update --skip-if-running | --allow-overlap (mutually exclusive)", "crons")
 		return 1
 	}
 	// Reject no-fields-set early; the server otherwise no-ops and
@@ -5545,7 +5793,7 @@ func cmdCronsUpdate(args []string) int {
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	// Local schedule shape check (5 whitespace tokens) mirrors the
@@ -5644,7 +5892,7 @@ func cmdKeys(args []string) int {
 	switch args[0] {
 	case subList:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale keys list", "keys")
+			PrintUsage(osStdout, "usage: gregale key list", "keys")
 			return 0
 		}
 		client, err := authedClient()
@@ -5658,20 +5906,11 @@ func cmdKeys(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
 		}
-		for _, k := range out {
-			// Revoked and grace-period keys looked identical to live ones,
-			// so a customer could not see which listed keys still work.
-			// Active rows keep their two-column shape for existing scripts.
-			if k.Status != "" && k.Status != "active" {
-				fmt.Printf("%-30s %-22s %s\n", k.Label, k.Prefix, k.Status)
-				continue
-			}
-			fmt.Printf("%-30s %s\n", k.Label, k.Prefix)
-		}
+		renderAPIKeys(osStdout, out)
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
+			PrintUsage(osStdout, "usage: gregale key create <label> [--scopes scope,...]", "keys")
 			return 0
 		}
 		flags, positional := splitArgsForFlags(args[1:])
@@ -5681,7 +5920,7 @@ func cmdKeys(args []string) int {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key create <label> [--scopes scope,...]", "keys")
 			return 1
 		}
 		var scopes []string
@@ -5717,7 +5956,7 @@ func cmdKeys(args []string) int {
 		return 0
 	case subRm:
 		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale keys rm <id>", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key delete <id>", "keys")
 			return 1
 		}
 		client, err := authedClient()
@@ -5752,7 +5991,7 @@ func cmdKeysRotate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale keys rotate <key-id>", "keys")
+		PrintUsage(os.Stderr, "usage: gregale key rotate <key-id>", "keys")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -5786,7 +6025,7 @@ func cmdKeysGraceWindow(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale keys grace-window [--reset | --days N]", "keys")
+		PrintUsage(os.Stderr, "usage: gregale key grace-window set [--reset | --days N]", "keys")
 		return 1
 	}
 	if *reset && *days >= 0 {
@@ -5873,7 +6112,7 @@ func cmdUsage(args []string) int {
 	case "object-storage":
 		return cmdUsageObjectStorage(args[1:])
 	}
-	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
+	PrintUsage(os.Stderr, "usage: gregale billing usage [--month YYYY-MM] | gregale billing usage summary [--month YYYY-MM] | gregale billing usage daily [--day YYYY-MM-DD] | gregale billing usage storage [--day YYYY-MM-DD]", "usage")
 	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "usage", parent, args[0])
 }
@@ -5929,7 +6168,7 @@ func cmdUsageList(args []string) int {
 	sortUsageRows(rows)
 	// The included allowance is account-wide, so it is printed once rather
 	// than repeated on every app row (production-us hunt #4).
-	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · egress\n")
+	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · traffic (not billed)\n")
 	var totalMBSeconds int64
 	for _, u := range rows {
 		totalMBSeconds += u.MBSeconds
@@ -5941,11 +6180,8 @@ func cmdUsageList(args []string) int {
 		// counter is non-zero — most months most apps are 0 and the
 		// trailing column is noise.
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
-			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · egress %.3f GB (tx %.2f / net %.2f)\n",
-				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6,
-				u.TotalEgressGB(),
-				float64(u.TXBytes)/(1024*1024*1024),
-				float64(u.NetTxBytes)/(1024*1024*1024))
+			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · %s\n",
+				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6, usageTrafficCell(u.TXBytes, u.NetTxBytes))
 			continue
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
@@ -6015,7 +6251,7 @@ func cmdInvoices(args []string) int {
 	before := fs.String("before", "", "pagination cursor (RFC3339Nano)")
 	limit := fs.Int("limit", 25, "page size (1..100)")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale invoices [--month YYYY-MM] [--before C] [--limit N]", "invoices")
+		PrintUsage(os.Stderr, "usage: gregale billing invoices [--month YYYY-MM] [--before C] [--limit N]", "invoices")
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
@@ -6063,7 +6299,7 @@ func renderInvoices(w io.Writer, page api.InvoiceListResponse) {
 			inv.Status, api.BillingCurrencySymbol+total, inv.Currency, pdf)
 	}
 	if page.NextBefore != "" {
-		_, _ = fmt.Fprintf(w, "\n  next page: gregale invoices --before %s\n", page.NextBefore)
+		_, _ = fmt.Fprintf(w, "\n  next page: gregale billing invoices --before %s\n", page.NextBefore)
 	}
 }
 
@@ -6095,6 +6331,11 @@ func renderUsageSummary(w io.Writer, s api.UsageSummaryResponse) {
 	_, _ = fmt.Fprintf(w, "  %-*s %d GB-hours\n", labelWidth, "Included:", s.IncludedGBHours)
 	_, _ = fmt.Fprintf(w, "  %-*s %.3f GB-hours\n", labelWidth, "Overage:", s.OverageGBHours)
 	_, _ = fmt.Fprintf(w, "  %-*s %d cents\n", labelWidth, "Overage cost:", s.OverageCents)
+	// ADR-20261023171905: quiet-paused time between requests that was not
+	// billed, beside Used rather than inside it. Shown once there is any.
+	if s.QuietPausedGBHours > 0 {
+		_, _ = fmt.Fprintf(w, "  %-*s %.3f GB-hours (not billed)\n", labelWidth, "Quiet paused:", s.QuietPausedGBHours)
+	}
 	// Issue #279 / PR-B: per-month CPU-hours is informational —
 	// not billed. Surfaced as a separate line so the customer
 	// sees the measurement next to the billing total without
@@ -6147,7 +6388,7 @@ func cmdConnect(args []string) int {
 	case svcGithub:
 		// `connect github` takes no positional args.
 		if len(args) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale connect github", "connect")
+			PrintUsage(os.Stderr, "usage: gregale github connect", "connect")
 			return 1
 		}
 		if _, err := authedClient(); err != nil {
@@ -6498,6 +6739,9 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	if len(args) > 0 && args[0] == "views" {
 		return cmdLogViews(args[1:])
 	}
+	if len(args) > 0 && args[0] == "view" {
+		return cmdLogsView(args[1:])
+	}
 	if len(args) > 0 && args[0] == subLogsSearch {
 		return cmdLogsSearch(args[1:])
 	}
@@ -6737,6 +6981,9 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		PrintUsage(os.Stderr, "--status, --route, --request, --trace, --limit, and --all require --source http", "logs")
 		return 2
 	}
+	if logSource == logsSourceHTTP && !*dryRun && capabilityHiddenForRun(httpLogsCapability, false) {
+		return printHTTPLogsUnavailable()
+	}
 	if logsFlagWasSet(fs, "status") && (*status < 100 || *status > 599) {
 		PrintUsage(os.Stderr, "--status must be between 100 and 599", "logs")
 		return 2
@@ -6970,6 +7217,11 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		body, err = client.StreamAppLogs(ctx, slug, deployment, follow, filter)
 	}
 	if err != nil {
+		// Ctrl-C before the stream connects is a deliberate stop, like
+		// Ctrl-C while it streams, not an unreachable API (#2691).
+		if ctx.Err() != nil {
+			return 130
+		}
 		var ae *APIError
 		if errors.As(err, &ae) {
 			renderAPIError(os.Stderr, ae)
@@ -6994,6 +7246,10 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	}
 	printedLines := retainedLines
 	parkedFallback := false
+	// reconnectAt is set when a follow stream ended on its idle timeout:
+	// `gregale logs -f` reconnects instead of exiting 0 after ten quiet
+	// minutes.
+	var reconnectAt time.Time
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
 		// when schedd's StreamAppLogs RPC isn't wired yet (the
@@ -7003,8 +7259,9 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		// removed.
 		if e.Event == "degraded" {
 			// A parked app has no running instance; show its newest
-			// retained logs instead of only naming the archive flags (H10-72).
-			if archive == nil && !follow && !jsonOutput && isNoRunningInstanceLogs(e.Data) {
+			// retained logs instead of only naming the archive flags (H10-72),
+			// under --json too, where scripts and agents read logs (H14-126).
+			if archive == nil && !follow && isNoRunningInstanceLogs(e.Data) {
 				parkedFallback = true
 				return true, 0
 			}
@@ -7036,10 +7293,25 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 					return true, 3
 				}
 			}
+			if follow && archive == nil && appLogsArchiveEndReason(e.Data) == "timeout" {
+				reconnectAt = time.Now()
+				return true, 0
+			}
 			if collector != nil && !jsonOutput {
 				collector.flush(osStdout)
 			}
 			return true, 0
+		}
+		if e.Event == "error" {
+			// A rejected filter or plan gate: report it and fail, not
+			// print it as a log line and exit 0.
+			problem := appLogsStreamErrorProblem(e.Data)
+			if jsonOutput {
+				_ = writeJSONProblem(problem)
+			} else {
+				renderAPIError(os.Stderr, &APIError{Problem: problem})
+			}
+			return true, 1
 		}
 		if e.Data != "" {
 			if archive != nil && !retainedLineMatches(e.Data, filter.Grep) {
@@ -7062,6 +7334,12 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	}
 	if streamErr != nil {
 		return printErr("Stream closed", streamErr)
+	}
+	if !reconnectAt.IsZero() && ctx.Err() == nil {
+		_ = dec.Close()
+		_ = body.Close()
+		filter.Since = reconnectAt.UTC().Format(time.RFC3339Nano)
+		return runLogsExplainingMissingArchive(ctx, slug, deployment, filter, archive, follow, explain, archiveMissing)
 	}
 	if parkedFallback {
 		if retainedLines > 0 {
@@ -7582,11 +7860,23 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		// pollDeploymentFinal. A fast tarball deploy on a slow link
 		// is the canonical case where the stream never opened and
 		// the build row is already terminal.
+		if readRefused(err) && !opts.quiet {
+			// deploy:write alone (a deploy token, a CI OIDC bearer) may not
+			// read build logs; it follows the deployment it created.
+			PrintProgress(osStdout, "build logs need apps:read; following the deployment's status instead")
+		}
 		if b, ok := pollBuildStatusContext(waitCtx, c, dep, 5*time.Second); ok {
 			return terminalBuild(b)
 		}
-		if final, ok := pollDeploymentFinalContext(waitCtx, c, dep); ok {
+		// Follow the deployment row to the wait deadline, as the end of the
+		// stream does below. One read used to give up on a deploy still
+		// building, so a CI credential's every --wait ended in exit 3.
+		if final, ok := pollDeploymentFinalUntilContext(waitCtx, c, dep, waitTimeout); ok {
 			return terminalDeployment(final)
+		}
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			warnWaitTimeout()
+			return 3
 		}
 		warnWaitStopped("stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
@@ -7637,9 +7927,9 @@ streamLoop:
 				}
 				if !opts.quiet && json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
 					if opts.prefixBuildLogs {
-						fmt.Printf("build | %s\n", entry.Line)
+						fmt.Printf("build | %s\n", terminalSafe(entry.Line))
 					} else {
-						fmt.Println(entry.Line)
+						fmt.Println(terminalSafe(entry.Line))
 					}
 				}
 			case "stage":
@@ -7773,14 +8063,30 @@ streamLoop:
 // where /v1/builds/{id} is unavailable still degrades gracefully;
 // streamDeployLogs prefers the new path.
 func pollDeploymentFinalContext(ctx context.Context, c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool) {
+	final, ok, _ := pollDeploymentFinalOnce(ctx, c, dep)
+	return final, ok
+}
+
+func pollDeploymentFinalOnce(ctx context.Context, c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool, error) {
 	got, err := c.GetDeployment(ctx, dep.ID)
 	if err != nil {
-		return api.DeploymentResponse{}, false
+		return api.DeploymentResponse{}, false, err
 	}
 	if got.PromotionHold != nil || isCompletedDeployment(got) {
-		return got, true
+		return got, true, nil
 	}
-	return api.DeploymentResponse{}, false
+	return api.DeploymentResponse{}, false, nil
+}
+
+// readRefused reports an answer a retry will not change: the credential may
+// not read the resource. A CI credential with only deploy:write (a deploy
+// token, a GitHub Actions OIDC bearer) is refused build logs and build status
+// but may read its deployment (ADR-20261031162858), so a wait stops asking
+// for what it cannot read and follows the deployment row instead.
+func readRefused(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) &&
+		(apiErr.Problem.Status == http.StatusUnauthorized || apiErr.Problem.Status == http.StatusForbidden)
 }
 
 // pollDeploymentFinalUntil is the deployment-row counterpart to
@@ -7796,8 +8102,12 @@ func pollDeploymentFinalUntilContext(ctx context.Context, c *Client, dep api.Dep
 	defer cancel()
 	backoff := time.Second
 	for {
-		if final, ok := pollDeploymentFinalContext(pollCtx, c, dep); ok {
+		final, ok, err := pollDeploymentFinalOnce(pollCtx, c, dep)
+		if ok {
 			return final, true
+		}
+		if readRefused(err) {
+			return api.DeploymentResponse{}, false
 		}
 		timer := time.NewTimer(backoff)
 		select {
@@ -7872,6 +8182,10 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 		cancelCall()
 		if err == nil && isTerminalBuildStatus(b.Status) {
 			return b, true
+		}
+		if readRefused(err) {
+			// The caller falls back to the deployment row at once.
+			return api.BuildResponse{}, false
 		}
 		// Jitter ±10% of the current backoff so N concurrent CI
 		// jobs don't wake at the same wall-clock tick. Pseudo-
@@ -8012,7 +8326,7 @@ func printDeployNoHTTPSentence(executionMode, appSlug string) {
 // pre-cluster rows that only have the raw failure_class string.
 func renderDeployFailure(d api.DeploymentResponse) int {
 	if strings.TrimSpace(d.Error) == "" {
-		PrintFail(os.Stderr, "Deployment %s failed without a server reason. Inspect details with: gregale deploys status %s", d.ID, d.ID)
+		PrintFail(os.Stderr, "Deployment %s failed without a server reason. Inspect details with: gregale release get %s", d.ID, d.ID)
 		return 1
 	}
 	if d.ErrorCode != "" {
@@ -8227,10 +8541,8 @@ func cmdUsageDaily(args []string) int {
 		totalMBSeconds += u.MBSeconds
 		gbh := float64(u.MBSeconds) / 3.6e6
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
-			txGB := float64(u.TXBytes) / (1024 * 1024 * 1024)
-			netGB := float64(u.NetTxBytes) / (1024 * 1024 * 1024)
-			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  egress %.3f GB (tx %.2f / net %.2f)\n",
-				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, netGB, txGB, netGB)
+			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  %s\n",
+				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, usageTrafficCell(u.TXBytes, u.NetTxBytes))
 			continue
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)
@@ -8356,7 +8668,7 @@ func renderSecretScanWarnings(findings []secretscan.Finding, w io.Writer) {
 		// discarded (same convention as writeStatus — see output.go).
 		_, _ = fmt.Fprintf(w, "  ↳ %s\n", f.Snippet)
 	}
-	PrintWarn(w, "%d secret line(s) skipped from the upload. Move to: gregale secrets set",
+	PrintWarn(w, "%d secret line(s) skipped from the upload. Move to: gregale env set",
 		len(findings))
 }
 
@@ -8378,11 +8690,12 @@ func warnDeployStreamInterrupted(quiet bool) {
 func cmdDomainsList(args []string) int {
 	fs := newFlagSet("domains list", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "only this app's domains")
+	selector := addSelectorFlag(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains list [--app <slug>]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domain list [--app <slug>] [-l SELECTOR]", "domains")
 		return 1
 	}
 	client, err := authedClient()
@@ -8409,6 +8722,18 @@ func cmdDomainsList(args []string) int {
 	if appID != "" {
 		out = slices.DeleteFunc(out, func(d api.CustomDomainResponse) bool { return d.AppID != appID })
 	}
+	if *selector != "" {
+		// A domain matches through its app (ADR-20261031100025).
+		apps, err := selectedApps(ctx, client, *selector)
+		if err != nil {
+			return printErr("Could not list apps", err)
+		}
+		matched := make(map[string]bool, len(apps))
+		for _, a := range apps {
+			matched[a.ID] = true
+		}
+		out = slices.DeleteFunc(out, func(d api.CustomDomainResponse) bool { return !matched[d.AppID] })
+	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(out))
 	}
@@ -8417,7 +8742,7 @@ func cmdDomainsList(args []string) int {
 		if appID != "" {
 			scope = "app " + strings.TrimSpace(*appSlug)
 		}
-		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domains setup <domain> --app <slug>`.\n", scope)
+		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domain setup <domain> --app <slug>`.\n", scope)
 		return 0
 	}
 	for _, d := range out {

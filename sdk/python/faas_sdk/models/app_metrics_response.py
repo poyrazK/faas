@@ -19,7 +19,7 @@ T = TypeVar("T", bound="AppMetricsResponse")
 
 @_attrs_define
 class AppMetricsResponse:
-    """Per-app metrics snapshot (issue #273 / ADR-041). Latencies are
+    """Per-app metrics snapshot. Latencies are
     milliseconds for the 2xx class only; failures surface as
     `error_rate_pct`. `wake_p95_ms` is the FLEET p95 — the
     underlying `gateway_wake_latency_seconds` histogram is
@@ -48,7 +48,7 @@ class AppMetricsResponse:
     cold_start_pct: float
     """Share of requests that triggered a cold boot (the WakeGate
     leader). Followers waiting on the gate see zero cold
-    contribution; their wait is on the §12 dashboard via
+    contribution; their wait is on the dashboard via
     `gateway_wake_queue_wait_seconds`.
     """
     wake_p95_ms: float
@@ -60,53 +60,47 @@ class AppMetricsResponse:
     """Current wake-queue depth
     (`gateway_queue_depth{app, account_id}` — `account_id`
     admitted via accountLabelSet, overflow=`__other__`,
-    added in PR-D). Backs the `queue_backlog_growing`
-    alert preset (ADR-123): comparison `gt 50` over the
+    added). Backs the `queue_backlog_growing`
+    alert preset: comparison `gt 50` over the
     chosen window. Best-effort: absent on Prometheus
     failure (the field is `null`); the evaluator's
     degraded-source contract skips firing rather than
     guessing.
     """
     egress_bytes: int | Unset = UNSET
-    """Per-app egress byte delta over the window (informational; not billed). ADR-046. Source:
-    schedd_egress_net_tx_bytes_total{app} (Prom rollup of usage_minutes.net_tx_bytes — PR-2 wires the rollup; until
-    then this field stays 0)."""
+    """Per-app egress byte delta over the window (informational; not billed). It is not collected yet and stays 0."""
     tx_bytes: int | Unset = UNSET
-    """Per-app egress byte delta over the window, gateway-side mirror (informational; not billed). ADR-046 PR-2 /
-    issue #415 PR-2. Source: gateway_egress_tx_bytes_total{app} (Prom rollup; the gatewayd-internal-local per-
-    instance egress ring populates the counter on each raw-stream chunk). Distinct from `egress_bytes` (the schedd-
-    side mirror) so a divergence between the two surfaces immediately on the dashboard. Best-effort: query failure
-    does NOT flip the response to degraded — matches the `egress_bytes` semantics."""
+    """Per-app egress byte delta over the window, gateway-side mirror (informational; not billed). Source:
+    gateway_egress_tx_bytes_total{app} (Prom rollup; the gateway-local per-instance egress ring populates the
+    counter on each raw-stream chunk). Distinct from `egress_bytes` (the scheduler-side mirror) so a divergence
+    between the two surfaces immediately on the dashboard. Best-effort: query failure does NOT flip the response to
+    degraded — matches the `egress_bytes` semantics."""
     routes: list[RouteRow] | Unset = UNSET
-    """Per-route breakdown for opt-in apps (ADR-093). Absent when
+    """Per-route breakdown for opt-in apps. Absent when
     `route_metrics_enabled` is false on the app — the dashboard
     distinguishes "feature off" (field absent) from "feature
     on, no traffic" (empty array). Each row is the bounded
-    detail from the gatewayd-internal in-memory reader: max
+    detail from the gateway in-memory reader: max
     50 distinct routes + the `__route_other__` wildcard-path
     overflow bucket. The route label is method + declared template
     when available, otherwise a best-effort inferred public path.
     """
     wakes_24h: int | Unset = UNSET
-    """Count of `wake.boot_started` events the schedd recorded for
+    """Count of `wake.boot_started` events the scheduler recorded for
     this app in the trailing 24 hours. Sourced from the
     `events` table via the events_wake_id_idx jsonb expression
-    index (migration 00114) — sub-second on a healthy app.
+    index — sub-second on a healthy app.
     Best-effort: 0 on a degraded store call, an empty app, or
-    when the events table predates the post-ADR-123 schema
-    (pre-PR-A boot_started rows carry no app_id field, so the
-    cast returns NULL which COUNT(*) coerces to 0 — same
-    posture as the wake-timeline view's `WakeCountWithMeta`
-    denominator at cmd/apid/handlers_dashboard.go:2659). The
+    when the events table predates per-app wake events
+    (older wake events carry no app ID and count as 0). The
     dashboard surfaces this as the "wakes today" line item;
     combined with `cold_start_pct` it answers "is my app
     wake-bound or sleep-bound". Field absent on Free
-    (the per-app dashboard is Hobby+ only — see
-    pkg/api/limits.go::PerAppMetricsAllowed).
+    (the per-app dashboard is Hobby+ only —
     """
     cache_hit_rate_pct: float | Unset = UNSET
     """Share of cache-eligible requests served from
-    `gateway_response_cache` (ADR-122) over the selected
+    `gateway_response_cache` over the selected
     window. The value is sourced from the additive
     `gateway_response_cache_app_total{app,outcome}` metric
     and counts only `hit / (hit + miss)`. Absence means the

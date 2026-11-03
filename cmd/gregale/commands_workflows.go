@@ -75,7 +75,7 @@ func cmdWorkflowsList(args []string) int {
 	workflowName := fs.String("workflow-name", "", "filter by exact workflow name")
 	createdAfter := fs.String("created-after", "", "inclusive RFC3339 creation-time start")
 	createdBefore := fs.String("created-before", "", "inclusive RFC3339 creation-time end")
-	usage := "usage: gregale workflows list [--app <slug>] [--limit N] [--offset N] [--all] [--status S] [--workflow-name NAME] [--created-after RFC3339] [--created-before RFC3339]"
+	usage := "usage: gregale workflow list [--app <slug>] [--limit N] [--offset N] [--all] [--status S] [--workflow-name NAME] [--created-after RFC3339] [--created-before RFC3339]"
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -135,7 +135,7 @@ func cmdWorkflowsList(args []string) int {
 
 	if len(items) == 0 {
 		detail := fmt.Sprintf("offset=%d; status=%q; workflow=%q; created-after=%q; created-before=%q (blank filters are unrestricted)", *offset, *status, *workflowName, *createdAfter, *createdBefore)
-		printEmptyResult("workflow runs in app "+*appSlug, detail, recoveryCLI()+" workflows list --app "+recoveryArgument(*appSlug))
+		printEmptyResult("workflow runs in app "+*appSlug, detail, recoveryCLI()+" workflow list --app "+recoveryArgument(*appSlug))
 		_, _ = fmt.Fprintln(osStdout, "The next command starts at the first page without these filters. No matches does not establish whether an uncertain submission was accepted.")
 		return 0
 	}
@@ -166,7 +166,7 @@ func cmdWorkflowsRun(args []string) int {
 	// `workflows run --app <slug> <workflow-name>`).
 	flagArgs, positional := splitArgsForFlags(args, "wait")
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale workflows run <workflow_name> [--app <slug>] [--input JSON | --input-file PATH|-] [--idempotency-key <key>] [--wait [--timeout 5m] [--poll-interval 2s]]", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow run <workflow_name> [--app <slug>] [--input JSON | --input-file PATH|-] [--idempotency-key <key>] [--wait [--timeout 5m] [--poll-interval 2s]]", "workflows")
 		return 1
 	}
 	workflowName := positional[0]
@@ -225,7 +225,7 @@ func cmdWorkflowsRun(args []string) int {
 	printWorkflowRunTarget(*appSlug, appSource)
 	run, err := client.RunWorkflowWithIdempotencyKey(context.Background(), *appSlug, workflowName, input, *idempotencyKey)
 	if err != nil {
-		return printRunSubmissionError("Request failed", err, recoveryCLI()+" workflows list --app "+recoveryArgument(*appSlug)+" --workflow-name "+recoveryArgument(workflowName), *idempotencyKey != "")
+		return printRunSubmissionError("Request failed", err, recoveryCLI()+" workflow list --app "+recoveryArgument(*appSlug)+" --workflow-name "+recoveryArgument(workflowName), *idempotencyKey != "")
 	}
 	rememberAcceptedWorkflow(*appSlug, workflowName, run)
 	if *wait {
@@ -262,7 +262,7 @@ func cmdWorkflowsStatus(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
-		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflows status RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--check]")
+		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflow status RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--check]")
 		return 1
 	}
 	target, code := validateWorkflowReadTarget(fs.Arg(0), *app, *name)
@@ -340,7 +340,7 @@ func cmdWorkflowsSteps(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
-		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflows steps RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--failed-only]")
+		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflow steps RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--failed-only]")
 		return 1
 	}
 	target, code := validateWorkflowReadTarget(fs.Arg(0), *app, *name)
@@ -404,7 +404,7 @@ func cmdWorkflowsAttempts(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 2 {
-		PrintUsage(os.Stderr, "usage: gregale workflows attempts <run_id|latest> <step_name> [--workflow-name NAME] [--app SLUG] [--failed-only]", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow attempts <run_id|latest> <step_name> [--workflow-name NAME] [--app SLUG] [--failed-only]", "workflows")
 		return 1
 	}
 	ref, stepName := fs.Arg(0), fs.Arg(1)
@@ -460,7 +460,7 @@ func cmdWorkflowsAttempts(args []string) int {
 
 func cmdWorkflowsResume(args []string) int {
 	flagArgs, positional := splitArgsForFlags(args, "wait")
-	usage := "usage: gregale workflows resume <run_id> --expected-resume-count <N> [--idempotency-key <KEY>] [--wait [--timeout 5m] [--poll-interval 2s]]"
+	usage := "usage: gregale workflow resume <run_id> --expected-resume-count <N> [--idempotency-key <KEY>] [--wait [--timeout 5m] [--poll-interval 2s]]"
 	if len(positional) != 1 {
 		PrintUsage(os.Stderr, usage, "workflows")
 		return 1
@@ -571,7 +571,7 @@ func cmdWorkflowsCancel(args []string) int {
 		return cmdWorkflowsInteractive("cancel", args)
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows cancel <run_id>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow cancel <run_id>", "workflows")
 		return 1
 	}
 	runID := args[0]
@@ -608,7 +608,7 @@ func cmdWorkflowsRetry(args []string) int {
 		return cmdWorkflowsInteractive("retry", args)
 	}
 	flagArgs, positional := splitArgsForFlags(args, "wait")
-	usage := "usage: gregale workflows retry <run_id> <step_name> [--wait [--timeout 5m] [--poll-interval 2s]]"
+	usage := "usage: gregale workflow retry <run_id> <step_name> [--wait [--timeout 5m] [--poll-interval 2s]]"
 	if len(positional) != 2 || !workflowUUIDPattern.MatchString(positional[0]) || positional[1] == "" {
 		PrintUsage(os.Stderr, usage, "workflows")
 		return 1
@@ -680,7 +680,7 @@ func cmdWorkflowsEvents(args []string) int {
 		return 1
 	}
 	if len(posArgs) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload JSON | --payload-file PATH|-]; legacy form: gregale workflows events send <run_id> <event_name>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow events <run_id> <event_name> [--payload JSON | --payload-file PATH|-]; legacy form: gregale workflow events send <run_id> <event_name>", "workflows")
 		return 1
 	}
 

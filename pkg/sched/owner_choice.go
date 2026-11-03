@@ -58,7 +58,7 @@ func leastOwnedNode(nodes []state.ComputeNode, ownedMB map[string]int64, ramMB i
 		if n.Lifecycle != "" && !n.Lifecycle.IsAdmitting() || !n.Active || int64(n.AdmissionCeilingMB) < billable || billable <= 0 {
 			continue
 		}
-		if n.Readiness == state.NodeReadinessDegraded && !allowDegraded {
+		if (n.Readiness == state.NodeReadinessDegraded || n.Readiness == state.NodeReadinessUnavailable) && !allowDegraded {
 			continue
 		}
 		if !found || ownsLess(n, best, ownedMB) {

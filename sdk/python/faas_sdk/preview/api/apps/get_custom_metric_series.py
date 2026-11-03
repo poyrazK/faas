@@ -88,9 +88,9 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     range_: GetCustomMetricSeriesRange | Unset = "24h",
 ) -> Response[CustomMetricSeriesResponse | Problem]:
-    r"""Read a custom metric's history (ADR-745)
+    r"""Read a custom metric's history
 
-     ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
     otherwise 503 `custom_metric_history_unavailable`.
 
     Returns the values Prometheus recorded from pushed custom metrics over
@@ -131,9 +131,9 @@ def sync(
     client: AuthenticatedClient | Client,
     range_: GetCustomMetricSeriesRange | Unset = "24h",
 ) -> CustomMetricSeriesResponse | Problem | None:
-    r"""Read a custom metric's history (ADR-745)
+    r"""Read a custom metric's history
 
-     ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
     otherwise 503 `custom_metric_history_unavailable`.
 
     Returns the values Prometheus recorded from pushed custom metrics over
@@ -169,9 +169,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     range_: GetCustomMetricSeriesRange | Unset = "24h",
 ) -> Response[CustomMetricSeriesResponse | Problem]:
-    r"""Read a custom metric's history (ADR-745)
+    r"""Read a custom metric's history
 
-     ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
     otherwise 503 `custom_metric_history_unavailable`.
 
     Returns the values Prometheus recorded from pushed custom metrics over
@@ -210,9 +210,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     range_: GetCustomMetricSeriesRange | Unset = "24h",
 ) -> CustomMetricSeriesResponse | Problem | None:
-    r"""Read a custom metric's history (ADR-745)
+    r"""Read a custom metric's history
 
-     ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
     otherwise 503 `custom_metric_history_unavailable`.
 
     Returns the values Prometheus recorded from pushed custom metrics over

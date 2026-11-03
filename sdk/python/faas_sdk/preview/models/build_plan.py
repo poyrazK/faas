@@ -17,9 +17,9 @@ T = TypeVar("T", bound="BuildPlan")
 
 @_attrs_define
 class BuildPlan:
-    """Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the exact
-    source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection when the
-    spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route.
+    """Effective build plan surfaced on DeploymentResponse. Captured from the exact source archive at enqueue time and
+    retained after spool cleanup; legacy rows fall back to marker detection when the spool is still available. Embedded
+    on DeploymentResponse; never returned by a dedicated route.
 
     """
 
@@ -43,7 +43,7 @@ class BuildPlan:
     config_file: None | str | Unset = UNSET
     """Framework configuration file that supplied the resolved build settings, when present."""
     class_: BuildPlanClassType1 | BuildPlanClassType2Type1 | BuildPlanClassType3Type1 | None | Unset = UNSET
-    """App class from `app.Type` — `app` for plain apps, `function` for function rewrites (spec §4.2)."""
+    """App class from `app.Type` — `app` for plain apps, `function` for function rewrites."""
     handler: None | str | Unset = UNSET
     """Function-layer export (for example `handler.handler`). Distinct from the process entrypoint."""
     source_sha256: None | str | Unset = UNSET

@@ -18,10 +18,8 @@ T = TypeVar("T", bound="CanaryPresetSpec")
 
 @_attrs_define
 class CanaryPresetSpec:
-    """The canary ladder a customer asks for on a deploy (issue
-    #976 / ADR-122 / SAFE-RELEASES-A + production-leveling
-    Stream F). Preset is the catalog name from
-    pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100/adaptive/
+    """The canary ladder a customer asks for on a deploy (A + production-leveling
+    Stream F). Preset is the catalog name (none/slow/balanced/aggressive/1-10-50-100/adaptive/
     custom). When Preset is 'custom', Stages is the
     customer-supplied ladder (each entry is percent +
     duration string in time.ParseDuration form, e.g.
@@ -37,7 +35,7 @@ class CanaryPresetSpec:
     """Catalog preset name. 'none' = no canary (server stamps canary_preset='none', canary_total_steps=0). 'custom'
     requires Stages to be non-empty."""
     stages: list[CustomStage] | Unset = UNSET
-    """Per-stage ladder. Required when preset='custom' (the apid handler 422s otherwise); ignored for catalog
+    """Per-stage ladder. Required when preset='custom' (the API handler 422s otherwise); ignored for catalog
     presets (the catalog resolution runs server-side)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

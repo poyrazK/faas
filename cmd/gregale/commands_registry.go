@@ -186,7 +186,7 @@ func cmdRegistryRm(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale registry rm --app <slug> --registry <h>", "registry")
+		PrintUsage(os.Stderr, "usage: gregale registry delete --app <slug> --registry <h>", "registry")
 		return 1
 	}
 	registryAPI, normErr := registryInputForAPI(*registry)

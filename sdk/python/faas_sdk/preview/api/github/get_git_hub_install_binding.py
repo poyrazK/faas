@@ -68,7 +68,7 @@ def _build_response(
 def sync_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[GitHubInstallStatus | Problem]:
     """Inspect the app's GitHub repository binding.
 
@@ -102,7 +102,7 @@ def sync_detailed(
 def sync(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> GitHubInstallStatus | Problem | None:
     """Inspect the app's GitHub repository binding.
 
@@ -131,7 +131,7 @@ def sync(
 async def asyncio_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[GitHubInstallStatus | Problem]:
     """Inspect the app's GitHub repository binding.
 
@@ -163,7 +163,7 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> GitHubInstallStatus | Problem | None:
     """Inspect the app's GitHub repository binding.
 

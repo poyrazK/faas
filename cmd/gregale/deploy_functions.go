@@ -284,7 +284,7 @@ func (d functionSetDeploy) reportUnlisted(ctx context.Context, client functionSe
 		return
 	}
 	sort.Strings(unlisted)
-	_, _ = fmt.Fprintf(d.out, "Not in gregale.yaml (kept): %s — delete with `gregale apps --yes <slug>`\n", strings.Join(unlisted, ", "))
+	_, _ = fmt.Fprintf(d.out, "Not in gregale.yaml (kept): %s — delete with `gregale app list --yes <slug>`\n", strings.Join(unlisted, ", "))
 }
 
 // reconcile applies one deployed function's manifest configuration.

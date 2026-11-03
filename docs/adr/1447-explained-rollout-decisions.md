@@ -56,3 +56,56 @@ The audit timeline keeps its existing 90-day retention.
 Ship with the record written and shown everywhere at once. The safe-release drill asserts that a quiet canary's completion carries an `advance_probe_evidence` record with probe counts for both revisions, that a probe-backed abort carries an `abort_5xx` record with `probes_included`, that the bad release carries `abort_5xx` with the candidate's 5xx, and that the crash loop carries `abort_crash_loop` with its restarts. It logs the quiet canary's hold rows; whether a hold occurs depends on how many probes arrived by the stage boundary.
 
 The drill passed on the n2 node on 2026-10-14 (all six cases, leakcheck clean): the quiet canary completed on `advance_probe_evidence` with 20 probes on each side at the decision and no hold at the boundary; the late-failing release aborted on `abort_5xx` with `probes_included` and candidate probe 5xx 20/20 ("5xx regression (candidate 95.2%, stable 0.0%; 20/21 vs 0/21 requests; synthetic probes included)"); the bad release aborted on `abort_5xx` and the crash loop on `abort_crash_loop`. The same run's Postgres test caught the hold insert's untyped time parameter, which made every hold fail; holds are covered by `TestRolloutDecisionsPG`.
+
+## Amendment (2026-10-22): request evidence for decisions
+
+The record says why the breaker decided, in aggregates; a customer whose
+release was rolled back on `abort_5xx` still has to find which requests
+failed. Two debugger reads (ADR-127) now join a decision to the request
+telemetry behind it, at request time. Nothing is added to the record, which
+stays aggregate-only, and both reads sit behind the debugger's plan gate and
+retention.
+
+- `GET /v1/apps/{slug}/debug/rollout` (`gregale debug rollout <slug>`)
+  explains the newest of the app's last 20 deployments with a canary rollout,
+  or `?deployment_id`.
+  - It returns `state` (`aborted`, `held`, `rolling_out`, `complete`, `none`)
+    and the record that explains it: the abort record, the newest hold, or the
+    latest advance.
+  - An abort from another path (route monitor, alert rollback, profile gate)
+    has no record; `aborted_reason` carries that path's reason.
+  - The window is the decision's observation window. A hold is shown up to
+    now, since the canary is still waiting. Without a window, the current step
+    (or the whole rollout) up to the abort or completion is used.
+  - Over that window, the candidate's routes are compared with the stable
+    deployment (the record's `stable_deployment_id`, otherwise the other
+    serving deployment with the most traffic). Routes are ranked worst first:
+    by p95 increase for a latency rule, otherwise by server-error rate
+    increase. At most five are returned.
+  - Up to three example requests come from the worst route: the newest server
+    errors, or the newest requests at or above the route's p95 for a latency
+    rule. Each links to its request evidence.
+  - The candidate's open regressions are included, and a deterministic
+    headline names the decision and the worst route.
+- `GET /v1/apps/{slug}/debug/status` (`gregale debug status <slug>`)
+  summarizes the app over `since` (default 1h) as one verdict, worst first:
+  - `failing`: at least 5% server errors over at least 20 requests;
+  - `rolled_back`: a rollback inside the window;
+  - `degraded`: an out-of-memory kill, open regressions, or any server
+    error;
+  - `releasing`: a rollout in flight;
+  - otherwise `healthy`, or `idle` with no requests.
+
+  It also returns the serving deployments, their requests, server errors and
+  p95, the rollout explanation when one is in flight or rolled back in the
+  window, the open regressions, the five newest server-error requests, the
+  five newest out-of-memory kills with their total and the remedy for the
+  newest (the `app_runtime_oom` fix text for its peak and plan), and whether
+  tracing is on. The CLI prints the drill-down commands.
+
+The logic lives in `pkg/apid/rolloutevidence` (ADR-982). It reads existing
+sqlc queries, `RequestTelemetryErrorsByRoute`,
+`RequestTelemetryBaselineP95ByRoute`, `ListRequestTelemetryByApp` and
+`RequestTelemetryAnalyticsSummary`, plus `ListAppWorkloadOOMKills`, which
+reads the app's `instances.workload_oom_failed` events (ADR-121) through the
+existing `events_kind_at_idx`. No migration or index is added.

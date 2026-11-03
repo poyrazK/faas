@@ -95,8 +95,8 @@ def sync_detailed(
 ) -> Response[EdgeWAFReviewResponse | Problem]:
     """The app's WAF detections grouped for a false-positive review.
 
-     ADR-831 amendment 13. Reads the app's sampled kind=waf detections
-    (detected, warned and blocked events, ADR-831 amendment 5) and groups
+     Reads the app's sampled kind=waf detections
+    (detected, warned and blocked events) and groups
     them by edge rule, CRS rule and path, with id-like path segments read
     as {id}. Each group is assessed: likely_false_positive (a documented
     false positive, or at least 3 clients flagged on the path with none
@@ -142,8 +142,8 @@ def sync(
 ) -> EdgeWAFReviewResponse | Problem | None:
     """The app's WAF detections grouped for a false-positive review.
 
-     ADR-831 amendment 13. Reads the app's sampled kind=waf detections
-    (detected, warned and blocked events, ADR-831 amendment 5) and groups
+     Reads the app's sampled kind=waf detections
+    (detected, warned and blocked events) and groups
     them by edge rule, CRS rule and path, with id-like path segments read
     as {id}. Each group is assessed: likely_false_positive (a documented
     false positive, or at least 3 clients flagged on the path with none
@@ -184,8 +184,8 @@ async def asyncio_detailed(
 ) -> Response[EdgeWAFReviewResponse | Problem]:
     """The app's WAF detections grouped for a false-positive review.
 
-     ADR-831 amendment 13. Reads the app's sampled kind=waf detections
-    (detected, warned and blocked events, ADR-831 amendment 5) and groups
+     Reads the app's sampled kind=waf detections
+    (detected, warned and blocked events) and groups
     them by edge rule, CRS rule and path, with id-like path segments read
     as {id}. Each group is assessed: likely_false_positive (a documented
     false positive, or at least 3 clients flagged on the path with none
@@ -229,8 +229,8 @@ async def asyncio(
 ) -> EdgeWAFReviewResponse | Problem | None:
     """The app's WAF detections grouped for a false-positive review.
 
-     ADR-831 amendment 13. Reads the app's sampled kind=waf detections
-    (detected, warned and blocked events, ADR-831 amendment 5) and groups
+     Reads the app's sampled kind=waf detections
+    (detected, warned and blocked events) and groups
     them by edge rule, CRS rule and path, with id-like path segments read
     as {id}. Each group is assessed: likely_false_positive (a documented
     false positive, or at least 3 clients flagged on the path with none

@@ -4,6 +4,7 @@ package fcvm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,5 +180,39 @@ func TestTrackFenceValueRevertKeepsNewerChange(t *testing.T) {
 	revertFirst()
 	if got := v.fences[l.Instance].cpuMax; got != "2 100000" {
 		t.Errorf("cpuMax = %q, want the newer change kept", got)
+	}
+}
+
+// adr: 20261027090014 — an agent run's networkless VM gets the whole vCPUs its plan
+// sizes it with (two on Pro), while app leases keep the app CPU tiers.
+func TestCgroupFenceSizesAgentRunCPU(t *testing.T) {
+	period := api.PlanPro.CPUPeriodUS()
+	for _, tc := range []struct {
+		name  string
+		lease Lease
+		want  string
+	}{
+		{"agent run 2 vCPU", Lease{Instance: "agent-1", Plan: api.PlanPro, MemoryMaxMiB: 1024, CPUMillicores: 2000, Networkless: true},
+			fmt.Sprintf("%d %d", 2*period, period)},
+		{"agent run 1 vCPU", Lease{Instance: "agent-2", Plan: api.PlanHobby, MemoryMaxMiB: 1024, CPUMillicores: 1000, Networkless: true},
+			fmt.Sprintf("%d %d", api.PlanHobby.CPUPeriodUS(), api.PlanHobby.CPUPeriodUS())},
+		{"app 500m", Lease{Instance: "app-1", Plan: api.PlanPro, MemoryMaxMiB: 512, CPUMillicores: 500},
+			fmt.Sprintf("%d %d", period/2, period)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := newCgroupFence(tc.lease)
+			if err != nil || f.cpuMax != tc.want {
+				t.Fatalf("cpu.max = %q, %v; want %q", f.cpuMax, err, tc.want)
+			}
+		})
+	}
+	for _, lease := range []Lease{
+		{Instance: "app-2", Plan: api.PlanPro, MemoryMaxMiB: 512, CPUMillicores: 2000},
+		{Instance: "agent-3", Plan: api.PlanPro, MemoryMaxMiB: 1024, CPUMillicores: 1500, Networkless: true},
+		{Instance: "agent-4", Plan: api.PlanPro, MemoryMaxMiB: 1024, CPUMillicores: 3000, Networkless: true},
+	} {
+		if _, err := newCgroupFence(lease); err == nil {
+			t.Errorf("%s with %dm: fence accepted", lease.Instance, lease.CPUMillicores)
+		}
 	}
 }

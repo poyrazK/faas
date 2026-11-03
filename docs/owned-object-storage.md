@@ -1172,7 +1172,7 @@ VM image: the local role fence cannot arbitrate cloned writers.
    from a timeout, sequence comparison or missing current object. If a capacity
    rebase is needed after settled writes/deletions, use the existing
    `gregale bucket reconcile start/status` workflow described in
-   [object storage](object-storage.md#reclaim-reserved-capacity). Finish or abort
+   [object storage](ops/object-storage-operator-notes.md#reclaim-reserved-capacity). Finish or abort
    live multipart sessions before a capacity reconciliation. Reopen customer
    writes after these checks; retain unresolved holds for normal recovery. In
    replica mode, first bind and confirm a new standby as described below: a

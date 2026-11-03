@@ -13,6 +13,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -24,18 +26,38 @@ import (
 const (
 	secretEntryPurpose = "mcp-secret-entry-v1"
 	secretEntryTTL     = 15 * time.Minute
+	// secretEntryRoute is the route whose organization decision the browser
+	// form repeats for the member completing the request.
+	secretEntryRoute = "POST /v1/apps/{slug}/secret-requests"
 )
 
+// secretEntryTicket names the account that owns the app's secrets
+// (AccountID) and the member who requested the entry (ActorID), who is the
+// one to open the form. Tickets sealed before ActorID existed name the
+// creator in both roles.
 type secretEntryTicket struct {
 	Purpose      string
 	ExchangeHash string
 	AccountID    string
+	ActorID      string `json:",omitempty"`
 	AppID        string
 	App          string
 	Scope        string
 	Key          string
 	Reason       string
 	ExpiresAt    time.Time
+	// KeyID and KeyAccountID name the API key that asked, shown on the form
+	// so the owner can tell which credential is behind the reason it
+	// carries (bug hunt 2026-10-28 H54). Empty for a browser session.
+	KeyID        string `json:",omitempty"`
+	KeyAccountID string `json:",omitempty"`
+}
+
+func (t secretEntryTicket) actorID() string {
+	if t.ActorID != "" {
+		return t.ActorID
+	}
+	return t.AccountID
 }
 
 func secretEntryCodeHash(code string) []byte {
@@ -63,10 +85,22 @@ func (s *server) openSecretEntryTicket(value string) (secretEntryTicket, error) 
 }
 
 // secretEntryApp re-resolves the ticket's app, so a deleted and recreated slug
-// cannot inherit a request.
-func (s *server) secretEntryApp(ctx context.Context, acct state.Account, ticket secretEntryTicket) (state.App, bool) {
-	app, err := s.store.AppBySlug(ctx, ticket.App)
-	return app, err == nil && app.ID == ticket.AppID && app.AccountID == acct.ID && ticket.AccountID == acct.ID
+// cannot inherit a request, and repeats the secret request's organization
+// decision for the signed-in member: one removed from the app's company,
+// demoted, or in a suspended company cannot finish a request they opened.
+// It returns the account that owns the app's secrets and the request
+// carrying the grant.
+func (s *server) secretEntryApp(r *http.Request, actor state.Account, ticket secretEntryTicket) (state.App, state.Account, *http.Request, bool) {
+	app, err := s.store.AppBySlug(r.Context(), ticket.App)
+	if err != nil || app.ID != ticket.AppID || ticket.actorID() != actor.ID {
+		return state.App{}, state.Account{}, r, false
+	}
+	gate := r.WithContext(middleware.WithPrincipal(r.Context(), actor, nil, nil))
+	owner, problem := appaccess.AuthorizeRoute(gate, s.store, loadOrgAuditFrom(s.audit), actor, app, secretEntryRoute)
+	if problem != nil || owner.ID != ticket.AccountID {
+		return state.App{}, state.Account{}, r, false
+	}
+	return app, owner, gate, true
 }
 
 func (s *server) requestSecretEntry(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -84,7 +118,8 @@ func (s *server) requestSecretEntry(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	response, err := s.mintSecretEntry(r.Context(), acct, app, scope, input)
+	_, key, _, _ := middleware.PrincipalFrom(r)
+	response, err := s.mintSecretEntry(r.Context(), acct, actorAccount(r, acct), key, app, scope, input)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not start secret entry"))
 		return
@@ -109,14 +144,17 @@ func secretEntryScope(input api.SecretEntryRequest) (string, *api.Problem) {
 	return input.Scope, nil
 }
 
-func (s *server) mintSecretEntry(ctx context.Context, acct state.Account, app state.App, scope string, input api.SecretEntryRequest) (api.SecretEntryResponse, error) {
+func (s *server) mintSecretEntry(ctx context.Context, acct, actor state.Account, key *state.APIKey, app state.App, scope string, input api.SecretEntryRequest) (api.SecretEntryResponse, error) {
 	entropy := make([]byte, 32)
 	if _, err := rand.Read(entropy); err != nil {
 		return api.SecretEntryResponse{}, err
 	}
 	code := base64.RawURLEncoding.EncodeToString(entropy)
 	hash := secretEntryCodeHash(code)
-	ticket := secretEntryTicket{Purpose: secretEntryPurpose, ExchangeHash: hex.EncodeToString(hash), AccountID: acct.ID, AppID: app.ID, App: app.Slug, Scope: scope, Key: input.Key, Reason: input.Reason, ExpiresAt: time.Now().UTC().Add(secretEntryTTL)}
+	ticket := secretEntryTicket{Purpose: secretEntryPurpose, ExchangeHash: hex.EncodeToString(hash), AccountID: acct.ID, ActorID: actor.ID, AppID: app.ID, App: app.Slug, Scope: scope, Key: input.Key, Reason: input.Reason, ExpiresAt: time.Now().UTC().Add(secretEntryTTL)}
+	if key != nil {
+		ticket.KeyID, ticket.KeyAccountID = key.ID, key.AccountID
+	}
 	data, err := json.Marshal(ticket)
 	if err != nil {
 		return api.SecretEntryResponse{}, err
@@ -148,17 +186,18 @@ func (s *server) secretEntryStatus(w http.ResponseWriter, r *http.Request, acct 
 	}
 	ticket, err := s.openSecretEntryTicket(input.Ticket)
 	hash := secretEntryCodeHash(input.ExchangeCode)
-	if err != nil || ticket.AccountID != acct.ID || ticket.AppID != app.ID || ticket.ExchangeHash != hex.EncodeToString(hash) {
+	actor := actorAccount(r, acct)
+	if err != nil || ticket.AccountID != acct.ID || ticket.actorID() != actor.ID || ticket.AppID != app.ID || ticket.ExchangeHash != hex.EncodeToString(hash) {
 		api.WriteProblem(w, secretEntryUnavailable())
 		return
 	}
 	_, claimedBy, err := s.store.PeekCliAuthCode(r.Context(), hash)
-	if err != nil || (claimedBy != "" && claimedBy != acct.ID) {
+	if err != nil || (claimedBy != "" && claimedBy != actor.ID) {
 		api.WriteProblem(w, secretEntryUnavailable())
 		return
 	}
 	status := api.SecretEntryPending
-	if claimedBy == acct.ID {
+	if claimedBy == actor.ID {
 		status = api.SecretEntrySet
 	}
 	writeJSON(w, http.StatusOK, api.SecretEntryStatus{Status: status, App: ticket.App, Key: ticket.Key, Scope: ticket.Scope, ExpiresAt: ticket.ExpiresAt.Format(time.RFC3339Nano)})

@@ -78,8 +78,7 @@ def sync_detailed(
      Returns the org row + the caller's role on the org. Authz:
     any active member of the org (`org.view`); non-members see
     403 `org_role_forbidden`. Unknown slugs are 404
-    `org_not_found` (IDOR-safe — same wire shape as the
-    pkg/authz.LoadOrg middleware).
+    `org_not_found` (IDOR-safe — the same wire shape as every org route).
 
     Args:
         slug (str):
@@ -113,8 +112,7 @@ def sync(
      Returns the org row + the caller's role on the org. Authz:
     any active member of the org (`org.view`); non-members see
     403 `org_role_forbidden`. Unknown slugs are 404
-    `org_not_found` (IDOR-safe — same wire shape as the
-    pkg/authz.LoadOrg middleware).
+    `org_not_found` (IDOR-safe — the same wire shape as every org route).
 
     Args:
         slug (str):
@@ -143,8 +141,7 @@ async def asyncio_detailed(
      Returns the org row + the caller's role on the org. Authz:
     any active member of the org (`org.view`); non-members see
     403 `org_role_forbidden`. Unknown slugs are 404
-    `org_not_found` (IDOR-safe — same wire shape as the
-    pkg/authz.LoadOrg middleware).
+    `org_not_found` (IDOR-safe — the same wire shape as every org route).
 
     Args:
         slug (str):
@@ -176,8 +173,7 @@ async def asyncio(
      Returns the org row + the caller's role on the org. Authz:
     any active member of the org (`org.view`); non-members see
     403 `org_role_forbidden`. Unknown slugs are 404
-    `org_not_found` (IDOR-safe — same wire shape as the
-    pkg/authz.LoadOrg middleware).
+    `org_not_found` (IDOR-safe — the same wire shape as every org route).
 
     Args:
         slug (str):

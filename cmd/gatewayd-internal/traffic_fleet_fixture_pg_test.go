@@ -269,11 +269,18 @@ type fleetDaemonResponse struct {
 }
 
 func requestFleetDaemon(ctx context.Context, endpoint, host, path string) (fleetDaemonResponse, error) {
+	return requestFleetDaemonHeader(ctx, endpoint, host, path, nil)
+}
+
+func requestFleetDaemonHeader(ctx context.Context, endpoint, host, path string, header http.Header) (fleetDaemonResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+path, nil)
 	if err != nil {
 		return fleetDaemonResponse{}, err
+	}
+	for key, values := range header {
+		request.Header[key] = values
 	}
 	request.Host = host
 	started := time.Now()

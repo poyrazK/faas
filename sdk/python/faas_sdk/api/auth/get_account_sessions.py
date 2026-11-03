@@ -71,7 +71,7 @@ def sync_detailed(
     """List active sessions for the calling account.
 
      Returns one `SessionInfo` row per active login (one row
-    per dashboard login; ADR-039 / IAM-3). Newest first. The
+    per dashboard login). Newest first. The
     row whose `id` matches the calling cookie's `sid` is
     flagged `current_session: true`. Revoked rows are NOT
     returned; the `audit-events` endpoint is the timeline
@@ -107,7 +107,7 @@ def sync(
     """List active sessions for the calling account.
 
      Returns one `SessionInfo` row per active login (one row
-    per dashboard login; ADR-039 / IAM-3). Newest first. The
+    per dashboard login). Newest first. The
     row whose `id` matches the calling cookie's `sid` is
     flagged `current_session: true`. Revoked rows are NOT
     returned; the `audit-events` endpoint is the timeline
@@ -138,7 +138,7 @@ async def asyncio_detailed(
     """List active sessions for the calling account.
 
      Returns one `SessionInfo` row per active login (one row
-    per dashboard login; ADR-039 / IAM-3). Newest first. The
+    per dashboard login). Newest first. The
     row whose `id` matches the calling cookie's `sid` is
     flagged `current_session: true`. Revoked rows are NOT
     returned; the `audit-events` endpoint is the timeline
@@ -172,7 +172,7 @@ async def asyncio(
     """List active sessions for the calling account.
 
      Returns one `SessionInfo` row per active login (one row
-    per dashboard login; ADR-039 / IAM-3). Newest first. The
+    per dashboard login). Newest first. The
     row whose `id` matches the calling cookie's `sid` is
     flagged `current_session: true`. Revoked rows are NOT
     returned; the `audit-events` endpoint is the timeline

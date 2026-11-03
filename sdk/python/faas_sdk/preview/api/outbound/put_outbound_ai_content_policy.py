@@ -92,15 +92,15 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Replace an AI integration's content guardrails.
 
-     Requires MFA and deploy-write scope (ADR-997). An active policy requires an AI provider; with one,
-    request bodies the gateway cannot read are refused.
+     Requires MFA and deploy-write scope. An active policy requires an AI provider; with one, request
+    bodies the gateway cannot read are refused.
 
     Args:
         integration (UUID):
-        body (OutboundAIContentPolicy): An integration's content guardrails (ADR-997). Each
-            detector is off, redacts its findings before the request reaches the provider, or blocks
-            the request. A request containing a blocked term, compared without case, is blocked. The
-            gateway checks the string values of JSON bodies and the text fields of forms.
+        body (OutboundAIContentPolicy): An integration's content guardrails. Each detector is off,
+            redacts its findings before the request reaches the provider, or blocks the request. A
+            request containing a blocked term, compared without case, is blocked. The gateway checks
+            the string values of JSON bodies and the text fields of forms.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,15 +130,15 @@ def sync(
 ) -> Any | Problem | None:
     """Replace an AI integration's content guardrails.
 
-     Requires MFA and deploy-write scope (ADR-997). An active policy requires an AI provider; with one,
-    request bodies the gateway cannot read are refused.
+     Requires MFA and deploy-write scope. An active policy requires an AI provider; with one, request
+    bodies the gateway cannot read are refused.
 
     Args:
         integration (UUID):
-        body (OutboundAIContentPolicy): An integration's content guardrails (ADR-997). Each
-            detector is off, redacts its findings before the request reaches the provider, or blocks
-            the request. A request containing a blocked term, compared without case, is blocked. The
-            gateway checks the string values of JSON bodies and the text fields of forms.
+        body (OutboundAIContentPolicy): An integration's content guardrails. Each detector is off,
+            redacts its findings before the request reaches the provider, or blocks the request. A
+            request containing a blocked term, compared without case, is blocked. The gateway checks
+            the string values of JSON bodies and the text fields of forms.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,15 +163,15 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Replace an AI integration's content guardrails.
 
-     Requires MFA and deploy-write scope (ADR-997). An active policy requires an AI provider; with one,
-    request bodies the gateway cannot read are refused.
+     Requires MFA and deploy-write scope. An active policy requires an AI provider; with one, request
+    bodies the gateway cannot read are refused.
 
     Args:
         integration (UUID):
-        body (OutboundAIContentPolicy): An integration's content guardrails (ADR-997). Each
-            detector is off, redacts its findings before the request reaches the provider, or blocks
-            the request. A request containing a blocked term, compared without case, is blocked. The
-            gateway checks the string values of JSON bodies and the text fields of forms.
+        body (OutboundAIContentPolicy): An integration's content guardrails. Each detector is off,
+            redacts its findings before the request reaches the provider, or blocks the request. A
+            request containing a blocked term, compared without case, is blocked. The gateway checks
+            the string values of JSON bodies and the text fields of forms.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,15 +199,15 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Replace an AI integration's content guardrails.
 
-     Requires MFA and deploy-write scope (ADR-997). An active policy requires an AI provider; with one,
-    request bodies the gateway cannot read are refused.
+     Requires MFA and deploy-write scope. An active policy requires an AI provider; with one, request
+    bodies the gateway cannot read are refused.
 
     Args:
         integration (UUID):
-        body (OutboundAIContentPolicy): An integration's content guardrails (ADR-997). Each
-            detector is off, redacts its findings before the request reaches the provider, or blocks
-            the request. A request containing a blocked term, compared without case, is blocked. The
-            gateway checks the string values of JSON bodies and the text fields of forms.
+        body (OutboundAIContentPolicy): An integration's content guardrails. Each detector is off,
+            redacts its findings before the request reaches the provider, or blocks the request. A
+            request containing a blocked term, compared without case, is blocked. The gateway checks
+            the string values of JSON bodies and the text fields of forms.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

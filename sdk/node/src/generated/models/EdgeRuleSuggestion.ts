@@ -3,12 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Single read-only candidate row in the dry-run response
- * (issue #975 item #2 D3 / ADR-126). Mirrors the
+ * Single read-only candidate row in the dry-run response. Mirrors the
  * create-edge-rule request body fields so the customer can
  * copy-paste the suggestion into the existing endpoint.
  * `kind` + `action` union shape matches the existing
- * `EdgeRule*Action` types in `pkg/api/dto.go`.
+ * `EdgeRule*Action` types.
  *
  */
 export type EdgeRuleSuggestion = {

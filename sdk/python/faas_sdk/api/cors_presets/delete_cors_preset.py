@@ -70,7 +70,7 @@ def sync_detailed(
      Removes the cors_presets row. The FK ON DELETE SET
     NULL on edge_rules.cors_preset_id clears every
     referencing rule's FK atomically with the preset's
-    deletion; the gatewayd-internal compile path fails
+    deletion; the gateway compile path fails
     closed (MergeCorsPresetIntoRule returns ErrNotFound)
     until the customer wires a new preset or inlines
     fallback values. The pgstore trigger fires
@@ -109,7 +109,7 @@ def sync(
      Removes the cors_presets row. The FK ON DELETE SET
     NULL on edge_rules.cors_preset_id clears every
     referencing rule's FK atomically with the preset's
-    deletion; the gatewayd-internal compile path fails
+    deletion; the gateway compile path fails
     closed (MergeCorsPresetIntoRule returns ErrNotFound)
     until the customer wires a new preset or inlines
     fallback values. The pgstore trigger fires
@@ -143,7 +143,7 @@ async def asyncio_detailed(
      Removes the cors_presets row. The FK ON DELETE SET
     NULL on edge_rules.cors_preset_id clears every
     referencing rule's FK atomically with the preset's
-    deletion; the gatewayd-internal compile path fails
+    deletion; the gateway compile path fails
     closed (MergeCorsPresetIntoRule returns ErrNotFound)
     until the customer wires a new preset or inlines
     fallback values. The pgstore trigger fires
@@ -180,7 +180,7 @@ async def asyncio(
      Removes the cors_presets row. The FK ON DELETE SET
     NULL on edge_rules.cors_preset_id clears every
     referencing rule's FK atomically with the preset's
-    deletion; the gatewayd-internal compile path fails
+    deletion; the gateway compile path fails
     closed (MergeCorsPresetIntoRule returns ErrNotFound)
     until the customer wires a new preset or inlines
     fallback values. The pgstore trigger fires

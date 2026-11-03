@@ -6,7 +6,7 @@ import type { OutboundAIReplayResult } from './OutboundAIReplayResult.js';
 import type { OutboundAIReplaySource } from './OutboundAIReplaySource.js';
 import type { OutboundAIReplayTarget } from './OutboundAIReplayTarget.js';
 /**
- * A replay of one captured call and, once done, its results in target order (ADR-997).
+ * A replay of one captured call and, once done, its results in target order.
  */
 export type OutboundAIReplay = {
   id: string;

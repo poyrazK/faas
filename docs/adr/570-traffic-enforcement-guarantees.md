@@ -141,6 +141,11 @@ deployment and port; this primes deployment weights outside the timed request.
 
 ## Shared traffic accounting
 
+Amended by ADR-20261027173012: for 5 minutes after the shared counter last
+decided a request on a gateway, a store error is decided by that gateway's
+own bucket (the limit holds per gateway); past that grace the refusal below
+applies.
+
 `[ratelimit] mode = "central"` is the daemon default and requires its Postgres
 pool. `local` remains an explicit operator/development exception; unknown
 values refuse startup. Central app/account/rule consumes are atomic. Store
@@ -158,6 +163,15 @@ but do not open the breaker: the next request must be able to verify counter
 table or row-lock recovery immediately. Neither path admits a local token or
 resets shared debt. Backends that cannot classify failures retain bounded
 consult backoff; caller cancellation does not open it.
+
+*Amendment 2026-10-28.* The app and account consume, including coalesced
+batches and their followers, has one second to complete; pre-auth and lease
+consults keep 250 ms. Connection acquisition stays bounded by 250 ms inside
+that budget, so a saturated pool still fails fast and opens the breaker.
+Before, one commit slower than 250 ms (a checkpoint or fsync stall, a
+row-lock wait) refused a customer request with `rate_limit_unavailable`/503
+even though the counter was healthy. A consume that does not finish within
+the budget still refuses; nothing is admitted unverified.
 
 ADR-104 consult coalescing preserves these rules for queued batches. Batch
 consumes and initial counter creation use SQLC, retain fractional refill and
@@ -256,6 +270,11 @@ Another account's broken free-form host match cannot block this tenant.
 Empty verified policies remain
 valid snapshots. Runtime response/span evidence records the digest.
 
+Amended by ADR-20261027085556: a request with no host, smoke, release or
+revision pin routes from its gateway's refreshed view of the app (owner,
+roster and release graph), refreshed every second and on notification, with
+a 5-minute outage grace. Pinned requests keep the per-request read below.
+
 Before public HTTP cache lookup or dispatch, release resolution, revision-pin
 eligibility, host-pinned deployment availability and scoped positive weights
 join one bounded read-only repeatable-read view. Owner identity is verified in
@@ -324,8 +343,10 @@ health and independent security generations can still refuse or cancel dispatch.
 These routing checks have local fixtures and Postgres evidence; deployed path,
 load and native lifecycle acceptance remain required.
 
-Ordinary policy updates fence new requests during convergence; an admitted
-request retains its snapshot. Emergency security revocation uses a separate
+Ordinary policy updates no longer fence new requests during convergence
+(ADR-20261101141123): each gateway serves its current rules until its apply,
+which the update waits for before returning; an admitted request retains its
+snapshot. Emergency security revocation uses a separate
 durable generation for an account, app or deployment. Account suspension/abuse
 hold, app deletion and deployment security quarantine advance that generation;
 release advances it again so a missed revoke/release pair cannot revive an old
@@ -1083,6 +1104,25 @@ policies before changing any row. Applies without policy changes keep their
 existing transaction. With these, every writer found by the 2026-10-26
 inventory of binding-table writes is guarded or explicitly exempt.
 
+### Follow-up: operator kill switches
+
+The revocation fence and the per-VM HTTP cap fail closed and were live for
+every account with no way to turn them off short of a release. Operator
+disable switches remain explicit, observable states, as the decision requires:
+
+- The platform flag `traffic_revocation_fence` defaults on. Turned off
+  platform-wide or for an account, gatewayd-internal skips enrollment for
+  those requests and stamps their answers with a `v1;fence-off` marker, which
+  the public edge passes unverified like the managed-realtime marker. The
+  compute gateway strips any guest copy first, so a guest cannot author it.
+  A missing account never reads as "off".
+- `FAAS_HTTP_ADMISSION=off` on vmmd lifts the cap and the plan requirement on
+  that node after a restart, while every exchange still holds a permit that
+  park, migration and retirement cancel. vmmd has no runtime flag watcher.
+
+`gateway_traffic_revocation_fence_off_total{path}`, the edge's unverified
+counter, the VM admission status and a startup warning report each state.
+
 ### Follow-up: bounded request decision evidence
 
 Ordinary response completion checks the attached budget's wall-clock expiry as
@@ -1647,8 +1687,9 @@ reads `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` (boolean, default off):
 - **off** — host ownership, route-target lookups and the compiled edge policy
   come from the existing route and edge-rule caches. Each request still pins
   one sealed copy of its cached host policy, so a refresh cannot change the
-  rules mid-request, and owner-scoped convergence fences still refuse requests
-  while a two-phase edge-rule mutation is in flight.
+  rules mid-request. A two-phase edge-rule mutation in flight no longer
+  refuses requests (ADR-20261101141123); its owner-scoped fence only refuses
+  a route rule whose target stopped resolving.
 - **on** — the authoritative snapshot path described above.
 
 Turning it on by default requires fleet load and Postgres-outage evidence;
@@ -1739,3 +1780,37 @@ Bounds and limits:
   consecutive releases have run with every member reporting the wiring, and
   not before rc.297. That is a separate change, with the release-compatibility
   tests updated to match.
+
+### Amendment: the binding guard is scoped to the hostnames a write changes (2026-10-27)
+
+[ADR 20261027163626](20261027163626-traffic-binding-guard-per-host.md)
+replaces the exclusive `gregale.traffic.global-routes.v1` lock with
+hierarchical per-name locks. The global key becomes their shared root. The
+guard analyses only hostnames whose claim changes, against the owned rules and
+the route candidates that can match them. The write-time guarantee, ceilings,
+error codes and the 2 s phase bound are unchanged. Until its switch is on, the
+sections above describe production.
+
+### Amendment: a timed-out policy check asks to be resent (2026-10-28)
+
+A policy check that runs out of time (the 2 s phase bound or the 1,750 ms SQL
+timeout, unit `milliseconds`) is not a verdict on the policy: on a busy control
+plane a deploy of an app with no edge rules was refused and passed on retry
+(H14-78). The release-guards drill on n2 hit it in every run, and once needed
+four sends while the app served about 30 requests a second. Its hint said to
+retry, but apid stored the 422 for the request's Idempotency-Key, and the CLI's
+deploy key is the deploy's content digest, so the same `gregale deploy` got the
+stored refusal back for 24 hours. Nothing retried it either.
+
+- The time-ceiling `traffic_policy_too_complex` problem carries `Retry-After`
+  (`api.TrafficPolicyAnalysisRetryAfter`, 2 s) and `retry_after_seconds`. Size
+  ceilings are unchanged and remain verdicts.
+- apid never stores a refusal (status ≥ 400) that carries `Retry-After` for
+  idempotent replay; like a 429 or 503 it releases the key, so the resend runs.
+- `api.Client` (the CLI) resends such a refusal after the wait, with the same
+  Idempotency-Key and Deployment-Attempt-ID, up to four sends. A refused send
+  saved nothing and left no submission receipt.
+- The Go, Node and Python SDK retry layers (opt-in) also resend it. They match
+  the code, not every 4xx with `Retry-After`: an MFA cooldown sends a 24-hour one.
+
+The bound, ceilings, codes and fail-closed behaviour are unchanged.

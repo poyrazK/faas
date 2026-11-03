@@ -95,8 +95,8 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Set or clear an app's own daily AI token limit on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled
-    input plus output tokens reach the limit; other apps are unaffected.
+     Requires MFA and deploy-write scope. Admission stops the app's new calls once its settled input plus
+    output tokens reach the limit; other apps are unaffected.
 
     Args:
         slug (str):
@@ -134,8 +134,8 @@ def sync(
 ) -> Any | Problem | None:
     """Set or clear an app's own daily AI token limit on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled
-    input plus output tokens reach the limit; other apps are unaffected.
+     Requires MFA and deploy-write scope. Admission stops the app's new calls once its settled input plus
+    output tokens reach the limit; other apps are unaffected.
 
     Args:
         slug (str):
@@ -168,8 +168,8 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Set or clear an app's own daily AI token limit on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled
-    input plus output tokens reach the limit; other apps are unaffected.
+     Requires MFA and deploy-write scope. Admission stops the app's new calls once its settled input plus
+    output tokens reach the limit; other apps are unaffected.
 
     Args:
         slug (str):
@@ -205,8 +205,8 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Set or clear an app's own daily AI token limit on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-990). Admission stops the app's new calls once its settled
-    input plus output tokens reach the limit; other apps are unaffected.
+     Requires MFA and deploy-write scope. Admission stops the app's new calls once its settled input plus
+    output tokens reach the limit; other apps are unaffected.
 
     Args:
         slug (str):

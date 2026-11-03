@@ -48,6 +48,39 @@ func TestMintAndVerify(t *testing.T) {
 	}
 }
 
+// A configured lifetime above five minutes is capped for app tokens too:
+// a cloud trusting the issuer would accept a copied token for its whole
+// stated life (2026-10-27 audit).
+func TestMintCapsAConfiguredLifetimeAtFiveMinutes(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := NewSigner(key, DefaultIssuer, "kid-1", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	tok, err := signer.Mint(now, uuid.NewString(), uuid.NewString(), uuid.NewString(), "sts.amazonaws.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.ExpiresIn != int64(DefaultTokenTTL/time.Second) {
+		t.Fatalf("expires_in = %d, want %d", tok.ExpiresIn, int64(DefaultTokenTTL/time.Second))
+	}
+	parsed, err := jwt.ParseSigned(tok.AccessToken, []jose.SignatureAlgorithm{jose.RS256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims jwt.Claims
+	if err := parsed.Claims(&key.PublicKey, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if got := claims.Expiry.Time().Sub(claims.IssuedAt.Time()); got != DefaultTokenTTL {
+		t.Fatalf("token lifetime = %v, want %v", got, DefaultTokenTTL)
+	}
+}
+
 func TestMintExecutionUsesDistinctClaimsAndCapsLifetime(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

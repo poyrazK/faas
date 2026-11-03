@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -47,6 +48,10 @@ func (s *server) approveProjectEnvironment(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, problem)
 				return
 			}
+		}
+		if problem := s.promotionApprovalByKeyProblem(r, acct, projectSlug, environment, promotionToken); problem != nil {
+			api.WriteProblem(w, problem)
+			return
 		}
 		approvalToken, approval, problem := s.issueProjectEnvironmentPromotionApproval(r.Context(), acct, projectSlug, environment, promotionToken)
 		if problem != nil {
@@ -87,6 +92,21 @@ func (s *server) getProjectEnvironmentApprovalStatus(w http.ResponseWriter, r *h
 		response.ConsumedAt = approval.ConsumedAt.UTC().Format(time.RFC3339)
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// promotionApprovalByKeyProblem refuses an API key or token's approval of a
+// protected production promotion that stands in for an app's release
+// approval policy (ADR-20261020085706 amendment 9). A person's approval is
+// unaffected, and so is a key's when no promoted app has a policy.
+func (s *server) promotionApprovalByKeyProblem(r *http.Request, acct state.Account, projectSlug, environment, promotionToken string) *api.Problem {
+	if p, ok := principalFrom(r); !ok || p.Key == nil {
+		return nil
+	}
+	plan, problem := s.validateProjectEnvironmentPromotionApproval(r.Context(), acct, projectSlug, environment, promotionToken)
+	if problem != nil {
+		return problem
+	}
+	return s.promotionApprovalKeyProblem(r, plan, environment)
 }
 
 func (s *server) issueProjectEnvironmentPromotionApproval(ctx context.Context, acct state.Account, projectSlug, environment, promotionToken string) (string, state.ProjectEnvironmentApproval, *api.Problem) {
@@ -139,15 +159,20 @@ func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct stat
 	}
 	approvalToken := base64.RawURLEncoding.EncodeToString(raw)
 	now := time.Now().UTC()
+	approver := acct.ID
+	if actor, _, ok := middleware.AccountFromCtx(ctx); ok {
+		approver = actor.ID
+	}
 	approval, err := s.store.CreateProjectEnvironmentApproval(ctx, state.ProjectEnvironmentApproval{
-		AccountID:         acct.ID,
-		ProjectSlug:       projectSlug,
-		EnvironmentSlug:   environment,
-		TokenKind:         tokenKind,
-		PlanTokenHash:     hashProjectEnvironmentApprovalMaterial(token),
-		ApprovalTokenHash: hashProjectEnvironmentApprovalMaterial(approvalToken),
-		ExpiresAt:         now.Add(projectEnvironmentApprovalTTL),
-		CreatedAt:         now,
+		ApprovedByAccountID: approver,
+		AccountID:           acct.ID,
+		ProjectSlug:         projectSlug,
+		EnvironmentSlug:     environment,
+		TokenKind:           tokenKind,
+		PlanTokenHash:       hashProjectEnvironmentApprovalMaterial(token),
+		ApprovalTokenHash:   hashProjectEnvironmentApprovalMaterial(approvalToken),
+		ExpiresAt:           now.Add(projectEnvironmentApprovalTTL),
+		CreatedAt:           now,
 	})
 	if err != nil {
 		return "", state.ProjectEnvironmentApproval{}, api.ErrCapacity("could not create environment approval")

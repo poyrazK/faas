@@ -30,6 +30,8 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// DatabaseVMs enables database VMs on a database node (ADR-1027).
+	DatabaseVMs *DatabaseVMConfig `toml:"database_vms"`
 	// NativeProcessRecovery enables journal-backed launch and strict recovery.
 	// Experimental until the dedicated native VM/leak acceptance gates pass.
 	NativeProcessRecovery bool `toml:"native_process_recovery"`
@@ -133,8 +135,8 @@ type Config struct {
 	CPUTemplate string `toml:"cpu_template"`
 	// QuietPause enables ADR-1151 quiet pause: vmmd pauses an eligible
 	// instance's vCPUs between requests and resumes it on the next one.
-	// Off by default; schedd decides which instances are eligible.
-	// FAAS_QUIET_PAUSE overrides TOML.
+	// On by default (ADR-1151 amendment 2026-10-27); schedd decides which
+	// instances are eligible. FAAS_QUIET_PAUSE overrides TOML.
 	QuietPause bool `toml:"quiet_pause"`
 	// QuietPauseObserve runs quiet pause in observe mode: vmmd measures the
 	// pauses it would make (vmmd_quiet_pause_observed_*) and pauses nothing,
@@ -142,22 +144,59 @@ type Config struct {
 	// quiet_pause wins when both are set. Off by default.
 	// FAAS_QUIET_PAUSE_OBSERVE overrides TOML.
 	QuietPauseObserve bool `toml:"quiet_pause_observe"`
+	// AgentWaitPause enables the model-wait pause of agent runs
+	// (ADR-20261027090012): vmmd pauses a run VM while it waits on the
+	// outbound relay and nothing else, and resumes it on the relay's next
+	// bytes. schedd marks which runs are eligible. Off by default.
+	AgentWaitPause bool `toml:"agent_wait_pause"`
 	// InvokeHookBackoff stops per-request invoke extension events to an
 	// instance for extension.InvokeUnavailableBackoff after its guest reports
-	// that no extension endpoint is listening (ADR-20261025150000). Off by
-	// default; FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
+	// that no extension endpoint is listening (ADR-20261025150000). On by
+	// default (amendment 2026-10-27); FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
 	InvokeHookBackoff bool `toml:"invoke_hook_backoff"`
 	// BridgeStreamHeadroom lets vmmd open another HTTP/2 connection to an
 	// instance's stream bridge when one is at its stream cap instead of
 	// queueing requests, sizes the bridge's guest pool to that cap and
-	// shortens its guest dial timeout (ADR-20261026120000). Off by default;
-	// FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
+	// shortens its guest dial timeout (ADR-20261026120000). On by default
+	// (amendment 2026-10-27); FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
 	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
+	// StreamBridgeGOMAXPROCS and StreamBridgeGOGC set GOMAXPROCS and GOGC
+	// for the stream bridges vmmd starts from now on, one per instance.
+	// 0 keeps Go's default (one P per host CPU, GOGC=100). A bridge relays a
+	// single VM capped at one core, and Go's scheduler was 26–33% of the
+	// request path's daemon profiles on 2026-10-25, so a node A/B measures
+	// these before they get defaults. FAAS_STREAM_BRIDGE_GOMAXPROCS and
+	// FAAS_STREAM_BRIDGE_GOGC override TOML.
+	StreamBridgeGOMAXPROCS int `toml:"stream_bridge_gomaxprocs"`
+	StreamBridgeGOGC       int `toml:"stream_bridge_gogc"`
+	// LocalDataSocket serves this node's gatewayd-internal on
+	// api.VmmdLocalDataSocket: no TLS, only the gateway's uid by peer
+	// credentials and only its forwarding RPCs (ADR-20261030230157). Off by
+	// default; off also removes a socket an earlier run left, so the gateway
+	// goes back to mTLS. FAAS_VMMD_LOCAL_DATA_SOCKET overrides TOML.
+	LocalDataSocket bool `toml:"local_data_socket"`
 	// RequireSecretBinding refuses runtime secret envelopes that carry no
 	// account binding (ADR-20261023173624, contract step). Off by default;
 	// the seal_domains role turns it on once every stored envelope is
 	// bound. FAAS_RUNTIME_SECRET_BINDING_REQUIRED overrides TOML.
 	RequireSecretBinding bool `toml:"require_secret_binding"`
+	// RuntimeSecretSignatureKeysFile holds the public keys apid's runtime
+	// secret signatures verify against (ADR 20261028161502, amendment 1).
+	// Set, vmmd refuses a runtime secret whose signature does not verify.
+	// It needs the compute-node database the signatures live in.
+	// FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE overrides TOML.
+	RuntimeSecretSignatureKeysFile string `toml:"runtime_secret_signature_keys_file"`
+	// RequireRuntimeSecretSignatures also refuses unsigned runtime secrets
+	// (the contract step). It needs RuntimeSecretSignatureKeysFile.
+	// FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED overrides TOML.
+	RequireRuntimeSecretSignatures bool `toml:"require_runtime_secret_signatures"`
+	// RuntimeSealDomainContracted drops the fleet and host identities
+	// (ADR 20261022111812, contract step): vmmd opens runtime secrets with
+	// the runtime seal domain alone and registry passwords with the build
+	// domain alone, and refuses to start without both. The seal_domains
+	// role sets it once `seal-domain migrate --check` passes for both.
+	// FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED overrides TOML.
+	RuntimeSealDomainContracted bool `toml:"runtime_seal_domain_contracted"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
 	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
@@ -411,6 +450,11 @@ type ComputeNodeConfig struct {
 	// rebuilds. Both are supplied by the vmmd systemd egress drop-in.
 	PrivateIngressCIDRs    []string `toml:"private_ingress_cidrs"`
 	PrivateIngressTCPPorts []int    `toml:"private_ingress_tcp_ports"`
+	// PublicIngressCIDRs, when set, restricts the public 80/443 accept to
+	// these sources, as the nftables role does for
+	// faas_cloudflare_origin_only. The vmmd egress drop-in supplies
+	// Cloudflare's pinned ranges (ADR-20261102081618 §2).
+	PublicIngressCIDRs []string `toml:"public_ingress_cidrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
 	// `tailscale ip -4` (Mega-PR-B Commit 3). Defaults to
@@ -439,6 +483,13 @@ type ComputeNodeConfig struct {
 	// node records compute_nodes.service_address_ready_at so service DNS only
 	// hands addresses to instances whose netns carries the admission.
 	ServiceTCPEnabled bool `toml:"service_tcp_enabled"`
+	// DatabaseRouteEnabled turns on the managed-database route (ADR-1027):
+	// every new netns admits guest TCP to api.DatabaseRouteAddress on the
+	// PostgreSQL port, and the runtime host policy DNATs it onto the
+	// gatewayd-internal forwarder that relays to pgproxyd. Pair with the
+	// nftables role's faas_database_route_enabled and gatewayd-internal's
+	// database_route_listen.
+	DatabaseRouteEnabled bool `toml:"database_route_enabled"`
 	// PrivateNetworkTransportInterface is the underlay NIC used for VXLAN
 	// packets. Empty falls back to OverlayInterface, which keeps the common
 	// Tailscale/WireGuard deployment concise.
@@ -606,6 +657,15 @@ func LoadConfig(path string) (*Config, error) {
 		// default. Bases without the pmem label, filesystems without
 		// reflink and native recovery all keep virtio-blk.
 		PmemBaseDir: fcvm.PmemBaseDirAuto,
+		// On by default since the 2026-10-27 production measurements
+		// (ADR-1151, ADR-20261025150000 and ADR-20261026120000
+		// amendments): release rollouts re-render vmmd.toml from the
+		// manifest, so a node-local TOML edit could not keep them on.
+		// vmmd.toml or FAAS_QUIET_PAUSE / FAAS_INVOKE_HOOK_BACKOFF /
+		// FAAS_BRIDGE_STREAM_HEADROOM = false turns one off.
+		QuietPause:           true,
+		InvokeHookBackoff:    true,
+		BridgeStreamHeadroom: true,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from storagekey.Kernel(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
@@ -781,6 +841,9 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PrivateIngressCIDRs = splitNonEmpty(v)
 	}
+	if v := os.Getenv("FAAS_PUBLIC_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PublicIngressCIDRs = splitNonEmpty(v)
+	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_TCP_PORTS"); v != "" {
 		ports, perr := parseTCPPorts(v)
 		if perr != nil {
@@ -813,6 +876,15 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_SERVICE_TCP_ENABLED %q invalid: %w", v, perr)
 		}
 		c.ComputeNode.ServiceTCPEnabled = parsed
+	}
+	// ADR-1027: Ansible sets it from the manifest's managed_postgres.app_route,
+	// with the nftables role's faas_database_route_enabled.
+	if v := os.Getenv("FAAS_VMMD_DATABASE_ROUTE_ENABLED"); v != "" {
+		parsed, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_DATABASE_ROUTE_ENABLED %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.DatabaseRouteEnabled = parsed
 	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE"); v != "" {
 		c.ComputeNode.PrivateNetworkTransportInterface = v
@@ -881,6 +953,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.QuietPauseObserve = enabled
 	}
+	if v := os.Getenv("FAAS_VMMD_AGENT_WAIT_PAUSE"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_AGENT_WAIT_PAUSE must be a boolean (got %q)", v)
+		}
+		c.AgentWaitPause = enabled
+	}
 	if v, ok := os.LookupEnv("FAAS_CPU_TEMPLATE"); ok {
 		c.CPUTemplate = strings.TrimSpace(v)
 	}
@@ -894,12 +973,57 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.RequireSecretBinding = required
 	}
+	if v, ok := os.LookupEnv("FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE"); ok {
+		c.RuntimeSecretSignatureKeysFile = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED"); v != "" {
+		required, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED must be a boolean (got %q)", v)
+		}
+		c.RequireRuntimeSecretSignatures = required
+	}
+	if v := os.Getenv("FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED"); v != "" {
+		contracted, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED must be a boolean (got %q)", v)
+		}
+		c.RuntimeSealDomainContracted = contracted
+	}
+	if c.RequireRuntimeSecretSignatures && c.RuntimeSecretSignatureKeysFile == "" {
+		return nil, errors.New("vmmd: requiring runtime secret signatures needs runtime_secret_signature_keys_file (FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE)")
+	}
 	if v := os.Getenv("FAAS_BRIDGE_STREAM_HEADROOM"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
 		if perr != nil {
 			return nil, fmt.Errorf("vmmd: FAAS_BRIDGE_STREAM_HEADROOM must be a boolean (got %q)", v)
 		}
 		c.BridgeStreamHeadroom = enabled
+	}
+	for _, knob := range []struct {
+		env, key string
+		value    *int
+	}{
+		{"FAAS_STREAM_BRIDGE_GOMAXPROCS", "stream_bridge_gomaxprocs", &c.StreamBridgeGOMAXPROCS},
+		{"FAAS_STREAM_BRIDGE_GOGC", "stream_bridge_gogc", &c.StreamBridgeGOGC},
+	} {
+		if v := os.Getenv(knob.env); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil {
+				return nil, fmt.Errorf("vmmd: %s must be an integer (got %q)", knob.env, v)
+			}
+			*knob.value = n
+		}
+		if *knob.value < 0 {
+			return nil, fmt.Errorf("vmmd: %s (%s) must be 0 for Go's default or a positive integer (got %d)", knob.key, knob.env, *knob.value)
+		}
+	}
+	if v := os.Getenv("FAAS_VMMD_LOCAL_DATA_SOCKET"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_LOCAL_DATA_SOCKET must be a boolean (got %q)", v)
+		}
+		c.LocalDataSocket = enabled
 	}
 	if v := os.Getenv("FAAS_INVOKE_HOOK_BACKOFF"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
@@ -1073,6 +1197,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: private_ingress_tcp_ports contains invalid TCP port %d", port)
 		}
 	}
+	for i, raw := range c.ComputeNode.PublicIngressCIDRs {
+		prefix, perr := netip.ParsePrefix(strings.TrimSpace(raw))
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: public_ingress_cidrs[%d] %q invalid: %w", i, raw, perr)
+		}
+		c.ComputeNode.PublicIngressCIDRs[i] = prefix.Masked().String()
+	}
 	return c, nil
 }
 
@@ -1205,8 +1336,16 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 			Ports:  append([]int(nil), cfg.PrivateIngressTCPPorts...),
 		})
 	}
+	for _, raw := range cfg.PublicIngressCIDRs {
+		if prefix, err := netip.ParsePrefix(raw); err == nil {
+			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())
+		}
+	}
 	if cfg.ServiceTCPEnabled {
 		policy.ServiceTCP = netns.NewServiceTCPHostPolicy(api.ServiceAddressCIDR(), bridge.Masked().Addr().Next(), api.ServiceTCPProxyPort, serviceHTTPS)
+	}
+	if cfg.DatabaseRouteEnabled {
+		policy.DatabaseRoute = netns.NewDatabaseRouteHostPolicy(api.DatabaseRouteAddress(), bridge.Masked().Addr().Next(), api.DatabaseRouteProxyPort)
 	}
 	return policy
 }

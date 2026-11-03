@@ -64,7 +64,7 @@ class InstanceResponse:
         | None
         | Unset
     ) = UNSET
-    """Closed-set execution mode for this instance (ADR-137 §Decision 1)."""
+    """Closed-set execution mode for this instance."""
     lifecycle_failure_reason: (
         InstanceResponseLifecycleFailureReasonType1
         | InstanceResponseLifecycleFailureReasonType2Type1
@@ -72,7 +72,7 @@ class InstanceResponse:
         | None
         | Unset
     ) = UNSET
-    """Reason for the most recent terminal transition (ADR-138 §Decision 2). null when still running."""
+    """Reason for the most recent terminal transition. null when still running."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

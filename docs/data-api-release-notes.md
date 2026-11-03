@@ -3,6 +3,34 @@
 This change completes the current core Data API development slice. It does not
 publish artifacts or establish hosted staging acceptance.
 
+## Hosted engine fixes: TLS roots and snapshot-safe sessions
+
+[ADR 20261026131131](adr/20261026131131-data-api-hosted-tls-roots-and-snapshot-sessions.md)
+fixes two faults that only a hosted database exposes:
+
+- **Remote databases.** PostgREST now verifies the database with Node's root
+  store; before, `sslmode=verify-full` without a root file refused every
+  remote database and the first deploy never became ready.
+- **Wakes.** The runtime stops PostgREST before a snapshot and starts it after
+  a restore, and requests wait for it, so the first request after a wake no
+  longer fails on a dead captured session. `data-api create` and `data-api
+  deploy` register the hooks.
+
+## Managed databases reachable on every plan
+
+[ADR 20261026150000](adr/20261026150000-managed-database-binding-egress.md):
+a managed PostgreSQL binding opens its database's port to that database's own
+addresses for the bound app, on every plan, so `data-api create` works on
+Hobby. Other destinations on 5432 still need Pro or Scale egress ports.
+
+## Row-level security required for signed-in requests
+
+[ADR 20261026140223](adr/20261026140223-data-api-requires-row-level-security.md):
+signed-in requests reach only RLS tables and security-invoker views (target,
+embeddings and computed relationships); others answer `403 rls_required`.
+Owners exempt intentionally shared relations with `data-api configure
+--allow-without-rls`, or `allow_without_rls` in the dev config.
+
 ## Public reads, server keys, aggregates, single-app projects and Python/Go clients
 
 [ADR 20261018170742](adr/20261018170742-data-api-access-modes-and-clients.md)
@@ -68,6 +96,12 @@ closes five product gaps, all opt-in:
   `storage_objects` decide every upload, download and removal, so file lists
   are ordinary queries and live reads. `@gregale/data` adds
   `createStorageClient`.
+- **Change hooks.** `gregale data-api hooks sql` adds a change event table
+  and `gregale_hooks.enable()` hooks tables; `hooks enable` publishes every
+  committed insert, update and delete as an event from the Data API app's
+  source. Any app subscribes with `event_triggers` or a workflow trigger, with
+  the router's retries, dead letters and per-row ordering
+  ([ADR 20261022121642](adr/20261022121642-data-api-change-hooks.md)).
 
 Every request now carries a gateway-owned `gregale_access` claim (`user`,
 `anonymous` or `server`) for policies. Logs and `data-api diagnostics` report

@@ -16,19 +16,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func validateAccountReleaseWebhookFilter(events []string) *api.Problem {
-	if len(events) == 0 || len(events) > len(api.AllowedAccountReleaseWebhookEvents) {
-		return api.ErrAppWebhookInvalid("event_filter must contain 1–5 account events")
+// validateAccountReleaseWebhookFilter accepts release events, and agent run
+// events for an account in the agent_runs rollout (ADR-20261027090010 §8). Outside
+// it the agent events are rejected like any unknown event.
+func validateAccountReleaseWebhookFilter(events []string, agentEvents bool) *api.Problem {
+	vocabulary := api.AllowedAccountReleaseWebhookEvents
+	if agentEvents {
+		vocabulary = append(append([]string{}, vocabulary...), api.AllowedAccountAgentWebhookEvents...)
 	}
-	allowed := make(map[string]struct{}, len(api.AllowedAccountReleaseWebhookEvents))
-	for _, event := range api.AllowedAccountReleaseWebhookEvents {
+	if len(events) == 0 || len(events) > len(vocabulary) {
+		return api.ErrAppWebhookInvalid(fmt.Sprintf("event_filter must contain 1–%d account events", len(vocabulary)))
+	}
+	allowed := make(map[string]struct{}, len(vocabulary))
+	for _, event := range vocabulary {
 		allowed[event] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(events))
 	for _, event := range events {
 		if _, ok := allowed[event]; !ok {
 			return api.ErrAppWebhookInvalid(fmt.Sprintf("event %q is not an account event; allowed: %s", event,
-				strings.Join(api.AllowedAccountReleaseWebhookEvents, ", ")))
+				strings.Join(vocabulary, ", ")))
 		}
 		if _, duplicate := seen[event]; duplicate {
 			return api.ErrAppWebhookInvalid(fmt.Sprintf("event %q is duplicated", event))
@@ -102,7 +109,7 @@ func (s *server) createAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	input, prob := accountReleaseWebhookInput(r.Context(), acct.ID, req)
+	input, prob := accountReleaseWebhookInput(r.Context(), acct.ID, req, s.agentStepsAllowed(acct))
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -118,11 +125,11 @@ func (s *server) createAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusCreated, accountReleaseWebhookResponse(row))
 }
 
-func accountReleaseWebhookInput(ctx context.Context, accountID string, req api.CreateAccountReleaseWebhookRequest) (state.AppWebhook, *api.Problem) {
+func accountReleaseWebhookInput(ctx context.Context, accountID string, req api.CreateAccountReleaseWebhookRequest, agentEvents bool) (state.AppWebhook, *api.Problem) {
 	if prob := validateWebhookURL(req.TargetURL); prob != nil {
 		return state.AppWebhook{}, prob
 	}
-	if prob := validateAccountReleaseWebhookFilter(req.EventFilter); prob != nil {
+	if prob := validateAccountReleaseWebhookFilter(req.EventFilter, agentEvents); prob != nil {
 		return state.AppWebhook{}, prob
 	}
 	if prob := validateWebhookRetryPolicy(req.RetryPolicy); prob != nil {
@@ -194,7 +201,7 @@ func (s *server) updateAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 	if _, ok := s.accountReleaseWebhookByRequest(w, r, acct); !ok {
 		return
 	}
-	params, prob := accountReleaseWebhookUpdateParams(r.Context(), req)
+	params, prob := accountReleaseWebhookUpdateParams(r.Context(), req, s.agentStepsAllowed(acct))
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -215,7 +222,7 @@ func (s *server) updateAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, accountReleaseWebhookResponse(row))
 }
 
-func accountReleaseWebhookUpdateParams(ctx context.Context, req api.UpdateAccountReleaseWebhookRequest) (state.UpdateAppWebhookParams, *api.Problem) {
+func accountReleaseWebhookUpdateParams(ctx context.Context, req api.UpdateAccountReleaseWebhookRequest, agentEvents bool) (state.UpdateAppWebhookParams, *api.Problem) {
 	p := state.UpdateAppWebhookParams{}
 	if req.TargetURL != nil {
 		if prob := validateWebhookURL(*req.TargetURL); prob != nil {
@@ -227,7 +234,7 @@ func accountReleaseWebhookUpdateParams(ctx context.Context, req api.UpdateAccoun
 		p.TargetURL = req.TargetURL
 	}
 	if req.EventFilter != nil {
-		if prob := validateAccountReleaseWebhookFilter(*req.EventFilter); prob != nil {
+		if prob := validateAccountReleaseWebhookFilter(*req.EventFilter, agentEvents); prob != nil {
 			return p, prob
 		}
 		p.EventFilter = req.EventFilter

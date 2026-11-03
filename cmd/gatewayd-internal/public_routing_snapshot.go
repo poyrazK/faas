@@ -16,12 +16,26 @@ func newPublicRoutingPinner(store state.PublicRoutingSnapshotStore) gateway.Publ
 	return publicRoutingPinner(store, true)
 }
 
-// publicRoutingPinnerFor is the production wiring. With the default cached
-// host policy a host resolves from the route cache and carries no host-policy
-// snapshot to re-verify, so requiring one refused every public request. The
-// view still verifies the owner and pins the deployment roster.
+// publicRoutingPinnerFor is the exact read: one repeatable-read transaction
+// per request. With the default cached host policy a host resolves from the
+// route cache and carries no host-policy snapshot to re-verify, so requiring
+// one refused every public request. The view still verifies the owner and
+// pins the deployment roster.
 func publicRoutingPinnerFor(store state.PublicRoutingSnapshotStore, cachedHostPolicy bool) gateway.PublicRoutingPinner {
 	return publicRoutingPinner(store, !cachedHostPolicy)
+}
+
+// publicRoutingViewPinnerFor is the production wiring (ADR-20261027085556):
+// an ordinary request admits from the gateway's refreshed routing view, and a
+// pinned request keeps the exact read. The authoritative host policy
+// re-verifies the host in the same transaction as the roster, so it keeps the
+// exact read for every request.
+func publicRoutingViewPinnerFor(store state.PublicRoutingSnapshotStore, view gateway.PublicRoutingViewSource, cachedHostPolicy bool) gateway.PublicRoutingPinner {
+	exact := publicRoutingPinnerFor(store, cachedHostPolicy)
+	if !cachedHostPolicy || view == nil {
+		return exact
+	}
+	return gateway.NewViewPublicRoutingPinner(view, exact)
 }
 
 func publicRoutingPinner(store state.PublicRoutingSnapshotStore, verifyHostPolicy bool) gateway.PublicRoutingPinner {

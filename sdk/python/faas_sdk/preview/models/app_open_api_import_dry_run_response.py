@@ -15,8 +15,7 @@ T = TypeVar("T", bound="AppOpenAPIImportDryRunResponse")
 
 @_attrs_define
 class AppOpenAPIImportDryRunResponse:
-    """Response body for `POST /v1/apps/{slug}/openapi/dry-run`
-    (issue #975 item #2 D3 / ADR-126). Read-only; no persist,
+    """Response body for `POST /v1/apps/{slug}/openapi/dry-run`. Read-only; no persist,
     no `pg_notify`, no MFA. Empty `suggestions` array when the
     doc is fully covered by existing validate edge rules.
 

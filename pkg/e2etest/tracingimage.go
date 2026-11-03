@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 )
 
@@ -39,14 +38,14 @@ func (f *fixtureBinary) build(env, name string, dir ...string) ([]byte, error) {
 			return
 		}
 		defer func() { _ = os.RemoveAll(tmp) }()
-		_, thisFile, _, ok := runtime.Caller(0)
-		if !ok {
-			f.err = fmt.Errorf("%s fixture: cannot locate source", name)
+		src, err := CallerDir()
+		if err != nil {
+			f.err = fmt.Errorf("%s fixture: %w", name, err)
 			return
 		}
 		out := filepath.Join(tmp, name)
 		cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", out, ".")
-		cmd.Dir = filepath.Join(append([]string{filepath.Dir(thisFile)}, dir...)...)
+		cmd.Dir = filepath.Join(append([]string{src}, dir...)...)
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 		if output, err := cmd.CombinedOutput(); err != nil {
 			f.err = fmt.Errorf("%s fixture: build: %w\n%s", name, err, output)

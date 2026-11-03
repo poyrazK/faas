@@ -118,7 +118,11 @@ func (m *MemStore) ListAllSLOs(_ context.Context) ([]SLO, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []SLO
-	for _, slos := range m.appSLOs {
+	for appID, slos := range m.appSLOs {
+		// A deleted app's SLOs get no rollups (ADR-20261029203000).
+		if app, ok := m.apps[appID]; ok && app.Status == AppDeleted {
+			continue
+		}
 		out = append(out, slos...)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

@@ -14,6 +14,10 @@ export type RouteHealthCounts = {
    */
   p95_latency_ms?: number;
   /**
+   * Requests the p95 ranked. The canary guard ranks only requests that did not cold boot, and the latency minimum applies to this count. Omitted when every request was ranked.
+   */
+  latency_requests?: number;
+  /**
    * Synthetic probe responses rejected by customer auth gates (401/403). Only present in synthetic_windows; a window where at least half of either side was rejected is unknown (probe_unauthenticated).
    */
   unauthenticated?: number;

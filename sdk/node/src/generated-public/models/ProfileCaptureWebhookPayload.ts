@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ProfileCapture } from './ProfileCapture.js';
 /**
- * Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events (ADR-1155). Carries the capture record and its paths, never profile samples.
+ * Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events. Carries the capture record and its paths, never profile samples.
  */
 export type ProfileCaptureWebhookPayload = {
   version: number;

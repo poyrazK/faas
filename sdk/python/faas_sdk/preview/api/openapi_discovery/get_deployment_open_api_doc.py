@@ -76,13 +76,13 @@ def sync_detailed(
 ) -> Response[GetDeploymentOpenAPIDocResponse200 | Problem]:
     """Read the captured OpenAPI document for a deployment.
 
-     Returns the OpenAPI document the cold-boot probe captured from the customer's app (issue #975 item
-    #1, ADR-122). The probe runs unconditionally during cold boot; the apid surfaces the doc only on
-    paid plans (Hobby/Pro/Scale). Free customers receive 402 + openapi_docs_not_allowed. Cache-Control:
-    5 min. Response headers: X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated
-    (1 if clipped at 128 KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-
-    ID, X-OpenAPI-Doc-SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These
-    authenticated metadata headers bind the unchanged body to its capture.
+     Returns the OpenAPI document the cold-boot probe captured from the customer's app. The probe runs
+    unconditionally during cold boot; the API surfaces the doc only on paid plans (Hobby/Pro/Scale).
+    Free customers receive 402 + openapi_docs_not_allowed. Cache-Control: 5 min. Response headers:
+    X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated (1 if clipped at 128
+    KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-ID, X-OpenAPI-Doc-
+    SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These authenticated metadata headers
+    bind the unchanged body to its capture.
 
     Args:
         slug (str):
@@ -116,13 +116,13 @@ def sync(
 ) -> GetDeploymentOpenAPIDocResponse200 | Problem | None:
     """Read the captured OpenAPI document for a deployment.
 
-     Returns the OpenAPI document the cold-boot probe captured from the customer's app (issue #975 item
-    #1, ADR-122). The probe runs unconditionally during cold boot; the apid surfaces the doc only on
-    paid plans (Hobby/Pro/Scale). Free customers receive 402 + openapi_docs_not_allowed. Cache-Control:
-    5 min. Response headers: X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated
-    (1 if clipped at 128 KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-
-    ID, X-OpenAPI-Doc-SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These
-    authenticated metadata headers bind the unchanged body to its capture.
+     Returns the OpenAPI document the cold-boot probe captured from the customer's app. The probe runs
+    unconditionally during cold boot; the API surfaces the doc only on paid plans (Hobby/Pro/Scale).
+    Free customers receive 402 + openapi_docs_not_allowed. Cache-Control: 5 min. Response headers:
+    X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated (1 if clipped at 128
+    KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-ID, X-OpenAPI-Doc-
+    SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These authenticated metadata headers
+    bind the unchanged body to its capture.
 
     Args:
         slug (str):
@@ -151,13 +151,13 @@ async def asyncio_detailed(
 ) -> Response[GetDeploymentOpenAPIDocResponse200 | Problem]:
     """Read the captured OpenAPI document for a deployment.
 
-     Returns the OpenAPI document the cold-boot probe captured from the customer's app (issue #975 item
-    #1, ADR-122). The probe runs unconditionally during cold boot; the apid surfaces the doc only on
-    paid plans (Hobby/Pro/Scale). Free customers receive 402 + openapi_docs_not_allowed. Cache-Control:
-    5 min. Response headers: X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated
-    (1 if clipped at 128 KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-
-    ID, X-OpenAPI-Doc-SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These
-    authenticated metadata headers bind the unchanged body to its capture.
+     Returns the OpenAPI document the cold-boot probe captured from the customer's app. The probe runs
+    unconditionally during cold boot; the API surfaces the doc only on paid plans (Hobby/Pro/Scale).
+    Free customers receive 402 + openapi_docs_not_allowed. Cache-Control: 5 min. Response headers:
+    X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated (1 if clipped at 128
+    KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-ID, X-OpenAPI-Doc-
+    SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These authenticated metadata headers
+    bind the unchanged body to its capture.
 
     Args:
         slug (str):
@@ -189,13 +189,13 @@ async def asyncio(
 ) -> GetDeploymentOpenAPIDocResponse200 | Problem | None:
     """Read the captured OpenAPI document for a deployment.
 
-     Returns the OpenAPI document the cold-boot probe captured from the customer's app (issue #975 item
-    #1, ADR-122). The probe runs unconditionally during cold boot; the apid surfaces the doc only on
-    paid plans (Hobby/Pro/Scale). Free customers receive 402 + openapi_docs_not_allowed. Cache-Control:
-    5 min. Response headers: X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated
-    (1 if clipped at 128 KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-
-    ID, X-OpenAPI-Doc-SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These
-    authenticated metadata headers bind the unchanged body to its capture.
+     Returns the OpenAPI document the cold-boot probe captured from the customer's app. The probe runs
+    unconditionally during cold boot; the API surfaces the doc only on paid plans (Hobby/Pro/Scale).
+    Free customers receive 402 + openapi_docs_not_allowed. Cache-Control: 5 min. Response headers:
+    X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated (1 if clipped at 128
+    KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-ID, X-OpenAPI-Doc-
+    SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These authenticated metadata headers
+    bind the unchanged body to its capture.
 
     Args:
         slug (str):

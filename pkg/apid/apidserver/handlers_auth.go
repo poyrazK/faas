@@ -37,6 +37,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -112,12 +113,79 @@ func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, statu
 // faas_sid cookie and redirects to /dashboard/. On replay / expiry /
 // invalid, returns 410 Gone (semantically correct: the resource was
 // consumed). No information leak between cases — they all return 410.
+//
+// A link opened straight from a mail app or the address bar signs in at
+// once. Any other navigation, such as a click in webmail or a page that
+// sends the browser here, gets a confirm page instead, whose POST must come
+// from Gregale itself: otherwise any site could sign a visitor into an
+// account of its choosing with a link it requested for itself (login CSRF,
+// security audit 2026-10-27).
 func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
-	hash, ok := magicLinkHash(r.URL.Query().Get("token"))
+	token := r.URL.Query().Get("token")
+	hash, ok := magicLinkHash(token)
 	if !ok {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
+	if !directNavigation(r) {
+		writeMagicLinkConfirm(w, strings.TrimSpace(token))
+		return
+	}
+	a.consumeMagicLink(w, r, hash)
+}
+
+// verifyConfirmed handles POST /auth/verify, the confirm page's form; the
+// route only accepts it from a Gregale origin.
+func (a *authHandlers) verifyConfirmed(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return
+	}
+	hash, ok := magicLinkHash(r.PostForm.Get("token"))
+	if !ok {
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return
+	}
+	a.consumeMagicLink(w, r, hash)
+}
+
+// directNavigation reports whether the browser opened this URL itself
+// (address bar, bookmark, a desktop mail app) or from a Gregale page, rather
+// than following a link or redirect on another site. A client that sends no
+// Sec-Fetch-Site (old browsers, curl) is treated as direct.
+func directNavigation(r *http.Request) bool {
+	switch strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))) {
+	case "", "none", "same-origin":
+		return true
+	}
+	return false
+}
+
+var magicLinkConfirmPage = template.Must(template.New("magic-link-confirm").Parse(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in to Gregale</title></head>
+<body>
+<main>
+<h1>Finish signing in to Gregale</h1>
+<p>Continue only if you asked Gregale for this sign-in link just now. A link someone else sent you signs you in to their account.</p>
+<form method="post" action="/auth/verify">
+<input type="hidden" name="token" value="{{.}}">
+<button type="submit">Sign in</button>
+</form>
+</main>
+</body>
+</html>
+`))
+
+func writeMagicLinkConfirm(w http.ResponseWriter, token string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	_ = magicLinkConfirmPage.Execute(w, token)
+}
+
+func (a *authHandlers) consumeMagicLink(w http.ResponseWriter, r *http.Request, hash []byte) {
 	acct, problem := a.srv.magicLinkAccount(r.Context(), hash)
 	if problem != nil {
 		api.WriteProblemForRequest(w, r, problem)

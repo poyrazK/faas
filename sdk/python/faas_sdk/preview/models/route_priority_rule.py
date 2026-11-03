@@ -14,7 +14,7 @@ T = TypeVar("T", bound="RoutePriorityRule")
 
 @_attrs_define
 class RoutePriorityRule:
-    """Assigns a priority class to requests matching a method and path (ADR-978)."""
+    """Assigns a priority class to requests matching a method and path."""
 
     path: str
     """Route template such as /users/{id}, or an edge-rule glob such as /exports/*."""

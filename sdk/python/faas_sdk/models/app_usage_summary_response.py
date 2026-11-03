@@ -38,15 +38,15 @@ class AppUsageSummaryResponse:
     period_end: datetime.datetime
     """Half-open window's exclusive upper bound. UTC midnight snap (handler defaults)."""
     mb_seconds: int
-    """Sum of usage_minutes.mb_seconds for this app in the window (ADR-048 billable unit)."""
+    """Sum of usage_minutes.mb_seconds for this app in the window (billable unit)."""
     gb_hours: float
     """mb_seconds / 1024 / 3600, rounded to 6 decimal places (mirror of meter.MonthlyUsageGB)."""
     requests: int
     """Cumulative HTTP request count (informational; not billed)."""
     tx_bytes: int
-    """Cumulative HTTP response body bytes (ADR-046; diagnostic subset of net_tx_bytes; never add both)."""
+    """Cumulative HTTP response body bytes (diagnostic subset of net_tx_bytes; never add both)."""
     net_tx_bytes: int
-    """Canonical cumulative host-interface egress bytes for the window (ADR-046; includes framing)."""
+    """Canonical cumulative host-interface egress bytes for the window (includes framing)."""
     builder_seconds: float
     """Cumulative builder-microVM CPU-seconds (informational; surfaced as a sidebar line on the dashboard)."""
     cold_boot_count: int

@@ -64,19 +64,25 @@ const (
 // same posture as cmdCronsUpdate and cmdCronsRuns.
 //
 // Async-by-design: the POST returns 202 + request_id, and the row
-// becomes terminal only after schedd dispatches the cron. We never
-// poll from the explicit-ID path; interactive mode follows the request
-// after reviewing and confirming the selected task.
+// becomes terminal only after schedd delivers the run. Without --wait the
+// explicit-ID path prints the request id and exits 0 once the run is
+// queued; --wait follows it and exits 0 only when the run succeeded.
+// Interactive mode follows the request after reviewing and confirming the
+// selected task.
 func cmdCronsRun(args []string) int {
 	fs := newFlagSet("crons-run", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose a task, confirm one manual run, and follow its request")
+	wait := fs.Bool("wait", false, "follow the run and exit non-zero unless it succeeds")
 	app := fs.String("app", "", "app slug for interactive task selection")
-	timeout := fs.Duration("timeout", 2*time.Minute, "maximum interactive fire-now wait")
-	flags, pos := splitArgsForFlags(args, "interactive")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum follow duration with --wait or --interactive")
+	flags, pos := splitArgsForFlags(args, "interactive", "wait")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if *interactive {
+		if *wait {
+			return printErr("Invalid interactive run flags", fmt.Errorf("--interactive already follows the run; drop --wait"))
+		}
 		if len(pos) != 0 || *timeout <= 0 {
 			return printErr("Invalid interactive run flags", fmt.Errorf("use crons run --interactive with optional --app and a positive --timeout; choose the task in the flow"))
 		}
@@ -89,16 +95,19 @@ func cmdCronsRun(args []string) int {
 		}
 		return cmdCronsRunInteractive(slug, *timeout)
 	}
-	if logsFlagWasSet(fs, "app") || logsFlagWasSet(fs, "timeout") {
-		return printErr("Invalid run flags", fmt.Errorf("--app and --timeout require --interactive"))
+	if logsFlagWasSet(fs, "app") {
+		return printErr("Invalid run flags", fmt.Errorf("--app requires --interactive"))
+	}
+	if logsFlagWasSet(fs, "timeout") && !*wait || *timeout <= 0 {
+		return printErr("Invalid run flags", fmt.Errorf("--timeout must be positive and requires --wait or --interactive"))
 	}
 	if len(pos) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron run <id>\n")
 		return 1
 	}
 	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron run <id>\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -109,10 +118,16 @@ func cmdCronsRun(args []string) int {
 	if err != nil {
 		return printErr("Could not enqueue fire-now", err)
 	}
+	if *wait {
+		if !jsonOutput {
+			PrintProgress(osStdout, "Fire-now request enqueued: %s", resp.RequestID)
+		}
+		return followCronFireNowRequest(context.Background(), client, id, resp.RequestID, *timeout)
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Fire-now request enqueued: %s (poll via `gregale crons fire-now %s`)\n",
+	_, _ = fmt.Fprintf(osStdout, "Fire-now request enqueued: %s (poll via `gregale cron run get %s`)\n",
 		resp.RequestID, resp.RequestID)
 	return 0
 }
@@ -133,12 +148,12 @@ func cmdCronsFireNowGet(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron run get <request-id>\n")
 		return 1
 	}
 	requestID := pos[0]
 	if !fireNowRequestIDPattern.MatchString(requestID) {
-		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron run get <request-id>\n")
 		return 1
 	}
 	if *timeout <= 0 || logsFlagWasSet(fs, "timeout") && !*wait {
@@ -158,7 +173,7 @@ func cmdCronsFireNowGet(args []string) int {
 		// the id is a cron, say which command fires it.
 		if isNotFound(err) {
 			if cron, cronErr := client.GetCron(context.Background(), requestID); cronErr == nil && cron.ID != "" {
-				return printErr("Not a fire-now request", fmt.Errorf("%s is a cron rule; fire it with `gregale crons run %s`, which prints the request id that `crons fire-now` follows", requestID, requestID))
+				return printErr("Not a fire-now request", fmt.Errorf("%s is a cron rule; fire it with `gregale cron run %s`, which prints the request id that `crons fire-now` follows", requestID, requestID))
 			}
 		}
 		return printErr("Could not load fire-now request", err)

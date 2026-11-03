@@ -79,10 +79,10 @@ def sync_detailed(
 
      Returns `{used, limit, plan}` from `Store.CountActiveOrgMembers`
     (the same row the cap-in-tx inside `ConsumeOrgInvitation`
-    reads). `limit` comes from `org.Plan.OrgMembersMax()` — the
+    reads). `limit` comes from `org.Plan.OrgMembersMax` — the
     `free` plan returns `0` to render \"personal org only\" in the
-    dashboard rather than \"0 of 0 used\". Visibility-only; PR 9
-    ships the per-seat pricing cut-over per ADR-061 §\"Out of
+    dashboard rather than \"0 of 0 used\". Visibility-only; ships the per-seat pricing cut-over §\"Out
+    of
     scope\". Every role may read (gated by `org.view`).
 
     Args:
@@ -116,10 +116,10 @@ def sync(
 
      Returns `{used, limit, plan}` from `Store.CountActiveOrgMembers`
     (the same row the cap-in-tx inside `ConsumeOrgInvitation`
-    reads). `limit` comes from `org.Plan.OrgMembersMax()` — the
+    reads). `limit` comes from `org.Plan.OrgMembersMax` — the
     `free` plan returns `0` to render \"personal org only\" in the
-    dashboard rather than \"0 of 0 used\". Visibility-only; PR 9
-    ships the per-seat pricing cut-over per ADR-061 §\"Out of
+    dashboard rather than \"0 of 0 used\". Visibility-only; ships the per-seat pricing cut-over §\"Out
+    of
     scope\". Every role may read (gated by `org.view`).
 
     Args:
@@ -148,10 +148,10 @@ async def asyncio_detailed(
 
      Returns `{used, limit, plan}` from `Store.CountActiveOrgMembers`
     (the same row the cap-in-tx inside `ConsumeOrgInvitation`
-    reads). `limit` comes from `org.Plan.OrgMembersMax()` — the
+    reads). `limit` comes from `org.Plan.OrgMembersMax` — the
     `free` plan returns `0` to render \"personal org only\" in the
-    dashboard rather than \"0 of 0 used\". Visibility-only; PR 9
-    ships the per-seat pricing cut-over per ADR-061 §\"Out of
+    dashboard rather than \"0 of 0 used\". Visibility-only; ships the per-seat pricing cut-over §\"Out
+    of
     scope\". Every role may read (gated by `org.view`).
 
     Args:
@@ -183,10 +183,10 @@ async def asyncio(
 
      Returns `{used, limit, plan}` from `Store.CountActiveOrgMembers`
     (the same row the cap-in-tx inside `ConsumeOrgInvitation`
-    reads). `limit` comes from `org.Plan.OrgMembersMax()` — the
+    reads). `limit` comes from `org.Plan.OrgMembersMax` — the
     `free` plan returns `0` to render \"personal org only\" in the
-    dashboard rather than \"0 of 0 used\". Visibility-only; PR 9
-    ships the per-seat pricing cut-over per ADR-061 §\"Out of
+    dashboard rather than \"0 of 0 used\". Visibility-only; ships the per-seat pricing cut-over §\"Out
+    of
     scope\". Every role may read (gated by `org.view`).
 
     Args:

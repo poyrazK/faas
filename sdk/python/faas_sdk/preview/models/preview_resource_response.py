@@ -24,28 +24,26 @@ class PreviewResourceResponse:
 
     app: AppResponse
     """An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy
-    pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169
-    / #172)."""
+    pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets."""
     changes_from_production: PreviewProductionChangesResponse
     """Non-secret preview differences from the production parent."""
     links: PreviewResourceLinksResponse
     """Public preview URL and native APIs for its logs, metrics, and effective app configuration."""
     parent: AppResponse | Unset = UNSET
     """An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy
-    pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169
-    / #172)."""
+    pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets."""
     latest_deployment: DeploymentResponse | Unset = UNSET
     """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
-    `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 /
-    ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last
-    deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed
-    because the ref shape is non-secret by design."""
+    `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object; they round-
+    trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env
+    values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape
+    is non-secret by design."""
     production_deployment: DeploymentResponse | Unset = UNSET
     """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
-    `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 /
-    ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last
-    deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed
-    because the ref shape is non-secret by design."""
+    `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object; they round-
+    trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env
+    values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape
+    is non-secret by design."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

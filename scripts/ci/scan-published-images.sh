@@ -29,6 +29,7 @@ images=(
   execution-python-data-v1
   runner-go124
   runner-go124-alpine
+  agent-base
 )
 
 mkdir -p "${output_dir}"

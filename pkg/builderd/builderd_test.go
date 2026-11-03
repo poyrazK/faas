@@ -343,6 +343,43 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 	}
 }
 
+// A cache hit opens image_build at once, so imaged's wait for the layer is
+// recorded there and not as source download (the spawn path already does).
+func TestProcessOne_CacheHitOpensImageBuildStage(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+	buildID, depID, _ := seedDeployment(t, store, src)
+	c := NewCache(t.TempDir())
+	layerPath := filepath.Join(t.TempDir(), "layer.ext4")
+	if err := os.WriteFile(layerPath, []byte("pre-cached layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := hashFile(src)
+	if err := c.StoreBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID)), layerPath, 18); err != nil {
+		t.Fatal(err)
+	}
+	b := New(store, &fakeNotifier{}, &fakeVM{}, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if res, err := b.ProcessOne(context.Background(), buildID); err != nil || !res.CacheHit {
+		t.Fatalf("ProcessOne = %+v, %v; want a cache hit", res, err)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	var stages state.StageState
+	if err := json.Unmarshal(dep.StageState, &stages); err != nil {
+		t.Fatalf("decode stage state: %v", err)
+	}
+	if stages.Current != state.StageImageBuild {
+		t.Errorf("current stage = %q, want %q", stages.Current, state.StageImageBuild)
+	}
+	if len(stages.History) != 1 {
+		t.Fatalf("stage history length = %d, want the completed source download: %+v", len(stages.History), stages.History)
+	}
+	if got := stages.History[0]; got.Name != state.StageSourceDownload || got.Status != "completed" || got.EndedAt == nil {
+		t.Errorf("source stage = %+v, want completed", got)
+	}
+}
+
 func TestSnapshotBootPayloadIncludesBuilderNode(t *testing.T) {
 	b := &Builderd{builderNodeID: "fsn-2.faas"}
 	got := b.snapshotBootPayload("app-1", "dep-1")
@@ -658,6 +695,51 @@ func TestProcessOne_FrameworkDetectFailsFlipsDeployment(t *testing.T) {
 	}
 	if !contains(dep.Error, "framework detect") {
 		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "framework detect")
+	}
+	// adr: 20261029103512 — a plain build failure carries its class's code
+	// and guidance, not only the message.
+	if dep.ErrorCode != api.CodeBuildFailed || dep.ErrorHint == "" {
+		t.Errorf("deployment error_code=%q hint=%q, want %q with a hint", dep.ErrorCode, dep.ErrorHint, api.CodeBuildFailed)
+	}
+}
+
+// adr: 20261029103512 — a build whose deployment a newer revision of the same
+// app has outpaced is skipped: promotion would supersede it, and building it
+// first held the builder slot the newer deployment was queued for.
+func TestProcessOne_SkipsBuildOutpacedByNewerDeployment(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+	buildID, depID, appID := seedDeployment(t, store, src)
+	if err := store.UpdateDeploymentStatus(ctx, depID, state.DeployBuilding, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindTarball, SourcePath: src, SourceBytes: 100}); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{}
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := b.ProcessOne(ctx, buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	build, _ := store.BuildByID(ctx, buildID)
+	dep, _ := store.DeploymentByID(ctx, depID)
+	if build.Status != state.BuildCancelled || dep.Status != state.DeploySuperseded || fvm.spawnCalls != 0 {
+		t.Fatalf("build=%s deployment=%s spawns=%d; want cancelled, superseded, 0", build.Status, dep.Status, fvm.spawnCalls)
+	}
+}
+
+func TestBuildFailureCodeCoversEveryClass(t *testing.T) {
+	for fc, want := range map[state.FailureClass]string{
+		state.FailureOOM:       api.CodeStageImageBuildOOM,
+		state.FailureTimeout:   api.CodeStageImageBuildTimeout,
+		state.FailureUserError: api.CodeBuildFailed,
+		state.FailureInfra:     api.CodeBuildInfrastructure,
+	} {
+		if got := buildFailureCode(fc); got != want {
+			t.Errorf("buildFailureCode(%s) = %q, want %q", fc, got, want)
+		}
 	}
 }
 

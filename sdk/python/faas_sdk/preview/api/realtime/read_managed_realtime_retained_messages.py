@@ -112,9 +112,9 @@ def sync_detailed(
 ) -> Response[ManagedRealtimeRetainedHistoryResponse | Problem]:
     """Read a page of retained channel history after a sequence.
 
-     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. A cursor
-    older than retained history returns 410 with code history_unavailable. This management API is not a
-    WebSocket resume protocol.
+     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API. A
+    cursor older than retained history returns 410 with code history_unavailable. This management API is
+    not a WebSocket resume protocol.
 
     Args:
         slug (str):
@@ -157,9 +157,9 @@ def sync(
 ) -> ManagedRealtimeRetainedHistoryResponse | Problem | None:
     """Read a page of retained channel history after a sequence.
 
-     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. A cursor
-    older than retained history returns 410 with code history_unavailable. This management API is not a
-    WebSocket resume protocol.
+     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API. A
+    cursor older than retained history returns 410 with code history_unavailable. This management API is
+    not a WebSocket resume protocol.
 
     Args:
         slug (str):
@@ -197,9 +197,9 @@ async def asyncio_detailed(
 ) -> Response[ManagedRealtimeRetainedHistoryResponse | Problem]:
     """Read a page of retained channel history after a sequence.
 
-     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. A cursor
-    older than retained history returns 410 with code history_unavailable. This management API is not a
-    WebSocket resume protocol.
+     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API. A
+    cursor older than retained history returns 410 with code history_unavailable. This management API is
+    not a WebSocket resume protocol.
 
     Args:
         slug (str):
@@ -240,9 +240,9 @@ async def asyncio(
 ) -> ManagedRealtimeRetainedHistoryResponse | Problem | None:
     """Read a page of retained channel history after a sequence.
 
-     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. A cursor
-    older than retained history returns 410 with code history_unavailable. This management API is not a
-    WebSocket resume protocol.
+     Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API. A
+    cursor older than retained history returns 410 with code history_unavailable. This management API is
+    not a WebSocket resume protocol.
 
     Args:
         slug (str):

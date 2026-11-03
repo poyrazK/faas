@@ -56,15 +56,14 @@ class Trigger:
     max_attempts: int
     """Omitted create values use min(5, the account plan cap)."""
     payload_max_bytes: int
-    """Per-record broker payload byte cap (migration 00274).
+    """Per-record broker payload byte cap.
     Records above this size are DLQ'd at insert time with
     reason='payload_too_large' rather than silently truncated.
     Plan-level ceiling in /v1/limits TriggerPayloadMaxBytes.
     Omitted create values use min(6291456, the account plan cap).
     """
     broker_poison_strategy: TriggerBrokerPoisonStrategy
-    """Kafka-only poison-record handling strategy (migration 00275,
-    audit #10). "commit" (default) advances the broker offset
+    """Kafka-only poison-record handling strategy (audit #10). "commit" (default) advances the broker offset
     via CommitMessages when the dispatcher dead-letters a
     record — the broker offset and the DB dead-letter state
     are permanently out of sync for that offset; operator
@@ -81,20 +80,17 @@ class Trigger:
     slug: str | Unset = UNSET
     """Unique-per-app handle. Required for non-cron kinds; ignored on cron."""
     delivery: TriggerDelivery | Unset = UNSET
-    """record invokes the function once per record; batch invokes it once per dispatch batch with every record
-    (ADR-1321)."""
+    """record invokes the function once per record; batch invokes it once per dispatch batch with every record."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
-    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
+    """Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
     account plan and never means unlimited. Durable invocation
     producers materialize the effective plan-capped value, and the
     scheduler re-clamps it at dispatch time to account for later plan
-    downgrades. Lives in pkg/api so the SDK can type the policy
-    without importing pkg/dispatch directly.
+    downgrades.
     """
     filter_criteria: FilterCriteria | Unset = UNSET
-    """FilterCriteria on a trigger (migration 00300,
-    pkg/sched/filter.go). nil / omitted matches every record.
+    """FilterCriteria on a trigger. nil / omitted matches every record.
     Top-level arrays combine via implicit OR for `$or` and
     AND for `$and`; nested clauses honour the same shape.
     Jsonpath implementation: github.com/PaesslerAG/jsonpath —

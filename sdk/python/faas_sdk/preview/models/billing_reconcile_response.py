@@ -13,7 +13,7 @@ T = TypeVar("T", bound="BillingReconcileResponse")
 
 @_attrs_define
 class BillingReconcileResponse:
-    """Returned by POST /v1/admin/billing-reconcile/{id} (PR-P3).
+    """Returned by POST /v1/admin/billing-reconcile/{id}.
     mb_seconds is the integer total the provider SDK returned
     for the rolling 30-day window [start, end). Operators can
     diff the SDK-side number against the local usage_minutes

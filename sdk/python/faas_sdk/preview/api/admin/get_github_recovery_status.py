@@ -98,7 +98,7 @@ def sync_detailed(
 ) -> Response[GithubRecoveryStatusResponse | Problem]:
     """List operator-safe GitHub webhook and Check Run recovery queue items.
 
-     Returns bounded queue metadata from githubd. Webhook payloads and
+     Returns bounded queue metadata from the GitHub integration. Webhook payloads and
     installation credentials are deliberately excluded. Requires admin
     scope, MFA, and membership in FAAS_ADMIN_EMAILS.
 
@@ -134,7 +134,7 @@ def sync(
 ) -> GithubRecoveryStatusResponse | Problem | None:
     """List operator-safe GitHub webhook and Check Run recovery queue items.
 
-     Returns bounded queue metadata from githubd. Webhook payloads and
+     Returns bounded queue metadata from the GitHub integration. Webhook payloads and
     installation credentials are deliberately excluded. Requires admin
     scope, MFA, and membership in FAAS_ADMIN_EMAILS.
 
@@ -165,7 +165,7 @@ async def asyncio_detailed(
 ) -> Response[GithubRecoveryStatusResponse | Problem]:
     """List operator-safe GitHub webhook and Check Run recovery queue items.
 
-     Returns bounded queue metadata from githubd. Webhook payloads and
+     Returns bounded queue metadata from the GitHub integration. Webhook payloads and
     installation credentials are deliberately excluded. Requires admin
     scope, MFA, and membership in FAAS_ADMIN_EMAILS.
 
@@ -199,7 +199,7 @@ async def asyncio(
 ) -> GithubRecoveryStatusResponse | Problem | None:
     """List operator-safe GitHub webhook and Check Run recovery queue items.
 
-     Returns bounded queue metadata from githubd. Webhook payloads and
+     Returns bounded queue metadata from the GitHub integration. Webhook payloads and
     installation credentials are deliberately excluded. Requires admin
     scope, MFA, and membership in FAAS_ADMIN_EMAILS.
 

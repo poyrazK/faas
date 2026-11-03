@@ -234,6 +234,15 @@ var routeExclude = map[string]bool{
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
+	"POST /v1/runtime/data-api/events":                  true,
+
+	// ADR-1027 in-place major upgrades: a preview gated by
+	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered
+	// routes outside it, so it stays out of the public OpenAPI spec and
+	// generated SDKs until launch. pkg/api keeps its client for the CLI.
+	// Mirror across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"POST /v1/postgres/databases/{id}/upgrade":              true,
+	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -280,6 +289,29 @@ var routeExclude = map[string]bool{
 	"POST /v1/postgres/databases/{id}/live":        true,
 	"DELETE /v1/postgres/databases/{id}/live":      true,
 	"POST /v1/postgres/databases/{id}/live/rotate": true,
+
+	// ADR-20261027090010 agents: the internal agents capability, answering like
+	// unregistered routes to every account it is not released to, so it stays
+	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
+	// across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"POST /v1/agents":                                 true,
+	"POST /v1/agent-callbacks":                        true,
+	"POST /v1/agent-callbacks/{token}":                true,
+	"POST /v1/agent-callbacks/revocations":            true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
+	"POST /v1/agent-tools/invoke":                     true,
+	"POST /v1/agent-tools/close_thread":               true,
+	"GET /v1/agents":                                  true,
+	"GET /v1/agents/{agent}":                          true,
+	"DELETE /v1/agents/{agent}":                       true,
+	"POST /v1/agents/{agent}/versions":                true,
+	"GET /v1/agents/{agent}/versions/{version}":       true,
+	"POST /v1/agents/{agent}/runs":                    true,
+	"GET /v1/agent-runs":                              true,
+	"GET /v1/agent-runs/{id}":                         true,
+	"DELETE /v1/agent-runs/{id}":                      true,
+	"GET /v1/agent-runs/{id}/outputs":                 true,
+	"GET /v1/agent-runs/{id}/outputs/files/{name...}": true,
 
 	// Issue #777 / ADR-091: operator observability backend. Same
 	// operator-only posture as /v1/compute-nodes — admin scope
@@ -329,38 +361,39 @@ var routeExclude = map[string]bool{
 	// Mirror the exclusion across BOTH this list AND
 	// cmd/apid/spec_compliance_test.go::routeExclude; the two
 	// lists must move together.
-	"POST /v1/admin/instances/{id}/force-park":           true, // PR #1099 P2a — operator-only recovery primitive
-	"POST /v1/admin/apps/{slug}/force-cold-boot":         true, // PR #1099 P2b — operator-only recovery primitive
-	"POST /v1/admin/instances/{id}/force-restart":        true, // PR #1105 P2d — operator-only recovery primitive
-	"POST /v1/admin/builds/sweep-stuck":                  true, // PR #1099 P2c — operator-only recovery primitive
-	"GET /v1/admin/ops/jobs/runs":                        true, // operator-only active job-run projection
-	"GET /v1/admin/ops/data-repairs":                     true, // operator-only repair health projection
-	"GET /v1/admin/ops/jobs/runs/{id}":                   true, // operator-only job-run inspection
-	"POST /v1/admin/ops/jobs/runs/{id}/cancel":           true, // operator-only job-run cancellation
-	"GET /v1/admin/ops/deployments":                      true, // operator-only deployment incident projection
-	"GET /v1/admin/ops/deployments/{id}":                 true, // operator-only deployment inspection
-	"POST /v1/admin/ops/deployments/{id}/cancel":         true, // operator-only deployment cancellation
-	"POST /v1/admin/ops/deployments/{id}/retry":          true, // operator-only deployment retry
-	"GET /v1/admin/ops/github/recovery":                  true, // operator-only githubd queue projection
-	"POST /v1/admin/ops/github/deliveries/{id}/retry":    true, // operator-only githubd delivery recovery
-	"POST /v1/admin/ops/github/check-updates/{id}/retry": true, // operator-only githubd Check Run recovery
-	"POST /v1/admin/ops/accounts/{id}/suspend":           true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":           true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":   true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":              true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":        true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":           true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/retire":             true, // operator-only terminal node lifecycle control
-	"GET /v1/admin/operator-intents/{id}":                true, // PR #1099 P2.3 — operator-only intent polling endpoint
-	"GET /v1/admin/config":                               true, // operator-only runtime configuration catalog
-	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write
-	"GET /v1/admin/config-operations/{id}":               true, // operator-only runtime configuration operation polling
-	"GET /v1/admin/config/{key}/revisions":               true, // operator-only runtime configuration history
-	"GET /v1/admin/flags":                                true, // ADR-1700 operator-only platform flag catalog
-	"GET /v1/admin/flags/{key}":                          true, // ADR-1700 operator-only platform flag detail
-	"GET /v1/admin/flags/{key}/decision":                 true, // ADR-1700 operator-only platform flag inspector
-	"GET /v1/admin/accounts/{id}/flags":                  true, // ADR-1700 operator-only per-account platform flags
-	"GET /v1/admin/managed-postgres/usage/{account_id}":  true, // operator-only COGS/capacity view; public SDK is customer-scoped
+	"POST /v1/admin/instances/{id}/force-park":                true, // PR #1099 P2a — operator-only recovery primitive
+	"POST /v1/admin/apps/{slug}/force-cold-boot":              true, // PR #1099 P2b — operator-only recovery primitive
+	"POST /v1/admin/instances/{id}/force-restart":             true, // PR #1105 P2d — operator-only recovery primitive
+	"POST /v1/admin/builds/sweep-stuck":                       true, // PR #1099 P2c — operator-only recovery primitive
+	"GET /v1/admin/ops/jobs/runs":                             true, // operator-only active job-run projection
+	"GET /v1/admin/ops/data-repairs":                          true, // operator-only repair health projection
+	"GET /v1/admin/ops/jobs/runs/{id}":                        true, // operator-only job-run inspection
+	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                true, // operator-only job-run cancellation
+	"GET /v1/admin/ops/deployments":                           true, // operator-only deployment incident projection
+	"GET /v1/admin/ops/deployments/{id}":                      true, // operator-only deployment inspection
+	"POST /v1/admin/ops/deployments/{id}/cancel":              true, // operator-only deployment cancellation
+	"POST /v1/admin/ops/deployments/{id}/retry":               true, // operator-only deployment retry
+	"GET /v1/admin/ops/github/recovery":                       true, // operator-only githubd queue projection
+	"POST /v1/admin/ops/github/deliveries/{id}/retry":         true, // operator-only githubd delivery recovery
+	"POST /v1/admin/ops/github/check-updates/{id}/retry":      true, // operator-only githubd Check Run recovery
+	"POST /v1/admin/ops/accounts/{id}/suspend":                true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":                true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":        true, // operator-only tenant security control
+	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling": true, // operator-only support grant (ADR-20261101214152)
+	"POST /v1/admin/ops/nodes/{name}/drain":                   true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":             true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":                true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/retire":                  true, // operator-only terminal node lifecycle control
+	"GET /v1/admin/operator-intents/{id}":                     true, // PR #1099 P2.3 — operator-only intent polling endpoint
+	"GET /v1/admin/config":                                    true, // operator-only runtime configuration catalog
+	"PATCH /v1/admin/config/{key}":                            true, // operator-only runtime configuration write
+	"GET /v1/admin/config-operations/{id}":                    true, // operator-only runtime configuration operation polling
+	"GET /v1/admin/config/{key}/revisions":                    true, // operator-only runtime configuration history
+	"GET /v1/admin/flags":                                     true, // ADR-1700 operator-only platform flag catalog
+	"GET /v1/admin/flags/{key}":                               true, // ADR-1700 operator-only platform flag detail
+	"GET /v1/admin/flags/{key}/decision":                      true, // ADR-1700 operator-only platform flag inspector
+	"GET /v1/admin/accounts/{id}/flags":                       true, // ADR-1700 operator-only per-account platform flags
+	"GET /v1/admin/managed-postgres/usage/{account_id}":       true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
 	// device-code flow for programmatic auth; the dashboard cookie
@@ -518,6 +551,16 @@ var methodRouteMap = map[string]string{
 	"GET /v1/orgs/{slug}/invoices":                                                                                     "ListOrgInvoices",
 	"GET /v1/orgs/{slug}/billing/portal":                                                                               "GetOrgBillingPortal",
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
+	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
+	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
+	"GET /v1/orgs/{slug}/billing/costs":                                                                                "GetOrgFinancialCosts", // ADR-20261031211500
+	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                                     "PreviewOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets":                                                                              "ListOrgFinancialBudgets",
+	"POST /v1/orgs/{slug}/billing/budgets":                                                                             "CreateOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "GetOrgFinancialBudget",
+	"PUT /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "UpdateOrgFinancialBudget",
+	"DELETE /v1/orgs/{slug}/billing/budgets/{id}":                                                                      "DeleteOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}/revisions":                                                               "ListOrgFinancialBudgetRevisions",
 	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
 	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
 	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",
@@ -591,6 +634,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/orgs/{organization}/postgres/databases/{id}/resizes/{resize_id}":                                          "GetOrgManagedPostgresResize",
 	"GET /v1/orgs/{organization}/postgres/databases/{id}/compute-policy-changes/{change_id}":                           "GetOrgManagedPostgresComputePolicyChange",
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/restore":                                                     "RestoreOrgManagedPostgresDatabase",
+	"POST /v1/orgs/{organization}/postgres/databases/{id}/undelete":                                                    "UndeleteOrgManagedPostgresDatabase",
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/resize":                                                      "ResizeOrgManagedPostgresDatabase",
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/compute-policy":                                              "ChangeOrgManagedPostgresComputePolicy",
 	"POST /v1/orgs/{organization}/postgres/bindings/{id}/rotate":                                                       "RotateOrgManagedPostgresBinding",
@@ -818,6 +862,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/profiles/captures":           "CreateProfileCapture",
 	"GET /v1/apps/{slug}/profiles/captures":            "ListProfileCaptures",
 	"GET /v1/apps/{slug}/profiles/captures/{id}":       "GetProfileCapture",
+	"DELETE /v1/apps/{slug}/profiles/captures/{id}":    "DeleteProfileCapture",
 	"GET /v1/apps/{slug}/profiles/captures/{id}/view":  "GetProfileCaptureView",
 	"GET /v1/apps/{slug}/profiles/captures/{id}/diff":  "DiffProfileCaptures",
 	"GET /v1/apps/{slug}/profiles/captures/{id}/pprof": "DownloadProfileCapture",
@@ -1177,119 +1222,131 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": "GetProjectEnvironmentQueueBindings",
 	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": "ReplaceProjectEnvironmentQueueBindings",
 
-	"DELETE /v1/orgs/{slug}/invitations/{invitation_id}":                                              "RevokeInvitation",
-	"GET /v1/github/repos":                                                                            "ListGitHubRepositories",
-	"DELETE /v1/keys/{id}":                                                                            "DeleteKey",
-	"POST /v1/keys/{id}/rotate":                                                                       "RotateKey",
-	"PATCH /v1/account/keys/grace_window_days":                                                        "SetGraceWindow",
-	"GET /v1/account/keys/grace_window_days":                                                          "GetGraceWindow",
-	"DELETE /v1/domains/{domain}":                                                                     "DeleteDomain",
-	"DELETE /v1/crons/{id}":                                                                           "DeleteCron",
-	"DELETE /v1/apps/{slug}":                                                                          "DeleteApp",
-	"POST /v1/apps/{slug}/restore":                                                                    "RestoreApp",
-	"GET /v1/deleted-apps":                                                                            "ListDeletedApps",
-	"GET /v1/deleted-apps/{id}":                                                                       "GetDeletedApp",
-	"POST /v1/deleted-apps/{id}/restore":                                                              "RestoreDeletedApp",
-	"DELETE /v1/apps/{slug}/secrets/{key}":                                                            "UnsetSecret",
-	"GET /v1/apps/{slug}/secret-revocations/{revocation_id}":                                          "GetSecretRevocation",
-	"GET /v1/apps/{slug}/config/revisions":                                                            "ListConfigRevisions",
-	"GET /v1/apps/{slug}/config/revisions/{revision}":                                                 "GetConfigRevision",
-	"GET /v1/apps/{slug}/config/guard":                                                                "GetConfigGuard",
-	"POST /v1/apps/{slug}/config/rollback":                                                            "RollbackConfig",
-	"GET /v1/freezes":                                                                                 "ListReleaseFreezes",
-	"POST /v1/freezes":                                                                                "CreateReleaseFreeze",
-	"DELETE /v1/freezes/{id}":                                                                         "LiftReleaseFreeze",
-	"GET /v1/apps/{slug}/freeze-status":                                                               "GetReleaseFreezeStatus",
-	"GET /v1/apps/{slug}/release-gates":                                                               "ListReleaseGates",
-	"POST /v1/apps/{slug}/release-gates":                                                              "CreateReleaseGate",
-	"DELETE /v1/apps/{slug}/release-gates/{name}":                                                     "DeleteReleaseGate",
-	"GET /v1/apps/{slug}/release-approval-policy":                                                     "GetReleaseApprovalPolicy",
-	"PUT /v1/apps/{slug}/release-approval-policy":                                                     "SetReleaseApprovalPolicy",
-	"DELETE /v1/apps/{slug}/release-approval-policy":                                                  "DeleteReleaseApprovalPolicy",
-	"GET /v1/apps/{slug}/release-approvals":                                                           "ListReleaseApprovals",
-	"GET /v1/deployments/{id}/approvals":                                                              "GetReleaseApproval",
-	"POST /v1/deployments/{id}/approvals":                                                             "DecideReleaseApproval",
-	"GET /v1/deployments/{id}/diff":                                                                   "GetReleaseDiff",
-	"GET /v1/scheduled-releases":                                                                      "ListScheduledReleases",
-	"GET /v1/deployments/{id}/schedule":                                                               "GetDeploymentSchedule",
-	"PUT /v1/deployments/{id}/schedule":                                                               "ScheduleDeployment",
-	"DELETE /v1/deployments/{id}/schedule":                                                            "CancelDeploymentSchedule",
-	"GET /v1/apps/{slug}/database-switches":                                                           "ListDatabaseSwitches",
-	"GET /v1/apps/{slug}/database-switches/{id}":                                                      "GetDatabaseSwitch",
-	"POST /v1/apps/{slug}/database-switches/{id}/cancel":                                              "CancelDatabaseSwitch",
-	"PUT /v1/apps/{slug}/secrets/{key}":                                                               "SetSecret",
-	"GET /v1/apps/{slug}/secret-references":                                                           "ListAppSecretReferences",
-	"PUT /v1/apps/{slug}/secret-references/{key}":                                                     "SetAppSecretReference",
-	"DELETE /v1/apps/{slug}/secret-references/{key}":                                                  "DeleteAppSecretReference",
-	"POST /v1/apps/{slug}/secrets/{key}/rotate":                                                       "RotateSecret",
-	"PATCH /v1/apps/{slug}":                                                                           "UpdateApp",
-	"POST /v1/apps/{slug}/rename":                                                                     "RenameApp",
-	"GET /v1/apps/{slug}":                                                                             "GetApp",
-	"GET /v1/apps/{slug}/tcp-listeners":                                                               "ListAppTCPListeners",
-	"POST /v1/apps/{slug}/tcp-listeners":                                                              "CreateAppTCPListener",
-	"PATCH /v1/apps/{slug}/tcp-listeners/{name}":                                                      "UpdateAppTCPListener",
-	"DELETE /v1/apps/{slug}/tcp-listeners/{name}":                                                     "DeleteAppTCPListener",
-	"GET /v1/apps/{slug}/tcp-listeners/{name}/tls-status":                                             "AppTCPListenerTLSStatus",
-	"GET /v1/apps/{slug}/udp-listeners":                                                               "ListAppUDPListeners",
-	"POST /v1/apps/{slug}/udp-listeners":                                                              "CreateAppUDPListener",
-	"PATCH /v1/apps/{slug}/udp-listeners/{name}":                                                      "UpdateAppUDPListener",
-	"DELETE /v1/apps/{slug}/udp-listeners/{name}":                                                     "DeleteAppUDPListener",
-	"POST /v1/apps/{slug}/previews":                                                                   "CreatePreview",
-	"GET /v1/apps/{slug}/instances":                                                                   "ListInstances",
-	"POST /v1/apps/{slug}/park":                                                                       "Park",
-	"POST /v1/apps/{slug}/park/conditional":                                                           "ParkIfDeployment",
-	"POST /v1/apps/{slug}/wake":                                                                       "Wake",
-	"POST /v1/apps/{slug}/restart":                                                                    "RestartApp",
-	"DELETE /v1/apps/{slug}/cache":                                                                    "PurgeAppCache",
-	"POST /v1/apps/{slug}/rollback":                                                                   "Rollback",
-	"POST /v1/apps/{slug}/rollouts/recover":                                                           "RecoverRollout",
-	"POST /v1/dev/sessions/{project}/syncs":                                                           "RecordDevSync",
-	"PUT /v1/dev/test-runs/{run_id}":                                                                  "RegisterScenarioTest",
-	"POST /v1/dev/test-runs/{run_id}/actions/seal":                                                    "SealScenarioTestActions",
-	"POST /v1/dev/test-runs/{run_id}/objects":                                                         "CreateScenarioObjects",
-	"POST /v1/dev/test-runs/{run_id}/objects/seal":                                                    "SealScenarioObjects",
-	"DELETE /v1/dev/test-runs/{run_id}/objects":                                                       "DeleteScenarioObjects",
-	"POST /v1/dev/test-runs/{run_id}/postgres":                                                        "CreateScenarioPostgres",
-	"POST /v1/dev/test-runs/{run_id}/postgres/seal":                                                   "SealScenarioPostgres",
-	"DELETE /v1/dev/test-runs/{run_id}/postgres":                                                      "DeleteScenarioPostgres",
-	"POST /v1/dev/test-runs/{run_id}/suspend-resume":                                                  "BeginScenarioSuspendResume",
-	"GET /v1/dev/test-runs/{run_id}/suspend-resume":                                                   "GetScenarioSuspendResume",
-	"DELETE /v1/dev/test-runs/{run_id}":                                                               "DeleteScenarioTest",
-	"PUT /v1/dev/test-runs/{run_id}/chaos":                                                            "InjectScenarioTestChaos",
-	"DELETE /v1/dev/test-runs/{run_id}/chaos":                                                         "ClearScenarioTestChaos",
-	"GET /v1/dev/test-runs/{run_id}/chaos/matches":                                                    "ScenarioTestChaosMatches",
-	"GET /v1/dev/sessions/{project}/history":                                                          "GetDevSyncHistory",
-	"POST /v1/apps/{slug}/deployments":                                                                "Deploy",
-	"POST /v1/apps/{slug}/image-published":                                                            "PublishAppImage",
-	"POST /v1/account/platform-tenants/{id}/reconciliation-plan/apply":                                "ApplyPlatformTenantReconciliation",
-	"GET /v1/account/platform-tenants/{id}/reconciliations":                                           "ListPlatformTenantReconciliationReceipts",
-	"GET /v1/account/platform-tenants/{id}/reconciliations/{receipt_id}":                              "GetPlatformTenantReconciliationReceipt",
-	"GET /v1/apps/{slug}/deployments":                                                                 "ListAppDeployments",
-	"GET /v1/apps/{slug}/deployments/latest":                                                          "GetLatestAppDeployment",
-	"GET /v1/apps/{slug}/deployment-aliases":                                                          "ListDeploymentAliases",
-	"PUT /v1/apps/{slug}/deployment-aliases/{name}":                                                   "SetDeploymentAlias",
-	"DELETE /v1/apps/{slug}/deployment-aliases/{name}":                                                "DeleteDeploymentAlias",
-	"GET /v1/apps/{slug}/deployments/{id}/summary":                                                    "GetAppDeploymentSummary",
-	"POST /v1/apps/{slug}/deployments/dev-source":                                                     "DeployDevSource",
-	"POST /v1/apps/{slug}/deployments/source-ref":                                                     "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
-	"GET /v1/projects":                                                                                "ListProjects",
-	"GET /v1/projects/{slug}":                                                                         "GetProject",
-	"PATCH /v1/projects/{slug}":                                                                       "UpdateProject",
-	"GET /v1/projects/{slug}/environments":                                                            "ListProjectEnvironments",
-	"POST /v1/projects/{slug}/environments":                                                           "CreateProjectEnvironment",
-	"POST /v1/projects/{slug}/environment-clones":                                                     "CreateFullProjectEnvironmentClone",
-	"GET /v1/projects/{slug}/environment-clones/{clone}":                                              "GetProjectEnvironmentCloneOperation",
-	"GET /v1/projects/{slug}/environments/{environment}":                                              "GetProjectEnvironment",
-	"PATCH /v1/projects/{slug}/environments/{environment}":                                            "UpdateProjectEnvironment",
-	"POST /v1/projects/{slug}/environments/{environment}/qualifications":                              "CreateProjectEnvironmentQualification",
-	"GET /v1/projects/{slug}/environments/{environment}/releases":                                     "GetProjectEnvironmentReleases",
-	"GET /v1/projects/{slug}/environments/{environment}/release-sets":                                 "ListProjectReleaseSets",
-	"GET /v1/projects/{slug}/environments/{environment}/release-sets/active":                          "GetActiveProjectReleaseSet",
-	"GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}":                       "GetProjectReleaseSet",
-	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs":              "CreateProjectBindingVerificationRun",
-	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}":         "GetProjectBindingVerificationRun",
-	"DELETE /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}":      "CancelProjectBindingVerificationRun",
-	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/resume": "ResumeProjectBindingVerificationRun",
+	"DELETE /v1/orgs/{slug}/invitations/{invitation_id}":                                         "RevokeInvitation",
+	"GET /v1/github/repos":                                                                       "ListGitHubRepositories",
+	"DELETE /v1/keys/{id}":                                                                       "DeleteKey",
+	"GET /v1/agent-connections":                                                                  "ListAgentConnections",
+	"DELETE /v1/agent-connections/{id}":                                                          "RevokeAgentConnection",
+	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
+	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
+	"DELETE /v1/agent-connections/self":                                                          "DisconnectAgent",
+	"POST /v1/keys/{id}/rotate":                                                                  "RotateKey",
+	"PATCH /v1/account/keys/grace_window_days":                                                   "SetGraceWindow",
+	"GET /v1/account/keys/grace_window_days":                                                     "GetGraceWindow",
+	"DELETE /v1/domains/{domain}":                                                                "DeleteDomain",
+	"DELETE /v1/crons/{id}":                                                                      "DeleteCron",
+	"DELETE /v1/apps/{slug}":                                                                     "DeleteApp",
+	"POST /v1/apps/{slug}/restore":                                                               "RestoreApp",
+	"GET /v1/deleted-apps":                                                                       "ListDeletedApps",
+	"GET /v1/deleted-apps/{id}":                                                                  "GetDeletedApp",
+	"POST /v1/deleted-apps/{id}/restore":                                                         "RestoreDeletedApp",
+	"DELETE /v1/apps/{slug}/secrets/{key}":                                                       "UnsetSecret",
+	"GET /v1/apps/{slug}/secret-revocations/{revocation_id}":                                     "GetSecretRevocation",
+	"GET /v1/apps/{slug}/config/revisions":                                                       "ListConfigRevisions",
+	"GET /v1/apps/{slug}/config/revisions/{revision}":                                            "GetConfigRevision",
+	"GET /v1/apps/{slug}/config/guard":                                                           "GetConfigGuard",
+	"POST /v1/apps/{slug}/config/rollback":                                                       "RollbackConfig",
+	"GET /v1/freezes":                                                                            "ListReleaseFreezes",
+	"POST /v1/freezes":                                                                           "CreateReleaseFreeze",
+	"DELETE /v1/freezes/{id}":                                                                    "LiftReleaseFreeze",
+	"GET /v1/apps/{slug}/freeze-status":                                                          "GetReleaseFreezeStatus",
+	"GET /v1/apps/{slug}/freezes":                                                                "ListAppReleaseFreezes",
+	"POST /v1/apps/{slug}/freezes":                                                               "CreateAppReleaseFreeze",
+	"DELETE /v1/apps/{slug}/freezes/{id}":                                                        "LiftAppReleaseFreeze",
+	"GET /v1/orgs/{slug}/freezes":                                                                "ListOrgReleaseFreezes",
+	"POST /v1/orgs/{slug}/freezes":                                                               "CreateOrgReleaseFreeze",
+	"DELETE /v1/orgs/{slug}/freezes/{id}":                                                        "LiftOrgReleaseFreeze",
+	"GET /v1/apps/{slug}/release-gates":                                                          "ListReleaseGates",
+	"POST /v1/apps/{slug}/release-gates":                                                         "CreateReleaseGate",
+	"DELETE /v1/apps/{slug}/release-gates/{name}":                                                "DeleteReleaseGate",
+	"GET /v1/apps/{slug}/release-approval-policy":                                                "GetReleaseApprovalPolicy",
+	"PUT /v1/apps/{slug}/release-approval-policy":                                                "SetReleaseApprovalPolicy",
+	"DELETE /v1/apps/{slug}/release-approval-policy":                                             "DeleteReleaseApprovalPolicy",
+	"GET /v1/apps/{slug}/release-approvals":                                                      "ListReleaseApprovals",
+	"GET /v1/deployments/{id}/approvals":                                                         "GetReleaseApproval",
+	"POST /v1/deployments/{id}/approvals":                                                        "DecideReleaseApproval",
+	"GET /v1/deployments/{id}/diff":                                                              "GetReleaseDiff",
+	"GET /v1/deployments/{id}/timeline":                                                          "GetReleaseTimeline",
+	"GET /v1/scheduled-releases":                                                                 "ListScheduledReleases",
+	"GET /v1/deployments/{id}/schedule":                                                          "GetDeploymentSchedule",
+	"PUT /v1/deployments/{id}/schedule":                                                          "ScheduleDeployment",
+	"DELETE /v1/deployments/{id}/schedule":                                                       "CancelDeploymentSchedule",
+	"GET /v1/apps/{slug}/database-switches":                                                      "ListDatabaseSwitches",
+	"GET /v1/apps/{slug}/database-switches/{id}":                                                 "GetDatabaseSwitch",
+	"POST /v1/apps/{slug}/database-switches/{id}/cancel":                                         "CancelDatabaseSwitch",
+	"PUT /v1/apps/{slug}/secrets/{key}":                                                          "SetSecret",
+	"GET /v1/apps/{slug}/secret-references":                                                      "ListAppSecretReferences",
+	"PUT /v1/apps/{slug}/secret-references/{key}":                                                "SetAppSecretReference",
+	"DELETE /v1/apps/{slug}/secret-references/{key}":                                             "DeleteAppSecretReference",
+	"POST /v1/apps/{slug}/secrets/{key}/rotate":                                                  "RotateSecret",
+	"PATCH /v1/apps/{slug}":                                                                      "UpdateApp",
+	"POST /v1/apps/{slug}/rename":                                                                "RenameApp",
+	"GET /v1/apps/{slug}":                                                                        "GetApp",
+	"GET /v1/apps/{slug}/tcp-listeners":                                                          "ListAppTCPListeners",
+	"POST /v1/apps/{slug}/tcp-listeners":                                                         "CreateAppTCPListener",
+	"PATCH /v1/apps/{slug}/tcp-listeners/{name}":                                                 "UpdateAppTCPListener",
+	"DELETE /v1/apps/{slug}/tcp-listeners/{name}":                                                "DeleteAppTCPListener",
+	"GET /v1/apps/{slug}/tcp-listeners/{name}/tls-status":                                        "AppTCPListenerTLSStatus",
+	"GET /v1/apps/{slug}/udp-listeners":                                                          "ListAppUDPListeners",
+	"POST /v1/apps/{slug}/udp-listeners":                                                         "CreateAppUDPListener",
+	"PATCH /v1/apps/{slug}/udp-listeners/{name}":                                                 "UpdateAppUDPListener",
+	"DELETE /v1/apps/{slug}/udp-listeners/{name}":                                                "DeleteAppUDPListener",
+	"POST /v1/apps/{slug}/previews":                                                              "CreatePreview",
+	"GET /v1/apps/{slug}/instances":                                                              "ListInstances",
+	"POST /v1/apps/{slug}/park":                                                                  "Park",
+	"POST /v1/apps/{slug}/park/conditional":                                                      "ParkIfDeployment",
+	"POST /v1/apps/{slug}/wake":                                                                  "Wake",
+	"POST /v1/apps/{slug}/restart":                                                               "RestartApp",
+	"DELETE /v1/apps/{slug}/cache":                                                               "PurgeAppCache",
+	"POST /v1/apps/{slug}/rollback":                                                              "Rollback",
+	"POST /v1/apps/{slug}/rollouts/recover":                                                      "RecoverRollout",
+	"POST /v1/dev/sessions/{project}/syncs":                                                      "RecordDevSync",
+	"PUT /v1/dev/test-runs/{run_id}":                                                             "RegisterScenarioTest",
+	"POST /v1/dev/test-runs/{run_id}/actions/seal":                                               "SealScenarioTestActions",
+	"POST /v1/dev/test-runs/{run_id}/objects":                                                    "CreateScenarioObjects",
+	"POST /v1/dev/test-runs/{run_id}/objects/seal":                                               "SealScenarioObjects",
+	"DELETE /v1/dev/test-runs/{run_id}/objects":                                                  "DeleteScenarioObjects",
+	"POST /v1/dev/test-runs/{run_id}/postgres":                                                   "CreateScenarioPostgres",
+	"POST /v1/dev/test-runs/{run_id}/postgres/seal":                                              "SealScenarioPostgres",
+	"DELETE /v1/dev/test-runs/{run_id}/postgres":                                                 "DeleteScenarioPostgres",
+	"POST /v1/dev/test-runs/{run_id}/suspend-resume":                                             "BeginScenarioSuspendResume",
+	"GET /v1/dev/test-runs/{run_id}/suspend-resume":                                              "GetScenarioSuspendResume",
+	"DELETE /v1/dev/test-runs/{run_id}":                                                          "DeleteScenarioTest",
+	"PUT /v1/dev/test-runs/{run_id}/chaos":                                                       "InjectScenarioTestChaos",
+	"DELETE /v1/dev/test-runs/{run_id}/chaos":                                                    "ClearScenarioTestChaos",
+	"GET /v1/dev/test-runs/{run_id}/chaos/matches":                                               "ScenarioTestChaosMatches",
+	"GET /v1/dev/sessions/{project}/history":                                                     "GetDevSyncHistory",
+	"POST /v1/apps/{slug}/deployments":                                                           "Deploy",
+	"POST /v1/apps/{slug}/image-published":                                                       "PublishAppImage",
+	"POST /v1/account/platform-tenants/{id}/reconciliation-plan/apply":                           "ApplyPlatformTenantReconciliation",
+	"GET /v1/account/platform-tenants/{id}/reconciliations":                                      "ListPlatformTenantReconciliationReceipts",
+	"GET /v1/account/platform-tenants/{id}/reconciliations/{receipt_id}":                         "GetPlatformTenantReconciliationReceipt",
+	"GET /v1/apps/{slug}/deployments":                                                            "ListAppDeployments",
+	"GET /v1/apps/{slug}/deployments/latest":                                                     "GetLatestAppDeployment",
+	"GET /v1/apps/{slug}/deployment-aliases":                                                     "ListDeploymentAliases",
+	"PUT /v1/apps/{slug}/deployment-aliases/{name}":                                              "SetDeploymentAlias",
+	"DELETE /v1/apps/{slug}/deployment-aliases/{name}":                                           "DeleteDeploymentAlias",
+	"GET /v1/apps/{slug}/deployments/{id}/summary":                                               "GetAppDeploymentSummary",
+	"POST /v1/apps/{slug}/deployments/dev-source":                                                "DeployDevSource",
+	"POST /v1/apps/{slug}/deployments/source-ref":                                                "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
+	"GET /v1/projects":                                                                           "ListProjects",
+	"GET /v1/projects/{slug}":                                                                    "GetProject",
+	"PATCH /v1/projects/{slug}":                                                                  "UpdateProject",
+	"GET /v1/projects/{slug}/environments":                                                       "ListProjectEnvironments",
+	"POST /v1/projects/{slug}/environments":                                                      "CreateProjectEnvironment",
+	"POST /v1/projects/{slug}/environment-clones":                                                "CreateFullProjectEnvironmentClone",
+	"GET /v1/projects/{slug}/environment-clones/{clone}":                                         "GetProjectEnvironmentCloneOperation",
+	"GET /v1/projects/{slug}/environments/{environment}":                                         "GetProjectEnvironment",
+	"PATCH /v1/projects/{slug}/environments/{environment}":                                       "UpdateProjectEnvironment",
+	"POST /v1/projects/{slug}/environments/{environment}/qualifications":                         "CreateProjectEnvironmentQualification",
+	"GET /v1/projects/{slug}/environments/{environment}/releases":                                "GetProjectEnvironmentReleases",
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets":                            "ListProjectReleaseSets",
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/active":                     "GetActiveProjectReleaseSet",
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}":                  "GetProjectReleaseSet",
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs":         "CreateProjectBindingVerificationRun",
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}":    "GetProjectBindingVerificationRun",
+	"DELETE /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}": "CancelProjectBindingVerificationRun",
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/resume":     "ResumeProjectBindingVerificationRun",
 	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/complete":   "CompleteProjectBindingVerificationRun",
 	"GET /v1/apps/{slug}/bindings/verification-runs/{run}/diagnostics":                                    "GetBindingVerificationRunDiagnostics",
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/diagnostics": "GetProjectBindingVerificationRunDiagnostics",
@@ -1411,8 +1468,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
+	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
 	"DELETE /v1/postgres/databases/{id}":                                              "DeleteManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/restore":                                        "RestoreManagedPostgresDatabase",
+	"POST /v1/postgres/databases/{id}/undelete":                                       "UndeleteManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/bindings":                                        "ListManagedPostgresBindings",
 	"POST /v1/postgres/databases/{id}/bindings":                                       "CreateManagedPostgresBinding",
 	"GET /v1/postgres/bindings/{id}":                                                  "GetManagedPostgresBinding",
@@ -1425,11 +1484,15 @@ var methodRouteMap = map[string]string{
 	"GET /v1/postgres/databases/{id}/connection-budget":                               "GetManagedPostgresConnectionBudget",
 	"GET /v1/apps/{slug}/data-api/connection-budget":                                  "GetAppDataAPIConnectionBudgets",
 	"GET /v1/apps/{slug}/data-api/usage":                                              "GetAppDataAPIUsage",
+	"POST /v1/apps/{slug}/data-api/contract-tasks":                                    "CreateDataAPIContractTask",
+	"GET /v1/apps/{slug}/data-api/contract-tasks/{id}":                                "GetDataAPIContractTask",
+	"GET /v1/apps/{slug}/data-api/runtime":                                            "GetDataAPIRuntime",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",
 	"GET /v1/deployments/{id}/logs":                                                   "StreamDeploymentLogs",
 	"GET /v1/deployments/{id}/scan":                                                   "GetDeploymentScan",                    // issue #464 / ADR-055; per-deploy grype CVE drill-down
+	"GET /v1/deployments/{id}/status":                                                 "GetDeploymentStatus",                  // ADR-20261030151810
 	"GET /v1/deployments/{id}/secret-scan":                                            "GetDeploymentSecretScan",              // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
 	"GET /v1/deployments/{id}/runtime":                                                "GetDeploymentRuntime",                 // ADR-736
 	"GET /v1/deployments/{id}/runtime/upgrade-preview":                                "PreviewRuntimeUpgrade",                // ADR-736
@@ -1555,6 +1618,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/crons/{id}/run":                                                               "FireCron",             // issue #791 — manual fire-now (PR-C)
 	"GET /v1/cron-fire-now-requests/{request_id}":                                           "GetFireCronRequest",   // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
 	"GET /v1/crons/{id}":                                                                    "GetCron",              // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
+	"GET /v1/crons/{id}/status":                                                             "GetCronStatus",        // ADR-20261030151810
 	// Issue #1184 Workstream A — run-to-completion jobs. Same
 	// resource-noun convention as crons + alerts + edge-rules:
 	// auto-derivation produces verb+placeholder concatenation
@@ -1572,6 +1636,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/jobs/{name}/runs":                          "CreateJobRun",
 	"GET /v1/jobs/{name}/runs":                           "ListJobRuns",
 	"GET /v1/jobs/{name}/runs/{id}":                      "GetJobRun",
+	"GET /v1/jobs/{name}/runs/{id}/status":               "GetJobRunStatus", // ADR-20261030151810
 	"POST /v1/jobs/{name}/runs/{id}/cancel":              "CancelJobRun",
 	"POST /v1/jobs/{name}/runs/{id}/replay-failed":       "ReplayFailedJobRun",
 	"GET /v1/jobs/{name}/runs/{id}/tasks":                "ListJobRunTasks",
@@ -2149,6 +2214,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/event-replays/{jobID}":                                     "GetEventReplayBackfill",
 	"GET /v1/event-replays/{jobID}/items":                               "ListEventReplayBackfillItems",
 	"POST /v1/event-replays/{jobID}/retry-failed":                       "RetryFailedEventReplayBackfill",
+	"POST /v1/event-replays/{jobID}/cancel":                             "CancelEventReplayBackfill",
 
 	// Workflow recovery policy and operator routes use the public client names.
 	"GET /v1/apps/{slug}/event-recoveries/by-request/{requestID}":                                       "GetEventRecoveryByRequest",
@@ -2393,6 +2459,11 @@ var methodRouteMap = map[string]string{
 	// names it GetAppMetrics to match the existing per-app methods
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/health":                "GetAppHealth",
+	"GET /v1/apps/{slug}/status":                "GetAppStatus",
+	"PATCH /v1/apps/{slug}/labels":              "UpdateAppLabels",
+	"PATCH /v1/postgres/databases/{id}/labels":  "UpdateDatabaseLabels",
+	"PATCH /v1/crons/{id}/labels":               "UpdateCronLabels",
+	"PATCH /v1/jobs/{name}/labels":              "UpdateJobLabels",
 	"GET /v1/apps/{slug}/health/history":        "ListAppHealthHistory",
 	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
 	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",
@@ -2429,6 +2500,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/debug/coverage":                   "GetAppDebugCoverage",
 	"GET /v1/apps/{slug}/debug/running":                    "GetAppDebugRunning",
 	"GET /v1/apps/{slug}/debug/critical-paths":             "GetAppDebugCriticalPaths",
+	"GET /v1/apps/{slug}/debug/rollout":                    "GetAppDebugRollout",
+	"GET /v1/apps/{slug}/debug/status":                     "GetAppDebugStatus",
 
 	// ADR-127 / PR-B — production debugger consumer surface.
 	// Same rationale as the PR-A request list: drop the slug from
@@ -2673,8 +2746,12 @@ var methodRouteMap = map[string]string{
 	// family (GetApp, GetDeployment, GetUsage).
 	"POST /v1/apps/{slug}/deployments/source-tarball": "DeployFromSourceTarball",
 	"GET /v1/domains/{domain}":                        "GetDomain",
+	"GET /v1/domains/{domain}/status":                 "GetDomainStatus", // ADR-20261030151810
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
+	"GET /v1/domains/{domain}/hosts":                  "GetDomainHosts",   // ADR-520 amendment 2
+	"PUT /v1/domains/{domain}/hosts":                  "SetDomainHosts",   // ADR-520 amendment 2
+	"DELETE /v1/domains/{domain}/hosts":               "ClearDomainHosts", // ADR-520 amendment 2
 
 	"POST /v1/apps/{slug}/github/activity/retry":                                                    "RetryGitHubActivity",
 	"PATCH /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":          "UpdateAccountWorkflowReadinessNotification",
@@ -2757,7 +2834,11 @@ func (r *reportT) print() {
 // Convenience aliases share a route with its checked path-shaped method.
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
-	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
+	"UpsertDevSession":                     "PUT /v1/dev/sessions/{project}",
+	"ListAppsSelected":                     "GET /v1/apps",
+	"ListManagedPostgresDatabasesSelected": "GET /v1/postgres/databases",
+	"ListCronsSelected":                    "GET /v1/crons",
+	"ListJobsSelected":                     "GET /v1/jobs",
 }
 
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {

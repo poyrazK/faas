@@ -44,7 +44,7 @@ func TestMigrationOIDCEnvironmentPreflightCapability(t *testing.T) {
 		select pg_get_constraintdef(oid)
 		from pg_constraint
 		where conrelid = 'api_keys'::regclass
-		  and conname = 'api_keys_scopes_vocab_chk'`).Scan(&apiKeyConstraint); err != nil {
+		  and conname like 'api_keys\_scopes\_vocab%'`).Scan(&apiKeyConstraint); err != nil {
 		t.Fatalf("read API-key scope constraint: %v", err)
 	}
 	for _, scope := range []string{"project_environments:read", "project_environments:qualify"} {

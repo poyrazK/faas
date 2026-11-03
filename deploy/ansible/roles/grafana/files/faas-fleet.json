@@ -123,6 +123,11 @@
           "expr": "histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[5m])) by (le))",
           "legendFormat": "platform p95",
           "refId": "C"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gateway_wake_request_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "every waiting request p95",
+          "refId": "D"
         }
       ],
       "fieldConfig": {

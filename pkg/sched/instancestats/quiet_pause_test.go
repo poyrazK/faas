@@ -59,3 +59,45 @@ func TestQuietPausedUsesNodeSampleTime(t *testing.T) {
 		t.Fatalf("QuietPaused(n2) = %v accepted a sample %v old", got, tick.Sub(stale))
 	}
 }
+
+// A schedd places its apps' instances on peer nodes too. The node-local
+// reader only holds its own node, so admission reads peers from the owner
+// fleet reader; without it a quiet-paused instance on a peer node is never
+// discounted.
+func TestQuietPausedAcrossReadsPeersFromTheFleet(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	local, fleet := NewReader(), NewReader()
+	(&Poller{Reader: local}).publishQuietPaused([]InstanceStat{
+		{InstanceID: "own", NodeID: "self", QuietPaused: true, SampledAt: now},
+	}, now)
+	(&Poller{Reader: fleet}).publishQuietPaused([]InstanceStat{
+		{InstanceID: "own-seen-by-fleet", NodeID: "self", QuietPaused: true, SampledAt: now},
+		{InstanceID: "peer", NodeID: "other", QuietPaused: true, SampledAt: now},
+	}, now)
+	set := func(src func(string, time.Time) (map[string]struct{}, time.Time, bool), node string) map[string]struct{} {
+		t.Helper()
+		got, _, ok := src(node, now)
+		if !ok {
+			t.Fatalf("QuietPaused(%s) not fresh", node)
+		}
+		return got
+	}
+
+	across := QuietPausedAcross(local, fleet, "self")
+	if got := set(across, "self"); len(got) != 1 || !has(got, "own") {
+		t.Fatalf("own node = %v, want the local reader's {own}", got)
+	}
+	if got := set(across, "other"); len(got) != 1 || !has(got, "peer") {
+		t.Fatalf("peer node = %v, want the fleet reader's {peer}", got)
+	}
+	// A single box has no owner node: everything is local.
+	single := QuietPausedAcross(local, local, "")
+	if got := set(single, "other"); len(got) != 0 {
+		t.Fatalf("single box peer = %v, want the local reader's empty set", got)
+	}
+}
+
+func has(set map[string]struct{}, id string) bool {
+	_, ok := set[id]
+	return ok
+}

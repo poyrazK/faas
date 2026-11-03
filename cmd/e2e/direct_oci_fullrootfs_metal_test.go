@@ -41,6 +41,13 @@ func TestDirectOCIMainHealthcheckWithCompanionMetal(t *testing.T) {
 	testDirectOCIFullRootfs(t, directOCIContractOptions{Process: true, Healthcheck: true, Companion: true})
 }
 
+// imageDeployLiveBudget bounds an image deployment from creation to live.
+// Every deployment runs its own grype scan of the app layer before it goes
+// live, and on the native acceptance host each grype run takes about a
+// minute, most of it loading the vulnerability database. The earlier 60-75 s
+// budgets expired mid-scan (containers lane, 2026-10-31).
+const imageDeployLiveBudget = 4 * time.Minute
+
 type directOCIContractOptions struct {
 	Process, Healthcheck, Companion bool
 }
@@ -126,9 +133,15 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 	}
 	depID := parseImageDeployment(t, body)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// A companion adds a second image import, secret scan, layer build and
+	// grype scan.
+	liveBudget := imageDeployLiveBudget
+	if options.Companion {
+		liveBudget = 2 * imageDeployLiveBudget
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), liveBudget+15*time.Second)
 	defer cancel()
-	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 75*time.Second)
+	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, liveBudget)
 	if err != nil {
 		h.DumpLogs(t)
 		t.Fatalf("direct OCI deployment did not reach live: %v", err)

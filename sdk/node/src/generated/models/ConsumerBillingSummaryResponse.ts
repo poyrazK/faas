@@ -6,7 +6,7 @@ import type { APIConsumerCreditBalance } from './APIConsumerCreditBalance.js';
 import type { ConsumerBillingPlan } from './ConsumerBillingPlan.js';
 import type { ConsumerBillingSpendCap } from './ConsumerBillingSpendCap.js';
 /**
- * A consumer's own month to date (ADR-1506), priced like its next statement.
+ * A consumer's own month to date, priced like its next statement.
  */
 export type ConsumerBillingSummaryResponse = {
   consumer_id: string;
@@ -31,7 +31,7 @@ export type ConsumerBillingSummaryResponse = {
   plan?: ConsumerBillingPlan;
   as_of: string;
   /**
-   * Prepaid credit the consumer can still use, per currency (ADR-1306).
+   * Prepaid credit the consumer can still use, per currency.
    */
   credits?: Array<APIConsumerCreditBalance>;
   spend_cap?: ConsumerBillingSpendCap;

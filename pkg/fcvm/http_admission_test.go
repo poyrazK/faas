@@ -265,3 +265,58 @@ func TestHTTPAdmissionCleanupRetryRetainsBridgeAndLease(t *testing.T) {
 		t.Fatal("retry retained the drained generation")
 	}
 }
+
+// FAAS_HTTP_ADMISSION=off lifts the cap and the plan requirement, but each
+// exchange still holds a permit so park and retirement can cancel it.
+func TestHTTPAdmissionKillSwitchLiftsCapButKeepsPermits(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithHTTPAdmission(false)
+	m.live["vm"] = &Instance{Lease: Lease{Instance: "vm", Slot: 1, Plan: api.PlanFree}, Plan: api.PlanFree}
+	m.live["planless"] = &Instance{Lease: Lease{Instance: "planless", Slot: 2}}
+	cap := api.PlanFree.ConcurrencyPerVMBound()
+	var releases []func()
+	var ctxs []context.Context
+	for i := 0; i < cap+3; i++ {
+		ctx, release, err := m.AcquireHTTPForward(context.Background(), "vm")
+		if err != nil {
+			t.Fatalf("exchange %d refused with the cap lifted: %v", i, err)
+		}
+		releases = append(releases, release)
+		ctxs = append(ctxs, ctx)
+	}
+	if _, release, err := m.AcquireHTTPForward(context.Background(), "planless"); err != nil {
+		t.Fatalf("unknown plan refused with the cap lifted: %v", err)
+	} else {
+		release()
+	}
+	state, _ := m.HTTPAdmissionStatus("vm")
+	if state.Enabled || state.Inflight != cap+3 {
+		t.Fatalf("status with the cap lifted: %+v", state)
+	}
+	if g := m.retireHTTPForwards(m.live["vm"].Lease); g == nil {
+		t.Fatal("retirement found no tracked permits")
+	}
+	for _, ctx := range ctxs {
+		if ctx.Err() == nil {
+			t.Fatal("retirement did not cancel an exchange admitted with the cap lifted")
+		}
+	}
+	for _, release := range releases {
+		release()
+	}
+	if _, _, err := (newTestManager(&fakeRunner{}, &fakeVMM{})).AcquireHTTPForward(context.Background(), "missing"); !errors.Is(err, ErrHTTPForwardNotLive) {
+		t.Fatalf("missing instance: %v", err)
+	}
+	for _, value := range []string{"", "on", "true", "1"} {
+		if enabled, err := api.HTTPAdmissionEnabled(value); err != nil || !enabled {
+			t.Fatalf("FAAS_HTTP_ADMISSION=%q: %v %v", value, enabled, err)
+		}
+	}
+	for _, value := range []string{"off", "false", "0"} {
+		if enabled, err := api.HTTPAdmissionEnabled(value); err != nil || enabled {
+			t.Fatalf("FAAS_HTTP_ADMISSION=%q: %v %v", value, enabled, err)
+		}
+	}
+	if _, err := api.HTTPAdmissionEnabled("maybe"); err == nil {
+		t.Fatal("malformed FAAS_HTTP_ADMISSION accepted")
+	}
+}

@@ -25,8 +25,7 @@ class SetPasswordRequest:
     """
     current_password: str | Unset = UNSET
     """Required when the account already has a password and the
-    session carries no step-up from the last 5 minutes
-    (ADR-140). Ignored for OAuth-only accounts.
+    session carries no step-up from the last 5 minutes. Ignored for OAuth-only accounts.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

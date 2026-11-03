@@ -32,6 +32,12 @@ ExecStart=/opt/faas/current/bin/livequeryd \
   -checkpoint-dir=/var/lib/faas/livequeryd \
   -keys-dsn-file=%d/keys_dsn \
   -keys-identity=%d/keys_identity \
+{% if faas_livequeryd_signing_pub_src %}
+  -live-signature-keys=/etc/faas/livequeryd/signing.pub \
+{% endif %}
+{% if faas_livequeryd_require_signatures | bool %}
+  -require-live-signatures \
+{% endif %}
   -listen={{ faas_livequeryd_listen }} \
 {% if faas_livequeryd_tls_cert %}
   -tls-cert={{ faas_livequeryd_tls_cert }} \

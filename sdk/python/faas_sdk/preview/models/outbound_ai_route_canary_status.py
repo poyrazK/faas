@@ -20,10 +20,10 @@ class OutboundAIRouteCanaryStatus:
     """A canary with the route's first target's and its own counts since window_start."""
 
     canary: OutboundAIRouteCanary
-    """A route's model canary (ADR-1340). target is the 1-based route position tried first by percent of the
-    route's calls, chosen per X-Gregale-AI-Session, else X-Gregale-AI-User, else at random. outboundd rolls the
-    canary back when, after min_calls canary attempts in the window, its error rate exceeds the first target's by
-    more than max_error_rate_increase percentage points, or its mean time to first byte by more than
+    """A route's model canary. target is the 1-based route position tried first by percent of the route's calls,
+    chosen per X-Gregale-AI-Session, else X-Gregale-AI-User, else at random. The outbound gateway rolls the canary
+    back when, after min_calls canary attempts in the window, its error rate exceeds the first target's by more than
+    max_error_rate_increase percentage points, or its mean time to first byte by more than
     max_latency_increase_percent."""
     window_start: datetime.datetime
     baseline: OutboundAIRouteTargetStats

@@ -10,6 +10,7 @@
       - faas_seal_domain_outbound_recipient_src | length > 0
       - faas_seal_domain_outbound_writes in ['', 'fleet', 'dual', 'domain']
       - faas_seal_domain_outbound_writes != 'domain' or (faas_seal_domain_outbound_readers_verified | bool)
+      - not (faas_seal_domain_outbound_contracted | bool) or faas_seal_domain_outbound_writes == 'domain'
     fail_msg: >-
       The outbound seal domain runs where outboundd runs (a control-plane or
       single-box host). Set faas_seal_domain_outbound_identity_src and
@@ -17,6 +18,7 @@
       `gregalectl seal-domain init --domain outbound`. writes=domain also
       needs faas_seal_domain_outbound_readers_verified once every outboundd
       verified the domain and the previous release left the rollback window.
+      faas_seal_domain_outbound_contracted needs writes=domain.
 
 # 0400 root:root. systemd hands the identity to outboundd alone as a
 # credential; no other unit names it.
@@ -29,6 +31,29 @@
     mode: "0400"
   no_log: true
   notify: restart faas-outboundd for seal domains
+
+# Key rotation (ADR 20261022111812): while the previous identity is
+# set it stays beside the new one, so values sealed to it still open until
+# the domain's re-seal to the new key completes. Unset, it is removed.
+- name: seal_domains — install the previous outbound domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_outbound_previous_identity_src }}"
+    dest: /etc/faas/secrets/domains/outbound.age.previous
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-outboundd for seal domains
+  when:
+    - faas_seal_domain_outbound_previous_identity_src | length > 0
+
+- name: seal_domains — remove the previous outbound domain identity
+  ansible.builtin.file:
+    path: /etc/faas/secrets/domains/outbound.age.previous
+    state: absent
+  notify: restart faas-outboundd for seal domains
+  when:
+    - faas_seal_domain_outbound_previous_identity_src | length == 0
 
 - name: seal_domains — install the outbound domain recipient
   ansible.builtin.copy:
@@ -48,6 +73,25 @@
     mode: "0755"
   loop: [faas-outboundd, faas-apid]
 
+# The contract step (ADR 20261022111812, step 4): outboundd keeps no
+# identity that opens a credential the domain does not. The check writes
+# nothing and fails while a credential still opens with the fleet or host
+# identity; writes=domain keeps new credentials off them.
+- name: seal_domains — check every outbound credential opens with the domain alone before outboundd drops the fleet identity
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - migrate
+      - --domain
+      - outbound
+      - --check
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --json
+  changed_when: false
+  when: faas_seal_domain_outbound_contracted | bool
+
 - name: seal_domains — give outboundd the outbound domain identity
   ansible.builtin.template:
     src: 60-faas-seal-domain-outbound-reader.conf.j2
@@ -59,6 +103,17 @@
 
 - name: seal_domains — restart outboundd before proving the domain
   ansible.builtin.meta: flush_handlers
+
+# systemd places a running unit's credentials in its credentials directory:
+# a contracted outboundd has the domain identity there and no fleet one.
+- name: seal_domains — prove a contracted outboundd runs without the fleet identity
+  ansible.builtin.find:
+    paths: /run/credentials/faas-outboundd.service
+  register: faas_seal_domain_outbound_credentials
+  failed_when: >-
+    'faas_seal_domain_outbound' not in (faas_seal_domain_outbound_credentials.files | map(attribute='path') | map('basename') | list) or
+    'faas_fleet_age_identity' in (faas_seal_domain_outbound_credentials.files | map(attribute='path') | map('basename') | list)
+  when: faas_seal_domain_outbound_contracted | bool
 
 - name: seal_domains — prove this node opens the outbound domain probe
   ansible.builtin.command:

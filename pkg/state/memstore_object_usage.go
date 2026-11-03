@@ -42,11 +42,18 @@ func (m *MemStore) objectUsageLocked(account string, now time.Time) ObjectUsageS
 func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.Time) ObjectUsageSnapshot {
 	periodStart = ObjectStoragePeriod(periodStart)
 	out := ObjectUsageSnapshot{Authorizations: m.objectAuthorizations[account+periodStart.String()]}
+	var capCents, grantBytes *int64
+	if cents, ok := m.overageCapCents[account]; ok {
+		capCents = &cents
+	}
+	if grant, ok := m.objectStorageCeilingGrants[account]; ok {
+		grantBytes = &grant.MaxBytes
+	}
 	if acct, ok := m.accounts[account]; ok {
-		out.PlanLimits = objectStoragePlanLimits(acct.Plan)
+		out.PlanLimits = objectStoragePlanLimits(acct.Plan, grantBytes, capCents)
 	}
 	if org, ok := m.orgs[account]; ok && !org.Personal && org.ResourceOwnershipEnabled {
-		out.PlanLimits = objectStoragePlanLimits(org.Plan)
+		out.PlanLimits = objectStoragePlanLimits(org.Plan, grantBytes, capCents)
 	}
 	for _, b := range m.objectBuckets {
 		if m.objectBillingSubjectForPeriodLocked(b, periodStart) == account {
@@ -282,7 +289,10 @@ func (m *MemStore) DueObjectInventories(ctx context.Context, limit int32) ([]Obj
 		u := m.objectUsage[b.ID]
 		// Active deletions do not block a claim: they yield to it and the
 		// worker waits for them before listing (ADR-20261025115958).
-		if !m.inventoryClaimFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute) && !u.LeaseUntil.After(now) {
+		// An unfinished listing is due at once (ADR-20261030100835).
+		scan := u.InventoryScan
+		listing := scan.Pages > 0 && !scan.Complete && scan.StartedAt.After(u.ObservedAt) && now.Sub(scan.StartedAt) < api.ObjectInventoryScanMaxAge
+		if !m.inventoryClaimFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute || listing) && !u.LeaseUntil.After(now) {
 			out = append(out, b)
 		}
 	}
@@ -345,7 +355,7 @@ func (m *MemStore) FinishObjectInventory(ctx context.Context, bucket, token stri
 	}
 
 	u := m.objectUsage[bucket]
-	if m.versionAccountingStatusLocked(bucket).VersionsObserved || u.InventoryScope == ObjectInventoryAllVersions || m.objectCapacityFencedLocked(bucket) || token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
+	if m.inventoryPublicationRefusedLocked(bucket, token) || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
 		return ErrConflict
 	}
 	if u.ObservedAt.IsZero() {
@@ -355,4 +365,12 @@ func (m *MemStore) FinishObjectInventory(ctx context.Context, bucket, token stri
 	u.Token, u.LeaseUntil = "", time.Time{}
 	m.objectUsage[bucket] = u
 	return nil
+}
+
+// inventoryPublicationRefusedLocked reports a bucket whose inventory cannot be
+// published under token: the claim is not live, or the bucket's versions,
+// deletions or transitions fence inventory.
+func (m *MemStore) inventoryPublicationRefusedLocked(bucket, token string) bool {
+	u := m.objectUsage[bucket]
+	return m.versionAccountingStatusLocked(bucket).VersionsObserved || u.InventoryScope == ObjectInventoryAllVersions || m.objectCapacityFencedLocked(bucket) || token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready"
 }

@@ -40,7 +40,7 @@ func (r *startRunner) resolveLaunchTarget() error {
 			return fmt.Errorf("check app name: %w", err)
 		}
 		if r.session.SourceContext != "" && !exists {
-			return errors.New("the saved app is unavailable; run gregale context --verify, or unlink before choosing a new app")
+			return errors.New("the saved app is unavailable; run gregale config context get --verify, or unlink before choosing a new app")
 		}
 		if r.session.AppID != "" && (!exists || app.ID != r.session.AppID) {
 			return errors.New("app identity changed; this launch must target the app recorded by its session")

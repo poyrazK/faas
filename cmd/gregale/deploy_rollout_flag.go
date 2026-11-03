@@ -7,7 +7,9 @@ import (
 )
 
 // rolloutFlagConflicts are the flags --rollout replaces or contradicts.
-var rolloutFlagConflicts = []string{"safe", "canary-preset", "canary-stages", "traffic-percent", "rollback-on-5xx"}
+// --rollback-on-5xx is not one: it adds the first-wake 5xx rollback to any
+// rollout (docs/deploys.md), and a safe rollout refuses only turning it off.
+var rolloutFlagConflicts = []string{"safe", "canary-preset", "canary-stages", "traffic-percent"}
 
 // applyRolloutFlag maps `gregale deploy --rollout` onto the rollout flags the
 // rest of deploy already understands (ADR-1450): safe is --safe, fast and
@@ -35,6 +37,16 @@ func applyRolloutFlag(rollout string, explicit map[string]bool, safe *bool, cana
 	return nil
 }
 
+// safeFlagName is how a refusal names the safe rollout: as --rollout safe
+// when the person typed that, not as the deprecated --safe it maps onto
+// (Hunt 31 H31-1).
+func safeFlagName(explicit map[string]bool) string {
+	if explicit["rollout"] {
+		return "--rollout safe"
+	}
+	return "--safe"
+}
+
 // followRolloutByDefault reports whether deploy follows a canary rollout to
 // its end (ADR-1450): only for a person at a terminal, never in CI or JSON.
 func followRolloutByDefault() bool {
@@ -45,5 +57,5 @@ func followRolloutByDefault() bool {
 // rollout runs on Gregale, not in the CLI.
 func printRolloutDetached(d api.DeploymentResponse) {
 	PrintProgress(osStdout, "Detached at %d%% traffic; the rollout continues.", d.TrafficPercent)
-	PrintProgress(osStdout, "follow again: gregale deployment wait %s --rollout", d.ID)
+	PrintProgress(osStdout, "follow again: gregale release wait %s --rollout", d.ID)
 }

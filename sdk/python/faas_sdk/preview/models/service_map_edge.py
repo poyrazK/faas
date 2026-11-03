@@ -30,22 +30,22 @@ class ServiceMapEdge:
     latency_p50_ms: float
     latency_p95_ms: float
     cold_calls: int
-    """Calls that found the target parked and waited for it to restore (ADR-196)."""
+    """Calls that found the target parked and waited for it to restore."""
     cold_call_pct: float
     """`cold_calls` as a percentage of `calls`."""
     suggest_wake_ahead: bool
-    """The caller has not opted into wake-ahead (ADR-977) and its calls
+    """The caller has not opted into wake-ahead and its calls
     mostly wake the target: at least 20 cold calls in the window,
     making up at least half of the edge's calls. Private TCP sessions
-    count as calls (ADR-1134).
+    count as calls.
     """
     wake_ahead_started: int
-    """Wake-aheads (ADR-977) the caller's wakes started for this target in the window."""
+    """Wake-aheads the caller's wakes started for this target in the window."""
     wake_ahead_used: int
     """Of those, the wake-aheads whose target was called while they were fresh."""
     tcp_sessions: int
-    """Private TCP sessions (ADR-576) from the caller to the target in the window, excluding identity,
-    authorization and plan session-limit refusals."""
+    """Private TCP sessions from the caller to the target in the window, excluding identity, authorization and plan
+    session-limit refusals."""
     tcp_errors: int
     """Of those, the sessions that failed after authorization (no replica, wake failure, unreachable guest, or an
     error while connected)."""

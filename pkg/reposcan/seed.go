@@ -115,6 +115,8 @@ type workloadSeed struct {
 	goCommand           string
 	image               string
 	healthcheck         *api.ComposeHealthcheck
+	readinessCheck      *api.DeploymentHealthcheck
+	ingressSettings     []IngressSetting
 	imageProcess        *api.ComposeProcess
 	secretFiles         []api.SecretFile
 	resources           *api.ComposeResources
@@ -131,14 +133,23 @@ type workloadSeed struct {
 	allowedServiceCallers     *[]string
 	allowedServiceCallScopes  *api.ServiceCallerScopes
 	platformTenantRequired    *bool
+	renamedFrom               string
 
 	class     Class
 	schedule  string
 	schedules []CronSchedule
 	ports     []int
+	// portsLoopback marks Compose ports that are all bound to a loopback
+	// address: the service listens but is not published (ADR-20261102192943).
+	portsLoopback bool
 	// internalPorts are compose expose: listeners (ADR-576); nil = undeclared.
 	internalPorts []api.WorkloadPort
 	envKeys       []string // KEYS only
+	// k8sEnvFrom are a Kubernetes container's envFrom sources, whose keys
+	// join envKeys once the whole scan has read them (ADR-20261029093621 §5).
+	k8sEnvFrom []k8sEnvFromRef
+	// labels are a Kubernetes object's usable metadata.labels.
+	labels map[string]string
 }
 
 // workloadKey is the merge-by-(RootDir, Name) key. Two seeds with

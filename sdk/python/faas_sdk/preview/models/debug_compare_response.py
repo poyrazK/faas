@@ -19,13 +19,13 @@ T = TypeVar("T", bound="DebugCompareResponse")
 
 @_attrs_define
 class DebugCompareResponse:
-    """POST response from /v1/apps/{slug}/debug/compare (ADR-127 / PR-B)."""
+    """POST response from /v1/apps/{slug}/debug/compare."""
 
     source: UUID
     mirror: UUID
     routes: list[DebugCompareRouteStats]
     app_id: UUID | Unset = UNSET
-    """App identity; present on servers supporting comparison-window metadata (ADR-1623)."""
+    """App identity; present on servers supporting comparison-window metadata."""
     since: str | Unset = UNSET
     """Effective lookback after the current retention cutoff; native default is 1h."""
     window_start: datetime.datetime | Unset = UNSET

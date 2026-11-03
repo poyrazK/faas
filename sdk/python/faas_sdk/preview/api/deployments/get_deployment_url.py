@@ -70,11 +70,11 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DeploymentPreviewURL | Problem]:
-    r"""Get per-deployment preview URL (SAFE-RELEASES-C.2).
+    r"""Get per-deployment preview URL.
 
      Returns the per-deployment preview URL shape
     `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
-    mint under for a single deployment (issue #976 / ADR-122).
+    mint under for a single deployment.
     `N` is the per-app 1-based ordinal of the deployment row,
     resolved from state.DeploymentOrdinal — the order is
     stable so a previously-issued URL doesn't silently rot when
@@ -123,11 +123,11 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> DeploymentPreviewURL | Problem | None:
-    r"""Get per-deployment preview URL (SAFE-RELEASES-C.2).
+    r"""Get per-deployment preview URL.
 
      Returns the per-deployment preview URL shape
     `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
-    mint under for a single deployment (issue #976 / ADR-122).
+    mint under for a single deployment.
     `N` is the per-app 1-based ordinal of the deployment row,
     resolved from state.DeploymentOrdinal — the order is
     stable so a previously-issued URL doesn't silently rot when
@@ -171,11 +171,11 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DeploymentPreviewURL | Problem]:
-    r"""Get per-deployment preview URL (SAFE-RELEASES-C.2).
+    r"""Get per-deployment preview URL.
 
      Returns the per-deployment preview URL shape
     `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
-    mint under for a single deployment (issue #976 / ADR-122).
+    mint under for a single deployment.
     `N` is the per-app 1-based ordinal of the deployment row,
     resolved from state.DeploymentOrdinal — the order is
     stable so a previously-issued URL doesn't silently rot when
@@ -222,11 +222,11 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> DeploymentPreviewURL | Problem | None:
-    r"""Get per-deployment preview URL (SAFE-RELEASES-C.2).
+    r"""Get per-deployment preview URL.
 
      Returns the per-deployment preview URL shape
     `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
-    mint under for a single deployment (issue #976 / ADR-122).
+    mint under for a single deployment.
     `N` is the per-app 1-based ordinal of the deployment row,
     resolved from state.DeploymentOrdinal — the order is
     stable so a previously-issued URL doesn't silently rot when

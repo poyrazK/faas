@@ -50,6 +50,8 @@ type EdgeRuleConvergence struct {
 	Hosts             []string
 	Expected          map[string]struct{}
 	OnAcknowledgement func(context.Context, string) error
+	// Metrics counts a phase that does not finish; nil records nothing.
+	Metrics *Metrics
 }
 
 // edgeRuleAccountLocks serializes this process's mutations per account
@@ -192,8 +194,8 @@ func (s *Service) PrepareEdgeRuleMutationLocked(ctx context.Context, appID, rule
 	}
 	conv := &EdgeRuleConvergence{
 		Notif: s.Host.Notifier(), Generation: generation, AppID: appID, AccountID: accountID, RuleID: ruleID,
-		Operation: operation, Hosts: canonicalEdgeRuleHosts(hosts), Expected: map[string]struct{}{},
-		Cancel: func() {}, Unlock: unlock,
+		Operation: operation, Hosts: boundedEdgeRuleHosts(canonicalEdgeRuleHosts(hosts)), Expected: map[string]struct{}{},
+		Cancel: func() {}, Unlock: unlock, Metrics: s.Metrics,
 	}
 	nodes, err := s.ServingEdgeRuleNodes(ctx)
 	if err != nil {
@@ -228,8 +230,10 @@ func (s *Service) PrepareEdgeRuleMutationLocked(ctx context.Context, appID, rule
 			listenCancel()
 		}
 	}
-	if err := conv.notifyAndWait(ctx, "prepare"); err != nil {
+	if err := conv.notifyAndWait(ctx, ConvergencePhasePrepare); err != nil {
 		conv.Abort(ctx)
+		s.Host.Logger().Warn("edge-rule convergence prepare failed; the change was refused",
+			"app", appID, "generation", generation, "err", err)
 		return nil, err
 	}
 	return conv, nil
@@ -262,6 +266,7 @@ func (s *Service) ServingEdgeRuleNodes(ctx context.Context) ([]string, error) {
 		for _, node := range stale {
 			if _, ok := seen[node]; ok {
 				delete(seen, node)
+				s.Metrics.gatewaySkipped(node)
 				s.Host.Logger().Warn("edge-rule convergence skips a gateway whose listener is stale",
 					"node", node, "stale_after", state.EdgeListenerStaleAfter)
 			}
@@ -273,6 +278,28 @@ func (s *Service) ServingEdgeRuleNodes(ctx context.Context) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// edgeRuleHostsPayloadBudget is how many bytes of a NOTIFY payload (at most
+// db.NotifyPayloadMaxBytes) the host list may take; the rest of the
+// convergence payload stays well under the remaining 1 KiB.
+const edgeRuleHostsPayloadBudget = db.NotifyPayloadMaxBytes - 1024
+
+// boundedEdgeRuleHosts collapses a host list too long for one NOTIFY payload
+// to "*" (ADR-091 amendment 2026-10-30, round 5). A rollback or a list edit
+// over a few hundred distinct hosts made the payload too large to publish, and
+// the change was refused for good. "*" fences and invalidates every host of
+// the mutating account, which covers the listed ones; other accounts are
+// untouched, since fences and invalidations are scoped by account.
+func boundedEdgeRuleHosts(hosts []string) []string {
+	size := 0
+	for _, host := range hosts {
+		size += len(host) + 3 // quotes and comma in the JSON array
+	}
+	if size <= edgeRuleHostsPayloadBudget {
+		return hosts
+	}
+	return []string{"*"}
 }
 
 func canonicalEdgeRuleHosts(hosts []string) []string {
@@ -299,7 +326,17 @@ func (c *EdgeRuleConvergence) payload(phase string) (string, error) {
 	return string(body), err
 }
 
+// notifyAndWait publishes phase and waits for every expected gateway to
+// acknowledge it. A phase that does not finish is counted by phase.
 func (c *EdgeRuleConvergence) notifyAndWait(ctx context.Context, phase string) error {
+	err := c.publishAndWait(ctx, phase)
+	if err != nil {
+		c.Metrics.convergenceFailed(phase)
+	}
+	return err
+}
+
+func (c *EdgeRuleConvergence) publishAndWait(ctx context.Context, phase string) error {
 	payload, err := c.payload(phase)
 	if err != nil {
 		return err
@@ -363,7 +400,7 @@ func (c *EdgeRuleConvergence) Apply(ctx context.Context, ruleID string) error {
 	c.RuleID = ruleID
 	applyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), EdgeRuleConvergenceTimeout+time.Second)
 	defer cancel()
-	return c.notifyAndWait(applyCtx, "apply")
+	return c.notifyAndWait(applyCtx, ConvergencePhaseApply)
 }
 
 func (c *EdgeRuleConvergence) Abort(ctx context.Context) {

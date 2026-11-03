@@ -84,9 +84,8 @@ def sync_detailed(
 
     Args:
         body (AdminSetGithubWebhookSecretRequest): Body shape for POST /v1/admin/github-webhook-
-            secrets
-            (PR-D / ADR-012 §7 amendment). The CLI takes hex so the
-            plaintext never has to be a binary argv value; the apid
+            secrets. The CLI takes hex so the
+            plaintext never has to be a binary argv value; the API
             handler hex-decodes before the INSERT.
 
     Raises:
@@ -117,9 +116,8 @@ def sync(
 
     Args:
         body (AdminSetGithubWebhookSecretRequest): Body shape for POST /v1/admin/github-webhook-
-            secrets
-            (PR-D / ADR-012 §7 amendment). The CLI takes hex so the
-            plaintext never has to be a binary argv value; the apid
+            secrets. The CLI takes hex so the
+            plaintext never has to be a binary argv value; the API
             handler hex-decodes before the INSERT.
 
     Raises:
@@ -145,9 +143,8 @@ async def asyncio_detailed(
 
     Args:
         body (AdminSetGithubWebhookSecretRequest): Body shape for POST /v1/admin/github-webhook-
-            secrets
-            (PR-D / ADR-012 §7 amendment). The CLI takes hex so the
-            plaintext never has to be a binary argv value; the apid
+            secrets. The CLI takes hex so the
+            plaintext never has to be a binary argv value; the API
             handler hex-decodes before the INSERT.
 
     Raises:
@@ -176,9 +173,8 @@ async def asyncio(
 
     Args:
         body (AdminSetGithubWebhookSecretRequest): Body shape for POST /v1/admin/github-webhook-
-            secrets
-            (PR-D / ADR-012 §7 amendment). The CLI takes hex so the
-            plaintext never has to be a binary argv value; the apid
+            secrets. The CLI takes hex so the
+            plaintext never has to be a binary argv value; the API
             handler hex-decodes before the INSERT.
 
     Raises:

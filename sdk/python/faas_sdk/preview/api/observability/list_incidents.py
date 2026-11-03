@@ -75,7 +75,7 @@ def sync_detailed(
 ) -> Response[IncidentsResponse | Problem]:
     """List the account's incidents.
 
-     ADR-20261022193512 internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+     Internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
     One list of alert rule firing periods, route monitor incidents and
     platform incidents from the status page: everything open plus what
     resolved since `since`, open first, then newest first, at most 100.
@@ -118,7 +118,7 @@ def sync(
 ) -> IncidentsResponse | Problem | None:
     """List the account's incidents.
 
-     ADR-20261022193512 internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+     Internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
     One list of alert rule firing periods, route monitor incidents and
     platform incidents from the status page: everything open plus what
     resolved since `since`, open first, then newest first, at most 100.
@@ -156,7 +156,7 @@ async def asyncio_detailed(
 ) -> Response[IncidentsResponse | Problem]:
     """List the account's incidents.
 
-     ADR-20261022193512 internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+     Internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
     One list of alert rule firing periods, route monitor incidents and
     platform incidents from the status page: everything open plus what
     resolved since `since`, open first, then newest first, at most 100.
@@ -197,7 +197,7 @@ async def asyncio(
 ) -> IncidentsResponse | Problem | None:
     """List the account's incidents.
 
-     ADR-20261022193512 internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+     Internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
     One list of alert rule firing periods, route monitor incidents and
     platform incidents from the status page: everything open plus what
     resolved since `since`, open first, then newest first, at most 100.

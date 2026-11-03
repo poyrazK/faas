@@ -20,6 +20,8 @@ package receivers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -30,6 +32,8 @@ import (
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
+	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -38,6 +42,7 @@ import (
 // spinning a real Postgres pool.
 type authStore interface {
 	AuthenticateKey(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
+	AuthenticateOIDCBearer(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
 }
 
 // authReceiver is the in-package server implementation of
@@ -48,11 +53,22 @@ type authStore interface {
 type authReceiver struct {
 	apidpb.UnimplementedAuthServer
 	store authStore
+	// tracing decides the tracing capability for an OTLP key's subject;
+	// nil releases everyone.
+	tracing TracingReleased
+	// sessions opens dashboard session cookies for VerifySession; nil
+	// answers Unavailable.
+	sessions SessionOpener
+}
+
+// SessionOpener opens a dashboard session cookie: apid's *session.Manager.
+type SessionOpener interface {
+	Verify(value string) (session.Envelope, error)
 }
 
 // newAuthReceiver wires a production receiver.
-func newAuthReceiver(store authStore) *authReceiver {
-	return &authReceiver{store: store}
+func newAuthReceiver(store authStore, tracing TracingReleased, sessions SessionOpener) *authReceiver {
+	return &authReceiver{store: store, tracing: tracing, sessions: sessions}
 }
 
 // AuthenticateKey resolves the bearer token to (account_id, plan).
@@ -78,7 +94,7 @@ func (r *authReceiver) AuthenticateKey(ctx context.Context, req *apidpb.Authenti
 	if tok == "" {
 		return nil, status.Error(codes.InvalidArgument, "empty token")
 	}
-	acct, _, err := r.store.AuthenticateKey(ctx, api.HashAPIKey(tok))
+	acct, key, err := r.store.AuthenticateKey(ctx, api.HashAPIKey(tok))
 	if err != nil {
 		// Hash miss + IAM-5 expired/revoked keys are all
 		// authenticated-shape errors from the gateway's POV:
@@ -98,15 +114,93 @@ func (r *authReceiver) AuthenticateKey(ctx context.Context, req *apidpb.Authenti
 		// Generic store-side error: same shape — Internal.
 		return nil, status.Errorf(codes.Internal, "apid auth lookup: %v", err)
 	}
-	return &apidpb.AuthenticateKeyResponse{
-		AccountId: acct.ID,
-		Plan:      string(acct.Plan),
-	}, nil
+	return r.traceKeyPrincipal(ctx, acct, key)
+}
+
+// AuthenticateCredential resolves a credential for a gateway that cannot
+// key its hash itself (ADR 20261029202403). The gateway sends the presented
+// token's SHA-256; an unknown, expired or revoked credential is an outcome,
+// so a store failure is the only error besides a malformed request.
+func (r *authReceiver) AuthenticateCredential(ctx context.Context, req *apidpb.AuthenticateCredentialRequest) (*apidpb.AuthenticateCredentialResponse, error) {
+	sum := req.GetSha256()
+	if len(sum) != sha256.Size {
+		return nil, status.Error(codes.InvalidArgument, "sha256 must be 32 bytes")
+	}
+	var lookup func(context.Context, []byte) (state.Account, state.APIKey, error)
+	switch req.GetKind() {
+	case apidpb.CredentialKind_CREDENTIAL_KIND_API_KEY:
+		lookup = r.store.AuthenticateKey
+	case apidpb.CredentialKind_CREDENTIAL_KIND_OIDC_BEARER:
+		lookup = r.store.AuthenticateOIDCBearer
+	default:
+		return nil, status.Error(codes.InvalidArgument, "unknown credential kind")
+	}
+	acct, key, err := lookup(ctx, sum)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return &apidpb.AuthenticateCredentialResponse{Outcome: apidpb.CredentialOutcome_CREDENTIAL_OUTCOME_NOT_FOUND}, nil
+	case errors.Is(err, state.ErrAPIKeyExpired):
+		return &apidpb.AuthenticateCredentialResponse{Outcome: apidpb.CredentialOutcome_CREDENTIAL_OUTCOME_EXPIRED}, nil
+	case errors.Is(err, state.ErrAPIKeyRevoked):
+		return &apidpb.AuthenticateCredentialResponse{Outcome: apidpb.CredentialOutcome_CREDENTIAL_OUTCOME_REVOKED}, nil
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "apid credential lookup: %v", err)
+	}
+	accountJSON, err := json.Marshal(acct)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "encode account: %v", err)
+	}
+	keyJSON, err := state.MarshalAPIKeyWire(key)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "encode key: %v", err)
+	}
+	return &apidpb.AuthenticateCredentialResponse{Outcome: apidpb.CredentialOutcome_CREDENTIAL_OUTCOME_OK, AccountJson: accountJSON, KeyJson: keyJSON}, nil
+}
+
+// MatchCredential answers whether a stored credential hash a gateway read
+// is the one the presented token may hold (ADR 20261029202403). It answers
+// only yes or no, and only for the columns gateways check, under apid's
+// policy for the column's family (amendment 1, decision 2).
+func (r *authReceiver) MatchCredential(_ context.Context, req *apidpb.MatchCredentialRequest) (*apidpb.MatchCredentialResponse, error) {
+	tag, family, ok := state.GatewayCheckedCredential(req.GetColumn())
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "column is not a gateway-checked credential")
+	}
+	if len(req.GetSha256()) != sha256.Size {
+		return nil, status.Error(codes.InvalidArgument, "sha256 must be 32 bytes")
+	}
+	return &apidpb.MatchCredentialResponse{Match: credhash.For(family).Matches(tag, req.GetSha256(), req.GetStored())}, nil
+}
+
+// VerifySession opens a dashboard session cookie for a gateway that holds
+// no session key (ADR-20261102191500). A malformed, forged or expired
+// cookie is an outcome, not an error. The cookie is never logged.
+func (r *authReceiver) VerifySession(_ context.Context, req *apidpb.VerifySessionRequest) (*apidpb.VerifySessionResponse, error) {
+	if req.GetCookie() == "" {
+		return nil, status.Error(codes.InvalidArgument, "cookie is required")
+	}
+	if r.sessions == nil {
+		return nil, status.Error(codes.Unavailable, "sessions are not configured")
+	}
+	env, verifyErr := r.sessions.Verify(req.GetCookie())
+	switch {
+	case errors.Is(verifyErr, session.ErrInvalid):
+		return &apidpb.VerifySessionResponse{}, nil
+	case verifyErr != nil:
+		return nil, status.Error(codes.Internal, "open session cookie")
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "encode session envelope")
+	}
+	return &apidpb.VerifySessionResponse{Valid: true, Envelope: raw}, nil
 }
 
 // RegisterAuthReceiver binds the AuthServer onto a gRPC server.
 // Called from runAuthServer in main.go alongside the other gRPC
-// services.
-func RegisterAuthReceiver(s *grpc.Server, store authStore) {
-	apidpb.RegisterAuthServer(s, newAuthReceiver(store))
+// services. tracing gates OTLP keys on the tracing capability; nil
+// releases everyone. sessions answers VerifySession; nil answers
+// Unavailable.
+func RegisterAuthReceiver(s *grpc.Server, store authStore, tracing TracingReleased, sessions SessionOpener) {
+	apidpb.RegisterAuthServer(s, newAuthReceiver(store, tracing, sessions))
 }

@@ -26,7 +26,7 @@ T = TypeVar("T", bound="ObsHealthResponse")
 class ObsHealthResponse:
     """Wire shape for GET /v1/admin/obs/health (admin scope +
     FAAS_ADMIN_EMAILS allowlist + MFA). Composed from
-    apid's own Prometheus counters (apid_audit_log_write_total /
+    the API's own Prometheus counters (apid_audit_log_write_total /
     apid_audit_log_write_failures_total), a SQL audit-log coverage ratio,
     a single SQL aggregate over operator_intents (stuck-running
     rows), a single SQL aggregate over events (trace_id
@@ -75,7 +75,7 @@ class ObsHealthResponse:
     in the window. Kinds with zero rows are seeded to
     1.0 (vacuous truth — see Store interface comment).
     Reads events (live), NOT audit_log (FK-free
-    post-deletion copy) — ADR-091 §3.7.4.
+    post-deletion copy).
     """
     alerts_firing: int
     """Count of Prometheus alert rules in the firing state

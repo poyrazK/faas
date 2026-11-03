@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,7 +43,12 @@ func TestAllBindingQueueVerification(t *testing.T) {
 				inventory.Bindings = append(inventory.Bindings, queue)
 			}
 			publishes, polls, cancels, tasks, reads := 0, 0, 0, 0, 0
+			// A timed-out poll can still be in flight when the CLI cancels
+			// the canary, so requests are served one at a time.
+			var mu sync.Mutex
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings":
 					reads++
@@ -124,6 +130,7 @@ func TestAllBindingQueueVerification(t *testing.T) {
 				args = []string{"bindings", "verify", "api", "--all", "--queue-publish", "--json"}
 			}
 			code, out, errs := captureBindingCLI(t, server.URL, args...)
+			server.Close() // waits for in-flight requests before the counts are read
 			if scenario == "unpinned consent" {
 				if code == 0 || reads+publishes+tasks != 0 {
 					t.Fatalf("invalid selection caused requests code=%d", code)

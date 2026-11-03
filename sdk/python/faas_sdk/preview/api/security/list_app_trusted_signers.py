@@ -77,8 +77,7 @@ def sync_detailed(
 ) -> Response[AppTrustedSignerListResponse | Problem]:
     """List the per-app trusted-publisher list (admin).
 
-     Lists every (signer_name, public_key_pem) row for this app
-    (issue #472 / ADR-054). Admin-scoped; the wire form is the
+     Lists every (signer_name, public_key_pem) row for this app. Admin-scoped; the wire form is the
     base64-encoded DER SPKI bytes, NOT a PEM-armoured block.
     Empty list is the EXPECTED state for any app with
     require_signed=false. Mounted with `authLimited → requireMFA →
@@ -113,8 +112,7 @@ def sync(
 ) -> AppTrustedSignerListResponse | Problem | None:
     """List the per-app trusted-publisher list (admin).
 
-     Lists every (signer_name, public_key_pem) row for this app
-    (issue #472 / ADR-054). Admin-scoped; the wire form is the
+     Lists every (signer_name, public_key_pem) row for this app. Admin-scoped; the wire form is the
     base64-encoded DER SPKI bytes, NOT a PEM-armoured block.
     Empty list is the EXPECTED state for any app with
     require_signed=false. Mounted with `authLimited → requireMFA →
@@ -144,8 +142,7 @@ async def asyncio_detailed(
 ) -> Response[AppTrustedSignerListResponse | Problem]:
     """List the per-app trusted-publisher list (admin).
 
-     Lists every (signer_name, public_key_pem) row for this app
-    (issue #472 / ADR-054). Admin-scoped; the wire form is the
+     Lists every (signer_name, public_key_pem) row for this app. Admin-scoped; the wire form is the
     base64-encoded DER SPKI bytes, NOT a PEM-armoured block.
     Empty list is the EXPECTED state for any app with
     require_signed=false. Mounted with `authLimited → requireMFA →
@@ -178,8 +175,7 @@ async def asyncio(
 ) -> AppTrustedSignerListResponse | Problem | None:
     """List the per-app trusted-publisher list (admin).
 
-     Lists every (signer_name, public_key_pem) row for this app
-    (issue #472 / ADR-054). Admin-scoped; the wire form is the
+     Lists every (signer_name, public_key_pem) row for this app. Admin-scoped; the wire form is the
     base64-encoded DER SPKI bytes, NOT a PEM-armoured block.
     Empty list is the EXPECTED state for any app with
     require_signed=false. Mounted with `authLimited → requireMFA →

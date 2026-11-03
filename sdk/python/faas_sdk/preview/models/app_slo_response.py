@@ -22,9 +22,8 @@ T = TypeVar("T", bound="AppSLOResponse")
 
 @_attrs_define
 class AppSLOResponse:
-    """Per-app SLO panel returned by `GET /v1/apps/{slug}/slo?window=`
-    (issue #696 / ADR-082). Distinct from `AppMetricsResponse`
-    (issue #273 / ADR-042): the SLO surface is a fixed-window
+    """Per-app SLO panel returned by `GET /v1/apps/{slug}/slo?window=`. Distinct from `AppMetricsResponse`: the SLO surface
+    is a fixed-window
     (1h/24h/7d) summary of the customer-facing SLO signals,
     not a 5m slice for the dashboard. The fields overlap only
     on latency percentiles, error rate, and cold-boot rate — the

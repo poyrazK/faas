@@ -301,6 +301,14 @@ type UsageModeProvider interface {
 	UsageMode() UsageMode
 }
 
+// DeliveryTimeStamper is an optional provider contract: a provider that
+// stamps each usage event with the time it is sent, not the hour it
+// measures (Polar, ADR-20261028101500), totals usage by delivery time, so
+// ReconcileUsage over a window counts what was delivered in it.
+type DeliveryTimeStamper interface {
+	StampsUsageAtDelivery() bool
+}
+
 // UsageMode describes the quantity passed to PushUsageRecord and returned by
 // ReconcileUsage.
 type UsageMode string
@@ -341,6 +349,23 @@ type SubscriptionPlanChangeProvider interface {
 // the current state before a delivery may move the account (Hunt 17 H17-1).
 type SubscriptionStateProvider interface {
 	SubscriptionState(ctx context.Context, subscriptionID string) (SubscriptionState, error)
+}
+
+// CustomerSubscriptionLister is an optional provider surface listing a
+// customer's subscriptions. apid reconciles billed accounts against it, so a
+// webhook delivery that was missed or never accepted cannot leave an account's
+// plan or dunning state behind the provider's for good
+// (ADR-20261029094512).
+type CustomerSubscriptionLister interface {
+	// CustomerSubscriptions returns the customer's subscriptions in every
+	// status, most recently started first.
+	CustomerSubscriptions(ctx context.Context, customerID string) ([]Subscription, error)
+}
+
+// Subscription is one provider subscription and its current state.
+type Subscription struct {
+	ID string
+	SubscriptionState
 }
 
 // SubscriptionState is a provider subscription's current status and plan.
@@ -569,6 +594,14 @@ type Event struct {
 	// projection (currently Paddle and Polar). It is persisted independently of the
 	// event type so order.created can populate invoice history before payment.
 	Invoice *InvoiceData
+
+	// HoldDunning marks a payment success whose subscription the provider
+	// still reports as past due: a late or out-of-order delivery for an
+	// earlier payment. The payment stands (invoice, credits, plan), but it
+	// does not end dunning; the payment that settles the overdue balance
+	// does, as does reconciliation once the provider reports the
+	// subscription paid up.
+	HoldDunning bool
 }
 
 // RefundResult is what Provider.Refund returns on a successful refund.
@@ -731,6 +764,10 @@ const (
 	// live object-storage charge meter and implements ObjectStorageLineItemSink.
 	// Shadow configurations retain local receipts without this capability.
 	CapObjectStorageUsage
+
+	// CapManagedPostgresUsage means the provider has a separately configured,
+	// live managed PostgreSQL overage charge meter (ADR-20261031110037).
+	CapManagedPostgresUsage
 )
 
 // CapabilitySet is the bitmask of capabilities a Provider exposes.
@@ -765,6 +802,7 @@ func (s CapabilitySet) String() string {
 		{CapUsageLineItem, "usage_line_item"},
 		{CapEgressUsage, "egress_usage"},
 		{CapObjectStorageUsage, "object_storage_usage"},
+		{CapManagedPostgresUsage, "managed_postgres_usage"},
 	} {
 		if s.Has(c.cap) {
 			parts = append(parts, c.name)

@@ -9,7 +9,6 @@
 # contract is unpinned there, which is how both stores came to return zero
 # from every live-instance reader while the suite sat green (#1666, #1669,
 # #1672). Sorted; keep it that way.
-APIKeyByHash
 AbortMigratingInstance
 AbortServiceRollout
 AccountByEmail
@@ -32,7 +31,6 @@ AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
 AppendDeploymentLog
 AppendDeploymentStage
-AppendEventWithTrace
 AppendSnapshotStorage
 AppendUploadBytes
 ApplyProjectPlan
@@ -40,7 +38,6 @@ ApplyRegressionAction
 AppsForProject
 AuthDefaultFlippedAt
 AuthenticateOIDCBearer
-AutoRollbackDeploymentsTx
 BeginCrashCapturePurge
 BeginCrashCaptureStage
 BeginServiceRolloutCutover
@@ -83,7 +80,6 @@ CountAppEnvInScope
 CountAppRegistryCredentials
 CountAppSecrets
 CountAppTrustedSigners
-CountAppsWithEvictionPriority
 CountAuthDefaultFlippedApps
 CountDataUpstreamsByApp
 CountDeployedApps
@@ -98,6 +94,7 @@ CountNewErrorFingerprintsSince
 CountOpenAPIDocsByAccount
 CountOpenAPIImportsByAccount
 CountOpenUploadSessionsByAccountApp
+CountOtherBillingSubjectAppsWithEvictionPriority
 CountPendingInvocations
 CountPendingOrgInvitations
 CountTenantHostnamesForSurface
@@ -109,7 +106,6 @@ CrashCapturesToEncrypt
 CrashCapturesToPurge
 CrashCapturesToStage
 CrashSnapshotSettingsFor
-CreateAPIKeyWithExpiry
 CreateAccountWithPersonalOrg
 CreateAlertRuleIfUnderQuota
 CreateAppFork
@@ -119,12 +115,11 @@ CreateAppWebhookIfUnderQuota
 CreateBuildProvenance
 CreateBuildWithID
 CreateConsumerKey
-CreateCorsPresetIfUnderQuota
+CreateConsumerKeyForConsumerIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions
 CreateCustomDomain
 CreateDeploymentScopeExclusion
-CreateEdgeRule
 CreateEdgeRuleIfUnderQuota
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
@@ -176,7 +171,6 @@ DeploymentRecordSnapshotMiss
 DeploymentSidecarRAMs
 DeploymentSnapshotBackoffActive
 DomainByName
-DropTriggerRecordByOperator
 EditPublicStatusEventTitle
 EditPublicStatusUpdateMessage
 ExpireCrashCapture
@@ -332,6 +326,7 @@ ListDeploymentAudit
 ListDeploymentAuditByAlertRule
 ListDeploymentLogs
 ListDeploymentScopeExclusions
+ListDeploymentSidecarEnvReseals
 ListDeploymentSidecarLayers
 ListDeploymentsByNodeID
 ListDeploymentsForAccount
@@ -340,7 +335,6 @@ ListDistinctUpstreamHostHashes
 ListDomainsForAccount
 ListDomainsForApp
 ListDueInvocations
-ListEdgeRulesForAccount
 ListEdgeRulesForApp
 ListEgressCircuitCandidates
 ListEnabledAlertRules
@@ -399,14 +393,12 @@ ListTenantHostnamesForSurface
 ListTenantSurfacesForAccount
 ListTenantSurfacesForApp
 ListTenantSurfacesNearingExpiry
-ListTriggerRecordsForTrigger
 ListUnplacedApps
 ListVerifiedTenantHostnamesForSurface
 ListWorkflowRuns
 LiveCrashCaptureDeploymentIDs
 LiveDeploymentForScope
 LiveDeployments
-LoadAllOverageCapCents
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes
 LookupDeploymentScopeExclusions
@@ -432,7 +424,6 @@ MarkRuntimeConfigOperationSucceeded
 MarkSnapshotStaleByAppProtocol
 MarkTenantHostnameCheckFailed
 MarkTenantHostnameVerified
-MarkTriggerRecordDeadLetter
 MarkTriggerRecordRetry
 MarkTriggerRecordSucceeded
 MarkUploadSessionCommitted
@@ -557,7 +548,6 @@ TakeOverAbandonedAppFork
 TenantSurfaceByHostname
 TouchConsumerKeyLastUsed
 TouchInstancesWithRequestDelta
-TouchKeyLastUsed
 TouchSessionLastSeen
 TouchTenantSurfaceForRenewal
 TrafficAnomalyAggregate
@@ -568,7 +558,6 @@ UpdateAccountProviderCustomerID
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus
 UpdateAlertRule
-UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
 UpdateCorsPreset
@@ -605,6 +594,7 @@ UpsertAppTrustedSigner
 UpsertComputeNode
 UpsertComputeNodeFromOperator
 UpsertDeploymentOpenAPIDoc
+UpsertDeploymentOpenAPIDocIfUnderQuota
 UpsertDeploymentScanResult
 UpsertDeploymentSecretFindings
 UpsertDoctorObservation

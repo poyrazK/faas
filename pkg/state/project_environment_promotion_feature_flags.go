@@ -22,6 +22,25 @@ type ProjectEnvironmentPromotionFeatureFlagStore interface {
 	ProjectEnvironmentPromotionFeatureFlags(context.Context, string, string) (ProjectEnvironmentPromotionFeatureFlags, error)
 }
 
+// FeatureFlagPromotionHoldReader reports whether an unfinished promotion still
+// compares the environment's flag head with the version it wrote. Completion
+// and rollback both require that version unchanged, so automatic writers such
+// as the rollout auto-advancer must leave it alone.
+type FeatureFlagPromotionHoldReader interface {
+	FeatureFlagVersionHeldByPromotion(context.Context, FeatureFlagScope, int64) (bool, error)
+}
+
+// A failed promotion keeps its activation held until its rollback finishes or
+// fails; an operator edit, not an automatic one, resolves that state.
+func promotionHoldsFeatureFlagVersion(promotion ProjectEnvironmentPromotion, receipt ProjectEnvironmentPromotionFeatureFlags, version int64) bool {
+	if version <= 0 {
+		return false
+	}
+	return receipt.TargetVersion == version && receipt.RollbackVersion == 0 && promotion.Status != "succeeded" &&
+		promotion.RollbackStatus != "rolled_back" && promotion.RollbackStatus != "rollback_failed" ||
+		receipt.RollbackVersion == version && promotion.RollbackStatus == "rolling_back"
+}
+
 type promotionFeatureFlags struct {
 	ProjectEnvironmentPromotionFeatureFlags
 	Source         projectCloneFeatureFlags

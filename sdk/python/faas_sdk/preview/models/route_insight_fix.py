@@ -15,7 +15,7 @@ T = TypeVar("T", bound="RouteInsightFix")
 @_attrs_define
 class RouteInsightFix:
     """The edge-rule change applying an active insight would make now, planned from its evidence and the app's current
-    rules (ADR-20261020161310). Absent when the platform has no fix; never in webhook payloads.
+    rules. Absent when the platform has no fix; never in webhook payloads.
 
     """
 

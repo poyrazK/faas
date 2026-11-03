@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -24,7 +25,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value, ok := m.endpoints.Load(id)
-	if !ok {
+	if !ok || !servedOnHost(value.(*endpointState), r) {
 		http.NotFound(w, r)
 		return
 	}
@@ -98,7 +99,11 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	var identity JWTIdentity
 	var err error
 	if usesTicket {
-		claims, e := m.readTicket(ctx, id, token)
+		claims, e := m.cachedTicket(ctx, id, token, true)
+		if e != nil && !errors.Is(e, state.ErrNotFound) {
+			writeTicketRefusal(w, e)
+			return
+		}
 		principal, err = claims.Principal, e
 		ticketExpiry = claims.ExpiresAt
 		if e == nil {
@@ -149,17 +154,20 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer m.release(node)
-	if !m.reserveResume(node.account) {
+	if !m.reserveResume(node) {
 		http.Error(w, "subscription limit reached", http.StatusTooManyRequests)
 		return
 	}
 	defer m.releaseResume(node.account)
-	read := func() (state.ManagedRealtimeChannelHistory, error) {
+	read := func(poll bool) (state.ManagedRealtimeChannelHistory, error) {
 		readCtx, stop := context.WithTimeout(ctx, resumeHistoryReadTimeout)
 		defer stop()
+		if poll {
+			return m.pollResumeHistory(readCtx, id, channel, after)
+		}
 		return m.readResumeHistory(readCtx, id, channel, after)
 	}
-	page, err := read()
+	page, err := read(false)
 	if err != nil {
 		http.Error(w, "history unavailable", http.StatusServiceUnavailable)
 		return
@@ -261,7 +269,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		page, err = read()
+		page, err = read(true)
 		if err != nil {
 			// Transient: end the stream so the client reconnects from its cursor.
 			return
@@ -356,7 +364,10 @@ func (a *sseAuthorization) checkTicket(ctx context.Context, now time.Time) sseVe
 	if now.Sub(a.refreshedAt) < realtimeAccessRefreshInterval {
 		return sseAllowed
 	}
-	claims, err := a.m.readTicket(ctx, a.endpointID, a.token)
+	claims, err := a.m.cachedTicket(ctx, a.endpointID, a.token, false)
+	if errors.Is(err, state.ErrNotFound) {
+		return sseDenied
+	}
 	if err != nil {
 		return sseUnavailable
 	}
@@ -392,7 +403,7 @@ func (a *sseAuthorization) authorize(ctx context.Context) sseVerdict {
 	if verified != a.principal {
 		return sseDenied
 	}
-	if channelRulesAllow(&current, identity, a.channel) {
+	if channelRulesAllow(&current, identity, a.channel, false) {
 		return sseAllowed
 	}
 	parent, scope, err := api.ParseRealtimeActivityScope(a.channel)
@@ -423,9 +434,7 @@ func (a *sseAuthorization) checkAccess(ctx context.Context, now time.Time) sseVe
 	if !a.node.config.Load().accessOn(a.m.cfg) || now.Sub(a.refreshedAt) < realtimeAccessRefreshInterval {
 		return sseAllowed
 	}
-	accessCtx, done := context.WithTimeout(ctx, realtimeAccessReadTimeout)
-	access, err := a.m.cfg.AccessReader.ReadRealtimeAccess(accessCtx, a.endpointID, a.principal)
-	done()
+	access, err := a.m.cachedAccess(ctx, a.endpointID, a.principal)
 	if err != nil {
 		return sseUnavailable
 	}

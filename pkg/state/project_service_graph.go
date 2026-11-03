@@ -54,7 +54,7 @@ func resolveProjectServiceGraph(input projectServiceGraphInput, service string) 
 	}
 	bound := false
 	for _, binding := range caller.Settings.Manifest.ServiceBindings {
-		bound = bound || binding.Service == service
+		bound = bound || api.SameServiceName(binding.Service, service)
 	}
 	if !bound {
 		return zero, true, false, nil
@@ -74,7 +74,7 @@ func resolveProjectServiceGraph(input projectServiceGraphInput, service string) 
 			return zero, true, false, ErrConflict
 		}
 		callerFound = callerFound || peer.AppID == caller.AppID && peer.DeploymentID == caller.DeploymentID && peer.Hash == caller.Hash
-		if peer.Name == service || peer.Slug == service {
+		if api.SameServiceName(peer.Name, service) || peer.Slug == service {
 			if target != nil || peer.AppID == caller.AppID {
 				return zero, true, false, ErrConflict
 			}
@@ -88,7 +88,7 @@ func resolveProjectServiceGraph(input projectServiceGraphInput, service string) 
 	if manifest.AllowedServiceCallers != nil {
 		allowed := false
 		for _, name := range *manifest.AllowedServiceCallers {
-			allowed = allowed || name == caller.Name || name == caller.Slug
+			allowed = allowed || api.SameServiceName(name, caller.Name) || name == caller.Slug
 		}
 		if !allowed {
 			return zero, true, false, ErrConflict
@@ -100,14 +100,20 @@ func resolveProjectServiceGraph(input projectServiceGraphInput, service string) 
 		if err != nil {
 			return zero, true, false, ErrConflict
 		}
-		scope, ok := scopes[caller.Name]
+		scope, ok := scopes[api.ServiceDNSName(caller.Name)]
 		if !ok {
 			return zero, true, false, ErrConflict
 		}
 		callScope = &scope
 	}
 	var reliability *api.ServiceReliabilityPolicy
-	if policy, ok := caller.Settings.Manifest.ServiceReliability[service]; ok {
+	policy, ok := caller.Settings.Manifest.ServiceReliability[service]
+	for name, candidate := range caller.Settings.Manifest.ServiceReliability {
+		if !ok && api.SameServiceName(name, service) {
+			policy, ok = candidate, true
+		}
+	}
+	if ok {
 		if policy.Validate() != nil {
 			return zero, true, false, ErrConflict
 		}

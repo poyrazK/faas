@@ -245,6 +245,48 @@ func (s *PgStore) ResealGithubWebhookSecret(ctx context.Context, installationID 
 	return tag.RowsAffected() == 1, nil
 }
 
+// GithubInstallTokenSealed is a stored GitHub install token that has not
+// expired yet, as sealed.
+type GithubInstallTokenSealed struct {
+	AccountID      string
+	InstallationID int64
+	Sealed         []byte
+}
+
+// ListUnexpiredGithubInstallTokens pages, in (account, installation) order
+// after the cursor, through the install tokens githubd may still open: a
+// githubd rehydrates an unexpired token from its row rather than mint a new
+// one. An empty afterAccountID starts at the beginning.
+func (s *PgStore) ListUnexpiredGithubInstallTokens(ctx context.Context, afterAccountID string, afterInstallationID int64, limit int) ([]GithubInstallTokenSealed, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT account_id::text, installation_id, sealed_install_token
+		  FROM github_installations
+		 WHERE token_expires_at > now()
+		   AND (account_id::text, installation_id) > ($1, $2)
+		 ORDER BY account_id::text, installation_id
+		 LIMIT $3
+	`, afterAccountID, afterInstallationID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list unexpired github install tokens: %w", err)
+	}
+	defer rows.Close()
+	var out []GithubInstallTokenSealed
+	for rows.Next() {
+		var t GithubInstallTokenSealed
+		if err := rows.Scan(&t.AccountID, &t.InstallationID, &t.Sealed); err != nil {
+			return nil, fmt.Errorf("state: scan github install token: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list unexpired github install tokens: %w", err)
+	}
+	return out, nil
+}
+
 // Registry credential kinds: an app's and a job's private-registry password.
 const (
 	RegistrySealedCredentialApp = "app"
@@ -257,6 +299,175 @@ type RegistrySealedCredential struct {
 	Kind   string
 	ID     string
 	Sealed []byte
+}
+
+// CountRuntimeCopiesOffDomain counts the short-lived copies of runtime
+// secrets filed under another key id than kid (ADR 20261022111812): the
+// replaced secrets an open config guard keeps to restore, and the
+// credentials a managed Postgres cutover has sealed and not yet published.
+// A guard's copies are deleted when it closes, and a cutover's ciphertext
+// is cleared when it publishes or cancels; a copy that lands in app_secrets
+// is listed with the rekey documents.
+func (s *PgStore) CountRuntimeCopiesOffDomain(ctx context.Context, kid string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM app_config_guard_secrets s
+		          JOIN app_config_guards g ON g.id = s.guard_id
+		         WHERE g.status = 'watching' AND s.ciphertext IS NOT NULL AND s.kid IS DISTINCT FROM $1)
+		     + (SELECT count(*) FROM managed_postgres_cutover_credentials
+		         WHERE state = 'sealed' AND kid IS DISTINCT FROM $1)
+	`, kid).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count runtime copies off the domain: %w", err)
+	}
+	return n, nil
+}
+
+// CrashCaptureKey is a ready crash capture's sealed per-capture key.
+type CrashCaptureKey struct {
+	ID        string
+	SealedKey []byte
+}
+
+// ListSealedCrashCaptureKeys pages, in id order after the cursor, through
+// the keys of the unexpired ready captures vmmd sealed at the source
+// (ADR-733): the keys a restoring vmmd opens.
+func (s *PgStore) ListSealedCrashCaptureKeys(ctx context.Context, afterID string, limit int) ([]CrashCaptureKey, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, sealed_key FROM crash_captures
+		 WHERE status = 'ready' AND plaintext_state = 'sealed' AND sealed_key IS NOT NULL
+		   AND (expires_at IS NULL OR expires_at > now())
+		   AND id::text > $1
+		 ORDER BY id::text
+		 LIMIT $2
+	`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list sealed crash capture keys: %w", err)
+	}
+	defer rows.Close()
+	var out []CrashCaptureKey
+	for rows.Next() {
+		var k CrashCaptureKey
+		if err := rows.Scan(&k.ID, &k.SealedKey); err != nil {
+			return nil, fmt.Errorf("state: scan crash capture key: %w", err)
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list sealed crash capture keys: %w", err)
+	}
+	return out, nil
+}
+
+// ListSidecarEnvDeployments pages, in id order after the cursor, through
+// the deployments whose sidecars declare env values: the sealed values the
+// runtime re-seal copies into deployment_sidecar_env_reseals. Soft-deleted
+// deployments are listed too, since recovery can serve them again.
+func (s *PgStore) ListSidecarEnvDeployments(ctx context.Context, afterID string, limit int) ([]DeploymentSidecars, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id::text, d.sidecars FROM deployments d
+		 WHERE d.id::text > $1
+		   AND EXISTS (SELECT 1 FROM jsonb_array_elements(d.sidecars) s
+		                WHERE jsonb_typeof(s->'env') = 'object' AND s->'env' <> '{}'::jsonb)
+		 ORDER BY d.id::text
+		 LIMIT $2
+	`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list sidecar env deployments: %w", err)
+	}
+	defer rows.Close()
+	var out []DeploymentSidecars
+	for rows.Next() {
+		var d DeploymentSidecars
+		if err := rows.Scan(&d.ID, &d.Sidecars); err != nil {
+			return nil, fmt.Errorf("state: scan sidecar env deployment: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list sidecar env deployments: %w", err)
+	}
+	return out, nil
+}
+
+// UpsertSidecarEnvReseal writes r when no copy is stored, or when the
+// stored copy is still previous, and reports whether it did; a copy
+// rewritten since it was read is left for the next run.
+func (s *PgStore) UpsertSidecarEnvReseal(ctx context.Context, r SidecarEnvReseal, previous []byte) (bool, error) {
+	if !validSidecarEnvReseal(r) {
+		return false, errors.New("state: sidecar env reseal needs a deployment, sidecar, key, source digest, key id and ciphertext")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO deployment_sidecar_env_reseals AS r
+		       (deployment_id, sidecar_name, env_key, source_sha256, kid, ciphertext)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6)
+		ON CONFLICT (deployment_id, sidecar_name, env_key) DO UPDATE SET
+			source_sha256 = EXCLUDED.source_sha256,
+			kid = EXCLUDED.kid,
+			ciphertext = EXCLUDED.ciphertext,
+			resealed_at = now()
+		 WHERE r.ciphertext = $7
+	`, r.DeploymentID, r.SidecarName, r.Key, r.SourceSHA256, r.Kid, r.Ciphertext, previous)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return false, nil // the deployment was deleted since it was listed
+	}
+	if err != nil {
+		return false, fmt.Errorf("state: upsert sidecar env reseal: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ListDeploymentSidecarEnvReseals implements Store; schedd reads it at wake.
+func (s *PgStore) ListDeploymentSidecarEnvReseals(ctx context.Context, deploymentID string) ([]SidecarEnvReseal, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT sidecar_name, env_key, source_sha256, kid, ciphertext
+		  FROM deployment_sidecar_env_reseals
+		 WHERE deployment_id = $1::uuid
+		 ORDER BY sidecar_name, env_key
+	`, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list sidecar env reseals: %w", err)
+	}
+	defer rows.Close()
+	out := []SidecarEnvReseal{}
+	for rows.Next() {
+		r := SidecarEnvReseal{DeploymentID: deploymentID}
+		if err := rows.Scan(&r.SidecarName, &r.Key, &r.SourceSHA256, &r.Kid, &r.Ciphertext); err != nil {
+			return nil, fmt.Errorf("state: scan sidecar env reseal: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list sidecar env reseals: %w", err)
+	}
+	return out, nil
+}
+
+// CountImagedKeyedCrashCaptures counts the unexpired ready crash captures
+// whose at-rest state imaged keeps with the fleet key (ADR-733): plaintext
+// it would still encrypt to the fleet recipient, and captures it encrypted
+// with a fleet-sealed key and would decrypt for a fork. A capture vmmd
+// sealed at the source (plaintext_state sealed) is not counted: imaged only
+// expires and purges those.
+func (s *PgStore) CountImagedKeyedCrashCaptures(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM crash_captures
+		 WHERE status = 'ready'
+		   AND plaintext_state IN ('present', 'absent', 'staging', 'staged')
+		   AND (expires_at IS NULL OR expires_at > now())
+	`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count imaged-keyed crash captures: %w", err)
+	}
+	return n, nil
 }
 
 // ListRegistrySealedCredentials pages through every sealed registry
@@ -512,6 +723,59 @@ func (s *PgStore) ResealAlertingCredential(ctx context.Context, c AlertingSealed
 	return tag.RowsAffected() == 1, nil
 }
 
+// Kinds of the MCP readiness destination secret copies open incidents carry.
+const (
+	AlertingRoutingCopyPrimary  = "mcp_incident_primary"
+	AlertingRoutingCopyFallback = "mcp_incident_fallback"
+)
+
+// ListOpenMCPReadinessRoutingSecrets pages, in (kind, id) order after the
+// cursor, through the sealed destination secrets that MCP readiness
+// incidents copy into delivery_routing when they open. ID is the incident
+// id. Only incidents delivery may still read are listed: those not yet
+// resolved and those with an event still to deliver. Delivery opens a copy
+// when the route names a receiver the current policy no longer does.
+func (s *PgStore) ListOpenMCPReadinessRoutingSecrets(ctx context.Context, afterKind, afterID string, limit int) ([]AlertingSealedCredential, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH open_incident AS (
+			SELECT i.id, i.delivery_routing FROM mcp_readiness_incidents i
+			 WHERE i.resolved_at IS NULL
+			    OR EXISTS (SELECT 1 FROM mcp_readiness_incident_events e
+			                WHERE e.incident_id = i.id
+			                  AND e.delivery_status NOT IN ('delivered', 'suppressed', 'abandoned'))
+		)
+		SELECT kind, id, sealed FROM (
+			SELECT 'mcp_incident_primary' AS kind, id::text AS id, decode(delivery_routing->'primary'->>'secret', 'base64') AS sealed
+			  FROM open_incident WHERE coalesce(delivery_routing->'primary'->>'secret', '') <> ''
+			UNION ALL
+			SELECT 'mcp_incident_fallback', id::text, decode(delivery_routing->'fallback'->>'secret', 'base64')
+			  FROM open_incident WHERE coalesce(delivery_routing->'fallback'->>'secret', '') <> ''
+		) copy
+		 WHERE (kind, id) > ($1, $2)
+		 ORDER BY kind, id
+		 LIMIT $3
+	`, afterKind, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list open MCP readiness routing secrets: %w", err)
+	}
+	defer rows.Close()
+	var out []AlertingSealedCredential
+	for rows.Next() {
+		var c AlertingSealedCredential
+		if err := rows.Scan(&c.Kind, &c.ID, &c.Sealed); err != nil {
+			return nil, fmt.Errorf("state: scan MCP readiness routing secret: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list open MCP readiness routing secrets: %w", err)
+	}
+	return out, nil
+}
+
 // ResealStorageCredential replaces an active S3 credential's sealed secret
 // and key id for the storage seal-domain re-seal (ADR 20261022111812), only
 // while it still holds old: a binding rotation can replace a credential's
@@ -637,14 +901,40 @@ func (s *PgStore) ResealDeliveryValue(ctx context.Context, v DeliverySealedValue
 
 // Account value kinds (ADR 20261022111812) that apid both seals and opens:
 // an account's TOTP secret, an inbound webhook endpoint's signing secret, a
-// billing provider key, a managed workflow's plan and a PagerDuty
-// acknowledgement signing secret.
+// billing provider key, a managed workflow's plan, a PagerDuty
+// acknowledgement signing secret and the integration credentials below.
 const (
 	AccountSealedMFASecret      = "mfa_secret"
 	AccountSealedInboundWebhook = "inbound_webhook"
 	AccountSealedBillingKey     = "billing_key"
 	AccountSealedWorkflowPlan   = "workflow_plan"
 	AccountSealedPagerDutyAck   = "pagerduty_ack"
+	// Integration credentials: GitLab OAuth tokens, Slack workspace tokens,
+	// interaction signing secrets, team Slack destinations and pending
+	// Slack consent, and Linear credentials and pending Linear consent.
+	AccountSealedGitLabOAuth       = "gitlab_oauth"
+	AccountSealedSlackInstallation = "slack_installation"
+	AccountSealedSlackInteraction  = "slack_interaction"
+	AccountSealedSlackDestination  = "slack_destination"
+	AccountSealedSlackOAuthFlow    = "slack_oauth_flow"
+	AccountSealedLinearConnection  = "linear_connection"
+	AccountSealedLinearOAuthFlow   = "linear_oauth_flow"
+	// Product email: a subscription's delivery grant and paused-recipient
+	// evidence, and a delivery's recipient evidence and unsubscribe token.
+	AccountSealedProductEmailGrant       = "product_email_grant"
+	AccountSealedProductEmailPause       = "product_email_pause"
+	AccountSealedProductEmailRecipient   = "product_email_recipient"
+	AccountSealedProductEmailUnsubscribe = "product_email_unsubscribe"
+	// Managed realtime: an endpoint's callback token, client auth token and
+	// previous auth token, a push device's target and a push provider's
+	// config. A push device's id is "<endpoint>:<principal key>:<device>"
+	// and a provider's "<endpoint>:<provider>", the suffixes of their
+	// namespaces.
+	AccountSealedRealtimeCallback     = "realtime_callback"
+	AccountSealedRealtimeAuth         = "realtime_auth"
+	AccountSealedRealtimeAuthPrevious = "realtime_auth_previous"
+	AccountSealedRealtimePushDevice   = "realtime_push_device"
+	AccountSealedRealtimePushProvider = "realtime_push_provider"
 )
 
 // AccountSealedValue is one sealed account value, listed for the account
@@ -660,7 +950,8 @@ type AccountSealedValue struct {
 }
 
 // ListAccountSealedValues pages through one kind's sealed account values in
-// id order after afterID. Plans of finished workflows are already cleared.
+// id order after afterID. Plans of finished workflows are already cleared;
+// expired consent flows are left for their sweep.
 func (s *PgStore) ListAccountSealedValues(ctx context.Context, kind, afterID string, limit int) ([]AccountSealedValue, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
@@ -683,6 +974,56 @@ func (s *PgStore) ListAccountSealedValues(ctx context.Context, kind, afterID str
 	case AccountSealedWorkflowPlan:
 		query = `SELECT id::text, sealed_plan, payload_kid FROM agent_execution_workflows
 		          WHERE sealed_plan IS NOT NULL AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedGitLabOAuth:
+		query = `SELECT account_id::text, credentials_sealed, '' FROM gitlab_oauth_connections
+		          WHERE account_id > $1::uuid ORDER BY account_id LIMIT $2`
+	case AccountSealedSlackInstallation:
+		query = `SELECT app_id::text, token_sealed, '' FROM issue_slack_installations
+		          WHERE octet_length(token_sealed) > 0 AND app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedSlackInteraction:
+		query = `SELECT app_id::text, secret_sealed, '' FROM issue_slack_interaction_policies
+		          WHERE app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedSlackDestination:
+		query = `SELECT id::text, token_sealed, '' FROM issue_team_slack_destinations
+		          WHERE octet_length(token_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedSlackOAuthFlow:
+		query = `SELECT app_id::text, sealed, '' FROM issue_slack_oauth_flows
+		          WHERE expires_at > now() AND app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedLinearConnection:
+		query = `SELECT app_id::text, sealed_credential, '' FROM issue_tracker_linear_connections
+		          WHERE sealed_credential IS NOT NULL AND app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedLinearOAuthFlow:
+		query = `SELECT app_id::text, sealed_state, '' FROM issue_tracker_linear_oauth_flows
+		          WHERE expires_at > now() AND app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedProductEmailGrant:
+		query = `SELECT id::text, grant_sealed, '' FROM product_control_email_subscriptions
+		          WHERE octet_length(grant_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedProductEmailPause:
+		query = `SELECT id::text, pause_recipient_sealed, '' FROM product_control_email_subscriptions
+		          WHERE octet_length(pause_recipient_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedProductEmailRecipient:
+		query = `SELECT id::text, recipient_sealed, '' FROM product_control_email_deliveries
+		          WHERE octet_length(recipient_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedProductEmailUnsubscribe:
+		query = `SELECT id::text, unsubscribe_sealed, '' FROM product_control_email_deliveries
+		          WHERE octet_length(unsubscribe_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedRealtimeCallback:
+		query = `SELECT id::text, callback_auth_token_sealed, '' FROM managed_realtime_endpoints
+		          WHERE octet_length(callback_auth_token_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedRealtimeAuth:
+		query = `SELECT id::text, auth_token_sealed, '' FROM managed_realtime_endpoints
+		          WHERE octet_length(auth_token_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedRealtimeAuthPrevious:
+		query = `SELECT id::text, auth_token_previous_sealed, '' FROM managed_realtime_endpoints
+		          WHERE octet_length(auth_token_previous_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedRealtimePushDevice:
+		query, after = `SELECT k, sealed, '' FROM (
+		           SELECT endpoint_id::text || ':' || principal || ':' || device AS k, sealed FROM managed_realtime_push_devices
+		         ) d WHERE k > $1 ORDER BY k LIMIT $2`, afterID
+	case AccountSealedRealtimePushProvider:
+		query, after = `SELECT k, sealed, '' FROM (
+		           SELECT endpoint_id::text || ':' || provider AS k, sealed FROM managed_realtime_push_providers
+		         ) p WHERE k > $1 ORDER BY k LIMIT $2`, afterID
 	case AccountSealedBillingKey:
 		query, after = `SELECT k, sealed_secret, '' FROM (
 		           SELECT account_id::text || '/' || provider AS k, sealed_secret FROM account_billing_connections
@@ -738,6 +1079,62 @@ func (s *PgStore) ResealAccountValue(ctx context.Context, v AccountSealedValue, 
 		}
 		tag, err = s.pool.Exec(ctx, `UPDATE agent_execution_workflows SET sealed_plan = $3, payload_kid = $4
 		                             WHERE id = $1::uuid AND sealed_plan = $2`, v.ID, v.Sealed, sealed, kid)
+	case AccountSealedGitLabOAuth:
+		tag, err = s.pool.Exec(ctx, `UPDATE gitlab_oauth_connections SET credentials_sealed = $3
+		                             WHERE account_id = $1::uuid AND credentials_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedSlackInstallation:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_slack_installations SET token_sealed = $3
+		                             WHERE app_id = $1::uuid AND token_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedSlackInteraction:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_slack_interaction_policies SET secret_sealed = $3
+		                             WHERE app_id = $1::uuid AND secret_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedSlackDestination:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_team_slack_destinations SET token_sealed = $3
+		                             WHERE id = $1::uuid AND token_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedSlackOAuthFlow:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_slack_oauth_flows SET sealed = $3
+		                             WHERE app_id = $1::uuid AND sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedLinearConnection:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_tracker_linear_connections SET sealed_credential = $3
+		                             WHERE app_id = $1::uuid AND sealed_credential = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedLinearOAuthFlow:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_tracker_linear_oauth_flows SET sealed_state = $3
+		                             WHERE app_id = $1::uuid AND sealed_state = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedProductEmailGrant:
+		tag, err = s.pool.Exec(ctx, `UPDATE product_control_email_subscriptions SET grant_sealed = $3
+		                             WHERE id = $1::uuid AND grant_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedProductEmailPause:
+		tag, err = s.pool.Exec(ctx, `UPDATE product_control_email_subscriptions SET pause_recipient_sealed = $3
+		                             WHERE id = $1::uuid AND pause_recipient_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedProductEmailRecipient:
+		tag, err = s.pool.Exec(ctx, `UPDATE product_control_email_deliveries SET recipient_sealed = $3
+		                             WHERE id = $1::uuid AND recipient_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedProductEmailUnsubscribe:
+		tag, err = s.pool.Exec(ctx, `UPDATE product_control_email_deliveries SET unsubscribe_sealed = $3
+		                             WHERE id = $1::uuid AND unsubscribe_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedRealtimeCallback:
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_endpoints SET callback_auth_token_sealed = $3
+		                             WHERE id = $1::uuid AND callback_auth_token_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedRealtimeAuth:
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_endpoints SET auth_token_sealed = $3
+		                             WHERE id = $1::uuid AND auth_token_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedRealtimeAuthPrevious:
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_endpoints SET auth_token_previous_sealed = $3
+		                             WHERE id = $1::uuid AND auth_token_previous_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedRealtimePushDevice:
+		parts := strings.SplitN(v.ID, ":", 3)
+		if len(parts) != 3 {
+			return false, fmt.Errorf("state: reseal realtime push device: malformed id %q", v.ID)
+		}
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_push_devices SET sealed = $5
+		                             WHERE endpoint_id = $1::uuid AND principal = $2 AND device = $3 AND sealed = $4`, parts[0], parts[1], parts[2], v.Sealed, sealed)
+	case AccountSealedRealtimePushProvider:
+		endpoint, provider, ok := strings.Cut(v.ID, ":")
+		if !ok {
+			return false, fmt.Errorf("state: reseal realtime push provider: malformed id %q", v.ID)
+		}
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_push_providers SET sealed = $4
+		                             WHERE endpoint_id = $1::uuid AND provider = $2 AND sealed = $3`, endpoint, provider, v.Sealed, sealed)
 	case AccountSealedBillingKey:
 		account, provider, ok := strings.Cut(v.ID, "/")
 		if !ok {
@@ -759,4 +1156,35 @@ func (s *PgStore) ResealAccountValue(ctx context.Context, v AccountSealedValue, 
 		return false, fmt.Errorf("state: reseal account value %s %s: %w", v.Kind, v.ID, err)
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// CountAccountCloneValuesOffDomain counts project environment clone rows,
+// archives included, filed under a key id other than kid (ADR
+// 20261022111812). Clone values are never re-sealed in place: other clone
+// rows bind them by ciphertext hash. The account re-seal reports these rows
+// as left on the fleet key; they clear as their clones finish.
+func (s *PgStore) CountAccountCloneValuesOffDomain(ctx context.Context, kid string) (int, error) {
+	if kid == "" {
+		return 0, errors.New("state: count clone values needs the domain key id")
+	}
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM project_environment_clone_checkpoint_pg_connection_values WHERE key_id IS NOT NULL AND key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_checkpoint_postgres_credentials WHERE key_id IS NOT NULL AND key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_archives WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_checkpoint_selections WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_contents WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_database_plans WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_database_sql_pins WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_inventories WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_membership_plans WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_role_plans WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_target_sql_pins WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_verification_attempts WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_verifications WHERE key_id <> $1)
+	`, kid).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count clone values off the account domain: %w", err)
+	}
+	return n, nil
 }

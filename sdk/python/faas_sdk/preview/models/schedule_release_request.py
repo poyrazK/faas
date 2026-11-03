@@ -18,15 +18,13 @@ T = TypeVar("T", bound="ScheduleReleaseRequest")
 
 @_attrs_define
 class ScheduleReleaseRequest:
-    """When and how a release waiting without traffic starts its rollout (ADR-20261021152201)."""
+    """When and how a release waiting without traffic starts its rollout."""
 
     release_at: datetime.datetime
-    """When the rollout starts; at most 7 days ahead. A time that has passed starts it on apid's next pass."""
+    """When the rollout starts; at most 7 days ahead. A time that has passed starts it on the API's next pass."""
     canary: CanaryPresetSpec | Unset = UNSET
-    """The canary ladder a customer asks for on a deploy (issue
-    #976 / ADR-122 / SAFE-RELEASES-A + production-leveling
-    Stream F). Preset is the catalog name from
-    pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100/adaptive/
+    """The canary ladder a customer asks for on a deploy (A + production-leveling
+    Stream F). Preset is the catalog name (none/slow/balanced/aggressive/1-10-50-100/adaptive/
     custom). When Preset is 'custom', Stages is the
     customer-supplied ladder (each entry is percent +
     duration string in time.ParseDuration form, e.g.

@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -195,6 +196,6 @@ func (s *server) routePolicyError(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrRoutePolicyKeyReused):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Idempotency key reused", "This key belongs to a different route policy request."))
 	default:
-		api.WriteProblem(w, api.ErrCapacity("route policy transaction could not complete; retry the same idempotency key to recover its outcome"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("route policy transaction could not complete; retry the same idempotency key to recover its outcome")))
 	}
 }

@@ -17,8 +17,7 @@ T = TypeVar("T", bound="FilterCriteria")
 
 @_attrs_define
 class FilterCriteria:
-    """FilterCriteria on a trigger (migration 00300,
-    pkg/sched/filter.go). nil / omitted matches every record.
+    """FilterCriteria on a trigger. nil / omitted matches every record.
     Top-level arrays combine via implicit OR for `$or` and
     AND for `$and`; nested clauses honour the same shape.
     Jsonpath implementation: github.com/PaesslerAG/jsonpath —

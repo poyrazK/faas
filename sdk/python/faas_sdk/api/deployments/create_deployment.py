@@ -136,12 +136,11 @@ def sync_detailed(
         deployment_attempt_id (str | Unset):
         body (CreateDeploymentRequest): Two content-types accepted (see operation description):
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
-            (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
-            different entrypoint / cmd / env / env_secrets / port / startup healthcheck /
-            readiness_probe / liveness_probe without rebuilding the image. The optional `companions`
-            array attaches bounded helper workloads such as an OpenTelemetry collector, database
-            proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing
-            clients.
+            lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd /
+            env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without
+            rebuilding the image. The optional `companions` array attaches bounded helper workloads
+            such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated
+            `sidecars` spelling remains accepted for existing clients.
         body (CreateDeploymentFilesBody):
 
     Raises:
@@ -190,12 +189,11 @@ def sync(
         deployment_attempt_id (str | Unset):
         body (CreateDeploymentRequest): Two content-types accepted (see operation description):
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
-            (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
-            different entrypoint / cmd / env / env_secrets / port / startup healthcheck /
-            readiness_probe / liveness_probe without rebuilding the image. The optional `companions`
-            array attaches bounded helper workloads such as an OpenTelemetry collector, database
-            proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing
-            clients.
+            lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd /
+            env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without
+            rebuilding the image. The optional `companions` array attaches bounded helper workloads
+            such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated
+            `sidecars` spelling remains accepted for existing clients.
         body (CreateDeploymentFilesBody):
 
     Raises:
@@ -239,12 +237,11 @@ async def asyncio_detailed(
         deployment_attempt_id (str | Unset):
         body (CreateDeploymentRequest): Two content-types accepted (see operation description):
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
-            (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
-            different entrypoint / cmd / env / env_secrets / port / startup healthcheck /
-            readiness_probe / liveness_probe without rebuilding the image. The optional `companions`
-            array attaches bounded helper workloads such as an OpenTelemetry collector, database
-            proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing
-            clients.
+            lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd /
+            env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without
+            rebuilding the image. The optional `companions` array attaches bounded helper workloads
+            such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated
+            `sidecars` spelling remains accepted for existing clients.
         body (CreateDeploymentFilesBody):
 
     Raises:
@@ -291,12 +288,11 @@ async def asyncio(
         deployment_attempt_id (str | Unset):
         body (CreateDeploymentRequest): Two content-types accepted (see operation description):
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
-            (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
-            different entrypoint / cmd / env / env_secrets / port / startup healthcheck /
-            readiness_probe / liveness_probe without rebuilding the image. The optional `companions`
-            array attaches bounded helper workloads such as an OpenTelemetry collector, database
-            proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing
-            clients.
+            lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd /
+            env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without
+            rebuilding the image. The optional `companions` array attaches bounded helper workloads
+            such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated
+            `sidecars` spelling remains accepted for existing clients.
         body (CreateDeploymentFilesBody):
 
     Raises:

@@ -39,14 +39,14 @@ class EdgeProtectionResponse:
     rejections: list[EdgeProtectionResponseRejectionsItem]
     """Requests answered by an edge gate, largest count first; zero counts are omitted."""
     waf: EdgeProtectionResponseWaf
-    """kind=waf inspections (ADR-831). Sampled detections are never blocked; block rules' 403s also appear in
-    rejections under gate waf."""
+    """kind=waf inspections. Sampled detections are never blocked; block rules' 403s also appear in rejections
+    under gate waf."""
     challenge: EdgeProtectionResponseChallenge
-    """kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge."""
+    """kind=challenge decisions; its 403s also appear in rejections under gate challenge."""
     penalty: EdgeProtectionResponsePenalty
-    """Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty."""
+    """Penalty boxes; refusals also appear in rejections under gate penalty."""
     attack_mode: EdgeAttackModeStatus
-    """An app's attack mode (ADR-20261021220456). While it is on, every
+    """An app's attack mode. While it is on, every
     request without a challenge pass is challenged: browsers solve a
     short proof of work once and continue, verified search crawlers and
     requests with a verified API key, consumer key or JWT pass straight
@@ -55,8 +55,7 @@ class EdgeProtectionResponse:
     current even when the edge-protection counts are degraded.
     """
     ai_crawlers: list[EdgeProtectionAICrawler]
-    """Requests whose User-Agent names an AI crawler (ADR-20261022083601), largest first, counted before any edge
-    rule acted on them."""
+    """Requests whose User-Agent names an AI crawler, largest first, counted before any edge rule acted on them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

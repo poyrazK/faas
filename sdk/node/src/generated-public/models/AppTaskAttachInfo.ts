@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One-time attach credential for an interactive app task (ADR-1037). Returned only in the create response.
+ * One-time attach credential for an interactive app task. Returned only in the create response.
  */
 export type AppTaskAttachInfo = {
   /**

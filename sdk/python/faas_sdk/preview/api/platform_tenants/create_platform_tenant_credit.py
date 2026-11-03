@@ -99,7 +99,7 @@ def sync_detailed(
 
      Finalized tenant statements in the credit's currency draw it down,
     the grant that expires first before grants that never expire, in the
-    same transaction that finalizes them (ADR-20261019100331). The
+    same transaction that finalizes them. The
     statement's credit_applied_millicents records the draw and invoice
     exports bill amount_due_millicents. Credit never pays more than a
     statement's amount. A tenant holds at most 100 grants with credit
@@ -108,7 +108,7 @@ def sync_detailed(
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer (ADR-1306).
+        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,7 +142,7 @@ def sync(
 
      Finalized tenant statements in the credit's currency draw it down,
     the grant that expires first before grants that never expire, in the
-    same transaction that finalizes them (ADR-20261019100331). The
+    same transaction that finalizes them. The
     statement's credit_applied_millicents records the draw and invoice
     exports bill amount_due_millicents. Credit never pays more than a
     statement's amount. A tenant holds at most 100 grants with credit
@@ -151,7 +151,7 @@ def sync(
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer (ADR-1306).
+        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,7 +180,7 @@ async def asyncio_detailed(
 
      Finalized tenant statements in the credit's currency draw it down,
     the grant that expires first before grants that never expire, in the
-    same transaction that finalizes them (ADR-20261019100331). The
+    same transaction that finalizes them. The
     statement's credit_applied_millicents records the draw and invoice
     exports bill amount_due_millicents. Credit never pays more than a
     statement's amount. A tenant holds at most 100 grants with credit
@@ -189,7 +189,7 @@ async def asyncio_detailed(
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer (ADR-1306).
+        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,7 +221,7 @@ async def asyncio(
 
      Finalized tenant statements in the credit's currency draw it down,
     the grant that expires first before grants that never expire, in the
-    same transaction that finalizes them (ADR-20261019100331). The
+    same transaction that finalizes them. The
     statement's credit_applied_millicents records the draw and invoice
     exports bill amount_due_millicents. Credit never pays more than a
     statement's amount. A tenant holds at most 100 grants with credit
@@ -230,7 +230,7 @@ async def asyncio(
     Args:
         id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer (ADR-1306).
+        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

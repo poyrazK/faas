@@ -24,8 +24,8 @@ T = TypeVar("T", bound="UsageSummaryResponse")
 @_attrs_define
 class UsageSummaryResponse:
     """Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage
-    dimensions, and a trailing 30-day daily trend (issue #308). The GB-hours fields drive the overage math; the other
-    dimensions are informational.
+    dimensions, and a trailing 30-day daily trend. The GB-hours fields drive the overage math; the other dimensions are
+    informational.
 
     """
 
@@ -35,8 +35,11 @@ class UsageSummaryResponse:
     overage_gb_hours: float
     overage_cents: int
     """Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded."""
+    quiet_paused_gb_hours: float | Unset = UNSET
+    """GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same
+    plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero."""
     used_cpu_hours: float | Unset = UNSET
-    """Per-month CPU-hours (informational; not billed). issue #279 / PR-B."""
+    """Per-month CPU-hours (informational; not billed)."""
     used_egress_gb: float | Unset = UNSET
     """Per-month canonical interface egress GB. Σ net_tx_bytes across all apps; tx_bytes is a diagnostic subset and
     is not added. Informational while egress_billing_mode is absent."""
@@ -52,17 +55,17 @@ class UsageSummaryResponse:
     egress_millicents_per_gb: int | Unset = UNSET
     """Configured price per egress billing unit in millicents."""
     used_ingress_gb: float | Unset = UNSET
-    """Per-month ingress GB (informational; not billed). Σ net_rx_bytes across all apps, converted to GB. ADR-048.
-    Mirror of `used_egress_gb` for the inbound direction."""
+    """Per-month ingress GB (informational; not billed). Σ net_rx_bytes across all apps, converted to GB. Mirror of
+    `used_egress_gb` for the inbound direction."""
     cold_boots: int | Unset = UNSET
     """Per-month sum of WAKE_RESTORE→WAKE_COLD_BOOT transitions across every app on the account (informational; not
-    billed). ADR-048."""
+    billed)."""
     executions: ExecutionUsageSummaryResponse | Unset = UNSET
     """Account-level usage roll-up for terminal disposable executions in one UTC calendar month. Payload cleanup
     does not remove these ledger-backed facts."""
     daily: list[DailyUsagePoint] | Unset = UNSET
     """Trailing 30 UTC calendar days, oldest first, grouped across the account. Empty when no daily rollup rows
-    exist. issue #308."""
+    exist."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +78,8 @@ class UsageSummaryResponse:
         overage_gb_hours = self.overage_gb_hours
 
         overage_cents = self.overage_cents
+
+        quiet_paused_gb_hours = self.quiet_paused_gb_hours
 
         used_cpu_hours = self.used_cpu_hours
 
@@ -120,6 +125,8 @@ class UsageSummaryResponse:
                 "overage_cents": overage_cents,
             }
         )
+        if quiet_paused_gb_hours is not UNSET:
+            field_dict["quiet_paused_gb_hours"] = quiet_paused_gb_hours
         if used_cpu_hours is not UNSET:
             field_dict["used_cpu_hours"] = used_cpu_hours
         if used_egress_gb is not UNSET:
@@ -160,6 +167,8 @@ class UsageSummaryResponse:
         overage_gb_hours = d.pop("overage_gb_hours")
 
         overage_cents = d.pop("overage_cents")
+
+        quiet_paused_gb_hours = d.pop("quiet_paused_gb_hours", UNSET)
 
         used_cpu_hours = d.pop("used_cpu_hours", UNSET)
 
@@ -211,6 +220,7 @@ class UsageSummaryResponse:
             included_gb_hours=included_gb_hours,
             overage_gb_hours=overage_gb_hours,
             overage_cents=overage_cents,
+            quiet_paused_gb_hours=quiet_paused_gb_hours,
             used_cpu_hours=used_cpu_hours,
             used_egress_gb=used_egress_gb,
             egress_billing_mode=egress_billing_mode,

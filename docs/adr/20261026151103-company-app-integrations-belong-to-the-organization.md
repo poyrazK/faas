@@ -91,3 +91,144 @@ For integrations that send data out of Gregale it is worse in two ways:
   has, including those other admins configured after this change.
 - **Flagging for review without pausing.** Company data keeps flowing to the
   departed member's destination until someone reviews it.
+
+## Amendment 1 (2026-10-27): credentials a company app issues
+
+A sweep of the app routes that still fall back to "the creator only, while
+an owner or admin" found a second kind of row a departure leaves behind:
+credentials. Each is shown once to the member who mints or sets it and
+keeps working after that member leaves, because it belongs to the app, not
+to the member. The member removal revokes deploy tokens and organization
+keys, which act as the member; it cannot revoke these without breaking the
+app's clients. Until now nobody else in the company could revoke or rotate
+them either.
+
+**Decision.** Owners and admins (`org.manage_app_security`) list, rotate and
+revoke a company app's credentials, whoever created the app:
+
+- API consumers and their keys: list, read, revoke a consumer; list, issue
+  and revoke its keys;
+- inbound webhooks: list, read, change (signing secret, delivery path,
+  enabled) and delete;
+- issue ingest tokens: list, issue and revoke;
+- the managed realtime endpoint's client authentication: list and read
+  endpoints, change one (static token, JWKS issuer, callback and the rest of
+  its settings), and rotate or finalize its static bearer token;
+- realtime publisher and worker credentials: list, issue, rotate and revoke;
+- AI gateway access tokens: list and revoke. Issuing one stays with the
+  app's creator, as binding an outbound integration does: the token spends
+  the creator's provider credential.
+
+Developers and viewers do not reach these routes. Each handler already binds
+the credential to the addressed app, so the change widens no lookup. The
+consequence above about managed realtime endpoint callbacks no longer holds
+for changing an endpoint; creating and deleting one keep the creator-only
+fallback.
+
+**Swept, unchanged.** The other unreviewed app routes keep the fallback:
+they configure or operate the app inside Gregale, and a departed creator
+loses them at once. Production forks and dev bridges, the two credentials
+that act as their creator outside apid, recheck the creator's standing on
+every use (`appaccess.Standing`). Traffic mirrors copy requests only to
+another deployment of the same app.
+
+## Amendment 2 (2026-10-28): API monetization on company apps
+
+API monetization bills an app's customers through billing connections that
+belong to an account (`/v1/account/billing-connections`), on billing runs
+that belong to an account (`/v1/account/billing-runs`). A company app keeps
+its creator's `account_id`, and so do its consumers, so all of it ran on
+the creator's personal account: their runs billed the company app's
+customers and exported the invoices to their Stripe account, sign-up saved
+new customers' cards there, and the customer portal opened there. None of
+that looked at the organization, so it went on after the creator left the
+company: the company's customers kept paying, and their names, usage and
+cards kept reaching, an account that no longer works there.
+
+**Decision.** A company app's customers are billed through its creator's
+account only while that account may see the company's apps
+(`account_may_see_org_resources`, the rule account-scope release webhooks
+follow under decision 5):
+
+- a billing run discovers a company app's consumers and Product Control
+  customers only while its account is a member of the company;
+- public sign-up answers as if the app took no sign-ups, and a pending
+  sign-up cannot complete, once the creator left;
+- the customer portal is unavailable for the same customers. Customers
+  still read their own usage, statements and plans, which never leave
+  Gregale.
+
+A company that wants to keep selling a departed member's app moves it to a
+new app created by a current member, with that member's billing
+connection; organization billing connections are future work.
+
+## Amendment 3 (2026-10-28): operating a company app's releases
+
+A release review found the release routes missing from the organization route
+map, so on a company app only its creator could reach them; an admin rolling
+back during an incident got `403 org_role_forbidden`. They are now mapped:
+
+- **Deploy permission** (owners, admins, developers): rollback, rollout
+  recovery (advance, promote, abort), canary advance, traffic changes and
+  promote, the same members who deploy.
+- **Read permission** (every member): rollback receipts, rollout observations
+  and debug views, release review, freeze status, release gates, the
+  route-health guard and its reports, history and investigations, and alert
+  rollbacks.
+- **Manage app security** (owners and admins): creating and removing release
+  gates and setting the route-health guard. They stop releases, so, like the
+  approval policy, a developer cannot switch them off.
+- **Configure** (owners, admins, developers): config rollback.
+
+Account-wide freezes (`/v1/freezes`) stay with the account that owns the app's
+resources; they name no app in their URL.
+
+## Amendment 4 (2026-10-31): custom domains, crons and invocations
+
+Custom domains, crons and invocation replays name a company app outside
+`/v1/apps/{slug}`: the create request names it in its body, and every other
+route names a domain, cron or invocation. appaccess resolves the app behind
+those URLs, so a creator who left the company already loses them, but the
+routes were never mapped. Only the app's creator, while an owner or admin,
+reached them, and the body-addressed creates priced the request by the
+caller's personal plan. A company's other owners could not remove a production
+domain or stop a cron on an app another member created; a Free member of a Pro
+company was refused crons the company pays for, and a Pro member of a Free
+company got them (bug hunt 2026-10-28 B9, H90).
+
+**Decision.**
+
+- **Read permission** (every member): a domain, its doctor report, a cron, its
+  runs and occurrences, and the cron list filtered to one app. A cron run's
+  output and an invocation take the logs permission.
+- **Configure permission** (owners, admins, developers): adding, verifying,
+  retrying, defaulting and removing a custom domain; creating, changing and
+  deleting a cron. They configure where and when the app runs, as its
+  environment does.
+- **Deploy permission** (owners, admins, developers): running a cron now,
+  cancelling a cron run, and replaying an invocation.
+- A body-addressed create (`POST /v1/domains`, `POST /v1/crons`) acts as the
+  app's resource account (`state.AppResourceAccount`), as Wrap-addressed routes
+  do: its plan decides wildcard domains, cron and domain limits, and its
+  account holds the rows. A request for an app the caller cannot reach is
+  judged on the caller's own plan, so the 402 a Free account gets before the
+  app lookup is unchanged.
+
+**Unchanged.** Legacy `/v1/triggers` administration stays personal-only:
+company triggers go through the reviewed queue-binding APIs
+(docs/organization-queues.md). Edge rules follow
+ADR-20261029100110. Managed PostgreSQL cutover preparation keeps the
+creator-only fallback. Background workers that read the creator's account
+instead of `state.AppResourceAccount` are not covered here.
+
+## Amendment 5 (2026-11-02): the cron routes amendment 4 missed
+
+Amendment 4 mapped the cron routes, but three were left out, and a member who
+did not create a company app was refused them: a cron's status
+(`GET /v1/crons/{id}/status`, read permission), its labels
+(`PATCH /v1/crons/{id}/labels`, configure permission), and a manual run's
+request (`GET /v1/cron-fire-now-requests/{request_id}`, read permission). The
+last one broke `gregale cron run --wait` for every member but the app's
+creator: the request is stored under the company's account, and the member
+polling it got 404. appaccess now resolves a run request to its cron's app,
+so the request is read with the cron's permission.

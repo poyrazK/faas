@@ -112,7 +112,7 @@ def sync_detailed(
 ) -> Response[AppForkResponse | Problem]:
     """Fork the app's live deployment into a quarantined debug copy.
 
-     Queues a production fork (ADR-732): a restore of the app's newest
+     Queues a production fork: a restore of the app's newest
     capture of its live deployment into an instance that never serves
     traffic, cannot reach the network, and is destroyed at its TTL.
     The fork holds a copy of production memory, secrets included, so
@@ -157,7 +157,7 @@ def sync(
 ) -> AppForkResponse | Problem | None:
     """Fork the app's live deployment into a quarantined debug copy.
 
-     Queues a production fork (ADR-732): a restore of the app's newest
+     Queues a production fork: a restore of the app's newest
     capture of its live deployment into an instance that never serves
     traffic, cannot reach the network, and is destroyed at its TTL.
     The fork holds a copy of production memory, secrets included, so
@@ -197,7 +197,7 @@ async def asyncio_detailed(
 ) -> Response[AppForkResponse | Problem]:
     """Fork the app's live deployment into a quarantined debug copy.
 
-     Queues a production fork (ADR-732): a restore of the app's newest
+     Queues a production fork: a restore of the app's newest
     capture of its live deployment into an instance that never serves
     traffic, cannot reach the network, and is destroyed at its TTL.
     The fork holds a copy of production memory, secrets included, so
@@ -240,7 +240,7 @@ async def asyncio(
 ) -> AppForkResponse | Problem | None:
     """Fork the app's live deployment into a quarantined debug copy.
 
-     Queues a production fork (ADR-732): a restore of the app's newest
+     Queues a production fork: a restore of the app's newest
     capture of its live deployment into an instance that never serves
     traffic, cannot reach the network, and is destroyed at its TTL.
     The fork holds a copy of production memory, secrets included, so

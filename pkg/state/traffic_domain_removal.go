@@ -34,10 +34,21 @@ type trafficDomainBindingTx struct {
 	accounts      []string
 	appsSuffix    string
 	appID         pgtype.UUID
-	release       func(context.Context)
+	scope         trafficBindingScope
+	// scoped domain writes lock and analyse only scope; routes is nil for
+	// the fleet-wide guard (ADR-20261027163626). They read only the claims
+	// lookup reaches, and only its reservations unless an empty-scope route
+	// needs them all (reservations nil; ADR-20261029190349).
+	scoped       bool
+	routes       *trafficRouteScope
+	account      string
+	lookup       trafficScopeLookup
+	reservations *trafficScopeLookup
+	release      func(context.Context)
 }
 
-func trafficDomainBindingOwners(ctx context.Context, reader sqlc.DBTX, claims []trafficDomainClaim, tenants []trafficTenantClaim, domain, originalAccount string) ([]string, error) {
+// A nil route scope joins every account with an enabled route.
+func trafficDomainBindingOwners(ctx context.Context, reader sqlc.DBTX, claims []trafficDomainClaim, tenants []trafficTenantClaim, domain, originalAccount string, scope *trafficRouteScope) ([]string, error) {
 	owners := trafficDomainOverlappingAccounts(claims, domain)
 	for _, tenant := range tenants {
 		if trafficDomainClaimsOverlap(domain, tenant.Host) {
@@ -45,7 +56,7 @@ func trafficDomainBindingOwners(ctx context.Context, reader sqlc.DBTX, claims []
 		}
 	}
 	owners = append(owners, originalAccount)
-	routes, err := sqlc.New().ReadTrafficGlobalRouteAccounts(ctx, reader, api.TrafficPolicyMaxAnalysisInputs)
+	routes, err := readTrafficRouteOwners(ctx, reader, scope)
 	if err != nil {
 		return nil, fmt.Errorf("state: read global route owners: %w", mapErr(err))
 	}
@@ -68,57 +79,90 @@ func (s *PgStore) beginTrafficDomainRemoval(ctx context.Context, domain, expecte
 	if expectedApp != "" && owner.AppID != uuidToPgtype(expectedApp) {
 		return nil, ErrNotFound
 	}
-	return s.beginTrafficDomainBinding(ctx, domain, owner.AccountID, owner.AppID, true)
+	return s.beginTrafficDomainBinding(ctx, domain, owner.AccountID, owner.AppID, true, "")
 }
 
 func (s *PgStore) beginTrafficDomainPublication(ctx context.Context, domain, app string) (*trafficDomainBindingTx, error) {
 	appID := mustPgUUID(app)
 	var account pgtype.UUID
+	var subject string
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var err error
-		account, err = sqlc.New().ReadAppTrafficAccount(bounded, s.pool, appID)
-		return mapErr(err)
+		if account, err = sqlc.New().ReadAppTrafficAccount(bounded, s.pool, appID); err != nil {
+			return mapErr(err)
+		}
+		// A new claim spends its billing subject's pending-domain budget
+		// (ADR-202610171904), so claims on the subject's other apps take
+		// its lock before their snapshot.
+		return mapErr(s.pool.QueryRow(bounded, `select (`+quotaSubjectSQL+`)::text from apps a left join orgs o on o.id = a.org_id
+			where a.id = $1`, appID).Scan(&subject))
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.beginTrafficDomainBinding(ctx, domain, account, appID, false)
+	return s.beginTrafficDomainBinding(ctx, domain, account, appID, false, subject)
 }
 
-func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, account, app pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, error) {
+// beginTrafficDomainBinding also holds budget's pending-domain lock when it is
+// set, the billing subject of a new claim.
+func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, account, app pgtype.UUID, requireClaim bool, budget string) (*trafficDomainBindingTx, error) {
+	start := time.Now()
 	for {
-		guarded, retry, err := s.tryBeginTrafficDomainBinding(ctx, domain, account, app, requireClaim)
+		attempt := time.Now()
+		guarded, retry, err := s.tryBeginTrafficDomainBinding(ctx, domain, account, app, requireClaim, budget)
 		if err != nil || !retry {
+			observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseLockWait, attempt.Sub(start))
 			return guarded, err
 		}
 		timer := time.NewTimer(api.TrafficPolicyMutationLockRetry)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseLockWait, time.Since(start))
 			return nil, ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
-func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain string, originalAccount, originalApp pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, bool, error) {
+func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain string, originalAccount, originalApp pgtype.UUID, requireClaim bool, budget string) (*trafficDomainBindingTx, bool, error) {
 	var accounts []string
+	var scope trafficBindingScope
+	var routes *trafficRouteScope
+	discover := time.Now()
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		claims, err := readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix)
-		if err != nil {
+		var claims trafficBindingClaims
+		var err error
+		if s.trafficScopedBinding {
+			if claims, scope, _, err = readTrafficBindingScopeClaims(bounded, s.pool, originalAccount.String(), []string{domain}, originalApp.String(), s.trafficAppsSuffix); err != nil {
+				return err
+			}
+			routes = newTrafficRouteScope(scope.Hosts, scope.Subtrees)
+		} else if claims, err = readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix); err != nil {
 			return err
 		}
-		accounts, err = trafficDomainBindingOwners(bounded, s.pool, claims.Domains, claims.Tenants, domain, originalAccount.String())
+		accounts, err = trafficDomainBindingOwners(bounded, s.pool, claims.Domains, claims.Tenants, domain, originalAccount.String(), routes)
 		return err
 	})
+	observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseDiscover, time.Since(discover))
 	if err != nil {
 		return nil, false, err
 	}
-	keys := []string{globalTrafficRoutesLock}
-	for _, account := range accounts {
-		keys = append(keys, "gregale.traffic.account.v1:"+account)
+	// The fleet-wide guard holds the root exclusively; a scoped write holds
+	// it shared with the name locks of its declared scope.
+	locks := []trafficSessionLock{{Key: globalTrafficRoutesLock}}
+	if s.trafficScopedBinding {
+		locks = trafficNameLocks(scope.Hosts, scope.Subtrees)
 	}
-	conn, release, busy, err := s.acquireTrafficDomainBindingSession(ctx, keys)
+	for _, account := range accounts {
+		locks = append(locks, trafficSessionLock{Key: "gregale.traffic.account.v1:" + account})
+	}
+	// The transaction below reads at one snapshot, so the budget's lock must
+	// be held before it begins for its count to see every earlier claim.
+	if budget != "" {
+		locks = append(locks, trafficSessionLock{Key: "gregale.traffic.domain-claims.v1:" + budget})
+	}
+	conn, release, busy, err := s.acquireTrafficBindingSessionLocks(ctx, locks)
 	if err != nil || busy {
 		return nil, busy, err
 	}
@@ -127,8 +171,10 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 		release(ctx)
 		return nil, false, fmt.Errorf("state: begin domain binding change: %w", err)
 	}
-	guarded := &trafficDomainBindingTx{Tx: tx, accounts: accounts, appsSuffix: s.trafficAppsSuffix, appID: originalApp, release: release}
+	guarded := &trafficDomainBindingTx{Tx: tx, accounts: accounts, appsSuffix: s.trafficAppsSuffix, appID: originalApp,
+		scoped: s.trafficScopedBinding, routes: routes, account: originalAccount.String(), release: release}
 	retry := false
+	before := time.Now()
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		for _, account := range accounts {
 			if _, err := sqlc.New().LockTrafficPolicyAccount(bounded, tx, uuidToPgtype(account)); err != nil {
@@ -138,8 +184,13 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 		if err := guardOrgAccessTx(bounded, tx); err != nil {
 			return err
 		}
+		var claims trafficBindingClaims
 		var err error
-		claims, err := readTrafficBindingClaims(bounded, tx, s.trafficAppsSuffix)
+		if guarded.scoped {
+			claims, guarded.scope, guarded.lookup, err = readTrafficBindingScopeClaims(bounded, tx, originalAccount.String(), []string{domain}, originalApp.String(), s.trafficAppsSuffix)
+		} else if claims, err = readTrafficBindingClaims(bounded, tx, s.trafficAppsSuffix); err == nil {
+			guarded.scope, err = declareTrafficBindingScope(bounded, tx, claims, originalAccount.String(), []string{domain}, originalApp.String(), s.trafficAppsSuffix)
+		}
 		if err != nil {
 			return err
 		}
@@ -157,11 +208,12 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 				return ErrNotFound
 			}
 		}
-		fresh, err := trafficDomainBindingOwners(bounded, tx, guarded.beforeClaims, guarded.beforeTenants, domain, originalAccount.String())
+		fresh, err := trafficDomainBindingOwners(bounded, tx, guarded.beforeClaims, guarded.beforeTenants, domain, originalAccount.String(), routes)
 		if err != nil {
 			return err
 		}
-		retry = !slices.Equal(accounts, fresh)
+		// A scoped write must still declare exactly what it locked.
+		retry = !slices.Equal(accounts, fresh) || guarded.scoped && !guarded.scope.equal(scope)
 		return nil
 	})
 	if err != nil || retry {
@@ -173,10 +225,22 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 		return nil, retry, mapErr(err)
 	}
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+		if guarded.scoped {
+			// An empty-scope route can match any unclaimed hostname, so its
+			// candidates need every reservation (ADR-20261029190349).
+			everywhere, err := sqlc.New().ReadTrafficEmptyScopeRoute(bounded, tx)
+			if err != nil {
+				return err
+			}
+			if !everywhere {
+				guarded.reservations = &guarded.lookup
+			}
+		}
 		var err error
-		guarded.globalBefore, err = readTrafficHostAnalysis(bounded, tx, pgtype.UUID{}, s.trafficAppsSuffix)
+		guarded.globalBefore, err = readTrafficHostAnalysisFor(bounded, tx, pgtype.UUID{}, s.trafficAppsSuffix, guarded.routes, guarded.reservations)
 		return err
 	})
+	observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseBefore, time.Since(before))
 	if err != nil {
 		_ = guarded.Rollback(context.WithoutCancel(ctx))
 		return nil, false, err
@@ -185,6 +249,20 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 }
 
 func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
+	if err := tx.validate(ctx); err != nil {
+		return err
+	}
+	defer tx.release(ctx)
+	return tx.Tx.Commit(ctx)
+}
+
+func (tx *trafficDomainBindingTx) validate(ctx context.Context) error {
+	defer func(start time.Time) {
+		observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseValidate, time.Since(start))
+	}(time.Now())
+	if tx.scoped {
+		return tx.validateScoped(ctx)
+	}
 	var claims trafficBindingClaims
 	var globalAfter trafficHostAnalysis
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
@@ -196,15 +274,63 @@ func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
 	}
 	if err := globalTrafficPolicyError(boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var err error
-		globalAfter, err = readTrafficHostAnalysis(bounded, tx.Tx, pgtype.UUID{}, tx.appsSuffix)
+		globalAfter, err = readTrafficHostAnalysisScoped(bounded, tx.Tx, pgtype.UUID{}, tx.appsSuffix, tx.routes)
 		if err != nil {
 			return err
 		}
+		// This transaction keeps no primary claims, so neither side compares them.
+		before := trafficBindingClaims{Domains: tx.beforeClaims, Tenants: tx.beforeTenants, Aliases: tx.beforeAliases}
+		after := trafficBindingClaims{Domains: claims.Domains, Tenants: claims.Tenants, Aliases: claims.Aliases}
+		changes := trafficBindingChanges(before, after, tx.globalBefore.Reservations, globalAfter.Reservations)
+		auditTrafficBindingScope(TrafficPolicyWriterDomainBinding, tx.scope, changes)
+		auditTrafficBindingCapture(bounded, tx.Tx, TrafficPolicyWriterDomainBinding, tx.appsSuffix, changes)
 		return checkTrafficHostAnalysis(bounded, tx.globalBefore, globalAfter)
 	})); err != nil {
 		return err
 	}
+	return tx.checkOwners(ctx, claims, globalAfter)
+}
+
+// validateScoped refuses a change outside the declared scope, which the
+// capture triggers recorded, then checks what the scope can see after the
+// write. A write that touched no claim or reservation left the route view as
+// it was (ADR-20261029190349).
+func (tx *trafficDomainBindingTx) validateScoped(ctx context.Context) error {
+	var claims trafficBindingClaims
+	var captured []trafficBindingChange
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+		var err error
+		if captured, err = readTrafficBindingCapture(bounded, tx.Tx, tx.appsSuffix); err != nil {
+			return err
+		}
+		if missed := auditTrafficBindingScope(TrafficPolicyWriterDomainBinding, tx.scope, captured); len(missed) > 0 {
+			// The scoped analysis cannot verify a hostname it did not lock or read.
+			return analysisLimit("binding_scope", "hostnames", 0, int64(len(missed)))
+		}
+		claims, err = readTrafficBindingClaimsScoped(bounded, tx.Tx, tx.appsSuffix, []string{tx.account}, tx.appID.String(), tx.lookup)
+		return err
+	}); err != nil {
+		return err
+	}
+	globalAfter := tx.globalBefore
+	if len(captured) > 0 {
+		if err := globalTrafficPolicyError(boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+			var err error
+			if globalAfter, err = readTrafficHostAnalysisFor(bounded, tx.Tx, pgtype.UUID{}, tx.appsSuffix, tx.routes, tx.reservations); err != nil {
+				return err
+			}
+			return checkTrafficHostAnalysis(bounded, tx.globalBefore, globalAfter)
+		})); err != nil {
+			return err
+		}
+	}
+	return tx.checkOwners(ctx, claims, globalAfter)
+}
+
+// checkOwners runs each locked owner's owned check against the claims after
+// the write.
+func (tx *trafficDomainBindingTx) checkOwners(ctx context.Context, claims trafficBindingClaims, globalAfter trafficHostAnalysis) error {
+	return boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		for _, account := range tx.accounts {
 			view, err := readTrafficHostAnalysis(bounded, tx.Tx, uuidToPgtype(account), tx.appsSuffix)
 			if err != nil {
@@ -215,17 +341,13 @@ func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
 			}
 		}
 		return nil
-	}); err != nil {
-		return err
-	}
-	defer tx.release(ctx)
-	return tx.Tx.Commit(ctx)
+	})
 }
 
-func (s *PgStore) acquireTrafficDomainBindingSession(ctx context.Context, keys []string) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {
+func (s *PgStore) acquireTrafficBindingSessionLocks(ctx context.Context, locks []trafficSessionLock) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var acquireErr error
-		conn, release, busy, acquireErr = s.tryAcquireTrafficPolicySessionKeys(bounded, keys)
+		conn, release, busy, acquireErr = s.tryAcquireTrafficPolicySessionLocks(bounded, locks)
 		return acquireErr
 	})
 	if err != nil && release != nil {

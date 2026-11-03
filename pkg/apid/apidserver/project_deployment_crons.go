@@ -25,7 +25,7 @@ func (s *server) planProjectDeploymentCrons(ctx context.Context, acct state.Acco
 		desired := []api.DeploymentCronConfig{}
 		for _, cron := range crons {
 			if strings.EqualFold(cron.WorkloadName, app.WorkloadName) {
-				desired = append(desired, api.DeploymentCronConfig{Schedule: cron.Schedule, Path: cron.Path, Enabled: cron.Enabled})
+				desired = append(desired, api.DeploymentCronConfig{Schedule: cron.Schedule, Path: cron.Path, Enabled: cron.Enabled, Timezone: cron.Timezone})
 			}
 		}
 		store, ok := s.store.(state.DeploymentCronStagingStore)

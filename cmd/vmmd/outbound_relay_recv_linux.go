@@ -23,12 +23,21 @@ const VsockOutboundRelayHostPort uint32 = fcvm.VsockOutboundRelayHostPort
 // OutboundRelayReceiver splices an app's relay connection to outboundd. The
 // per-instance listener identifies the app; vmmd never parses the bytes.
 type OutboundRelayReceiver struct {
-	ctx    context.Context
-	log    *slog.Logger
-	mgr    *fcvm.Manager
-	signer *workloadidentity.Signer
-	dial   outboundRelayDialer
-	now    func() time.Time
+	ctx         context.Context
+	log         *slog.Logger
+	mgr         *fcvm.Manager
+	signer      *workloadidentity.Signer
+	dial        outboundRelayDialer
+	now         func() time.Time
+	deployments workloadIdentityDeployments
+}
+
+// UseDeployments names each app relay assertion's environment, so outboundd
+// can keep stage instances off production's managed integrations.
+func (r *OutboundRelayReceiver) UseDeployments(d workloadIdentityDeployments) {
+	if r != nil {
+		r.deployments = d
+	}
 }
 
 // StartOutboundRelayReceiver binds the relay port. Without a signer or a
@@ -86,12 +95,21 @@ func (r *OutboundRelayReceiver) handleGuestStream(instance string, guest net.Con
 	if err := relaywire.Write(upstream, preamble); err != nil {
 		return "write", err
 	}
+	// ADR-20261027090012: an agent run whose model-wait pause is on reports
+	// its relay bytes, and outboundd's bytes resume a paused VM before they
+	// are written to it.
+	if relay := r.mgr.AgentRelayOpened(instance); relay != nil {
+		defer relay.Close()
+		spliceOutboundRelayReaders(guest, upstream, relay.Reader(r.ctx, guest, false), relay.Reader(r.ctx, upstream, true))
+		return "", nil
+	}
 	spliceOutboundRelay(guest, upstream)
 	return "", nil
 }
 
-// relayPreamble identifies the instance as a Run with granted integrations
-// (ADR-990) or as an app (ADR-989). A Run without grants, or any other
+// relayPreamble identifies the instance as an agent run (ADR-20261027090010 §7), a
+// Run with granted integrations (ADR-990) or an app (ADR-989). A Run
+// without grants, an agent run without a relay principal, or any other
 // instance, gets no relay.
 func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamble, error) {
 	app, account, run, simErr := r.mgr.InstanceRehearsalRelayIdentity(r.ctx, instance)
@@ -102,6 +120,18 @@ func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamb
 		token, err := r.signer.MintRehearsalRelay(r.now(), account, app, instance, run)
 		if err != nil {
 			return relaywire.Preamble{}, err
+		}
+		return relaywire.Preamble{Assertion: token.BearerValue()}, nil
+	}
+	if accountID, relay, err := r.mgr.AgentRunRelayIdentity(instance); err == nil {
+		// ADR-20261027090010 §7: an agent run's relay names the run, its lease and its
+		// tenant; outboundd checks the lease and the version's integrations
+		// on every request.
+		token, mintErr := r.signer.MintAgentRun(r.now(), workloadidentity.AgentRunClaims{AccountID: accountID, RunID: relay.RunID,
+			LeaseToken: relay.LeaseToken, TenantID: relay.TenantID, AgentID: relay.AgentID, AgentVersion: relay.AgentVersion},
+			workloadidentity.OutboundRelayAudience)
+		if mintErr != nil {
+			return relaywire.Preamble{}, fmt.Errorf("outbound relay: mint agent run assertion: %w", mintErr)
 		}
 		return relaywire.Preamble{Assertion: token.BearerValue()}, nil
 	}
@@ -119,7 +149,11 @@ func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamb
 	if appID == "" || accountID == "" {
 		return relaywire.Preamble{}, fmt.Errorf("outbound relay: instance identity unavailable")
 	}
-	token, err := r.signer.Mint(r.now(), accountID, appID, instance, workloadidentity.OutboundRelayAudience)
+	environment, err := instanceEnvironment(r.ctx, r.mgr, r.deployments, instance)
+	if err != nil {
+		return relaywire.Preamble{}, fmt.Errorf("outbound relay: %w", err)
+	}
+	token, err := r.signer.MintEnvironment(r.now(), accountID, appID, instance, environment, workloadidentity.OutboundRelayAudience)
 	if err != nil {
 		return relaywire.Preamble{}, fmt.Errorf("outbound relay: mint assertion: %w", err)
 	}
@@ -130,8 +164,15 @@ func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamb
 // either direction fails rather than reaching EOF, both connections close so
 // the other copy cannot block forever.
 func spliceOutboundRelay(guest, upstream net.Conn) {
+	spliceOutboundRelayReaders(guest, upstream, guest, upstream)
+}
+
+// spliceOutboundRelayReaders is spliceOutboundRelay reading the guest's bytes
+// from fromGuest and outboundd's from fromUpstream, readers that wrap the two
+// connections.
+func spliceOutboundRelayReaders(guest, upstream net.Conn, fromGuest, fromUpstream io.Reader) {
 	done := make(chan struct{}, 2)
-	pipe := func(dst, src net.Conn) {
+	pipe := func(dst net.Conn, src io.Reader) {
 		defer func() { done <- struct{}{} }()
 		if _, err := io.Copy(dst, src); err != nil {
 			_ = guest.Close()
@@ -142,8 +183,8 @@ func spliceOutboundRelay(guest, upstream net.Conn) {
 			_ = half.CloseWrite()
 		}
 	}
-	go pipe(upstream, guest)
-	go pipe(guest, upstream)
+	go pipe(upstream, fromGuest)
+	go pipe(guest, fromUpstream)
 	<-done
 	<-done
 }

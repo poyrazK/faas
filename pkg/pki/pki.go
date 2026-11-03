@@ -205,12 +205,13 @@ func Roles() []Role {
 		{CommonName: "apid.faas", Kind: KindServer, Directory: "apid", Filename: "advisory", AltNames: ProductionSANs("apid.faas")},
 		{CommonName: "githubd.faas", Kind: KindServer, Directory: "githubd", Filename: "server", AltNames: ProductionSANs("githubd.faas")},
 		{CommonName: "meterd.faas", Kind: KindServer, Directory: "meterd", Filename: "server", AltNames: ProductionSANs("meterd.faas")},
-		// ADR-989's outboundd/server and vmmd/outboundd-client leaves are not
-		// listed here yet. Every role in this table is required by trust-bundle
-		// validation, renewal and expiry metrics, and no rollout or renewal
-		// path issues a role an existing host lacks: listing them blocked every
-		// live-node compute rollout of v0.1.18-rc.255. They return with an
-		// issuance migration; until then the relay stays closed as documented.
+		// ADR-989's relay leaves are not listed here: every role in this table
+		// is required by trust-bundle validation, renewal and expiry metrics,
+		// and no rollout or renewal path issues a role an existing host lacks
+		// (listing them blocked every live-node compute rollout of
+		// v0.1.18-rc.255). They are the outbound-relay feature leaves
+		// (FeatureOutboundRelay), issued only where an operator turns the
+		// relay on.
 		// Tier A9 / ADR-084: the cross-box standby write-
 		// redirect hop lands on the LEADER box's
 		// gatewayd-public listener over an mTLS-only port
@@ -258,6 +259,14 @@ func Roles() []Role {
 		{CommonName: "imaged.faas", Kind: KindClient, Directory: "imaged", Filename: "vmmd-client", AltNames: ProductionSANs("imaged.faas")},
 		{CommonName: "imaged.faas", Kind: KindClient, Directory: "imaged", Filename: "githubd-client", AltNames: ProductionSANs("imaged.faas")},
 		{CommonName: "gatewayd-internal-public.faas", Kind: KindClient, Directory: "gatewayd-internal-public", Filename: "leader-client", AltNames: MergeProductionSANs("gatewayd-internal-public.faas", "gatewayd-public.faas")},
+		// ADR-1027: pgproxyd on a database node wakes databases through
+		// schedd and opens DatabaseSession streams on vmmd.
+		{CommonName: "pgproxyd.faas", Kind: KindClient, Directory: "pgproxyd", Filename: "schedd-client", AltNames: ProductionSANs("pgproxyd.faas")},
+		{CommonName: "pgproxyd.faas", Kind: KindClient, Directory: "pgproxyd", Filename: "vmmd-client", AltNames: ProductionSANs("pgproxyd.faas")},
+		// ADR-1027 production class: a database node's vmmd dials another
+		// database node's vmmd for its standbys' replication streams, as
+		// the node itself (the vmmd directory carries the node identity).
+		{CommonName: "vmmd.faas", Kind: KindClient, Directory: "vmmd", Filename: "database-peer-client", AltNames: ProductionSANs("vmmd.faas")},
 	}
 
 	all := make([]Role, 0, len(serverRoles)+len(clientRoles))
@@ -304,6 +313,8 @@ func RolesForBox(role string) []Role {
 		return rolesForControlPlane()
 	case "compute-only":
 		return rolesForComputeOnly()
+	case "database":
+		return rolesForDatabase()
 	case "single-box", "":
 		return Roles()
 	default:
@@ -379,7 +390,35 @@ func rolesForComputeOnly() []Role {
 		"egress":                   true, // egress/egress server (gatewayd-internal listener)
 		"gatewayd-internal-public": true, // fsn-2's standby dialer (ADR-084)
 	}
-	return filterRolesByDirectory(keep)
+	roles := filterRolesByDirectory(keep)
+	// vmmd/database-peer-client is a database node's (ADR-1027): only a
+	// database node's vmmd dials another for standby replication, so
+	// compute nodes, which already run, need no new leaf.
+	out := roles[:0]
+	for _, r := range roles {
+		if r.Directory != "vmmd" || r.Filename != "database-peer-client" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// rolesForDatabase returns the leaves a database node needs (ADR-1027). It
+// runs vmmd, which serves the database VM RPCs to schedd under the node's
+// own identity, and pgproxyd, which dials schedd and vmmd. App VMs never
+// run there, so none of the compute data-path leaves are issued.
+func rolesForDatabase() []Role {
+	return filterRolesByDirectory(map[string]bool{
+		"vmmd":     true, // vmmd/server under the node identity
+		"pgproxyd": true, // pgproxyd/{schedd-client,vmmd-client}
+	})
+}
+
+// UsesNodeIdentity reports whether a box role's node-identity leaves (see
+// RoleUsesNodeIdentity) carry the host's own CN: compute nodes and database
+// nodes, whose vmmd the control plane verifies against its node registry.
+func UsesNodeIdentity(hostRole string) bool {
+	return hostRole == "compute-only" || hostRole == "database"
 }
 
 // filterRolesByDirectory returns the subset of Roles() whose Directory

@@ -189,6 +189,10 @@
     mode: "0644"
   notify: restart faas-vmmd
 
+- name: vmmd_service — converge vmmd's relay client leaf (ADR-989)
+  ansible.builtin.include_tasks: outbound_relay_tls.yml
+  when: faas_vmmd_outbound_relay_tls_managed | bool
+
 - name: vmmd_service — install app outbound relay target (ADR-989)
   ansible.builtin.template:
     src: 99-faas-outbound-relay.conf.j2
@@ -394,3 +398,9 @@
 # provisioned via `gregalectl secrets init`).
 - name: vmmd_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
+
+- name: vmmd_service — attach credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: attach
+    credential_units: [faas-vmmd]

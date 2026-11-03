@@ -51,7 +51,7 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 	}
 	trafficPercent := src.TrafficPercent
 	if src.CanaryTotalSteps > 0 {
-		preset, err := retryCanaryPreset(src, canaryPreset)
+		preset, err := deploymentCanaryPreset(src, canaryPreset)
 		if err != nil {
 			return Deployment{}, err
 		}
@@ -138,21 +138,23 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 	}, nil
 }
 
-func retryCanaryPreset(src Deployment, name string) (canarycatalog.Preset, error) {
+// deploymentCanaryPreset resolves the ladder a deployment row recorded: a
+// catalog preset by name, or its persisted custom stages.
+func deploymentCanaryPreset(src Deployment, name string) (canarycatalog.Preset, error) {
 	if name != "custom" {
 		preset, ok := canarycatalog.LookupPreset(name)
 		if !ok {
-			return canarycatalog.Preset{}, fmt.Errorf("retry deployment %s: unknown canary preset %q", src.ID, name)
+			return canarycatalog.Preset{}, fmt.Errorf("deployment %s: unknown canary preset %q", src.ID, name)
 		}
 		return preset, nil
 	}
 	var stages []canarycatalog.CustomStage
 	if err := json.Unmarshal(src.CanaryStages, &stages); err != nil {
-		return canarycatalog.Preset{}, fmt.Errorf("retry deployment %s: decode custom canary stages: %w", src.ID, err)
+		return canarycatalog.Preset{}, fmt.Errorf("deployment %s: decode custom canary stages: %w", src.ID, err)
 	}
 	preset, err := canarycatalog.LookupCustomPreset(stages)
 	if err != nil {
-		return canarycatalog.Preset{}, fmt.Errorf("retry deployment %s: validate custom canary stages: %w", src.ID, err)
+		return canarycatalog.Preset{}, fmt.Errorf("deployment %s: validate custom canary stages: %w", src.ID, err)
 	}
 	return preset, nil
 }

@@ -34,7 +34,7 @@ class EdgeRuleValidateAction:
     `action` jsonb blob (single-table flow), capped at the
     platform's `MaxEdgeRuleValidateSchemaBytes` (64 KiB). The
     gateway re-validates at compile time as defence-in-depth so
-    the SQL hotfix path that bypasses apid-Validate still cannot
+    the SQL hotfix path that bypasses API-Validate still cannot
     ship an external `$ref`.
 
     Field-by-field:
@@ -44,12 +44,12 @@ class EdgeRuleValidateAction:
         (`#/definitions/Foo`) pass through. Optional when
         `parameters` is set, so a body-less request can be validated.
       * `parameters` — optional path, query, and header schemas,
-        checked before the body is read (ADR-091 amendment).
+        checked before the body is read.
       * `content_types` — optional media-type allowlist.
         Closed set `application/*`. Empty = match any.
       * `apply_while_streaming` — per-rule opt-in for the
-        streaming response path (ADR-047). Default false mirrors
-        the §4.1 `Accept: application/json` opt-out.
+        streaming response path. Default false mirrors
+        the `Accept: application/json` opt-out.
       * `reject_on_unknown_fields` — toggles
         `additionalProperties: false` on the compiled schema.
         Default false preserves byte-stable schemas.
@@ -62,12 +62,12 @@ class EdgeRuleValidateAction:
 
     schema: EdgeRuleValidateActionSchema | Unset = UNSET
     """Inline JSON Schema document (Draft 2020-12). The schema
-    is preserved byte-exact across apid↔gatewayd round-trips
-    so the SHA-256 cache key in `pkg/edgevalidate` is stable.
+    is preserved byte-exact across the API↔the gateway round-trips
+    so the SHA-256 cache key is stable.
     """
     parameters: EdgeRuleValidateParameters | Unset = UNSET
     """Path, query, and header validation for a kind=validate rule
-    (ADR-091 amendment: request parameters). Each schema is a JSON
+    (request parameters). Each schema is a JSON
     Schema object whose properties are parameter names; property types
     must be string, integer, number, boolean, or an array of those.
     Request values are converted to the declared type before
@@ -81,8 +81,7 @@ class EdgeRuleValidateAction:
     with `application/`. Empty array = match any Content-Type.
     """
     apply_while_streaming: bool | Unset = UNSET
-    """Whether validation fires on the streaming response path
-    (ADR-047). Default false; set true per-rule to opt the
+    """Whether validation fires on the streaming response path. Default false; set true per-rule to opt the
     SSE / chunked response path into body validation.
     """
     reject_on_unknown_fields: bool | Unset = UNSET
@@ -96,7 +95,7 @@ class EdgeRuleValidateAction:
     be > 0 and <= the platform cap.
     """
     validate_mode: EdgeRuleValidateActionValidateMode | Unset = "block"
-    """DEPRECATED (ADR-128 D2). Moved to top-level
+    """DEPRECATED. Moved to top-level
     `EdgeRuleResponse.validate_mode` /
     `CreateEdgeRuleRequest.validate_mode` /
     `UpdateEdgeRuleRequest.validate_mode`. Retained on

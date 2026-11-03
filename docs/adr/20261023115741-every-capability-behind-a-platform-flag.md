@@ -199,3 +199,35 @@ off everywhere, at runtime and without a deploy.
   readiness alert routes and inbound-webhook bindings were owned by GA or
   beta prefixes, so the apid gate served those preview APIs to every
   account. They now belong to their capabilities.
+
+## Amendment (2026-10-27): the events flag
+
+[ADR 20261027125625](20261027125625-events-kill-switch.md) makes `events`
+stop the work it owns outside apid: schedd holds event routing (all of it
+under the kill switch, an account's customer events when off for that
+account), vmmd refuses in-guest publishing, and the publish routes answer
+`503 events_paused` rather than hiding, so producers keep their events. The
+exact path `/v1/events` (the live-update stream) moves to `dashboard`.
+
+## Amendment (2026-10-28): imaged decides profile-captures
+
+imaged joins the consumers (`productcap.KnownConsumers`). With
+`FAAS_PROFILING_ON_DEMAND=1` it keeps the platform flags current through the
+runtime-config watcher, as vmmd does, and decides `profile-captures` for a
+deployment's account, plan and organization before stamping on-demand
+collectors into its guest manifest (ADR-1155). An unreleased account's
+runtimes keep no collector preload.
+
+## Amendment (2026-11-01): templates and gregale.yaml in the CLI
+
+`GET /v1/templates` already leaves out a template whose `gregale.yaml` turns
+on a capability the account does not have. `gregale init --list` and the
+`init` picker now do the same from the CLI's capability view, mapping a
+manifest to capabilities through the catalog's `settings` and
+`capgate.ManifestSettings`. Listed templates name the secrets of a service
+the customer brings (`cron-worker` needs Upstash and QStash). A deploy whose
+template or `gregale.yaml` turns on a hidden capability is refused before
+any app or upload exists, after asking the server when the cached view does
+not already release the capability. Before, `queue-worker` created the app
+and its release, then failed on the gated queue-binding route with a bare
+`no such API route` (#5756).

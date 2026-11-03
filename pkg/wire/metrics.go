@@ -118,6 +118,9 @@ type OpsMetrics struct {
 	// computeNodeReadiness is one-hot per node: 1 for the node's current
 	// readiness, 0 for the others (ADR-20261022184531).
 	computeNodeReadiness *prometheus.GaugeVec
+	// nodeWakeBreaker counts node wake breaker transitions
+	// (ADR-20261022184531 step 3).
+	nodeWakeBreaker *prometheus.CounterVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -343,6 +346,16 @@ type OpsMetrics struct {
 	exclusiveOperationDispatches *prometheus.CounterVec
 	exclusiveOperationRenewals   *prometheus.CounterVec
 	exclusiveOperationDueRows    prometheus.Gauge
+	// trafficPolicyPhase times each phase of a guarded traffic policy write
+	// (ADR 20261027163626); writer and phase are closed pkg/state labels.
+	trafficPolicyPhase *prometheus.HistogramVec
+	// trafficBindingScope audits a binding write's declared hostnames against
+	// what it changed (ADR 20261027163626); labels are closed pkg/state kinds.
+	trafficBindingScopeAudits *prometheus.CounterVec
+	trafficBindingScopeMisses *prometheus.CounterVec
+	// trafficBindingCaptureGaps counts changed hostnames the capture triggers
+	// did not record (ADR 20261029190349); labels are closed pkg/state kinds.
+	trafficBindingCaptureGaps *prometheus.CounterVec
 	// wakeFailure (issue #1059 / ADR-127) — operator-facing wake
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
@@ -623,9 +636,10 @@ type OpsMetrics struct {
 	issueEventsRecorded *prometheus.CounterVec
 	// requestTelemetryRecorded (ADR-127 PR-B) — counter the
 	// apid gRPC handler (cmd/apid/grpc_server_request_telemetry.go)
-	// increments per outcome. outcome ∈ {inserted, rate_limited,
-	// db_error}. `inserted` is the §12 customer-telemetry-ingest
-	// panel (rate over 5m). `rate_limited` is the per-account
+	// increments per outcome. outcome ∈ {inserted, not_retained,
+	// rate_limited, db_error}. `inserted` is the §12 customer-telemetry-ingest
+	// panel (rate over 5m). `not_retained` is a row whose plan keeps no
+	// request telemetry (usage only). `rate_limited` is the per-account
 	// token-bucket overflow path (DebugTelemetryRequestsPerMinute
 	// exceeded). `db_error` is the per-row INSERT failure path.
 	// The closed label set keeps cardinality bounded.
@@ -657,7 +671,8 @@ type OpsMetrics struct {
 	// counter the gatewayd-public OTel handler increments when
 	// the apid AuthenticateKey RPC rejects the bearer token or
 	// the plan doesn't include telemetry. reason ∈
-	// {unauthenticated, plan_disabled, internal}. Single-registry:
+	// {unauthenticated, forbidden, not_released, plan_disabled,
+	// internal}. Single-registry:
 	// registered on every daemon; only gatewayd-public increments
 	// via IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures *prometheus.CounterVec
@@ -1366,7 +1381,21 @@ type OpsMetrics struct {
 	// would book.
 	nodeMemoryReservedMB *prometheus.GaugeVec
 	nodeMemoryMeasuredMB *prometheus.GaugeVec
-	instanceInflightReqs *prometheus.GaugeVec
+	// nodeCPUMeasuredMillicores: the host CPU measured CPU admission
+	// charges a node's measured instances (ADR 20261029151111).
+	nodeCPUMeasuredMillicores *prometheus.GaugeVec
+	// instanceCPUMeasuredMillicores: each measured instance's measured CPU
+	// per tick, the distribution measured CPU admission's floor and window
+	// are tuned on (ADR 20261029151111). Per node, not per instance, so its
+	// cardinality is bounded by the fleet.
+	instanceCPUMeasuredMillicores *prometheus.HistogramVec
+	// nodeCPUPressureSomeAvg10, nodeCPUBusyPercent and nodeCPUPressureHeld:
+	// the CPU pressure backstop's readings and the holds this schedd started
+	// (ADR 20261030100950).
+	nodeCPUPressureSomeAvg10 *prometheus.GaugeVec
+	nodeCPUBusyPercent       *prometheus.GaugeVec
+	nodeCPUPressureHeld      *prometheus.CounterVec
+	instanceInflightReqs     *prometheus.GaugeVec
 	// instanceCPUSecondsTotal (issue #279 / PR-B): cumulative
 	// CPU-seconds per (app, node). Counter (not Gauge) because
 	// the value is monotonic between cgroup regressions — the
@@ -1696,6 +1725,10 @@ type OpsMetrics struct {
 	// whose scan found a fixable CRITICAL refused every boot on it with
 	// no metric and no alert (Hunt 12 H12-1).
 	baseScanRefusals *prometheus.CounterVec
+	// baseScanFailuresHeld counts shared-base scans that failed for a
+	// reason other than the bytes or their findings while a clean scan of
+	// the same bytes stayed in force (bug hunt 2026-10-28 H102).
+	baseScanFailuresHeld *prometheus.CounterVec
 	// liveMigrationDecisions: Tier A5 / ADR-066 cross-node
 	// live-instance migration observability. Counter labelled by
 	// outcome ∈ {migrated, conflict, no_headroom, no_eligibility,
@@ -1983,6 +2016,7 @@ type OpsMetrics struct {
 	workerRecovery          *workerRecoveryMetrics
 	queue                   *queueMetrics
 	delayedTasks            *delayedTaskMetrics
+	cronDelivery            *cronDeliveryMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
 	// counter incremented on every successful events-table
 	// append at pkg/audit.Auditor.Emit. Splits the legacy
@@ -2143,6 +2177,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	workerRecovery := newWorkerRecoveryMetrics(prefix)
 	queue := newQueueMetrics(prefix)
 	delayedTasks := newDelayedTaskMetrics(prefix)
+	cronDelivery := newCronDeliveryMetrics(prefix)
 	ops := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_ops_total",
 		Help: "Count of operations, labelled by op name and terminal status code.",
@@ -2191,6 +2226,28 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			exclusiveOperationRenewals.WithLabelValues(outcome)
 		}
 	}
+	var trafficPolicyPhase *prometheus.HistogramVec
+	var trafficBindingScopeAudits, trafficBindingScopeMisses, trafficBindingCaptureGaps *prometheus.CounterVec
+	if prefix == "apid" {
+		trafficPolicyPhase = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "traffic_policy_analysis_seconds",
+			Help:    "Time per phase of a guarded traffic policy write (discover, lock_wait, before, validate), by writer. Each analysis phase is bounded at 2 s (ADR-570).",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 2.5, 5},
+		}, []string{"writer", "phase"})
+		trafficBindingScopeAudits = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "traffic_binding_scope_audits_total",
+			Help: "Binding writes whose changed hostnames were checked against the scope they declared, by writer and outcome (covered, missed).",
+		}, []string{"writer", "outcome"})
+		trafficBindingScopeMisses = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "traffic_binding_scope_misses_total",
+			Help: "Changed hostnames outside a binding write's declared scope, by writer and kind. Must stay zero before the scoped guard is enabled.",
+		}, []string{"writer", "kind"})
+		trafficBindingCaptureGaps = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "traffic_binding_capture_gaps_total",
+			Help: "Changed hostnames of a binding write that the change-capture triggers did not record, by writer and kind. Must stay zero before scoped writes rely on the capture.",
+		}, []string{"writer", "kind"})
+		reg.MustRegister(trafficPolicyPhase, trafficBindingScopeAudits, trafficBindingScopeMisses, trafficBindingCaptureGaps)
+	}
 	watchdogKills := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_watchdog_kills_total",
 		Help: "Count of instances the §6.1 watchdog transitioned out of a stuck state, labelled by from→to state.",
@@ -2220,6 +2277,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			for _, outcome := range WakeFailoverOutcomes {
 				wakeFailover.WithLabelValues(reason, outcome)
 			}
+		}
+	}
+	nodeWakeBreaker := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_node_wake_breaker_total",
+		Help: "Node wake breaker transitions this schedd wrote (ADR-20261022184531): opened after consecutive platform-attributable wake failures on a node, reopened when the first wake after the cooldown failed too, closed when a wake there succeeded.",
+	}, []string{"transition"})
+	if prefix == "schedd" {
+		for _, transition := range NodeWakeBreakerTransitions {
+			nodeWakeBreaker.WithLabelValues(transition)
 		}
 	}
 	computeNodeReadiness := prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -2317,10 +2383,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	frozenCompressTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_compress_total",
-		Help: "Compressions of frozen instances into memory-only swap before memory pressure would park them (ADR-906 decision 6), by outcome.",
-	}, []string{"outcome"})
-	for _, outcome := range FrozenCompressOutcomes {
-		frozenCompressTotal.WithLabelValues(outcome)
+		Help: "Compressions of frozen instances into memory-only swap (ADR-906 decision 6), by what asked for them (pressure: before memory pressure would park them; proactive: a node near its RAM ceiling, ADR 20261031143521) and outcome.",
+	}, []string{"trigger", "outcome"})
+	for _, trigger := range FrozenCompressTriggers {
+		for _, outcome := range FrozenCompressOutcomes {
+			frozenCompressTotal.WithLabelValues(trigger, outcome)
+		}
 	}
 	frozenInstances := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "_frozen_instances",
@@ -3539,6 +3607,27 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_node_memory_measured_mb",
 		Help: "What admission by measured memory would book on a node: per instance its cgroup memory plus headroom, capped at plan RAM + 8 MB (ADR-909 shadow mode; admission is unchanged).",
 	}, []string{"node"})
+	nodeCPUMeasuredMillicores := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_cpu_measured_millicores",
+		Help: "Host CPU millicores summed over a node's measured instances: per instance the larger of its latest CPU and its p95 over the charge window (ADR 20261029151111). Instances without enough history are not counted.",
+	}, []string{"node"})
+	instanceCPUMeasuredMillicores := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_instance_cpu_measured_millicores",
+		Help:    "Each measured instance's host CPU millicores per instance stats tick, as measured CPU admission measures it: the larger of its latest CPU and its p95 over the charge window (ADR 20261029151111). 125 is the booking model's assumption for a 1000 mc booking.",
+		Buckets: []float64{1, 2, 5, 10, 15, 25, 50, 125, 250, 500, 1000, 2000},
+	}, []string{"node"})
+	nodeCPUPressureSomeAvg10 := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_cpu_pressure_some_avg10",
+		Help: "A node's tenant-slice CPU pressure: the share of the last 10 s in which a tenant task waited for a CPU, in percent (cpu.pressure some avg10, ADR 20261030100950). Reported for the nodes whose readings this schedd receives.",
+	}, []string{"node"})
+	nodeCPUBusyPercent := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_cpu_busy_percent",
+		Help: "A node's busy share of all its CPUs over the last 10 s, in percent, from /proc/stat (ADR 20261030100950).",
+	}, []string{"node"})
+	nodeCPUPressureHeld := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_node_cpu_pressure_holds_total",
+		Help: "CPU pressure episodes this schedd started on a node: its tenant tasks waited for CPU while its CPUs were nearly all busy, so placement prefers other nodes and admission counts its bookings in full (ADR 20261030100950).",
+	}, []string{"node"})
 	instanceInflightReqs := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_instance_inflight_requests",
 		Help: "Outbound ForwardHTTP count in flight, per (app, node) — sum over live siblings (issue #170 / PR-A). Load rollup.",
@@ -3981,11 +4070,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest,
+		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest, eventDelivery.outcomes,
 		workerRecovery.apps, workerRecovery.replicas, workerRecovery.observedAt,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
+		cronDelivery.deliveryTotal, cronDelivery.scheduleLagSeconds,
 		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenFastPathSkipped, frozenThawTickets, ownerCacheTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
@@ -4014,7 +4104,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
 		staleDeploymentOldestAge, staleDeploymentsReconciled,
 		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
-		nodeMemoryReservedMB, nodeMemoryMeasuredMB,
+		nodeMemoryReservedMB, nodeMemoryMeasuredMB, nodeCPUMeasuredMillicores, instanceCPUMeasuredMillicores,
+		nodeCPUPressureSomeAvg10, nodeCPUBusyPercent, nodeCPUPressureHeld,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
@@ -4072,7 +4163,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness, nodeWakeBreaker)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -4168,6 +4259,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Instance boots vmmd's base scan gate refused (issue #299), labelled by base (the storage key of the staged base ext4) and reason (critical, sidecar_missing, generation_mismatch, generation_unavailable, incomplete). Any increase means no instance on that base can start until the base is rebuilt or rescanned.",
 	}, []string{"base", "reason"})
 	commonCollectors = append(commonCollectors, baseScanRefusals)
+	baseScanFailuresHeld := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_base_scan_failures_held_total",
+		Help: "Shared-base scans that failed for a reason other than the bytes or their findings (scanner_unavailable, artifact_read, scanner_invalid) while the last clean scan of the same bytes stayed in force, labelled by base (the artifact storage key) and reason. Boots continue; the base is refused only once the hold runs out (api.SharedBaseScanFailureGrace).",
+	}, []string{"base", "reason"})
+	commonCollectors = append(commonCollectors, baseScanFailuresHeld)
 	// ADR-055: per-deploy grype scan metrics. Labelled by
 	// severity (the Grype closed set) — the same vocabulary
 	// imageScanVulns uses, so anyone familiar with the base-ext4
@@ -4290,7 +4386,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// increments via IncrementGatewaydPublicOtelSpansIngested.
 	gatewaydPublicOtelSpansIngested := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_spans_ingested_total",
-		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid}. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
+		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid, buffer_full}. `buffer_full` counts traces rejected because the account or the process already buffers its maximum of traces between flushes. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansIngested)
 	// ADR-127 PR-D: truncation tripwire. Fires once per OTLP
@@ -4310,7 +4406,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_auth_failures_total",
-		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
+		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, forbidden, not_released, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `forbidden` is a key that cannot write traces (no admin, deploy:write or metrics:write scope, or a company key whose holder may no longer deploy there). `not_released` is the tracing capability being off for the account. `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
 	}, []string{"reason"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelAuthFailures)
 	// ADR-127 PR-D: apid-side SpansWriter RPC outcomes. outcome
@@ -4923,11 +5019,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"identity", "result"})
 	loopWork := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_loop_work_total",
-		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; any `panicked` is a bug.",
+		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, rerun, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; `rerun` counts the extra passes a kind such as event_fanout runs because a submit coalesced into a running one; any `panicked` is a bug.",
 	}, []string{"kind", "outcome"})
 	loopWorkDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_loop_work_duration_seconds",
-		Help: "How long one off-loop task ran (ADR-191), labelled by kind. The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
+		Help: "How long one pass of an off-loop task ran (ADR-191), labelled by kind; each rerun of a rerunCoalesced kind such as event_fanout is its own pass (ADR-20261029012000). The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
 		// Reconciles are millisecond-scale database work; prime is
 		// tens of seconds. One set of buckets has to span both.
 		Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 5, 15, 30, 60, 120},
@@ -5038,6 +5134,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		cronFireNowDispatchDur:             schedd,
 		delayedTasks.dispatchTotal:         schedd,
 		delayedTasks.scheduleLagSeconds:    schedd,
+		cronDelivery.deliveryTotal:         schedd,
+		cronDelivery.scheduleLagSeconds:    schedd,
 		evictionFiredTotal:                 schedd,
 		scaleUpAdmitRPS:                    schedd,
 		eventsWriteFail:                    schedd,
@@ -5513,6 +5611,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
 		wakeFailover:                               wakeFailover,
 		computeNodeReadiness:                       computeNodeReadiness,
+		nodeWakeBreaker:                            nodeWakeBreaker,
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
@@ -5561,6 +5660,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		exclusiveOperationDispatches:               exclusiveOperationDispatches,
 		exclusiveOperationRenewals:                 exclusiveOperationRenewals,
 		exclusiveOperationDueRows:                  exclusiveOperationDueRows,
+		trafficPolicyPhase:                         trafficPolicyPhase,
+		trafficBindingScopeAudits:                  trafficBindingScopeAudits,
+		trafficBindingScopeMisses:                  trafficBindingScopeMisses,
+		trafficBindingCaptureGaps:                  trafficBindingCaptureGaps,
 		wakeFailure:                                wakeFailure,
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
@@ -5696,6 +5799,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		instanceRSSMB:                        instanceRSSMB,
 		nodeMemoryReservedMB:                 nodeMemoryReservedMB,
 		nodeMemoryMeasuredMB:                 nodeMemoryMeasuredMB,
+		nodeCPUMeasuredMillicores:            nodeCPUMeasuredMillicores,
+		instanceCPUMeasuredMillicores:        instanceCPUMeasuredMillicores,
+		nodeCPUPressureSomeAvg10:             nodeCPUPressureSomeAvg10,
+		nodeCPUBusyPercent:                   nodeCPUBusyPercent,
+		nodeCPUPressureHeld:                  nodeCPUPressureHeld,
 		instanceInflightReqs:                 instanceInflightReqs,
 		instanceCPUSecondsTotal:              instanceCPUSecondsTotal,
 		instanceStatsCollectDur:              instanceStatsCollectDur,
@@ -5728,6 +5836,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		provenanceWrites:                     provenanceWrites,
 		imageScanVulns:                       imageScanVulns,
 		baseScanRefusals:                     baseScanRefusals,
+		baseScanFailuresHeld:                 baseScanFailuresHeld,
 		deployScanDuration:                   deployScanDuration,
 		deployStageDuration:                  deployStageDuration,
 		apiHostingPhaseTotal:                 apiHostingPhaseTotal,
@@ -5777,6 +5886,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		workerRecovery:                       workerRecovery,
 		queue:                                queue,
 		delayedTasks:                         delayedTasks,
+		cronDelivery:                         cronDelivery,
 		auditLogWriteTotal:                   auditLogWriteTotal,
 		auditLogWriteFailuresTotal:           auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio: operatorActionTraceCompletenessRatio,
@@ -6246,6 +6356,12 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 const (
 	WakeFailoverReasonBaseGeneration     = "base_generation"
 	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"
+	// WakeFailoverReasonNodeSetup: vmmd failed to acquire a jail lease or
+	// set up the network before the VM started (wake_stage=pre_start).
+	WakeFailoverReasonNodeSetup = "node_setup"
+	// WakeFailoverReasonVMMDUnreachable: the boot request never reached the
+	// node's vmmd (ADR-20261029085904).
+	WakeFailoverReasonVMMDUnreachable = "vmmd_unreachable"
 
 	WakeFailoverOutcomeSucceeded    = "succeeded"
 	WakeFailoverOutcomeRefusedAgain = "refused_again"
@@ -6257,9 +6373,22 @@ const (
 // WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
 // counter reads zero, not absent, on a fleet that has never failed over.
 var (
-	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing}
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing, WakeFailoverReasonNodeSetup, WakeFailoverReasonVMMDUnreachable}
 	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
 )
+
+// NodeWakeBreakerTransitions are the closed transition label values of
+// schedd_node_wake_breaker_total.
+var NodeWakeBreakerTransitions = []string{"opened", "reopened", "closed"}
+
+// RecordNodeWakeBreaker counts one breaker transition. Only schedd exports
+// the counter; an unknown transition is dropped.
+func (m *OpsMetrics) RecordNodeWakeBreaker(transition string) {
+	if m == nil || m.nodeWakeBreaker == nil || m.metricPrefix != "schedd" || !slices.Contains(NodeWakeBreakerTransitions, transition) {
+		return
+	}
+	m.nodeWakeBreaker.WithLabelValues(transition).Inc()
+}
 
 // ComputeNodeReadinessStates are the closed state label values of
 // schedd_compute_node_readiness; they mirror compute_nodes_readiness_chk.
@@ -6355,10 +6484,15 @@ var (
 	// (ADR-1741).
 	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
-		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining"}
+		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining",
+		// ADR 20261031190030: frozen VMs yield memory to admission.
+		"admission", "refused_wake"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
 	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}
+	// FrozenCompressTriggers: pressure is eviction above a node's ceiling,
+	// proactive a node near it (ADR 20261031143521).
+	FrozenCompressTriggers = []string{"pressure", "proactive"}
 )
 
 // FrozenFreezeTotal is the idle-timeout freeze counter for one outcome.
@@ -6410,12 +6544,13 @@ func (m *OpsMetrics) FrozenParksTotal(reason string) prometheus.Counter {
 	return m.frozenParksTotal.WithLabelValues(reason)
 }
 
-// FrozenCompressTotal is the frozen-compression counter for one outcome.
-func (m *OpsMetrics) FrozenCompressTotal(outcome string) prometheus.Counter {
+// FrozenCompressTotal is the frozen-compression counter for one trigger and
+// outcome.
+func (m *OpsMetrics) FrozenCompressTotal(trigger, outcome string) prometheus.Counter {
 	if m == nil {
 		return nil
 	}
-	return m.frozenCompressTotal.WithLabelValues(outcome)
+	return m.frozenCompressTotal.WithLabelValues(trigger, outcome)
 }
 
 // SetFrozenInstances sets the number of instances held frozen.
@@ -8246,6 +8381,43 @@ func (m *OpsMetrics) ObserveExclusiveOperationLeaseRenewal(outcome string) {
 	m.exclusiveOperationRenewals.WithLabelValues(outcome).Inc()
 }
 
+// ObserveTrafficPolicyPhase records one phase of a guarded traffic policy
+// write. It matches state.TrafficPolicyPhaseObserver.
+func (m *OpsMetrics) ObserveTrafficPolicyPhase(writer, phase string, elapsed time.Duration) {
+	if m == nil || m.trafficPolicyPhase == nil {
+		return
+	}
+	m.trafficPolicyPhase.WithLabelValues(writer, phase).Observe(elapsed.Seconds())
+}
+
+// ObserveTrafficBindingScope records one audited binding write and the kind
+// of each changed hostname its declared scope missed. It matches
+// state.TrafficBindingScopeObserver.
+func (m *OpsMetrics) ObserveTrafficBindingScope(writer string, missed []string) {
+	if m == nil || m.trafficBindingScopeAudits == nil {
+		return
+	}
+	outcome := "covered"
+	if len(missed) > 0 {
+		outcome = "missed"
+	}
+	m.trafficBindingScopeAudits.WithLabelValues(writer, outcome).Inc()
+	for _, kind := range missed {
+		m.trafficBindingScopeMisses.WithLabelValues(writer, kind).Inc()
+	}
+}
+
+// ObserveTrafficBindingCapture counts the changed hostnames of one binding
+// write that the capture triggers did not record.
+func (m *OpsMetrics) ObserveTrafficBindingCapture(writer string, gaps []string) {
+	if m == nil || m.trafficBindingCaptureGaps == nil {
+		return
+	}
+	for _, kind := range gaps {
+		m.trafficBindingCaptureGaps.WithLabelValues(writer, kind).Inc()
+	}
+}
+
 // SetExclusiveOperationDueCandidates publishes the bounded scan result size.
 func (m *OpsMetrics) SetExclusiveOperationDueCandidates(n int) {
 	if m == nil || m.exclusiveOperationDueRows == nil {
@@ -8596,8 +8768,14 @@ func (m *OpsMetrics) ObserveImageScanVuln(image, severity string, count int) {
 }
 
 // BaseScanRefusalReasons is the closed reason set of
-// <daemon>_base_scan_refusals_total.
-var BaseScanRefusalReasons = []string{"critical", "sidecar_missing", "generation_mismatch", "generation_unavailable", "incomplete"}
+// <daemon>_base_scan_refusals_total. scan_failed is imaged's fail-closed
+// placeholder (BaseScanFailedCount) rather than real findings.
+var BaseScanRefusalReasons = []string{"critical", "sidecar_missing", "generation_mismatch", "generation_unavailable", "incomplete", "scan_failed"}
+
+// BaseScanFailedCount is the per-severity count imaged writes into a base's
+// scan sidecar when its Grype scan failed, so vmmd refuses to boot an
+// unscanned base. It is a placeholder, not a number of vulnerabilities.
+const BaseScanFailedCount = 9999
 
 // ObserveBaseScanRefusal counts one boot refused by vmmd's base scan gate.
 // Safe on a nil receiver.
@@ -8606,6 +8784,15 @@ func (m *OpsMetrics) ObserveBaseScanRefusal(base, reason string) {
 		return
 	}
 	m.baseScanRefusals.WithLabelValues(base, reason).Inc()
+}
+
+// ObserveBaseScanFailureHeld counts one failed shared-base scan whose last
+// clean verdict stayed in force. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveBaseScanFailureHeld(base, reason string) {
+	if m == nil {
+		return
+	}
+	m.baseScanFailuresHeld.WithLabelValues(base, reason).Inc()
 }
 
 // ObserveDeployScanDuration records one per-deploy grype scan's
@@ -9417,6 +9604,55 @@ func (m *OpsMetrics) ReplaceNodeMemoryShadow(byNode map[string][2]int) {
 		m.nodeMemoryReservedMB.WithLabelValues(node).Set(float64(v[0]))
 		m.nodeMemoryMeasuredMB.WithLabelValues(node).Set(float64(v[1]))
 	}
+}
+
+// ReplaceNodeCPUMeasured publishes each node's measured CPU millicores for
+// measured CPU admission, per node and per instance: byNode maps a node to
+// its measured instances' millicores. Nodes absent from byNode are dropped
+// from the gauge.
+func (m *OpsMetrics) ReplaceNodeCPUMeasured(byNode map[string]map[string]int) {
+	if m == nil {
+		return
+	}
+	m.nodeCPUMeasuredMillicores.Reset()
+	for node, instances := range byNode {
+		sum := 0
+		perInstance := m.instanceCPUMeasuredMillicores.WithLabelValues(node)
+		for _, v := range instances {
+			sum += v
+			perInstance.Observe(float64(v))
+		}
+		m.nodeCPUMeasuredMillicores.WithLabelValues(node).Set(float64(sum))
+	}
+}
+
+// NodeCPUPressure is one node's CPU pressure readings (ADR 20261030100950).
+type NodeCPUPressure struct {
+	SomeAvg10   float64
+	BusyPercent float64
+}
+
+// ReplaceNodeCPUPressure publishes the CPU pressure readings of the nodes
+// whose readings this schedd receives; nodes absent from byNode are dropped.
+func (m *OpsMetrics) ReplaceNodeCPUPressure(byNode map[string]NodeCPUPressure) {
+	if m == nil {
+		return
+	}
+	m.nodeCPUPressureSomeAvg10.Reset()
+	m.nodeCPUBusyPercent.Reset()
+	for node, r := range byNode {
+		m.nodeCPUPressureSomeAvg10.WithLabelValues(node).Set(r.SomeAvg10)
+		m.nodeCPUBusyPercent.WithLabelValues(node).Set(r.BusyPercent)
+	}
+}
+
+// NodeCPUPressureHeld counts a CPU pressure episode this schedd started on
+// node.
+func (m *OpsMetrics) NodeCPUPressureHeld(node string) {
+	if m == nil {
+		return
+	}
+	m.nodeCPUPressureHeld.WithLabelValues(node).Inc()
 }
 
 func (m *OpsMetrics) ReplaceInstanceStats(rows []InstanceStatRow, dur time.Duration) {

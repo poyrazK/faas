@@ -103,7 +103,7 @@ func cmdInvoke(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(resp))
 		}
-		PrintOK(os.Stdout, "Async invocation %s queued. Poll with `gregale invocations get %s` or via %s", resp.ID, resp.ID, resp.StatusURL)
+		PrintOK(os.Stdout, "Async invocation %s queued. Poll with `gregale invocation get %s` or via %s", resp.ID, resp.ID, resp.StatusURL)
 		return 0
 	}
 	resp, err := client.InvokeApp(context.Background(), slug, req)
@@ -137,7 +137,7 @@ func cmdInvoke(args []string) int {
 	// app reported success. Result (if any) is still printed above so
 	// the operator sees the handler's own error body.
 	if !invokeStatusOK(resp.Status) {
-		_, _ = fmt.Fprintf(os.Stderr, "invoke: terminal state %q — see `gregale invocations get %s` for the error\n", resp.Status, resp.ID)
+		_, _ = fmt.Fprintf(os.Stderr, "invoke: terminal state %q — see `gregale invocation get %s` for the error\n", resp.Status, resp.ID)
 		return 1
 	}
 	return 0

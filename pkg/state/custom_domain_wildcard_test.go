@@ -31,7 +31,7 @@ func TestWildcardCustomDomainHelpers(t *testing.T) {
 	if got := state.CustomDomainChallengeName("*.example.com"); got != "_faas-verify.example.com" {
 		t.Fatalf("challenge name = %q", got)
 	}
-	if got, ok := state.WildcardProbeHost("*.example.com"); !ok || got != "www.example.com" {
+	if got, ok := state.WildcardProbeHost("*.example.com"); !ok || got != "gregale-wildcard-check.example.com" {
 		t.Fatalf("probe host = %q, %v", got, ok)
 	}
 }

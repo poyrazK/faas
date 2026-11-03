@@ -43,6 +43,7 @@
     - faas-meterd
     - faas-outboundd
     - faas-bridged
+    - faas-mcp-bridge
 
 # schedd reads the non-secret signing public key directly. Keep the shared
 # parent traversable by the faas group while private children and files retain
@@ -208,6 +209,76 @@
     group: root
     mode: "0644"
   notify: restart faas-apid
+
+# ADR 20261029202403: apid keys stored account credential hashes with a ring
+# no other daemon and never the database holds. The file stays root:root
+# 0400; systemd hands it to apid as a credential.
+- name: control_plane_service — refuse keyed credential writes without a key ring
+  ansible.builtin.assert:
+    that:
+      - faas_apid_credential_writes in ['plain', 'keyed']
+      - faas_apid_credential_writes == 'plain' or faas_apid_credential_keys_src | length > 0
+      - faas_apid_credential_plain_lookup | bool or faas_apid_credential_writes == 'keyed'
+    fail_msg: >-
+      faas_apid_credential_writes must be plain or keyed; keyed needs
+      faas_apid_credential_keys_src, and plain lookup may be turned off only
+      with keyed writes.
+
+- name: control_plane_service — install the account credential key ring
+  ansible.builtin.copy:
+    src: "{{ faas_apid_credential_keys_src }}"
+    dest: /etc/faas/secrets/credential-keys
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-apid
+  when: faas_apid_credential_keys_src | length > 0
+
+- name: control_plane_service — remove the account credential key ring
+  ansible.builtin.file:
+    path: /etc/faas/secrets/credential-keys
+    state: absent
+  when: faas_apid_credential_keys_src | length == 0
+
+- name: control_plane_service — give apid its credential key settings
+  ansible.builtin.template:
+    src: 60-faas-credential-keys.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/60-faas-credential-keys.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid
+
+- name: control_plane_service — scheduler credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: scheduler
+    credential_units: [faas-apid, faas-schedd]
+
+- name: control_plane_service — outbound credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: outbound
+    credential_units: [faas-apid, faas-outboundd]
+
+- name: control_plane_service — attach credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: attach
+    credential_units: [faas-apid]
+
+- name: control_plane_service — dev-bridge credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: dev-bridge
+    credential_units: [faas-apid, faas-bridged]
+
+- name: control_plane_service — data-api credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: data-api
+    credential_units: [faas-apid]
 
 - name: control_plane_service — set developer live patch gate (ADR-740)
   ansible.builtin.template:
@@ -375,6 +446,9 @@
 - name: control_plane_service — converge cluster workload trust (ADR-1141)
   ansible.builtin.include_tasks: workload_trust.yml
 
+- name: control_plane_service — converge the app outbound relay (ADR-989)
+  ansible.builtin.include_tasks: outbound_relay.yml
+
 - name: control_plane_service — set public status launch boundary
   notify: restart faas-apid
   ansible.builtin.template:
@@ -515,8 +589,8 @@
     mode: "0644"
   when: (faas_box_role | default('single-box')) == 'control-plane'
 
-# ADR-847: synthetic route probes stay off until route_probes_enabled is set;
-# the drop-in then points apid at the public gateway origin.
+# ADR-847: synthetic route probes, on unless route_probes_enabled is false;
+# the drop-in points apid at the local gatewayd-public listener.
 - name: control_plane_service — configure synthetic route probes
   notify: restart faas-apid
   ansible.builtin.template:
@@ -639,6 +713,39 @@
     owner: root
     group: root
     mode: "0644"
+
+# ADR-1027: schedd's database scheduler, from the manifest's database hosts
+# (faas_schedd_database_scheduler, rendered by `gregalectl manifest ansible`).
+# A fleet without database hosts keeps neither file.
+- name: control_plane_service — render schedd's database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: schedd-database.toml.j2
+    dest: /etc/faas/schedd-database.toml
+    owner: root
+    group: faas
+    mode: "0640"
+  when: faas_schedd_database_scheduler is defined
+
+- name: control_plane_service — point schedd at its database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: 99-faas-schedd-database.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-database.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_schedd_database_scheduler is defined
+
+- name: control_plane_service — remove schedd's database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/faas-schedd.service.d/99-faas-database.conf
+    - /etc/faas/schedd-database.toml
+  when: faas_schedd_database_scheduler is not defined
 
 # Issue #585 / ADR-127 — per-daemon secret file perm-asserts. The
 # shared block checks ALL new per-daemon secret files (schedd +
@@ -1186,3 +1293,115 @@
     group: root
     mode: "0644"
   notify: restart faas-schedd
+
+# ADR-20261026195952: the hosted management MCP server. The unit ships with
+# every converge but runs only where faas_mcp_bridge_enabled is set and the
+# state key exists. The 50-faas-mcp-bridge.conf marker tells cd-controlplane
+# to update and restart it with each release.
+- name: control_plane_service — install hosted management MCP unit
+  ansible.builtin.copy:
+    src: faas-mcp-bridge.service
+    dest: /etc/systemd/system/faas-mcp-bridge.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-mcp-bridge
+
+- name: control_plane_service — create hosted management MCP drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-mcp-bridge.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The bridge's resource URL is https://api.<platform domain>/mcp, resolved
+# from the same domain layout as every daemon (ADR-20261026100000).
+- name: control_plane_service — install hosted management MCP domain drop-ins
+  ansible.builtin.template:
+    src: "../../_shared/templates/{{ item }}.j2"
+    dest: "/etc/systemd/system/faas-mcp-bridge.service.d/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - 99-faas-apps-domain.conf
+    - 99-faas-domain-layout.conf
+  notify: restart faas-mcp-bridge
+
+# The key never leaves the host except through control-plane state staging,
+# which copies /etc/faas/secrets to the standby. A host that loses it makes a
+# new one; the bridge then drops the state it cannot open and agents sign in
+# again.
+- name: control_plane_service — create the hosted management MCP state key once
+  ansible.builtin.shell: |
+    set -eu
+    install -d -m 0700 -o root -g root /etc/faas/secrets/mcp-bridge
+    umask 077
+    head -c 32 /dev/urandom > /etc/faas/secrets/mcp-bridge/.state.key.new
+    mv -f /etc/faas/secrets/mcp-bridge/.state.key.new /etc/faas/secrets/mcp-bridge/state.key
+  args:
+    creates: /etc/faas/secrets/mcp-bridge/state.key
+  notify: restart faas-mcp-bridge
+  when: faas_mcp_bridge_enabled | bool
+
+- name: control_plane_service — check the hosted management MCP state key
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/mcp-bridge/state.key
+  register: faas_mcp_bridge_key
+  when: faas_mcp_bridge_enabled | bool
+
+- name: control_plane_service — require a well-formed hosted management MCP state key
+  ansible.builtin.assert:
+    that:
+      - faas_mcp_bridge_key.stat.exists
+      - faas_mcp_bridge_key.stat.size in [32, 64, 65]
+    fail_msg: >-
+      /etc/faas/secrets/mcp-bridge/state.key must hold 32 random bytes or 64 hex
+      characters. Remove it to have this role generate a new one; connected
+      agents then sign in again (ADR-20261026195952).
+  when: faas_mcp_bridge_enabled | bool
+
+- name: control_plane_service — mark the hosted management MCP server configured
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-mcp-bridge.service.d/50-faas-mcp-bridge.conf
+    content: |
+      # Managed by Ansible (ADR-20261026195952): the hosted management MCP server
+      # is enabled here; cd-controlplane updates and restarts it with a release.
+      [Service]
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-mcp-bridge
+  when: faas_mcp_bridge_enabled | bool
+
+# A release converges these roles before it activates, so the first release
+# that ships mcp-bridged is not on disk yet: enable the unit now and let the
+# release's own restart step start it once it is.
+- name: control_plane_service — check for the hosted management MCP binary
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/mcp-bridged
+  register: faas_mcp_bridge_binary
+  when: faas_mcp_bridge_enabled | bool
+
+- name: control_plane_service — enable the hosted management MCP server
+  ansible.builtin.systemd_service:
+    name: faas-mcp-bridge.service
+    enabled: true
+    state: "{{ 'started' if faas_mcp_bridge_binary.stat.exists else omit }}"
+    daemon_reload: true
+  when: faas_mcp_bridge_enabled | bool
+
+- name: control_plane_service — unmark the hosted management MCP server when disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-mcp-bridge.service.d/50-faas-mcp-bridge.conf
+    state: absent
+  when: not (faas_mcp_bridge_enabled | bool)
+
+- name: control_plane_service — stop the hosted management MCP server when disabled
+  ansible.builtin.systemd_service:
+    name: faas-mcp-bridge.service
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: not (faas_mcp_bridge_enabled | bool)

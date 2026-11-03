@@ -30,6 +30,7 @@ func (m *MemStore) CreateDeployToken(_ context.Context, accountID, appID string,
 	if expiresAt.IsZero() || !expiresAt.After(time.Now()) {
 		return DeployToken{}, errors.New("state: deploy token expiry must be in the future")
 	}
+	hash = storedCredential(credTagDeployToken, hash)
 	if len(scopes) == 0 {
 		scopes = []string{"deploy:write"}
 	}
@@ -116,6 +117,7 @@ func (m *MemStore) RotateDeployToken(_ context.Context, accountID, appID, tokenI
 	if len(hash) != 32 || !expiresAt.After(time.Now()) {
 		return DeployToken{}, DeployToken{}, errors.New("state: invalid rotated deploy token")
 	}
+	hash = storedCredential(credTagDeployToken, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	old, ok := m.deployTokens[tokenID]
@@ -161,7 +163,13 @@ func (m *MemStore) RotateDeployToken(_ context.Context, accountID, appID, tokenI
 func (m *MemStore) AuthenticateDeployToken(_ context.Context, hash []byte) (Account, APIKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	t, ok := m.deployTokenByHash[string(hash)]
+	var t DeployToken
+	ok := false
+	for _, value := range credentialLookups(credTagDeployToken, hash) {
+		if t, ok = m.deployTokenByHash[string(value)]; ok {
+			break
+		}
+	}
 	if !ok {
 		return Account{}, APIKey{}, ErrNotFound
 	}

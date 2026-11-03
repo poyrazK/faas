@@ -178,6 +178,16 @@ func Authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	return authorize(r, store, audit, actor, app)
 }
 
+// AuthorizeRoute is Authorize for a request that finishes another route's
+// work on a different surface: the browser secret-entry page completes a
+// secret request, so it gets the decision that request's route pattern gets.
+func AuthorizeRoute(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App, pattern string) (state.Account, *api.Problem) {
+	served := r.Pattern
+	r.Pattern = pattern
+	defer func() { r.Pattern = served }()
+	return authorize(r, store, audit, actor, app)
+}
+
 func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App) (state.Account, *api.Problem) {
 	_, key, _, ok := authmw.PrincipalFrom(r)
 	if !ok {
@@ -191,7 +201,7 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 		if app.AccountID != actor.ID || key != nil && key.OrgID != "" && !personalKey(r.Context(), store, key.OrgID, actor.ID) {
 			return state.Account{}, notFound(r)
 		}
-		return actor, nil
+		return actor, personalSuspension(r, actor)
 	}
 	org, err := store.OrgByID(r.Context(), app.OrgID)
 	if err != nil {
@@ -201,7 +211,7 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 		if app.AccountID != actor.ID || org.PersonalOwnerAccountID == nil || *org.PersonalOwnerAccountID != actor.ID {
 			return state.Account{}, notFound(r)
 		}
-		return actor, nil
+		return actor, personalSuspension(r, actor)
 	}
 	return authorizeShared(r, store, audit, actor, key, app, org)
 }
@@ -258,7 +268,10 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 		}
 		action = authz.OrgActionManageAppSecurity
 	}
-	if (org.Status == state.OrgStatusSuspended || org.Status == state.OrgStatusPastDue) && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
+	// A past-due company keeps running and loses only deploys (spec §4.7), as
+	// a past-due account does: the owner account below carries past_due, so
+	// deploy admission refuses while members still revoke and reconfigure.
+	if org.Status == state.OrgStatusSuspended && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
 		return state.Account{}, api.ErrOrgRoleForbidden("change applications in an inactive organization")
 	}
 	if p := authz.AuthorizeOrgAction(r.Context(), action, audit); p != nil {
@@ -277,6 +290,20 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 	}
 	*r = *r.WithContext(managedpostgres.WithOwnership(context.WithValue(r.Context(), grantKey{}, Grant{App: app, Actor: actor, Owner: owner, Fence: fence}), org.ID, owner.ResourceOwnerID()))
 	return owner, nil
+}
+
+// personalSuspension refuses a personal app to its suspended owner. The auth
+// middleware lets a billing-suspended caller through to app-addressed routes
+// so the app's owner decides (H87); for a personal app that owner is the
+// caller, so the suspension applies here exactly as it did at sign-in.
+func personalSuspension(r *http.Request, actor state.Account) *api.Problem {
+	if actor.Active() || authmw.InactiveAccountMayReach(actor, r.Method, r.URL.Path) {
+		return nil
+	}
+	if actor.AbuseHeld() {
+		return actor.InactiveProblem()
+	}
+	return authmw.SuspendedProblem()
 }
 
 func personalKey(ctx context.Context, store Store, orgID, actorID string) bool {
@@ -299,6 +326,8 @@ func notFound(r *http.Request) *api.Problem {
 		what = "no such cron run"
 	case strings.HasPrefix(path, "/v1/crons/"):
 		what = "no such cron"
+	case strings.HasPrefix(path, "/v1/cron-fire-now-requests/"):
+		what = "no such fire-now request"
 	case strings.HasPrefix(path, "/v1/deployments/"):
 		what = "no such deployment"
 	case strings.HasPrefix(path, "/v1/domains/"):

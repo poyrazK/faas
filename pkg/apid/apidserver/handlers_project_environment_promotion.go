@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	promotionapi "github.com/onebox-faas/faas/pkg/apid/promotion"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -752,6 +754,15 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalRequired,
 				"Protected environment approval required", "approve this exact promotion before executing it"))
 			return
+		}
+		// The approval stands in for each app's own release approval policy,
+		// so it is held to it: who approved, against who promotes.
+		if approval, err := s.store.ProjectEnvironmentApprovalByToken(r.Context(), acct.ID, projectSlug, toEnvironment,
+			hashProjectEnvironmentApprovalMaterial(promotionToken), hashProjectEnvironmentApprovalMaterial(approvalToken)); err == nil {
+			if problem := s.protectedPromotionApprovalProblem(r.Context(), plan, toEnvironment, approval.ApprovedByAccountID, actorAccount(r, acct).ID); problem != nil {
+				api.WriteProblem(w, problem)
+				return
+			}
 		}
 
 	}
@@ -1542,6 +1553,22 @@ func promoteProjectEnvironmentDeploymentDark(ctx context.Context, store state.St
 	return promoteProjectEnvironmentDeploymentWithTraffic(ctx, store, source, targetEnvironment, promotionID, true)
 }
 
+// promotionDefaultRollbackOn5xx gives a promotion into production the default
+// first-wake 5xx rollback and post-release watch its app would get from a
+// deploy (ADR-1446 amendment 2): the staging release it copies never had
+// them. Lookup failures leave the promotion as it was.
+func promotionDefaultRollbackOn5xx(ctx context.Context, store state.Store, appID, targetEnvironment string) bool {
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return false
+	}
+	acct, err := store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		return false
+	}
+	return release.DefaultRollbackOn5xx(ctx, store, slog.Default(), app, acct.Plan, targetEnvironment)
+}
+
 func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store state.Store, source state.Deployment, targetEnvironment, promotionID string, dark bool, configuration ...state.ProjectEnvironmentPromotionWorkloadSpecInput) (state.Deployment, error) {
 	if err := durable.TransferPromotionValidator(ctx, source, ""); err != nil {
 		return state.Deployment{}, err
@@ -1571,6 +1598,8 @@ func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store s
 	if dark {
 		candidate.TrafficPercent = 0
 		candidate.TrafficPercentExplicit = true
+	} else if !candidate.RollbackOn5xx {
+		candidate.RollbackOn5xx = promotionDefaultRollbackOn5xx(ctx, store, source.AppID, targetEnvironment)
 	}
 	candidate.RolloutState = "pending"
 	candidate.RolloutStartedAt = nil

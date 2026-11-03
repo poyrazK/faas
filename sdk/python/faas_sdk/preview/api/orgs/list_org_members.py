@@ -82,7 +82,7 @@ def sync_detailed(
     boundary). Each row carries the joined `account.email`
     so the dashboard can render `bob@acme.com` without a
     second round-trip. Removed rows do NOT count toward the
-    member cap (per ADR-061 §B).
+    member cap.
 
     Args:
         slug (str):
@@ -118,7 +118,7 @@ def sync(
     boundary). Each row carries the joined `account.email`
     so the dashboard can render `bob@acme.com` without a
     second round-trip. Removed rows do NOT count toward the
-    member cap (per ADR-061 §B).
+    member cap.
 
     Args:
         slug (str):
@@ -149,7 +149,7 @@ async def asyncio_detailed(
     boundary). Each row carries the joined `account.email`
     so the dashboard can render `bob@acme.com` without a
     second round-trip. Removed rows do NOT count toward the
-    member cap (per ADR-061 §B).
+    member cap.
 
     Args:
         slug (str):
@@ -183,7 +183,7 @@ async def asyncio(
     boundary). Each row carries the joined `account.email`
     so the dashboard can render `bob@acme.com` without a
     second round-trip. Removed rows do NOT count toward the
-    member cap (per ADR-061 §B).
+    member cap.
 
     Args:
         slug (str):

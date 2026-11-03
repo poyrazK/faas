@@ -67,16 +67,22 @@ func (r *WorkloadIdentityReceiver) UseDeployments(d workloadIdentityDeployments)
 // refuses rather than guess: a token without the scope would carry the
 // default environment's subject, which a production trust policy accepts.
 func (r *WorkloadIdentityReceiver) environment(instance string) (string, error) {
-	if r.deployments == nil {
+	return instanceEnvironment(r.ctx, r.mgr, r.deployments, instance)
+}
+
+// instanceEnvironment is the deployment scope instance runs, or "" when the
+// node has no deployment store. Guest tokens and the outbound relay share it.
+func instanceEnvironment(parent context.Context, mgr *fcvm.Manager, deployments workloadIdentityDeployments, instance string) (string, error) {
+	if deployments == nil {
 		return "", nil
 	}
-	id := r.mgr.WorkloadTokenDeployment(instance)
+	id := mgr.WorkloadTokenDeployment(instance)
 	if id == "" {
 		return "", errors.New("workload identity: instance runs no known deployment")
 	}
-	ctx, cancel := context.WithTimeout(r.ctx, 3*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
-	dep, err := r.deployments.DeploymentByID(ctx, id)
+	dep, err := deployments.DeploymentByID(ctx, id)
 	if err != nil {
 		return "", fmt.Errorf("workload identity: read deployment %s: %w", id, err)
 	}
@@ -143,6 +149,9 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 	appID, accountID, err := r.mgr.WorkloadTokenIdentity(r.ctx, instance)
 	if errors.Is(err, fcvm.ErrRehearsalExternalActionDenied) {
 		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "rehearsal_identity_unavailable"})
+	}
+	if errors.Is(err, fcvm.ErrQualificationExternalActionDenied) {
+		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "qualification_identity_unavailable"})
 	}
 	if err != nil || appID == "" || accountID == "" {
 		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})

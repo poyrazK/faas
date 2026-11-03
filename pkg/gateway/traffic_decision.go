@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -202,7 +203,7 @@ func recordTrafficRetryStop(ctx context.Context, reason string) {
 
 func recordTrafficRefusal(ctx context.Context, reason string) {
 	switch reason {
-	case "deadline", "rate_limited", "rate_limit_unavailable", "security_revoked", "security_unavailable", "policy_unavailable", "capacity", "identity", "authorization", "circuit":
+	case "deadline", "rate_limited", "rate_limit_unavailable", "security_revoked", "security_unavailable", "policy_unavailable", "capacity", "identity", "authorization", "circuit", "node_capacity", "node_admission_unavailable":
 	default:
 		reason = "other"
 	}
@@ -307,6 +308,23 @@ func trafficDecisionEvidence(ctx context.Context, status int, seal bool) traffic
 		value.trafficDecisionSnapshot, value.sealed = result, true
 	}
 	return result
+}
+
+// platformRefusal reports a 5xx the gateway returned because a Gregale
+// dependency could not admit the request: node admission, traffic policy,
+// rate-limit or revocation state was unavailable. Neither deployment caused
+// it, so route evidence skips it (ADR-20261028110044 amendment 3). Deadlines,
+// open circuits, capacity and wake or boot failures still count: a candidate
+// can cause each of them.
+func (value trafficDecisionSnapshot) platformRefusal(status int) bool {
+	if status < http.StatusInternalServerError || value.outcome != "refused" {
+		return false
+	}
+	switch value.refusal {
+	case "node_admission_unavailable", "policy_unavailable", "rate_limit_unavailable", "security_unavailable":
+		return true
+	}
+	return false
 }
 
 func trafficSecurityDecision(err error) string {

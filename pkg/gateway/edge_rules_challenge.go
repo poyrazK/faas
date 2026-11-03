@@ -6,7 +6,10 @@ package gateway
 // and sets a signed pass cookie. Any other request gets 403
 // challenge_required. Requests with a verified API key, consumer key or JWT
 // subject are never challenged. The gateway keeps no state: tokens and passes
-// are HMAC-signed and bound to the client's address prefix and User-Agent.
+// are HMAC-signed and bound to the client's address prefix and User-Agent,
+// and to the host and the account that owns it rather than one app: a host
+// whose paths route to several of the account's apps is one site to a
+// visitor (ADR-831 amendment 17).
 
 import (
 	"context"
@@ -14,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"math/bits"
 	"net"
@@ -66,7 +70,7 @@ func PickFirstChallengeMatch(rules []EdgeRuleChallengeResolved, requestPath, met
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(rule.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if rule.Methods != nil && !rule.Methods[method] {
+		if !protectiveMethodMatch(rule.Methods, method) {
 			continue
 		}
 		if rule.PathGlob != "" {
@@ -95,13 +99,20 @@ func FirstEnforcedChallengeRule(ctx context.Context, rules []EdgeRuleChallengeRe
 
 const (
 	// ChallengeSolvePath receives the solved proof of work on hosts with a
-	// challenge rule.
+	// challenge rule. The page posts to it with its token in the query, so
+	// the gateway knows the post is its own before reading the body.
 	ChallengeSolvePath = "/.well-known/gregale-challenge"
-	// ChallengeCookieName holds the signed pass.
-	ChallengeCookieName = "gregale_challenge"
+	// ChallengeCookieName holds the signed pass. Browsers accept a __Host-
+	// cookie only from the host itself (Secure, Path=/, no Domain), so a page
+	// on another host of a shared apps domain, which is not on the Public
+	// Suffix List, cannot plant one that hides the visitor's pass (ADR-831
+	// amendment 18).
+	ChallengeCookieName = "__Host-gregale_challenge"
 
-	challengeTokenPrefix = "c1."
-	challengePassPrefix  = "p1."
+	// Version 2 (amendment 17) binds to the host and its account; version 1
+	// bound to the app, and neither version honours the other.
+	challengeTokenPrefix = "c2."
+	challengePassPrefix  = "p2."
 	challengeMACBytes    = 16
 	challengeMaxField    = 2048
 )
@@ -112,6 +123,15 @@ func DeriveEdgeChallengeKey(secret []byte) []byte {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte("gregale edge challenge v1"))
 	return mac.Sum(nil)
+}
+
+// EdgeChallengeKeyID names a derived challenge key without revealing it.
+// Gateways that report different IDs refuse one another's tokens and passes
+// (gateway_edge_challenge_key_info, ADR-831 amendment 17).
+func EdgeChallengeKeyID(key []byte) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("gregale edge challenge key id"))
+	return hex.EncodeToString(mac.Sum(nil)[:6])
 }
 
 // challengeBinding is what a token and a pass are bound to: the client's
@@ -150,9 +170,19 @@ func challengeClientIP(r *http.Request) net.IP {
 	return net.ParseIP(host)
 }
 
-// challengeToken is the signed challenge a page carries.
+// challengeHost is the host a token and a pass are bound to.
+func challengeHost(r *http.Request) string {
+	return hostname(r.Host)
+}
+
+// challengeToken is the signed challenge a page carries. AppID is the app
+// whose rule challenged, for the solve's events and metrics; the solve
+// accepts the token on its host for the host's account, whichever of the
+// account's apps serves the solve path there.
 type challengeToken struct {
 	AppID      string `json:"a"`
+	AccountID  string `json:"o"`
+	Host       string `json:"h"`
 	RuleID     string `json:"r"`
 	Nonce      []byte `json:"n"`
 	Difficulty int    `json:"d"`
@@ -160,10 +190,12 @@ type challengeToken struct {
 	Expires    int64  `json:"e"`
 }
 
-// challengePass is the signed pass a cookie carries.
+// challengePass is the signed pass a cookie carries: it lets the client
+// through every challenge rule of the account on the host.
 type challengePass struct {
-	AppID   string `json:"a"`
-	Expires int64  `json:"e"`
+	AccountID string `json:"o"`
+	Host      string `json:"h"`
+	Expires   int64  `json:"e"`
 }
 
 // sealChallenge encodes v as prefix + base64(json) + "." + base64(mac),
@@ -220,17 +252,20 @@ func challengeWorkValid(token, counter string, difficulty int) bool {
 	return bits.LeadingZeros32(binary.BigEndian.Uint32(sum[:4])) >= difficulty
 }
 
-// validPass reports whether the request carries an unexpired pass for app.
-func validPass(key []byte, r *http.Request, appID string, now time.Time) bool {
-	c, err := r.Cookie(ChallengeCookieName)
-	if err != nil {
-		return false
+// validPass reports whether the request carries an unexpired pass for its
+// host, issued while app's account owned it. Every cookie of the pass's name
+// is tried, so another cookie of that name sent first, such as one the app
+// set on a longer path, cannot hide the pass.
+func validPass(key []byte, r *http.Request, app App, now time.Time) bool {
+	binding, host := bindingFor(r), challengeHost(r)
+	for _, c := range r.CookiesNamed(ChallengeCookieName) {
+		var p challengePass
+		if openChallenge(key, "pass", challengePassPrefix, c.Value, binding, &p) &&
+			p.AccountID == app.AccountID && p.Host == host && now.Unix() < p.Expires {
+			return true
+		}
 	}
-	var p challengePass
-	if !openChallenge(key, "pass", challengePassPrefix, c.Value, bindingFor(r), &p) {
-		return false
-	}
-	return p.AppID == appID && now.Unix() < p.Expires
+	return false
 }
 
 // isBrowserNavigation reports whether a request is a top-level page load:

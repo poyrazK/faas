@@ -24,8 +24,8 @@ class AccountUsageResponse:
     month: str
     compute: UsageSummaryResponse
     """Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage
-    dimensions, and a trailing 30-day daily trend (issue #308). The GB-hours fields drive the overage math; the
-    other dimensions are informational."""
+    dimensions, and a trailing 30-day daily trend. The GB-hours fields drive the overage math; the other dimensions
+    are informational."""
     object_storage: ObjectStorageUsageResponse | Unset = UNSET
     """Current UTC-month accounting, customer charge estimate, billing rollout state, and operator safety policy."""
     managed_postgres: ManagedPostgresUsageResponse | Unset = UNSET

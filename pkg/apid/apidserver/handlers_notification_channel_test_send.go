@@ -3,10 +3,14 @@ package apidserver
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -34,6 +38,10 @@ func (s *server) testNotificationChannel(w http.ResponseWriter, r *http.Request,
 		s.notFound(w, "no such notification channel")
 		return
 	}
+	if prob := s.channelTestAllowed(acct); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	now := time.Now()
 	errMsg, prob := s.sendChannelTest(r.Context(), acct, row, now)
 	if prob != nil {
@@ -45,6 +53,31 @@ func (s *server) testNotificationChannel(w http.ResponseWriter, r *http.Request,
 	}
 	s.audit.Emit(r.Context(), "notification_channel.tested", &acct.ID, map[string]any{"channel_id": row.ID, "delivered": errMsg == ""})
 	writeJSON(w, http.StatusOK, api.TestNotificationChannelResponse{Delivered: errMsg == "", Error: errMsg})
+}
+
+// channelTestAllowed takes one of the account's
+// NotificationChannelTestsPerAccountMinute test sends (ADR-20261028101615).
+func (s *server) channelTestAllowed(acct state.Account) *api.Problem {
+	return s.testSendAllowed(&s.channelTestsOnce, &s.channelTests, acct,
+		api.NotificationChannelTestsPerAccountMinute, api.ErrNotificationChannelTestRateLimited)
+}
+
+// testSendAllowed takes one of an account's limit test sends a minute from
+// the limiter once builds; limited is the 429 past it.
+func (s *server) testSendAllowed(once *sync.Once, limiter **peraccount.Limiter, acct state.Account, limit int,
+	limited func(limit, retryAfterS int) *api.Problem) *api.Problem {
+	account, err := uuid.Parse(acct.ID)
+	if err != nil {
+		// Account ids are UUIDs; one that is not cannot be counted, so
+		// the send is refused rather than let through unlimited.
+		s.log.Error("test send: account id is not a UUID", "account", acct.ID, "err", err)
+		return api.ErrInternal("could not count this account's test sends")
+	}
+	once.Do(func() { *limiter = peraccount.NewLimiter() })
+	if ok, retryMS := (*limiter).Take(account, limit); !ok {
+		return limited(limit, int((retryMS+999)/1000))
+	}
+	return nil
 }
 
 // sendChannelTest sends the test message and returns the delivery error,

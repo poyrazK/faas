@@ -13,8 +13,7 @@ T = TypeVar("T", bound="UpdateUpstreamCircuitBreakerRequest")
 
 @_attrs_define
 class UpdateUpstreamCircuitBreakerRequest:
-    """Partial update of an upstream's egress circuit-breaker policy
-    (ADR-201 §3). Omitted fields are left unchanged.
+    """Partial update of an upstream's egress circuit-breaker policy. Omitted fields are left unchanged.
 
     Setting `enabled` to false leaves the threshold fields intact, so
     toggling protection off does not discard your tuning.

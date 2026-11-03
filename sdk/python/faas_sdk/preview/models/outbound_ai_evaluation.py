@@ -26,8 +26,8 @@ T = TypeVar("T", bound="OutboundAIEvaluation")
 
 @_attrs_define
 class OutboundAIEvaluation:
-    """An evaluation of a route target (ADR-1431). verdict is set when state is done, error_code when it is failed. items
-    are returned only when one evaluation is read.
+    """An evaluation of a route target. verdict is set when state is done, error_code when it is failed. items are returned
+    only when one evaluation is read.
 
     """
 

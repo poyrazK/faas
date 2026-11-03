@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"time"
 
@@ -228,6 +229,7 @@ type ProjectEnvironmentInspection = projectEnvironmentInspection
 type ProjectEnvironmentPromotionWaitReceipt = projectEnvironmentPromotionWaitReceipt
 type QueueCanaryConsentKey = queueCanaryConsentKey
 type QueueStatusReport = queueStatusReport
+type ReleaseGateFlags = releaseGateFlags
 type ResumableUploadState = resumableUploadState
 type RolloutHeldNotice = rolloutHeldNotice
 type RouteHealthCorrelationReport = routeHealthCorrelationReport
@@ -506,6 +508,7 @@ const UploadSessionAlreadyCommittedCode = uploadSessionAlreadyCommittedCode
 const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
+var TerminalSafe = terminalSafe
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
 var AuthAdminKeyName = &authAdminKeyName
@@ -572,6 +575,7 @@ var ApplyJSONFlag = applyJSONFlag
 var ApplyMCPGatewayPolicy = applyMCPGatewayPolicy
 var ApplyMCPTasksStatusChecks = applyMCPTasksStatusChecks
 var ApplyRolloutFlag = applyRolloutFlag
+var SafeFlagName = safeFlagName
 var ApplySimpleAppPlanToCreateRequest = applySimpleAppPlanToCreateRequest
 var ApplyTestConnectionLeaks = applyTestConnectionLeaks
 var ApplyTestFaultMatrixCase = applyTestFaultMatrixCase
@@ -669,8 +673,25 @@ var ChooseMenuAction = chooseMenuAction
 var ClassifyDevRuntimeLog = classifyDevRuntimeLog
 var CleanupUploadCacheExclusive = cleanupUploadCacheExclusive
 var CliConfigPath = cliConfigPath
-var CliHelpGroup = cliHelpGroup
-var CliHelpGroups = &cliHelpGroups
+var CliTreePlaces = cliTreePlaces
+var CliTreeManifest = cliTreeManifest
+var CliTreeSpelling = cliTreeSpelling
+var CliTreeCanonicalFlag = cliTreeCanonicalFlag
+var CliTreeFlagsForDisplay = cliTreeFlagsForDisplay
+var CliTreeFlagSynonyms = &cliTreeFlagSynonyms
+var CliTreeFolds = &cliTreeFolds
+var CliTreeFlagFolds = &cliTreeFlagFolds
+var RewriteFlagFold = rewriteFlagFold
+var CliTreeFlagFoldSpelling = func(fold cliTreeFlagFold) string { return fold.spelling() }
+var CliTreeFold = cliTreeFold
+var ManifestLeafFlags = manifestLeafFlags
+var CliTreeEarlierName = cliTreeEarlierName
+var CliTreeNounsHolding = cliTreeNounsHolding
+var CliTreeHintTerminal = &cliTreeHintTerminal
+
+// CustomerManifest is every customer command, earlier names included.
+func CustomerManifest() []cliCommand { return customerAudience(discoverableCliCommands()) }
+
 var CliRelatedCommands = &cliRelatedCommands
 var CliSeeAlso = cliSeeAlso
 var CliPreAuthPatch = cliPreAuthPatch
@@ -678,6 +699,7 @@ var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
 var CmdReleaseGates = cmdReleaseGates
+var CmdApprovals = cmdApprovals
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
 var CmdAccountDelete = cmdAccountDelete
@@ -689,6 +711,7 @@ var CmdAdd = cmdAdd
 var CmdAddBucket = cmdAddBucket
 var CmdAddPostgres = cmdAddPostgres
 var CmdAdmin = cmdAdmin
+var CmdAppCopy = cmdAppCopy
 var CmdAlertActions = cmdAlertActions
 var CmdAlertAdd = cmdAlertAdd
 var CmdAlertInfo = cmdAlertInfo
@@ -805,6 +828,11 @@ var CmdDataAPIFixture = cmdDataAPIFixture
 var CmdDataAPIInstall = cmdDataAPIInstall
 var CmdDataAPILive = cmdDataAPILive
 var CmdDataAPIStorage = cmdDataAPIStorage
+var CmdDataAPIHooks = cmdDataAPIHooks
+var DataAPIHooksSQL = dataAPIHooksSQL
+var EnableDataAPIHooks = enableDataAPIHooks
+var DisableDataAPIHooks = disableDataAPIHooks
+var DataAPIHooksStatus = dataAPIHooksStatus
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
 var CmdDataAPIRefresh = cmdDataAPIRefresh
@@ -831,6 +859,8 @@ var CmdDeliver = cmdDeliver
 var CmdDeployGithubSnippet = cmdDeployGithubSnippet
 var CmdDeployRepoSourceRef = cmdDeployRepoSourceRef
 var CmdDeployTarball = cmdDeployTarball
+var CmdDeployCheck = cmdDeployCheck
+var CredentialFileName = credentialFileName
 var CmdDeployTarballToExisting = cmdDeployTarballToExisting
 var CmdDeployment = cmdDeployment
 var CmdDeploymentAliasDelete = cmdDeploymentAliasDelete
@@ -920,6 +950,10 @@ var CmdMCPTasksReport = cmdMCPTasksReport
 var CmdMail = cmdMail
 var CmdMan = cmdMan
 var CmdMetrics = cmdMetrics
+
+var ParseJobCommand = parseJobCommand
+
+var SplitJobArgv = splitJobArgv
 var CmdMfa = cmdMfa
 var CmdMfaConfirm = cmdMfaConfirm
 var CmdMfaDisable = cmdMfaDisable
@@ -970,6 +1004,7 @@ var CmdPostgresDelete = cmdPostgresDelete
 var CmdPostgresDiagnostics = cmdPostgresDiagnostics
 var CmdPostgresGet = cmdPostgresGet
 var CmdPostgresList = cmdPostgresList
+var CmdPostgresUndelete = cmdPostgresUndelete
 var CmdPostgresReconcile = cmdPostgresReconcile
 var CmdPostgresResize = cmdPostgresResize
 var CmdPostgresUsage = cmdPostgresUsage
@@ -1105,12 +1140,8 @@ var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
 
-// ReleaseGateRequest builds a release-gates add request from its flags.
-func ReleaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above, aiMetric string,
-	maxIncrease, minSamples int) (api.CreateReleaseGateRequest, error) {
-	return releaseGateRequest(releaseGateFlags{name: name, slo: slo, maxBurn: maxBurn, newErrors: newErrors, maxGroups: maxGroups,
-		minEvents: minEvents, metric: metric, below: below, above: above, aiMetric: aiMetric, maxIncrease: maxIncrease, minSamples: minSamples})
-}
+// ReleaseGateRequest builds a release gate create request from its flags.
+var ReleaseGateRequest = releaseGateRequest
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
 	return collectListPages[T](p0, p1, p2, p3)
@@ -1152,6 +1183,7 @@ var CorrelateRouteMonitorIncidentSourceAuto = correlateRouteMonitorIncidentSourc
 var CoveragePolicy = coveragePolicy
 var CreateDevSetupManifest = createDevSetupManifest
 var CreateDurableProjectVerification = createDurableProjectVerification
+var CreateOrFetchApp = createOrFetchApp
 var CreateTestAsyncRoutes = createTestAsyncRoutes
 var CurrentUploadOffset = currentUploadOffset
 var CustomerCliCommands = customerCliCommands
@@ -1192,6 +1224,8 @@ var DeployIdempotencyKey = deployIdempotencyKey
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings
+
+var DeployManifestLabels = deployManifestLabels
 var DeployManifestTriggersWithRollback = deployManifestTriggersWithRollback
 var DeployOperationIdempotencyKey = deployOperationIdempotencyKey
 var DeployOptionsFingerprint = deployOptionsFingerprint
@@ -1319,10 +1353,12 @@ var FormatSuspectedDependency = formatSuspectedDependency
 var FreezeRequestFromFlags = freezeRequestFromFlags
 var FunctionConcurrencyDeployHint = functionConcurrencyDeployHint
 var GeneratedTestCICompareCommand = generatedTestCICompareCommand
+var GeneratedTestCIInstallCommand = generatedTestCIInstallCommand
 var GeneratedTestCIRunCommand = generatedTestCIRunCommand
 var GeneratedTestCIVMConfigCommand = generatedTestCIVMConfigCommand
 var GeneratedTestCIVMRunCommand = generatedTestCIVMRunCommand
 var GitArchiveHEAD = gitArchiveHEAD
+var GithubSetupCheckWaitFor = githubSetupCheckWaitFor
 var GithubTarballURL = githubTarballURL
 var GithubWebhookSecretSet = githubWebhookSecretSet
 var GroupDigits = groupDigits
@@ -1335,11 +1371,13 @@ var ImageRunExitCode = imageRunExitCode
 var IndexByte = indexByte
 var InitTestRepo = initTestRepo
 var InitZeroConfigRepo = initZeroConfigRepo
+var InspectArtifactOutputDirectory = inspectArtifactOutputDirectory
 var InspectCommitEvent = inspectCommitEvent
 var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
 var InspectProductPilotHelp = inspectProductPilotHelp
 var InspectRecommendations = inspectRecommendations
+var InspectRuntime = inspectRuntime
 var InspectResources = inspectResources
 var InspectUnavailable = inspectUnavailable
 var InspectWatchChanges = inspectWatchChanges
@@ -1369,6 +1407,7 @@ var LoadOrCreateDeveloperID = loadOrCreateDeveloperID
 var LoadTestStep = loadTestStep
 var LoadToken = loadToken
 var LoadWorkflowManifestForDeploy = loadWorkflowManifestForDeploy
+var LargestSourceTarballMB = largestSourceTarballMB
 var LocalTestConsumerEnv = localTestConsumerEnv
 var LockAutomationLiveSuite = lockAutomationLiveSuite
 var LockBucketUploadCheckpoint = lockBucketUploadCheckpoint
@@ -1392,6 +1431,7 @@ var McpCatalogDigestForPin = mcpCatalogDigestForPin
 var McpExpectedGatewayAction = mcpExpectedGatewayAction
 var McpHealthURL = mcpHealthURL
 var McpInputIsTerminal = mcpInputIsTerminal
+var McpLocalCLIDir = mcpLocalCLIDir
 var McpNativeDeploy = mcpNativeDeploy
 var McpNativeFingerprint = mcpNativeFingerprint
 var McpNativeWorkerLogs = mcpNativeWorkerLogs
@@ -1452,6 +1492,13 @@ var OutputAlertRollback = outputAlertRollback
 var OwnMCPJournal = ownMCPJournal
 var PackDirToTarGz = packDirToTarGz
 var PackGitArchive = packGitArchive
+
+// NormalizeGitArchive normalizes a `git archive HEAD` of repoRoot taken at
+// prefix ("" for the whole tree).
+func NormalizeGitArchive(repoRoot, prefix, archivePath string) ([]string, error) {
+	return normalizeGitArchive(gitArchiveSource{repoRoot: repoRoot, prefix: prefix, commit: "HEAD"}, archivePath)
+}
+
 var ParkedArchivePendingNote = parkedArchivePendingNote
 var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
@@ -1472,6 +1519,11 @@ var ParseCustomerOperationSignal = parseCustomerOperationSignal
 // (ADR-20261017100853), whose fields are unexported.
 func NewTenantCustomerOperationSignalClient(client *api.Client, definition string) tenantCustomerOperationSignalClient {
 	return tenantCustomerOperationSignalClient{client: client, definition: definition}
+}
+
+// NewEnvironmentAppClient builds a stage app client whose revision pin starts unset.
+func NewEnvironmentAppClient(client *api.Client, environment string, revision *int64) EnvironmentAppClient {
+	return environmentAppClient{Client: client, environment: environment, revision: revision}
 }
 
 var ParseDataAPIContract = parseDataAPIContract
@@ -1647,6 +1699,7 @@ var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
 var ReleaseDiffLines = releaseDiffLines
 var ReleaseSummaryLine = releaseSummaryLine
+var ReleaseTimelineLines = releaseTimelineLines
 var ReleasedUsage = releasedUsage
 var RemoveTestFaultRules = removeTestFaultRules
 var RenderAccountSLO = renderAccountSLO
@@ -1686,6 +1739,7 @@ var RenderEnvDiffCell = renderEnvDiffCell
 var RenderEnvDiffTable = renderEnvDiffTable
 var RenderFireNowStatus = renderFireNowStatus
 var RenderFishCommand = renderFishCommand
+var RenderGithubSetupWorkflow = renderGithubSetupWorkflow
 var RenderGithubSnippet = renderGithubSnippet
 var RenderHTTPLogQueryPageWarnings = renderHTTPLogQueryPageWarnings
 var RenderInspectErrorsHuman = renderInspectErrorsHuman
@@ -1732,6 +1786,7 @@ var RequireTyped = requireTyped
 var ResetJSONOut = resetJSONOut
 var ResetJSONOutput = resetJSONOutput
 var ResetNOColorCache = resetNOColorCache
+var ResetCapabilityView = resetCapabilityView
 var ResetStdoutTTYCache = resetStdoutTTYCache
 var ResolveDeployReleaseAt = resolveDeployReleaseAt
 var ResolveDeployRollbackOn5xx = resolveDeployRollbackOn5xx
@@ -1804,6 +1859,7 @@ var RunIssueTicketSync = runIssueTicketSync
 var RunIssueTickets = runIssueTickets
 var RunLocalTest = runLocalTest
 var RunLocalTestWithLoad = runLocalTestWithLoad
+var RunLogs = runLogs
 var RunMCPBrowserConnection = runMCPBrowserConnection
 var RunMCPCatalogMonitor = runMCPCatalogMonitor
 var RunMCPNativeRelease = runMCPNativeRelease
@@ -1947,6 +2003,7 @@ var ValidDataAPIConnectionBudget = validDataAPIConnectionBudget
 var ValidDeploymentRef = validDeploymentRef
 var ValidDeveloperID = validDeveloperID
 var ValidGithubSetupBranch = validGithubSetupBranch
+var ValidGithubSetupWorkflowName = validGithubSetupWorkflowName
 var ValidLiveSuiteHash = validLiveSuiteHash
 var ValidSecretClass = validSecretClass
 var ValidTestCIEnvironment = validTestCIEnvironment
@@ -2028,7 +2085,9 @@ var WaitForTestInvocation = waitForTestInvocation
 var WaitForTestOutputs = waitForTestOutputs
 var WaitMCPAccessConvergence = waitMCPAccessConvergence
 var WakeRecommendationTier = wakeRecommendationTier
+var WarnClientScopedProtectiveRule = warnClientScopedProtectiveRule
 var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
+var WarnSingleHostProtectiveRule = warnSingleHostProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
 var WithBindingProgress = withBindingProgress
@@ -2036,6 +2095,7 @@ var WithBindingVerificationBudget = withBindingVerificationBudget
 var WithBindingVerificationSlot = withBindingVerificationSlot
 var WithCwd = withCwd
 var WithFixtureCronStaging = withFixtureCronStaging
+var WithFixturePolicyStaging = withFixturePolicyStaging
 var WithGetErr = withGetErr
 var WithRecorder = withRecorder
 var WithResetJSONOutput = withResetJSONOutput
@@ -2089,8 +2149,37 @@ var WriteWaitedDeploymentReceiptUntil = writeWaitedDeploymentReceiptUntil
 var WriteWaitedDeploymentReceiptUntilWithOptions = writeWaitedDeploymentReceiptUntilWithOptions
 var ZeroConfigDeployServer = zeroConfigDeployServer
 
+// Data API runtime served by the control plane (ADR-20261031095954).
+var ServedDataAPIRuntime = servedDataAPIRuntime
+var UploadedSourceFiles = uploadedSourceFiles
+var UploadedServerHas = uploadedServerHas
+var ReadDataAPIRuntimeArchive = readDataAPIRuntimeArchive
+var AttachDataAPIRuntime = attachDataAPIRuntime
+
+type DataAPIHealthProbe = dataAPIHealthProbe
+
+const ServedRuntimeVersion = servedRuntimeVersion
+
 // Members of appTaskStreamSession
 func (r *appTaskStreamSession) Stdout() **io.PipeReader { return &r.stdout }
+
+// Members of artifactOutputDirectory
+func (d *artifactOutputDirectory) Planned() []string                { return d.planned }
+func (d *artifactOutputDirectory) Root() *os.Root                   { return d.root }
+func (d *artifactOutputDirectory) Create(ctx context.Context) error { return d.create(ctx) }
+
+// OpenArtifactTaskDirectory opens a server-named task directory under parent.
+var OpenArtifactTaskDirectory = openArtifactTaskDirectory
+
+// CLIUserAgent is the User-Agent the CLI's API client sends.
+var CLIUserAgent = cliUserAgent
+
+// ResetServerNotices forgets the notices already printed this run.
+func ResetServerNotices() {
+	serverNotices.Lock()
+	defer serverNotices.Unlock()
+	serverNotices.seen = nil
+}
 
 // Members of authCreateOptions
 func (r *authCreateOptions) EmailAPIKey() *string   { return &r.emailAPIKey }
@@ -2476,6 +2565,43 @@ var PreviewCompanionsFromManifest = previewCompanionsFromManifest
 // FormatStageDuration is the live ticker's stage duration cell.
 var FormatStageDuration = formatStageDuration
 
+// ADR-20261026145832: the new command tree.
+type CliTreeAlias = cliTreeAlias
+type CliTreeNoun = cliTreeNoun
+
+var CliTreeAliases = &cliTreeAliases
+var CliTreeNouns = &cliTreeNouns
+var RewriteCliTree = rewriteCliTree
+var OldPathDepth = oldPathDepth
+
+// CliPathHasVerbs reports whether words name a manifest command or verb, and
+// whether it has verbs of its own that a tree noun can expose.
+func CliPathHasVerbs(words []string) (exists, hasVerbs bool) {
+	node, ok := lookupCliPath(words)
+	return ok, ok && len(node.Subs) > 0 && !node.AfterPositionals
+}
+
+// CliTreeChild is one verb under a manifest path, for the tree's verb baseline.
+type CliTreeChild struct {
+	Name     string
+	HasVerbs bool
+}
+
+var CliTreeStandardVerb = cliTreeStandardVerb
+
+// CliPathChildren lists the verbs under words, or nil for a slug-first family.
+func CliPathChildren(words []string) []CliTreeChild {
+	node, ok := lookupCliPath(words)
+	if !ok || node.AfterPositionals {
+		return nil
+	}
+	children := make([]CliTreeChild, 0, len(node.Subs))
+	for _, sub := range node.Subs {
+		children = append(children, CliTreeChild{Name: sub.Name, HasVerbs: len(sub.Subcommands) > 0 && !sub.SubcommandsAfterPositionals})
+	}
+	return children
+}
+
 // gregale logs --project (ADR-20261026190244).
 var RunProjectLogs = runProjectLogs
 var ProjectLogJSON = projectLogJSON
@@ -2498,9 +2624,38 @@ func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
 	return withDevGoCommand(devSourceConfig{shape: shapeApp}.sessionRequest("", false, "", 0, nil), command)
 }
 
+var NormalizeTreeFlags = normalizeTreeFlags
+
 // Bucket CORS CLI (ADR-20261025202805).
 var (
 	DecodeBucketCORSFile = decodeBucketCORSFile
 	ValidBucketCORSArgs  = validBucketCORSArgs
 	RunBucketCORS        = runBucketCORS
 )
+
+// TierDiscoverableFlags is discovery's flag filter under the logged-out tier
+// view (preview and internal capabilities hidden).
+func TierDiscoverableFlags(names, capabilities []string) []string {
+	flags := make([]cliFlag, len(names))
+	for i := range names {
+		flags[i] = cliFlag{Name: names[i], Capability: capabilities[i]}
+	}
+	var kept []string
+	for _, flag := range (capabilityView{tier: true}).discoverableFlags(flags) {
+		kept = append(kept, flag.Name)
+	}
+	return kept
+}
+
+// BindExclusiveLock binds a created cron or broker trigger to its lock.
+var BindExclusiveLock = bindExclusiveLock
+
+type ExclusiveLock = exclusiveLock
+
+// CLI audit 2026-10-31 (auth and credentials).
+var CmdLogin = cmdLogin
+var WithEntry = withEntry
+
+// GitHub connector commands (ADR-20261101160300).
+var CmdGithub = cmdGithub
+var CmdGithubSetup = cmdGithubSetup

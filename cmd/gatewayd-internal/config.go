@@ -66,6 +66,18 @@ type Config struct {
 	// ServiceTCPListen, so raw TCP to an answered address always has a proxy.
 	ServiceTCPDNS bool `toml:"service_tcp_dns"`
 
+	// DatabaseRouteListen enables the app route to managed databases
+	// (ADR-1027). It must bind the service proxy bridge address on the
+	// reserved port 10083, where the host DNATs guest traffic to
+	// 198.18.0.1:5432. The forwarder relays bytes to DatabaseRouteUpstreams
+	// (pgproxyd host:port over the overlay); TLS and SCRAM stay end to end.
+	DatabaseRouteListen    string   `toml:"database_route_listen"`
+	DatabaseRouteUpstreams []string `toml:"database_route_upstreams"`
+	// DatabaseRouteHostSuffix makes the guest resolver answer
+	// <database-id>.<suffix> with the route address. Requires
+	// DatabaseRouteListen.
+	DatabaseRouteHostSuffix string `toml:"database_route_host_suffix"`
+
 	// AppsDomain is the platform wildcard suffix (e.g. "gregale.dev").
 	// gatewayd routes <slug>.<apps_domain> to the customer's app and
 	// applies the apps-suffix host guard. Empty disables wildcard routing
@@ -217,7 +229,8 @@ type TOMLRateLimitConfig struct {
 
 	// Lease makes central mode spend tokens from local leases instead of
 	// consulting Postgres for every request (ADR-1520). It requires
-	// Mode = "central" and is off by default.
+	// Mode = "central". Deployments turn it on (the Ansible default); a TOML
+	// without the key, as in local runs, keeps it off.
 	Lease bool `toml:"lease"`
 	// LeaseWindowMS is how long a lease should last at the counter's recent
 	// rate. 0 takes the default, 250.

@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/sealsig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -324,7 +325,8 @@ type bringUpTimings struct {
 	coldBootMs   int64
 	restoreError string
 	// restoreFallbackReason is customer-safe only for the application
-	// after_restore failure. Other restore diagnostics stay operator-only.
+	// after_restore failure. RestoreFallbackNodeLocal tells schedd to keep the
+	// snapshot; other restore diagnostics stay operator-only.
 	restoreFallbackReason string
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
@@ -445,6 +447,11 @@ type Instance struct {
 	// one-shot guest by guessing its instance id.
 	ExecutionOnly  bool
 	DataRepairOnly bool
+	// AgentRunOnly marks a VM WakeAgentRun booted for one agent run. It is
+	// also ExecutionOnly; ExecuteExecution refuses it and RunAgent requires it.
+	AgentRunOnly bool
+	// AgentRunRelay is the run principal of the VM's relay; host-only.
+	AgentRunRelay *AgentRunRelay `json:"-"`
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).
 	// The lease and grant list are host-only broker inputs and must never be
 	// serialized into guest-visible state.
@@ -466,6 +473,10 @@ type Instance struct {
 	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
 	// instance keeps running between requests (quiet_pause.go).
 	QuietPauseAfter time.Duration
+	// AgentWaitPauseAfter is an agent run's model-wait pause delay
+	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
+	// running while it waits on the model.
+	AgentWaitPauseAfter time.Duration
 	// Frozen (ADR-1151; freeze.go) marks an instance Freeze paused in place
 	// for the frozen tier, until Thaw resumes it or teardown kills it.
 	// FrozenSince is when that pause took effect. Both are guarded by
@@ -511,9 +522,11 @@ type Instance struct {
 	// operator can distinguish a stale snapshot from a guest resume-hook
 	// failure (including its ACK code).
 	RestoreError string
-	// RestoreFallbackReason is the closed customer-facing reason for a
-	// successful cold-boot fallback after an application restore hook failure.
-	// Empty for other failures, planned cold boots, and successful restores.
+	// RestoreFallbackReason is the closed reason for a successful cold-boot
+	// fallback: WakeReasonAfterRestoreFailed (customer-facing) after an
+	// application restore hook failure, RestoreFallbackNodeLocal (operator
+	// only) when the failure was this node's. Empty for other failures,
+	// planned cold boots, and successful restores.
 	RestoreFallbackReason string
 	// AppID is the apps.id UUID the instance was woken for.
 	// UpdateEgressAllowlist (PR-B, ADR-031+033) uses it to walk
@@ -683,6 +696,9 @@ type Instance struct {
 	// egress_resolved set expires (ADR-373), so repeated lookups of the
 	// same name skip the nft call until half the TTL has passed.
 	resolvedEgress map[netip.Addr]time.Time
+	// databaseEgress is when each address . port pair in this instance's
+	// egress_db set expires (ADR 20261026150000), on the same rule.
+	databaseEgress map[databaseEgressKey]time.Time
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -862,6 +878,8 @@ type Manager struct {
 	// Forwarding permits belong to the live instance generation, not a gateway
 	// process. Cleanup drains them before recycling its network or lease.
 	httpForwards map[string]*httpForwardGeneration
+	// httpAdmissionDisabled is the FAAS_HTTP_ADMISSION=off kill switch.
+	httpAdmissionDisabled bool
 	// qualificationInstances owns isolated qualification targets without
 	// making them discoverable through serving lookups, CID routing, health
 	// loops, or app policy fan-out. Guarded by mu.
@@ -876,6 +894,9 @@ type Manager struct {
 	// egress_resolved set: a restored snapshot may reconnect to addresses
 	// its guest resolved before the snapshot.
 	appResolved map[string]map[netip.Addr]time.Time
+	// appDatabaseResolved is the same per app for bound managed databases'
+	// address . port pairs (ADR 20261026150000).
+	appDatabaseResolved map[string]map[databaseEgressKey]time.Time
 	// ADR-570: serialize circuit updates and pending-network registration so
 	// a wake cannot miss a policy change before it enters the live map.
 	egressCircuitMu           sync.Mutex
@@ -1116,13 +1137,17 @@ type Manager struct {
 	// plaintext. vmmd owns the on-disk files.
 	hostIdentities []*age.X25519Identity
 	// registryIdentities open the registry passwords a builder VM pulls its
-	// base images with (ADR-20261026090000): the build seal domain, then
+	// base images with (ADR-20261026091500): the build seal domain, then
 	// the fleet and host identities. nil leaves builders anonymous.
 	registryIdentities []*age.X25519Identity
 	// requireSecretBinding refuses runtime envelopes that carry no account
 	// binding (ADR-20261023173624, contract step). Off until every stored
 	// envelope is bound.
 	requireSecretBinding bool
+	// runtimeSignatures verifies apid's writer signature on runtime
+	// envelopes before any is opened (ADR 20261028161502, amendment 1).
+	// nil checks nothing.
+	runtimeSignatures *sealsig.RuntimeChecker
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -1145,6 +1170,15 @@ type Manager struct {
 	backingMu       sync.Mutex
 	backingDigests  map[fileIdentityKey]string
 	instanceBacking map[string]BackingIdentity
+	// backingHashing is each file version being hashed now, and
+	// backingPending each instance whose identity is still being computed
+	// (rememberInstanceBacking): its channel closes when the identity, or
+	// its absence, is recorded.
+	backingHashing map[fileIdentityKey]*backingDigestCall
+	backingPending map[string]chan struct{}
+	// beforeBackingHash, when set, runs before a file version is hashed.
+	// Tests use it to hold a hash in flight.
+	beforeBackingHash func(path string)
 	// baseGenerations binds each logical runtime base key to the immutable
 	// OCI reference configured for this node. The separate mutex serializes
 	// the rare cross-node cache adoption path without holding Manager.mu
@@ -1310,6 +1344,17 @@ type Manager struct {
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
 
+	// Model-wait pause of agent runs (ADR-20261027090012;
+	// agent_wait_pause.go). agentWaitCPU is nil unless vmmd.toml enables it.
+	// agentWaitMu guards agentWaits and is a leaf lock, like quietMu.
+	agentWaitCPU     AgentWaitCPU
+	agentWaitMetrics *AgentWaitMetrics
+	agentWaitMu      sync.Mutex
+	agentWaits       map[string]*agentWaitState
+	// agentUsageTick is the agent run usage sample interval
+	// (agent_run_usage.go); zero is api.AgentRunUsageSampleMillis.
+	agentUsageTick time.Duration
+
 	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
 	// activity tracker; without it Freeze cannot see forwards in flight.
 	freezeActivity                QuietActivity
@@ -1344,6 +1389,10 @@ type HostRenderer interface {
 	// rules.
 	SetStaticEgressRules(rules []netns.StaticEgressRule)
 }
+
+// JailLeases is the host's jail-identity allocator. Database VMs (ADR-1027)
+// take their jail uid from it so they never share one with an app VM.
+func (m *Manager) JailLeases() *Allocator { return m.alloc }
 
 // NewManager wires a Manager. fcVersion is the running Firecracker version (used
 // to decide snapshot usability, ADR-005). log may be nil (a discard logger).
@@ -1633,6 +1682,33 @@ func (m *Manager) SetHostIdentities(ids []*age.X25519Identity) {
 // production wires it before serving traffic.
 func (m *Manager) RequireSecretBinding(required bool) {
 	m.requireSecretBinding = required
+}
+
+// WithRuntimeSecretSignatures makes every path that opens runtime secrets
+// verify their writer signatures first (ADR 20261028161502, amendment 1).
+// NOT safe to call concurrently with Wake; production wires it before
+// serving traffic.
+func (m *Manager) WithRuntimeSecretSignatures(checker *sealsig.RuntimeChecker) *Manager {
+	m.runtimeSignatures = checker
+	return m
+}
+
+// checkRuntimeSignatures refuses the entries if any envelope's signature
+// does not verify, naming the entry.
+func (m *Manager) checkRuntimeSignatures(ctx context.Context, entries []SealedEnvEntry) error {
+	if m.runtimeSignatures == nil {
+		return nil
+	}
+	blobs := make([][]byte, len(entries))
+	for i, entry := range entries {
+		blobs[i] = entry.Ciphertext
+	}
+	err := m.runtimeSignatures.Check(ctx, blobs)
+	var refused *sealsig.BlobError
+	if errors.As(err, &refused) {
+		return fmt.Errorf("sealed env[%s]: %w", logsanitize.Field(entries[refused.Index].Key), refused.Err)
+	}
+	return err
 }
 
 // WithStorage wires the artifact backend the Manager uses to read
@@ -2062,7 +2138,7 @@ func (m *Manager) WithLivenessSink(relay LivenessFailedSink) *Manager {
 // observed payload); the only difference is the payload shape
 // (peakMB + planMB ints instead of a closed-set reason string).
 // MemoryPressureSink receives a guest memory-pressure report in MiB.
-type MemoryPressureSink func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int)
+type MemoryPressureSink func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int, profiling bool)
 
 // WithMemoryPressureSink attaches the best-effort memory-pressure relay.
 func (m *Manager) WithMemoryPressureSink(relay MemoryPressureSink) *Manager {
@@ -2072,7 +2148,7 @@ func (m *Manager) WithMemoryPressureSink(relay MemoryPressureSink) *Manager {
 
 // ReportMemoryPressure relays one guest report for a live app instance.
 // Reports for unknown, execution-only or job VMs are dropped.
-func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int, profiling bool) {
 	if m.memoryPressureRelay == nil {
 		return
 	}
@@ -2083,7 +2159,7 @@ func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, a
 	if !ok {
 		return
 	}
-	m.memoryPressureRelay(ctx, instanceID, availableMB, totalMB, anonMB)
+	m.memoryPressureRelay(ctx, instanceID, availableMB, totalMB, anonMB, profiling)
 }
 
 func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
@@ -2104,6 +2180,11 @@ func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
 // returning, then retries delivery independently of the receiver context
 // (ADR-471). A storage error is logged and retained for persistence retry.
 func (m *Manager) ReportWorkloadOOM(ctx context.Context, instanceID string, peakMB, planMB int) {
+	// A kill before readiness explains the failed startup (ADR-121
+	// amendment); schedd ignores reports for instances not yet RUNNING.
+	if noter, ok := m.vmm.(interface{ NoteWorkloadOOM(string, int, int) }); ok {
+		noter.NoteWorkloadOOM(instanceID, peakMB, planMB)
+	}
 	if m.workloadOOMRelay == nil {
 		return
 	}
@@ -2987,6 +3068,9 @@ type wakingInstance struct {
 	appID        string
 	accountID    string
 	contained    bool // a rehearsal run contains it (ADR-20261017201005)
+	// qualification marks a held GitOps qualification candidate (ADR-568):
+	// it boots with its app's identity but takes no external action.
+	qualification bool
 }
 
 // WorkloadTokenIdentity resolves the identity a workload-identity token is
@@ -3468,15 +3552,15 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 // is still closed; keeping the preparation here preserves the Manager as the
 // only secret-unseal boundary without allowing guest-init to race a late
 // loopback write.
-func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
+func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
 	var merged secretbox.Envelope
 	if len(req.SealedEnvEntries) > 0 {
-		merged, err = m.openSealedEnvEntries(req.SealedEnvEntries, req.AccountID)
+		merged, err = m.openSealedEnvEntries(ctx, req.SealedEnvEntries, req.AccountID)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
-	// ADR-20261026090000: a builder's Docker config rides in its
+	// ADR-20261026091500: a builder's Docker config rides in its
 	// secrets.env, written after the build's own secrets.
 	if req.ExportDir != "" {
 		if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
@@ -3509,12 +3593,15 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 // openSealedEnvEntries opens a workload's selected ciphertext for accountID,
 // the account the workload runs for. An envelope bound to another account
 // (ADR-20261023173624) is refused before any of its values are used.
-func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
+func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
+	}
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
+		return nil, err
 	}
 	merged := secretbox.Envelope{}
 	for _, entry := range entries {
@@ -3543,12 +3630,15 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry, accountID strin
 // remains in caller memory only; callers must not log or persist it outside
 // the guest's runtime projection. accountID is the account the workload runs
 // for; an envelope bound to another account is refused.
-func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry, accountID string) (map[string]string, error) {
+func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
+	}
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
+		return nil, err
 	}
 	secrets := make(map[string]string, len(entries))
 	for _, entry := range entries {
@@ -3599,7 +3689,7 @@ func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string
 // by apid and keeps plaintext only in the wake request until the concrete VMM
 // writes it to that sidecar's workload-specific env file in the instance's
 // writable main upper. It never modifies the shared sidecar image.
-func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
+func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
 		secretEntries := req.Sidecars[i].SealedSecrets
@@ -3634,7 +3724,7 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 			}
 			merged[entry.Key] = string(plaintext)
 		}
-		secrets, err := m.UnsealRuntimeSecrets(secretEntries, req.AccountID)
+		secrets, err := m.UnsealRuntimeSecrets(ctx, secretEntries, req.AccountID)
 		if err != nil {
 			return fmt.Errorf("open sidecar app secrets: %w", err)
 		}
@@ -3696,8 +3786,17 @@ type WakeRequest struct {
 	// NodeID is supplied by the serving vmmd, never by a guest frame.
 	NodeID         string
 	dataRepairOnly bool
-	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
-	Instance       string
+	// agentRunOnly is set only by WakeAgentRun (ADR-20261027090010 §6), on top of
+	// ExecutionOnly; RunAgent accepts no other instance. agentRunRelay is
+	// the run's relay principal, accepted only with agentRunOnly.
+	agentRunOnly     bool
+	agentRunRelay    *AgentRunRelay
+	agentRunInputKey string
+	// agentRunWaitPauseAfter is the run's model-wait pause delay, accepted
+	// only with agentRunOnly (ADR-20261027090012).
+	agentRunWaitPauseAfter time.Duration
+	RehearsalRunID         string // exact durable containment run; ordinary legacy callers may omit it
+	Instance               string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -3761,7 +3860,7 @@ type WakeRequest struct {
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
 	// BuildRegistryCredentials are the sealed registry credentials of the
-	// app a builder VM builds (ADR-20261026090000). prepareWakeFiles opens
+	// app a builder VM builds (ADR-20261026091500). prepareWakeFiles opens
 	// them into the builder's secrets.env as a Docker config. Ignored for
 	// every VM that is not a builder.
 	BuildRegistryCredentials []BuildRegistryCredential
@@ -4244,7 +4343,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// per-task secrets.env file before Firecracker starts.
 	var secretsEnvJSON []byte
 	if len(req.SealedEnvEntries) > 0 {
-		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries, AccountID: req.AccountID})
+		secretsEnvJSON, _, err = m.prepareWakeFiles(ctx, WakeRequest{SealedEnvEntries: req.SealedEnvEntries, AccountID: req.AccountID})
 		if err != nil {
 			return nil, fmt.Errorf("manager: BootJob %s: prepare sealed env: %w", req.Instance, err)
 		}
@@ -4698,7 +4797,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 
 	lease, preparedNetwork, err := m.acquireWakeNetwork(req, computeLease.egressFunded()) //nolint:contextcheck // Failed cache claims use bounded daemon-owned cleanup, independent of a canceled Wake RPC.
 	if err != nil {
-		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
+		return nil, wakeNotStarted(fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err))
 	}
 	phases.mark("lease_acquire")
 	// Stamp the Plan onto the Lease (issue #301, ADR-044) so the
@@ -4725,7 +4824,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if m.waking == nil {
 		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID, contained: req.RehearsalRunID != ""}
+	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID,
+		contained: req.RehearsalRunID != "", qualification: qualificationOnly}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)
@@ -4815,12 +4915,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// stages these bytes before releasing Firecracker's config FIFO; test VMMs
 	// without the pre-boot marker keep the legacy post-ready staging hooks
 	// below for compatibility.
-	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(req)
+	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(ctx, req)
 	if err != nil {
 		err = fmt.Errorf("wake %s: prepare runtime env: %w", req.Instance, err)
 		return nil, err
 	}
-	if err = m.prepareSidecarEnvFiles(&req); err != nil {
+	if err = m.prepareSidecarEnvFiles(ctx, &req); err != nil {
 		err = fmt.Errorf("wake %s: prepare sidecar env: %w", req.Instance, err)
 		return nil, err
 	}
@@ -5049,7 +5149,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr))
 		}
 		timings.netnsTapMs = network.duration.Milliseconds()
 		if m.preparedNetworks != nil {
@@ -5089,7 +5189,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, err))
 		}
 		timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
 		if !req.ExecutionOnly {
@@ -5230,7 +5330,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if lease.IsBuilder {
 			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
 		} else {
-			err = writeAppCgroup(req.Instance, req.Plan, wakeGuestMemoryMiB(req), req.CPUMillicores)
+			err = writeLeaseCgroup(lease, wakeGuestMemoryMiB(req))
 		}
 		if err != nil {
 			// Cgroup setup is a mandatory isolation boundary. The VM is already
@@ -5340,7 +5440,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
-		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
@@ -5351,9 +5451,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
-		QuietPauseAfter:  quietPauseAfterFor(req, qualificationOnly),
-		ExecutionMode:    req.ExecutionMode,
-		Characterization: report, Runtime: req.Runtime,
+		QuietPauseAfter:     quietPauseAfterFor(req, qualificationOnly),
+		AgentWaitPauseAfter: agentWaitPauseAfterFor(req),
+		ExecutionMode:       req.ExecutionMode,
+		Characterization:    report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 	}
@@ -5614,6 +5715,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				"instance", req.Instance, "storage_key", req.Snapshot.StorageKey, "err", refusal)
 			if timings != nil {
 				timings.restoreError = refusal.Error()
+				if RestoreFailureNodeLocal(refusal) {
+					timings.restoreFallbackReason = RestoreFallbackNodeLocal
+				}
 			}
 			m.metrics.ObserveFallback()
 			if m.wakeFailureMetrics != nil {
@@ -5672,6 +5776,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			ServiceDiscoveryIP: serviceDiscoveryIP,
 			Networkless:        req.ExecutionOnly,
 			KeepPaused:         req.KeepPaused,
+			AgentInput:         req.agentRunOnly,
+			InputKey:           req.agentRunInputKey,
 		}
 		if timings != nil {
 			// ADR-192: hand the pre-restore Manager phases to the VMM so
@@ -5734,6 +5840,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				timings.restoreError = rErr.Error()
 				if errors.Is(rErr, ErrAfterRestoreHook) {
 					timings.restoreFallbackReason = WakeReasonAfterRestoreFailed
+				} else if RestoreFailureNodeLocal(rErr) {
+					timings.restoreFallbackReason = RestoreFallbackNodeLocal
 				}
 			}
 			m.metrics.ObserveFallback()
@@ -5954,9 +6062,12 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
 	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
 		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, "generation_unavailable")
+		if m.log != nil {
+			m.log.Warn("fcvm: runtime base could not adopt its configured generation", "base", baseKey, "err", err)
+		}
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"runtime base generation unavailable",
-			fmt.Sprintf("runtime base %q could not adopt its configured generation: %v", baseKey, err))
+			fmt.Sprintf("runtime base %q could not adopt its configured generation", baseKey))
 	}
 	scan, readErr := m.readBaseScan(ctx, scanKey)
 	reason, gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
@@ -6012,6 +6123,13 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 		return "incomplete", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar incomplete",
 			fmt.Sprintf("scan sidecar at %q has no fix-available CRITICAL total; refusing to boot (issue #299)", scanKey))
+	}
+	if n >= wire.BaseScanFailedCount {
+		// imaged's placeholder for a scan that failed, not findings (#5709:
+		// customers read "9999 fix-available CRITICAL vulnerabilities").
+		return "scan_failed", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+			"Base image scan unavailable",
+			fmt.Sprintf("Gregale could not finish the vulnerability scan of its base image %q, so Gregale will not start instances on it until the scan completes; this is a platform problem, not your code", baseKey))
 	}
 	if n > 0 {
 		// The deploy and wake errors carry this detail to the customer, who
@@ -6097,7 +6215,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
-	spec.nativeRuntime = m.nativeRuntimeCapture(inst, spec)
+	spec.nativeRuntime = m.nativeRuntimeCapture(operationCtx, inst, spec)
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	info, snapshotErr = checkedNativeSnapshotResult(operationCtx, spec, info, snapshotErr)
 	if snapshotErr != nil {
@@ -6179,7 +6297,7 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if m.functionResourcesEnabled(inst) {
 		info, err, retire = m.warmFunctionSnapshot(ctx, inst, spec, flight)
 	} else {
-		spec.nativeRuntime = m.nativeRuntimeCapture(inst, spec)
+		spec.nativeRuntime = m.nativeRuntimeCapture(ctx, inst, spec)
 		info, err = m.warmSnapshotInstance(ctx, inst, spec)
 	}
 	if err != nil {

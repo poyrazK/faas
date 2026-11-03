@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -68,6 +69,10 @@ type adoptionCheckResult struct {
 	// need no drain, which would end them too.
 	Killed      []string               `json:"killed"`
 	Unadoptable []adoptionCheckVerdict `json:"unadoptable"`
+	// Gone lists records whose guest process no longer runs. A restart
+	// loses nothing for them, so they do not force a drain; the restarted
+	// vmmd keeps quarantining any of their resources that survive.
+	Gone []adoptionCheckVerdict `json:"gone"`
 	// Reason is set when the check could not judge the guests at all.
 	Reason string `json:"reason,omitempty"`
 }
@@ -92,7 +97,7 @@ func adoptionCheckCommand(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "vmmd adoption-check: %v\n", err)
 		return adoptionExitError
 	}
-	res := adoptionCheckResult{Killed: []string{}, Unadoptable: []adoptionCheckVerdict{}}
+	res := adoptionCheckResult{Killed: []string{}, Unadoptable: []adoptionCheckVerdict{}, Gone: []adoptionCheckVerdict{}}
 	switch {
 	case cfg.NativeProcessRecovery:
 		res.Reason = "native_process_recovery keeps its strict quarantine"
@@ -114,6 +119,10 @@ func adoptionCheckCommand(args []string, stdout, stderr io.Writer) int {
 			}
 			if v.Adoptable {
 				res.Adoptable++
+				continue
+			}
+			if v.Gone {
+				res.Gone = append(res.Gone, adoptionCheckVerdict{Instance: v.Instance, Reason: v.Reason, Detail: v.Detail})
 				continue
 			}
 			res.Unadoptable = append(res.Unadoptable, adoptionCheckVerdict{Instance: v.Instance, Reason: v.Reason, Detail: v.Detail})
@@ -147,15 +156,19 @@ func fetchAdoptionInventory(ctx context.Context, socket string) ([]fcvm.Adoption
 }
 
 type adoptionReportResult struct {
-	Clean       bool                   `json:"clean"`
-	NodeID      string                 `json:"node_id,omitempty"`
-	Epoch       uint64                 `json:"epoch,omitempty"`
-	Fenced      bool                   `json:"fenced"`
-	Complete    bool                   `json:"complete"`
-	Adopted     int                    `json:"adopted"`
-	Stopped     int                    `json:"stopped"`
-	Killed      int                    `json:"killed"`
-	Refused     []adoptionCheckVerdict `json:"refused"`
+	Clean    bool                   `json:"clean"`
+	NodeID   string                 `json:"node_id,omitempty"`
+	Epoch    uint64                 `json:"epoch,omitempty"`
+	Fenced   bool                   `json:"fenced"`
+	Complete bool                   `json:"complete"`
+	Adopted  int                    `json:"adopted"`
+	Stopped  int                    `json:"stopped"`
+	Killed   int                    `json:"killed"`
+	Refused  []adoptionCheckVerdict `json:"refused"`
+	// Gone lists refusals of guests the pre-restart check already found
+	// gone (--already-gone): their processes had ended before this restart,
+	// so they do not make the report dirty.
+	Gone        []adoptionCheckVerdict `json:"gone"`
 	Reason      string                 `json:"reason,omitempty"`
 	WaitedMilli int64                  `json:"waited_ms"`
 }
@@ -165,12 +178,19 @@ func adoptionReportCommand(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	socket := fs.String("socket", vmmdgrpc.AdoptionAdminSocket, "the restarted vmmd's admin socket")
 	wait := fs.Duration("wait", 90*time.Second, "how long to wait for the report")
+	alreadyGone := fs.String("already-gone", "", "comma-separated instances the pre-restart adoption-check reported gone")
 	if err := fs.Parse(args); err != nil {
 		return adoptionExitError
 	}
+	goneBefore := map[string]bool{}
+	for _, id := range strings.Split(*alreadyGone, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			goneBefore[id] = true
+		}
+	}
 	started := time.Now()
 	resp, err := waitAdoptionReport(*socket, *wait)
-	res := adoptionReportResult{Refused: []adoptionCheckVerdict{}, WaitedMilli: time.Since(started).Milliseconds()}
+	res := adoptionReportResult{Refused: []adoptionCheckVerdict{}, Gone: []adoptionCheckVerdict{}, WaitedMilli: time.Since(started).Milliseconds()}
 	code := adoptionExitNotYet
 	switch {
 	case status.Code(err) == codes.Unimplemented:
@@ -190,7 +210,14 @@ func adoptionReportCommand(args []string, stdout, stderr io.Writer) int {
 				}
 				continue
 			}
-			res.Refused = append(res.Refused, adoptionCheckVerdict{Instance: r.GetInstance(), Reason: r.GetReason(), Detail: r.GetDetail()})
+			verdict := adoptionCheckVerdict{Instance: r.GetInstance(), Reason: r.GetReason(), Detail: r.GetDetail()}
+			// Only a guest that was gone before the restart is excused: one
+			// that died across it is exactly what this report must catch.
+			if goneBefore[r.GetInstance()] && fcvm.AdoptionGuestGone(r.GetReason()) {
+				res.Gone = append(res.Gone, verdict)
+				continue
+			}
+			res.Refused = append(res.Refused, verdict)
 		}
 		res.Clean = !res.Fenced && res.Complete && len(res.Refused) == 0
 		if res.Clean {

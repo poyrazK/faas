@@ -286,6 +286,13 @@ var ErrInvalidPreviewPrState = errors.New("state: invalid preview_pr_state")
 // api.ErrTrafficPercentSumInvalid (409 Conflict).
 var ErrTrafficPercentSumInvalid = errors.New("state: traffic_percent sum != 100")
 
+// ErrTrafficResidualUnassigned refuses a manual traffic change whose remaining
+// weight has no recipient but aborted canary candidates or releases that have
+// never served, which receive traffic only when named
+// (RedistributeManualTraffic). It wraps ErrTrafficPercentSumInvalid: applied,
+// the change would leave Σ below 100.
+var ErrTrafficResidualUnassigned = fmt.Errorf("%w: only an aborted canary or a release that never served could take the remaining traffic", ErrTrafficPercentSumInvalid)
+
 // ErrInvalidMirrorPercent is returned by CreateMirrorRule /
 // UpdateMirrorRule when the requested percent falls outside
 // [0, 100]. The CHECK constraint on mirror_rules.percent
@@ -1746,6 +1753,13 @@ type Store interface {
 	ListAPIConsumersForApp(ctx context.Context, accountID, appID string) ([]APIConsumer, error)
 	RevokeAPIConsumer(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
 	CreateConsumerKeyForConsumer(ctx context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error)
+	// CreateConsumerKeyForConsumerIfUnderQuota issues a key as
+	// CreateConsumerKeyForConsumer does unless the consumer's app, or the
+	// app's billing subject (ADR-202610171904), already holds quota's
+	// unrevoked keys; then it returns *ConsumerKeyQuotaError. The count and
+	// the insert are one step, so concurrent issues cannot overshoot.
+	CreateConsumerKeyForConsumerIfUnderQuota(ctx context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string,
+		expiresAt *time.Time, quota ConsumerKeyQuota) (ConsumerKey, error)
 
 	// Login tokens (M7.5 magic-link, spec §14 + ADR-011).
 	//
@@ -2349,13 +2363,16 @@ type Store interface {
 	// deliberately separate from the deployed-app quota so local development
 	// cannot consume production or preview slots.
 	CountDeveloperApps(ctx context.Context, accountID string) (int, error)
-	// CountAppsWithEvictionPriority returns the per-account count of
-	// apps whose eviction_priority equals the given tier (issue #475).
-	// Counts APPS (not instances) — the per-account cap
+	// CountOtherBillingSubjectAppsWithEvictionPriority counts the apps other
+	// than appID that share appID's billing subject (ADR-202610171904): its
+	// company once the company adopted billing, else its creator; and that
+	// use the given eviction tier (issue #475) on the app itself or in any
+	// project environment's current workload settings. Counts APPS (not
+	// instances or environments) — the per-account cap
 	// (Plan.ReservedConcurrencyPerAccount) is over apps. Excludes
-	// soft-deleted apps so a recently-deleted reserved app doesn't
-	// leak into the cap and reject a subsequent recreate.
-	CountAppsWithEvictionPriority(ctx context.Context, accountID, priority string) (int, error)
+	// soft-deleted apps so a recently-deleted reserved app doesn't leak into
+	// the cap and reject a subsequent recreate. An unknown appID counts zero.
+	CountOtherBillingSubjectAppsWithEvictionPriority(ctx context.Context, appID, priority string) (int, error)
 	// CountAuthDefaultFlippedApps returns the per-account count of
 	// apps that were stamped by the apps-auth-default grand-father
 	// migration (issue #695 / ADR-080). The migration sets
@@ -2466,6 +2483,7 @@ type Store interface {
 	// state so a failed storage operation remains durably retryable.
 	ListAppDeletionArtifacts(ctx context.Context, appID string) ([]AppDeletionArtifact, error)
 	// DeleteAppPermanently removes a claimed, expired app and its dependent state.
+	// A refusal may be an *AppPurgeBlockedError naming the reason.
 	DeleteAppPermanently(ctx context.Context, id string) error
 
 	// Projects (ADR-050, Phase 1).
@@ -3269,10 +3287,17 @@ type Store interface {
 	// migration 00330 makes this unreachable in practice, but
 	// the explicit error lets a misuse at the call site fail
 	// closed). Idempotent: a re-delivered cold-boot event
-	// overwrites the same row, not create a second one. The
-	// capture count for the per-account quota is computed via
-	// CountOpenAPIDocsByAccount.
+	// overwrites the same row, not create a second one. It checks
+	// no quota.
 	UpsertDeploymentOpenAPIDoc(ctx context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error
+	// UpsertDeploymentOpenAPIDocIfUnderQuota is UpsertDeploymentOpenAPIDoc
+	// for the per-account allowance (api.Plan.OpenAPIDocsPerAccount): it
+	// counts the documents of the app's billing subject
+	// (ADR-202610171904) and saves this one in one step, under the
+	// subject's lock. Replacing a deployment's document is not a new one.
+	// Over the allowance it returns *OpenAPIDocQuotaError; a deployment
+	// that is not the app's is ErrNotFound.
+	UpsertDeploymentOpenAPIDocIfUnderQuota(ctx context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool, limit int) error
 	// DeleteDeploymentOpenAPIDoc removes the doc row for one
 	// deployment. ErrNotFound when no row OR the caller's
 	// accountID does not match — same IDOR floor as the read.
@@ -3281,10 +3306,9 @@ type Store interface {
 	// caller treats a 404 as success after a delete).
 	DeleteDeploymentOpenAPIDoc(ctx context.Context, deploymentID, accountID string) error
 	// CountOpenAPIDocsByAccount returns the number of doc rows
-	// the account owns. Drives the per-account quota gate
-	// (api.Plan.OpenAPIDocsPerAccount). The count is computed
-	// server-side via a SELECT COUNT(*) so the apid doesn't
-	// load the full body slice.
+	// the account owns. The per-account quota counts the app's
+	// billing subject instead, in
+	// UpsertDeploymentOpenAPIDocIfUnderQuota.
 	CountOpenAPIDocsByAccount(ctx context.Context, accountID string) (int, error)
 
 	// Per-app OpenAPI import (issue #975 item #2 / ADR-126).
@@ -3319,10 +3343,12 @@ type Store interface {
 	UpsertAppOpenAPIDoc(ctx context.Context, appID, accountID string, doc []byte, endpointCount int, openapiVersion string) error
 	// UpsertAppOpenAPIDocIfUnderQuota bundles the per-account quota
 	// gate (count + lock + check) with the upsert so a TOCTOU race
-	// between two concurrent imports under the same account can't
-	// slip past the cap. The PgStore impl runs the count + upsert
-	// inside a transaction with a row lock on the account; the
-	// MemStore impl serialises under m.mu. Returns
+	// between two concurrent imports can't slip past the cap. The
+	// allowance and the count belong to the app's billing subject
+	// (ADR-202610171904). The PgStore impl runs the count + upsert
+	// inside a transaction under the subject's lock
+	// (lockQuotaSubjectTx); the MemStore impl serialises under m.mu.
+	// Returns
 	// ErrOpenAPIImportsPerAccountQuotaReached when count>=limit;
 	// ErrNotFound when the parent app row is missing or the
 	// caller's accountID does not match.
@@ -3369,6 +3395,11 @@ type Store interface {
 	// returns ([]nil, nil). vmmd's Wake path consumes this
 	// eagerly to convert into wake.Workloads entries.
 	ListDeploymentSidecarLayers(ctx context.Context, deploymentID string) ([]DeploymentSidecarLayer, error)
+	// ListDeploymentSidecarEnvReseals returns the runtime-domain copies of the
+	// deployment's sidecar env values that `gregalectl seal-domain migrate`
+	// wrote (ADR 20261022111812), ordered by sidecar and key; empty when
+	// there are none.
+	ListDeploymentSidecarEnvReseals(ctx context.Context, deploymentID string) ([]SidecarEnvReseal, error)
 
 	// SetDeploymentSourceURL records the canonical upstream URL +
 	// commit SHA the build was triggered from (Tier 3 / issue #197
@@ -3737,8 +3768,11 @@ type Store interface {
 	TriggerRecordIDByItemIdentifier(ctx context.Context, triggerID, itemIdentifier string) (string, error)
 	ListTriggerDeadLetter(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerDeadLetter, error)
 	ListTriggerRecordsForTrigger(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error)
-	RetryTriggerRecordByOperator(ctx context.Context, id string) error
-	DropTriggerRecordByOperator(ctx context.Context, id string) error
+	// RetryTriggerRecordByOperator and DropTriggerRecordByOperator act on
+	// one record of triggerID, a trigger of appID. A record of another
+	// trigger or app answers ErrNotFound, as a missing one does.
+	RetryTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error
+	DropTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error
 
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +
@@ -3895,9 +3929,9 @@ type Store interface {
 	// pinned by the createAlertRuleIfUnderQuota path at
 	// handlers_alert_presets.go:255. We match by joining
 	// alert_presets on (name) and selecting the rule whose name LIKE
-	// (display_name || ' (%'); the existing
-	// alert_rules_account_name_uniq index covers the LIKE prefix
-	// scan as a range scan on (account_id, name) — no new index.
+	// (display_name || ' (%'); the alert_rules_app_name_uniq index
+	// covers the LIKE prefix scan as a range scan on (app_id, name)
+	// (ADR-20261029203000).
 	//
 	// Returns:
 	//   - (AlertRule{}, ErrNotFound) when no rule exists for this
@@ -4009,6 +4043,13 @@ type Store interface {
 	CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error)
 	ListEdgeRulesForAccount(ctx context.Context, accountID string) ([]EdgeRule, error)
 	ListEdgeRulesForApp(ctx context.Context, appID string) ([]EdgeRule, error)
+	// ListEdgeRulesUsingCorsPreset returns the account's rules that apply
+	// presetID, and ListRouteRulesTargeting its route rules that send to
+	// targetSlug, in match order. The CORS preset barrier and the app rename
+	// read only the rules they change, not every rule of the account (ADR-091
+	// amendment 2026-10-30, round 5).
+	ListEdgeRulesUsingCorsPreset(ctx context.Context, accountID, presetID string) ([]EdgeRule, error)
+	ListRouteRulesTargeting(ctx context.Context, accountID, targetSlug string) ([]EdgeRule, error)
 	GetEdgeRuleByID(ctx context.Context, id string) (EdgeRule, error)
 	// UpdateEdgeRule coalesces the optional fields onto edge_rules.
 	// nil pointers leave the field untouched; Action is
@@ -4432,6 +4473,10 @@ type Store interface {
 	QueueDepthInScope(ctx context.Context, appID, scope string, limit int) (int, error)
 	QueueDepthForBindingInScope(ctx context.Context, appID, bindingID, scope string, limit int) (int, error)
 	QueueBindingHasInFlight(ctx context.Context, appID, bindingID, scope string) (bool, error)
+	// QueueBindingTelemetry is QueueStateForBinding for gauges and alerts:
+	// each count stops at limit and the oldest pending message comes from
+	// the lease indexes (ADR-20261018101500 amendment 2026-10-27).
+	QueueBindingTelemetry(ctx context.Context, appID, bindingID string, limit int) (QueueStats, error)
 	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by
@@ -6008,7 +6053,7 @@ type Store interface {
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer. imaged opens the passwords to pull images;
 	// builderd forwards them unopened to vmmd, which opens them into a
-	// Dockerfile builder's Docker config (ADR-20261026090000). PasswordEncrypted
+	// Dockerfile builder's Docker config (ADR-20261026091500). PasswordEncrypted
 	// is the age-sealed bytea produced by pkg/secretbox.SealBytes with
 	// namespace="registry_creds" — the plaintext password is never
 	// stored, never logged, never returned over the wire.
@@ -6393,7 +6438,15 @@ type Store interface {
 	UpdateAppLogDrain(ctx context.Context, id string, params UpdateAppLogDrainParams) (AppLogDrain, error)
 	DeleteAppLogDrain(ctx context.Context, id string) error
 	ListAppLogDrainsForApp(ctx context.Context, appID string) ([]AppLogDrain, error)
+	// ListEnabledAppLogDrains is the drains log delivery runs: enabled, not on
+	// a rehearsal-enrolled app, and covered by the plan of the account the
+	// app's resources belong to. A plan covers the oldest enabled drains up
+	// to its per-app and account-wide allowances; drains an organization's
+	// application standard installed are outside those allowances.
 	ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, error)
+	// ListAppLogDrainsPausedByPlan names appID's enabled drains that
+	// ListEnabledAppLogDrains leaves out because the plan does not cover them.
+	ListAppLogDrainsPausedByPlan(ctx context.Context, appID string) ([]string, error)
 	UpsertAppLogDrainHealth(ctx context.Context, health AppLogDrainHealth) error
 	AppLogDrainHealthByDrainID(ctx context.Context, drainID string) (AppLogDrainHealth, error)
 	ListAppLogDrainHealthForApp(ctx context.Context, appID string) ([]AppLogDrainHealth, error)
@@ -6579,13 +6632,15 @@ type Store interface {
 	// concurrent UPDATEs is acceptable. summary is the raw JSON
 	// bytes (the caller has already validated json.Valid).
 	//
-	// accountID is REQUIRED — PR-D code-review #1 pins the
+	// target.AccountID is REQUIRED — PR-D code-review #1 pins the
 	// WHERE clause on (trace_id, account_id) so a buggy upstream
 	// caller can't overwrite a different customer's row. The
-	// gateway-side accumulator already rejects
-	// trace_id/account_id collisions (ErrAccountMismatch); this
-	// is the SQL-side defense in depth.
-	UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte) error
+	// gateway-side accumulator buffers each target and trace
+	// separately and maxSpans bounds the row to the plan; this
+	// is the SQL-side defense in depth. target's optional app,
+	// organization and customer-credential fields narrow the rows
+	// further (SpansSummaryTarget).
+	UpdateSpansSummary(ctx context.Context, target SpansSummaryTarget, summary []byte, maxSpans int) error
 
 	// ListRequestTelemetryByApp backs GET /v1/apps/{slug}/debug/requests.
 	// Time-windowed (since, until) with hard limit; cursor pagination

@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
+	"github.com/onebox-faas/faas/pkg/labels"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -83,9 +84,10 @@ const (
 	// (issue #757). Config schema: RedisStreamsConfig{Addr, Stream,
 	// Group, Consumer}.
 	TriggerKindRedisStreams TriggerKind = "redis_streams"
-	// TriggerKindSQSCompat — long-poll the in-platform SQS-compatible
-	// HTTP queue (issue #757). Config schema:
-	// SQSCompatConfig{QueueURL, LongPollSecs}.
+	// TriggerKindSQSCompat — long-poll an SQS-compatible HTTP queue
+	// (issue #757). Delisted 2026-10-29: its poller speaks no real SQS
+	// wire protocol, so the manifest refuses it like amqp. Config
+	// schema: SQSCompatConfig{QueueURL, LongPollSecs}.
 	TriggerKindSQSCompat TriggerKind = "sqs_compat"
 	// TriggerKindQueue — in-platform queue / delayed_task merger
 	// (issue #757, ADR-0NN). The platform's own `invocations` rows
@@ -1441,11 +1443,11 @@ func (d BucketDependency) EffectiveLabel() string {
 }
 
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
-// The supported top-level declarations are `schema_version`, `hosting`,
+// The supported top-level declarations are `schema_version`, `hosting`, `build`,
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
 // `triggers`, `event_triggers`, `async_routes`, `routes`, `companions`, `main_depends_on`,
 // `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
-// and the local-only `dev`
+// `labels`, and the local-only `dev`
 // profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
@@ -1456,8 +1458,11 @@ type Manifest struct {
 	// set it to 1; a future incompatible manifest requires a new version.
 	SchemaVersion int                   `yaml:"schema_version,omitempty"`
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
-	Dev           *DevConfig            `yaml:"dev,omitempty"`
-	Function      *FunctionConfig       `yaml:"function,omitempty"`
+	// Build selects and parameterizes a Dockerfile build for a source
+	// deploy (ADR-20261026152731).
+	Build    *BuildConfig    `yaml:"build,omitempty"`
+	Dev      *DevConfig      `yaml:"dev,omitempty"`
+	Function *FunctionConfig `yaml:"function,omitempty"`
 	// Functions declares several functions deployed from one manifest, each
 	// as its own app (ADR-985). Mutually exclusive with Function.
 	Functions []FunctionSpec   `yaml:"functions,omitempty"`
@@ -1496,6 +1501,10 @@ type Manifest struct {
 	// Realtime declares managed realtime endpoints by slug
 	// (ADR-20261019102657).
 	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
+	// Labels are the app's key/value labels (ADR-20261031100025 §7). A deploy
+	// sets these keys and removes none: a key dropped from the manifest stays
+	// until `gregale app label unset` removes it. Labels are not secret.
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate
@@ -1817,6 +1826,30 @@ func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 	}
 }
 
+// ScalingPolicyRequest is the app scaling policy the manifest asks for: the
+// scaling block, with a worker block that names a metric taking its bounds
+// and target. The CLI and apid's source deploys both apply it, so a worker
+// deployed from a repository scales like one deployed from a laptop
+// (ADR-20261018101500 amendment 2026-10-27). Cooldowns default as the
+// scaling block's do, because the API refuses zero cooldowns.
+func (m *Manifest) ScalingPolicyRequest() *api.ScalingPolicy {
+	if m == nil {
+		return nil
+	}
+	policy := m.Scaling.ToAPI()
+	if m.Worker == nil || m.Worker.Scale.Metric == "" {
+		return policy
+	}
+	if policy == nil {
+		policy = &api.ScalingPolicy{ScaleOutCooldownS: defaultScaleOutCooldownS, ScaleInCooldownS: defaultScaleInCooldownS}
+	}
+	scale := m.Worker.Scale
+	policy.MinInstances, policy.MaxInstances = scale.Min, scale.Max
+	policy.Targets = nil
+	policy.Target = &api.ScalingTarget{Metric: scale.Metric, Name: scale.Name, Value: scale.Target}
+	return policy
+}
+
 // Validate checks worker configuration syntax and constraints.
 func (w *WorkerSpec) Validate() error {
 	if w == nil {
@@ -1844,14 +1877,14 @@ func (w *WorkerSpec) Validate() error {
 	}
 	if w.Source != nil {
 		switch w.Source.Kind {
-		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue:
+		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindQueue:
 			// valid broker kinds
-		case TriggerKindAMQP, TriggerKindRabbitMQ:
+		case TriggerKindAMQP, TriggerKindRabbitMQ, TriggerKindSQSCompat:
 			return fmt.Errorf("worker.source: %w", errBrokerKindUnavailable(w.Source.Kind))
 		case "":
 			return errors.New("worker.source: kind is required")
 		default:
-			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, sqs_compat, queue", w.Source.Kind)
+			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, queue", w.Source.Kind)
 		}
 		if err := w.Source.validateKindConfig(0); err != nil {
 			return fmt.Errorf("worker.source: %w", err)
@@ -2103,6 +2136,7 @@ type tomlManifest struct {
 	Companions          []CompanionSpec            `toml:"companions"`
 	MainDependsOn       []ExtensionDependency      `toml:"main_depends_on"`
 	Extensions          []ExtensionSpec            `toml:"extensions"`
+	Labels              map[string]string          `toml:"labels"`
 }
 
 type tomlTriggers struct {
@@ -2133,6 +2167,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		Companions:          raw.Companions,
 		MainDependsOn:       raw.MainDependsOn,
 		Extensions:          raw.Extensions,
+		Labels:              raw.Labels,
 	}, nil
 }
 
@@ -2200,10 +2235,21 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m.SchemaVersion != 0 && m.SchemaVersion != 1 {
 		return fmt.Errorf("schema_version: unsupported version %d; supported versions: 1", m.SchemaVersion)
 	}
+	// A customer's labels: valid keys and values, within the limit, and none
+	// under gregale.dev/.
+	if err := (labels.Change{Set: m.Labels}).Validate(); err != nil {
+		return fmt.Errorf("labels: %w", err)
+	}
 	if m.Hosting != nil {
 		if err := m.Hosting.Validate(); err != nil {
 			return fmt.Errorf("hosting: %w", err)
 		}
+	}
+	if err := m.Build.Validate(); err != nil {
+		return fmt.Errorf("build: %w", err)
+	}
+	if m.Build != nil && (m.Function != nil || len(m.Functions) > 0) {
+		return fmt.Errorf("build: applies to app deploys; functions build from the platform runtime")
 	}
 	if m.Dev != nil {
 		if err := m.Dev.Validate(); err != nil {
@@ -2333,11 +2379,10 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindKafka,
 			TriggerKindNATS,
 			TriggerKindRedisStreams,
-			TriggerKindSQSCompat,
 			TriggerKindQueue,
 			TriggerKindRealtime:
 			// fall through to per-kind validation below
-		case TriggerKindAMQP, TriggerKindRabbitMQ:
+		case TriggerKindAMQP, TriggerKindRabbitMQ, TriggerKindSQSCompat:
 			return fmt.Errorf("trigger[%d]: %w", i, errBrokerKindUnavailable(t.Kind))
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
@@ -2622,7 +2667,7 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue, realtime"
+	return "cron, kafka, nats, redis_streams, queue, realtime"
 }
 
 // errBrokerKindUnavailable rejects broker kinds the manifest can parse but
@@ -2655,11 +2700,11 @@ func (t Trigger) validateKindConfig(idx int) error {
 		if _, err := cronexpr.Parse(t.Schedule, cronexpr.DefaultTimezone); err != nil {
 			return fmt.Errorf("trigger[%d]: bad schedule %q: %w", idx, t.Schedule, err)
 		}
-		if !strings.HasPrefix(t.Path, "/") {
-			return fmt.Errorf("trigger[%d]: path must start with '/' (got %q)", idx, t.Path)
+		if problem := api.ValidateCronPath(t.Path); problem != nil {
+			return fmt.Errorf("trigger[%d]: invalid path %q: %s", idx, t.Path, problem.Detail)
 		}
 		if t.Timezone != "" {
-			if _, err := time.LoadLocation(t.Timezone); err != nil {
+			if _, err := cronexpr.NormalizeCustomerTimezone(t.Timezone); err != nil {
 				return fmt.Errorf("trigger[%d]: timezone %q is not a valid IANA location", idx, t.Timezone)
 			}
 		}

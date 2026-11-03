@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Config contains only non-secret placement settings and names of environment
@@ -26,7 +28,34 @@ type Config struct {
 	ProvisioningEnabled    bool              `json:"provisioning_enabled"`
 	Usage                  UsageConfig       `json:"usage"`
 	Health                 HealthConfig      `json:"health"`
+	Fleet                  FleetConfig       `json:"fleet"`
 	Backends               []BackendConfig   `json:"backends"`
+}
+
+// FleetConfig is the JSON-safe form of FleetPolicy (ADR-20261028103115).
+// Zero leaves a ceiling unset; production provisioning requires both.
+type FleetConfig struct {
+	MaxDatabases             int   `json:"max_databases"`
+	MaxMonthlyCostMillicents int64 `json:"max_monthly_cost_millicents"`
+	// PaidReserveDatabases is how many of MaxDatabases only paid plans may
+	// add. Unset reserves api.ManagedPostgresFleetPaidReservePercent of
+	// MaxDatabases; 0 reserves none.
+	PaidReserveDatabases *int `json:"paid_reserve_databases,omitempty"`
+}
+
+func (c FleetConfig) policy() (FleetPolicy, error) {
+	if c.MaxDatabases < 0 || c.MaxDatabases > api.ManagedPostgresFleetDatabasesCeiling ||
+		c.MaxMonthlyCostMillicents < 0 || c.MaxMonthlyCostMillicents > api.ManagedPostgresFleetMonthlyCostCeilingMillicents {
+		return FleetPolicy{}, errors.New("managed postgres: invalid fleet policy")
+	}
+	reserve := c.MaxDatabases * api.ManagedPostgresFleetPaidReservePercent / 100
+	if c.PaidReserveDatabases != nil {
+		reserve = *c.PaidReserveDatabases
+	}
+	if reserve < 0 || (reserve > 0 && reserve >= c.MaxDatabases) {
+		return FleetPolicy{}, errors.New("managed postgres: the paid reserve must be below the fleet's database cap")
+	}
+	return FleetPolicy{MaxDatabases: c.MaxDatabases, MaxMonthlyCostMillicents: c.MaxMonthlyCostMillicents, PaidReserve: reserve}, nil
 }
 
 // UsageConfig is the JSON-safe form of UsagePolicy. Prices are integer
@@ -126,13 +155,19 @@ type Registry struct {
 	ProvisioningEnabled    bool
 	usage                  UsagePolicy
 	health                 HealthPolicy
+	fleet                  FleetPolicy
 	backends               map[string]Backend
 	defaults               map[string]string
 }
 
 func NewRegistry(config Config, getenv func(string) string, factories map[string]Factory) (*Registry, error) {
 	if config.MaxDatabasesPerAccount == 0 {
+		// Production sells the plans' limits; elsewhere a small cap keeps
+		// staging accounts from filling a shared provider.
 		config.MaxDatabasesPerAccount = 3
+		if ProductionEnvironmentActive(getenv) {
+			config.MaxDatabasesPerAccount = api.ManagedPostgresPlanDatabasesMax()
+		}
 	}
 	if config.MaxDatabasesPerAccount < 1 || config.MaxDatabasesPerAccount > 100 {
 		return nil, errors.New("managed postgres: invalid per-account database limit")
@@ -145,12 +180,17 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 	if err != nil {
 		return nil, errors.New("managed postgres: invalid health policy")
 	}
+	fleetPolicy, err := config.Fleet.policy()
+	if err != nil {
+		return nil, err
+	}
 	registry := &Registry{
 		DefaultRegion:          config.DefaultRegion,
 		MaxDatabasesPerAccount: config.MaxDatabasesPerAccount,
 		ProvisioningEnabled:    config.ProvisioningEnabled,
 		usage:                  usagePolicy,
 		health:                 healthPolicy,
+		fleet:                  fleetPolicy,
 		backends:               make(map[string]Backend, len(config.Backends)),
 		defaults:               make(map[string]string, len(config.Defaults)),
 	}

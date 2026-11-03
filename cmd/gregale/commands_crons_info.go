@@ -43,12 +43,12 @@ func cmdCronsInfo(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale crons info <id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron get <id>\n")
 		return 1
 	}
 	id := fs.Arg(0)
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale crons info <id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron get <id>\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -94,7 +94,7 @@ func renderCronRecentRuns(w io.Writer, id string, runs []api.CronRun) {
 		}
 	}
 	if unsuccessful > 0 {
-		_, _ = fmt.Fprintf(w, "  recent:   %d of the last %d runs did not succeed; see `gregale crons runs %s`\n", unsuccessful, len(runs), id)
+		_, _ = fmt.Fprintf(w, "  recent:   %d of the last %d runs did not succeed; see `gregale cron runs %s`\n", unsuccessful, len(runs), id)
 	}
 }
 

@@ -86,6 +86,17 @@ type trafficHostEnvironment struct {
 }
 
 func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID, appsSuffix string) (trafficHostAnalysis, error) {
+	return readTrafficHostAnalysisScoped(ctx, tx, account, appsSuffix, nil)
+}
+
+// A route scope limits only the global view's routes; an account view ignores it.
+func readTrafficHostAnalysisScoped(ctx context.Context, tx pgx.Tx, account pgtype.UUID, appsSuffix string, scope *trafficRouteScope) (trafficHostAnalysis, error) {
+	return readTrafficHostAnalysisFor(ctx, tx, account, appsSuffix, scope, nil)
+}
+
+// reservations, when set, limits the global view's reservations to a scoped
+// binding write's lookup (ADR-20261029190349).
+func readTrafficHostAnalysisFor(ctx context.Context, tx pgx.Tx, account pgtype.UUID, appsSuffix string, scope *trafficRouteScope, reservations *trafficScopeLookup) (trafficHostAnalysis, error) {
 	defaults, err := trafficHostActionDefaults()
 	if err != nil {
 		return trafficHostAnalysis{}, err
@@ -96,11 +107,15 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 		return trafficHostAnalysis{}, fmt.Errorf("state: configure traffic analysis timeout: %w", err)
 	}
 	start := time.Now()
-	row, err := queries.ReadTrafficHostAnalysis(ctx, tx, sqlc.ReadTrafficHostAnalysisParams{
+	names, trees := scope.params()
+	params := sqlc.ReadTrafficHostAnalysisParams{
 		AccountID: account, MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes,
+		RouteScopeNames: names, RouteScopeTrees: trees,
 		// Scoped domains can be longer than a generated environment host.
 		// Reserve maximum hostname length and JSON escape amplification.
-		Defaults: defaults, AppsSuffix: appsSuffix, DeploySuffix: hostidentity.DeploySuffix(), EnvironmentHostBytes: 6 * api.TrafficPolicyMaxHostnameBytes})
+		Defaults: defaults, AppsSuffix: appsSuffix, DeploySuffix: hostidentity.DeploySuffix(), EnvironmentHostBytes: 6 * api.TrafficPolicyMaxHostnameBytes}
+	trafficReservationParams(&params, reservations)
+	row, err := queries.ReadTrafficHostAnalysis(ctx, tx, params)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.QueryCanceled {

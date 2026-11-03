@@ -89,7 +89,7 @@ def sync_detailed(
     scope: str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> Response[ListConfigRevisionsResponse | Problem]:
-    """List a scope's config revisions (ADR-1451).
+    """List a scope's config revisions.
 
      Newest first. Each customer env or secret write records a revision of the scope's complete config;
     the newest 100 are kept. Values are not listed; read one revision for its variables.
@@ -127,7 +127,7 @@ def sync(
     scope: str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> ListConfigRevisionsResponse | Problem | None:
-    """List a scope's config revisions (ADR-1451).
+    """List a scope's config revisions.
 
      Newest first. Each customer env or secret write records a revision of the scope's complete config;
     the newest 100 are kept. Values are not listed; read one revision for its variables.
@@ -160,7 +160,7 @@ async def asyncio_detailed(
     scope: str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> Response[ListConfigRevisionsResponse | Problem]:
-    """List a scope's config revisions (ADR-1451).
+    """List a scope's config revisions.
 
      Newest first. Each customer env or secret write records a revision of the scope's complete config;
     the newest 100 are kept. Values are not listed; read one revision for its variables.
@@ -196,7 +196,7 @@ async def asyncio(
     scope: str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> ListConfigRevisionsResponse | Problem | None:
-    """List a scope's config revisions (ADR-1451).
+    """List a scope's config revisions.
 
      Newest first. Each customer env or secret write records a revision of the scope's complete config;
     the newest 100 are kept. Values are not listed; read one revision for its variables.

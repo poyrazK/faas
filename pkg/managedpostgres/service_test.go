@@ -21,6 +21,8 @@ type fakeProvider struct {
 	lastDelete      DeleteRequest
 	restoreCalls    int
 	lastRestore     RestoreRequest
+	// inspectStorageLimit, when set, is the storage limit Inspect reports.
+	inspectStorageLimit int64
 }
 
 func (p *fakeProvider) Capabilities() Capabilities { return p.capabilities }
@@ -51,6 +53,9 @@ func (p *fakeProvider) Restore(_ context.Context, request RestoreRequest) (Obser
 func (p *fakeProvider) Inspect(_ context.Context, providerResourceID string) (ObservedDatabase, error) {
 	p.inspectCalls++
 	observed := ObservedDatabase{ProviderResourceID: providerResourceID, Status: p.inspectStatus, Spec: testSpec()}
+	if p.inspectStorageLimit != 0 {
+		observed.Spec.StorageLimitBytes = p.inspectStorageLimit
+	}
 	if p.lastRestore.ResourceID != "" && providerResourceID == "restored-"+p.lastRestore.ResourceID {
 		observed.RestoreLineage = &RestoreLineage{SourceResourceID: p.lastRestore.SourceResourceID, PointInTime: p.lastRestore.PointInTime}
 	}

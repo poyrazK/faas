@@ -320,6 +320,19 @@ type ObsAccountMutationResponse struct {
 	RevokedSessions int          `json:"revoked_sessions"`
 }
 
+// ObsObjectStorageCeilingResponse is a billing subject's object-storage
+// ceiling after support set or cleared its grant (ADR-20261101214152).
+// GrantBytes is nil when the plan's ceiling applies; CeilingBytes is the
+// ceiling admission enforces, the plan's or the grant, tightened by the spend
+// cap.
+type ObsObjectStorageCeilingResponse struct {
+	OwnerID          string `json:"owner_id"`
+	Plan             Plan   `json:"plan"`
+	PlanCeilingBytes int64  `json:"plan_ceiling_bytes"`
+	GrantBytes       *int64 `json:"grant_bytes"`
+	CeilingBytes     int64  `json:"ceiling_bytes"`
+}
+
 // ObsInvocationRow is the safe operational projection of an invocation.
 type ObsInvocationRow struct {
 	ID          string     `json:"id"`
@@ -479,6 +492,49 @@ type ObsNodeMutationResponse struct {
 	Forced             bool                      `json:"forced"`
 	Reason             string                    `json:"reason"`
 	Preflight          ObsNodeOperationPreflight `json:"preflight"`
+}
+
+// ObsDatabaseRestartResponse acknowledges an operator's in-place restart
+// of a native managed database (ADR-1027), onto its node's current base.
+// Poll StatusURL for the intent.
+type ObsDatabaseRestartResponse struct {
+	OK         bool      `json:"ok"`
+	IntentID   string    `json:"intent_id"`
+	StatusURL  string    `json:"status_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Kind       string    `json:"kind"`
+	DatabaseID string    `json:"database_id"`
+	Reason     string    `json:"reason"`
+}
+
+// ObsDatabaseSwitchoverResponse acknowledges an operator's planned
+// switchover of a production-class native managed database to its
+// synchronized standby (ADR-1027). Poll StatusURL for the intent.
+type ObsDatabaseSwitchoverResponse struct {
+	OK         bool      `json:"ok"`
+	IntentID   string    `json:"intent_id"`
+	StatusURL  string    `json:"status_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Kind       string    `json:"kind"`
+	DatabaseID string    `json:"database_id"`
+	Reason     string    `json:"reason"`
+}
+
+// ObsDatabaseMoveResponse acknowledges an operator's move of a native
+// managed database to another database node (ADR-1027). schedd parks the
+// database and records the move, then copies it in the background; poll
+// StatusURL for the intent.
+type ObsDatabaseMoveResponse struct {
+	OK         bool      `json:"ok"`
+	IntentID   string    `json:"intent_id"`
+	StatusURL  string    `json:"status_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Kind       string    `json:"kind"`
+	DatabaseID string    `json:"database_id"`
+	// TargetNode is the requested node; empty lets schedd pick the active
+	// node with the most free volume capacity.
+	TargetNode string `json:"target_node,omitempty"`
+	Reason     string `json:"reason"`
 }
 
 // ObsNodeOperationPreflight is the bounded impact summary persisted with a

@@ -32,18 +32,29 @@ func TestCapAllowancesExactArithmetic(t *testing.T) {
 		{"large caps saturate", math.MaxInt64, 0, 0, math.MaxInt64, math.MaxInt64},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := capComputeAllowance(tc.cap, tc.egress, &policy); got != tc.wantCompute {
+			if got := capComputeAllowance(tc.cap, tc.egress, &policy, 0); got != tc.wantCompute {
 				t.Fatalf("compute allowance = %d, want %d", got, tc.wantCompute)
 			}
-			if got := capEgressAllowance(tc.cap, tc.compute, policy); got != tc.wantEgress {
+			if got := capEgressAllowance(tc.cap, tc.compute, 0, policy); got != tc.wantEgress {
 				t.Fatalf("egress allowance = %d, want %d", got, tc.wantEgress)
 			}
 		})
 	}
-	if got := capEgressAllowance(1, 0, billing.MeterUsagePolicy{}); got != 0 {
+	// ADR-20261027093220: live object storage billed this month is reserved
+	// first; 400 of 1,000 millicents leaves 0.6 GB-hours or 0.3 GiB.
+	if got := capComputeAllowance(1, 0, nil, 400); got != api.SecondsPerGBHour*6/10 {
+		t.Fatalf("compute allowance after object storage = %d, want %d", got, api.SecondsPerGBHour*6/10)
+	}
+	if got := capEgressAllowance(1, 0, 400, policy); got != gib*3/10 {
+		t.Fatalf("egress allowance after object storage = %d, want %d", got, gib*3/10)
+	}
+	if got := capComputeAllowance(1, 0, nil, -1); got != 0 {
+		t.Fatalf("negative object storage compute allowance = %d, want 0 (fail closed)", got)
+	}
+	if got := capEgressAllowance(1, 0, 0, billing.MeterUsagePolicy{}); got != 0 {
 		t.Fatalf("invalid pricing policy egress allowance = %d, want 0 (fail closed)", got)
 	}
-	if got := capComputeAllowance(1, 1, &billing.MeterUsagePolicy{}); got != 0 {
+	if got := capComputeAllowance(1, 1, &billing.MeterUsagePolicy{}, 0); got != 0 {
 		t.Fatalf("invalid pricing policy compute allowance = %d, want 0 (fail closed)", got)
 	}
 }

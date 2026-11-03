@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { AppChangeEvent } from './AppChangeEvent.js';
 /**
- * ADR-751 change timeline for one app over [since, until), newest first.
+ * Change timeline for one app over [since, until), newest first.
  */
 export type AppChangeTimelineResponse = {
   app_id: string;

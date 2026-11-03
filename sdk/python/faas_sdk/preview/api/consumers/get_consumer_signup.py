@@ -65,7 +65,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ConsumerSignupSettingsResponse | Problem]:
-    """Read the app's self-service sign-up settings (ADR-20261021143000).
+    """Read the app's self-service sign-up settings.
 
     Args:
         slug (str):
@@ -94,7 +94,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ConsumerSignupSettingsResponse | Problem | None:
-    """Read the app's self-service sign-up settings (ADR-20261021143000).
+    """Read the app's self-service sign-up settings.
 
     Args:
         slug (str):
@@ -118,7 +118,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ConsumerSignupSettingsResponse | Problem]:
-    """Read the app's self-service sign-up settings (ADR-20261021143000).
+    """Read the app's self-service sign-up settings.
 
     Args:
         slug (str):
@@ -145,7 +145,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ConsumerSignupSettingsResponse | Problem | None:
-    """Read the app's self-service sign-up settings (ADR-20261021143000).
+    """Read the app's self-service sign-up settings.
 
     Args:
         slug (str):

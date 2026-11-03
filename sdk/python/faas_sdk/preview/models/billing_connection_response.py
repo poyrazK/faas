@@ -22,7 +22,7 @@ class BillingConnectionResponse:
     """A stored payment-provider key, identified without revealing it."""
 
     provider: BillingProvider
-    """A billing provider statements export to (ADR-1507)."""
+    """A billing provider statements export to."""
     key_last4: str
     livemode: bool
     """False for Stripe test and Paddle sandbox keys; Lago has no test mode."""
@@ -31,11 +31,11 @@ class BillingConnectionResponse:
     api_url: str | Unset = UNSET
     """The Lago API origin."""
     collection: BillingConnectionResponseCollection | Unset = UNSET
-    """What the provider does with exported invoices (ADR-1311)."""
+    """What the provider does with exported invoices."""
     days_until_due: int | Unset = UNSET
     """Days until a sent invoice is due."""
     automatic_tax: bool | Unset = UNSET
-    """Whether Stripe Tax calculates tax on the connection's exports (ADR-1313)."""
+    """Whether Stripe Tax calculates tax on the connection's exports."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

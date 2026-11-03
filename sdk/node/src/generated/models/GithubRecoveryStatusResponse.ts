@@ -5,7 +5,7 @@
 import type { GithubCheckUpdateRecord } from './GithubCheckUpdateRecord.js';
 import type { GithubWebhookDeliveryRecord } from './GithubWebhookDeliveryRecord.js';
 /**
- * Operator-safe projections of githubd's durable recovery queues. Webhook payloads are never included.
+ * Operator-safe projections of the GitHub integration's durable recovery queues. Webhook payloads are never included.
  */
 export type GithubRecoveryStatusResponse = {
   deliveries: Array<GithubWebhookDeliveryRecord>;

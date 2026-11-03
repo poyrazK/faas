@@ -15,7 +15,7 @@ T = TypeVar("T", bound="AccountCreditResponse")
 
 @_attrs_define
 class AccountCreditResponse:
-    """One row in the account_credits table (issue #279). cents_remaining
+    """One row in the account_credits table. cents_remaining
     is the integer-cents balance still available; consumption
     decrements it (the consumption reducer lands in a follow-up
     PR). expires_at is RFC 3339 when set; absent (or null) means

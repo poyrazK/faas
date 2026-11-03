@@ -25,11 +25,11 @@ export type PlatformTenantStatementFinalizedWebhookPayload = {
   priced: boolean;
   lines: Array<PlatformTenantStatementLineResponse>;
   /**
-   * The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents.
+   * The revision's monthly base fees and minimum top-ups, included in amount_millicents.
    */
   fees?: Array<APIConsumerStatementFeeResponse>;
   /**
-   * Tenant prepaid credit this finalized revision drew (ADR-20261019100331).
+   * Tenant prepaid credit this finalized revision drew.
    */
   credit_applied_millicents?: number;
   /**

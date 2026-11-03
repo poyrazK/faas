@@ -277,7 +277,7 @@ func (a *PrivateNetworkRouteApplier) withReadyPeeringRoutes(ctx context.Context,
 }
 
 func (a *PrivateNetworkRouteApplier) applyWithReport(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule, networkID string, address netip.Addr) (privatenetwork.RouteApplyReport, error) {
-	rows, err := a.store.ListInstancesForApp(ctx, appID)
+	rows, err := liveInstancesOf(ctx, a.store, appID)
 	if err != nil {
 		return privatenetwork.RouteApplyReport{}, err
 	}

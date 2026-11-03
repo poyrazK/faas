@@ -48,7 +48,7 @@ class Failure(Exception):
 # Deploy's recovery guidance after an uncertain submission (deploy_recovery.go,
 # deploy_success.go). These lines may name an accepted deployment that the
 # guided session has not adopted.
-RECOVERY_GUIDANCE = re.compile(r"Stage: \S+; inspect: |Deployment: \S+; resume: |deployment wait \S+")
+RECOVERY_GUIDANCE = re.compile(r"Stage: \S+; inspect: |Deployment: \S+; resume: |(?:deployment|release) wait \S+")
 
 
 def require(condition, message):
@@ -271,6 +271,14 @@ def source_multipart(root, project):
 class Terminal:
     """Real CLI, terminal stdin, plain bounded output kept only in memory."""
     def __init__(self, cli, directory, environment):
+        # gregale start refuses FAAS_TOKEN, which would shadow the login it
+        # saves; sign the CLI in to this launch's config directory instead.
+        environment = dict(environment)
+        token = environment.pop("FAAS_TOKEN", "")
+        if token:
+            login = subprocess.run([str(cli), "login", "--token-stdin"], env=environment, input=token.encode(),
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, check=False)
+            require(login.returncode == 0, "gregale login failed: " + login.stderr.decode(errors="replace").replace(token, "[credential]")[-500:])
         master, slave = pty.openpty()
         settings = termios.tcgetattr(slave)
         settings[3] &= ~termios.ECHO

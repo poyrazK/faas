@@ -88,7 +88,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     scope: str | Unset = UNSET,
 ) -> Response[ConfigRevisionDetail | Problem]:
-    """Read one config revision (ADR-1451).
+    """Read one config revision.
 
      The scope's variables and secret versions after the change. Secret values and fingerprints are never
     returned.
@@ -126,7 +126,7 @@ def sync(
     client: AuthenticatedClient | Client,
     scope: str | Unset = UNSET,
 ) -> ConfigRevisionDetail | Problem | None:
-    """Read one config revision (ADR-1451).
+    """Read one config revision.
 
      The scope's variables and secret versions after the change. Secret values and fingerprints are never
     returned.
@@ -159,7 +159,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     scope: str | Unset = UNSET,
 ) -> Response[ConfigRevisionDetail | Problem]:
-    """Read one config revision (ADR-1451).
+    """Read one config revision.
 
      The scope's variables and secret versions after the change. Secret values and fingerprints are never
     returned.
@@ -195,7 +195,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     scope: str | Unset = UNSET,
 ) -> ConfigRevisionDetail | Problem | None:
-    """Read one config revision (ADR-1451).
+    """Read one config revision.
 
      The scope's variables and secret versions after the change. Secret values and fingerprints are never
     returned.

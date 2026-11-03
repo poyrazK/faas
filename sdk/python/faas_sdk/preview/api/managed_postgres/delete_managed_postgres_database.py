@@ -13,17 +13,25 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     id: str,
     *,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
 
+    params: dict[str, Any] = {}
+
+    params["purge"] = purge
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
     _kwargs: dict[str, Any] = {
         "method": "delete",
         "url": "/v1/postgres/databases/{id}".format(
             id=quote(str(id), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["headers"] = headers
@@ -58,12 +66,19 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Delete a managed PostgreSQL database
 
+     A ready database is kept for 7 days with its compute stopped and its connections refused, and can be
+    undeleted until restorable_until. It still counts toward the plan's database limit and keeps its
+    name until it is purged. Any other database, or a delete with purge=true, is deleted at once.
+    Bindings and restore dependencies must be removed first.
+
     Args:
         id (str):
+        purge (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -76,6 +91,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        purge=purge,
         idempotency_key=idempotency_key,
     )
 
@@ -90,12 +106,19 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedPostgresDatabase | Problem | None:
     """Delete a managed PostgreSQL database
 
+     A ready database is kept for 7 days with its compute stopped and its connections refused, and can be
+    undeleted until restorable_until. It still counts toward the plan's database limit and keeps its
+    name until it is purged. Any other database, or a delete with purge=true, is deleted at once.
+    Bindings and restore dependencies must be removed first.
+
     Args:
         id (str):
+        purge (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -109,6 +132,7 @@ def sync(
     return sync_detailed(
         id=id,
         client=client,
+        purge=purge,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -117,12 +141,19 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Delete a managed PostgreSQL database
 
+     A ready database is kept for 7 days with its compute stopped and its connections refused, and can be
+    undeleted until restorable_until. It still counts toward the plan's database limit and keeps its
+    name until it is purged. Any other database, or a delete with purge=true, is deleted at once.
+    Bindings and restore dependencies must be removed first.
+
     Args:
         id (str):
+        purge (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -135,6 +166,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        purge=purge,
         idempotency_key=idempotency_key,
     )
 
@@ -147,12 +179,19 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedPostgresDatabase | Problem | None:
     """Delete a managed PostgreSQL database
 
+     A ready database is kept for 7 days with its compute stopped and its connections refused, and can be
+    undeleted until restorable_until. It still counts toward the plan's database limit and keeps its
+    name until it is purged. Any other database, or a delete with purge=true, is deleted at once.
+    Bindings and restore dependencies must be removed first.
+
     Args:
         id (str):
+        purge (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -167,6 +206,7 @@ async def asyncio(
         await asyncio_detailed(
             id=id,
             client=client,
+            purge=purge,
             idempotency_key=idempotency_key,
         )
     ).parsed

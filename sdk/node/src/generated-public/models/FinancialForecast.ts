@@ -19,7 +19,7 @@ export type FinancialForecast = {
   projected_quantity?: number;
   projected_net_millicents?: number;
   /**
-   * Set only for account-level meters priced by more than one rate, such as object_storage (ADR-20261020160000).
+   * Set only for account-level meters priced by more than one rate, such as object_storage.
    */
   projected_gross_millicents?: number;
 };

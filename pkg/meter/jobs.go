@@ -171,12 +171,11 @@ func (m *JobMetrics) Registry() *prometheus.Registry { return m.reg }
 // up closed minutes that were never recorded compute-complete (H5-55).
 func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error) {
 	observedAt := s.now().UTC()
-	s.jobCaughtUp = s.jobCaughtUp[:0]
 	if _, ok := s.store.(instanceBillingSecondsStore); !ok {
 		return s.rollJobs(ctx, MinuteKey(observedAt), false)
 	}
-	newest := observedAt.Truncate(time.Minute).Add(-time.Minute)
-	pending, rolled, err := s.minutesToCatchUp(ctx, s.jobRolled, newest)
+	newest := s.newestClosedMinute(observedAt)
+	pending, rolled, _, err := s.minutesToCatchUp(ctx, s.jobRolled, newest)
 	s.jobRolled = rolled
 	if err != nil {
 		return nil, err
@@ -189,7 +188,6 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 			return out, fmt.Errorf("meter: catch up job minute %s: %w", minute.Format(time.RFC3339), err)
 		}
 		s.jobRolled[minute] = true
-		s.jobCaughtUp = append(s.jobCaughtUp, minute)
 	}
 	rows, err := s.rollJobs(ctx, newest, true)
 	out = append(out, rows...)

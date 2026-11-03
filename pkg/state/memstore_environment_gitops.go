@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -158,6 +159,12 @@ func (m *MemStore) ApproveEnvironmentDesiredRevision(_ context.Context, input Ap
 	var revision EnvironmentDesiredRevision
 	for _, existing := range memory.revisions {
 		if existing.CommitSHA == input.CommitSHA && existing.Digest == desired.Digest {
+			// Mirrors InsertEnvironmentDesiredRevision: a person's approval
+			// replaces a key's, never the reverse.
+			if !strings.HasPrefix(input.ApprovedBy, EnvironmentRevisionKeyApproverPrefix) && existing.ApprovedBy != input.ApprovedBy {
+				existing.ApprovedBy, existing.ApprovedAt = input.ApprovedBy, time.Now().UTC()
+				memory.revisions[existing.ID] = existing
+			}
 			revision = existing
 			break
 		}

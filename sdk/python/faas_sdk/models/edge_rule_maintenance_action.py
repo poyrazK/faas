@@ -13,10 +13,9 @@ T = TypeVar("T", bound="EdgeRuleMaintenanceAction")
 
 @_attrs_define
 class EdgeRuleMaintenanceAction:
-    """Per-route maintenance toggle (ADR-091 amendment, §4.1.2.13).
+    """Per-route maintenance toggle.
     The fine-grained primitive for "this endpoint is in
-    maintenance mode" — the hot-path applier
-    (pkg/gateway.(*Handler).applyEdgeRuleMaintenance) short-
+    maintenance mode" — the gateway's hot-path applier short-
     circuits a matched (host, path, http_method) request with
     503 + Retry-After BEFORE auth, BEFORE wake. The coarse
     sibling (`apps.maintenance_mode`, PATCH /v1/apps/{slug})

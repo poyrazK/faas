@@ -117,11 +117,56 @@ func healthcheckGRPCForApp(dep state.Deployment, appProtocol string) (bool, stri
 // a spec that carries both, so h14-grpc's first deploy on rc.297 failed its
 // snapshot prime with "healthcheck_path and healthcheck_grpc are mutually
 // exclusive" (Hunt 14 H14-55).
-func startupProbeForApp(dep state.Deployment, appProtocol string) (path string, grpc bool, service string) {
-	if grpc, service = healthcheckGRPCForApp(dep, appProtocol); grpc {
+func startupProbeForApp(dep state.Deployment, app state.App) (path string, grpc bool, service string) {
+	if grpc, service = healthcheckGRPCForApp(dep, app.AppProtocol); grpc {
 		return "", true, service
 	}
-	return healthcheckPathFromDep(dep), false, ""
+	return healthcheckPathForApp(dep, app), false, ""
+}
+
+// healthcheckPathForApp drops the platform's default /healthz when the routed
+// port is one of the app's public raw-TCP listeners (ADR-20261027090000). A
+// TCP service such as a database cannot answer an HTTP GET, and a source
+// build had no way to say so: every boot ended app_not_listening. A health
+// path the customer chose (deploy override, environment runtime field,
+// gregale.yaml hosting.health, or a non-default path) keeps HTTP readiness.
+func healthcheckPathForApp(dep state.Deployment, app state.App) string {
+	path := healthcheckPathFromDep(dep)
+	if path != defaultHealthcheckPath || !routesRawTCPListener(dep, app) ||
+		deploymentDeclaresStartupProbe(dep) || profileHealthFromConfig(dep) {
+		return path
+	}
+	return ""
+}
+
+const defaultHealthcheckPath = "/healthz"
+
+// routesRawTCPListener reports that the deployment's routed port is declared
+// on the app as a public TCP listener.
+func routesRawTCPListener(dep state.Deployment, app state.App) bool {
+	port := deploymentRuntimePort(dep)
+	if port == 0 {
+		port = api.DefaultAppPort
+	}
+	for _, declared := range app.Manifest.Ports {
+		if declared.Port == port && !declared.Internal && declared.EffectiveProtocol() == api.WorkloadPortTCP {
+			return true
+		}
+	}
+	return false
+}
+
+// profileHealthFromConfig reports that the persisted profile's health path is
+// gregale.yaml's explicit hosting.health rather than the inferred default.
+func profileHealthFromConfig(dep state.Deployment) bool {
+	var receipt struct {
+		Profile frameworkprofile.Profile `json:"profile"`
+	}
+	if len(dep.APIHostingReceipt) > 0 && json.Unmarshal(dep.APIHostingReceipt, &receipt) == nil && receipt.Profile.HealthFromConfig {
+		return true
+	}
+	var profile frameworkprofile.Profile
+	return len(dep.InferredProfile) > 0 && json.Unmarshal(dep.InferredProfile, &profile) == nil && profile.HealthFromConfig
 }
 
 // deploymentDeclaresStartupProbe reports an explicit primary-app probe: an

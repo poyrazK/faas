@@ -20,7 +20,7 @@ T = TypeVar("T", bound="EdgeRuleValidateParameters")
 @_attrs_define
 class EdgeRuleValidateParameters:
     """Path, query, and header validation for a kind=validate rule
-    (ADR-091 amendment: request parameters). Each schema is a JSON
+    (request parameters). Each schema is a JSON
     Schema object whose properties are parameter names; property types
     must be string, integer, number, boolean, or an array of those.
     Request values are converted to the declared type before

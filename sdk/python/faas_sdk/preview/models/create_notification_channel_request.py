@@ -21,7 +21,7 @@ T = TypeVar("T", bound="CreateNotificationChannelRequest")
 
 @_attrs_define
 class CreateNotificationChannelRequest:
-    """Adds a Slack, PagerDuty or email alert channel (ADR-749). Set only the fields for the chosen kind."""
+    """Adds a Slack, PagerDuty or email alert channel. Set only the fields for the chosen kind."""
 
     name: str
     """Unique per account."""

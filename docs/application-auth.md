@@ -1140,6 +1140,9 @@ gregale realtime create shop --auth shop-auth --allowed-origin https://shop.exam
 
 Name channels `org:<org id>:<kind>:<name>`, for example `org:…:room:lobby`, and
 add a policy such as `{"action": "realtime:read", "resource": "room", "permission": "org:read"}`.
+Setting presence state and sending signals is a separate action, `realtime:presence`:
+add `{"action": "realtime:presence", "resource": "room", "permission": "org:read"}`
+for channels where members may announce state or signal each other.
 Retained WebSocket and SSE channel grants have a 30-second lifetime. A ban,
 deletion, global sign-out or membership change is enforced when that check next
 runs. Expired grants block further channel output until the check succeeds.

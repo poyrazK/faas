@@ -11,7 +11,7 @@ export type EventReplayBackfillItemResponse = {
   event_type: string;
   schema_version?: string;
   accepted_at: string;
-  state: 'pending' | 'processing' | 'enqueued' | 'filtered' | 'failed' | 'skipped_captured' | 'skipped_unknown' | 'skipped_existing' | 'skipped_unsettled';
+  state: 'pending' | 'processing' | 'enqueued' | 'filtered' | 'failed' | 'skipped_captured' | 'skipped_unknown' | 'skipped_existing' | 'skipped_unsettled' | 'cancelled';
   attempts: number;
   failure_code?: string;
   /**

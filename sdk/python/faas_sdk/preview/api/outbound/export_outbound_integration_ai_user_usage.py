@@ -116,9 +116,9 @@ def sync_detailed(
 ) -> Response[File | Problem]:
     """Export per-end-user AI gateway usage for a range of UTC days.
 
-     Requires MFA and read scope (ADR-995). Streams every per-end-user row of the days from through to,
-    ordered by day and end user. CSV columns are usage_date, end_user, requests, error_requests,
-    input_tokens, output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
+     Requires MFA and read scope. Streams every per-end-user row of the days from through to, ordered by
+    day and end user. CSV columns are usage_date, end_user, requests, error_requests, input_tokens,
+    output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
 
     Args:
         integration (UUID):
@@ -158,9 +158,9 @@ def sync(
 ) -> File | Problem | None:
     """Export per-end-user AI gateway usage for a range of UTC days.
 
-     Requires MFA and read scope (ADR-995). Streams every per-end-user row of the days from through to,
-    ordered by day and end user. CSV columns are usage_date, end_user, requests, error_requests,
-    input_tokens, output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
+     Requires MFA and read scope. Streams every per-end-user row of the days from through to, ordered by
+    day and end user. CSV columns are usage_date, end_user, requests, error_requests, input_tokens,
+    output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
 
     Args:
         integration (UUID):
@@ -195,9 +195,9 @@ async def asyncio_detailed(
 ) -> Response[File | Problem]:
     """Export per-end-user AI gateway usage for a range of UTC days.
 
-     Requires MFA and read scope (ADR-995). Streams every per-end-user row of the days from through to,
-    ordered by day and end user. CSV columns are usage_date, end_user, requests, error_requests,
-    input_tokens, output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
+     Requires MFA and read scope. Streams every per-end-user row of the days from through to, ordered by
+    day and end user. CSV columns are usage_date, end_user, requests, error_requests, input_tokens,
+    output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
 
     Args:
         integration (UUID):
@@ -235,9 +235,9 @@ async def asyncio(
 ) -> File | Problem | None:
     """Export per-end-user AI gateway usage for a range of UTC days.
 
-     Requires MFA and read scope (ADR-995). Streams every per-end-user row of the days from through to,
-    ordered by day and end user. CSV columns are usage_date, end_user, requests, error_requests,
-    input_tokens, output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
+     Requires MFA and read scope. Streams every per-end-user row of the days from through to, ordered by
+    day and end user. CSV columns are usage_date, end_user, requests, error_requests, input_tokens,
+    output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
 
     Args:
         integration (UUID):

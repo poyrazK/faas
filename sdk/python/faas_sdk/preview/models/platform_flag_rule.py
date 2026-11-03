@@ -21,7 +21,7 @@ T = TypeVar("T", bound="PlatformFlagRule")
 @_attrs_define
 class PlatformFlagRule:
     """One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching
-    rule decides. Orgs match the organization a request acts under (ADR 20261021080640).
+    rule decides. Orgs match the organization a request acts under.
 
     """
 
@@ -38,10 +38,10 @@ class PlatformFlagRule:
     ends_at: datetime.datetime | Unset = UNSET
     """The rule stops applying at this moment (exclusive); must be after starts_at."""
     ramp: PlatformFlagRamp | Unset = UNSET
-    """Advances the rule's rollout stage by stage (ADR 20261021080640). The rollout is the current stage; apid
-    moves it on once the flag's version has held for interval_seconds and its health routes stayed under
-    max_5xx_basis_points over that window with at least min_requests requests. On a breach it pauses (and for
-    rollback returns one stage); a paused ramp waits for an operator to clear paused."""
+    """Advances the rule's rollout stage by stage. The rollout is the current stage; the API moves it on once the
+    flag's version has held for interval_seconds and its health routes stayed under max_5xx_basis_points over that
+    window with at least min_requests requests. On a breach it pauses (and for rollback returns one stage); a paused
+    ramp waits for an operator to clear paused."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -165,13 +165,16 @@ apid enforces this for every account in `FAAS_ADMIN_EMAILS`
   360 and activity, apps, node detail, node events, overview, anomalies,
   rate limits, audit-log search, events, traces, incidents with their
   evidence, context and recurrence, egress flows, managed Postgres usage and
-  accounting, job runs, deployments, account flags and `/v1/audit-log/all`.
+  accounting, job runs, deployments, account flags, `/v1/audit-log/all`,
+  data repairs, operator intents, GitHub recovery, runtime config with its
+  revisions and operations, and platform flags with their decisions.
   Sign in with `gregalectl auth login` and use that session.
 - **Fleet telemetry accepts a key.** Probes and scripts may keep an
   operator key (`FAAS_ADMIN_TOKEN`) for capacity, nodes, heartbeats, wake
   latency, builder heartbeats, `obs/health`, the notification, rule,
   recording and input health and coverage reads, collection history, and
-  the platform-alert summary, response times and triage history.
+  the platform-alert summary, response times and triage history, the Paddle
+  catalog and overage preflight, and secrets rekey progress.
 - **One-release grace.** Setting `FAAS_OPERATOR_BEARER_READS=deprecated` on
   apid lets operator keys read customer data again, marked with
   `Deprecation: true` and a `Warning` header. Each such read writes an

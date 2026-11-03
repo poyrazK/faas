@@ -57,7 +57,7 @@ func newRecording(t *testing.T) *Service {
 	mem := state.NewMemStore()
 	aud := audit.New(mem, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, "githubd_test")
 	rec := reconcile.NewService(mem, aud, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	rec.Scan = func(_ fs.FS) (reposcan.Result, error) {
+	rec.Scan = func(_ fs.FS, _ reposcan.ScanOptions) (reposcan.Result, error) {
 		return reposcan.Result{}, nil
 	}
 	acct, err := mem.CreateAccount(context.Background(), "octo@example.com", "hobby")
@@ -489,7 +489,8 @@ func TestWebhookPush_Metrics(t *testing.T) {
 	// assert on the `code="ok"` counter line because CounterVec has no
 	// pre-instantiation loop — it's only emitted once observed.
 	want := []string{
-		`githubd_test_ops_total{code="err",op="webhook_push"} 2`,
+		`githubd_test_ops_total{code="signature_invalid",op="webhook_push"} 1`,
+		`githubd_test_ops_total{code="method_not_allowed",op="webhook_push"} 1`,
 		`githubd_test_op_duration_seconds_count{op="webhook_push"} 2`,
 	}
 	for _, w := range want {

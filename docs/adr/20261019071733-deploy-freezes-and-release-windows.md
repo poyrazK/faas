@@ -1,6 +1,6 @@
 # ADR-20261019071733 · Deploy freezes and release windows
 
-- **Status:** accepted (shipped in PR 5034, 2026-10-20); n2 metal drill passed 2026-10-26 (`cmd/e2e/release_guards_drill_metal_test.go`); amendment 1 (2026-10-26)
+- **Status:** accepted (shipped in PR 5034, 2026-10-20); n2 metal drill passed 2026-10-26 (`cmd/e2e/release_guards_drill_metal_test.go`); amendment 1 (2026-10-26); amendments 2-3 (2026-10-28); amendment 4 (2026-10-29)
 - **Date:** 2026-10-19
 - **Follows:** [ADR-1446](1446-safe-releases-by-default.md) (production releases), [ADR-1445](1445-post-release-watch.md) and [ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md) (automatic rollbacks)
 - **Decision:** An account can freeze production releases for all of its apps or for one app: for a fixed window, every week at set hours, or for a while after Gregale rolls a release back automatically. While a freeze is active, every path that creates a production deployment refuses with `409 release_frozen`, naming the freeze. A person can override one release with a reason, which is audited. Rollbacks are never frozen.
@@ -62,7 +62,7 @@ A deploy request may carry `override_freeze` with a reason (1–200 characters).
 
 - A release refused by a freeze costs nothing: no build runs, no upload is kept and no deployment row exists.
 - Weekly windows are evaluated in the freeze's time zone, so they follow daylight-saving changes.
-- Freezes are per account. Org-wide freezes across several accounts are out of scope.
+- Freezes are per account. Org-wide freezes across several accounts are out of scope. (Superseded by amendment 4: a company organization owns its apps' freezes.)
 - Project-level freezes, and freezes on non-production environments, are follow-ups. An app-level freeze on each app of a project covers the case meanwhile.
 
 ## Amendment 1 (2026-10-26): every path that releases into production
@@ -80,3 +80,109 @@ All three now meet the freeze.
 - **Runtime upgrades.** Staging an upgrade refuses an app a freeze covers (`runtimeupgrade.ErrReleaseFrozen`). It fails closed when freezes cannot be read, since a platform upgrade can wait. Upgrades have no customer route yet. Before customer admission ships, the cutover must also hold while a freeze is active, because a freeze can start between staging and cutover.
 - **Metrics.** `faas_release_guard_decisions_total{guard="freeze",outcome="refused|overridden"}` counts refusals and overrides on every path (`pkg/releasemetrics`). The runbook is `docs/runbooks/FaasReleaseGuards.md`.
 - **Dashboard.** `/dashboard/apps/{slug}/release-safety` shows the active and next freezes, alongside the app's gates, approvals and scheduled releases.
+
+## Amendment 2 (2026-10-28): runtime upgrade cutover holds while frozen
+
+Amendment 1 left one gap: a freeze that starts after staging, while the
+upgrade's candidate builds, did not stop the cutover. Now the runtime upgrade
+executor reads the app's freezes before every advance
+(`runtimeupgrade.ReleaseFreezeHold`). While one is active, a ready upgrade
+keeps waiting (phase `waiting`, no blocker) instead of switching traffic, and it
+completes once the freeze lifts or ends. A freeze read that fails holds the
+upgrade too: the iteration fails and its lease expires. The upgrade's deadline
+still applies, so a long freeze ends it as `deadline_exceeded`. The claim
+carries the account, app and serving deployment from the row it already
+returns, so no query or schema changes.
+
+## Amendment 3 (2026-10-28): releases parked before a freeze, and the override audit
+
+- **A parked release waits for the freeze.** A freeze refuses creating
+  production releases, but a release deployed without traffic before it began
+  could ship during it through `traffic`, promote or a rollback to it, with no
+  override and no audit. Giving traffic to a live release that is at 0% by
+  choice, has never completed a rollout and was created before the active
+  freeze's current start is refused with `409 release_frozen`. A release
+  deployed during the freeze passed the freeze check, or its audited override,
+  when it was created. A release that completed a rollout served before; going
+  back to it is a rollback, which freezes never refuse.
+- **The override is audited once the release exists.** A deploy emitted
+  `release.freeze_overridden` at the freeze check, so a deploy that then failed
+  validation left an override for a release that never existed. The deploy
+  paths now emit it after creating the deployment, naming it.
+
+## Amendment 4 (2026-10-29): a company organization owns its apps' freezes
+
+A freeze belonged to an account, but a company app's rows stay under the
+account of the member who created it
+([ADR-202610171904](202610171904-organization-resource-lifecycle.md)). Only
+that member could freeze the app: another admin's `POST /v1/freezes` naming it
+got 404. No freeze could cover all of a company's apps. A creator's freeze on
+all of their apps also froze the company apps they had created, and their
+freezes on company apps went away with their account.
+
+- **Owner.** A freeze belongs to an account or to a company organization
+  (`release_freezes.org_id`; exactly one of `account_id` and `org_id`, checked
+  by `release_freezes_one_owner_chk`). A company app is covered by its
+  organization's freezes, on all of its apps or on that app. A personal app,
+  including one in a personal organization, is covered by its account's
+  freezes. An account freeze on all apps no longer reaches company apps.
+  `freeze.Owner` resolves the owner from the app's persisted `org_id`, and
+  every place that checks a freeze reads the app's owner through it: the
+  deploy paths, GitHub pushes, GitOps activation, retries, parked releases,
+  scheduled releases at scheduling and at start, runtime upgrade staging and
+  cutover, and after-rollback policies. An automatic freeze belongs to the
+  owner of the policy that created it. Each owner holds at most
+  `api.ReleaseFreezesMax` unlifted freezes. A company's freezes are removed
+  with the organization, not with any member's account.
+- **Routes.**
+  - `GET|POST /v1/apps/{slug}/freezes` and `DELETE /v1/apps/{slug}/freezes/{id}`
+    list the freezes covering an app and create or lift a freeze on it, for a
+    personal or a company app. They take the app's organization access check
+    (`pkg/apid/appaccess`).
+  - `GET|POST /v1/orgs/{slug}/freezes` and `DELETE /v1/orgs/{slug}/freezes/{id}`
+    hold a company's freezes on all of its apps. A personal organization's
+    route answers 409: its apps use `/v1/freezes`.
+  - `/v1/freezes` holds the account's freezes. Naming a company app there is
+    refused with 409 and the routes that hold its freezes, instead of creating
+    a freeze that would cover nothing.
+  - A freeze in a response carries `org`, the owning organization's slug.
+- **Roles on a company.** Every member reads freezes (`org.read_app`). A
+  member who deploys (`org.deploy_app`) may create a window, since stopping
+  releases is the safe direction, and lift a window they created. Weekly and
+  after-rollback freezes are standing policies, so only owners and admins
+  (`org.manage_app_security`) create them, as with release gates and the
+  approval policy; they also lift any freeze. Overriding a freeze for one
+  release is unchanged: anyone who may deploy, with an audited reason.
+- **Audit and activity.** `release.freeze_created`, `release.freeze_lifted`
+  and `release.freeze_overridden` keep their names and add `org_id` for a
+  company's freeze. They also appear in the organization's activity timeline,
+  with Gregale as the actor of an automatic freeze.
+- **CLI.** `gregale release freeze create|list|lift` take `--org ORG` for a
+  company's freezes. `--app` uses the app routes, so it works on company apps.
+  `--all-apps` freezes your personal apps.
+
+Freezes existing before this amendment keep their account. On 2026-10-29
+production held three freezes, all lifted, so none needed converting.
+
+## Amendment 5 (2026-11-01): overriding a company's freeze needs the right to lift it
+
+Any principal allowed to deploy could override, which amendment 4 kept. For a company organization that let a developer, or any member's CI key, ship past a freeze an owner or admin set for the whole company, with nobody but the audit log told. An override of a company organization's freeze now needs what lifting it needs: an owner or admin, or the member who created the window, with a signed-in session or an admin-scoped key (lifting needs the admin scope since ADR-20261020085706 amendment 5). Others get `403 release_freeze_override_not_allowed`. An account's own freezes keep the open, audited override: one person both sets and overrides them.
+
+## Amendment 6 (2026-11-01): an after-rollback freeze ends when its rollback fails
+
+An after-rollback freeze starts when Gregale requests the automatic rollback. If that rollback does not restore the previous release (ADR-1445 amendment 4), the release it meant to replace still serves and a fix has to ship; the freeze, which only an owner or admin may lift in a company (amendment 5), held it. Gregale now lifts the after-rollback freezes that name the release when its automatic rollback fails, audited as `release.freeze_lifted` by `gregale`.
+
+## Amendment 7 (2026-11-02): a scheduled release overrides a company's freeze on the same terms
+
+Amendment 5 held an immediate release's override of a company freeze to the right to lift it. A scheduled release took its override through a separate check, which only asked for a reason. `release_at` may be up to a minute in the past and the scheduled-release worker checks every 15 seconds, so a member's deploy key could deploy with `release_at` set to now and `override_freeze` set, and ship past an owner's freeze seconds later. Scheduling a release (a deploy with `release_at`, or `PUT /v1/deployments/{id}/schedule`) whose time falls in a company freeze now needs the same right as an immediate override: `403 release_freeze_override_not_allowed` otherwise.
+
+## Amendment 8 (2026-11-03): a scheduled release is built during the freeze it is created in
+
+A scheduled release was checked against freezes only at `release_at`, but it is built, and its release command (a migration) runs, as soon as it is deployed; only its traffic waits. A release scheduled during a freeze for after it so changed the production database during the freeze with no override and no audit (release review 2026-11-03). A deploy with `release_at` is now also checked against the freezes active when it is made, exactly as an immediate release: refused with `409 release_frozen` unless overridden, with the override held to amendment 5 and audited. Rescheduling a release that is already built (`PUT /v1/deployments/{id}/schedule`) is unchanged.
+
+## Amendment 9 (2026-11-03): release graphs and protected environments meet the release guards
+
+Two paths gave a release traffic with none of the guards (release review 2026-11-03):
+
+- **Release graph activation.** `release-sets/activate` and `release-sets/rollback` made a project release graph serve with only binding qualification: a member staged without traffic could ship during the break-glass pause or a freeze, past its app's approval policy, into a protected environment. A member that does not serve yet now meets exactly what `traffic` or promote would give it (the pause, the freezes that began after it was deployed, the app's approvals), and activating a graph in a protected environment other than production is refused. Members already serving, and a deactivation's fallback, are not new releases.
+- **Protected environments.** A protected environment takes releases through an approved project plan or environment promotion, but a single-app deploy into one (by `environment`, raw `scope`, or a GitHub push to its scope) needed no approval. Such a deploy is now refused (`409 project_environment_approval_required`) unless it stages the release without traffic, and that staged release cannot take traffic by hand (`traffic`, promote, rollback to it). Production keeps its direct releases, as for its routes (ADR-233): freezes, approval policies and the default rollout hold them.

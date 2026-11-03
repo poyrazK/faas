@@ -18,7 +18,7 @@ T = TypeVar("T", bound="AppErrorSummaryItem")
 
 @_attrs_define
 class AppErrorSummaryItem:
-    """One row of the errors summary (ADR-096 / PR-B)."""
+    """One row of the errors summary."""
 
     fingerprint: str
     """64-hex-char SHA-256 fingerprint identifying this error group; stable across requests with the same (route,

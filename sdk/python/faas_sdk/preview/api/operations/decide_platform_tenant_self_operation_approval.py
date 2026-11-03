@@ -109,7 +109,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: OperationApprovalRequest,
 ) -> Response[OperationResponse | Problem]:
-    """Decide this customer's approval on its waiting operation (ADR-1194).
+    """Decide this customer's approval on its waiting operation.
 
      Requires platform_tenant:operations:manage. Only a step whose definition names the customer
     approver, on the customer's own operation. The same decision is idempotent; a different one
@@ -149,7 +149,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: OperationApprovalRequest,
 ) -> OperationResponse | Problem | None:
-    """Decide this customer's approval on its waiting operation (ADR-1194).
+    """Decide this customer's approval on its waiting operation.
 
      Requires platform_tenant:operations:manage. Only a step whose definition names the customer
     approver, on the customer's own operation. The same decision is idempotent; a different one
@@ -184,7 +184,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: OperationApprovalRequest,
 ) -> Response[OperationResponse | Problem]:
-    """Decide this customer's approval on its waiting operation (ADR-1194).
+    """Decide this customer's approval on its waiting operation.
 
      Requires platform_tenant:operations:manage. Only a step whose definition names the customer
     approver, on the customer's own operation. The same decision is idempotent; a different one
@@ -222,7 +222,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: OperationApprovalRequest,
 ) -> OperationResponse | Problem | None:
-    """Decide this customer's approval on its waiting operation (ADR-1194).
+    """Decide this customer's approval on its waiting operation.
 
      Requires platform_tenant:operations:manage. Only a step whose definition names the customer
     approver, on the customer's own operation. The same decision is idempotent; a different one

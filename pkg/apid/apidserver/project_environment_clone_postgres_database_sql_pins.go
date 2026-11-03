@@ -57,7 +57,7 @@ func (s *server) projectEnvironmentClonePostgresDatabaseSQLPins(ctx context.Cont
 		if owned.DatabasePlanCiphertextSHA256 != parent.Sealed.CiphertextSHA256 || owned.ArchiveOwnerID != a.OwnerID || owned.ArchiveReservationSHA256 != a.ReservationFingerprint() {
 			return zero, managedpostgres.ErrConflict
 		}
-		return copydatabases.OpenPreparation(mfaIdentities(), exports, plan, oid, owned.Sealed)
+		return copydatabases.OpenPreparation(accountIdentities(), exports, plan, oid, owned.Sealed)
 	}
 	if err == nil {
 		r, e := open(owner)
@@ -69,8 +69,8 @@ func (s *server) projectEnvironmentClonePostgresDatabaseSQLPins(ctx context.Cont
 	if l.Operation.Status != state.CloneOperationCapturing || s.managedPostgres == nil || setSecretRecipient == nil {
 		return zero, owner, managedpostgres.ErrUnavailable
 	}
-	recipient := hostSecretRecipient()
-	if !cloneInventoryCanOpen(recipient, mfaIdentities()) {
+	recipient := cloneSealRecipient()
+	if !cloneInventoryCanOpen(recipient, accountIdentities()) {
 		return zero, owner, managedpostgres.ErrUnavailable
 	}
 	parents := s.store.(state.ProjectEnvironmentClonePostgresDatabasePlanStore)
@@ -146,7 +146,7 @@ func (s *server) openProjectEnvironmentClonePostgresDatabasePreparation(ctx cont
 	if err != nil {
 		return zero, err
 	}
-	ids := mfaIdentities()
+	ids := accountIdentities()
 	input, err := s.clonePostgresDatabaseInput(ctx, l, source, ids, exports)
 	if err != nil {
 		return zero, err

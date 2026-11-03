@@ -21,6 +21,9 @@ import (
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
+	// DatabaseScheduler enables the database scheduler (ADR-1027).
+	DatabaseScheduler *DatabaseSchedulerConfig `toml:"database_scheduler"`
+
 	// AppsDomain matches public routing for deployment alias activation checks.
 	AppsDomain                      string `toml:"apps_domain"`
 	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
@@ -190,9 +193,33 @@ type Config struct {
 	// QuietPauseAdmission (ADR-1151) makes the vCPU and CPU gates count only
 	// active instances: bookings less those vmmd reports quiet-paused, with
 	// all bookings capped at api.QuietPauseMaxVCPUOvercommitPercent of the
-	// budget. Off by default; turn it on together with vmmd's quiet_pause on
-	// the same nodes. A node without a fresh sample counts every booking.
+	// budget. On by default (ADR-1151 amendment 2026-10-31), as vmmd's
+	// quiet_pause is; quiet_pause_admission = false turns it off, and
+	// FAAS_QUIET_PAUSE_ADMISSION overrides it either way. A node without a
+	// fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
+
+	// MeasuredCPUAdmission (ADR 20261029151111) makes the vCPU and CPU gates
+	// charge an instance the latest instance stats sample measured its
+	// measured host CPU instead of its booking, never less than
+	// api.MeasuredCPUMinChargePercent of the booking, and stops counting its
+	// guest vCPUs; all bookings stay capped at
+	// api.MeasuredCPUMaxOvercommitPercent of the budget. On by default
+	// (amendment 2026-10-31); measured_cpu_admission = false turns it off,
+	// and FAAS_MEASURED_CPU_ADMISSION overrides it either way. A node
+	// without a fresh sample counts every booking.
+	MeasuredCPUAdmission bool `toml:"measured_cpu_admission"`
+
+	// CPUPressureBackstop (ADR 20261030100950) makes this schedd hold the
+	// nodes whose readings it receives under CPU pressure while their tenant
+	// tasks wait for CPU (api.NodeCPUPressureStallPercent) and their CPUs
+	// are nearly all busy (api.NodeCPUPressureBusyPercent). Every schedd
+	// honours a hold: placement prefers other nodes and admission counts the
+	// node's bookings in full. On by default (amendment 2026-10-31);
+	// cpu_pressure_backstop = false turns it off, and
+	// FAAS_CPU_PRESSURE_BACKSTOP overrides it either way. The readings'
+	// gauges are published either way.
+	CPUPressureBackstop bool `toml:"cpu_pressure_backstop"`
 
 	// QuietPauseLedger (ADR-20261023171905) records the quiet pauses this
 	// schedd's node reports in the pause ledger, for meterd to subtract from
@@ -209,18 +236,25 @@ type Config struct {
 	FrozenTier bool `toml:"frozen_tier"`
 	// FrozenTierApps (ADR-1151 step 3) extends the frozen tier from
 	// functions to request-mode apps whose declared pause is not never.
-	// Off by default and ignored unless frozen_tier is on.
-	// FAAS_FROZEN_TIER_APPS overrides it.
+	// On by default (ADR-1151 amendment 2026-10-27) and ignored unless
+	// frozen_tier is on. FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
 	// FrozenTierWorkers (ADR-20261019103000) lets a worker pool freeze a
 	// surplus worker that holds no queue lease instead of stopping it, and
 	// thaw it before booting a new one. Off by default and ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_WORKERS overrides it.
 	FrozenTierWorkers bool `toml:"frozen_tier_workers"`
+	// FrozenProactiveCompress (ADR 20261031143521) compresses frozen VMs
+	// into memory-only swap on nodes near their RAM ceiling, longest frozen
+	// first, so the RAM they free goes back to admission. On by default; a
+	// node without the zswap role answers unavailable and is left alone.
+	// FAAS_FROZEN_PROACTIVE_COMPRESS overrides it either way.
+	FrozenProactiveCompress bool `toml:"frozen_proactive_compress"`
 	// FrozenTierEarlyFreezeAfterS (ADR-20261021215353) freezes a quiet
 	// between_requests instance this many seconds after its last request
 	// instead of at its idle timeout, so it stops accruing usage soon after
-	// it last served. 0 (the default) is off; otherwise 2-300. Ignored unless
+	// it last served. 0 is off; otherwise 2-300, by default
+	// api.FrozenEarlyFreezeDefaultSeconds (ADR 20261102072403). Ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S overrides it.
 	FrozenTierEarlyFreezeAfterS int `toml:"frozen_tier_early_freeze_after_s"`
 
@@ -490,6 +524,24 @@ func LoadConfig(path string) (*Config, error) {
 		ReaperAggressive: true,
 		// ADR-909 (accepted 2026-10-12): admit by measured memory.
 		MeasuredAdmission: true,
+		// ADR-1151 amendment 2026-10-27: request-mode apps join the frozen
+		// tier whenever frozen_tier is on. FAAS_FROZEN_TIER_APPS=false or
+		// frozen_tier_apps = false keeps the tier to functions.
+		FrozenTierApps: true,
+		// Amendments of 2026-10-31 to ADR-1151, ADR 20261029151111 and
+		// ADR 20261030100950: admit CPU by what instances use, with the
+		// pressure backstop. Release rollouts re-render schedd.toml from the
+		// manifest, so only a binary default keeps them on; each stays an
+		// opt-out (= false in schedd.toml).
+		QuietPauseAdmission: true,
+		// ADR 20261031143521: zswap (the role's canary list) gates it per
+		// node.
+		FrozenProactiveCompress: true,
+		MeasuredCPUAdmission:    true,
+		CPUPressureBackstop:     true,
+		// ADR 20261102072403: early freeze on by default for density; 0 in
+		// schedd.toml or FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S turns it off.
+		FrozenTierEarlyFreezeAfterS: api.FrozenEarlyFreezeDefaultSeconds,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go
@@ -540,7 +592,7 @@ func LoadConfig(path string) (*Config, error) {
 			c.Role = role.FromConfig(string(c.Role), "FAAS_SCHEDD_ROLE")
 			applyRoutingEnv()
 			c.overlayEventAcknowledgmentWriterEnv()
-			return c, nil
+			return c, loadDatabaseSchedulerFile(c)
 		}
 		return nil, fmt.Errorf("schedd: read %q: %w", path, err)
 	}
@@ -603,6 +655,26 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.FrozenTierApps = enabled
 	}
+	// The density switches default on (amendments of 2026-10-31). A manifest
+	// render rewrites schedd.toml at every rollout, so a node's opt-out set
+	// there does not last; an environment drop-in does.
+	for _, sw := range []struct {
+		env string
+		dst *bool
+	}{
+		{"FAAS_QUIET_PAUSE_ADMISSION", &c.QuietPauseAdmission},
+		{"FAAS_MEASURED_CPU_ADMISSION", &c.MeasuredCPUAdmission},
+		{"FAAS_CPU_PRESSURE_BACKSTOP", &c.CPUPressureBackstop},
+		{"FAAS_FROZEN_PROACTIVE_COMPRESS", &c.FrozenProactiveCompress},
+	} {
+		if v := os.Getenv(sw.env); v != "" {
+			enabled, err := strconv.ParseBool(v)
+			if err != nil {
+				return nil, fmt.Errorf("schedd: %s must be a boolean (got %q)", sw.env, v)
+			}
+			*sw.dst = enabled
+		}
+	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_WORKERS"); v != "" {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {
@@ -623,7 +695,36 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("schedd: frozen_tier_early_freeze_after_s must be 0 or %d-%d (got %d)", api.FrozenEarlyFreezeMinSeconds, api.FrozenEarlyFreezeMaxSeconds, s)
 	}
 	applyRoutingEnv()
-	return c, nil
+	return c, loadDatabaseSchedulerFile(c)
+}
+
+// loadDatabaseSchedulerFile reads [database_scheduler] from the file
+// FAAS_SCHEDD_DATABASE_CONFIG names (ADR-1027). Ansible renders that file
+// from the deployment manifest's database hosts, beside the operator's
+// schedd.toml; the table may live in only one of them.
+func loadDatabaseSchedulerFile(c *Config) error {
+	path := os.Getenv("FAAS_SCHEDD_DATABASE_CONFIG")
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // operator-configured path
+	if err != nil {
+		return fmt.Errorf("schedd: read FAAS_SCHEDD_DATABASE_CONFIG: %w", err)
+	}
+	var file struct {
+		DatabaseScheduler *DatabaseSchedulerConfig `toml:"database_scheduler"`
+	}
+	if err := toml.Unmarshal(b, &file); err != nil {
+		return fmt.Errorf("schedd: parse %q: %w", path, err)
+	}
+	if file.DatabaseScheduler == nil {
+		return fmt.Errorf("schedd: %q has no [database_scheduler]", path)
+	}
+	if c.DatabaseScheduler != nil {
+		return fmt.Errorf("schedd: [database_scheduler] is in both the config and %q", path)
+	}
+	c.DatabaseScheduler = file.DatabaseScheduler
+	return nil
 }
 
 func (c *Config) overlayEventAcknowledgmentWriterEnv() {

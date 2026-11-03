@@ -30,24 +30,24 @@ class PlatformTenantRateCardResponse:
     tenant_id: UUID
     currency: str
     unit: str
-    """What the tenant card prices (ADR-1310, ADR-1319)."""
+    """What the tenant card prices."""
     price_millicents_per_unit: int
     included_units_per_month: int
-    """Free units per tenant per UTC calendar month (ADR-975)."""
+    """Free units per tenant per UTC calendar month."""
     effective_from: datetime.datetime
     created_at: datetime.datetime
     base_fee_millicents_per_month: int | Unset = UNSET
-    """The card's fixed monthly charge per tenant (ADR-1322)."""
+    """The card's fixed monthly charge per tenant."""
     minimum_millicents_per_month: int | Unset = UNSET
-    """The card's minimum monthly usage charge per tenant (ADR-1322)."""
+    """The card's minimum monthly usage charge per tenant."""
     prorate_monthly_fees: bool | Unset = UNSET
-    """Whether the first month's fees are prorated (ADR-1325)."""
+    """Whether the first month's fees are prorated."""
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
-    """Ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."""
+    """Ladder counted per tenant per UTC calendar month; absent for flat cards."""
     tier_mode: PlatformTenantRateCardResponseTierMode | Unset = UNSET
-    """How the tenant ladder prices a month (ADR-1309)."""
+    """How the tenant ladder prices a month."""
     route_weights: PlatformTenantRateCardResponseRouteWeights | Unset = UNSET
-    """Units per request on a route (ADR-1307, ADR-1310); absent when every request counts 1."""
+    """Units per request on a route; absent when every request counts 1."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

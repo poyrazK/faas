@@ -102,7 +102,7 @@ def sync_detailed(
 ) -> Response[ManagedRealtimeOccupancyResponse | Problem]:
     """Count a managed realtime channel's subscribers and presence members.
 
-     Returns fleet-wide counts for each requested channel (ADR-1324).
+     Returns fleet-wide counts for each requested channel.
     `subscribers` counts every open subscription: WebSocket, read-only
     ticket and SSE. `presence_members` counts distinct presence members;
     a principal-scoped member with several connections counts once.
@@ -145,7 +145,7 @@ def sync(
 ) -> ManagedRealtimeOccupancyResponse | Problem | None:
     """Count a managed realtime channel's subscribers and presence members.
 
-     Returns fleet-wide counts for each requested channel (ADR-1324).
+     Returns fleet-wide counts for each requested channel.
     `subscribers` counts every open subscription: WebSocket, read-only
     ticket and SSE. `presence_members` counts distinct presence members;
     a principal-scoped member with several connections counts once.
@@ -183,7 +183,7 @@ async def asyncio_detailed(
 ) -> Response[ManagedRealtimeOccupancyResponse | Problem]:
     """Count a managed realtime channel's subscribers and presence members.
 
-     Returns fleet-wide counts for each requested channel (ADR-1324).
+     Returns fleet-wide counts for each requested channel.
     `subscribers` counts every open subscription: WebSocket, read-only
     ticket and SSE. `presence_members` counts distinct presence members;
     a principal-scoped member with several connections counts once.
@@ -224,7 +224,7 @@ async def asyncio(
 ) -> ManagedRealtimeOccupancyResponse | Problem | None:
     """Count a managed realtime channel's subscribers and presence members.
 
-     Returns fleet-wide counts for each requested channel (ADR-1324).
+     Returns fleet-wide counts for each requested channel.
     `subscribers` counts every open subscription: WebSocket, read-only
     ticket and SSE. `presence_members` counts distinct presence members;
     a principal-scoped member with several connections counts once.

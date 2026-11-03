@@ -165,7 +165,7 @@ func TestBuildSecretsReachTheBuilderWithoutAWarmVM(t *testing.T) {
 				t.Fatal(err)
 			}
 			vm := &fakeVM{out: BuildOutcome{OCIImage: artifact, DockerfileBuildSHA256: options.SHA256()}}
-			b := New(store, &fakeNotifier{}, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			b := New(store, &fakeNotifier{}, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{DeferCacheExport: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			_, err = b.ProcessOne(t.Context(), build.ID)
 			if tc.wantErr {
 				if !errors.Is(err, errBuildSecretMissing) || vm.spawnCalls != 0 {
@@ -181,6 +181,10 @@ func TestBuildSecretsReachTheBuilderWithoutAWarmVM(t *testing.T) {
 			}
 			if vm.lastRequest.WarmScopeKey != "" {
 				t.Fatalf("a build with secrets kept warm scope %q", vm.lastRequest.WarmScopeKey)
+			}
+			// ADR-20261029171525: the cache export VM would get no secrets.
+			if vm.lastRequest.DeferCacheExport {
+				t.Fatal("a build with secrets deferred its cache export")
 			}
 		})
 	}

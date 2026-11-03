@@ -15,6 +15,13 @@ import (
 // profileCapturePollInterval paces status polls while a capture runs.
 var profileCapturePollInterval = time.Second
 
+// profileCaptureWait bounds a wait on one capture: it may stay queued until
+// schedd's queued timeout, then runs its window and the collectors' grace;
+// the slack covers the sweep that fails it.
+func profileCaptureWait(capture api.ProfileCapture) time.Duration {
+	return api.ProfileCaptureQueuedTimeout + time.Duration(capture.DurationSeconds)*time.Second + api.ProfileCaptureGrace + 2*time.Minute
+}
+
 const profileCaptureUsage = "usage: gregale debug capture <slug> [--type cpu,heap,stacks] [--duration 10s] [--instance UUID] [--output DIR] [--top N] [--no-wait]"
 
 // cmdDebugCapture runs an on-demand CPU/heap capture on a running instance
@@ -61,18 +68,20 @@ func cmdDebugCapture(args []string) int {
 	return showProfileCapture(ctx, client, positional[0], capture, *output, *top)
 }
 
-const profileCapturesUsage = "usage: gregale debug captures <slug> [<capture-id>] [--output DIR] [--top N]"
+const profileCapturesUsage = "usage: gregale debug captures <slug> [<capture-id>] [--output DIR] [--top N] [--delete]"
 
-// cmdDebugCaptures lists an app's captures or shows one.
+// cmdDebugCaptures lists an app's captures, shows one, or deletes one with
+// --delete, freeing its share of the account's capture storage (ADR-1155).
 func cmdDebugCaptures(args []string) int {
 	fs := newFlagSet("debug captures", flag.ContinueOnError)
 	output := fs.String("output", "", "directory for the merged .pb.gz pprof files")
 	top := fs.Int("top", 15, "functions to print per kind")
+	del := fs.Bool("delete", false, "delete the named capture and its profiles")
 	flags, positional := normalizeDebugFlagArgs(args, map[string]bool{"output": true, "top": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) < 1 || len(positional) > 2 {
+	if len(positional) < 1 || len(positional) > 2 || *del && len(positional) != 2 {
 		PrintUsage(osStderr, profileCapturesUsage, debugCmdDocsTopic)
 		return 1
 	}
@@ -81,6 +90,16 @@ func cmdDebugCaptures(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
+	if *del {
+		if err := client.DeleteProfileCapture(ctx, positional[0], positional[1]); err != nil {
+			return printErr("Could not delete profile capture", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"app": positional[0], "id": positional[1], "deleted": true}))
+		}
+		_, _ = fmt.Fprintf(osStdout, "Deleted profile capture %s.\n", positional[1])
+		return 0
+	}
 	if len(positional) == 2 {
 		capture, err := client.GetProfileCapture(ctx, positional[0], positional[1])
 		if err != nil {
@@ -107,7 +126,7 @@ func cmdDebugCaptures(args []string) int {
 }
 
 func waitProfileCapture(ctx context.Context, client *Client, slug string, capture api.ProfileCapture) (api.ProfileCapture, error) {
-	deadline := time.Now().Add(time.Duration(capture.DurationSeconds)*time.Second + 2*time.Minute)
+	deadline := time.Now().Add(profileCaptureWait(capture))
 	for !capture.Done() {
 		if time.Now().After(deadline) {
 			return capture, fmt.Errorf("capture %s is still %s; check it later with `gregale debug captures %s %s`", capture.ID, capture.Status, slug, capture.ID)
@@ -154,7 +173,7 @@ func printProfileCapture(c api.ProfileCapture) int {
 	return 0
 }
 
-const profileCaptureDiffUsage = "usage: gregale debug capture-diff <slug> <capture-id> --base <capture-id> [--type cpu|heap] [--top N]"
+const profileCaptureDiffUsage = "usage: gregale debug capture diff <slug> <capture-id> --base <capture-id> [--type cpu|heap] [--top N]"
 
 // cmdDebugCaptureDiff compares a capture with an earlier one (ADR-1155).
 func cmdDebugCaptureDiff(args []string) int {

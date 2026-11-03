@@ -427,7 +427,17 @@ the host's units back to the release that was active before
 (`deployctl rollback --only … --expect-current <overlay> --to <base>`) and
 stops the run.
 `scripts/ci/observe_rollout_availability.sh` keeps doing the black-box
-probing during the control plane's activation itself.
+probing during the control plane's activation itself. Its canary app is the
+`ROLLOUT_APP_PROBE_URL` repository or environment variable, defaulting to
+`https://e2e-probe.gregale.dev/`; a canary whose baseline is unhealthy gates
+nothing, so the run carries a warning annotation and step-summary callout.
+A gated path fails on any failure other than a timeout. Up to three timed-out
+samples (at most two in a row, final sample healthy) are tolerated and
+annotated: the observer runs on the busy control plane it measures, and
+rc.304, rc.305 and rc.307 each failed activation on one or two 3 s timeouts
+while the bundle unpacked. Release acceptance's redeploy continuity probe
+likewise retries one failed probe once and fails on a failed retry or a second
+failure.
 
 ## Deploy order and skew in the unit lanes
 
@@ -464,6 +474,16 @@ The unit lanes enforce the rules above in their workflows:
   a variable an older binary ignores, and never remove one the running
   binaries read in the same change.
 
+  Every `deploy/` path has one class
+  (docs/adr/20261027151755-unit-lane-deploy-path-classes.md). A daemon
+  change must not need a change of the classes the lanes leave at the base:
+  the release's unit files and `blocking` paths (the production manifest,
+  operator playbooks) wait for the next full release and close both lanes
+  until then, and compute roles and playbooks hold the edge lane while it
+  restarts a gateway on a compute host. Documentation, samples, the
+  dashboard mirror and changes that only touch comment lines change
+  nothing a host runs, so they close nothing.
+
   `release-units.yml` deploys the control-plane lane first, and the edge
   lane (`cd-edge-units.yml`) only after it. When the edge lane runs alone,
   it first checks that the control plane already runs the code of that unit
@@ -472,6 +492,80 @@ The unit lanes enforce the rules above in their workflows:
   restores binaries, never the schema. The previous binaries run against an
   expand-only schema, and their startup migration ignores ledger versions
   they do not embed.
+
+## Release history
+
+Every `deployctl deploy` and `deployctl rollback` on a control-plane host
+records one row in `platform_release_activations` (issue #574). The row
+holds the host, the kind, the release and the release it replaced, the
+commit, the `--only` services, the actor and the start and finish times.
+deployctl inserts it as `in_progress` under the host's deploy lock and
+finishes it with one of these statuses:
+
+- `succeeded`;
+- `failed`;
+- `rolled_back`: the deploy changed the host, failed, and was unwound to the
+  previous release.
+
+A deployctl that dies mid-activation leaves its row `in_progress`. The
+host's next activation marks it `interrupted`.
+
+Compute hosts have no local Postgres, so deployctl does not record them.
+Instead, a compute host changes release through `gregalectl release
+install`, which stamps `compute_nodes.release_id` once the release's
+binaries are live (the node may still be drained for readiness). A trigger
+on that column records each change as a finished `deploy` row for the node:
+
+- the host is the node's name;
+- the row carries the release it replaced;
+- the actor is `release install as <database role>`.
+
+The trigger runs as the schema owner (SECURITY DEFINER) and writes only what
+the change says, so the installer's runtime role still cannot write the
+history itself. A failed insert only raises a warning; it never fails the
+install.
+
+Per-unit deploys and rollbacks on a compute host (`deployctl deploy --only`
+and `deployctl rollback --only` from the edge lane) do not change
+`compute_nodes.release_id`. deployctl appends each finished one to a spool on
+the host instead (`/var/lib/faas/deploy/activations.jsonl`, the newest 256),
+with the same detail a control-plane row has. After each node, the edge lane
+runs `unit_deploy.sh record`. It copies the spool to the control plane, where
+`deployctl record` imports it as the schema owner.
+
+- **Host name.** Rows are filed under the node's `compute_nodes` name
+  (`<node>.faas`), which CD supplies; a spool never names its own host, so a
+  node cannot write rows for another.
+- **Idempotent.** Each line keeps the id it got on the node, so importing it
+  again adds nothing.
+- **Late imports.** A run outside the edge lane, such as a watch rollback or
+  a manual run, is imported with the node's next edge deploy.
+
+To see what ran when:
+
+```
+gregalectl release history [--host NAME] [--limit 20] [--json]
+```
+
+It reads `FAAS_PG_DSN` (or `DATABASE_URL`, or `/etc/faas/sealed.env` as
+root), as the other `gregalectl release` commands do.
+
+- **Actor.** CD sets it to its workflow run (`FAAS_DEPLOY_ACTOR`). A deploy
+  run by hand records the operator's sudo or login name.
+- **Writes.** deployctl writes as the schema owner over the local socket.
+  Daemons can read the table but not change it: the migration and the
+  postgres role's `runtime-roles.sql` revoke their writes, as for the audit
+  log.
+- **Failures.** Recording is best effort. An unreachable Postgres costs a
+  deploy at most a few seconds and a warning on stderr; it never fails or
+  blocks the deploy.
+- **First rollout.** The table only exists once the release's migrations
+  have run, so the first deploy is recorded when it finishes.
+- **Not recorded:**
+  - a rerun that finds its release already active;
+  - a refused deploy (`--expect-current` mismatch);
+  - a compute host's activation whose deployctl died before it finished:
+    only finished activations are spooled.
 
 ## Not covered yet
 
@@ -485,6 +579,13 @@ The unit lanes enforce the rules above in their workflows:
   Neither is built.
 - The full release pipeline still has to enforce that no unit lags more than
   one release. The unit lanes do enforce it.
-- Gate 1 checks protos and guest JSON only. HTTP headers and trailers
-  between gatewayd-public and gatewayd-internal have no CI skew check; the
+- Gate 1 checks protos and guest JSON only. Edge-rule rows (apid writes
+  them, gatewayd-internal compiles them) have no CI skew check either. A
+  gateway fails a host closed on an enabled rule whose kind it does not know
+  or whose action is missing (ADR-091 amendment 2026-11-02), so release a new
+  kind behind a capability that is turned on after the edge rollout. A new
+  field on an existing kind is ignored by older gateways: if it makes a rule
+  refuse more, gate it the same way.
+- HTTP headers and trailers between gatewayd-public and gatewayd-internal
+  have no CI skew check; the
   tests named under Deploy order are the guard.

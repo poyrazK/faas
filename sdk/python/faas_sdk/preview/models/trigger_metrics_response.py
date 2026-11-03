@@ -12,7 +12,7 @@ T = TypeVar("T", bound="TriggerMetricsResponse")
 @_attrs_define
 class TriggerMetricsResponse:
     """Aggregated counters per state for one trigger. NOT a Prometheus
-    scrape — /v1/metrics is the Prometheus surface (issue #684).
+    scrape — /v1/metrics is the Prometheus surface.
 
     """
 

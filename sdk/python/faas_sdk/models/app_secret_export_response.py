@@ -12,8 +12,8 @@ T = TypeVar("T", bound="AppSecretExportResponse")
 
 @_attrs_define
 class AppSecretExportResponse:
-    """One sealed secret in export form: key name, sealed ciphertext (sealed at rest per §11), version, and timestamps.
-    Plaintext is never exported.
+    """One sealed secret in export form: key name, sealed ciphertext (sealed at rest), version, and timestamps. Plaintext
+    is never exported.
 
     """
 

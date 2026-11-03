@@ -32,8 +32,7 @@ class DiffResponse:
     reading the top-level keys agree.
     """
     blocking: bool
-    """True if any break has severity "error". Mirrors
-    [pkg/deploydiff.Diff.HasBlockingBreaks]. The exit-1
+    """True if any break has severity "error". The exit-1
     input for CI gates.
     """
     slug: str

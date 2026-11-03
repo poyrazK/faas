@@ -21,11 +21,8 @@ func RetirementHandler(store state.Store) httpkit.AccountHandler {
 			respond(w, nil, errors.New("retirement store unavailable"))
 			return
 		}
-		hidden, err := hiddenApps(r, store, account)
-		if err != nil {
-			respond(w, nil, err)
-			return
-		}
+		visibility := NewRetirementVisibility(r, store, account)
+		var err error
 		if r.Method == http.MethodGet {
 			offset := 0
 			if raw := r.URL.Query().Get("offset"); raw != "" {
@@ -36,7 +33,10 @@ func RetirementHandler(store state.Store) httpkit.AccountHandler {
 				return
 			}
 			out, err := source.ListMCPOAuthRetirements(r.Context(), account.ID, offset)
-			respond(w, VisibleRetirements(out, hidden), err)
+			if err == nil {
+				out, err = visibility.Filter(out)
+			}
+			respond(w, out, err)
 			return
 		}
 		id, err := uuid.Parse(r.PathValue("id"))
@@ -53,7 +53,7 @@ func RetirementHandler(store state.Store) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrValidation("use retry or acknowledge_manual"))
 			return
 		}
-		if err := retirementVisible(r, store, account.ID, id.String(), hidden); err != nil {
+		if err := retirementVisible(r.Context(), store, visibility, account.ID, id.String()); err != nil {
 			respond(w, nil, err)
 			return
 		}
@@ -69,16 +69,17 @@ func RetirementHandler(store state.Store) httpkit.AccountHandler {
 // retirementVisible refuses a recovery action on a hidden app's record as if
 // the record did not exist. Retrying can revoke a grant at the provider and
 // acknowledging closes the company's open revocation work.
-func retirementVisible(r *http.Request, store state.Store, account, id string, hidden map[string]bool) error {
-	if len(hidden) == 0 {
-		return nil
-	}
+func retirementVisible(ctx context.Context, store state.Store, visibility *RetirementVisibility, account, id string) error {
 	reader, ok := store.(state.MCPOAuthRetirementReader)
 	if !ok {
 		return errors.New("retirement app unavailable")
 	}
-	appID, err := reader.MCPOAuthRetirementAppID(r.Context(), account, id)
-	if err == nil && hidden[appID] {
+	appID, err := reader.MCPOAuthRetirementAppID(ctx, account, id)
+	if err != nil {
+		return err
+	}
+	visible, err := visibility.Visible(appID)
+	if err == nil && !visible {
 		err = state.ErrNotFound
 	}
 	return err

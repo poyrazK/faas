@@ -15,7 +15,7 @@ export class RunsService {
    * and admits each step as a separate disposable Run after its dependencies
    * succeed. Independent steps may run in parallel up to the submitted
    * workflow limit and the account's concurrent Run limit. Continuation is
-   * owned by the control plane and survives CLI disconnects and apid
+   * owned by the control plane and survives CLI disconnects and the API
    * restarts. Source and input are never returned; the encrypted plan is
    * erased when the workflow reaches a terminal state. Requires
    * `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
@@ -53,7 +53,7 @@ export class RunsService {
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,

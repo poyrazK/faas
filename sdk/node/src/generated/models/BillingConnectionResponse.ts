@@ -18,7 +18,7 @@ export type BillingConnectionResponse = {
    */
   api_url?: string;
   /**
-   * What the provider does with exported invoices (ADR-1311).
+   * What the provider does with exported invoices.
    */
   collection?: 'none' | 'send' | 'charge';
   /**
@@ -26,7 +26,7 @@ export type BillingConnectionResponse = {
    */
   days_until_due?: number;
   /**
-   * Whether Stripe Tax calculates tax on the connection's exports (ADR-1313).
+   * Whether Stripe Tax calculates tax on the connection's exports.
    */
   automatic_tax?: boolean;
   created_at: string;

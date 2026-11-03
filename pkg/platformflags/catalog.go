@@ -55,6 +55,21 @@ const (
 	RealtimeAccess     = "realtime_access"
 	RealtimeOccupancy  = "realtime_occupancy"
 	StrictBudgets      = "strict_budgets"
+	// AppHealthWorkers assesses worker pools in app health
+	// (ADR-20261102091500) for the accounts it releases.
+	AppHealthWorkers = "app_health_workers"
+	// AppHealthMemory warns in app health when an app's guests ran short of
+	// memory (ADR-20261102124306) for the accounts it releases.
+	AppHealthMemory = "app_health_memory"
+
+	// QuietPauseUnbilled releases unbilled quiet pause (ADR-20261023171905)
+	// to accounts where meterd's quiet_pause_unbilled mode is on.
+	QuietPauseUnbilled = "quiet_pause_unbilled"
+
+	// TrafficRevocationFence is the ADR-570 security revocation fence kill
+	// switch: on by default, an operator turns it off for an account or the
+	// platform when the fence itself refuses healthy traffic.
+	TrafficRevocationFence = "traffic_revocation_fence"
 
 	// Edge rule features released by platform flags (ADR-20261023113721).
 	EdgeWAFBlocking = "edge_waf_blocking"
@@ -317,6 +332,24 @@ var catalog = []Spec{
 		Consumers: []string{"apid", "gatewayd-internal"},
 	},
 	{
+		Key:         AppHealthWorkers,
+		Label:       "Worker health",
+		Description: "Assess worker pools in app health (running replicas against the pool minimum, backlog age, recent dead letters) for the accounts it releases. Off, a worker's health reads unsupported, as before.",
+		ADR:         "ADR-20261102091500",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-03-31",
+	},
+	{
+		Key:         AppHealthMemory,
+		Label:       "Memory-pressure health",
+		Description: "Warn in app health when an app's guests ran short of memory in the last day (available memory at 15% or less), before an OOM kill, for the accounts it releases. Off, app health has no memory check, as before.",
+		ADR:         "ADR-20261102124306",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-03-31",
+	},
+	{
 		Key:         StrictBudgets,
 		Label:       "Strict budgets",
 		Description: "Release strict (suspend_workloads) compute and egress budgets to accounts. Off by default until native acceptance passes. Strict budgets that are already enabled keep enforcing and stay editable while it is off; only creating or enabling one is refused.",
@@ -324,6 +357,17 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan},
 		RetireBy:    "2027-01-31",
+	},
+	{
+		Key:   QuietPauseUnbilled,
+		Label: "Unbilled quiet pause",
+		Description: "Bill the seconds a VM runs, not the seconds it is quiet-paused between requests, for the accounts it releases. " +
+			"It takes effect only where meterd's quiet_pause_unbilled mode is on; meterd counts every other account's paused seconds as in shadow mode and bills them in full. " +
+			"Off by default: release it to internal accounts first, then to every account after the financial-model sign-off.",
+		ADR:        "ADR-20261023171905",
+		Consumers:  []string{"meterd"},
+		Attributes: []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:   "2027-06-30",
 	},
 	{
 		Key:        EdgeWAFBlocking,
@@ -389,6 +433,18 @@ var catalog = []Spec{
 		ADR:         "ADR-20261019102657",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_REALTIME_PREVIEW_ACCOUNTS"},
+	},
+	{
+		Key:   TrafficRevocationFence,
+		Label: "Traffic revocation fence",
+		Description: "Kill switch for the ADR-570 security revocation fence. On (the default), gateways verify the account, app and deployment " +
+			"security generations before serving and cancel exchanges when one is revoked. Turned off for an account or platform-wide, " +
+			"gatewayd-internal serves that account's requests without the fence and marks their answers so the public edge passes them " +
+			"unverified: suspension, deletion and deployment quarantine then stop cutting in-flight traffic for those accounts. " +
+			"Disable the flag to turn the fence off platform-wide; a value-false account rule turns it off for that account.",
+		ADR:       "ADR-570",
+		Consumers: []string{"gatewayd-internal"},
+		Default:   Definition{Enabled: true, Default: true},
 	},
 }
 

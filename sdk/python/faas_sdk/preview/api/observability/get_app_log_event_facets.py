@@ -118,7 +118,7 @@ def sync_detailed(
 ) -> Response[LogEventFacetsResponse | Problem]:
     """Count an app's log events by facet.
 
-     ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+     Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
     Takes the same filters as the search and counts the matches by
     source, level, status class, and the ten busiest routes. Counts sum
     each event's occurrences. The window is at most 7 days.
@@ -185,7 +185,7 @@ def sync(
 ) -> LogEventFacetsResponse | Problem | None:
     """Count an app's log events by facet.
 
-     ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+     Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
     Takes the same filters as the search and counts the matches by
     source, level, status class, and the ten busiest routes. Counts sum
     each event's occurrences. The window is at most 7 days.
@@ -247,7 +247,7 @@ async def asyncio_detailed(
 ) -> Response[LogEventFacetsResponse | Problem]:
     """Count an app's log events by facet.
 
-     ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+     Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
     Takes the same filters as the search and counts the matches by
     source, level, status class, and the ten busiest routes. Counts sum
     each event's occurrences. The window is at most 7 days.
@@ -312,7 +312,7 @@ async def asyncio(
 ) -> LogEventFacetsResponse | Problem | None:
     """Count an app's log events by facet.
 
-     ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+     Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
     Takes the same filters as the search and counts the matches by
     source, level, status class, and the ten busiest routes. Counts sum
     each event's occurrences. The window is at most 7 days.

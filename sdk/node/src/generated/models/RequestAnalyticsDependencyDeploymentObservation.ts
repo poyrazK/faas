@@ -34,7 +34,7 @@ export type RequestAnalyticsDependencyDeploymentObservation = {
   p99_ms: number;
   exclusive_p95_ms: number;
   /**
-   * P95 percentage change from the preceding comparable deployment, when its baseline is non-zero.
+   * Percentage change from the preceding comparable deployment, when its baseline is non-zero.
    */
   p95_change_pct?: number;
   /**

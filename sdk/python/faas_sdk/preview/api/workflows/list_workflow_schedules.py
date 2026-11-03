@@ -85,8 +85,8 @@ def sync_detailed(
      Returns schedules from the default-scope live deployment, their next
     nominal fire time and the most recent durable admission outcome.
     When scheduling is unavailable, unavailable_reason explains why and
-    next_fire_at is omitted. Runtime availability reflects apid configuration;
-    operators must enable the same workflow gate on schedd.
+    next_fire_at is omitted. Runtime availability reflects the API configuration;
+    operators must enable the same workflow gate on the scheduler.
     Disabling or redeploying a schedule does not cancel existing runs.
     No live default deployment returns an empty schedules array.
 
@@ -122,8 +122,8 @@ def sync(
      Returns schedules from the default-scope live deployment, their next
     nominal fire time and the most recent durable admission outcome.
     When scheduling is unavailable, unavailable_reason explains why and
-    next_fire_at is omitted. Runtime availability reflects apid configuration;
-    operators must enable the same workflow gate on schedd.
+    next_fire_at is omitted. Runtime availability reflects the API configuration;
+    operators must enable the same workflow gate on the scheduler.
     Disabling or redeploying a schedule does not cancel existing runs.
     No live default deployment returns an empty schedules array.
 
@@ -154,8 +154,8 @@ async def asyncio_detailed(
      Returns schedules from the default-scope live deployment, their next
     nominal fire time and the most recent durable admission outcome.
     When scheduling is unavailable, unavailable_reason explains why and
-    next_fire_at is omitted. Runtime availability reflects apid configuration;
-    operators must enable the same workflow gate on schedd.
+    next_fire_at is omitted. Runtime availability reflects the API configuration;
+    operators must enable the same workflow gate on the scheduler.
     Disabling or redeploying a schedule does not cancel existing runs.
     No live default deployment returns an empty schedules array.
 
@@ -189,8 +189,8 @@ async def asyncio(
      Returns schedules from the default-scope live deployment, their next
     nominal fire time and the most recent durable admission outcome.
     When scheduling is unavailable, unavailable_reason explains why and
-    next_fire_at is omitted. Runtime availability reflects apid configuration;
-    operators must enable the same workflow gate on schedd.
+    next_fire_at is omitted. Runtime availability reflects the API configuration;
+    operators must enable the same workflow gate on the scheduler.
     Disabling or redeploying a schedule does not cancel existing runs.
     No live default deployment returns an empty schedules array.
 

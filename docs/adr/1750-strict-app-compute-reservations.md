@@ -11,7 +11,9 @@
 VM allocation, including cold/restore, paused warm capacity, workers, command
 tasks and qualification cold boots. `schedd` remains the instance/dispatch owner.
 Gateways check durable holds for warm traffic, reusing each decision for at
-most one second (store errors are not reused); command claims retain queued work.
+most one second (store errors are not reused; amended by ADR-20261028083324: a
+decision is refreshed in the background and survives a store outage for a
+bounded grace); command claims retain queued work.
 
 Physical attempt IDs, fences and acquire request identities derive from the
 persisted wake ID or command lease token, account, app and instance. The grant

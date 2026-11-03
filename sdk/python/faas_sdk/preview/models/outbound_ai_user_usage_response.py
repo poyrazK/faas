@@ -16,7 +16,7 @@ T = TypeVar("T", bound="OutboundAIUserUsageResponse")
 
 @_attrs_define
 class OutboundAIUserUsageResponse:
-    """One UTC day of per-end-user AI usage, most expensive first (ADR-994)."""
+    """One UTC day of per-end-user AI usage, most expensive first."""
 
     usage_date: datetime.date
     user_daily_token_limit: int | None

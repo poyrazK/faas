@@ -14,7 +14,7 @@ T = TypeVar("T", bound="DebugCompareRequest")
 
 @_attrs_define
 class DebugCompareRequest:
-    """POST body for /v1/apps/{slug}/debug/compare (ADR-127 / PR-B)."""
+    """POST body for /v1/apps/{slug}/debug/compare."""
 
     source: UUID
     """Source deployment id."""

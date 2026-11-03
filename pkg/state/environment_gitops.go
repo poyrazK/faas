@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"regexp"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 var ErrEnvironmentGitManaged = errors.New("setting is managed by the environment Git source")
@@ -27,6 +27,12 @@ type EnvironmentGitRevisionApproval = api.EnvironmentGitRevisionApproval
 type EnvironmentGitApprovalStore interface {
 	EnvironmentGitRevisionApproval(context.Context, string, string, string) (EnvironmentGitRevisionApproval, error)
 }
+
+// EnvironmentRevisionKeyApproverPrefix marks a revision approved with an API
+// key or token ("api_key:<id>"); a person's approval records their account
+// ID. Approving the same revision again as a person replaces a key's
+// approval, never the reverse (ADR-20261020085706 amendment 8).
+const EnvironmentRevisionKeyApproverPrefix = "api_key:"
 
 type ApproveEnvironmentRevision struct {
 	AccountID          string
@@ -99,7 +105,7 @@ type EnvironmentGitOpsModeClaimStore interface {
 	ClaimEnvironmentGitOpsMode(context.Context, string, string, time.Time, time.Duration) (EnvironmentGitOpsLease, error)
 }
 
-var environmentCommitRE = regexp.MustCompile(`^([a-f0-9]{40}|[a-f0-9]{64})$`)
+var environmentCommitRE = lazyregexp.New(`^([a-f0-9]{40}|[a-f0-9]{64})$`)
 
 type EnvironmentGitOpsLifecycleStore interface {
 	RebindEnvironmentGitSource(context.Context, string, string, int64, EnvironmentGitSourceSpec) (EnvironmentGitSource, error)

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Body for `POST /v1/auth/oidc/exchange` (ADR-101).
+ * Body for `POST /v1/auth/oidc/exchange`.
  */
 export type OIDCExchangeRequest = {
   /**

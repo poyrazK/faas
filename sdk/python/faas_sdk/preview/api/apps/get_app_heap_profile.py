@@ -117,7 +117,7 @@ def sync_detailed(
     start: datetime.datetime,
     end: datetime.datetime,
 ) -> Response[Problem | ProfileHeapResponse]:
-    """Query the continuous live heap near a window end (ADR-1155).
+    """Query the continuous live heap near a window end.
 
      Requires profiling.kinds to include heap. The query is narrowed to the last collection window before
     end so merged snapshots are not summed. Values are live heap bytes.
@@ -161,7 +161,7 @@ def sync(
     start: datetime.datetime,
     end: datetime.datetime,
 ) -> Problem | ProfileHeapResponse | None:
-    """Query the continuous live heap near a window end (ADR-1155).
+    """Query the continuous live heap near a window end.
 
      Requires profiling.kinds to include heap. The query is narrowed to the last collection window before
     end so merged snapshots are not summed. Values are live heap bytes.
@@ -200,7 +200,7 @@ async def asyncio_detailed(
     start: datetime.datetime,
     end: datetime.datetime,
 ) -> Response[Problem | ProfileHeapResponse]:
-    """Query the continuous live heap near a window end (ADR-1155).
+    """Query the continuous live heap near a window end.
 
      Requires profiling.kinds to include heap. The query is narrowed to the last collection window before
     end so merged snapshots are not summed. Values are live heap bytes.
@@ -242,7 +242,7 @@ async def asyncio(
     start: datetime.datetime,
     end: datetime.datetime,
 ) -> Problem | ProfileHeapResponse | None:
-    """Query the continuous live heap near a window end (ADR-1155).
+    """Query the continuous live heap near a window end.
 
      Requires profiling.kinds to include heap. The query is narrowed to the last collection window before
     end so merged snapshots are not summed. Values are live heap bytes.

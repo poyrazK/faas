@@ -77,12 +77,23 @@ func TestAlertHistoricalRollbackBlocksUnavailableTelemetryAndResumes(t *testing.
 }
 func TestAlertPostDeployWindowValidationAndMerge(t *testing.T) {
 	for _, n := range []int{-1, api.AlertRollbackMaxWindowSeconds + 1} {
-		if validateAlertRollbackWindow(n, "rollback") == nil {
+		if validateAlertRollbackWindow(n, "rollback", "error_rate_pct", "gt", "5m", 1) == nil {
 			t.Errorf("accepted %d", n)
 		}
 	}
-	if validateAlertRollbackWindow(60, "webhook") == nil {
+	if validateAlertRollbackWindow(60, "webhook", "error_rate_pct", "gt", "5m", 1) == nil {
 		t.Fatal("window accepted without rollback")
+	}
+	if p := validateAlertRollbackWindow(600, "rollback", "error_rate_pct", "gte", "5m", 1); p != nil {
+		t.Fatalf("error-rate window refused: %+v", p)
+	}
+	if p := validateAlertRollbackWindow(0, "rollback", "latency_p95_ms", "gt", "5m", 40); p != nil {
+		t.Fatalf("live-only latency rollback refused: %+v", p)
+	}
+	for _, c := range []struct{ metric, comparison string }{{"latency_p95_ms", "gt"}, {"error_rate_pct", "lt"}, {"custom_metric", "gt"}} {
+		if validateAlertRollbackWindow(600, "rollback", c.metric, c.comparison, "5m", 40) == nil {
+			t.Errorf("post-deploy window accepted on %s %s, which can never roll a release back", c.metric, c.comparison)
+		}
 	}
 	existing := state.AlertRule{Name: "rollback", Action: state.AlertActionRollback, PostDeployRollbackWindowSeconds: 600}
 	name := "renamed"

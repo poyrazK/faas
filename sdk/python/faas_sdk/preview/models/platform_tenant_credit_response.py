@@ -19,7 +19,7 @@ T = TypeVar("T", bound="PlatformTenantCreditResponse")
 
 @_attrs_define
 class PlatformTenantCreditResponse:
-    """One prepaid credit grant to a platform tenant (ADR-20261019100331)."""
+    """One prepaid credit grant to a platform tenant."""
 
     id: UUID
     tenant_id: UUID

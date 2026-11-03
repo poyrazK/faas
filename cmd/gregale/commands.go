@@ -20,6 +20,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/safetext"
+	"golang.org/x/term"
 )
 
 // authedClient builds a client using the stored token, or errors (exit 2) if the
@@ -69,14 +70,17 @@ func cmdLogin(args []string) int {
 		if *token != "" {
 			return printErr("Invalid login flags", errors.New("--token and --token-stdin cannot be combined"))
 		}
-		body, err := io.ReadAll(io.LimitReader(osStdin, 64*1024+1))
-		if err != nil || len(body) > 64*1024 {
-			return printErr("Could not read token", errors.New("stdin token exceeds 64 KiB or could not be read"))
+		value, err := readLoginTokenStdin()
+		if err != nil {
+			return printErr("Could not read token", err)
 		}
-		*token = strings.TrimSpace(string(body))
-		if *token == "" {
-			return printErr("Could not read token", errors.New("stdin contains no API token"))
-		}
+		*token = value
+	}
+	// FAAS_TOKEN outranks every saved login, so a login saved now would never
+	// be used. Passing FAAS_TOKEN's own value (`login --token "$FAAS_TOKEN"`)
+	// stays allowed: later commands authenticate the same way either way.
+	if env := envToken(); env != "" && *token != env {
+		return printErr("FAAS_TOKEN is set", errEnvTokenShadowsLogin("gregale login"))
 	}
 
 	previousCredential := loginErrorCredential
@@ -117,7 +121,9 @@ func cmdLogin(args []string) int {
 		return printErr("Could not start login", err)
 	}
 
+	_, _ = fmt.Fprintf(osStdout, "Your code: %s\n", codeResp.Code)
 	_, _ = fmt.Fprintf(osStdout, "Opening %s in your browser...\n", codeResp.URL)
+	_, _ = fmt.Fprintln(osStdout, "  Type the code there to approve this terminal. Never type a code someone sent you.")
 	_, _ = fmt.Fprintln(osStdout, "  (or visit that URL and paste the code below)")
 
 	// Best-effort browser open. On a sandboxed CI box the helper
@@ -144,7 +150,55 @@ func cmdLogin(args []string) int {
 	if len(pasted) != 8 {
 		return printErr("Invalid login code", fmt.Errorf("code should be 8 characters (XXXX-NNNN), got %d; run gregale login again", len(pasted)))
 	}
+	// This terminal's own code is exchanged with the device code only it
+	// holds; the server no longer accepts the short code for it (H67).
+	if pasted == strings.ToUpper(strings.ReplaceAll(codeResp.Code, "-", "")) {
+		resp, err := c.ExchangeCliAuthLogin(ctx, codeResp)
+		if err != nil {
+			return printErr("Login failed", err)
+		}
+		return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
+	}
 	return exchangeOnce(ctx, c, pasted)
+}
+
+// readLoginTokenStdin reads `login --token-stdin`. Piped input is read whole
+// (up to 64 KiB) as before; on a terminal the token is typed at a hidden
+// prompt instead of echoing on screen.
+func readLoginTokenStdin() (string, error) {
+	var value string
+	if readerIsTerminal(osStdin) {
+		if nonInteractive {
+			return "", errors.New("pipe the API token on stdin; --non-interactive disables the hidden prompt")
+		}
+		line, err := readInteractivePassword(bufio.NewReader(osStdin), "API token (input hidden): ")
+		if err != nil {
+			return "", fmt.Errorf("read API token: %w", err)
+		}
+		value = line
+	} else {
+		body, err := io.ReadAll(io.LimitReader(osStdin, 64*1024+1))
+		if err != nil || len(body) > 64*1024 {
+			return "", errors.New("stdin token exceeds 64 KiB or could not be read")
+		}
+		value = string(body)
+	}
+	if value = strings.TrimSpace(value); value == "" {
+		return "", errors.New("stdin contains no API token")
+	}
+	return value, nil
+}
+
+// readerIsTerminal reports whether r is a file attached to a terminal.
+func readerIsTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+// errEnvTokenShadowsLogin explains why a command that saves a login refuses
+// while FAAS_TOKEN is set.
+func errEnvTokenShadowsLogin(command string) error {
+	return fmt.Errorf("FAAS_TOKEN overrides any saved login, so later commands would keep using it instead of the login %s saves; run 'unset FAAS_TOKEN' and retry", command)
 }
 
 // waitForApproval polls /v1/cli-auth/exchange at 1s until the user
@@ -170,11 +224,8 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 			return printErr("Login interrupted", ctx.Err())
 		case <-time.After(backoff):
 		}
-		// Strip the dash so the server's normalizeCliAuthCode
-		// doesn't have to. The server is case-insensitive so
-		// uppercase is purely cosmetic on the wire.
-		normalized := strings.ReplaceAll(codeResp.Code, "-", "")
-		resp, err := c.ExchangeCliAuthCode(ctx, normalized)
+		// The device code when the server issued one, else the code.
+		resp, err := c.ExchangeCliAuthLogin(ctx, codeResp)
 		if err == nil {
 			return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
 		}
@@ -216,6 +267,7 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 	previousCredential := loginErrorCredential
 	loginErrorCredential = plaintext
 	defer func() { loginErrorCredential = previousCredential }()
+	previous := currentManagedLogin()
 	if err := saveToken(plaintext); err != nil {
 		return printErr("Could not save token", err)
 	}
@@ -227,6 +279,14 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 		}
 		deleteToken()
 		return printErr("Could not save CLI session", err)
+	}
+	// The replaced login's CLI key would otherwise stay live for its full
+	// lifetime with no local copy left to revoke it from.
+	if previous.token != "" && previous.token != plaintext && previous.meta.KeyID != managedKeyID {
+		revokeReplacedLogin(ctx, previous)
+	}
+	if env := envToken(); env != "" && env != plaintext {
+		PrintWarn(osStderr, "FAAS_TOKEN is set and overrides the login just saved; unset FAAS_TOKEN to use it.")
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(acct))
@@ -275,19 +335,12 @@ func readLineWithTimeout(r io.Reader, d time.Duration) (string, bool) {
 }
 
 func cmdLogout() int {
-	token := loadToken()
-	meta, metaErr := loadManagedSession()
+	// Revoke the saved login's own CLI key, never FAAS_TOKEN's credential.
 	var revokeErr error
-	if metaErr != nil {
+	if _, metaErr := loadManagedSession(); metaErr != nil {
 		PrintWarn(os.Stderr, "Could not read CLI session metadata; the server credential may require manual revocation: %v", metaErr)
-	} else if os.Getenv("FAAS_TOKEN") == "" && token != "" && meta.matches(token) {
-		base := meta.APIBase
-		if base == "" {
-			base = apiBase()
-		}
-		if err := NewClient(base, token).DeleteKey(context.Background(), meta.KeyID); err != nil {
-			revokeErr = fmt.Errorf("could not revoke CLI key %s: %w", meta.KeyID, err)
-		}
+	} else if login := currentManagedLogin(); login.token != "" {
+		revokeErr = revokeManagedLogin(context.Background(), login)
 	}
 	// Clear both stores (OS keychain + legacy plaintext file).
 	// Best-effort: a stuck keychain must not block logout, and a
@@ -297,8 +350,18 @@ func cmdLogout() int {
 	if revokeErr != nil {
 		return printErr("Logged out locally, but server revocation failed", revokeErr)
 	}
+	envActive := envToken() != ""
 	if jsonOutput {
-		return jsonOut(writeJSON(map[string]bool{"logged_out": true}))
+		receipt := map[string]bool{"logged_out": true}
+		if envActive {
+			receipt["faas_token_active"] = true
+		}
+		return jsonOut(writeJSON(receipt))
+	}
+	if envActive {
+		PrintOK(osStdout, "Removed the saved login")
+		PrintWarn(osStderr, "FAAS_TOKEN is still set, so commands keep authenticating with it; run 'unset FAAS_TOKEN' to log out completely.")
+		return 0
 	}
 	PrintOK(osStdout, "Logged out")
 	return 0
@@ -320,17 +383,34 @@ func cmdWhoami() int {
 	return 0
 }
 
-func cmdApps() int {
+func cmdApps(args []string) int {
+	fs := newFlagSet("app list", flag.ContinueOnError)
+	selector := addSelectorFlag(fs)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	apps, err := client.ListApps(context.Background())
+	var apps []api.AppResponse
+	if *selector != "" {
+		apps, err = selectedApps(context.Background(), client, *selector)
+	} else {
+		apps, err = client.ListApps(context.Background())
+	}
 	if err != nil {
 		return printErr("Could not list apps", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(apps))
+	}
+	if len(apps) == 0 && *selector != "" {
+		_, _ = fmt.Fprintf(osStdout, "No app matches %s\n", *selector)
+		return 0
 	}
 	if len(apps) == 0 {
 		// One line and one next action, as in the app picker. recoveryCLI
@@ -618,7 +698,7 @@ func submitsDeployments(path string) bool {
 // server returned a Problem when the request never reached it.
 func transportProblem(err error) api.Problem {
 	detail := "The Gregale API could not be reached."
-	hint := "Check your network connection and FAAS_API endpoint; run gregale profile check."
+	hint := "Check your network connection and FAAS_API endpoint; run gregale config profile check."
 	canceledHint := "Canceling the CLI request does not guarantee the server stopped it; check the result before retrying a change."
 	if submitsDeployments(invokedCommandPath) {
 		hint += " Inspect deployment status before retrying a deploy."
@@ -640,10 +720,10 @@ func transportProblem(err error) api.Problem {
 		detail = "The request timed out before the Gregale API responded."
 	case errors.As(err, &dns):
 		detail = "The Gregale API hostname could not be resolved."
-		hint = "Check the selected profile's endpoint, FAAS_API override, and DNS connectivity with gregale profile check."
+		hint = "Check the selected profile's endpoint, FAAS_API override, and DNS connectivity with gregale config profile check."
 	case errors.As(err, &unknownCA) || errors.As(err, &invalidCertificate) || errors.As(err, &hostname) || errors.As(err, &tlsHeader):
 		detail = "The Gregale API TLS connection could not be verified or established."
-		hint = "Check the HTTPS endpoint and trusted certificates with gregale profile check."
+		hint = "Check the HTTPS endpoint and trusted certificates with gregale config profile check."
 	default:
 		cause := err
 		var urlErr *url.Error

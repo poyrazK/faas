@@ -53,6 +53,12 @@ func scanSidecarNaming(image string) string {
 	return `{"image":"` + image + `","findings":{"CRITICAL":0},"fix_available_findings":{"CRITICAL":0}}`
 }
 
+// failClosedScanNaming is the CRITICAL=9999 placeholder imaged writes when
+// the scan of image failed.
+func failClosedScanNaming(image string) string {
+	return `{"image":"` + image + `","findings":{"CRITICAL":9999,"HIGH":9999},"fix_available_findings":{"CRITICAL":9999,"HIGH":9999}}`
+}
+
 func TestJudgeBaseAdoption(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -98,6 +104,17 @@ func TestJudgeBaseAdoption(t *testing.T) {
 		{name: "a rebuild of the generation is in flight under its own keys", scan: scanSidecarNaming(adoptionGenNew), digest: true,
 			genScan: scanSidecarNaming(uncommittedBaseScanImage), genDigest: true, want: BaseAdoption{Verdict: BaseAdoptionStale}},
 		{name: "torn scan sidecar", scan: "{not json", digest: true, want: BaseAdoption{Verdict: BaseAdoptionStale}},
+		// production-us rc.305, 2026-10-29: fsn-2's pre-stage scan of the new
+		// base-minimal failed (artifact_mismatch) and published the fail-closed
+		// placeholder under the generation's keys, and its cache committed the
+		// generation. Every later pre-stage judged it adopted, so nothing
+		// rescanned it while vmmd refused every boot with scan_failed.
+		{name: "rc.305: the cached generation's scan failed closed", marker: adoptionGenNew, genScan: failClosedScanNaming(adoptionGenNew), genDigest: true,
+			want: BaseAdoption{Cached: adoptionGenNew, Verdict: BaseAdoptionStale}},
+		{name: "another node published a fail-closed scan of the generation", marker: adoptionGenOld, genScan: failClosedScanNaming(adoptionGenNew), genDigest: true,
+			want: BaseAdoption{Cached: adoptionGenOld, Verdict: BaseAdoptionStale}},
+		{name: "uncached storage whose scan failed closed", uncached: true, scan: failClosedScanNaming(adoptionGenNew), digest: true,
+			want: BaseAdoption{Verdict: BaseAdoptionStale}},
 		// An unnamed dev node may configure a tag; vmmd accepts a scan of
 		// that repository's digest (fcvm.scanNamesConfiguredBase).
 		{name: "tag configuration and a scan of its digest", generation: "registry.gregale.dev/base-minimal:latest", genScan: scanSidecarNaming(adoptionGenNew), genDigest: true,

@@ -22,6 +22,12 @@ import (
 type accountValues struct {
 	rows   map[string]map[string]state.AccountSealedValue
 	rotate string
+	// clones is how many clone rows are filed under another key id.
+	clones int
+}
+
+func (f *accountValues) CountAccountCloneValuesOffDomain(context.Context, string) (int, error) {
+	return f.clones, nil
 }
 
 func (f *accountValues) put(v state.AccountSealedValue) {
@@ -144,5 +150,19 @@ func TestMigrateAccount(t *testing.T) {
 	again, err := sealmigrate.MigrateAccount(context.Background(), f, domain, []*age.X25519Identity{fleet})
 	if err != nil || again.Resealed != 1 || again.Changed != 0 || again.Current != 7 {
 		t.Fatalf("second run = %+v, %v; want only the rotated acknowledgement re-sealed", again, err)
+	}
+}
+
+// TestMigrateAccountReportsCloneRows leaves project environment clone rows
+// alone and reports those still under another key id as skipped.
+func TestMigrateAccountReportsCloneRows(t *testing.T) {
+	domain, fleet := mustIdentity(t), mustIdentity(t)
+	f := &accountValues{rows: map[string]map[string]state.AccountSealedValue{}, clones: 3}
+	report, err := sealmigrate.MigrateAccount(context.Background(), f, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Skipped != 3 || report.Resealed != 0 {
+		t.Fatalf("report = %+v, want the three clone rows skipped", report)
 	}
 }

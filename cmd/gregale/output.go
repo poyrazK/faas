@@ -348,7 +348,7 @@ func printSubcommandChoices(w io.Writer, path string, command cliCommand, got st
 	}
 	_, _ = fmt.Fprintf(w, "  Subcommands: %s\n", strings.Join(names, ", "))
 	if listApp != "" && api.ValidAppSlug(got) && !commonVerbWord(got) {
-		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s list %s\n", got, path, listApp)
+		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s %s\n", got, cliTreeSpellPath(path+" list"), listApp)
 	}
 }
 
@@ -411,6 +411,7 @@ func printUsage(w io.Writer, usage, topic string) {
 	if flagHelpPrinted {
 		return
 	}
+	usage = spellUsageForTree(usage)
 	if jsonOutput && !jsonUsageHelp {
 		_ = writeJSONProblemWithExit(w, api.Problem{
 			Type:    docsSiteURL + "/errors/invalid-request",
@@ -424,6 +425,21 @@ func printUsage(w io.Writer, usage, topic string) {
 	}
 	_, _ = fmt.Fprintf(w, "%s\n", compactUsage(usage))
 	_, _ = fmt.Fprintf(w, "  Docs: %s\n", docsURLForTopic(topic))
+}
+
+// treeUsageFrom and treeUsageTo are today's command path and the tree path
+// the current run() was typed as (cliTreeHelpRename), so usage lines and
+// flag errors name the command the user typed (`release gate delete`, not
+// `release-gates rm`).
+var treeUsageFrom, treeUsageTo string
+
+// spellUsageForTree spells today's command path in text as the typed tree
+// path.
+func spellUsageForTree(text string) string {
+	if treeUsageFrom == "" || treeUsageFrom == treeUsageTo {
+		return text
+	}
+	return renameHelpPath(text, treeUsageFrom, treeUsageTo)
 }
 
 // usageSynopsisLimit bounds the usage line printed after a bad invocation.

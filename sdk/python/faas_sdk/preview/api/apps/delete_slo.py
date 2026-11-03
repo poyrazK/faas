@@ -51,7 +51,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any]:
-    """Delete a customer-defined SLO (ADR-747)
+    """Delete a customer-defined SLO
 
      Removes the SLO and frees a slot against the per-app cap.
 
@@ -85,7 +85,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any]:
-    """Delete a customer-defined SLO (ADR-747)
+    """Delete a customer-defined SLO
 
      Removes the SLO and frees a slot against the per-app cap.
 

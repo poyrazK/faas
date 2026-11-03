@@ -74,7 +74,7 @@ def sync_detailed(
 ) -> Response[Any | ReorderDeploymentResponse200]:
     """Reorder a pending deployment.
 
-     ADR-124 deployment queue controls — update the priority of a
+     Deployment queue controls — update the priority of a
     still-pending deployment. 0 = deploy immediately (top of
     queue), 100 = FIFO default, 1000 = background rebuild.
     Plan-gated (Hobby/Pro/Scale only); Free returns 402
@@ -113,7 +113,7 @@ def sync(
 ) -> Any | ReorderDeploymentResponse200 | None:
     """Reorder a pending deployment.
 
-     ADR-124 deployment queue controls — update the priority of a
+     Deployment queue controls — update the priority of a
     still-pending deployment. 0 = deploy immediately (top of
     queue), 100 = FIFO default, 1000 = background rebuild.
     Plan-gated (Hobby/Pro/Scale only); Free returns 402
@@ -147,7 +147,7 @@ async def asyncio_detailed(
 ) -> Response[Any | ReorderDeploymentResponse200]:
     """Reorder a pending deployment.
 
-     ADR-124 deployment queue controls — update the priority of a
+     Deployment queue controls — update the priority of a
     still-pending deployment. 0 = deploy immediately (top of
     queue), 100 = FIFO default, 1000 = background rebuild.
     Plan-gated (Hobby/Pro/Scale only); Free returns 402
@@ -184,7 +184,7 @@ async def asyncio(
 ) -> Any | ReorderDeploymentResponse200 | None:
     """Reorder a pending deployment.
 
-     ADR-124 deployment queue controls — update the priority of a
+     Deployment queue controls — update the priority of a
     still-pending deployment. 0 = deploy immediately (top of
     queue), 100 = FIFO default, 1000 = background rebuild.
     Plan-gated (Hobby/Pro/Scale only); Free returns 402

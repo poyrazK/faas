@@ -26,18 +26,18 @@ class DeploymentSummaryResponse:
 
     deployment: DeploymentResponse
     """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
-    `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 /
-    ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last
-    deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed
-    because the ref shape is non-secret by design."""
+    `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object; they round-
+    trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env
+    values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape
+    is non-secret by design."""
     changes: list[DeploymentChange]
     previous: DeploymentResponse | None | Unset = UNSET
     """The immediately older deployment by created_at, or null for an initial release."""
     rollback_target_id: None | Unset | UUID = UNSET
     """The latest superseded deployment eligible for POST /v1/apps/{slug}/rollback; omitted when none exists."""
     rollback_target_revision: int | Unset = UNSET
-    """Revision (ADR-198) of `rollback_target_id`, so a client can render the rollback command with the `v41`
-    handle a customer can read and retype. Omitted when the target predates the revision column; fall back to
+    """Revision of `rollback_target_id`, so a client can render the rollback command with the `v41` handle a
+    customer can read and retype. Omitted when the target predates the revision column; fall back to
     `rollback_target_id` rather than rendering `v0`."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

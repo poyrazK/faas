@@ -11,7 +11,7 @@ T = TypeVar("T", bound="SetAppStaticEgressIPRequest")
 
 @_attrs_define
 class SetAppStaticEgressIPRequest:
-    """PUT /v1/apps/{slug}/static-egress-ip body (ADR-119). IP is
+    """PUT /v1/apps/{slug}/static-egress-ip body. IP is
     the canonical customer-supplied IPv4 (dotted-quad string).
     The handler validates the family=4 + non-RFC1918 +
     non-link-local + non-multicast shape before the column

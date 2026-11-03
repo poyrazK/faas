@@ -41,6 +41,13 @@ func globalTrafficRule(account Account, app App, host string, numbers int) Creat
 	return in
 }
 
+func trafficGuardName(scoped bool) string {
+	if scoped {
+		return "scoped"
+	}
+	return "fleet-wide"
+}
+
 func requireGlobalTrafficAggregate(t *testing.T, err error) {
 	t.Helper()
 	var aggregate *TrafficPolicyAggregateError
@@ -50,40 +57,45 @@ func requireGlobalTrafficAggregate(t *testing.T, err error) {
 }
 
 func TestPgTrafficGlobalRouteConcurrentAccountsShareAllowance(t *testing.T) {
-	store, pool, account, app := trafficHostPGFixture(t)
-	peerAccount, peer := globalTrafficPeer(t, store, "global-route-peer")
-	before, err := store.LatestEdgeRuleChangeID(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	start, results := make(chan struct{}), make(chan error, 2)
-	for _, in := range []CreateEdgeRuleParams{globalTrafficRule(account, app, "*", 260), globalTrafficRule(peerAccount, peer, "*", 260)} {
-		go func() {
-			<-start
-			_, err := store.CreateEdgeRuleIfUnderQuota(t.Context(), in, api.MustLimitsFor(account.Plan))
-			results <- err
-		}()
-	}
-	close(start)
-	accepted := 0
-	for range 2 {
-		if err := <-results; err != nil {
-			requireGlobalTrafficAggregate(t, err)
-		} else {
-			accepted++
-		}
-	}
-	var rules, changes int
-	if err := pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM edge_rules), (SELECT count(*) FROM edge_rule_change_log WHERE id>$1)`, before).Scan(&rules, &changes); err != nil {
-		t.Fatal(err)
-	}
-	if accepted != 1 || rules != 1 || changes != 1 {
-		t.Fatalf("cross-account allowance: accepted=%d rules=%d changes=%d", accepted, rules, changes)
-	}
-	row, err := sqlc.New().ReadTrafficHostAnalysis(t.Context(), pool, sqlc.ReadTrafficHostAnalysisParams{MaxInputs: api.TrafficPolicyMaxAnalysisInputs,
-		MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes, Defaults: mustTrafficDefaults(t), AppsSuffix: store.trafficAppsSuffix})
-	if err != nil || row.Inputs != 3 || len(row.Data) > 2048 || strings.Contains(string(row.Data), "1e130000") {
-		t.Fatalf("global metadata body transfer: inputs=%d bytes=%d err=%v", row.Inputs, len(row.Data), err)
+	for _, scoped := range []bool{false, true} {
+		t.Run(trafficGuardName(scoped), func(t *testing.T) {
+			_, pool, account, app := trafficHostPGFixture(t)
+			store := NewPgStore(pool, WithTrafficScopedBindingGuard(scoped))
+			peerAccount, peer := globalTrafficPeer(t, store, "global-route-peer")
+			before, err := store.LatestEdgeRuleChangeID(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			start, results := make(chan struct{}), make(chan error, 2)
+			for _, in := range []CreateEdgeRuleParams{globalTrafficRule(account, app, "*", 260), globalTrafficRule(peerAccount, peer, "*", 260)} {
+				go func() {
+					<-start
+					_, err := store.CreateEdgeRuleIfUnderQuota(t.Context(), in, api.MustLimitsFor(account.Plan))
+					results <- err
+				}()
+			}
+			close(start)
+			accepted := 0
+			for range 2 {
+				if err := <-results; err != nil {
+					requireGlobalTrafficAggregate(t, err)
+				} else {
+					accepted++
+				}
+			}
+			var rules, changes int
+			if err := pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM edge_rules), (SELECT count(*) FROM edge_rule_change_log WHERE id>$1)`, before).Scan(&rules, &changes); err != nil {
+				t.Fatal(err)
+			}
+			if accepted != 1 || rules != 1 || changes != 1 {
+				t.Fatalf("cross-account allowance: accepted=%d rules=%d changes=%d", accepted, rules, changes)
+			}
+			row, err := sqlc.New().ReadTrafficHostAnalysis(t.Context(), pool, sqlc.ReadTrafficHostAnalysisParams{MaxInputs: api.TrafficPolicyMaxAnalysisInputs,
+				MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes, Defaults: mustTrafficDefaults(t), AppsSuffix: store.trafficAppsSuffix})
+			if err != nil || row.Inputs != 3 || len(row.Data) > 2048 || strings.Contains(string(row.Data), "1e130000") {
+				t.Fatalf("global metadata body transfer: inputs=%d bytes=%d err=%v", row.Inputs, len(row.Data), err)
+			}
+		})
 	}
 }
 
@@ -250,80 +262,90 @@ func trafficSessionTestDSN(t *testing.T, pool *pgxpool.Pool) string {
 }
 
 func TestPgTrafficGlobalRouteDisjointHostsAndRetargetRollback(t *testing.T) {
-	store, _, account, app := trafficHostPGFixture(t)
-	peerAccount, peer := globalTrafficPeer(t, store, "global-route-disjoint")
-	if _, err := store.CreateEdgeRule(t.Context(), globalTrafficRule(account, app, "api.*", 260)); err != nil {
-		t.Fatal(err)
-	}
-	second, err := store.CreateEdgeRule(t.Context(), globalTrafficRule(peerAccount, peer, "web.*", 260))
-	if err != nil {
-		t.Fatalf("disjoint hosts became a flat global quota: %v", err)
-	}
-	bridgeAccount, bridge := globalTrafficPeer(t, store, "global-route-bridge")
-	if _, err := store.CreateEdgeRule(t.Context(), globalTrafficRule(bridgeAccount, bridge, "*", 3)); err != nil {
-		t.Fatalf("connected selectors became a flat global quota: %v", err)
-	}
-	before, err := store.LatestEdgeRuleChangeID(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	host := "*.test"
-	_, err = store.UpdateEdgeRule(t.Context(), second.ID, UpdateEdgeRuleParams{MatchHost: &host})
-	requireGlobalTrafficAggregate(t, err)
-	saved, err := store.GetEdgeRuleByID(t.Context(), second.ID)
-	if err != nil || saved.MatchHost != second.MatchHost || !saved.UpdatedAt.Equal(second.UpdatedAt) {
-		t.Fatal("rejected global retarget changed intent")
-	}
-	after, err := store.LatestEdgeRuleChangeID(t.Context())
-	if err != nil || after != before {
-		t.Fatalf("rejected global retarget emitted change: before=%d after=%d err=%v", before, after, err)
+	for _, scoped := range []bool{false, true} {
+		t.Run(trafficGuardName(scoped), func(t *testing.T) {
+			_, pool, account, app := trafficHostPGFixture(t)
+			store := NewPgStore(pool, WithTrafficScopedBindingGuard(scoped))
+			peerAccount, peer := globalTrafficPeer(t, store, "global-route-disjoint")
+			if _, err := store.CreateEdgeRule(t.Context(), globalTrafficRule(account, app, "api.*", 260)); err != nil {
+				t.Fatal(err)
+			}
+			second, err := store.CreateEdgeRule(t.Context(), globalTrafficRule(peerAccount, peer, "web.*", 260))
+			if err != nil {
+				t.Fatalf("disjoint hosts became a flat global quota: %v", err)
+			}
+			bridgeAccount, bridge := globalTrafficPeer(t, store, "global-route-bridge")
+			if _, err := store.CreateEdgeRule(t.Context(), globalTrafficRule(bridgeAccount, bridge, "*", 3)); err != nil {
+				t.Fatalf("connected selectors became a flat global quota: %v", err)
+			}
+			before, err := store.LatestEdgeRuleChangeID(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			host := "*.test"
+			_, err = store.UpdateEdgeRule(t.Context(), second.ID, UpdateEdgeRuleParams{MatchHost: &host})
+			requireGlobalTrafficAggregate(t, err)
+			saved, err := store.GetEdgeRuleByID(t.Context(), second.ID)
+			if err != nil || saved.MatchHost != second.MatchHost || !saved.UpdatedAt.Equal(second.UpdatedAt) {
+				t.Fatal("rejected global retarget changed intent")
+			}
+			after, err := store.LatestEdgeRuleChangeID(t.Context())
+			if err != nil || after != before {
+				t.Fatalf("rejected global retarget emitted change: before=%d after=%d err=%v", before, after, err)
+			}
+		})
 	}
 }
 
 func TestPgTrafficGlobalSnapshotDoesNotCreditConcurrentDeletion(t *testing.T) {
-	store, pool, account, app := trafficHostPGFixture(t)
-	peerAccount, peer := globalTrafficPeer(t, store, "global-route-deleted")
-	for _, in := range []CreateEdgeRuleParams{globalTrafficRule(account, app, "*", 257), globalTrafficRule(peerAccount, peer, "*", 260)} {
-		encoded, err := json.Marshal(in.Action)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := pool.Exec(t.Context(), `INSERT INTO edge_rules(account_id,app_id,match_host,match_path,enabled,kind,action) VALUES($1,$2,'*','/',true,'route',$3::jsonb)`, in.AccountID, in.AppID, encoded); err != nil {
-			t.Fatal(err)
-		}
-	}
-	tx, err := store.beginRuleTrafficPolicyMutation(t.Context(), uuidToPgtype(account.ID), EdgeRuleKindRoute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
-	// A shrinking writer/cascade need not take the global lock. Its commit
-	// must remain invisible to this write's before/after projection.
-	if _, err := pool.Exec(t.Context(), `DELETE FROM edge_rules WHERE account_id=$1`, peerAccount.ID); err != nil {
-		t.Fatal(err)
-	}
-	ledger, err := store.LatestEdgeRuleChangeID(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	in := globalTrafficRule(account, app, "credit.example.test", 3)
-	encoded, err := json.Marshal(in.Action)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(t.Context(), `INSERT INTO edge_rules(account_id,app_id,match_host,match_path,enabled,kind,action) VALUES($1,$2,$3,'/',true,'route',$4::jsonb)`, account.ID, app.ID, in.MatchHost, encoded); err != nil {
-		t.Fatal(err)
-	}
-	requireGlobalTrafficAggregate(t, tx.Commit(t.Context()))
-	if err := tx.Rollback(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	after, err := store.LatestEdgeRuleChangeID(t.Context())
-	if err != nil || after != ledger {
-		t.Fatalf("rejected growth retained ledger: before=%d after=%d err=%v", ledger, after, err)
-	}
-	if _, err := store.CreateEdgeRule(t.Context(), in); err != nil {
-		t.Fatalf("fresh snapshot after repair: %v", err)
+	for _, scoped := range []bool{false, true} {
+		t.Run(trafficGuardName(scoped), func(t *testing.T) {
+			_, pool, account, app := trafficHostPGFixture(t)
+			store := NewPgStore(pool, WithTrafficScopedBindingGuard(scoped))
+			peerAccount, peer := globalTrafficPeer(t, store, "global-route-deleted")
+			for _, in := range []CreateEdgeRuleParams{globalTrafficRule(account, app, "*", 257), globalTrafficRule(peerAccount, peer, "*", 260)} {
+				encoded, err := json.Marshal(in.Action)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(t.Context(), `INSERT INTO edge_rules(account_id,app_id,match_host,match_path,enabled,kind,action) VALUES($1,$2,'*','/',true,'route',$3::jsonb)`, in.AccountID, in.AppID, encoded); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tx, err := store.beginRuleTrafficPolicyMutation(t.Context(), uuidToPgtype(account.ID), EdgeRuleKindRoute, "credit.example.test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
+			// A shrinking writer/cascade need not take the global lock. Its commit
+			// must remain invisible to this write's before/after projection.
+			if _, err := pool.Exec(t.Context(), `DELETE FROM edge_rules WHERE account_id=$1`, peerAccount.ID); err != nil {
+				t.Fatal(err)
+			}
+			ledger, err := store.LatestEdgeRuleChangeID(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			in := globalTrafficRule(account, app, "credit.example.test", 3)
+			encoded, err := json.Marshal(in.Action)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(t.Context(), `INSERT INTO edge_rules(account_id,app_id,match_host,match_path,enabled,kind,action) VALUES($1,$2,$3,'/',true,'route',$4::jsonb)`, account.ID, app.ID, in.MatchHost, encoded); err != nil {
+				t.Fatal(err)
+			}
+			requireGlobalTrafficAggregate(t, tx.Commit(t.Context()))
+			if err := tx.Rollback(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			after, err := store.LatestEdgeRuleChangeID(t.Context())
+			if err != nil || after != ledger {
+				t.Fatalf("rejected growth retained ledger: before=%d after=%d err=%v", ledger, after, err)
+			}
+			if _, err := store.CreateEdgeRule(t.Context(), in); err != nil {
+				t.Fatalf("fresh snapshot after repair: %v", err)
+			}
+		})
 	}
 }
 

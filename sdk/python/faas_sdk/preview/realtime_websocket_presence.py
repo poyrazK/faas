@@ -18,7 +18,7 @@ from .realtime_presence import (
 )
 from .realtime_recovery import RealtimeRecoveryError
 
-_REJECTIONS = {"presence_rate_limited", "signal_rate_limited", "signal_relay_unavailable"}
+_REJECTIONS = {"presence_rate_limited", "signal_rate_limited", "signal_relay_unavailable", "presence_not_authorized"}
 
 
 def _json_copy(value: Any, limit: int, *, object_only: bool = False) -> Any:

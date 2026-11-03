@@ -91,8 +91,8 @@ def sync_detailed(
 ) -> Response[OutboundAITraceResponse | Problem]:
     """Read an AI trace with its logged calls.
 
-     Requires MFA and read scope (ADR 20261020202035). Calls are the trace's request-log entries, oldest
-    first, at most 500; calls_truncated marks a longer trace.
+     Requires MFA and read scope. Calls are the trace's request-log entries, oldest first, at most 500;
+    calls_truncated marks a longer trace.
 
     Args:
         integration (UUID):
@@ -126,8 +126,8 @@ def sync(
 ) -> OutboundAITraceResponse | Problem | None:
     """Read an AI trace with its logged calls.
 
-     Requires MFA and read scope (ADR 20261020202035). Calls are the trace's request-log entries, oldest
-    first, at most 500; calls_truncated marks a longer trace.
+     Requires MFA and read scope. Calls are the trace's request-log entries, oldest first, at most 500;
+    calls_truncated marks a longer trace.
 
     Args:
         integration (UUID):
@@ -156,8 +156,8 @@ async def asyncio_detailed(
 ) -> Response[OutboundAITraceResponse | Problem]:
     """Read an AI trace with its logged calls.
 
-     Requires MFA and read scope (ADR 20261020202035). Calls are the trace's request-log entries, oldest
-    first, at most 500; calls_truncated marks a longer trace.
+     Requires MFA and read scope. Calls are the trace's request-log entries, oldest first, at most 500;
+    calls_truncated marks a longer trace.
 
     Args:
         integration (UUID):
@@ -189,8 +189,8 @@ async def asyncio(
 ) -> OutboundAITraceResponse | Problem | None:
     """Read an AI trace with its logged calls.
 
-     Requires MFA and read scope (ADR 20261020202035). Calls are the trace's request-log entries, oldest
-    first, at most 500; calls_truncated marks a longer trace.
+     Requires MFA and read scope. Calls are the trace's request-log entries, oldest first, at most 500;
+    calls_truncated marks a longer trace.
 
     Args:
         integration (UUID):

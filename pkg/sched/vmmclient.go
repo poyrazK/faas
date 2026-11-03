@@ -334,8 +334,11 @@ type StatsSnapshot struct {
 	// InstanceBridgeResidentBytes is the node's instance bridge units'
 	// memory (connection-survival ADR §2); nil when vmmd reports none.
 	InstanceBridgeResidentBytes *int64
-	Instances                   []VMInstanceStat
-	SampledAt                   time.Time
+	// CPUPressure is the node's CPU pressure readings (ADR 20261030100950);
+	// nil unless vmmd reported both.
+	CPUPressure *NodeCPUPressure
+	Instances   []VMInstanceStat
+	SampledAt   time.Time
 }
 
 // VMInstanceStat is the sched-side view of vmmdpb.InstanceStats —
@@ -1785,6 +1788,9 @@ func (c *VMMClient) Stats(ctx context.Context) (*StatsSnapshot, error) {
 		b := v.GetValue()
 		out.InstanceBridgeResidentBytes = &b
 	}
+	if p, b := resp.GetTenantCpuPressureSomeAvg10(), resp.GetHostCpuBusyPercent(); p != nil && b != nil {
+		out.CPUPressure = &NodeCPUPressure{SomeAvg10: p.GetValue(), BusyPercent: b.GetValue()}
+	}
 	for _, in := range resp.GetInstances() {
 		row := vmInstanceStatFromProto(in)
 		if row.InstanceID == "" {
@@ -2133,9 +2139,26 @@ func liftErr(err error) error {
 		if p.Code == api.CodeDatabaseCutoverFenced {
 			return errors.Join(p, state.ErrManagedPostgresAdmissionFenced)
 		}
+		if stage, _ := grpcerr.MetadataValue(err, grpcerr.MetadataWakeStage); stage == grpcerr.WakeStagePreStart {
+			return vmmWakeNotStartedError{p}
+		}
 		return p
 	}
 	return err
+}
+
+// ErrVMMWakeNotStarted marks a vmmd wake failure that happened before the VM
+// started (wake_stage=pre_start, ADR-20261022184531): the node, not the app,
+// failed, so the wake may be placed on another node and the failure counts
+// against this one. schedd never forwards the marker; callers see the
+// Problem unchanged.
+var ErrVMMWakeNotStarted = errors.New("sched: vmmd wake failed before the VM started")
+
+type vmmWakeNotStartedError struct{ problem *api.Problem }
+
+func (e vmmWakeNotStartedError) Error() string { return e.problem.Error() }
+func (e vmmWakeNotStartedError) Unwrap() []error {
+	return []error{e.problem, ErrVMMWakeNotStarted}
 }
 
 // egressPortsToWire converts an app's extra egress ports to the proto shape.

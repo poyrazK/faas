@@ -30,7 +30,7 @@ func fireWithLogContext(t *testing.T, store *state.MemStore, ident *age.X25519Id
 		Now:        func() time.Time { return now },
 		Log:        discardLog(),
 	})
-	ev.SetLogContext(enabled)
+	ev.SetLogContext(func(context.Context, string, string) bool { return enabled })
 	if _, err := ev.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -103,5 +103,5 @@ func TestEvaluator_LogContextOffByDefault(t *testing.T) {
 // configured; the setter must tolerate that as SetChannels does.
 func TestEvaluator_SetLogContextOnNilEvaluator(t *testing.T) {
 	var e *alerts.Evaluator
-	e.SetLogContext(true)
+	e.SetLogContext(func(context.Context, string, string) bool { return true })
 }

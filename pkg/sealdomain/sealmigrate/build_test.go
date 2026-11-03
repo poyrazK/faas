@@ -19,6 +19,12 @@ type registryPasswords struct {
 	rows map[string]state.RegistrySealedCredential // keyed by kind|id
 	// rotate makes the next write to this key lose once.
 	rotate string
+	// captures is how many crash captures imaged keeps with the fleet key.
+	captures int
+}
+
+func (f *registryPasswords) CountImagedKeyedCrashCaptures(context.Context) (int, error) {
+	return f.captures, nil
 }
 
 func (f *registryPasswords) ListRegistrySealedCredentials(_ context.Context, afterKind, afterID string, limit int) ([]state.RegistrySealedCredential, error) {
@@ -113,5 +119,56 @@ func TestMigrateBuild_RequiresIdentities(t *testing.T) {
 	}
 	if _, err := sealmigrate.MigrateBuild(context.Background(), &registryPasswords{}, nil, []*age.X25519Identity{domain}); err == nil {
 		t.Fatal("migrating without the domain identity succeeded")
+	}
+}
+
+// TestCheckBuild counts the registry passwords a legacy identity still opens
+// and the crash captures imaged keeps with the fleet key, writing nothing:
+// the precondition for imaged dropping the fleet and host identities.
+func TestCheckBuild(t *testing.T) {
+	domain, fleet := mustIdentity(t), mustIdentity(t)
+	password := func(to ...*age.X25519Identity) []byte {
+		var rs []*age.X25519Recipient
+		for _, id := range to {
+			rs = append(rs, id.Recipient())
+		}
+		b, err := secretbox.SealBytesTo(rs, "registry_creds", []byte("hunter2"), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	f := &registryPasswords{captures: 1, rows: map[string]state.RegistrySealedCredential{}}
+	for _, c := range []state.RegistrySealedCredential{
+		{Kind: state.RegistrySealedCredentialApp, ID: "a1", Sealed: password(fleet)},
+		{Kind: state.RegistrySealedCredentialApp, ID: "a2", Sealed: password(domain, fleet)},
+		{Kind: state.RegistrySealedCredentialJob, ID: "j1", Sealed: password(domain)},
+	} {
+		f.rows[c.Kind+"|"+c.ID] = c
+	}
+	before := map[string][]byte{}
+	for key, c := range f.rows {
+		before[key] = c.Sealed
+	}
+	ctx := context.Background()
+	report, err := sealmigrate.CheckBuild(ctx, f, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sealmigrate.MigrationReport{Domain: sealdomain.Build, Target: domain.Recipient().String(), Scanned: 3, Current: 1, Pending: 2, Skipped: 1}
+	if report != want {
+		t.Fatalf("report = %+v, want %+v", report, want)
+	}
+	for key, c := range f.rows {
+		if !bytes.Equal(c.Sealed, before[key]) {
+			t.Fatalf("the check rewrote %s", key)
+		}
+	}
+	if _, err := sealmigrate.MigrateBuild(ctx, f, domain, []*age.X25519Identity{fleet}); err != nil {
+		t.Fatal(err)
+	}
+	f.captures = 0 // the capture expired
+	if report, err := sealmigrate.CheckBuild(ctx, f, domain, []*age.X25519Identity{fleet}); err != nil || report.Pending != 0 || report.Skipped != 0 || report.Current != 3 {
+		t.Fatalf("check after the re-seal = %+v, %v; want nothing left", report, err)
 	}
 }

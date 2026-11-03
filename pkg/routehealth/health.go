@@ -63,6 +63,24 @@ func Windows(now time.Time) []api.RouteHealthWindowEvidence {
 	return out
 }
 
+// TelemetryIncomplete is the window reason when a gateway may have lost the
+// request telemetry the window reads (ADR-20261028110044 amendment 1).
+const TelemetryIncomplete = "telemetry_incomplete"
+
+// EvidenceLost reports whether report's windows were unavailable because a
+// gateway may have lost telemetry: the platform's gap, not the customer's
+// traffic, so it never starts a customer-visible hold or ends a release.
+func EvidenceLost(report api.RouteHealthReport) bool {
+	for _, f := range report.Routes {
+		for _, w := range f.Windows {
+			if w.ErrorReason == TelemetryIncomplete || w.Reason == TelemetryIncomplete {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // LatencyEnabled preserves prior selectors' 5xx-only behavior.
 func LatencyEnabled(check bool, budget int64) bool { return check || budget > 0 }
 
@@ -155,7 +173,7 @@ func latencyWindow(w *api.RouteHealthWindowEvidence, budget int64, checkRelative
 	if reason := windowUnavailable(*w, anchor, unavailable); reason != "" {
 		return "unknown", reason
 	}
-	if w.Candidate.Requests < api.RouteHealthMinLatencyRequests || w.Stable.Requests < api.RouteHealthMinLatencyRequests {
+	if LatencySamples(w.Candidate) < api.RouteHealthMinLatencyRequests || LatencySamples(w.Stable) < api.RouteHealthMinLatencyRequests {
 		return "unknown", "insufficient_latency_requests"
 	}
 	if !validP95(w.Candidate.P95LatencyMS) || !validP95(w.Stable.P95LatencyMS) {
@@ -221,7 +239,16 @@ func combine(a, ar, b, br string) (string, string) {
 	return a, ar
 }
 func valid(c api.RouteHealthCounts) bool {
-	return c.Requests >= 0 && c.ServerErrors >= 0 && c.ServerErrors <= c.Requests
+	return c.Requests >= 0 && c.ServerErrors >= 0 && c.ServerErrors <= c.Requests && (c.LatencyRequests == nil || *c.LatencyRequests >= 0 && *c.LatencyRequests <= c.Requests)
+}
+
+// LatencySamples is how many requests a p95 ranked: the warm requests the
+// canary guard reports, or every request when it reports none.
+func LatencySamples(c api.RouteHealthCounts) int64 {
+	if c.LatencyRequests != nil {
+		return *c.LatencyRequests
+	}
+	return c.Requests
 }
 func rate(c *api.RouteHealthCounts) {
 	c.ErrorRate = 0

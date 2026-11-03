@@ -281,15 +281,16 @@ func TestLocalOCIIntegrityBoundsUncompressedWorkAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	diffID := digestFor(t, payload)
-	if err := verifyLocalOCIDiffIDs(context.Background(), []*os.File{file}, []string{diffID}, 128); err == nil || !strings.Contains(err.Error(), "uncompressed size limit") {
+	gz := oci.Descriptor{MediaType: "application/vnd.oci.image.layer.v1.tar+gzip"}
+	if err := verifyLocalOCIDiffIDs(context.Background(), []oci.Descriptor{gz}, []*os.File{file}, []string{diffID}, 128); err == nil || !strings.Contains(err.Error(), "uncompressed size limit") {
 		t.Fatalf("gzip expansion accepted: %v", err)
 	}
-	if err := verifyLocalOCIDiffIDs(context.Background(), []*os.File{file, file}, []string{diffID, diffID}, int64(len(payload))); err == nil || !strings.Contains(err.Error(), "uncompressed size limit") {
+	if err := verifyLocalOCIDiffIDs(context.Background(), []oci.Descriptor{gz, gz}, []*os.File{file, file}, []string{diffID, diffID}, int64(len(payload))); err == nil || !strings.Contains(err.Error(), "uncompressed size limit") {
 		t.Fatalf("aggregate expansion accepted: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := verifyLocalOCIDiffIDs(ctx, []*os.File{file}, []string{diffID}, int64(len(payload))); !errors.Is(err, context.Canceled) {
+	if err := verifyLocalOCIDiffIDs(ctx, []oci.Descriptor{gz}, []*os.File{file}, []string{diffID}, int64(len(payload))); !errors.Is(err, context.Canceled) {
 		t.Fatalf("decompression ignored cancellation: %v", err)
 	}
 	f := newLocalOCIIntegrityFixture(t)

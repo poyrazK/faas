@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ListReleaseGatesResponse | Problem]:
-    """List an app's release gates (ADR-20261019071734).
+    """List an app's release gates.
 
      Gates on the app's SLOs, new error groups and custom metrics. The canary circuit breaker and the
     post-release watch abort or roll back a release that fails one.
@@ -102,7 +102,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ListReleaseGatesResponse | Problem | None:
-    """List an app's release gates (ADR-20261019071734).
+    """List an app's release gates.
 
      Gates on the app's SLOs, new error groups and custom metrics. The canary circuit breaker and the
     post-release watch abort or roll back a release that fails one.
@@ -129,7 +129,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ListReleaseGatesResponse | Problem]:
-    """List an app's release gates (ADR-20261019071734).
+    """List an app's release gates.
 
      Gates on the app's SLOs, new error groups and custom metrics. The canary circuit breaker and the
     post-release watch abort or roll back a release that fails one.
@@ -159,7 +159,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ListReleaseGatesResponse | Problem | None:
-    """List an app's release gates (ADR-20261019071734).
+    """List an app's release gates.
 
      Gates on the app's SLOs, new error groups and custom metrics. The canary circuit breaker and the
     post-release watch abort or roll back a release that fails one.

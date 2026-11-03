@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -30,7 +31,7 @@ type linearCredentialEnvelope struct {
 	WebhookSecret string                `json:"webhook_secret,omitempty"`
 }
 
-const linearCredentialNamespace = "issue_tracker_linear_api_key_v1"
+const linearCredentialNamespace = api.IssueTrackerLinearCredentialNamespace
 
 func validLinearScope(scope LinearCredentialScope) bool {
 	for _, value := range []string{scope.AccountID, scope.AppID, scope.Identity.WorkspaceID, scope.Identity.TeamID, scope.Identity.ViewerID} {
@@ -45,6 +46,13 @@ func validLinearScope(scope LinearCredentialScope) bool {
 // SealLinearCredential performs a fresh provider verification before returning
 // ciphertext. Caller authorization and durable connection storage are separate.
 func SealLinearCredential(ctx context.Context, verifier LinearConnectionVerifier, recipient *age.X25519Recipient, accountID, appID, teamID, token string, webhookSecrets ...string) (LinearCredentialScope, []byte, error) {
+	return SealLinearCredentialTo(ctx, verifier, []*age.X25519Recipient{recipient}, accountID, appID, teamID, token, webhookSecrets...)
+}
+
+// SealLinearCredentialTo is SealLinearCredential for several recipients: the
+// account seal domain and the fleet recipient while the domain rolls out
+// (ADR 20261022111812).
+func SealLinearCredentialTo(ctx context.Context, verifier LinearConnectionVerifier, recipients []*age.X25519Recipient, accountID, appID, teamID, token string, webhookSecrets ...string) (LinearCredentialScope, []byte, error) {
 	webhookSecret := ""
 	if len(webhookSecrets) > 1 {
 		return LinearCredentialScope{}, nil, errors.New("invalid webhook configuration")
@@ -55,7 +63,7 @@ func SealLinearCredential(ctx context.Context, verifier LinearConnectionVerifier
 	if webhookSecret != "" && !issuetracker.ValidLinearWebhookSecret(webhookSecret) {
 		return LinearCredentialScope{}, nil, errors.New("invalid webhook signing secret")
 	}
-	if verifier == nil || recipient == nil || !validLinearToken(token) {
+	if verifier == nil || len(recipients) == 0 || slices.Contains(recipients, nil) || !validLinearToken(token) {
 		return LinearCredentialScope{}, nil, errors.New("linear credential configuration is invalid")
 	}
 	for _, value := range []string{accountID, appID, teamID} {
@@ -73,7 +81,7 @@ func SealLinearCredential(ctx context.Context, verifier LinearConnectionVerifier
 	if err != nil {
 		return LinearCredentialScope{}, nil, errors.New("linear credential could not be encoded")
 	}
-	sealed, err := secretbox.SealBytes(recipient, linearCredentialNamespace, plaintext, 0)
+	sealed, err := secretbox.SealBytesTo(recipients, linearCredentialNamespace, plaintext, 0)
 	if err != nil {
 		return LinearCredentialScope{}, nil, errors.New("linear credential could not be sealed")
 	}

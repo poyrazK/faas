@@ -70,10 +70,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[SLOResponse]]:
-    """List the app's customer-defined SLOs (ADR-747)
+    """List the app's customer-defined SLOs
 
      Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which
-    reports ADR-082's fixed 99.5% availability panel.
+    reports the fixed 99.5% availability panel.
 
     Args:
         slug (str):
@@ -102,10 +102,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[SLOResponse] | None:
-    """List the app's customer-defined SLOs (ADR-747)
+    """List the app's customer-defined SLOs
 
      Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which
-    reports ADR-082's fixed 99.5% availability panel.
+    reports the fixed 99.5% availability panel.
 
     Args:
         slug (str):
@@ -129,10 +129,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[SLOResponse]]:
-    """List the app's customer-defined SLOs (ADR-747)
+    """List the app's customer-defined SLOs
 
      Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which
-    reports ADR-082's fixed 99.5% availability panel.
+    reports the fixed 99.5% availability panel.
 
     Args:
         slug (str):
@@ -159,10 +159,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[SLOResponse] | None:
-    """List the app's customer-defined SLOs (ADR-747)
+    """List the app's customer-defined SLOs
 
      Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which
-    reports ADR-082's fixed 99.5% availability panel.
+    reports the fixed 99.5% availability panel.
 
     Args:
         slug (str):

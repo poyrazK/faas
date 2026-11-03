@@ -48,7 +48,12 @@ func (s *routeLabelSet) lookup(route string) (string, bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.admitted[route]
+	entry, ok := s.admitted[route]
+	if ok {
+		// A label in use is not idle: keep it out of reach of replacement.
+		entry.lastSeen = s.now().UnixNano()
+		s.admitted[route] = entry
+	}
 	return route, ok
 }
 
@@ -59,7 +64,7 @@ func (s *routeLabelSet) labelBeforeResponse(route string, declared bool) string 
 		return label
 	}
 	if declared {
-		return s.admit(route)
+		return s.admitDeclared(route)
 	}
 	return ""
 }

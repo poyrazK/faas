@@ -20,17 +20,24 @@ class ReleaseGateResult:
     kind: ReleaseGateResultKind
     passed: bool
     observed: float
-    """The burn rate, new error groups, metric average, or the release's AI metric."""
+    """The burn rate, new error groups, metric average, the release's AI metric, failed-probe percentage, or signed
+    change in percent."""
     bound: float
     """The value that fails the gate."""
     samples: int
-    """The release's requests, new-error events, metric values or AI calls."""
+    """The release's requests, new-error events, probes, metric values or AI calls."""
     summary: str
     """What the gate measured, in one line."""
     baseline_bad_fraction: float | Unset = UNSET
     """slo gates: the predecessor's bad fraction."""
+    baseline: float | Unset = UNSET
+    """synthetic gates: the stable revision's failed-probe percentage; metric_change gates: the metric's average
+    before the rollout."""
     error_classes: list[str] | Unset = UNSET
     """new_errors gates: the new groups' error classes."""
+    not_judged: bool | Unset = UNSET
+    """True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says
+    what it was waiting for."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,9 +57,13 @@ class ReleaseGateResult:
 
         baseline_bad_fraction = self.baseline_bad_fraction
 
+        baseline = self.baseline
+
         error_classes: list[str] | Unset = UNSET
         if not isinstance(self.error_classes, Unset):
             error_classes = self.error_classes
+
+        not_judged = self.not_judged
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -69,8 +80,12 @@ class ReleaseGateResult:
         )
         if baseline_bad_fraction is not UNSET:
             field_dict["baseline_bad_fraction"] = baseline_bad_fraction
+        if baseline is not UNSET:
+            field_dict["baseline"] = baseline
         if error_classes is not UNSET:
             field_dict["error_classes"] = error_classes
+        if not_judged is not UNSET:
+            field_dict["not_judged"] = not_judged
 
         return field_dict
 
@@ -93,7 +108,11 @@ class ReleaseGateResult:
 
         baseline_bad_fraction = d.pop("baseline_bad_fraction", UNSET)
 
+        baseline = d.pop("baseline", UNSET)
+
         error_classes = cast(list[str], d.pop("error_classes", UNSET))
+
+        not_judged = d.pop("not_judged", UNSET)
 
         release_gate_result = cls(
             name=name,
@@ -104,7 +123,9 @@ class ReleaseGateResult:
             samples=samples,
             summary=summary,
             baseline_bad_fraction=baseline_bad_fraction,
+            baseline=baseline,
             error_classes=error_classes,
+            not_judged=not_judged,
         )
 
         release_gate_result.additional_properties = d

@@ -11,11 +11,28 @@ Metrics use the daemon prefix (`apid_` or `vmmd_`):
 `<daemon>_log_archive_local_bytes_max`,
 `<daemon>_log_archive_flush_duration_seconds`,
 `<daemon>_log_archive_upload_duration_seconds`.
+vmmd also counts lines it dropped before they reached the spool in
+`vmmd_log_archive_lines_dropped_total` (full eviction queue, full spool,
+spool write failure, or a ring retired after the archive closed); every drop
+also counts in `vmmd_log_archive_failures_total{reason}`, which this alert
+watches.
 For control-plane checks use the `apid` prefix and `apid` service below; on a
 compute host substitute the `vmmd` prefix and `faas-vmmd` service.
-Issue: #562.
+Issue: #562. Ownership, kill switches and recovery: [FaasLogs](FaasLogs.md).
 Severity: warn, including when the local spool approaches
 `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX` (ADR-1236 demoted that page).
+All three log-archive alerts are judged per scrape target.
+
+## FaasLogArchiveNodeDisabled
+
+`<daemon>_log_archive_enabled` is 0 on one target while others report 1: that
+daemon started without archiving (no `archive-creds.json`, the `{}`
+placeholder, an unreadable envelope, or a client or shipper that failed to
+start). On vmmd its parked instances' logs are not archived; on apid account
+erasure cannot reach the bucket (the grace sweep logs `log archive erasure
+skipped`). Check the daemon's startup warnings and the envelope on that host,
+re-run the `log_archive` role with the manifest's `log_archive` settings, then
+restart the daemon.
 
 ## Symptom
 
@@ -39,7 +56,10 @@ Three failure shapes show up first:
    Spool is full; the shipper is now in back-pressure mode
    and new per-instance rings will spill to the local
    filesystem (`reason="spool_full"`). `reason="queue_full"` means
-   vmmd's bounded eviction-to-disk queue is saturated.
+   vmmd's bounded eviction-to-disk queue is saturated. Evicted lines are
+   dropped then; a torn-down VM's retained lines wait up to 2 s for room
+   and are then written to the spool directly (logged as
+   `logarchive.retire_spilled`), so mass teardown no longer drops them.
 
 A fourth shape is observable through the `FaasLogArchiveShipperDegraded`
 alert: `reason="throttle"` means the vendor is rate-limiting the
@@ -256,7 +276,7 @@ In order — each step assumes the previous didn't help:
    and the spool has filled. Two options:
 
    a. **Raise the cap** by editing the apid unit's
-      drop-in to set `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX=20G`
+      drop-in to set `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX=20GiB` (plain bytes or a K/M/G/T binary unit; anything else falls back to 10 GiB with a warning)
       (or similar). This buys time but does not fix the
       root cause; the spool will keep growing.
 

@@ -12,7 +12,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func routeMonitorRollbackFixture(t *testing.T, onViolation string, openedAfterRelease time.Duration) (apidserver.TestEnv, state.App, state.Deployment, state.Deployment, string) {
+// routeMonitorRollbackFixture seeds an open incident whose healthy baseline
+// is the fixture's rollback target, or baselineID when given.
+func routeMonitorRollbackFixture(t *testing.T, onViolation string, openedAfterRelease time.Duration, baselineID ...string) (apidserver.TestEnv, state.App, state.Deployment, state.Deployment, string) {
 	t.Helper()
 	e, app, target, current := apidserver.CheckedRollbackAPIFixture(t)
 	zero, budget := int64(0), int64(100)
@@ -27,9 +29,13 @@ func routeMonitorRollbackFixture(t *testing.T, onViolation string, openedAfterRe
 		t.Fatal(err)
 	}
 	released := routemonitor.ReleasedAt(current.CreatedAt, current.CanaryStepStartedAt, current.RolloutCompletedAt)
+	baseline := target.ID
+	if len(baselineID) > 0 {
+		baseline = baselineID[0]
+	}
 	incident := api.RouteMonitorIncident{
 		Version: api.RouteMonitorVersion, ID: uuid.NewString(), AppID: app.ID, DeploymentID: current.ID, Revision: 1,
-		Status: "open", OpenedAt: released.Add(openedAfterRelease), Baseline: &api.RouteMonitorDeploymentBaseline{DeploymentID: target.ID},
+		Status: "open", OpenedAt: released.Add(openedAfterRelease), Baseline: &api.RouteMonitorDeploymentBaseline{DeploymentID: baseline},
 		OpeningReport: api.RouteMonitorReport{AppID: app.ID, DeploymentID: current.ID, Status: "violated", Routes: []api.RouteMonitorFinding{{
 			Route: api.RouteMonitorRoute{Method: "POST", Path: "/checkout", Max5xxRateBPS: &budget}, Status: "violated", ErrorStatus: "violated",
 		}}},
@@ -73,6 +79,16 @@ func TestRouteMonitorRollbackSkipsOrIgnores(t *testing.T) {
 		incident, err := (*e.Store()).GetRouteMonitorIncident(ctx, (*e.Acct()).ID, app.ID, incidentID)
 		if err != nil || incident.Rollback == nil || incident.Rollback.Status != "skipped" || incident.Rollback.Reason != routemonitor.RollbackSkipOutsideWindow {
 			t.Fatalf("late incident rollback = %+v, %v", incident.Rollback, err)
+		}
+	})
+	// adr: 20261028110044 — a refused checked rollback records its problem code.
+	t.Run("checked rollback refuses", func(t *testing.T) {
+		e, app, _, _, incidentID := routeMonitorRollbackFixture(t, "rollback", time.Minute, uuid.NewString())
+		ctx := t.Context()
+		(*e.S()).ApplyRouteMonitorRollback(ctx, state.RouteMonitorTarget{AccountID: (*e.Acct()).ID, AppID: app.ID})
+		incident, err := (*e.Store()).GetRouteMonitorIncident(ctx, (*e.Acct()).ID, app.ID, incidentID)
+		if err != nil || incident.Rollback == nil || incident.Rollback.Status != "skipped" || incident.Rollback.Reason != routemonitor.RollbackSkipTargetIneligible || incident.Rollback.RefusalCode == "" {
+			t.Fatalf("refused rollback = %+v, %v; want skipped with the refusal code", incident.Rollback, err)
 		}
 	})
 	t.Run("report mode", func(t *testing.T) {

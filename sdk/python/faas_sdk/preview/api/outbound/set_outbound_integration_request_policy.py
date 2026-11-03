@@ -83,8 +83,8 @@ def sync_detailed(
     """Replace a customer-owned integration's rate, burst, concurrency, and timeout policy.
 
      Requires MFA and deploy-write scope. Every value must fit the account plan ceiling. Changes are
-    enforced on subsequent admissions without an outboundd restart; already-admitted calls keep their
-    existing deadline.
+    enforced on subsequent admissions without an outbound gateway restart; already-admitted calls keep
+    their existing deadline.
 
     Args:
         integration (UUID):
@@ -120,8 +120,8 @@ def sync(
     """Replace a customer-owned integration's rate, burst, concurrency, and timeout policy.
 
      Requires MFA and deploy-write scope. Every value must fit the account plan ceiling. Changes are
-    enforced on subsequent admissions without an outboundd restart; already-admitted calls keep their
-    existing deadline.
+    enforced on subsequent admissions without an outbound gateway restart; already-admitted calls keep
+    their existing deadline.
 
     Args:
         integration (UUID):
@@ -152,8 +152,8 @@ async def asyncio_detailed(
     """Replace a customer-owned integration's rate, burst, concurrency, and timeout policy.
 
      Requires MFA and deploy-write scope. Every value must fit the account plan ceiling. Changes are
-    enforced on subsequent admissions without an outboundd restart; already-admitted calls keep their
-    existing deadline.
+    enforced on subsequent admissions without an outbound gateway restart; already-admitted calls keep
+    their existing deadline.
 
     Args:
         integration (UUID):
@@ -187,8 +187,8 @@ async def asyncio(
     """Replace a customer-owned integration's rate, burst, concurrency, and timeout policy.
 
      Requires MFA and deploy-write scope. Every value must fit the account plan ceiling. Changes are
-    enforced on subsequent admissions without an outboundd restart; already-admitted calls keep their
-    existing deadline.
+    enforced on subsequent admissions without an outbound gateway restart; already-admitted calls keep
+    their existing deadline.
 
     Args:
         integration (UUID):

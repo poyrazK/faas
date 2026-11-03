@@ -41,7 +41,7 @@ func (s *server) getPlatformTenantConsumerProvisioningPolicy(w http.ResponseWrit
 	}
 	policy, err := store.GetPlatformTenantConsumerProvisioningPolicy(r.Context(), acct.ID, tenantID)
 	if err != nil {
-		s.platformTenantCredentialError(w, err, acct.Plan)
+		s.platformTenantCredentialError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, platformTenantConsumerPolicyResponse(policy))
@@ -71,12 +71,12 @@ func (s *server) setPlatformTenantConsumerProvisioningPolicy(w http.ResponseWrit
 	}
 	prior, err := store.GetPlatformTenantConsumerProvisioningPolicy(r.Context(), acct.ID, tenantID)
 	if err != nil {
-		s.platformTenantCredentialError(w, err, acct.Plan)
+		s.platformTenantCredentialError(w, err)
 		return
 	}
 	policy, err := store.SetPlatformTenantConsumerProvisioningPolicy(r.Context(), acct.ID, tenantID, *req.Enabled, *req.MaxConsumers)
 	if err != nil {
-		s.platformTenantCredentialError(w, err, acct.Plan)
+		s.platformTenantCredentialError(w, err)
 		return
 	}
 	if prior.Enabled != policy.Enabled || prior.MaxConsumers != policy.MaxConsumers {

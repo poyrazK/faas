@@ -16,7 +16,7 @@ T = TypeVar("T", bound="EdgeWAFReviewResponse")
 
 @_attrs_define
 class EdgeWAFReviewResponse:
-    """An app's sampled kind=waf detections grouped for a false-positive review (ADR-831 amendment 13)."""
+    """An app's sampled kind=waf detections grouped for a false-positive review."""
 
     since: datetime.datetime
     """Start of the reviewed window"""

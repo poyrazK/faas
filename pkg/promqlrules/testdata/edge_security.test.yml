@@ -111,6 +111,40 @@ tests:
               description: "More than half of the challenge solutions gw-2 received in 15m were invalid or expired. If only this gateway does it, its challenge key or clock differs from the gateway that issued the pages; visitors are sent back to the challenge."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
 
+  # ADR-831 amendment 17.
+  - name: gateways signing challenges with different keys warn
+    interval: 1m
+    input_series:
+      - series: gateway_edge_challenge_key_info{job="gatewayd-internal",instance="gw-1",key_id="6ecec4c8a1b2",source="session"}
+        values: 1x20
+      - series: gateway_edge_challenge_key_info{job="gatewayd-internal",instance="gw-2",key_id="c2b8f982c3d4",source="session"}
+        values: 1x20
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasEdgeChallengeKeyMismatch
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+            exp_annotations:
+              summary: "Gateways sign browser challenges with different keys"
+              description: "gatewayd-internal processes report more than one gateway_edge_challenge_key_info key_id. A challenge pass one gateway issues is refused by the others, so visitors behind a challenge rule are challenged again whenever a request reaches another gateway. Give every gateway the fleet's gatewayd_edge_challenge_key before releasing edge_challenge."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
+
+  - name: gateways sharing the fleet challenge key do not warn
+    interval: 1m
+    input_series:
+      - series: gateway_edge_challenge_key_info{job="gatewayd-internal",instance="gw-1",key_id="3f09ab12cd34",source="fleet"}
+        values: 1x20
+      - series: gateway_edge_challenge_key_info{job="gatewayd-internal",instance="gw-2",key_id="3f09ab12cd34",source="fleet"}
+        values: 1x20
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasEdgeChallengeKeyMismatch
+        exp_alerts: []
+
   - name: penalty box sharing errors, drops and slow propagation warn
     interval: 1m
     input_series:
@@ -242,3 +276,29 @@ tests:
               summary: "App b is in attack mode"
               description: "gateway_edge_attack_mode_total shows app b's attack mode deciding requests for 15m. While attack mode is preview, review each use: did it stop the flood, and did the app's own clients get through?"
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
+
+  - name: a country database built more than 75 days ago warns; a fresher one does not
+    interval: 1m
+    input_series:
+      # Built 77 days (gw-1) and 60 days (gw-2) before the test's epoch.
+      - series: geoip_db_build_timestamp_seconds{instance="gw-1"}
+        values: -6652800x90
+      - series: geoip_db_build_timestamp_seconds{instance="gw-2"}
+        values: -5184000x90
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasGeoIPDatabaseStale
+        exp_alerts: []
+      - eval_time: 75m
+        alertname: FaasGeoIPDatabaseStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              instance: gw-1
+            exp_annotations:
+              summary: "gw-1 judges geo rules with a country database built more than 75 days ago"
+              description: "geoip_db_build_timestamp_seconds on gw-1 is more than 75 days old. Addresses reassigned since then resolve to their old country or to none, so kind=geo rules and country match conditions misjudge them. Bump faas_geoip_release and re-run the geoip role."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGeoIPDatabaseStale.md"

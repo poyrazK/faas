@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-var _ ObjectBucketStore = (*PgStore)(nil)
+var (
+	_ ObjectBucketStore          = (*PgStore)(nil)
+	_ ObjectBucketPlacementStore = (*PgStore)(nil)
+)
 
 func objectBucketFromSQL(b sqlc.ObjectBucket) ObjectBucket {
 	return ObjectBucket{ID: pgUUIDString(b.ID), OrgID: pgUUIDString(b.OrgID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, PublicRead: b.PublicRead, ServeAt: b.ServeAt.String, EnvironmentCloneSourceBucketID: pgUUIDString(b.EnvironmentCloneSourceBucketID), EnvironmentCloneOperationID: pgUUIDString(b.EnvironmentCloneOperationID), CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time, AttemptCount: b.AttemptCount, RetryAt: b.RetryAt.Time, LastErrorCode: b.LastErrorCode}
@@ -36,7 +39,71 @@ func (s *pgCore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBuck
 	return reserved, created, tx.Commit(ctx)
 }
 
+func (s *pgCore) ReserveObjectBucketPlaced(ctx context.Context, b ObjectBucket, appLimit int, candidates []ObjectBucketPlacement) (ObjectBucket, bool, error) {
+	if b.EnvironmentCloneOperationID != "" || len(candidates) == 0 {
+		return ObjectBucket{}, false, ErrConflict
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectBucket{}, false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	reserved, created, err := reserveObjectBucketPlacedTx(ctx, tx, b, appLimit, candidates)
+	if err != nil {
+		return ObjectBucket{}, false, err
+	}
+	return reserved, created, tx.Commit(ctx)
+}
+
+func (s *pgCore) ObjectBucketPlacementCounts(ctx context.Context, accountID string, backendIDs []string) (map[string]ObjectBucketPlacementCount, error) {
+	return objectBucketPlacementCountsDB(ctx, s.pool, accountID, backendIDs)
+}
+
+func objectBucketPlacementCountsDB(ctx context.Context, db sqlc.DBTX, accountID string, backendIDs []string) (map[string]ObjectBucketPlacementCount, error) {
+	var account pgtype.UUID
+	if accountID != "" {
+		account = mustPgUUID(accountID)
+	}
+	rows, err := sqlc.New().ObjectBucketPlacementCounts(ctx, db, sqlc.ObjectBucketPlacementCountsParams{AccountID: account, BackendIds: backendIDs})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]ObjectBucketPlacementCount, len(rows))
+	for _, row := range rows {
+		out[row.BackendID] = ObjectBucketPlacementCount{Buckets: row.Buckets, AccountBuckets: row.AccountBuckets}
+	}
+	return out, nil
+}
+
+// placeObjectBucketTx picks b's backend under the region's placement lock,
+// taken after the reservation's account and app locks.
+func placeObjectBucketTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, candidates []ObjectBucketPlacement) (ObjectBucket, error) {
+	if err := sqlc.New().ObjectBucketPlacementLock(ctx, tx, b.Region); err != nil {
+		return b, err
+	}
+	ids := make([]string, len(candidates))
+	for i, c := range candidates {
+		ids[i] = c.BackendID
+	}
+	counts, err := objectBucketPlacementCountsDB(ctx, tx, b.AccountID, ids)
+	if err != nil {
+		return b, err
+	}
+	choice, ok := ChooseObjectBucketPlacement(candidates, counts)
+	if !ok {
+		return b, ErrObjectStorageRegionFull
+	}
+	b.BackendID, b.BackendFingerprint = choice.BackendID, choice.BackendFingerprint
+	return b, nil
+}
+
 func reserveObjectBucketTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
+	return reserveObjectBucketPlacedTx(ctx, tx, b, limit, nil)
+}
+
+// reserveObjectBucketPlacedTx places the new bucket among candidates when
+// there are any; otherwise b keeps the backend its caller chose.
+func reserveObjectBucketPlacedTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, limit int, candidates []ObjectBucketPlacement) (ObjectBucket, bool, error) {
 	q := sqlc.New()
 	owner, err := q.ObjectStorageReserveOwner(ctx, tx, sqlc.ObjectStorageReserveOwnerParams{AppID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID)})
 	if err != nil {
@@ -74,6 +141,11 @@ func reserveObjectBucketTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, limit
 	}
 	if count >= int64(limit) {
 		return ObjectBucket{}, false, ErrConflict
+	}
+	if len(candidates) != 0 {
+		if b, err = placeObjectBucketTx(ctx, tx, b, candidates); err != nil {
+			return ObjectBucket{}, false, err
+		}
 	}
 	var cloneSource pgtype.UUID
 	if b.EnvironmentCloneSourceBucketID != "" {

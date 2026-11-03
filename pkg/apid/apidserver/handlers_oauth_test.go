@@ -289,12 +289,10 @@ func TestOAuthCallback_RequiresSessionAuth(t *testing.T) {
 	}
 }
 
-// TestOAuthCallback_RejectsForeignInstall is the §11 ownership
-// proof (PR-B): when the install exists but belongs to a different
-// GitHub user than the dashboard session claims to be, the handler
-// returns 403 forged. Without this check (the pre-PR-B behaviour),
-// any logged-in FaaS account could adopt any installation_id by
-// guessing — the §11 anti-takeover invariant is what this closes.
+// TestOAuthCallback_RejectsForeignInstall: an installation ID the App does
+// not know (or another App's) is refused before any OAuth step. Ownership of
+// a real installation is proved by the code callback, which only connects an
+// installation the authorizing GitHub user owns or administers.
 func TestOAuthCallback_RejectsForeignInstall(t *testing.T) {
 	gh := &fakeGithubdClient{verified: false, accountLogin: "bob"}
 	srv, cookie, mgr := newOAuthTestServerWithLogin(t, gh, "alice")
@@ -305,11 +303,8 @@ func TestOAuthCallback_RejectsForeignInstall(t *testing.T) {
 	r.AddCookie(cookie)
 	srv.ServeHTTP(rec, r)
 
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("code = %d, want 403\nbody = %s", rec.Code, rec.Body.String())
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
-		t.Errorf("content-type = %q, want application/problem+json", ct)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/dashboard/account?github=forged" {
+		t.Fatalf("code = %d location = %q, want 302 to ?github=forged\nbody = %s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
 	}
 	if gh.gotExpectedLogin != "" {
 		t.Errorf("verify expected_login = %q, want empty for organization-compatible lookup", gh.gotExpectedLogin)
@@ -342,17 +337,12 @@ func TestOAuthCallback_AcceptsOwnInstall(t *testing.T) {
 	}
 }
 
-// TestOAuthCallback_UnauthenticatedInstallRefused is the §11
-// third path: the user has a FaaS session but never completed
-// /v1/auth/github. expectedLogin is empty, so we cannot prove the
-// install belongs to them — refuse with 302 to
-// /dashboard/account?github=unauthenticated rather than silently
-// binding the install under an unverified identity.
-//
-// This is the regression test for the wire-back-compat worry from
-// the plan: pre-PR-B cookies minted without github_login must NOT
-// get a free pass.
-func TestOAuthCallback_UnauthenticatedInstallRefused(t *testing.T) {
+// TestOAuthCallback_PasswordSessionContinuesToAuthorization: a Gregale
+// session signed in with Google or a password has no GitHub login. After
+// installing the App it used to land on ?github=unauthenticated with no way
+// forward (ADR-20261101160300); it now continues to GitHub's user
+// authorization, which proves ownership before anything is persisted.
+func TestOAuthCallback_PasswordSessionContinuesToAuthorization(t *testing.T) {
 	gh := &fakeGithubdClient{verified: true, accountLogin: "alice"}
 	srv, cookie, _ := newOAuthTestServerWithLogin(t, gh, "alice")
 	// NB: no wrapWithGithubLogin — cookie has no github_login.
@@ -365,11 +355,14 @@ func TestOAuthCallback_UnauthenticatedInstallRefused(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
 	}
-	loc := rec.Header().Get("Location")
-	if loc != "/dashboard/account?github=unauthenticated" {
-		t.Errorf("redirect = %q, want /dashboard/account?github=unauthenticated", loc)
+	u, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse redirect: %v", err)
 	}
-	if gh.gotInstallID != 0 {
-		t.Errorf("verify should NOT be called when github_login is empty; got installID=%d", gh.gotInstallID)
+	if u.Host != "github.com" || !strings.HasSuffix(u.Query().Get("state"), ".42") {
+		t.Errorf("redirect = %q, want GitHub OAuth state bound to installation 42", u)
+	}
+	if gh.gotInstallID != 42 {
+		t.Errorf("verified installation = %d, want 42", gh.gotInstallID)
 	}
 }

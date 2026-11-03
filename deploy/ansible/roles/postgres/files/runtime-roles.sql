@@ -25,7 +25,7 @@ BEGIN
 	END IF;
 	ALTER ROLE faas_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 	FOREACH r IN ARRAY ARRAY['faas_apid', 'faas_schedd', 'faas_meterd', 'faas_githubd',
-		'faas_outboundd', 'faas_bridged', 'faas_shared'] LOOP
+		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared'] LOOP
 		IF to_regrole(r) IS NULL THEN
 			EXECUTE format('CREATE ROLE %I LOGIN', r);
 		END IF;
@@ -65,6 +65,11 @@ BEGIN
 	-- appended, never changed.
 	IF to_regclass('public.audit_log_anchors') IS NOT NULL THEN
 		REVOKE UPDATE, DELETE ON public.audit_log_anchors FROM faas_runtime;
+	END IF;
+	-- Issue #574: deployctl writes the release history as the owner; daemons
+	-- only read it, so none can rewrite what was deployed.
+	IF to_regclass('public.platform_release_activations') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.platform_release_activations FROM faas_runtime;
 	END IF;
 END
 $$;

@@ -17,8 +17,8 @@ T = TypeVar("T", bound="RetryDeploymentRequest")
 @_attrs_define
 class RetryDeploymentRequest:
     """Body for POST /v1/deployments/{id}/retry. Identifies the stage the retry should resume from. The closed-6 vocabulary
-    mirrors `state.AllStageNames` (ADR-117); the API rejects unknown values with 400. Empty strings are rejected for the
-    same reason.
+    mirrors `state.AllStageNames`; the API rejects unknown values with 400. Empty strings are rejected for the same
+    reason.
 
     """
 

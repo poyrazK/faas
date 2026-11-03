@@ -15,7 +15,7 @@ export type AuditEventResponse = {
    */
   at: string;
   /**
-   * Which daemon wrote the row. `apid` for IAM-4 surface; `schedd` for state-transition events (instance wakes / parks / watchdog timeouts).
+   * Which daemon wrote the row. `apid` for surface; `schedd` for state-transition events (instance wakes / parks / watchdog timeouts).
    */
   actor: string;
   /**
@@ -27,7 +27,7 @@ export type AuditEventResponse = {
    */
   subject?: string;
   /**
-   * Highest-severity classification for stateless.advisory rows (`high` for /data, /db, /var/lib/postgresql, /var/lib/mysql; `warn` for other closed paths; `info` for an empty batch). Omitted for non-stateless kinds and for pre-PR-427 stateless.advisory rows where the data.severity key is absent. Mega-PR B / stateless-DX work.
+   * Highest-severity classification for stateless.advisory rows (`high` for /data, /db, /var/lib/postgresql, /var/lib/mysql; `warn` for other closed paths; `info` for an empty batch). Omitted for non-stateless kinds and for older stateless.advisory rows without a severity.
    */
   severity?: 'high' | 'warn' | 'info';
   /**

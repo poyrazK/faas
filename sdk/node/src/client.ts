@@ -12,7 +12,8 @@
 //   * Stack ordering (outermost → innermost):
 //       1. idempotency — one Idempotency-Key per logical mutating call
 //       2. rfc7807    — decode the final Problem, raise typed errors
-//       3. retry      — bounded exponential backoff on 5xx + 429
+//       3. retry      — bounded exponential backoff on 5xx + 429 and on a
+//                       timed-out traffic policy check (422 + Retry-After)
 //       4. logger     — emit one log line per attempt
 //       5. user fetch — globalThis.fetch (or a test-supplied fetch)
 //
@@ -59,6 +60,19 @@ function retryAfterMs(value: string | null): number {
   const raw = value.trim();
   const delay = /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw) - Date.now();
   return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+
+/** A traffic policy check that ran out of time on a busy control plane
+ *  (422 traffic_policy_too_complex with Retry-After). The refusal saved
+ *  nothing and asks to be resent. Reads a clone, so the body stays intact. */
+async function policyCheckTimedOut(response: Response): Promise<boolean> {
+  if (response.status !== 422 || !response.headers.get('Retry-After')) return false;
+  try {
+    const problem: unknown = await response.clone().json();
+    return typeof problem === 'object' && problem !== null && (problem as { code?: unknown }).code === 'traffic_policy_too_complex';
+  } catch {
+    return false;
+  }
 }
 
 async function waitForRetry(delayMs: number, signal?: AbortSignal | null): Promise<void> {
@@ -320,9 +334,11 @@ export class FaaSClient {
       const attempts = body instanceof ReadableStream ? 1 : Math.max(1, retry.maxAttempts);
       for (let attempt = 0; attempt < attempts; attempt++) {
         signal?.throwIfAborted();
-        // Transport errors propagate unchanged; only HTTP 429/5xx retry.
+        // Transport errors propagate unchanged; only HTTP 429/5xx and a
+        // timed-out traffic policy check retry.
         const response = await loggerLayer(input, init);
-        if ((response.status < 500 && response.status !== 429) || attempt + 1 === attempts) return response;
+        const retryable = response.status >= 500 || response.status === 429 || await policyCheckTimedOut(response);
+        if (!retryable || attempt + 1 === attempts) return response;
         const delay = Math.max(retry.backoffMs * 2 ** attempt, retryAfterMs(response.headers.get('Retry-After')));
         // Release intermediate bodies only. The final body must remain intact
         // for typed errors and the generated client's normal response parser.

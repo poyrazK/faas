@@ -1,15 +1,20 @@
+// adr: 1155 — the capture API's gates, lifecycle, deletion and problem shapes.
 package profilecapture_test
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/profilecapture"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -18,13 +23,20 @@ import (
 )
 
 type fakeHost struct {
-	mem      *state.MemStore
-	app      state.App
+	mem *state.MemStore
+	app state.App
+	// members are the other accounts the app is shared with.
+	members  []string
 	notified []string
+	audited  []string
+}
+
+func (h *fakeHost) Audit(_ context.Context, action, _ string, details map[string]any) {
+	h.audited = append(h.audited, fmt.Sprintf("%s %v", action, details["capture_id"]))
 }
 
 func (h *fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, acct state.Account, slug string) (state.App, bool) {
-	if slug != h.app.Slug || acct.ID != h.app.AccountID {
+	if slug != h.app.Slug || acct.ID != h.app.AccountID && !slices.Contains(h.members, acct.ID) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "App not found", "the app does not exist"))
 		return state.App{}, false
 	}
@@ -66,6 +78,7 @@ func serve(svc *profilecapture.Service, acct state.Account, method, target, body
 	mux.HandleFunc("POST /v1/apps/{slug}/profiles/captures", wrap(svc.Create))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures", wrap(svc.List))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}", wrap(svc.Get))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/profiles/captures/{id}", wrap(svc.Delete))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/view", wrap(svc.View))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/pprof", wrap(svc.Download))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/diff", wrap(svc.Diff))
@@ -102,6 +115,128 @@ func TestCaptureGates(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCaptureDelete pins that a customer can delete a capture of their app
+// once, that other or malformed ids are a 404, and that the deletion is audited.
+func TestCaptureDelete(t *testing.T) {
+	svc, host, acct := newService(t, api.PlanPro, true)
+	rec := serve(svc, acct, http.MethodPost, "/v1/apps/capture/profiles/captures", `{"kinds":["heap"],"duration_seconds":5}`)
+	var created api.ProfileCapture
+	if rec.Code != http.StatusAccepted || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body)
+	}
+	target := "/v1/apps/capture/profiles/captures/" + created.ID
+	for _, tc := range []struct {
+		name, method, target string
+		want                 int
+	}{
+		{"malformed id", http.MethodDelete, "/v1/apps/capture/profiles/captures/not-a-uuid", http.StatusNotFound},
+		{"unknown id", http.MethodDelete, "/v1/apps/capture/profiles/captures/" + uuid.NewString(), http.StatusNotFound},
+		{"delete", http.MethodDelete, target, http.StatusNoContent},
+		{"gone", http.MethodGet, target, http.StatusNotFound},
+		{"delete again", http.MethodDelete, target, http.StatusNotFound},
+	} {
+		if rec := serve(svc, acct, tc.method, tc.target, ""); rec.Code != tc.want {
+			t.Fatalf("%s = %d, want %d: %s", tc.name, rec.Code, tc.want, rec.Body)
+		}
+	}
+	if want := "profile_capture.deleted " + created.ID; len(host.audited) != 1 || host.audited[0] != want {
+		t.Fatalf("audited = %v, want [%s]", host.audited, want)
+	}
+	free, _, freeAcct := newService(t, api.PlanFree, true)
+	if rec := serve(free, freeAcct, http.MethodDelete, target, ""); rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("plan without profiling = %d", rec.Code)
+	}
+}
+
+// TestOrgAppCaptures pins that an organization's app is judged by the
+// organization's plan, whichever member asks, and that its captures are the
+// app's: every member reads and deletes the same ones.
+func TestOrgAppCaptures(t *testing.T) {
+	ctx := t.Context()
+	mem := state.NewMemStore()
+	creator, err := mem.CreateAccount(ctx, "org-creator@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := mem.CreateAccount(ctx, "org-member@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Free organization owns its resources at once; upgrading keeps them.
+	org, err := mem.CreateOrg(ctx, state.Org{Slug: "capture-team", Name: "Team", Plan: api.PlanFree, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.UpdateOrgPlan(ctx, org.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	app, err := mem.CreateApp(ctx, state.App{AccountID: creator.ID, OrgID: org.ID, Slug: "capture", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &profilecapture.Service{Host: &fakeHost{mem: mem, app: app, members: []string{member.ID}}, Enabled: true}
+
+	rec := serve(svc, member, http.MethodPost, "/v1/apps/capture/profiles/captures", `{"kinds":["cpu"],"duration_seconds":5}`)
+	var created api.ProfileCapture
+	if rec.Code != http.StatusAccepted || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("Free member's capture of a Pro organization's app = %d: %s", rec.Code, rec.Body)
+	}
+	var list api.ProfileCaptureList
+	if rec := serve(svc, creator, http.MethodGet, "/v1/apps/capture/profiles/captures", ""); rec.Code != http.StatusOK ||
+		json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list.Captures) != 1 || list.Captures[0].ID != created.ID {
+		t.Fatalf("another member's list = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := serve(svc, creator, http.MethodDelete, "/v1/apps/capture/profiles/captures/"+created.ID, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("another member's delete = %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestCaptureCreateProblems pins the problem each store rejection maps to.
+// Both account quotas answer 429 quota_exhausted with their limit and
+// observed value; a full capture storage also names the bytes (ADR-1155).
+func TestCaptureCreateProblems(t *testing.T) {
+	full := &state.ProfileCaptureStorageError{Limit: 256 << 20, Used: 254 << 20}
+	for _, tc := range []struct {
+		name            string
+		err             error
+		status          int
+		code            string
+		limit, observed int64
+		bytes           bool
+	}{
+		{"app gone", state.ErrNotFound, http.StatusNotFound, api.CodeNotFound, 0, 0, false},
+		{"capture active", state.ErrProfileCaptureActive, http.StatusConflict, api.CodeConflict, 0, 0, false},
+		{"hourly quota", state.ErrProfileCaptureQuota, http.StatusTooManyRequests, api.CodeQuotaExhausted,
+			api.ProfileCaptureMaxPerAccountHour, api.ProfileCaptureMaxPerAccountHour, false},
+		{"storage full", fmt.Errorf("queue profile capture: %w", full), http.StatusTooManyRequests, api.CodeQuotaExhausted,
+			full.Limit, full.Used, true},
+		{"store failure", errors.New("connection reset"), http.StatusServiceUnavailable, api.CodeCapacity, 0, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := profilecapture.CreateProblem(tc.err)
+			if p.Status != tc.status || p.Code != tc.code {
+				t.Fatalf("problem = %d %s, want %d %s", p.Status, p.Code, tc.status, tc.code)
+			}
+			if got := [2]int64{deref(p.Limit), deref(p.Observed)}; got != [2]int64{tc.limit, tc.observed} {
+				t.Fatalf("limit, observed = %v, want %d, %d", got, tc.limit, tc.observed)
+			}
+			if bytes := p.LimitBytes != nil && *p.LimitBytes == tc.limit && p.ObservedBytes != nil && *p.ObservedBytes == tc.observed; bytes != tc.bytes {
+				t.Fatalf("limit_bytes, observed_bytes = %v, %v, want set %v", p.LimitBytes, p.ObservedBytes, tc.bytes)
+			}
+			if tc.bytes && p.DocsURL == "" {
+				t.Fatal("storage problem has no docs URL")
+			}
+		})
+	}
+}
+
+func deref(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 func TestCaptureLifecycle(t *testing.T) {

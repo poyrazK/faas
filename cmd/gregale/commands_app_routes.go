@@ -45,7 +45,7 @@ import (
 func cmdAppsRoutes(slug string, args []string) int {
 	_ = args // no flags yet; future flags land here alongside a server DTO bump
 	if slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale apps routes <slug>", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app list routes <slug>", "apps")
 		return 1
 	}
 	client, err := authedClient()

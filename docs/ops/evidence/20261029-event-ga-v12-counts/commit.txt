@@ -1,0 +1,1 @@
+f28b0beb perf(events): delivery counts read the account's live slots alone (ADR-614 amendment 2026-10-29)

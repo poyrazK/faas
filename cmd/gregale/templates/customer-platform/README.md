@@ -56,7 +56,7 @@ gregale deploy --name <slug> --platform-tenant-required --no-require-authn \
 
 The runtime login must have neither SUPERUSER nor BYPASSRLS. An ordinary secret
 named `MIGRATION_DATABASE_URL` lacks a managed binding's delivery restriction.
-After app creation, `gregale secrets set --app <slug> DATABASE_URL=...` updates
+After app creation, `gregale env set --app <slug> DATABASE_URL=...` updates
 an external connection. Start a new deployment after changing that credential;
 this starter reads it at process startup.
 

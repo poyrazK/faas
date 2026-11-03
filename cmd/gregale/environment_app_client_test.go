@@ -58,6 +58,38 @@ func TestAppEnvironmentFlagScopesConfigurationReadsAndWrites(t *testing.T) {
 	}
 }
 
+func TestEnvironmentAppClientPinsFirstObservedRevision(t *testing.T) {
+	var reads int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			reads++
+			// A concurrent edit lands between the command's merge reads.
+			observed := "7"
+			if reads > 1 {
+				observed = "8"
+			}
+			w.Header().Set("X-Gregale-Workload-Revision", observed)
+			main.WriteJSONTest(w, api.AppResponse{Slug: "hello"})
+			return
+		}
+		if r.Header.Get("If-Workload-Revision") != "7" {
+			t.Errorf("update fenced on a later read, losing the concurrent edit: %v", r.Header.Get("If-Workload-Revision"))
+		}
+		main.WriteJSONTest(w, api.AppResponse{Slug: "hello"})
+	}))
+	defer srv.Close()
+	revision := int64(-1)
+	client := main.NewEnvironmentAppClient(api.NewClient(srv.URL, "fp_test_x"), "staging", &revision)
+	for range 2 {
+		if _, err := client.GetApp(t.Context(), "hello"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := client.UpdateApp(t.Context(), "hello", api.UpdateAppRequest{}); err != nil || revision != 7 {
+		t.Fatalf("update: revision=%d err=%v", revision, err)
+	}
+}
+
 func TestProductionAppClientDelegatesConfigurationReadsAndWrites(t *testing.T) {
 	var reads, writes int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

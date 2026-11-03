@@ -7,7 +7,7 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class InternalService {
   /**
-   * Internal — schedd posts a batch envelope to the gateway.
+   * Internal — the scheduler posts a batch envelope to the gateway.
    * Internal-only route. Schedd invokes this once per closed
    * batch. The gateway delivers records sequentially and returns one
    * result per item. Each function response may include

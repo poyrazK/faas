@@ -12,13 +12,14 @@ import (
 )
 
 // SetLogContext turns on the ADR-20261022172052 log context for firing app
-// alerts; meterd calls it while FAAS_LOG_SEARCH_ENABLED=1. A nil evaluator
-// (alerting not configured) ignores it, as SetChannels does.
-func (e *Evaluator) SetLogContext(enabled bool) {
+// alerts of the accounts released reports true for: meterd passes the
+// log-search capability flag (ADR-20261024222102). nil turns it off. A nil
+// evaluator (alerting not configured) ignores it, as SetChannels does.
+func (e *Evaluator) SetLogContext(released func(ctx context.Context, accountID, appID string) bool) {
 	if e == nil {
 		return
 	}
-	e.logContextEnabled = enabled
+	e.logContextReleased = released
 }
 
 // logContext is what the app's log ledger shows around a firing alert.
@@ -38,7 +39,7 @@ type logContext struct {
 // deploys of the hour before it. Any failure omits the context: an alert
 // never waits on or fails for it.
 func (e *Evaluator) readLogContext(ctx context.Context, rule state.AlertRule, slug string, now time.Time) (logContext, bool) {
-	if !e.logContextEnabled || rule.AppID == "" || slug == "" {
+	if e.logContextReleased == nil || rule.AppID == "" || slug == "" || !e.logContextReleased(ctx, rule.AccountID, rule.AppID) {
 		return logContext{}, false
 	}
 	ledger, ok := e.store.(state.LogEventStore)

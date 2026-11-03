@@ -18,8 +18,8 @@ T = TypeVar("T", bound="AppErrorSampleResponse")
 
 @_attrs_define
 class AppErrorSampleResponse:
-    """Single sample row returned by `GET /v1/apps/{slug}/errors/{fingerprint}/first`
-    (ADR-096 / PR-B). Embeds `AppErrorRequestItem` plus the
+    """Single sample row returned by `GET /v1/apps/{slug}/errors/{fingerprint}/first`. Embeds `AppErrorRequestItem` plus
+    the
     redacted `headers_sample` (jsonb-decoded to map) and the
     `redactions_applied` pattern names so the dashboard can
     render a "we redacted X / Y / Z" badge.

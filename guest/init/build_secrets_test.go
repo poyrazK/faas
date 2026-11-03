@@ -50,7 +50,7 @@ func TestBuildSecretEnvSkipsBuildsWithoutSecrets(t *testing.T) {
 	}
 }
 
-// ADR-20261026090000: vmmd delivers the app's registry logins as a Docker
+// ADR-20261026091500: vmmd delivers the app's registry logins as a Docker
 // config in secrets.env; buildctl reads it through DOCKER_CONFIG, it is
 // never a build secret, and secrets.env is gone afterwards.
 func TestBuildSecretEnvStagesRegistryDockerConfig(t *testing.T) {

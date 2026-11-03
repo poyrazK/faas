@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const DefaultUsageExportInterval = 5 * time.Minute
@@ -19,7 +21,8 @@ type UsageExportJob struct {
 	Exporter           UsageReportExporter
 	// CoverageLag accounts for provider sources that arrive asynchronously,
 	// such as OVH server access logs. The exported observation is moved back
-	// by this duration and clamped to the beginning of the billing month.
+	// by this duration, and the report belongs to the month that observation
+	// falls in.
 	CoverageLag time.Duration
 }
 
@@ -36,7 +39,6 @@ func RunUsageExportsOnce(ctx context.Context, jobs []UsageExportJob, now time.Ti
 
 func runUsageExports(ctx context.Context, jobs []UsageExportJob, now time.Time, observe func(string, string, error)) error {
 	now = now.UTC()
-	period := utcMonth(now)
 	var failures []error
 	for _, job := range jobs {
 		if err := ctx.Err(); err != nil {
@@ -50,14 +52,7 @@ func runUsageExports(ctx context.Context, jobs []UsageExportJob, now time.Time, 
 			failures = append(failures, fmt.Errorf("backend %s: %w", job.BackendID, err))
 			continue
 		}
-		observedAt := now.Add(-job.CoverageLag)
-		if observedAt.Before(period) {
-			observedAt = period
-		}
-		err := ExportUsageReports(ctx, job.ReportPath, job.Exporter, UsageReportExportRequest{
-			BackendID: job.BackendID, BackendFingerprint: job.BackendFingerprint,
-			PeriodStart: period, ObservedAt: observedAt,
-		})
+		err := exportUsageJob(ctx, job, now)
 		if err != nil {
 			if observe != nil {
 				observe(job.BackendID, "failed", err)
@@ -70,6 +65,31 @@ func runUsageExports(ctx context.Context, jobs []UsageExportJob, now time.Time, 
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// exportUsageJob writes one backend's reports for the month its lagged
+// observation falls in. A report counts only toward the month it is observed
+// in, and the runner used to report only the clock's month, clamping the
+// observation to its first instant. The previous month's last CoverageLag of
+// usage was therefore never reported, and month close billed a month short by
+// that much (Hunt 19 H19-2). For ObjectStorageReportCloseWindow into a month,
+// the file also carries the previous month's closing report, observed at its
+// last microsecond: the timestamp column keeps microseconds, so a later
+// instant would round into the next month.
+func exportUsageJob(ctx context.Context, job UsageExportJob, now time.Time) error {
+	observedAt := now.Add(-job.CoverageLag)
+	period := utcMonth(observedAt)
+	requests := []UsageReportExportRequest{{
+		BackendID: job.BackendID, BackendFingerprint: job.BackendFingerprint,
+		PeriodStart: period, ObservedAt: observedAt,
+	}}
+	if observedAt.Sub(period) < api.ObjectStorageReportCloseWindow {
+		requests = append(requests, UsageReportExportRequest{
+			BackendID: job.BackendID, BackendFingerprint: job.BackendFingerprint,
+			PeriodStart: period.AddDate(0, -1, 0), ObservedAt: period.Add(-time.Microsecond),
+		})
+	}
+	return ExportUsageReportSet(ctx, job.ReportPath, job.Exporter, requests...)
 }
 
 // RunUsageExports keeps provider reports fresh until ctx is cancelled. The

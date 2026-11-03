@@ -42,9 +42,9 @@ class PlatformTenantStatementFinalizedWebhookPayload:
     as_of: datetime.datetime
     finalized_at: datetime.datetime
     fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
-    """The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents."""
+    """The revision's monthly base fees and minimum top-ups, included in amount_millicents."""
     credit_applied_millicents: int | Unset = UNSET
-    """Tenant prepaid credit this finalized revision drew (ADR-20261019100331)."""
+    """Tenant prepaid credit this finalized revision drew."""
     amount_due_millicents: int | Unset = UNSET
     """What remains to invoice after the credit."""
 

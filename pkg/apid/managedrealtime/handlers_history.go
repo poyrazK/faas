@@ -93,6 +93,9 @@ func (s *Service) AppendManagedRealtimeRetainedMessage(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrRealtimeInvalid("ttl_seconds must be between zero and 86400"))
 		return
 	}
+	if !s.allowRealtimeWrites(w, acct, 1) {
+		return
+	}
 	if request.TTLSeconds > 0 {
 		if expiring, ok := s.Host.Store().(state.ManagedRealtimeExpiringStore); ok {
 			message, err = expiring.AppendManagedRealtimeChannelExpiring(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey, request.Metadata, request.ExpectedSequence, request.TTLSeconds)
@@ -224,14 +227,20 @@ func (s *Service) writeManagedRealtimeHistoryError(w http.ResponseWriter, r *htt
 		return
 	}
 	if errors.Is(err, state.ErrManagedRealtimeEventSchemaLimit) {
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Event schema limit reached", "an endpoint can register 64 immutable schema versions"))
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Event schema limit reached",
+			fmt.Sprintf("an event type can register %d immutable schema versions and an endpoint %d; see https://gregale.dev/docs/realtime", api.RealtimeEventSchemaVersionsPerEventType, api.RealtimeEventSchemasPerEndpoint)))
 		return
 	}
+	var account *state.ManagedRealtimeRetainedChannelLimitError
 	switch {
 	case errors.Is(err, state.ErrManagedRealtimeHistoryInvalid):
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid channel, cursor, payload, or idempotency key"))
+	case errors.As(err, &account):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Retained channel limit reached",
+			fmt.Sprintf("this plan retains history on at most %d channels per account at a time; a channel frees its slot when its messages expire", account.Limit)).
+			WithLimit(int64(account.Limit), int64(account.Observed)).WithDocs("https://gregale.dev/docs/realtime#fair-use-limits"))
 	case errors.Is(err, state.ErrManagedRealtimeHistoryLimit):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Realtime channel limit reached", "a realtime endpoint can retain history for at most 32 channels"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Realtime channel limit reached", fmt.Sprintf("a realtime endpoint retains history on at most %d channels at a time; a channel frees its slot when its messages expire", state.ManagedRealtimeHistoryMaxChannels)))
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Idempotency key conflict", "the retained message key already has a different payload"))
 	case errors.Is(err, state.ErrNotFound):

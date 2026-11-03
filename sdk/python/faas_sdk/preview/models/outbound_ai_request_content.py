@@ -17,15 +17,15 @@ T = TypeVar("T", bound="OutboundAIRequestContent")
 
 @_attrs_define
 class OutboundAIRequestContent:
-    """One logged AI call's captured bodies as the gateway sent them to the provider and read them back; never headers
-    (ADR-996). Personal data and secrets are redacted (ADR-997).
+    """One logged AI call's captured bodies as the gateway sent them to the provider and read them back; never headers.
+    Personal data and secrets are redacted.
 
     """
 
     request_id: UUID
     created_at: datetime.datetime
     request_path: None | str
-    """The provider path of the call; null for captures made before ADR-997."""
+    """The provider path of the call; null for older captures."""
     request: OutboundAIContentBody
     """The start of one captured body."""
     response: OutboundAIContentBody

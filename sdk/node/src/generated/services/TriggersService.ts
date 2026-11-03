@@ -23,7 +23,8 @@ export class TriggersService {
    * Returns every trigger owned by the calling account, optional
    * ?app_id filter to scope to one app, ?kind to scope to one
    * kind. Newest-first by created_at; result is unbounded but
-   * the typical account has well under 200.
+   * the typical account has well under 200. Cron schedules are
+   * not triggers: list them with GET /v1/crons.
    *
    * @returns Trigger The trigger list.
    * @throws ApiError
@@ -40,8 +41,9 @@ export class TriggersService {
     appId?: string,
     /**
      * Optional trigger kind filter (kafka / nats / redis_streams
-     * / sqs_compat / queue). Invalid values produce an empty list,
-     * not 400 — see the trigger list paginator in pkg/apid.
+     * / sqs_compat / queue / realtime). kind=cron answers 400
+     * validation_failed pointing at GET /v1/crons; any other
+     * unknown value produces an empty list.
      *
      */
     kind?: TriggerKind,
@@ -54,6 +56,7 @@ export class TriggersService {
         'kind': kind,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -69,7 +72,7 @@ export class TriggersService {
    * `plan_triggers_not_allowed` for Free plan. A 403 may be
    * `trigger_kind_not_allowed`, `plan_trigger_quota`,
    * `trigger_batch_window_too_large`, or
-   * `trigger_tls_skip_verify_not_allowed`; see ADR-100.
+   * `trigger_tls_skip_verify_not_allowed`.
    *
    * @returns Trigger The new trigger.
    * @throws ApiError
@@ -114,7 +117,7 @@ export class TriggersService {
    * Fires a `triggers:` and `event_triggers:` fragment at the server,
    * validates via the same path the CLI uses, and returns per-row ids
    * and any per-row RFC 7807 codes. Event triggers for the target app
-   * are applied the way a source deploy applies them (ADR-1342):
+   * are applied the way a source deploy applies them:
    * existing subscriptions are kept, and a failure is one `errors`
    * row after its changes are rolled back.
    *
@@ -607,7 +610,7 @@ export class TriggersService {
   /**
    * Per-state aggregate counts for one trigger.
    * Counter roll-up by state. Not a Prometheus surface — that
-   * is /v1/metrics (issue #684).
+   * is /v1/metrics.
    *
    * @returns TriggerMetricsResponse Aggregated counts.
    * @throws ApiError
@@ -638,7 +641,7 @@ export class TriggersService {
     });
   }
   /**
-   * Internal — schedd posts a batch envelope to the gateway.
+   * Internal — the scheduler posts a batch envelope to the gateway.
    * Internal-only route. Schedd invokes this once per closed
    * batch. The gateway delivers records sequentially and returns one
    * result per item. Each function response may include

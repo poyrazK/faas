@@ -87,7 +87,7 @@ def sync_detailed(
 ) -> Response[APIConsumerBillingPolicyResponse | Problem]:
     """Refuse consumers whose exported invoice is unpaid some days after its due date.
 
-     Every 5 minutes apid places a hold on each consumer whose exported
+     Every 5 minutes the API places a hold on each consumer whose exported
     invoice is open or uncollectible with an amount left at least
     block_overdue_after_days past its due date, and lifts holds that no
     longer apply. The gateway answers a held consumer with 402
@@ -95,7 +95,7 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (PutAPIConsumerBillingPolicyRequest): An app's overdue-invoice rule (ADR-1315).
+        body (PutAPIConsumerBillingPolicyRequest): An app's overdue-invoice rule.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,7 +125,7 @@ def sync(
 ) -> APIConsumerBillingPolicyResponse | Problem | None:
     """Refuse consumers whose exported invoice is unpaid some days after its due date.
 
-     Every 5 minutes apid places a hold on each consumer whose exported
+     Every 5 minutes the API places a hold on each consumer whose exported
     invoice is open or uncollectible with an amount left at least
     block_overdue_after_days past its due date, and lifts holds that no
     longer apply. The gateway answers a held consumer with 402
@@ -133,7 +133,7 @@ def sync(
 
     Args:
         slug (str):
-        body (PutAPIConsumerBillingPolicyRequest): An app's overdue-invoice rule (ADR-1315).
+        body (PutAPIConsumerBillingPolicyRequest): An app's overdue-invoice rule.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,7 +158,7 @@ async def asyncio_detailed(
 ) -> Response[APIConsumerBillingPolicyResponse | Problem]:
     """Refuse consumers whose exported invoice is unpaid some days after its due date.
 
-     Every 5 minutes apid places a hold on each consumer whose exported
+     Every 5 minutes the API places a hold on each consumer whose exported
     invoice is open or uncollectible with an amount left at least
     block_overdue_after_days past its due date, and lifts holds that no
     longer apply. The gateway answers a held consumer with 402
@@ -166,7 +166,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (PutAPIConsumerBillingPolicyRequest): An app's overdue-invoice rule (ADR-1315).
+        body (PutAPIConsumerBillingPolicyRequest): An app's overdue-invoice rule.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +194,7 @@ async def asyncio(
 ) -> APIConsumerBillingPolicyResponse | Problem | None:
     """Refuse consumers whose exported invoice is unpaid some days after its due date.
 
-     Every 5 minutes apid places a hold on each consumer whose exported
+     Every 5 minutes the API places a hold on each consumer whose exported
     invoice is open or uncollectible with an amount left at least
     block_overdue_after_days past its due date, and lifts holds that no
     longer apply. The gateway answers a held consumer with 402
@@ -202,7 +202,7 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (PutAPIConsumerBillingPolicyRequest): An app's overdue-invoice rule (ADR-1315).
+        body (PutAPIConsumerBillingPolicyRequest): An app's overdue-invoice rule.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

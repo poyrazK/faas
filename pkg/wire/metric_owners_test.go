@@ -145,6 +145,8 @@ var singleOwnerAccessorCallers = map[string][]string{
 	"CronFireNowDispatchDuration":                           {"pkg/sched"},
 	"ObserveDelayedTaskDispatch":                            {"pkg/sched"},
 	"ObserveDelayedTaskScheduleLag":                         {"pkg/sched"},
+	"ObserveCronDelivery":                                   {"pkg/sched"},
+	"ObserveCronScheduleLag":                                {"pkg/sched"},
 	"EvictionFired":                                         {"pkg/sched"},
 	"ObserveScaleUpAdmitRPS":                                {"pkg/sched/scaleup"},
 	"EventsWriteFailures":                                   {"pkg/sched"},

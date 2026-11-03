@@ -14,11 +14,18 @@ def _get_kwargs(
     organization: str,
     id: str,
     *,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    params: dict[str, Any] = {}
+
+    params["purge"] = purge
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "delete",
@@ -26,6 +33,7 @@ def _get_kwargs(
             organization=quote(str(organization), safe=""),
             id=quote(str(id), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["headers"] = headers
@@ -76,16 +84,19 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Delete a company PostgreSQL resource.
 
      An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must
-    be removed first; accounting evidence remains available.
+    be removed first; accounting evidence remains available. A ready database is kept for 7 days and can
+    be undeleted until restorable_until; purge=true deletes at once.
 
     Args:
         organization (str):
         id (str):
+        purge (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -99,6 +110,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         organization=organization,
         id=id,
+        purge=purge,
         idempotency_key=idempotency_key,
     )
 
@@ -114,16 +126,19 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedPostgresDatabase | Problem | None:
     """Delete a company PostgreSQL resource.
 
      An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must
-    be removed first; accounting evidence remains available.
+    be removed first; accounting evidence remains available. A ready database is kept for 7 days and can
+    be undeleted until restorable_until; purge=true deletes at once.
 
     Args:
         organization (str):
         id (str):
+        purge (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -138,6 +153,7 @@ def sync(
         organization=organization,
         id=id,
         client=client,
+        purge=purge,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -147,16 +163,19 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Delete a company PostgreSQL resource.
 
      An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must
-    be removed first; accounting evidence remains available.
+    be removed first; accounting evidence remains available. A ready database is kept for 7 days and can
+    be undeleted until restorable_until; purge=true deletes at once.
 
     Args:
         organization (str):
         id (str):
+        purge (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -170,6 +189,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         organization=organization,
         id=id,
+        purge=purge,
         idempotency_key=idempotency_key,
     )
 
@@ -183,16 +203,19 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    purge: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedPostgresDatabase | Problem | None:
     """Delete a company PostgreSQL resource.
 
      An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must
-    be removed first; accounting evidence remains available.
+    be removed first; accounting evidence remains available. A ready database is kept for 7 days and can
+    be undeleted until restorable_until; purge=true deletes at once.
 
     Args:
         organization (str):
         id (str):
+        purge (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -208,6 +231,7 @@ async def asyncio(
             organization=organization,
             id=id,
             client=client,
+            purge=purge,
             idempotency_key=idempotency_key,
         )
     ).parsed

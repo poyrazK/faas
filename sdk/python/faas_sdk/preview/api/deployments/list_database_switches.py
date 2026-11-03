@@ -82,7 +82,7 @@ def sync_detailed(
 ) -> Response[DatabaseSwitchList | Problem]:
     """List rollbacks that restore the database.
 
-     An app's database switches, newest first (ADR-20261023181931).
+     An app's database switches, newest first.
 
     Args:
         slug (str):
@@ -113,7 +113,7 @@ def sync(
 ) -> DatabaseSwitchList | Problem | None:
     """List rollbacks that restore the database.
 
-     An app's database switches, newest first (ADR-20261023181931).
+     An app's database switches, newest first.
 
     Args:
         slug (str):
@@ -139,7 +139,7 @@ async def asyncio_detailed(
 ) -> Response[DatabaseSwitchList | Problem]:
     """List rollbacks that restore the database.
 
-     An app's database switches, newest first (ADR-20261023181931).
+     An app's database switches, newest first.
 
     Args:
         slug (str):
@@ -168,7 +168,7 @@ async def asyncio(
 ) -> DatabaseSwitchList | Problem | None:
     """List rollbacks that restore the database.
 
-     An app's database switches, newest first (ADR-20261023181931).
+     An app's database switches, newest first.
 
     Args:
         slug (str):

@@ -125,7 +125,7 @@ func TestBucketUnknownSubcommandIsNamed(t *testing.T) {
 	if code := main.CmdBucket([]string{"versions list my-api c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df"}); code == 0 {
 		t.Fatal("unknown subcommand exited 0")
 	}
-	if got := stderr.String(); !strings.Contains(got, "unknown bucket subcommand") || strings.Contains(got, "usage: gregale bucket reconcile") {
+	if got := stderr.String(); !strings.Contains(got, "unknown bucket subcommand") || strings.Contains(got, "usage: gregale bucket inventory") {
 		t.Fatalf("unknown subcommand stderr:\n%s", got)
 	}
 }

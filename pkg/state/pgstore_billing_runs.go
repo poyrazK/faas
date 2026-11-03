@@ -252,6 +252,10 @@ func discoverBillingRunUsageItems(ctx context.Context, tx pgx.Tx, run BillingRun
 			       case when $5::boolean and a.app_id is not null then $6::text end, $7::timestamptz, $7::timestamptz
 			  from billed b
 			  join api_consumers c on c.account_id = $2::uuid and c.app_id = b.app_id and c.id::text = b.consumer_key
+			  -- A company app keeps its creator's account_id; its customers
+			  -- are billed on that account only while it is a member of the
+			  -- company (ADR-20261026151103 amendment 2).
+			  join apps ap on ap.id = c.app_id and account_may_see_org_resources($2::uuid, ap.org_id)
 			  left join attributed a on a.app_id = b.app_id and a.consumer_key = b.consumer_key
 			on conflict do nothing`,
 			runID, run.AccountID, run.PeriodStart, run.PeriodEnd, run.Includes(BillingRunSourcePlatformTenants), tenantReason, now); err != nil {

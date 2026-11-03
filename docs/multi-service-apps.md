@@ -33,11 +33,11 @@ gregale deploy --repo octo/shop --ref main --project
 Add `--only api,web` or `--exclude worker` to deploy part of the project, and
 `--diff` to see the plan without changing anything.
 
-`gregale projects info` lists each service with its app, its latest deployment
+`gregale project get` lists each service with its app, its latest deployment
 and the services it declares it calls:
 
 ```text
-$ gregale projects info shop
+$ gregale project get shop
 ...
   services:
     NAME    APP          DEPLOYMENT  CALLS
@@ -45,6 +45,12 @@ $ gregale projects info shop
     api     shop-api     live        -
     worker  shop-worker  failed      -
 ```
+
+The project's page in the dashboard shows the same, plus which services call
+each one. Where the [service map](service-map.md) is available to your
+account, it also shows the measured calls between the project's services over
+the last hour: volume, errors, p95 latency, and how often a call woke a parked
+service.
 
 ## What becomes a service
 
@@ -90,6 +96,50 @@ Other datastores, and `postgres` where managed PostgreSQL is not available, are
 listed under **Managed (not provisioned)** with the variable your services
 expect. Point that variable at a database you run elsewhere.
 
+Only a reviewed deploy (`gregale deploy`, the dashboard) creates the managed
+database. When a GitHub push adds a `postgres` service, the services that need
+its variable and have no value for it are not deployed by that push; their
+GitHub check says so. Run a reviewed deploy, or set the variable yourself, and
+the next push deploys them
+([ADR-20261103112845](adr/20261103112845-github-pushes-never-remove-or-strand-services.md)).
+
+### Start order and migrations
+
+`depends_on` keeps its Compose meaning where Gregale can honour it
+([ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md)):
+
+- `condition: service_healthy` on another service holds this service's new
+  release until that service's deployment is live.
+- `condition: service_healthy` on a datastore (`db: postgres:16`) is accepted as
+  a plain dependency, because Gregale does not run the datastore as a service.
+  The plan says so; have the service retry its connection until the database
+  answers, as it does when Compose restarts the database.
+- A step the others wait for with `condition: service_completed_successfully`,
+  such as a migration, runs as the **release command** of the waiting service
+  that shares its build:
+
+  ```yaml
+  services:
+    migrate:
+      build: ./api
+      command: npm run migrate
+    api:
+      build: ./api
+      ports: ["3000:3000"]
+      depends_on:
+        migrate:
+          condition: service_completed_successfully
+  ```
+
+  `npm run migrate` runs once before each `api` release goes live, in the `api`
+  image with its variables and secrets, and `migrate` is not deployed as a
+  service. Every deploy of `api` runs it, GitHub pushes included, unless the
+  `api` source declares its own `release.command` or Procfile `release:`. Other
+  services that waited for `migrate` no longer wait; the plan names them. The
+  step must use the same `build:` (context, Dockerfile, args) or `image:` as a
+  waiting service that serves requests, must have a `command:` and must not
+  publish ports; chained steps and two steps for one service fail the plan.
+
 Each service keeps its name inside the project. Its app slug is the same name,
 or `<project>-<name>` when the name is reserved (`api`, `admin`, …) or taken by
 another app, for example `shop-api`.
@@ -98,11 +148,40 @@ another app, for example `shop-api`.
 
 A Compose service that publishes `ports:` gets a public URL. One without
 `ports:` is **internal**: other services in the project can call it, and it has
-no public URL. Other services are public unless
+no public URL. So is one whose ports are all bound to a loopback address, such
+as `127.0.0.1:8081:8080`, which Docker publishes only on your own machine; the
+plan warns, and removing the address publishes it. Other services are public unless
 [`.gregale/project.yaml`](#without-a-compose-file) says `visibility: internal`.
 The plan lists every public service under **Public on the internet** and marks
 the rest `visibility=internal`. Visibility is set when the app is created; see
 [networking](networking.md) for changing it later.
+
+A service listens on the container side of its first `ports:` mapping: with
+`ports: ["8080:3000"]`, Gregale sends requests to port 3000 and, unless you set
+`PORT` yourself, sets it to 3000, whether the service is built from source or
+runs an `image:`. A built
+service without `ports:` uses its Dockerfile's single `EXPOSE`, or `PORT`
+(8080).
+
+A service without `ports:` serves requests (`class=http` in the plan) when
+another service calls it:
+
+- another service's `environment:` addresses it by URL, such as
+  `API_URL: http://api:8000`, or
+- a service that serves requests lists it in `depends_on`, and it shows that it
+  listens: it declares the port with `expose:`, or it runs its own image's
+  command (no `command:` override) and its Dockerfile has `EXPOSE`, or, built
+  without a Dockerfile, it is an Express, Fastify, NestJS, Hono, FastAPI,
+  Flask, Django or Gin app, or, for a prebuilt `image:`, the image's config
+  exposes a port. Gregale reads public images' configs; a private image
+  counts only with `expose:` or a URL.
+
+Like any service, it then parks when idle and wakes when called. Any other
+service without `ports:` is a background worker (`class=worker`): it runs all
+the time and a request never wakes it. When a web service lists a worker in
+`depends_on`, the plan warns, because Compose also uses `depends_on` for start
+order; if the web service does call it, add `expose:` or the URL
+([ADR-20261029120000](adr/20261029120000-called-compose-services-serve-requests.md)).
 
 ## Call another service
 
@@ -113,7 +192,13 @@ curl http://billing.internal:10081/invoices
 ```
 
 `http://billing.svc.gregale:10081` is the same service. Calls stay on
-Gregale's private network and wake a parked service when needed. During
+Gregale's private network and wake a parked service when needed.
+
+A call stays in its caller's environment: production reaches the production
+deployment of `billing`, and a `staging` workload reaches the `staging`
+deployment. When `billing` has no deployment in that environment, the call is
+refused with 403 rather than sent to production; deploy `billing` to the
+environment first. During
 development, `gregale dev --all` runs every service in its own developer
 environment, and the same names reach those environments instead of
 production ([gregale dev](gregale-dev.md#call-the-other-apps)).
@@ -172,7 +257,7 @@ environment under **Needs a value**; set them before the first request:
 
 ```sh
 gregale env set --app shop-api LOG_LEVEL=info
-gregale secrets set --app shop-api STRIPE_KEY=sk_live_…
+gregale env set --app shop-api STRIPE_KEY=sk_live_…
 ```
 
 or pass a `--secrets-file` to `gregale deploy`, which supplies its keys to every
@@ -195,8 +280,9 @@ services:
 
 An `http`, `https`, `ws` or `wss` value that calls another service of the
 project by its Docker name is imported as that service's Gregale address:
-`http://billing.svc.gregale:10081` (or `https://billing.internal`), keeping the
-path. The service mesh forwards to the service's own port, so the Docker port
+`http://billing.svc.gregale:10081` (or `https://billing.internal` where private
+service HTTPS is enabled; elsewhere an `https` value imports as the `http`
+address, and the plan says so), keeping the path. The service mesh forwards to the service's own port, so the Docker port
 is dropped; a value for a second listener of that service, or for another
 protocol, needs its address set by hand
 ([ADR-20261026181020](adr/20261026181020-compose-service-address-import.md)).
@@ -211,6 +297,38 @@ Imports happen on reviewed deploys (`gregale deploy`, the dashboard,
 `compose.override.yaml` are imported too, so keep local-only settings out of an
 opted-in project.
 See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
+
+## Rename, remove or detach a service
+
+Each deploy compares the repository with the project, and the plan shows every
+change before anything is applied:
+
+- **Removing** a service from Compose removes its app when the plan of a
+  reviewed deploy (`gregale deploy`, the dashboard) is applied. A service that
+  still lists it in `depends_on` fails the plan. A GitHub push never removes a
+  service: the app keeps serving its last release, and the push's GitHub check
+  says a reviewed deploy removes it. A service hidden by an inactive Compose
+  `profiles:` entry counts as removed. A removed app can be restored for 7 days.
+- **Renaming** a service keeps its app when you say what it was called before:
+
+  ```yaml
+  services:
+    accounts:
+      build: ./accounts
+      x-gregale-renamed-from: ledger
+  ```
+
+  The plan shows one update, and the app keeps its environment values,
+  secrets, domains and URL
+  ([ADR-20261029090000](adr/20261029090000-compose-service-rename.md)). The
+  service is then called by its new name, so services that call it list
+  `accounts` in `depends_on` and read `GREGALE_SERVICE_ACCOUNTS_URL`. Without
+  the hint, a rename is a removal and a new service, and the new app starts
+  without the old one's values, secrets and domains.
+- **`gregale project delete`** deletes the project but not its services: each one
+  keeps running as a standalone app, with its domains, environment values and
+  crons. Detached apps are no longer one project, so they cannot call each
+  other by service name; delete them with `gregale app delete`.
 
 ## Pull request previews
 
@@ -228,12 +346,28 @@ is refused by default (`403 preview_production_dependency_denied`). See
 [preview environments](preview-environments.md) and [networking](networking.md)
 for letting chosen production services accept preview traffic.
 
+A preview never receives production environment values, because they can hold
+credentials. It gets:
+
+- the service URLs Gregale injects;
+- the plain values its pull request's Compose file declares, under the same
+  `x-gregale-env-import: true` opt-in and rules as a deploy; and
+- the values and secrets you set for previews on the production app:
+
+  ```sh
+  gregale env set --app shop-web --env pr-preview STRIPE_KEY=sk_test_…
+  ```
+
+`pr-preview` values override the PR's Compose values. See
+[preview environments](preview-environments.md#configuration).
+
 ## Cold starts and tracing
 
 Parked services wake on their first request, so a chain of cold services wakes
 one after another. Wake-ahead lets an app start restoring the services it
 usually calls while it is still waking itself. It is on by default for services
-under the `project` policy, once the gateways have measured which siblings an
-app calls after waking; `gregale wake-ahead <app> off` turns it off. See
+under the `project` policy: the first wake restores the services an app lists in
+`depends_on`, and the gateways then learn which siblings it calls after waking.
+`gregale app wake-ahead <app> off` turns it off. See
 [wake-ahead](service-wake-ahead.md). Traces follow a request across services;
 see [tracing](tracing.md) and the [service map](service-map.md).

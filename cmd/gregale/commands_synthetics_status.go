@@ -19,7 +19,7 @@ func cmdSyntheticsStatus(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale synthetics status --app <slug> <check-id>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check status --app <slug> <check-id>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()

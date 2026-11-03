@@ -12,22 +12,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func (s *PgStore) CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture) error {
-	return s.insertProfileCapture(ctx, accountID, appID, c, 0)
+func (s *PgStore) CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, limits ProfileCaptureLimits) error {
+	return s.insertProfileCapture(ctx, accountID, appID, c, 0, limits)
 }
 
-func (s *PgStore) QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration) error {
+func (s *PgStore) QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration, limits ProfileCaptureLimits) error {
 	if c.Trigger == "" || c.Trigger == api.ProfileCaptureTriggerManual || minInterval <= 0 {
 		return fmt.Errorf("automatic profile capture needs a trigger and minimum interval")
 	}
-	return s.insertProfileCapture(ctx, accountID, appID, c, minInterval)
+	return s.insertProfileCapture(ctx, accountID, appID, c, minInterval, limits)
 }
 
-// insertProfileCapture enforces, under the app row lock, the account quota,
-// one active capture per app and, for automatic captures, the per-trigger
-// minimum interval.
-func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration) error {
-	doc, err := profileCaptureRequestDoc(c)
+// insertProfileCapture enforces, under the account and app locks, the
+// account's hourly quota for the capture's kind (manual or automatic), one
+// active capture per app, for automatic captures the per-trigger minimum
+// interval, and the account's capture storage limit, rotating out the
+// oldest automatic captures when an automatic one needs their room.
+func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration, limits ProfileCaptureLimits) error {
+	pool := limits.pool(accountID)
+	doc, err := profileCaptureRequestDoc(c, pool)
 	if err != nil {
 		return fmt.Errorf("encode profile capture: %w", err)
 	}
@@ -37,15 +40,20 @@ func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID str
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	// The app row lock serializes the quota and single-active checks.
+	// The account lock serializes the account-wide quota and storage checks
+	// across its apps; the app row lock, the single-active check.
+	if err := q.LockProfileCaptureAccount(ctx, tx, pool); err != nil {
+		return routePolicyReadError(err)
+	}
 	if _, err := q.LockProfileCaptureApp(ctx, tx, sqlc.LockProfileCaptureAppParams{AppID: appID, AccountID: accountID}); err != nil {
 		return routePolicyReadError(err)
 	}
-	recent, err := q.CountRecentProfileCaptures(ctx, tx, sqlc.CountRecentProfileCapturesParams{AccountID: accountID, Since: pgtypeFromTime(c.CreatedAt.Add(-time.Hour))})
+	automatic := c.Automatic()
+	recent, err := q.CountRecentProfileCaptures(ctx, tx, sqlc.CountRecentProfileCapturesParams{Pool: pool, Since: pgtypeFromTime(c.CreatedAt.Add(-time.Hour)), Automatic: automatic})
 	if err != nil {
 		return fmt.Errorf("count profile captures: %w", err)
 	}
-	if recent >= api.ProfileCaptureMaxPerAccountHour {
+	if recent >= profileCaptureHourlyLimit(automatic) {
 		return ErrProfileCaptureQuota
 	}
 	active, err := q.CountActiveProfileCaptures(ctx, tx, appID)
@@ -62,6 +70,30 @@ func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID str
 		}
 		if n > 0 {
 			return ErrProfileCaptureRecent
+		}
+	}
+	row, err := q.ProfileCaptureAccountStorage(ctx, tx, sqlc.ProfileCaptureAccountStorageParams{Pool: pool, Now: pgtypeFromTime(c.CreatedAt)})
+	if err != nil {
+		return fmt.Errorf("profile capture storage: %w", err)
+	}
+	usage := profileCaptureUsage{StoredBytes: row.StoredBytes, Active: row.Active, AutomaticStoredBytes: row.AutomaticStoredBytes, AutomaticActive: row.AutomaticActive}
+	var candidates []rotatableProfileCapture
+	if automatic && usage.automaticShareFull(limits.StorageBytes) {
+		rows, err := q.ListEvictableAutomaticProfileCaptures(ctx, tx, sqlc.ListEvictableAutomaticProfileCapturesParams{Pool: pool, Now: pgtypeFromTime(c.CreatedAt), MaxRows: api.ProfileCaptureMaxRotated})
+		if err != nil {
+			return fmt.Errorf("list rotatable profile captures: %w", err)
+		}
+		for _, r := range rows {
+			candidates = append(candidates, rotatableProfileCapture{ID: r.ID, Bytes: r.Bytes})
+		}
+	}
+	rotate, err := planProfileCaptureStorage(usage, automatic, limits.StorageBytes, candidates)
+	if err != nil {
+		return err
+	}
+	if len(rotate) > 0 {
+		if _, err := q.DeleteAccountProfileCaptures(ctx, tx, sqlc.DeleteAccountProfileCapturesParams{Pool: pool, Ids: rotate}); err != nil {
+			return fmt.Errorf("rotate out automatic profile captures: %w", err)
 		}
 	}
 	if err := q.InsertProfileCapture(ctx, tx, sqlc.InsertProfileCaptureParams{ID: c.ID, AppID: appID, AccountID: accountID, Capture: doc,
@@ -93,6 +125,17 @@ func (s *PgStore) GetProfileCapture(ctx context.Context, accountID, appID, id st
 	return decodeProfileCapture(body)
 }
 
+func (s *PgStore) DeleteProfileCapture(ctx context.Context, accountID, appID, id string) error {
+	n, err := sqlc.New().DeleteProfileCapture(ctx, s.pool, sqlc.DeleteProfileCaptureParams{ID: id, AppID: appID, AccountID: accountID})
+	if err != nil {
+		return fmt.Errorf("delete profile capture: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *PgStore) ListProfileCaptures(ctx context.Context, accountID, appID string) ([]api.ProfileCapture, error) {
 	rows, err := sqlc.New().ListProfileCaptures(ctx, s.pool, sqlc.ListProfileCapturesParams{AppID: appID, AccountID: accountID, MaxRows: api.ProfileCaptureMaxListed})
 	if err != nil {
@@ -122,7 +165,7 @@ func (s *PgStore) ProfileCaptureBlobs(ctx context.Context, accountID, appID, id 
 }
 
 func (s *PgStore) ClaimProfileCapture(ctx context.Context, now time.Time) (ClaimedProfileCapture, error) {
-	row, err := sqlc.New().ClaimQueuedProfileCapture(ctx, s.pool, pgtypeFromTime(now))
+	row, err := sqlc.New().ClaimQueuedProfileCapture(ctx, s.pool, sqlc.ClaimQueuedProfileCaptureParams{Now: pgtypeFromTime(now), MaxRunning: api.ProfileCaptureMaxRunningPerPool})
 	if err != nil {
 		return ClaimedProfileCapture{}, routePolicyReadError(err)
 	}

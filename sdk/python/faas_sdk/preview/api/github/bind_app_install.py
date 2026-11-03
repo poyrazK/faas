@@ -62,6 +62,11 @@ def _parse_response(
 
         return response_502
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -82,20 +87,18 @@ def _build_response(
 def sync_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> Response[InstallBindResponse | Problem]:
     """Persist the (account, app, installation, repo, branch) bind row.
 
      Cookie-session-authenticated (NOT API-key). Persists the
-    GitHub install binding via githubd.BindAppRepo (which
-    writes through to pkg/state.PgStore.UpsertGithubInstallBinding
-    per PR-B).
+    GitHub install binding.
 
-    ADR-1345 / §11: the exact installation must be durably connected to
+    the exact installation must be durably connected to
     the session's Gregale account. Requires the named, account-bound
     bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
-    required. Live installation verification and githubd's current
+    required. Live installation verification and the GitHub integration's current
     repository access check still run before persistence.
 
     On success emits `auth.install.bound` for the audit trail.
@@ -106,7 +109,7 @@ def sync_detailed(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
@@ -134,20 +137,18 @@ def sync_detailed(
 def sync(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> InstallBindResponse | Problem | None:
     """Persist the (account, app, installation, repo, branch) bind row.
 
      Cookie-session-authenticated (NOT API-key). Persists the
-    GitHub install binding via githubd.BindAppRepo (which
-    writes through to pkg/state.PgStore.UpsertGithubInstallBinding
-    per PR-B).
+    GitHub install binding.
 
-    ADR-1345 / §11: the exact installation must be durably connected to
+    the exact installation must be durably connected to
     the session's Gregale account. Requires the named, account-bound
     bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
-    required. Live installation verification and githubd's current
+    required. Live installation verification and the GitHub integration's current
     repository access check still run before persistence.
 
     On success emits `auth.install.bound` for the audit trail.
@@ -158,7 +159,7 @@ def sync(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
@@ -181,20 +182,18 @@ def sync(
 async def asyncio_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> Response[InstallBindResponse | Problem]:
     """Persist the (account, app, installation, repo, branch) bind row.
 
      Cookie-session-authenticated (NOT API-key). Persists the
-    GitHub install binding via githubd.BindAppRepo (which
-    writes through to pkg/state.PgStore.UpsertGithubInstallBinding
-    per PR-B).
+    GitHub install binding.
 
-    ADR-1345 / §11: the exact installation must be durably connected to
+    the exact installation must be durably connected to
     the session's Gregale account. Requires the named, account-bound
     bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
-    required. Live installation verification and githubd's current
+    required. Live installation verification and the GitHub integration's current
     repository access check still run before persistence.
 
     On success emits `auth.install.bound` for the audit trail.
@@ -205,7 +204,7 @@ async def asyncio_detailed(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
@@ -231,20 +230,18 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> InstallBindResponse | Problem | None:
     """Persist the (account, app, installation, repo, branch) bind row.
 
      Cookie-session-authenticated (NOT API-key). Persists the
-    GitHub install binding via githubd.BindAppRepo (which
-    writes through to pkg/state.PgStore.UpsertGithubInstallBinding
-    per PR-B).
+    GitHub install binding.
 
-    ADR-1345 / §11: the exact installation must be durably connected to
+    the exact installation must be durably connected to
     the session's Gregale account. Requires the named, account-bound
     bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
-    required. Live installation verification and githubd's current
+    required. Live installation verification and the GitHub integration's current
     repository access check still run before persistence.
 
     On success emits `auth.install.bound` for the audit trail.
@@ -255,7 +252,7 @@ async def asyncio(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.

@@ -16,7 +16,7 @@ import type { EdgeRuleValidateParameters } from './EdgeRuleValidateParameters.js
  * `action` jsonb blob (single-table flow), capped at the
  * platform's `MaxEdgeRuleValidateSchemaBytes` (64 KiB). The
  * gateway re-validates at compile time as defence-in-depth so
- * the SQL hotfix path that bypasses apid-Validate still cannot
+ * the SQL hotfix path that bypasses API-Validate still cannot
  * ship an external `$ref`.
  *
  * Field-by-field:
@@ -26,12 +26,12 @@ import type { EdgeRuleValidateParameters } from './EdgeRuleValidateParameters.js
  * (`#/definitions/Foo`) pass through. Optional when
  * `parameters` is set, so a body-less request can be validated.
  * * `parameters` — optional path, query, and header schemas,
- * checked before the body is read (ADR-091 amendment).
+ * checked before the body is read.
  * * `content_types` — optional media-type allowlist.
  * Closed set `application*`. Empty = match any.
  * * `apply_while_streaming` — per-rule opt-in for the
- * streaming response path (ADR-047). Default false mirrors
- * the §4.1 `Accept: application/json` opt-out.
+ * streaming response path. Default false mirrors
+ * the `Accept: application/json` opt-out.
  * * `reject_on_unknown_fields` — toggles
  * `additionalProperties: false` on the compiled schema.
  * Default false preserves byte-stable schemas.
@@ -44,8 +44,8 @@ import type { EdgeRuleValidateParameters } from './EdgeRuleValidateParameters.js
 export type EdgeRuleValidateAction = {
   /**
    * Inline JSON Schema document (Draft 2020-12). The schema
-   * is preserved byte-exact across apid↔gatewayd round-trips
-   * so the SHA-256 cache key in `pkg/edgevalidate` is stable.
+   * is preserved byte-exact across the API↔the gateway round-trips
+   * so the SHA-256 cache key is stable.
    *
    */
   schema?: Record<string, any>;
@@ -57,8 +57,7 @@ export type EdgeRuleValidateAction = {
    */
   content_types?: Array<string>;
   /**
-   * Whether validation fires on the streaming response path
-   * (ADR-047). Default false; set true per-rule to opt the
+   * Whether validation fires on the streaming response path. Default false; set true per-rule to opt the
    * SSE / chunked response path into body validation.
    *
    */
@@ -78,7 +77,7 @@ export type EdgeRuleValidateAction = {
    */
   max_body_bytes?: number;
   /**
-   * DEPRECATED (ADR-128 D2). Moved to top-level
+   * DEPRECATED. Moved to top-level
    * `EdgeRuleResponse.validate_mode` /
    * `CreateEdgeRuleRequest.validate_mode` /
    * `UpdateEdgeRuleRequest.validate_mode`. Retained on

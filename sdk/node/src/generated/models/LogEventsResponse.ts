@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { LogQueryEvent } from './LogQueryEvent.js';
 /**
- * One newest-first page of an app's log ledger (ADR-20261018083536).
+ * One newest-first page of an app's log ledger.
  */
 export type LogEventsResponse = {
   /**

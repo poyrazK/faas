@@ -328,6 +328,7 @@ func (s *Service) applyUpdate(
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
 	manifest.BuildGoCommand = a.Workload.GoCommand
+	releaseScanWorkerMode(&manifest, a.App.WorkloadClass, a.Workload)
 	applyProjectImage(&manifest, a.Workload)
 	resourced := a.App
 	resourced.Manifest = manifest
@@ -443,6 +444,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	}
 	app.RootDir = w.RootDir
 	app.WorkloadName = w.Name
+	releaseScanWorkerMode(&app.Manifest, app.WorkloadClass, w)
 	app.WorkloadClass = workloadClassFromScan(w)
 	app.StartCommand = resolveStartCommand(w)
 	transport := serviceBindingTransportForExistingWorkload(w, app.Manifest.ServiceBindingTransport)
@@ -476,10 +478,20 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	// and so do the process overrides other than entrypoint, which the scan
 	// folds into a built service's command (ADR-20261022160000).
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectReadinessCheck = w.ReadinessCheck.Clone()
 	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	// Compose secrets become files for built and prebuilt images alike
 	// (ADR-20261023090000).
 	manifest.ProjectSecretFiles = api.CloneSecretFiles(w.SecretFiles)
+	// A Compose service run to completion is this app's release command
+	// (ADR-20261102192943); every deploy path reads it from here.
+	manifest.ProjectReleaseCommand, manifest.ProjectReleaseCommandShell = composeReleaseCommand(w)
+	// The first Compose ports: target is the serving port of a built
+	// service too, so an app that listens on a fixed port without a
+	// Dockerfile EXPOSE is reached there (ADR-20261103112845).
+	if len(w.Ports) > 0 && (w.Image != "" || w.DetectedBy.Detector == detectorCompose) {
+		manifest.ProjectImagePort = w.Ports[0]
+	}
 	if w.Image == "" {
 		return
 	}
@@ -487,8 +499,31 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	if w.CommandShell && len(w.Command) > 0 {
 		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}
 	}
-	if len(w.Ports) > 0 {
-		manifest.ProjectImagePort = w.Ports[0]
+}
+
+// detectorCompose is reposcan's Detection.Detector for a Compose service.
+const detectorCompose = "compose"
+
+// composeReleaseCommand is the release command an app keeps for w: the
+// command of the Compose service w waits for to complete. A Procfile release
+// command stays with the source and is not stored on the app.
+func composeReleaseCommand(w reposcan.Workload) ([]string, bool) {
+	if w.ReleaseService == "" || len(w.ReleaseCommand) == 0 {
+		return nil, false
+	}
+	return append([]string(nil), w.ReleaseCommand...), w.ReleaseCommandShell
+}
+
+// releaseScanWorkerMode clears the worker mode the scan gave an app once the
+// scan no longer classifies its workload as a worker: a Compose service
+// without ports that another service now calls serves requests
+// (ADR-20261029120000). Worker mode alone would keep the app from parking
+// and refuse the wakes its callers need. An app that was not a worker keeps
+// any mode its owner set.
+func releaseScanWorkerMode(manifest *state.AppManifest, previous state.WorkloadClass, w reposcan.Workload) {
+	if previous == state.WorkloadClassWorker && workloadClassFromScan(w) != state.WorkloadClassWorker &&
+		manifest.ExecutionMode == api.ExecutionModeWorker {
+		manifest.ExecutionMode = ""
 	}
 }
 

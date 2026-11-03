@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Mirror quality gate for a canary stage (issue #1395 B1).
+ * Mirror quality gate for a canary stage.
  */
 export type MirrorCleanCondition = {
   /**

@@ -75,9 +75,9 @@ def sync_detailed(
 ) -> Response[AsyncInvokeResponse | Problem]:
     """Reset a dead-letter queue row back to pending.
 
-     ADR-134 PR-C. Resets the row's `state` to `pending` with
-    `attempts=0`, `last_error=null`, `due_at=now()`,
-    `last_replayed_at=now()`. Distinct from
+     Resets the row's `state` to `pending` with
+    `attempts=0`, `last_error=null`, `due_at=now`,
+    `last_replayed_at=now`. Distinct from
     `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
     tagged Source=InvocationReplay. This endpoint mutates the
     existing row in place so the dashboard's replay history view
@@ -120,9 +120,9 @@ def sync(
 ) -> AsyncInvokeResponse | Problem | None:
     """Reset a dead-letter queue row back to pending.
 
-     ADR-134 PR-C. Resets the row's `state` to `pending` with
-    `attempts=0`, `last_error=null`, `due_at=now()`,
-    `last_replayed_at=now()`. Distinct from
+     Resets the row's `state` to `pending` with
+    `attempts=0`, `last_error=null`, `due_at=now`,
+    `last_replayed_at=now`. Distinct from
     `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
     tagged Source=InvocationReplay. This endpoint mutates the
     existing row in place so the dashboard's replay history view
@@ -160,9 +160,9 @@ async def asyncio_detailed(
 ) -> Response[AsyncInvokeResponse | Problem]:
     """Reset a dead-letter queue row back to pending.
 
-     ADR-134 PR-C. Resets the row's `state` to `pending` with
-    `attempts=0`, `last_error=null`, `due_at=now()`,
-    `last_replayed_at=now()`. Distinct from
+     Resets the row's `state` to `pending` with
+    `attempts=0`, `last_error=null`, `due_at=now`,
+    `last_replayed_at=now`. Distinct from
     `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
     tagged Source=InvocationReplay. This endpoint mutates the
     existing row in place so the dashboard's replay history view
@@ -203,9 +203,9 @@ async def asyncio(
 ) -> AsyncInvokeResponse | Problem | None:
     """Reset a dead-letter queue row back to pending.
 
-     ADR-134 PR-C. Resets the row's `state` to `pending` with
-    `attempts=0`, `last_error=null`, `due_at=now()`,
-    `last_replayed_at=now()`. Distinct from
+     Resets the row's `state` to `pending` with
+    `attempts=0`, `last_error=null`, `due_at=now`,
+    `last_replayed_at=now`. Distinct from
     `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
     tagged Source=InvocationReplay. This endpoint mutates the
     existing row in place so the dashboard's replay history view

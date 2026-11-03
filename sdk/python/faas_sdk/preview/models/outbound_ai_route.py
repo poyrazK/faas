@@ -22,9 +22,8 @@ T = TypeVar("T", bound="OutboundAIRoute")
 
 @_attrs_define
 class OutboundAIRoute:
-    """An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An
-    openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider
-    (ADR-991, ADR-995).
+    """An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}. An openai-format
+    route accepts OpenAI chat completions and embeddings and translates them for each target's provider.
 
     """
 
@@ -35,11 +34,11 @@ class OutboundAIRoute:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     strategy: OutboundAIRouteStrategy
-    """How a call picks its first target (ADR-1434)."""
+    """How a call picks its first target."""
     max_ttfb_ms: int | None | Unset = UNSET
     """A cost route's latency target, or null."""
     canary: None | OutboundAIRouteCanary | Unset = UNSET
-    """The route's model canary, or null (ADR-1340)."""
+    """The route's model canary, or null."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -41,3 +41,40 @@ tests:
               summary: "Expired app artifacts remain on persistent storage"
               description: "Known artifact bytes remain after their app deletion grace expired. Apid retains the database references and retries cleanup rather than orphaning the objects."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"
+
+  - name: "a purge blocked by a foreign key warns after the back-off window"
+    interval: 1m
+    input_series:
+      - series: 'apid_app_grace_blocked_apps{reason="foreign_key"}'
+        values: '1x41'
+      - series: 'apid_app_grace_blocked_apps{reason="multipart_write"}'
+        values: '1x41'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasAppDeletionPurgeBlocked
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: FaasAppDeletionPurgeBlocked
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: app_deletion_grace
+              public_status: internal
+              reason: foreign_key
+            exp_annotations:
+              summary: "Expired app purges are blocked (foreign_key)"
+              description: "Apid cannot permanently delete at least one expired app. foreign_key: a row the purge does not remove still references the app, and the sweep backs off up to 6 h between attempts; the apid log names the constraint. managed_postgres_binding: a live binding holds a deleted app and only the binding service may revoke it."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"
+
+  - name: "a purge that waits on an uncertain part write does not page"
+    interval: 1m
+    input_series:
+      - series: 'apid_app_grace_blocked_apps{reason="multipart_write"}'
+        values: '1x61'
+      - series: 'apid_app_grace_blocked_apps{reason="foreign_key"}'
+        values: '0x61'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: FaasAppDeletionPurgeBlocked
+        exp_alerts: []

@@ -62,7 +62,7 @@ func cmdDebugRequestsWatch(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests watch [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--limit N] [--interval D] [--once] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests watch [--since D] [--route P] [--release UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--limit N] [--interval D] [--once] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {

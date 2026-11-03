@@ -18,7 +18,7 @@ T = TypeVar("T", bound="LogEventsResponse")
 
 @_attrs_define
 class LogEventsResponse:
-    """One newest-first page of an app's log ledger (ADR-20261018083536)."""
+    """One newest-first page of an app's log ledger."""
 
     since: datetime.datetime
     """Effective window start after clamping to retention."""

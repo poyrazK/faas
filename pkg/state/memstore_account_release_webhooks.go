@@ -19,22 +19,12 @@ func (m *MemStore) CreateAccountReleaseWebhookIfUnderQuota(_ context.Context, in
 	if _, ok := m.accounts[in.AccountID]; !ok {
 		return AppWebhook{}, ErrNotFound
 	}
-	count := 0
 	for _, hook := range m.appWebhooks {
-		if hook.AccountID != in.AccountID {
-			continue
-		}
-		if hook.Scope == AppWebhookScopeAccount || hook.Scope == AppWebhookScopePlatformTenant {
-			if hook.Scope == AppWebhookScopeAccount && hook.TargetURL == in.TargetURL {
-				return AppWebhook{}, ErrConflict
-			}
-			count++
-			continue
-		}
-		if app, ok := m.apps[hook.AppID]; ok && app.Status != AppDeleted && app.AccountID == in.AccountID {
-			count++
+		if hook.AccountID == in.AccountID && hook.Scope == AppWebhookScopeAccount && hook.TargetURL == in.TargetURL {
+			return AppWebhook{}, ErrConflict
 		}
 	}
+	count := m.appWebhookQuotaCountLocked(in.AccountID)
 	if count >= limits.WebhookPerAccount {
 		return AppWebhook{}, &AppWebhookQuotaError{
 			Scope: AppWebhookQuotaScopeAccount, Limit: limits.WebhookPerAccount, Observed: count,

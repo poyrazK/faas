@@ -2,7 +2,6 @@ package liveserver
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,29 +13,31 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/livekeys"
 )
 
-// ResealStore pages every stored live key and login and swaps one seal for
-// another; *livekeys.Store is one.
+// ResealStore pages every stored live key and login, swaps a key's seal for
+// another and drops a legacy login; *livekeys.Store is one.
 type ResealStore interface {
 	SealedKeysAfter(ctx context.Context, after string, limit int) ([]livekeys.Sealed, error)
 	ResealKey(ctx context.Context, key livekeys.Sealed, blob []byte) (bool, error)
 	SealedLoginsAfter(ctx context.Context, after string, limit int) ([]livekeys.Sealed, error)
-	ResealLogin(ctx context.Context, login livekeys.Sealed, blob []byte) (bool, error)
+	DropLegacyLogin(ctx context.Context, login livekeys.Sealed) (bool, error)
 }
 
 // ResealCounts is what a re-seal did with one kind of row.
 type ResealCounts struct {
-	// Resealed rows held the legacy namespace and now hold their database's.
+	// Resealed keys held the legacy namespace and now hold their database's.
 	Resealed int
+	// Dropped logins held the legacy namespace and were removed. apid issues
+	// each such database a new login, sealed bound to it.
+	Dropped int
 	// Bound rows already held their database's namespace.
 	Bound int
 	// Changed rows were rotated, revoked or re-sealed while the re-seal ran;
 	// whatever replaced them was written by a release that seals bound.
 	Changed int
-	// Refused rows did not open, were bound to another database, named a
-	// recipient that is not this livequeryd's, (a key) held another key's
-	// secret, or (a login) held a plaintext another row holds too. They are
-	// left as they are and must be resolved before release 3 stops opening
-	// the legacy form.
+	// Refused rows did not open, were bound to another database, or (a key)
+	// named a recipient that is not this livequeryd's or held another key's
+	// secret. They are left as they are and must be resolved before release
+	// 3 stops opening the legacy form.
 	Refused int
 }
 
@@ -47,17 +48,21 @@ type ResealReport struct{ Keys, Logins ResealCounts }
 // write, so no transaction spans a page.
 const resealPage = 100
 
-// Reseal re-seals every live key and login still sealed under the legacy
-// namespace (livekeys.SealNamespace, LoginSealNamespace) to its database's
-// bound namespace (ADR-20261016151947, at-rest binding, release 2). apid
-// cannot open what it sealed, and rotating a key would issue a secret the
-// customer has not deployed, so the re-seal runs where livequeryd's identity
-// is: it opens each row with identities and seals the same plaintext to the
-// identity's own recipient, never to one a database row names. It is
-// idempotent and never logs a plaintext. It refuses, and counts, a row bound
-// to another database, a row whose recipient is not one of identities', a
-// key holding another key's secret, and a login whose plaintext another row
-// holds too: a database writer could have copied it there.
+// Reseal moves every live key and login off the legacy namespace
+// (livekeys.SealNamespace, LoginSealNamespace) for its database's bound one
+// (ADR-20261016151947, at-rest binding, release 2). It runs where
+// livequeryd's identity is, opening each row with identities, is idempotent
+// and never logs a plaintext.
+//
+// A key is re-sealed: rotating it would issue a secret the customer has not
+// deployed. The same plaintext is sealed to the identity's own recipient,
+// never to one a database row names, and a key holding another key's
+// secret is refused. A login is dropped instead (amended 2026-10-28): a
+// legacy blob names no database, so the re-seal cannot tell a database's own
+// login from one a database writer moved onto its row, and binding it would
+// make the move permanent. apid issues each database that has a live key
+// and no login a new one, sealed bound to it. Rows bound to another
+// database, and rows that do not open, are refused and counted.
 func Reseal(ctx context.Context, store ResealStore, identities []*age.X25519Identity, log *slog.Logger) (ResealReport, error) {
 	var report ResealReport
 	recipients := make(map[string]*age.X25519Recipient, len(identities))
@@ -69,19 +74,15 @@ func Reseal(ctx context.Context, store ResealStore, identities []*age.X25519Iden
 	if err := keys.run(ctx, identities, log, &report.Keys); err != nil {
 		return report, err
 	}
-	logins := resealKind{name: "login", legacy: livekeys.LoginSealNamespace, bound: livekeys.LoginSealNamespaceFor, maxBytes: livekeys.LoginMaxBytes,
-		page: store.SealedLoginsAfter, swap: store.ResealLogin, recipients: recipients}
-	shared, err := logins.sharedPlaintexts(ctx, identities)
-	if err != nil {
-		return report, err
-	}
-	logins.shared = shared
-	err = logins.run(ctx, identities, log, &report.Logins)
+	logins := resealKind{name: "login", legacy: livekeys.LoginSealNamespace, bound: livekeys.LoginSealNamespaceFor,
+		page: store.SealedLoginsAfter, drop: store.DropLegacyLogin}
+	err := logins.run(ctx, identities, log, &report.Logins)
 	return report, err
 }
 
-// resealKind is one table's re-seal: its namespaces, plaintext cap and
-// store calls, and for keys a check of the plaintext against the row.
+// resealKind is one table's re-seal: its namespaces and store calls. Keys
+// set swap, maxBytes, check and recipients and are re-sealed; logins set
+// drop and are removed.
 type resealKind struct {
 	name     string
 	legacy   string
@@ -89,44 +90,11 @@ type resealKind struct {
 	maxBytes int
 	page     func(ctx context.Context, after string, limit int) ([]livekeys.Sealed, error)
 	swap     func(ctx context.Context, row livekeys.Sealed, blob []byte) (bool, error)
+	drop     func(ctx context.Context, row livekeys.Sealed) (bool, error)
 	check    func(row livekeys.Sealed, plain []byte) error
 	// recipients are the loaded identities' recipients by their string
-	// form: the only ones a row is re-sealed to.
+	// form: the only ones a key is re-sealed to.
 	recipients map[string]*age.X25519Recipient
-	// shared holds the digests of plaintexts that more than one row holds
-	// (logins, whose plaintext names no row).
-	shared map[[sha256.Size]byte]bool
-}
-
-// sharedPlaintexts reads every row once and returns the digests of the
-// plaintexts more than one row holds. A legacy blob names no database, so a
-// copy of another database's login onto this row is told apart only by its
-// plaintext appearing twice; the re-seal must not bind either copy.
-func (k resealKind) sharedPlaintexts(ctx context.Context, identities []*age.X25519Identity) (map[[sha256.Size]byte]bool, error) {
-	seen := map[[sha256.Size]byte]int{}
-	for after := ""; ; {
-		rows, err := k.page(ctx, after, resealPage)
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			if _, plain, err := secretbox.OpenBytesMulti(identities, row.Blob); err == nil {
-				seen[sha256.Sum256(plain)]++
-				clear(plain)
-			}
-		}
-		if len(rows) < resealPage {
-			break
-		}
-		after = rows[len(rows)-1].ID
-	}
-	shared := map[[sha256.Size]byte]bool{}
-	for digest, n := range seen {
-		if n > 1 {
-			shared[digest] = true
-		}
-	}
-	return shared, nil
 }
 
 func (k resealKind) run(ctx context.Context, identities []*age.X25519Identity, log *slog.Logger, counts *ResealCounts) error {
@@ -168,15 +136,24 @@ func (k resealKind) one(ctx context.Context, row livekeys.Sealed, identities []*
 		refuse(fmt.Sprintf("it is sealed for %q", namespace))
 		return nil
 	}
+	if k.drop != nil {
+		dropped, err := k.drop(ctx, row)
+		switch {
+		case err != nil:
+			return err
+		case dropped:
+			counts.Dropped++
+			log.InfoContext(ctx, "livequeryd: legacy live "+k.name+" dropped; apid issues a new one", "database", row.DatabaseID)
+		default:
+			counts.Changed++
+		}
+		return nil
+	}
 	if k.check != nil {
 		if err := k.check(row, plain); err != nil {
 			refuse(err.Error())
 			return nil
 		}
-	}
-	if k.shared[sha256.Sum256(plain)] {
-		refuse("another row holds the same " + k.name)
-		return nil
 	}
 	// The recipient column is data a database writer controls: re-sealing to
 	// it would hand them the plaintext.

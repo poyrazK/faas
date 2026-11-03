@@ -1984,6 +1984,10 @@ type AppManifest struct {
 	ProjectImageCommand     []string                `json:"project_image_command,omitempty"`
 	ProjectImagePort        int                     `json:"project_image_port,omitempty"`
 	ProjectImageHealthcheck *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
+	// ProjectReadinessCheck is the scanned HTTP or gRPC readiness check
+	// (ADR-20261029093621 §3); project deploys pass it as the deployment's
+	// startup probe. Nil leaves readiness to the image and inferred profile.
+	ProjectReadinessCheck *api.DeploymentHealthcheck `json:"project_readiness_check,omitempty"`
 	// ProjectImageProcess is the Compose entrypoint, user, working_dir and
 	// stop contract for the image (ADR-1337); nil inherits the image's.
 	ProjectImageProcess         *api.ComposeProcess `json:"project_image_process,omitempty"`
@@ -1992,6 +1996,12 @@ type AppManifest struct {
 	// /run/secrets in its main workload (ADR-20261023090000). imaged copies
 	// them into the guest manifest; they name app secrets, never values.
 	ProjectSecretFiles []api.SecretFile `json:"project_secret_files,omitempty"`
+	// ProjectReleaseCommand is the command of the Compose service this app
+	// waits for with service_completed_successfully (ADR-20261102192943).
+	// A deploy whose source declares no release command (gregale.yaml
+	// release.command or Procfile release:) runs it as the release command.
+	ProjectReleaseCommand      []string `json:"project_release_command,omitempty"`
+	ProjectReleaseCommandShell bool     `json:"project_release_command_shell,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -2096,7 +2106,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2119,6 +2129,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectImageCommand = desired.ProjectImageCommand
 	existing.ProjectImagePort = desired.ProjectImagePort
 	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
+	existing.ProjectReadinessCheck = desired.ProjectReadinessCheck.Clone()
 	existing.ProjectImageProcess = desired.ProjectImageProcess.Clone()
 	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
 	existing.ProjectSecretFiles = api.CloneSecretFiles(desired.ProjectSecretFiles)
@@ -2445,6 +2456,14 @@ type GitHubBinding struct {
 	OwnerID          int64
 	RepoID           int64
 	ProductionBranch string
+	// ProductionTrigger chooses the webhook or GitHub Actions for an app
+	// bound without a project (ADR-20261101160300). Empty is the webhook.
+	// A binding upsert keeps it; unbinding clears it.
+	ProductionTrigger ProductionTrigger
+	// PreviewsOff turns off pull-request previews for an app bound without
+	// a project; a project-backed app follows its project's policy. Kept and
+	// cleared like ProductionTrigger.
+	PreviewsOff bool
 }
 
 // GitHubInstall is the durable OAuth handshake state for one account's
@@ -2498,10 +2517,14 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// submissionAttemptID is creation-only metadata, never copied onto the wire.
-	submissionAttemptID  string
-	releaseWorkerAttempt string
-	releaseConfigAttempt string
-	retryDeploymentID    string
+	submissionAttemptID string
+	// eventSubscriptionIntent is creation-only: the event subscriptions a
+	// production manifest deploy declares (ADR-20261101030512). nil records
+	// no intent; an empty slice declares none.
+	eventSubscriptionIntent *[]string
+	releaseWorkerAttempt    string
+	releaseConfigAttempt    string
+	retryDeploymentID       string
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`
@@ -3400,6 +3423,24 @@ type Cron struct {
 	SkipIfRunning   bool   // skip a scheduled fire while a prior cron run is active
 	CreatedAt       time.Time
 	LastFiredAt     time.Time // zero until first fire; updated by MarkCronFired
+	// ScheduleAnchorAt is when the schedule last took effect: a schedule or
+	// timezone change, an enable, or a lifted suspension (ADR-20261026201726).
+	// Zero until then. See ScheduleCursor.
+	ScheduleAnchorAt time.Time
+}
+
+// ScheduleCursor is the instant after which the cron's next boundary
+// falls: LastFiredAt (CreatedAt before the first fire), or ScheduleAnchorAt
+// when that is later (ADR-20261026201726).
+func (c Cron) ScheduleCursor() time.Time {
+	cursor := c.LastFiredAt
+	if cursor.IsZero() {
+		cursor = c.CreatedAt
+	}
+	if c.ScheduleAnchorAt.After(cursor) {
+		cursor = c.ScheduleAnchorAt
+	}
+	return cursor
 }
 
 const CronSuspendedNoLiveDeployment = "no_live_deployment"
@@ -3462,7 +3503,7 @@ type FireNowRequest struct {
 	AccountID    string
 	RequestedAt  time.Time
 	Status       FireNowStatus
-	InvocationID *string // nil while pending/running; set on terminal
+	InvocationID *string // set once an HTTP fire queues its invocation (ADR-20261026201726)
 	OperationID  *string // set when this cron fire was admitted as managed work
 	TaskID       *string // nil for HTTP crons; set when a command-cron task is queued
 	Error        *string // nil until status=failed
@@ -3514,7 +3555,46 @@ const (
 	OperatorIntentKindNodeForceDrain OperatorIntentKind = "node_force_drain"
 	OperatorIntentKindNodeActivate   OperatorIntentKind = "node_activate"
 	OperatorIntentKindNodeRetire     OperatorIntentKind = "node_retire"
+	// OperatorIntentKindDatabaseMove moves a native managed database to
+	// another database node (ADR-1027). TargetID is the database id,
+	// AccountID is nil, and Metadata names the target node (empty: the
+	// active node with the most free volume capacity). schedd's database
+	// scheduler parks the database and records the move before stamping
+	// the intent; the copy finishes in the background.
+	OperatorIntentKindDatabaseMove OperatorIntentKind = "database_move"
+	// OperatorIntentKindDatabaseRestart restarts a running native managed
+	// database in place (ADR-1027), onto its node's current base. TargetID
+	// is the database id and AccountID is nil. schedd's database scheduler
+	// parks the database and wakes it again before stamping the intent; a
+	// parked database is left for its next wake, which boots the current
+	// base anyway.
+	OperatorIntentKindDatabaseRestart OperatorIntentKind = "database_restart"
+	// OperatorIntentKindDatabaseSwitchover hands a production-class native
+	// managed database to its synchronized standby on purpose (ADR-1027).
+	// TargetID is the database id and AccountID is nil. schedd's database
+	// scheduler stops a running primary cleanly and promotes the standby,
+	// or moves a parked database's record to the standby's node, before
+	// stamping the intent.
+	OperatorIntentKindDatabaseSwitchover OperatorIntentKind = "database_switchover"
 )
+
+// IsOperatorDatabaseKind reports the native database operations (ADR-1027),
+// which schedd's database scheduler runs.
+func IsOperatorDatabaseKind(kind OperatorIntentKind) bool {
+	switch kind {
+	case OperatorIntentKindDatabaseMove, OperatorIntentKindDatabaseRestart, OperatorIntentKindDatabaseSwitchover:
+		return true
+	default:
+		return false
+	}
+}
+
+// DatabaseMoveIntentMetadata is a database_move intent's metadata: the
+// node to move to, or empty for the active node with the most free volume
+// capacity.
+type DatabaseMoveIntentMetadata struct {
+	TargetNode string `json:"target_node,omitempty"`
+}
 
 // OperatorIntent is one row of operator_intents (migrations/00431).
 // apid inserts customer-workload or fleet-level node intents, emits
@@ -3620,8 +3700,13 @@ const (
 	AlertMetricCertExpirySeconds                            AlertMetric = "cert_expiry_seconds"
 	AlertMetricCertIssuanceFailed                           AlertMetric = "cert_issuance_failed"
 	AlertMetricQueueDepth                                   AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold                       AlertMetric = "pre_auth_target_threshold"
-	AlertMetricPreAuthTargetSignalGapPct                    AlertMetric = "pre_auth_target_signal_gap_pct"
+	// AlertMetricQueueBacklog and AlertMetricQueueOldestAge watch the app's
+	// durable queue: messages waiting for its workers and the age of the
+	// oldest (ADR-20261018101500 amendment 2026-10-27). Webhook-only.
+	AlertMetricQueueBacklog              AlertMetric = "queue_backlog"
+	AlertMetricQueueOldestAge            AlertMetric = "queue_oldest_age_seconds"
+	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
 	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
 	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
 	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
@@ -3649,6 +3734,10 @@ const (
 	// AlertMetricRouteInsightsDetected counts the app's route insights that
 	// became active in the window (ADR-20261020161310).
 	AlertMetricRouteInsightsDetected AlertMetric = "route_insights_detected"
+	// Route monitor incidents open within the window and canaries the route
+	// health guard holds or aborted (ADR-20261028110044).
+	AlertMetricRouteMonitorIncidents AlertMetric = "route_monitor_incidents"
+	AlertMetricRouteHealthHolds      AlertMetric = "route_health_holds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3847,6 +3936,7 @@ type UpdateAlertRuleParams struct {
 	WebhookURL          *string
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 	CooldownMinutes     *int
+	NotifyResolved      *bool
 }
 
 // AlertRule is one customer-configurable rule (issue #396, ADR-045).
@@ -3885,12 +3975,15 @@ type AlertRule struct {
 	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL          string
 	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
-	CooldownMinutes     int
-	State               AlertState
-	LastFiredAt         time.Time // zero until first fire
-	LastEvaluatedAt     time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// NotifyResolved also sends the webhook a signed resolve event when the
+	// rule recovers (ADR-20261029203000); channels always get one.
+	NotifyResolved  bool
+	CooldownMinutes int
+	State           AlertState
+	LastFiredAt     time.Time // zero until first fire
+	LastEvaluatedAt time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
@@ -5688,6 +5781,26 @@ type ComputeNode struct {
 	Readiness NodeReadiness
 	// ReadinessReason says why a node is not ready; nil when it is.
 	ReadinessReason *string
+	// WakeBreakerOpenUntil is the node's wake breaker (ADR-20261022184531
+	// step 3): degraded until then, half-open once it passes, closed when
+	// nil. WakeBreakerReason says what opened it.
+	WakeBreakerOpenUntil *time.Time
+	WakeBreakerReason    *string
+	// CPUPressureUntil is how long the node's schedd holds it under CPU
+	// pressure (ADR 20261030100950): its tenant tasks waited for CPU while
+	// its CPUs were nearly all busy. It only expires; nil when never set.
+	CPUPressureUntil *time.Time
+}
+
+// WakeBreakerOpen reports whether the node's wake breaker holds it degraded
+// at now.
+func (n ComputeNode) WakeBreakerOpen(now time.Time) bool {
+	return n.WakeBreakerOpenUntil != nil && now.Before(*n.WakeBreakerOpenUntil)
+}
+
+// CPUPressured reports whether the node is held under CPU pressure at now.
+func (n ComputeNode) CPUPressured(now time.Time) bool {
+	return n.CPUPressureUntil != nil && now.Before(*n.CPUPressureUntil)
 }
 
 // NodeReadiness is whether a compute node has proven it can take a wake
@@ -5715,10 +5828,16 @@ func (r NodeReadiness) Valid() bool {
 	return false
 }
 
-// EffectiveReadiness is the node's readiness with lifecycle applied: a node
-// that lifecycle keeps out of placement reads unavailable or draining even
-// before the heartbeat writes it, and a row with no readiness reads ready.
+// EffectiveReadiness is EffectiveReadinessAt the current time.
 func (n ComputeNode) EffectiveReadiness() NodeReadiness {
+	return n.EffectiveReadinessAt(time.Now())
+}
+
+// EffectiveReadinessAt is the node's readiness with lifecycle and its wake
+// breaker applied: a node that lifecycle keeps out of placement reads
+// unavailable or draining even before the heartbeat writes it, an open wake
+// breaker reads degraded, and a row with no readiness reads ready.
+func (n ComputeNode) EffectiveReadinessAt(now time.Time) NodeReadiness {
 	switch n.Lifecycle {
 	case NodeLifecycleDraining, NodeLifecycleForceDraining, NodeLifecycleMaintenance:
 		return NodeReadinessDraining
@@ -5728,14 +5847,38 @@ func (n ComputeNode) EffectiveReadiness() NodeReadiness {
 	if n.Lifecycle == "" && !n.Active {
 		return NodeReadinessUnavailable
 	}
+	if n.WakeBreakerOpen(now) {
+		return NodeReadinessDegraded
+	}
 	if n.Readiness == "" {
 		return NodeReadinessReady
 	}
 	return n.Readiness
 }
 
+// ComputeNodeWakeBreakerStore records a node's wake breaker
+// (ADR-20261022184531 step 3). Any schedd may write it; every schedd places
+// by it.
+type ComputeNodeWakeBreakerStore interface {
+	// OpenComputeNodeWakeBreaker holds the node degraded until until.
+	OpenComputeNodeWakeBreaker(ctx context.Context, nodeID string, until time.Time, reason string) error
+	// CloseComputeNodeWakeBreaker clears the breaker and reports whether one
+	// was set.
+	CloseComputeNodeWakeBreaker(ctx context.Context, nodeID string) (bool, error)
+}
+
+// ComputeNodeCPUPressureStore records how long a node is held under CPU
+// pressure (ADR 20261030100950). Only the schedd that receives the node's
+// readings writes it; every schedd places by it.
+type ComputeNodeCPUPressureStore interface {
+	// HoldComputeNodeCPUPressure sets the node's cpu_pressure_until.
+	HoldComputeNodeCPUPressure(ctx context.Context, nodeID string, until time.Time) error
+}
+
 // ComputeNodeReadinessStore records a node's proven readiness. schedd's
-// heartbeat is the only writer (ADR-20261022184531).
+// heartbeat writes it (ADR-20261022184531), and so does the scheduler that
+// receives a node's capacity stream when that stream goes silent and vmmd
+// does not answer a ping (ADR-20261029085904).
 type ComputeNodeReadinessStore interface {
 	// SetComputeNodeReadiness writes readiness and reason (empty clears it)
 	// and reports whether either changed. Only a change fires
@@ -7010,14 +7153,26 @@ type EmailVerificationToken struct {
 
 // CliAuthCode is one row of the cli_auth_codes table (spec §2.2
 // device-code flow). AccountID is empty between mint and claim; the
-// claim statement fills it in atomically. The 4-byte entropy + 5-min
-// TTL + per-IP rate limit means brute-force on the code space is not
-// realistic, so we don't bump the byte length here.
+// claim statement fills it in atomically. TokenHash is the hash of the
+// short code the user approves. DeviceHash, when set, is the hash of a
+// 32-byte device code only the CLI holds, and the row can then be
+// exchanged only with that device code (bug hunt 2026-10-28 H67).
 type CliAuthCode struct {
 	TokenHash  []byte
+	DeviceHash []byte
 	AccountID  string // empty until ClaimCliAuthCode
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
+}
+
+// CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row
+// issued through it is refused by ConsumeCliAuthCode, so guessing the short
+// code the user approves never yields a key.
+type CliAuthDeviceCodeStore interface {
+	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error
+	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
+	// the device code's hash.
+	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
 }
 
 // AccountPassword is one row of the account_passwords table
@@ -7707,6 +7862,9 @@ type ProjectEnvironmentApproval struct {
 	ExpiresAt         time.Time
 	ConsumedAt        *time.Time
 	CreatedAt         time.Time
+	// ApprovedByAccountID is who gave the approval; "" for approvals made
+	// before it was recorded (ADR-20261020085706 amendment 2).
+	ApprovedByAccountID string
 }
 
 // ProjectEnvironmentConfig is one immutable, canonical non-secret
@@ -7895,8 +8053,11 @@ type Org struct {
 	ProviderCustomerID       string
 	StripeSubscriptionItem   string
 	DeletedPending           bool
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	// DeletionRequestedAt is when DeletedPending turned on (ADR-20261101143527);
+	// meterd delivers the organization's usage from before it.
+	DeletionRequestedAt *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // OrgMembership is the (org, account) join row. The pair is the PK;
@@ -8310,7 +8471,9 @@ type EdgeRuleIPAction struct {
 //     enforced as a sanity floor — MaxBodyBytes > plan cap is a
 //     create-time 422 from pkg/api/dto.go.
 type EdgeRuleValidateAction struct {
-	Schema              json.RawMessage `json:"schema"`
+	// Schema is absent for a parameter-only rule. Rows written before
+	// omitempty store "schema": null; the gateway reads that as absent.
+	Schema              json.RawMessage `json:"schema,omitempty"`
 	ContentTypes        []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknown     bool            `json:"reject_on_unknown_fields,omitempty"`
@@ -9235,6 +9398,10 @@ type OIDCExchangedToken struct {
 	Audience  []string
 	JTI       string
 	CreatedAt time.Time
+	// AppID binds the bearer to one app (ADR-20261101100000): set for a
+	// deploy bearer minted under a trust policy Gregale created, and
+	// enforced like a per-app deploy token. Empty is account-wide.
+	AppID string
 }
 
 // ToAPIKey projects the OIDC-bearer row into a synthetic state.APIKey
@@ -9265,6 +9432,7 @@ func (e OIDCExchangedToken) ToAPIKey() APIKey {
 		AccountID: e.AccountID,
 		Scopes:    scopes,
 		Status:    string(APIKeyStatusActive),
+		AppID:     e.AppID,
 	}
 }
 

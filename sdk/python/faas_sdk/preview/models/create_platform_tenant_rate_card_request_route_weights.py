@@ -11,9 +11,9 @@ T = TypeVar("T", bound="CreatePlatformTenantRateCardRequestRouteWeights")
 
 @_attrs_define
 class CreatePlatformTenantRateCardRequestRouteWeights:
-    """Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes; ADR-1307),
-    including surface and JWT-rule requests (ADR-1310). Unlisted routes count 1. Statements for periods it prices must
-    cover one calendar month.
+    """Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes), including
+    surface and JWT-rule requests. Unlisted routes count 1. Statements for periods it prices must cover one calendar
+    month.
 
     """
 

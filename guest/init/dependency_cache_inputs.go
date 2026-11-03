@@ -161,3 +161,21 @@ func dependencyCacheKept(outDir string) bool {
 	_, err := os.Stat(filepath.Join(outDir, dependencyCacheUnchangedMarker))
 	return err == nil
 }
+
+// clearOutputExcept empties a deferred build's output directory before its
+// cache export run, keeping only the named entry.
+func clearOutputExcept(outDir, keep string) error {
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == keep {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(outDir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}

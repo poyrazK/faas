@@ -43,7 +43,7 @@ func cmdOverageCap(args []string) int {
 		return 1
 	}
 	if *clear && fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale overage-cap [--clear] [<cents>]", "overage-cap")
+		PrintUsage(os.Stderr, "usage: gregale billing spend-cap [--clear] [<cents>]", "overage-cap")
 		return 1
 	}
 	if !*clear && fs.NArg() == 0 {
@@ -52,7 +52,7 @@ func cmdOverageCap(args []string) int {
 		return showOverageCap()
 	}
 	if !*clear && fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale overage-cap [--clear] [<cents>]", "overage-cap")
+		PrintUsage(os.Stderr, "usage: gregale billing spend-cap [--clear] [<cents>]", "overage-cap")
 		return 1
 	}
 	var cap *int64
@@ -97,7 +97,7 @@ func showOverageCap() int {
 		return jsonOut(writeJSON(saved))
 	}
 	if saved.OverageCapCents == nil {
-		_, _ = fmt.Fprintln(osStdout, "Overage cap: none (no limit). Set one with: gregale overage-cap <cents>")
+		_, _ = fmt.Fprintln(osStdout, "Overage cap: none (no limit). Set one with: gregale billing spend-cap <cents>")
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "Overage cap: %d cents (%s) per month.\n", *saved.OverageCapCents, api.FormatBillingCents(*saved.OverageCapCents))

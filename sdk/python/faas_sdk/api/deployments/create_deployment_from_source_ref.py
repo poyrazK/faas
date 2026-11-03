@@ -116,9 +116,9 @@ def sync_detailed(
 ) -> Response[DeploymentResponse | Problem]:
     """Create a deployment from a Git source-ref (headless).
 
-     Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+     Headless deploy path.
     Resolves the GitHub install bound to the caller's account,
-    fetches the (repo, ref) tarball via the githubd bridge, spools
+    fetches the (repo, ref) tarball via the GitHub bridge, spools
     it under the per-plan SourceTarballMaxMB cap, validates shape,
     and enqueues a build (Kind=DeploymentKindGitHub) pinned to
     the resolved 40-char commit SHA.
@@ -135,8 +135,8 @@ def sync_detailed(
         slug (str):
         idempotency_key (str | Unset):
         deployment_attempt_id (str | Unset):
-        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref
-            (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref.
+            The headless CI deploy
             path: `repo` resolves to an install-token-bound fetch, `ref` is
             the customer's chosen input (branch / tag / SHA — server
             resolves to a 40-char SHA before stamping the deployment row).
@@ -173,9 +173,9 @@ def sync(
 ) -> DeploymentResponse | Problem | None:
     """Create a deployment from a Git source-ref (headless).
 
-     Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+     Headless deploy path.
     Resolves the GitHub install bound to the caller's account,
-    fetches the (repo, ref) tarball via the githubd bridge, spools
+    fetches the (repo, ref) tarball via the GitHub bridge, spools
     it under the per-plan SourceTarballMaxMB cap, validates shape,
     and enqueues a build (Kind=DeploymentKindGitHub) pinned to
     the resolved 40-char commit SHA.
@@ -192,8 +192,8 @@ def sync(
         slug (str):
         idempotency_key (str | Unset):
         deployment_attempt_id (str | Unset):
-        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref
-            (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref.
+            The headless CI deploy
             path: `repo` resolves to an install-token-bound fetch, `ref` is
             the customer's chosen input (branch / tag / SHA — server
             resolves to a 40-char SHA before stamping the deployment row).
@@ -225,9 +225,9 @@ async def asyncio_detailed(
 ) -> Response[DeploymentResponse | Problem]:
     """Create a deployment from a Git source-ref (headless).
 
-     Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+     Headless deploy path.
     Resolves the GitHub install bound to the caller's account,
-    fetches the (repo, ref) tarball via the githubd bridge, spools
+    fetches the (repo, ref) tarball via the GitHub bridge, spools
     it under the per-plan SourceTarballMaxMB cap, validates shape,
     and enqueues a build (Kind=DeploymentKindGitHub) pinned to
     the resolved 40-char commit SHA.
@@ -244,8 +244,8 @@ async def asyncio_detailed(
         slug (str):
         idempotency_key (str | Unset):
         deployment_attempt_id (str | Unset):
-        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref
-            (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref.
+            The headless CI deploy
             path: `repo` resolves to an install-token-bound fetch, `ref` is
             the customer's chosen input (branch / tag / SHA — server
             resolves to a 40-char SHA before stamping the deployment row).
@@ -280,9 +280,9 @@ async def asyncio(
 ) -> DeploymentResponse | Problem | None:
     """Create a deployment from a Git source-ref (headless).
 
-     Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+     Headless deploy path.
     Resolves the GitHub install bound to the caller's account,
-    fetches the (repo, ref) tarball via the githubd bridge, spools
+    fetches the (repo, ref) tarball via the GitHub bridge, spools
     it under the per-plan SourceTarballMaxMB cap, validates shape,
     and enqueues a build (Kind=DeploymentKindGitHub) pinned to
     the resolved 40-char commit SHA.
@@ -299,8 +299,8 @@ async def asyncio(
         slug (str):
         idempotency_key (str | Unset):
         deployment_attempt_id (str | Unset):
-        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref
-            (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref.
+            The headless CI deploy
             path: `repo` resolves to an install-token-bound fetch, `ref` is
             the customer's chosen input (branch / tag / SHA — server
             resolves to a 40-char SHA before stamping the deployment row).

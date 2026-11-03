@@ -60,7 +60,7 @@ func parseAppDebugPath(rest string) (string, bool) {
 func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -81,9 +81,9 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	}
 	data.ActionError = r.URL.Query().Get("action") == "replay_error"
 	if s.sessions != nil {
-		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardDebugReplayAction, acct.ID, dashboardDebugReplayCSRFCookie)
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardDebugReplayAction, actorAccount(r, acct).ID, dashboardDebugReplayCSRFCookie)
 		if tokenErr != nil {
-			log.Warn("dashboard debug: issue replay csrf", "account_id", acct.ID, "app_id", app.ID, "err", tokenErr)
+			log.Warn("dashboard debug: issue replay csrf", "account_id", actorAccount(r, acct).ID, "app_id", app.ID, "err", tokenErr)
 		} else {
 			data.ReplayCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardDebugReplayCSRFCookie, Value: token, Path: "/", HttpOnly: true,
@@ -176,6 +176,12 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		running.Since = data.Since
 		running.RetentionClamped = data.WindowClamped
 		data.Running = dashboardDebugRunningView(running, app.Slug)
+	}
+	if status, statusErr := s.rolloutEvidence().Status(ctx, app, since, retention); statusErr != nil {
+		log.Warn("dashboard renderAppDebug: debug status", "account_id", acct.ID, "app_id", app.ID, "err", statusErr)
+	} else {
+		status.Since = data.Since
+		data.DebugStatus = dashboardDebugStatusView(status, app.Slug)
 	}
 
 	coverage, coverageErr := s.store.RequestTelemetryCoverage(ctx, sqlc.RequestTelemetryCoverageParams{
@@ -381,7 +387,7 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -1305,6 +1311,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 			Approximate:   stage.Approximate,
 		})
 	}
+	logs, logsTruncated := s.debugEvidenceLogs(ctx, acct.ID, app.ID, item)
 	evidence := api.DebugRequestEvidenceResponse{
 		Request:                    item,
 		Regression:                 apiRegression,
@@ -1314,6 +1321,8 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		DependencyLatencyTruncated: dependencyLatencyTruncated,
 		Spans:                      spans,
 		SpansTruncated:             truncated,
+		Logs:                       logs,
+		LogsTruncated:              logsTruncated,
 		Explanation:                explanation,
 	}
 	explanation = debugger.Synthesize(evidence)
@@ -1347,8 +1356,20 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		Findings:                   findingViews,
 		Recommendations:            recommendationViews,
 		GeneratedAt:                now.Format(time.RFC3339),
+		Logs:                       dashboardDebugLogViews(logs),
+		LogsTruncated:              logsTruncated,
 	}
 	return nil
+}
+
+func dashboardDebugLogViews(lines []api.DebugEvidenceLogLine) []dashboard.DebugLogLineView {
+	views := make([]dashboard.DebugLogLineView, 0, len(lines))
+	for _, line := range lines {
+		views = append(views, dashboard.DebugLogLineView{
+			OccurredAt: line.OccurredAt, Source: line.Source, Level: line.Level, Stream: line.Stream, Message: line.Message,
+		})
+	}
+	return views
 }
 
 func buildDebugCriticalPath(spans []api.DebugTelemetrySpan) *api.DebugRequestCriticalPath {

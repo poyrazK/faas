@@ -20,7 +20,7 @@ T = TypeVar("T", bound="AppForkResponse")
 
 @_attrs_define
 class AppForkResponse:
-    """One production fork (ADR-732). `status` moves from `queued` through
+    """One production fork. `status` moves from `queued` through
     `restoring` to `running`, and ends as `expired`, `cancelled` or
     `failed`. Scheduler leases and instance identifiers are never
     returned.

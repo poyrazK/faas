@@ -20,8 +20,8 @@ T = TypeVar("T", bound="RoutePriorityQueueStats")
 
 @_attrs_define
 class RoutePriorityQueueStats:
-    """How the app's warm-capacity queue behaved per priority class over the evidence window (ADR-1152). Present on GET;
-    source is unavailable when gateway metrics cannot be read.
+    """How the app's warm-capacity queue behaved per priority class over the evidence window. Present on GET; source is
+    unavailable when gateway metrics cannot be read.
 
     """
 

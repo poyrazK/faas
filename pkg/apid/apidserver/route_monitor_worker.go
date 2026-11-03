@@ -32,5 +32,8 @@ func (s *server) drainRouteMonitors(ctx context.Context) (int, error) {
 	}
 	return routejobs.MonitorDrain{
 		Queue: worker, AfterEvaluate: s.applyRouteMonitorRollback, Metrics: s.routeJobMetrics, Log: s.log,
+		Released: func(ctx context.Context, target state.RouteMonitorTarget) bool {
+			return s.routeCapabilityReleased(ctx, routeMonitorCapability, target.AccountID, target.AppID)
+		},
 	}.Run(ctx)
 }

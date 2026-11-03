@@ -83,7 +83,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DebugTelemetryRequestItem | Problem]:
-    """Get one request telemetry record (ADR-127).
+    """Get one request telemetry record.
 
      Resolves an exact public x-faas-request-id through the durable,
     app-scoped request-ID journal, then enriches it from detailed request
@@ -125,7 +125,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> DebugTelemetryRequestItem | Problem | None:
-    """Get one request telemetry record (ADR-127).
+    """Get one request telemetry record.
 
      Resolves an exact public x-faas-request-id through the durable,
     app-scoped request-ID journal, then enriches it from detailed request
@@ -162,7 +162,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DebugTelemetryRequestItem | Problem]:
-    """Get one request telemetry record (ADR-127).
+    """Get one request telemetry record.
 
      Resolves an exact public x-faas-request-id through the durable,
     app-scoped request-ID journal, then enriches it from detailed request
@@ -202,7 +202,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> DebugTelemetryRequestItem | Problem | None:
-    """Get one request telemetry record (ADR-127).
+    """Get one request telemetry record.
 
      Resolves an exact public x-faas-request-id through the durable,
     app-scoped request-ID journal, then enriches it from detailed request

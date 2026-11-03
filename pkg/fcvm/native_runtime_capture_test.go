@@ -263,7 +263,7 @@ func (v runtimeCaptureVMM) nativeRuntimeCaptureEnabled() bool { return v.enabled
 func TestManagerRequestsNativeRuntimeCaptureOnlyForOrdinaryCaptures(t *testing.T) {
 	inst := &Instance{Lease: leaseForSlot("runtime-capture", 4), DeploymentID: uuid.NewString(), nativeGeneration: uuid.NewString()}
 	m := &Manager{vmm: runtimeCaptureVMM{enabled: true}, fcVersion: "1.7.0", instanceBacking: map[string]BackingIdentity{}}
-	req := m.nativeRuntimeCapture(inst, SnapshotSpec{})
+	req := m.nativeRuntimeCapture(t.Context(), inst, SnapshotSpec{})
 	if req == nil || req.DeploymentID != inst.DeploymentID || req.NativeGeneration != inst.nativeGeneration || req.FCVersion != "1.7.0" {
 		t.Fatalf("ordinary capture request = %+v", req)
 	}
@@ -275,12 +275,12 @@ func TestManagerRequestsNativeRuntimeCaptureOnlyForOrdinaryCaptures(t *testing.T
 	}
 	sealed := SnapshotSpec{Storage: sealedStore}
 	for name, spec := range map[string]SnapshotSpec{"admitted": admitted, "migration": migration, "sealed": sealed} {
-		if req := m.nativeRuntimeCapture(inst, spec); req != nil {
+		if req := m.nativeRuntimeCapture(t.Context(), inst, spec); req != nil {
 			t.Fatalf("%s capture requested native runtime capture: %+v", name, req)
 		}
 	}
 	m.vmm = runtimeCaptureVMM{}
-	if req := m.nativeRuntimeCapture(inst, SnapshotSpec{}); req != nil {
+	if req := m.nativeRuntimeCapture(t.Context(), inst, SnapshotSpec{}); req != nil {
 		t.Fatalf("disabled VMM requested native runtime capture: %+v", req)
 	}
 }

@@ -93,6 +93,14 @@ func testQueueBindingEnvironmentIdentity(t *testing.T, fx *Fixture) {
 		if inFlight, err := fx.Store.QueueBindingHasInFlight(fx.Ctx, app.ID, binding.ID, ""); err != nil || inFlight != (stats.InFlight > 0) {
 			t.Fatalf("binding in flight = %v, %v; stats %+v", inFlight, err, stats)
 		}
+		// Gauge telemetry reports the same figures, each bounded by its limit.
+		for _, limit := range []int{10, 1} {
+			got, err := fx.Store.QueueBindingTelemetry(fx.Ctx, app.ID, binding.ID, limit)
+			if err != nil || got.Depth != min(stats.Depth, limit) || got.InFlight != min(stats.InFlight, limit) ||
+				got.DeadLetter != min(stats.DeadLetter, limit) || got.OldestPendingAt.Sub(stats.OldestPendingAt).Abs() > time.Millisecond {
+				t.Fatalf("binding telemetry limit %d = %+v, %v; stats %+v", limit, got, err, stats)
+			}
+		}
 	}
 	bind("staging", "payments") // Multiple named consumers are independent in one environment.
 	if got := enqueue("staging", ""); got.QueueBindingID != "" {

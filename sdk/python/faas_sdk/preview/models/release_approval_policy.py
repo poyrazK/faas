@@ -17,7 +17,7 @@ T = TypeVar("T", bound="ReleaseApprovalPolicy")
 
 @_attrs_define
 class ReleaseApprovalPolicy:
-    """An app's release approval policy (ADR-20261020085706)."""
+    """An app's release approval policy."""
 
     app: str
     required_approvals: int

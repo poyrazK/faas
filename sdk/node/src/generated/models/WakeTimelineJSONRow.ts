@@ -4,11 +4,11 @@
 /* eslint-disable */
 /**
  * One row of `AppWakeTimelineResponse.rows`. Mirrors
- * pkg/dashboard/views.WakeTimelineRow's fields so the JSON
+ * the dashboard wake-timeline row's fields so the JSON
  * mirror can render the same dashboard page 1:1. The
  * nullable fields (Trigger / QueuedCount / ConcurrencyAtAdmit
  * / ReadyInMS) use omitempty so the dashboard SPA can
- * distinguish "absent" (jsonb key missing — pre-PR-A fleet
+ * distinguish "absent" (jsonb key missing — older rows
  * row) from "explicit zero" (jsonb key present and 0).
  * `ready_in_ms = -1` is the em-dash sentinel for "no
  * boot_completed row yet" (still booting or rejected) — the
@@ -34,7 +34,7 @@ export type WakeTimelineJSONRow = {
    */
   wake_id?: string;
   /**
-   * Closed-enum trigger that admitted the wake (manual.cron / manual.api / scheduled.idle / …). Empty/absent on pre-PR-A fleet rows.
+   * Closed-enum trigger that admitted the wake (manual.cron / manual.api / scheduled.idle / …). Empty/absent on older rows.
    */
   trigger?: string;
   /**
@@ -42,7 +42,7 @@ export type WakeTimelineJSONRow = {
    */
   trigger_class?: 'user' | 'monitor' | 'crawler' | 'preview_bot' | 'unknown';
   /**
-   * Wake method vmmd ran (restore or cold_boot), when telemetry is available. A planned restore that fell back to a cold boot reads cold_boot.
+   * Wake method the VM manager ran (restore or cold_boot), when telemetry is available. A planned restore that fell back to a cold boot reads cold_boot.
    */
   method?: string;
   /**
@@ -62,7 +62,7 @@ export type WakeTimelineJSONRow = {
    */
   at_capacity: boolean;
   /**
-   * True when the at_capacity key was in jsonb; false = absent (pre-PR-A fleet). The dashboard renders em-dash when false.
+   * True when the at_capacity key was in jsonb; false = absent (older rows). The dashboard renders em-dash when false.
    */
   at_capacity_present: boolean;
   /**
@@ -70,7 +70,7 @@ export type WakeTimelineJSONRow = {
    */
   ready_in_ms?: number;
   /**
-   * The method schedd planned when vmmd ran another one, for example restore on a wake that fell back to a cold boot. Absent otherwise.
+   * The method scheduler planned when the VM manager ran another one, for example restore on a wake that fell back to a cold boot. Absent otherwise.
    */
   planned_method?: string;
   /**

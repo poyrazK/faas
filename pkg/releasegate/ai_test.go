@@ -45,10 +45,17 @@ func TestJudgeAI(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := Judge([]Gate{tc.gate}, map[string]Evidence{"ai": {AIRelease: tc.release, AIBaseline: tc.baseline}})
-			if judged := len(v.Results) == 1; judged != tc.wantJudged {
+			if len(v.Results) != 1 {
+				t.Fatalf("results = %+v, want the gate reported", v.Results)
+			}
+			if judged := !v.Results[0].NotJudged; judged != tc.wantJudged {
 				t.Fatalf("judged = %v, want %v (%+v)", judged, tc.wantJudged, v)
 			}
 			if !tc.wantJudged {
+				// An unjudged gate says why and never fails the verdict.
+				if !v.Results[0].Passed || v.Failed != nil || !strings.HasPrefix(v.Results[0].Summary, "not judged: ") {
+					t.Fatalf("unjudged result = %+v, failed = %+v", v.Results[0], v.Failed)
+				}
 				return
 			}
 			r := v.Results[0]

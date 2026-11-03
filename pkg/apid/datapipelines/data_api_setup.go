@@ -44,6 +44,10 @@ type DataAPISetup struct {
 	// auth app in the request body, outside appaccess.Wrap, so a company
 	// auth app stays unavailable to a creator who left the company.
 	AppVisible func(context.Context, state.Account, state.App) bool
+	// DataAPIReleased reports whether the Data API capability is released to
+	// the account (ADR-20261027123814): a setup never creates a Data API the
+	// account could not create itself. Nil releases it.
+	DataAPIReleased func(state.Account) bool
 }
 
 func (s *DataAPISetup) account(ctx context.Context, id string) (state.Account, error) {
@@ -104,10 +108,14 @@ func (s *DataAPISetup) authVisible(ctx context.Context, account, id string) erro
 }
 
 func (s *DataAPISetup) Plan(ctx context.Context, account string, r datapipeline.SetupRequest) (datapipeline.DataAPIPlan, error) {
-	if _, err := s.account(ctx, account); err != nil {
+	a, err := s.account(ctx, account)
+	if err != nil {
 		return datapipeline.DataAPIPlan{}, err
 	}
-	if err := s.authVisible(ctx, account, r.AuthAppID); err != nil {
+	if s.DataAPIReleased != nil && !s.DataAPIReleased(a) {
+		return datapipeline.DataAPIPlan{}, datapipeline.ErrUnavailable
+	}
+	if err = s.authVisible(ctx, account, r.AuthAppID); err != nil {
 		return datapipeline.DataAPIPlan{}, err
 	}
 	issuer, err := s.auth(ctx, account, r.AuthAppID)

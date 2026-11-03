@@ -132,8 +132,9 @@ func checkSourceBuildRootfsOwner(in SourceBuildRootfsInput, parent BuildExportPu
 
 // sharedSourceAppRuntimes are the runner bases a source-built container app
 // may run on instead of the minimal base, holding only /app in its layer
-// (docs/adr/1500-shared-runtime-source-apps.md, H10-140).
-var sharedSourceAppRuntimes = map[string]bool{"node22": true, "node24": true}
+// (docs/adr/1500-shared-runtime-source-apps.md, H10-140; Python: amendment 2).
+// Migration 20261029134512301 widens the SQL lists to match.
+var sharedSourceAppRuntimes = map[string]bool{"node22": true, "node24": true, "python312": true, "python313": true}
 
 // SharedSourceAppRuntime reports whether runtime is a runner base a
 // source-built container app may claim.

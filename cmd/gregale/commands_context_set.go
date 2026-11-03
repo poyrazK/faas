@@ -166,14 +166,14 @@ func cmdContextSetSelected(args []string, selection *contextUpdateSelection) int
 		return printErr("Could not recheck context file", err)
 	}
 	if current != before || currentPath != path || !os.SameFile(info, latest) {
-		return printErr("Context changed during validation", errors.New("review gregale context and repeat the intended update"))
+		return printErr("Context changed during validation", errors.New("review gregale config context get and repeat the intended update"))
 	}
 	if after != before && !*dryRun {
 		if _, err := saveProjectContext(filepath.Dir(filepath.Dir(path)), after); err != nil {
 			return printErr("Could not save context update", err)
 		}
 	}
-	receipt := contextUpdateReceipt{Before: before, After: after, Path: path, Changed: after != before && !*dryRun, DryRun: *dryRun, WouldChange: after != before, Connection: effectiveConnectionContext()}
+	receipt := contextUpdateReceipt{Before: before, After: after, Path: path, Changed: after != before && !*dryRun, DryRun: *dryRun, WouldChange: after != before, Connection: displayConnectionContext()}
 	if selection != nil {
 		receipt.Preset, receipt.PresetPath = selection.Preset, selection.PresetPath
 	}
@@ -202,7 +202,7 @@ func cmdContextSetSelected(args []string, selection *contextUpdateSelection) int
 		_, _ = fmt.Fprintf(osStdout, "Unchanged settings: %s\nPreview only; no local files or remote services were changed.\n", strings.Join(unchanged, ", "))
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "Use gregale context to review targeting. Remote services and connection settings were not changed.")
+	_, _ = fmt.Fprintln(osStdout, "Use gregale config context get to review targeting. Remote services and connection settings were not changed.")
 	return 0
 }
 

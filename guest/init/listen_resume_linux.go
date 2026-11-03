@@ -322,9 +322,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		return
 	}
 	var req struct {
-		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
-		Entropy          string `json:"entropy"`     // base64; decode + ioctl(RNDADDENTROPY)
-		Traceparent      string `json:"traceparent"` // W3C; empty is tolerated (issues PR-4)
+		HostTimeUnixNano    int64  `json:"hostTimeUnixNano"`
+		Entropy             string `json:"entropy"`             // base64; decode + ioctl(RNDADDENTROPY)
+		Traceparent         string `json:"traceparent"`         // W3C; empty is tolerated (issues PR-4)
+		EventPublishVerdict bool   `json:"eventPublishVerdict"` // ADR-20261031102000; absent from an older vmmd
 		// QualificationReceipt is sent only by a native qualification
 		// restore: re-attest the boot configuration under a fresh token.
 		QualificationReceipt *struct {
@@ -338,6 +339,9 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		_, _ = f.Write([]byte{VsockResumeAckJSON})
 		return
 	}
+	// The vmmd restoring this VM decides how in-guest publishes are answered,
+	// whichever vmmd the snapshot booted under.
+	eventPublishVerdict.Store(req.EventPublishVerdict)
 	// ADR-022: host entropy is what makes two restores of one snapshot
 	// diverge (virtio-rng state is part of the snapshot, and the CRNG is
 	// only rekeyed after it is mixed in). A resume without it would serve

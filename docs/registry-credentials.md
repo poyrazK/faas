@@ -5,7 +5,7 @@ Registry credentials let Gregale pull private OCI images during a deployment.
 ```bash
 gregale registry list --app APP_ID
 printf '%s\n' "$REGISTRY_TOKEN" | gregale registry set --app APP_ID --registry registry-1.docker.io --user USER --password-stdin
-gregale registry rm --app APP_ID --registry registry-1.docker.io
+gregale registry delete --app APP_ID --registry registry-1.docker.io
 ```
 
 The CLI prompts for the secret and sends it over the authenticated API; it never prints the value. The service stores write-only credential metadata, redacts credential fields from events and logs, and uses the credential only for the selected registry host. The credential is sent only to an HTTPS token endpoint; a registry whose authentication challenge names a plain-HTTP token endpoint fails the pull instead.
@@ -15,10 +15,10 @@ Image runs (`gregale run`) take the credential per run instead:
 `GREGALE_REGISTRY_PASSWORD` or a prompt, or from a Docker config with
 `--docker-config ~/.docker` (ADR-20261025110000). It is stored sealed on the image's
 runner job, for the image's registry only, and refreshed by every run that
-passes it (ADR-1790). See [Jobs](jobs.md#image-runs).
+passes it (ADR-1790). See [image runs](image-runs.md).
 
 A Dockerfile build uses the same credentials for its `FROM` images, so an app can
-build on a private base image ([ADR-20261026090000](adr/20261026090000-builder-private-base-images.md)).
+build on a private base image ([ADR-20261026091500](adr/20261026091500-builder-private-base-images.md)).
 The build log names the registries it authenticates to. Such a build never reuses
 a warm builder, and its cached image is reused only by the same app. An ECR access
 key cannot be used for `FROM` images; store an ECR password with the username `AWS`

@@ -52,7 +52,7 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	svc.WorkDir = t.TempDir()
 	enqueuer := &previewDependencyEnqueuer{}
 	svc.Enqueuer = enqueuer
-	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+	svc.Reconcile.Scan = func(fs.FS, reposcan.ScanOptions) (reposcan.Result, error) {
 		return reposcan.Result{
 			Workloads: []reposcan.Workload{
 				{Name: "api", DependsOn: []string{"worker", "redis"}, Dockerfile: "Dockerfile.preview", Command: []string{"node", "api.js"}},
@@ -200,7 +200,7 @@ func TestHandlePullRequest_ProvisionsNewDependencyWithoutProduction(t *testing.T
 	svc.WorkDir = t.TempDir()
 	enqueuer := &previewDependencyEnqueuer{}
 	svc.Enqueuer = enqueuer
-	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+	svc.Reconcile.Scan = func(fs.FS, reposcan.ScanOptions) (reposcan.Result, error) {
 		return reposcan.Result{Workloads: []reposcan.Workload{
 			{Name: "api", DependsOn: []string{"worker"}, Dockerfile: "Dockerfile.preview"},
 			{Name: "worker", Class: reposcan.ClassWorker, Command: []string{"node", "worker.js"}, Dockerfile: "Dockerfile.preview"},
@@ -275,7 +275,7 @@ func TestHandlePullRequest_RemovedDependencyWaitsForJanitor(t *testing.T) {
 	svc.WorkDir = t.TempDir()
 	svc.Enqueuer = &previewDependencyEnqueuer{}
 	dependencies := []string{"worker"}
-	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+	svc.Reconcile.Scan = func(fs.FS, reposcan.ScanOptions) (reposcan.Result, error) {
 		return reposcan.Result{Workloads: []reposcan.Workload{
 			{Name: "api", DependsOn: dependencies}, {Name: "worker"},
 		}}, nil
@@ -344,7 +344,7 @@ func TestHandlePullRequest_SwapsDependencyAtFullQuota(t *testing.T) {
 	svc.WorkDir = t.TempDir()
 	svc.Enqueuer = &previewDependencyEnqueuer{}
 	dependency := "worker"
-	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+	svc.Reconcile.Scan = func(fs.FS, reposcan.ScanOptions) (reposcan.Result, error) {
 		return reposcan.Result{Workloads: []reposcan.Workload{
 			{Name: "api", DependsOn: []string{dependency}}, {Name: "worker"}, {Name: "db"},
 		}}, nil
@@ -465,7 +465,7 @@ func TestHandlePullRequest_DependencyQuotaStopsBuilds(t *testing.T) {
 	svc.WorkDir = t.TempDir()
 	enqueuer := &previewDependencyEnqueuer{}
 	svc.Enqueuer = enqueuer
-	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+	svc.Reconcile.Scan = func(fs.FS, reposcan.ScanOptions) (reposcan.Result, error) {
 		return reposcan.Result{Workloads: []reposcan.Workload{
 			{Name: "api", DependsOn: []string{"worker"}},
 			{Name: "worker", DependsOn: []string{"db"}},

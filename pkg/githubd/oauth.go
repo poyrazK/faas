@@ -24,12 +24,15 @@ import (
 	"context"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // GitHubAPI is the base URL for api.github.com. Tests override via
@@ -233,7 +236,72 @@ type UserInstallation struct {
 	ID      int64 `json:"id"`
 	Account struct {
 		Login string `json:"login"`
+		// Type is "User" or "Organization".
+		Type string `json:"type"`
 	} `json:"account"`
+}
+
+// AuthorizeInstallationBinder checks that the GitHub user behind userToken
+// may connect installation to a Gregale account. GitHub lists an
+// installation in /user/installations for anyone with access to one of its
+// repositories, so any member of a company could bind the company's
+// installation and reach every repository it covers (bug hunt 2026-10-28
+// H49). An organization installation now needs an active organization
+// admin; a personal installation needs its owner.
+func (a *AppAuth) AuthorizeInstallationBinder(ctx context.Context, userToken string, installation UserInstallation) error {
+	var user struct {
+		Login string `json:"login"`
+	}
+	if status, err := a.getUserJSON(ctx, userToken, "/user", &user); err != nil || status != http.StatusOK {
+		return fmt.Errorf("githubd: read GitHub user: status=%d: %w", status, err)
+	}
+	owner := installation.Account.Login
+	if !strings.EqualFold(installation.Account.Type, "Organization") {
+		if owner == "" || !strings.EqualFold(user.Login, owner) {
+			return api.ErrGitHubInstallationOwnerRequired(owner)
+		}
+		return nil
+	}
+	var membership struct {
+		State string `json:"state"`
+		Role  string `json:"role"`
+	}
+	// Needs the App's organization Members (read) permission. An
+	// installation from before that permission answers 403 until an
+	// organization owner accepts it.
+	status, err := a.getUserJSON(ctx, userToken, "/user/memberships/orgs/"+url.PathEscape(owner), &membership)
+	if err != nil {
+		return fmt.Errorf("githubd: read %s membership: %w", owner, err)
+	}
+	if status == http.StatusForbidden {
+		return api.ErrGitHubPermissionPending(owner, "Members (read)")
+	}
+	if status != http.StatusOK || membership.State != "active" || membership.Role != "admin" {
+		return api.ErrGitHubOrgAdminRequired(owner)
+	}
+	return nil
+}
+
+// getUserJSON GETs a GitHub API path with a user token and decodes a 200.
+func (a *AppAuth) getUserJSON(ctx context.Context, userToken, path string, out any) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, GitHubAPI+path, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+userToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "faas-githubd/1.0")
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+		return resp.StatusCode, nil
+	}
+	return resp.StatusCode, decodeGitHubJSON(resp.Body, out)
 }
 
 // ListInstallationsForUser enumerates the GitHub App installs visible
@@ -251,10 +319,29 @@ func (a *AppAuth) ListInstallationsForUser(ctx context.Context, userToken string
 	if userToken == "" {
 		return nil, fmt.Errorf("githubd: user token required")
 	}
-	endpoint := GitHubAPI + "/user/installations?per_page=100"
+	var installations []UserInstallation
+	nextURL := GitHubAPI + "/user/installations?per_page=100"
+	for page := 0; page < userInstallationsPageCap && nextURL != ""; page++ {
+		pageInstallations, next, err := a.listUserInstallationsPage(ctx, userToken, nextURL)
+		if err != nil {
+			return nil, err
+		}
+		installations = append(installations, pageInstallations...)
+		nextURL = next
+	}
+	if nextURL != "" {
+		return nil, fmt.Errorf("githubd: list user installations: page cap %d reached before pagination completed", userInstallationsPageCap)
+	}
+	return installations, nil
+}
+
+// userInstallationsPageCap bounds /user/installations to 1,000 entries.
+const userInstallationsPageCap = 10
+
+func (a *AppAuth) listUserInstallationsPage(ctx context.Context, userToken, endpoint string) ([]UserInstallation, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+userToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -263,20 +350,20 @@ func (a *AppAuth) ListInstallationsForUser(ctx context.Context, userToken string
 
 	resp, err := a.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("githubd: list user installations: %w", err)
+		return nil, "", fmt.Errorf("githubd: list user installations: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return nil, fmt.Errorf("githubd: list user installations: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, "", fmt.Errorf("githubd: list user installations: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var payload struct {
 		Installations []UserInstallation `json:"installations"`
 	}
 	if err := decodeGitHubJSON(resp.Body, &payload); err != nil {
-		return nil, fmt.Errorf("githubd: decode user installations: %w", err)
+		return nil, "", fmt.Errorf("githubd: decode user installations: %w", err)
 	}
-	return payload.Installations, nil
+	return payload.Installations, nextLink(strings.Join(resp.Header.Values("Link"), ", ")), nil
 }
 
 // InstallableRepo is one entry in the list returned by
@@ -293,6 +380,11 @@ type InstallableRepo struct {
 	DefaultBranch string `json:"default_branch"`
 	Private       bool   `json:"private"`
 }
+
+// ErrRepositoryNotVisible reports that an installation sees no repository of
+// the requested name: GitHub answered 404, or the name now leads to another
+// repository.
+var ErrRepositoryNotVisible = errors.New("githubd: repository not visible to the installation")
 
 func (a *AppAuth) GetInstallableRepo(ctx context.Context, installToken, fullName string) (InstallableRepo, error) {
 	owner, name, ok := strings.Cut(fullName, "/")
@@ -320,6 +412,9 @@ func (a *AppAuth) GetInstallableRepo(ctx context.Context, installToken, fullName
 	if err != nil {
 		return InstallableRepo{}, fmt.Errorf("githubd: read repository %q response: %w", fullName, err)
 	}
+	if resp.StatusCode == http.StatusNotFound {
+		return InstallableRepo{}, fmt.Errorf("githubd: repository %q unavailable to installation (status %d): %w", fullName, resp.StatusCode, ErrRepositoryNotVisible)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return InstallableRepo{}, fmt.Errorf("githubd: repository %q unavailable to installation (status %d)", fullName, resp.StatusCode)
 	}
@@ -328,7 +423,7 @@ func (a *AppAuth) GetInstallableRepo(ctx context.Context, installToken, fullName
 		return InstallableRepo{}, fmt.Errorf("githubd: decode repository %q: %w", fullName, err)
 	}
 	if !strings.EqualFold(repo.FullName, fullName) {
-		return InstallableRepo{}, fmt.Errorf("githubd: repository lookup returned %q for %q", repo.FullName, fullName)
+		return InstallableRepo{}, fmt.Errorf("githubd: repository lookup returned %q for %q: %w", repo.FullName, fullName, ErrRepositoryNotVisible)
 	}
 	if repo.ID <= 0 || repo.Owner.ID <= 0 {
 		return InstallableRepo{}, fmt.Errorf("githubd: repository %q is missing immutable GitHub IDs", repo.FullName)

@@ -75,7 +75,7 @@ type EgressCircuitInstanceStore interface {
 // this no-op.
 func NewStoreEgressCircuitNodeLister(store EgressCircuitInstanceStore) EgressCircuitNodeLister {
 	return func(ctx context.Context, appID string) ([]string, error) {
-		instances, err := store.ListInstancesForApp(ctx, appID)
+		instances, err := liveInstancesOf(ctx, store, appID)
 		if err != nil {
 			return nil, err
 		}

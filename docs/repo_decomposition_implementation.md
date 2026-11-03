@@ -54,7 +54,11 @@ project the workload keeps its name: `depends_on`, the injected
 
 A Compose service without `ports:` becomes an internal app: reachable from the
 project's other services, with no public URL (ADR-20261022131852). Services
-that publish `ports:` are public.
+that publish `ports:` are public. A service without `ports:` is classified
+`http` when another service calls it (a Compose `environment:` URL addresses
+it, or a request-serving service lists it in `depends_on` and it declares
+`expose:` or runs its own listening image) and `worker` otherwise
+(ADR-20261029120000 and its amendment 1).
 
 `.gregale/project.yaml` at the repository root declares, for any detected
 workload, the service policy (`service_policy`, top level or per service),

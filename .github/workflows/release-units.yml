@@ -20,11 +20,15 @@
 # anything. So do changes to control-plane host roles (docs/adr/
 # 20261018133100-host-configuration-lane.md): cd-controlplane's
 # converge-host-config job converges the roles whose content hash changed
-# first, with the gregalectl the release carries. Full releases (release.yml
-# on a v*.*.* tag) are unchanged and remain the only path for contract
-# migrations, release unit files, deploy/ changes no control-plane role
-# reads, compute host roles, dependency bumps and the other compute
-# daemons; this workflow says so and exits when a range needs one.
+# first, with the gregalectl the release carries. Every deploy/ path has one
+# class (scripts/ci/release_units.json deploy_classes, docs/adr/
+# 20261027151755-unit-lane-deploy-path-classes.md): documentation, samples
+# and trees no release installs change nothing; compute roles and playbooks
+# hold only the edge lane. Full releases (release.yml on a v*.*.* tag) are
+# unchanged and remain the only path for contract migrations, release unit
+# files, deploy/ paths of the blocking class, compute host roles,
+# dependency bumps and the other compute daemons; this workflow says so and
+# exits when a range needs one.
 #
 # The base defaults to the newest full release tag reachable from the
 # commit, the release CI checked every merge against. The deploy refuses any

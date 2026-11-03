@@ -89,11 +89,10 @@ func (s *server) consumeInvoiceCredits(w http.ResponseWriter, r *http.Request, a
 		}
 		// Reducer error is not a "deliberate refusal" (which would
 		// be ErrCapacity / 503); it's an unexpected server-side
-		// failure — DB commit, network blip, partial state. 500 with
-		// the verbatim err.Error() surfaces the breadcrumb in the
-		// operator's browser console; the audit row carries the
-		// same text for the on-call engineer.
-		api.WriteProblem(w, api.ErrInternal(err.Error()))
+		// failure — DB commit, network blip, partial state. The
+		// error goes to the log, not the response.
+		logCustomerFailure(s.log, "consume invoice credits", err)
+		api.WriteProblem(w, api.ErrInternal(api.DetailServerFailure))
 		return
 	}
 }

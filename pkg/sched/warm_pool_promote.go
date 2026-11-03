@@ -41,7 +41,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		// The ordinary admission gate owns the capacity result.
 		return WakeResult{}, false, nil
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return WakeResult{}, false, fmt.Errorf("sched: warm pool: list promotion candidates: %w", err)
 	}

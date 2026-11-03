@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An account's managed PostgreSQL compute overage setting (ADR-20261025094915).
+ * An account's managed PostgreSQL compute overage setting.
  */
 export type ManagedPostgresOverage = {
   enabled: boolean;

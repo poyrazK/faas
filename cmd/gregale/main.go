@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -22,29 +23,27 @@ import (
 // docsURL is the canonical link printed at the bottom of the usage string.
 var docsURL = docsSiteURL
 
-// topLevelUsage renders root help. The default view is the first screen for
-// a new customer; showAll lists every customer command by journey group, and
-// showOperator adds operator and compatibility commands.
+// topLevelUsage renders root help in the command tree's names
+// (ADR-20261026145832). The default view is the first screen for a new
+// customer; showAll lists the shortcuts and every noun by family, and
+// showOperator adds operator commands and today's earlier names.
 func topLevelUsage(showAll, showOperator bool) string {
 	var b strings.Builder
+	discovery := newCliTreeDiscovery()
 	b.WriteString("gregale — deploy apps and functions that scale to zero.\n\n")
 	b.WriteString("Usage:\n  gregale <command> [flags]\n")
 	if showAll {
-		writeGroupedCommands(&b, customerCliCommands())
+		writeCliTreeCommands(&b, discovery)
 		if showOperator {
 			b.WriteString("\nOperator and compatibility:\n")
 			for _, command := range advancedCliCommands() {
 				writeRootHelpEntry(&b, command.Name, command.Short)
 			}
+			writeCliEarlierNames(&b, discovery)
 		}
 	} else {
 		b.WriteString("\nGet started:\n")
-		for _, name := range []string{"start", "menu", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
-			if command, ok := lookupDiscoverableCommand(name); ok {
-				writeRootHelpEntry(&b, command.Name, command.Short)
-			}
-		}
-		writeRootHelpEntry(&b, "help", "Show command help")
+		writeCliTreeDailyCommands(&b, discovery)
 		b.WriteString("\nExamples:\n")
 		b.WriteString("  gregale start\n  gregale start ./my-api\n  gregale deploy --preview\n")
 		b.WriteString("\nRun 'gregale help --all' for every command, or 'gregale help deploy' for a topic.\n")
@@ -62,35 +61,6 @@ func topLevelUsage(showAll, showOperator bool) string {
 	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
-}
-
-// writeGroupedCommands lists customer commands in the journey order of
-// cliHelpGroups. The manifest order still drives completion and man output.
-func writeGroupedCommands(b *strings.Builder, commands []cliCommand) {
-	byGroup := make(map[string][]cliCommand, len(cliHelpGroups)+1)
-	for _, command := range commands {
-		group := cliHelpGroup(command)
-		byGroup[group] = append(byGroup[group], command)
-	}
-	for _, group := range cliHelpGroups {
-		fmt.Fprintf(b, "\n%s:\n", group.Title)
-		for _, name := range group.Commands {
-			for _, command := range byGroup[group.Title] {
-				if command.Name == name {
-					writeRootHelpEntry(b, command.Name, command.Short)
-				}
-			}
-		}
-		if group.Title == cliHelpGroups[0].Title {
-			writeRootHelpEntry(b, "help", "Show command help")
-		}
-	}
-	if other := byGroup[cliHelpGroupOther]; len(other) > 0 {
-		fmt.Fprintf(b, "\n%s:\n", cliHelpGroupOther)
-		for _, command := range other {
-			writeRootHelpEntry(b, command.Name, command.Short)
-		}
-	}
 }
 
 func writeRootHelpEntry(b *strings.Builder, name, short string) {
@@ -144,6 +114,9 @@ func run(args []string) (status int) {
 	previousAutomation := nonInteractive
 	defer func() { nonInteractive = previousAutomation }()
 	nonInteractive = false
+	previousInsecureWarned := insecureAPIWarned
+	defer func() { insecureAPIWarned = previousInsecureWarned }()
+	insecureAPIWarned = false
 	var automationErr error
 	args, automationErr = extractAutomationFlag(args)
 	previousProfile := profileOverride
@@ -166,12 +139,60 @@ func run(args []string) (status int) {
 	if profileErr != nil {
 		return printErr("Invalid connection profile", profileErr)
 	}
+	// ADR-20261026145832: a path in the new command tree runs the command
+	// that implements it today, so help, gating and dispatch see that path.
+	typed := args
+	args, err := rewriteCliTree(args)
+	if err != nil {
+		return printErr("Invalid app target", err)
+	}
+	if slices.Equal(typed, args) {
+		printCliTreeHint(osStderr, typed)
+	}
+	args = normalizeTreeFlags(args)
+	// A flag that reaches another capability answers like an unknown flag
+	// while that capability is hidden for the account (cliFlag.Capability).
+	if len(args) > 0 {
+		if name, hidden := hiddenFlagArg(manifestLeafFlags(args), args[1:]); hidden {
+			return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag %s; run 'gregale %s --help' for its options", name, leadingWords(typed)))
+		}
+	}
+	// Help under a tree noun or a shortcut comes from the tree manifest the
+	// reference renders, so it names the same verbs at every depth.
+	if words, ok := treeHelpWords(typed); ok {
+		if cliTreeTopicHidden(cliTreeTopic{Path: words[:1]}) {
+			return unknownCommand(strings.Join(leadingTreeWords(words), " "))
+		}
+		if printTreeManifestHelp(osStdout, words) {
+			return 0
+		}
+	}
+	// A topic is what the user typed: `mcp server --help` rewrites to `mcp
+	// --help`, whose topic is another page.
+	if topic, ok := cliTreeHelpTopic(args); ok && slices.Equal(typed, args) {
+		if cliTreeTopicHidden(topic) {
+			return unknownCommand(strings.Join(leadingTreeWords(typed), " "))
+		}
+		printCliTreeHelp(osStdout, topic)
+		return 0
+	}
+	previousUsageFrom, previousUsageTo := treeUsageFrom, treeUsageTo
+	treeUsageFrom, treeUsageTo = "", ""
+	if from, to, ok := cliTreeHelpRename(typed, args); ok {
+		treeUsageFrom, treeUsageTo = from, to
+	}
+	defer func() { treeUsageFrom, treeUsageTo = previousUsageFrom, previousUsageTo }()
+	if len(args) > 0 {
+		if noun, ok := lookupCliTreeNoun(args[0]); ok && oldPathDepth(args[:1]) == 0 {
+			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name))
+		}
+	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
 	previousHelpPrinted, previousHelpPath := flagHelpPrinted, helpRequestPath
 	flagHelpPrinted, helpRequestPath = false, ""
 	if jsonUsageHelp {
-		helpRequestPath = leadingWords(args)
+		helpRequestPath = cliTreeSpellPath(leadingWords(typed))
 	}
 	defer func() {
 		// A parser that printed --help reports the request as a parse error;
@@ -192,6 +213,9 @@ func run(args []string) (status int) {
 	// answers like an unknown one.
 	if args[0] != "help" {
 		if path, hidden := hiddenCommand(args, hasHelpFlag(args[1:])); hidden {
+			if !slices.Equal(typed, args) {
+				path = strings.Join(leadingTreeWords(typed), " ") // the name the user typed
+			}
 			return unknownCommand(path)
 		}
 	}
@@ -199,7 +223,7 @@ func run(args []string) (status int) {
 	// the generated reference. This also handles flags preceding --help.
 	if len(args) > 1 && args[0] != "help" && hasHelpFlag(args[1:]) {
 		if command, ok := lookupDiscoverableCommand(args[0]); ok {
-			if printManifestHelp(osStdout, command, args[1:]) {
+			if printManifestHelpAs(typed, args, command, args[1:]) {
 				return 0
 			}
 		}
@@ -235,7 +259,7 @@ func run(args []string) (status int) {
 			return 0
 		}
 		if command, ok := lookupDiscoverableCommand(args[1]); ok && cliCommandAvailable(command.Name) {
-			if printManifestHelp(osStdout, command, args[2:]) {
+			if printManifestHelpAs(typed, args, command, args[2:]) {
 				return 0
 			}
 		}
@@ -247,17 +271,25 @@ func run(args []string) (status int) {
 		}
 		PrintUsage(os.Stderr, message, "cli")
 		return 1
+	case "completion":
+		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
+		// via cmdCompletion; the dispatcher is in completion.go. Like help,
+		// it must work with a broken profile: shells source it at startup.
+		return cmdCompletion(args[1:])
+	case "man":
+		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
+		// gregale-<command>(1). Dispatcher is in man.go.
+		return cmdMan(args[1:])
 	}
 	if err := validateSelectedProfile(); err != nil {
 		return printErr("Invalid connection profile", err)
 	}
+	if code, stop := connectionPreflight(args[0]); stop {
+		return code
+	}
 	switch args[0] {
 	case "profile":
 		return cmdProfile(args[1:])
-	case "completion":
-		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
-		// via cmdCompletion; the dispatcher is in completion.go.
-		return cmdCompletion(args[1:])
 	case "config":
 		return cmdConfig(args[1:])
 	case "link":
@@ -268,10 +300,6 @@ func run(args []string) (status int) {
 		return cmdContext(args[1:])
 	case "capabilities":
 		return cmdCapabilities(args[1:])
-	case "man":
-		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
-		// gregale-<command>(1). Dispatcher is in man.go.
-		return cmdMan(args[1:])
 	case "login":
 		return cmdLogin(args[1:])
 	case dispatchSignup:
@@ -343,11 +371,14 @@ func run(args []string) (status int) {
 		// `gregale apps ls` (or `list`, as `projects list` spells it) is an
 		// alias for the default list action.
 		if len(args) > 1 && (args[1] == "ls" || args[1] == "list") {
-			if len(args) != 2 {
-				PrintUsage(os.Stderr, "usage: gregale apps [ls|list]", "apps")
+			if len(args) != 2 && !hasSelectorFlag(args[2:]) {
+				PrintUsage(os.Stderr, "usage: gregale app list [ls|list] [-l SELECTOR]", "apps")
 				return 1
 			}
-			return cmdApps()
+			return cmdApps(args[2:])
+		}
+		if len(args) > 1 && hasSelectorFlag(args[1:2]) {
+			return cmdApps(args[1:])
 		}
 		if len(args) > 1 && args[1] == subRestore {
 			return cmdAppsRestore(args[2:])
@@ -409,10 +440,10 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|list|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list [ls|list|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
 			return 1
 		}
-		return cmdApps()
+		return cmdApps(nil)
 	case dispatchDeployments:
 		// `gregale deployments [--app SLUG] [--limit N|--before C|--all]` — list.
 		// Place before appSlugFallback so the singular never shadows it.
@@ -512,6 +543,8 @@ func run(args []string) (status int) {
 		return cmdUploadCache(args[1:])
 	case "domains":
 		return cmdDomains(args[1:])
+	case "deploy-tokens":
+		return cmdDeployTokens(args[1:])
 	case "sites":
 		return cmdSites(args[1:])
 	case "tenant-surfaces":
@@ -881,6 +914,21 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 	return true
 }
 
+// printManifestHelpAs prints manifest help in the tree path the user typed
+// when run() rewrote it to today's command (ADR-20261026145832 step 5).
+func printManifestHelpAs(typed, args []string, command cliCommand, rest []string) bool {
+	from, to, renamed := cliTreeHelpRename(typed, args)
+	if !renamed {
+		return printManifestHelp(osStdout, command, rest)
+	}
+	var help bytes.Buffer
+	if !printManifestHelp(&help, command, rest) {
+		return false
+	}
+	_, _ = io.WriteString(osStdout, renameHelpPath(help.String(), from, to))
+	return true
+}
+
 func manifestFlag(command cliCommand, selected []cliSub, name string) *cliFlag {
 	flags := command.Flags
 	if len(selected) > 0 {
@@ -907,6 +955,7 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 	case "rollback":
 		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
 		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackStatusUsage, "usage: "))
+		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackSwitchUsage, "usage: "))
 		if len(command.Examples) > 0 {
 			_, _ = fmt.Fprintln(w, "\nExamples:")
 			printCLIExamples(w, command.Examples)
@@ -993,7 +1042,7 @@ func printLocalHelpSubcommands(w io.Writer, subcommands []cliSub, compact bool) 
 // printHelpSeeAlso points at commands whose names are easy to confuse with
 // this one (cliRelatedCommands); `help --all` lists their summaries together.
 func printHelpSeeAlso(w io.Writer, name string) {
-	related := cliSeeAlso(name, customerCliCommands())
+	related := cliSeeAlso(name, customerAudience(discoverableCliCommands()))
 	if len(related) == 0 {
 		return
 	}

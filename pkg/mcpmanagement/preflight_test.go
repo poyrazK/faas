@@ -54,7 +54,7 @@ func TestPreflightIncompatibleReviewAndStoreFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, closed := range []bool{false, true} {
-		manager.opts.planStore = &StateStore{closed: closed, path: "/private/secret-state"}
+		manager.opts.planStore = &StateStore{closed: closed, persist: &fileState{path: "/private/secret-state"}}
 		out, err := manager.preflight(ctx, appArgs{App: "alpha"})
 		if err != nil {
 			t.Fatal(err)

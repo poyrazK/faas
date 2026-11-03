@@ -26,7 +26,45 @@ const (
 	consoleTailBusy = 20 * time.Millisecond
 	consoleTailIdle = 200 * time.Millisecond
 	consoleTailRead = 32 << 10
+	// consoleFileMaxBytes caps one VM's console file on the node's root
+	// filesystem. Every byte a tenant app writes to stdout or stderr lands
+	// there, so an app logging in a loop filled the host disk (bug hunt
+	// 2026-10-28 B15). Past the cap the file starts over with a marker; the
+	// bounded per-instance log ring is unaffected.
+	consoleFileMaxBytes = 16 << 20
 )
+
+var consoleTruncatedMarker = []byte("\n[gregale: console file exceeded its size cap; earlier output dropped]\n")
+
+// cappedConsoleFile is the console file vmmd writes in pipe mode, started
+// over with a marker once it would pass consoleFileMaxBytes. The file is
+// opened O_APPEND, so writes after Truncate land at the new end.
+type cappedConsoleFile struct {
+	f       *os.File
+	written int64
+}
+
+func (c *cappedConsoleFile) Write(p []byte) (int, error) {
+	if c.written+int64(len(p)) > consoleFileMaxBytes {
+		if err := c.f.Truncate(0); err == nil {
+			n, _ := c.f.Write(consoleTruncatedMarker)
+			c.written = int64(n)
+		}
+	}
+	n, err := c.f.Write(p)
+	c.written += int64(n)
+	return n, err
+}
+
+// removeConsoleFile deletes instance's console file once the VM is gone.
+// Nothing removed them, so the directory grew by one file per wake for the
+// life of the node (B15). A failed restore's preserved console has another
+// name and stays.
+func (v *JailerVMM) removeConsoleFile(instance string) {
+	if err := os.Remove(v.consoleLogPath(instance)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("vmm: remove console file", "instance", instance, "err", err)
+	}
+}
 
 // defaultConsoleLogDir holds each VM's serial console copy,
 // vm-<instance>.console.
@@ -156,6 +194,53 @@ func (v *JailerVMM) consoleIsFile(instance string) bool {
 	return rec != nil && rec.fileConsole
 }
 
+// consoleTailDrainWait bounds how long teardown waits for a file console's
+// tailer to finish its final drain once the guest has exited. The drain
+// reads at most consoleFileMaxBytes from local disk.
+const consoleTailDrainWait = 2 * time.Second
+
+// startConsoleTail tails rec's console file from offset into w until the
+// guest exits, and records in rec.tailDone when the final drain is done.
+func (v *JailerVMM) startConsoleTail(rec *instanceRecord, from int64, w *customerConsoleWriter) {
+	done := make(chan struct{})
+	v.mu.Lock()
+	rec.tailDone = done
+	v.mu.Unlock()
+	go func() {
+		defer close(done)
+		tailConsole(rec.consolePath, from, w, w.Flush, rec.done)
+	}()
+}
+
+// awaitConsoleDrain waits, bounded, for rec's console tailer to copy the
+// exited guest's last output, including a final line without a newline,
+// into the ring. Teardown used to close the ring as soon as the watchdog
+// confirmed exit, so the tailer's final drain hit a closed ring and up to
+// one poll interval of output was lost (logs/traces audit 2026-10-31 A7).
+// Call it only after the process exit is confirmed: the tailer drains when
+// rec.done closes.
+func (v *JailerVMM) awaitConsoleDrain(instance string, rec *instanceRecord) {
+	if rec == nil {
+		return
+	}
+	v.mu.Lock()
+	done, wait := rec.tailDone, v.consoleDrainWait
+	v.mu.Unlock()
+	if done == nil {
+		return
+	}
+	if wait <= 0 {
+		wait = consoleTailDrainWait
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		slog.Warn("vmm: console tail still draining at teardown", "instance", instance, "wait", wait)
+	}
+}
+
 // tailConsole copies the console file from offset into w until done closes,
 // then drains what is left and flushes the last partial line.
 func tailConsole(path string, from int64, w io.Writer, flush func() error, done <-chan struct{}) {
@@ -181,6 +266,13 @@ func tailConsole(path string, from int64, w io.Writer, flush func() error, done 
 		if err != nil && !errors.Is(err, io.EOF) {
 			slog.Warn("vmm: console tail read", "path", path, "err", err)
 			return
+		}
+		// Firecracker appends to a file console itself; start the file
+		// over at the cap once everything written so far was read (B15).
+		if offset, serr := f.Seek(0, io.SeekCurrent); serr == nil && offset > consoleFileMaxBytes {
+			if terr := os.Truncate(path, 0); terr == nil {
+				_, _ = f.Seek(0, io.SeekStart)
+			}
 		}
 		select {
 		case <-done:

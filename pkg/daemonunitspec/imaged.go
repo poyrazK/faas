@@ -71,13 +71,16 @@ func UnitImaged() daemonunit.Unit {
 		TimeoutStartSec: "20min",
 
 		Slice: "faas-cp.slice",
-		// Base-image conversion invokes mkfs.ext4 over the OCI layer
-		// tree. The Go runtime base peaks above 2G while its large
-		// compiler tree is materialised, which otherwise turns first
-		// boot into an OOM restart loop. Keep the daemon bounded at
-		// the control-plane slice's 6G ceiling, but leave enough room
-		// for one conversion at a time.
-		MemoryMax: "4G",
+		// imaged is bounded by its slice, as vmmd is. Its own memory is
+		// small (about 50 MB, above 2 GB only while mkfs.ext4 converts the
+		// Go runtime base); what grows is page cache, above all the 3.4 GB
+		// Grype vulnerability database every scan reads. A 4G cap kept
+		// evicting that database: on 2026-10-31 a compute node at 4G hit
+		// the cap 129,649 times and Grype took p50 78 s / p90 336 s, while
+		// the other node, bounded only by this 6G slice, took 8.9 s / 60 s.
+		// Page cache is reclaimable, so under slice pressure the kernel
+		// takes it back before vmmd or a builder VM runs short.
+		MemoryMax: FaasCPSliceMemoryMax,
 
 		// DEPLOY-1 erased cap_sys_admin; the parent-ref mount is an RPC to
 		// vmmd now. CAP_CHOWN preserves OCI uid/gid metadata. CAP_DAC_OVERRIDE

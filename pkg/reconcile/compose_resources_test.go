@@ -101,6 +101,9 @@ func TestComposeResourcesAdmission(t *testing.T) {
 			Resources: &api.ComposeResources{Replicas: replicas(3)}}, "deploy.replicas 3 exceeds the hobby plan's 2 concurrent instances"},
 		{"worker replicas beyond plan", api.PlanPro, reposcan.Workload{Name: "jobs", Class: reposcan.ClassWorker, Image: "example.com/worker:v1",
 			Resources: &api.ComposeResources{Replicas: replicas(4)}}, "deploy.replicas 4 exceeds the pro plan's 3 worker replicas"},
+		{"kubernetes replicas beyond concurrency", api.PlanHobby, reposcan.Workload{Name: "api", Class: reposcan.ClassHTTP, Image: "example.com/api:v1",
+			DetectedBy: reposcan.Detection{Detector: "k8s"},
+			Resources:  &api.ComposeResources{Replicas: replicas(3)}}, `workload "api": replicas 3 exceeds the hobby plan's 2 concurrent instances`},
 		{"invalid shape", api.PlanPro, reposcan.Workload{Name: "web", Class: reposcan.ClassHTTP, Image: "example.com/web:v1",
 			Resources: &api.ComposeResources{CPUMillicores: 300}}, "one of 250, 500, 1000"},
 	} {

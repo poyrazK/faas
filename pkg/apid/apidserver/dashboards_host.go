@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -96,6 +97,34 @@ func (d dashboardSources) AppMetrics(ctx context.Context, acct state.Account, ap
 }
 
 func (d dashboardSources) LogEvents() state.LogEventStore { return d.s.logEvents() }
+
+// Released refuses a widget whose source is off for the account: the
+// source's operator switch, or its capability flag (ADR-20261028101615). A
+// dashboard released ahead of log search, custom metric history or SLOs must
+// not show what those sources' own routes hide.
+func (d dashboardSources) Released(acct state.Account, app state.App, kind string) error {
+	var capability string
+	switch kind {
+	case api.DashboardWidgetLogCount:
+		if !d.s.logSearch.Enabled {
+			return errors.New("log search is not enabled")
+		}
+		capability = logSearchCapability
+	case api.DashboardWidgetCustomMetric:
+		if !d.s.customMetricHistoryEnabled {
+			return errors.New("custom metric history is not enabled")
+		}
+		capability = "custom-metric-history"
+	case api.DashboardWidgetSLO:
+		capability = "custom-slos"
+	default:
+		return nil
+	}
+	if !d.s.capabilityEnabledFor(capability, acct, app) {
+		return fmt.Errorf("%s is not available to this account", d.s.capGate.Name(capability))
+	}
+	return nil
+}
 
 func (d dashboardSources) CustomMetricSeries(ctx context.Context, app state.App, name, rng string) api.CustomMetricSeriesResponse {
 	return d.s.customMetricSeries(ctx, app.ID, name, d.s.customMetricKind(ctx, app.ID, name), rng, time.Now().UTC())

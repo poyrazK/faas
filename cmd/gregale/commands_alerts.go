@@ -41,6 +41,7 @@ const (
 	flagNameEnabled         = "enabled"
 	flagNameCooldownMinutes = "cooldown-minutes"
 	flagNameAction          = "action"
+	flagNameNotifyResolved  = "notify-resolved"
 )
 
 func cmdAlerts(args []string) int {
@@ -88,7 +89,7 @@ func cmdAlertList(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale alerts list --app <slug>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert list --app <slug>", "alerts")
 		return 1
 	}
 	client, err := authedClient()
@@ -141,6 +142,7 @@ func cmdAlertAdd(args []string) int {
 	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown window in minutes (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	enabled := fs.Bool(flagNameEnabled, true, "whether the rule is enabled")
+	notifyResolved := fs.Bool(flagNameNotifyResolved, false, "also send the webhook a signed alert.resolved event when the rule recovers")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -206,6 +208,7 @@ func cmdAlertAdd(args []string) int {
 		WebhookSecret:                   *webhookSecret,
 		CooldownMinutes:                 cooldown,
 		PostDeployRollbackWindowSeconds: &windowSeconds,
+		NotifyResolved:                  *notifyResolved,
 	})
 	if err != nil {
 		return printErr("Could not create alert rule", err)
@@ -256,7 +259,7 @@ func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhook
 			missing = append(missing, "--webhook-url with --webhook-secret, or --channel")
 		}
 		_, _ = fmt.Fprintf(os.Stderr, "missing: %s\n", strings.Join(missing, ", "))
-		PrintUsage(os.Stderr, "usage: gregale alerts add --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> (--webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) | --channel <id>...) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert create --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> (--webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) | --channel <id>...) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
 		return 1, false
 	}
 	if *cooldown < api.AlertRuleCooldownMinMinutes || *cooldown > api.AlertRuleCooldownMaxMinutes {
@@ -305,7 +308,7 @@ func cmdAlertInfo(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts info --app <slug> <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert get --app <slug> <alert-id>", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -402,7 +405,7 @@ func cmdAlertDeliveries(args []string) int {
 		return cmdAlertDeliveriesInteractive(app)
 	}
 	if *slug == "" || fs.NArg() != 1 || *limit < 1 || *limit > 100 {
-		PrintUsage(os.Stderr, "usage: gregale alerts deliveries <alert-id> --app <slug> [--limit N] [--include-test]", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert deliveries <alert-id> --app <slug> [--limit N] [--include-test]", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -487,6 +490,7 @@ func cmdAlertUpdate(args []string) int {
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the replacement webhook secret from stdin")
 	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
+	notifyResolved := fs.Bool(flagNameNotifyResolved, false, "send the webhook alert.resolved events (--notify-resolved=false turns them off)")
 	// `alerts info|deliveries|rm <id> --app X` take the id first; update
 	// stopped parsing at it and never saw --app (production-us hunt #4).
 	if err := parseInterspersed(fs, args); err != nil {
@@ -513,7 +517,7 @@ func cmdAlertUpdate(args []string) int {
 	}
 
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
 		return 1
 	}
 	if *webhookSecretStdin || *webhookSecret != "" {
@@ -536,6 +540,7 @@ func cmdAlertUpdate(args []string) int {
 	enabledSet := false
 	cooldownSet := false
 	postWindowSet := false
+	notifyResolvedSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case flagNameEnabled:
@@ -544,6 +549,8 @@ func cmdAlertUpdate(args []string) int {
 			cooldownSet = true
 		case "post-deploy-rollback-window":
 			postWindowSet = true
+		case flagNameNotifyResolved:
+			notifyResolvedSet = true
 		}
 	})
 	req := api.UpdateAlertRuleRequest{
@@ -568,6 +575,9 @@ func cmdAlertUpdate(args []string) int {
 	}
 	if cooldownSet {
 		req.CooldownMinutes = cooldown
+	}
+	if notifyResolvedSet {
+		req.NotifyResolved = notifyResolved
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -656,7 +666,7 @@ func cmdAlertRm(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts rm --app <slug> <alert-id> [--yes]", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert delete --app <slug> <alert-id> [--yes]", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -692,7 +702,7 @@ func cmdAlertRotateSecret(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts rotate-secret --app <slug> --from-stdin <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert secret rotate --app <slug> --from-stdin <alert-id>", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)

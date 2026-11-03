@@ -96,7 +96,7 @@ def sync_detailed(
 
      Inserts a pending row into
     `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-    schedd claims the row on the next LISTEN delivery. HTTP crons
+    the scheduler claims the row on the next LISTEN delivery. HTTP crons
     dispatch through `RunCronNow`; command crons enqueue a task
     pinned to the current live deployment. Poll the request to
     obtain its invocation id or command task id.
@@ -105,7 +105,7 @@ def sync_detailed(
     the stored 202 without enqueuing a second fire.
 
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
-    scope is added (ADR-090 §Sub-decisions 1). The fire does
+    scope is added (decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
     unaffected. For a command cron, its saved command, timeout,
     output limit, retry policy, skip_if_running behavior, and
@@ -146,7 +146,7 @@ def sync(
 
      Inserts a pending row into
     `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-    schedd claims the row on the next LISTEN delivery. HTTP crons
+    the scheduler claims the row on the next LISTEN delivery. HTTP crons
     dispatch through `RunCronNow`; command crons enqueue a task
     pinned to the current live deployment. Poll the request to
     obtain its invocation id or command task id.
@@ -155,7 +155,7 @@ def sync(
     the stored 202 without enqueuing a second fire.
 
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
-    scope is added (ADR-090 §Sub-decisions 1). The fire does
+    scope is added (decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
     unaffected. For a command cron, its saved command, timeout,
     output limit, retry policy, skip_if_running behavior, and
@@ -191,7 +191,7 @@ async def asyncio_detailed(
 
      Inserts a pending row into
     `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-    schedd claims the row on the next LISTEN delivery. HTTP crons
+    the scheduler claims the row on the next LISTEN delivery. HTTP crons
     dispatch through `RunCronNow`; command crons enqueue a task
     pinned to the current live deployment. Poll the request to
     obtain its invocation id or command task id.
@@ -200,7 +200,7 @@ async def asyncio_detailed(
     the stored 202 without enqueuing a second fire.
 
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
-    scope is added (ADR-090 §Sub-decisions 1). The fire does
+    scope is added (decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
     unaffected. For a command cron, its saved command, timeout,
     output limit, retry policy, skip_if_running behavior, and
@@ -239,7 +239,7 @@ async def asyncio(
 
      Inserts a pending row into
     `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-    schedd claims the row on the next LISTEN delivery. HTTP crons
+    the scheduler claims the row on the next LISTEN delivery. HTTP crons
     dispatch through `RunCronNow`; command crons enqueue a task
     pinned to the current live deployment. Poll the request to
     obtain its invocation id or command task id.
@@ -248,7 +248,7 @@ async def asyncio(
     the stored 202 without enqueuing a second fire.
 
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
-    scope is added (ADR-090 §Sub-decisions 1). The fire does
+    scope is added (decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
     unaffected. For a command cron, its saved command, timeout,
     output limit, retry policy, skip_if_running behavior, and

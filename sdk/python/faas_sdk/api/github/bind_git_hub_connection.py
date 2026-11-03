@@ -75,6 +75,11 @@ def _parse_response(
 
         return response_502
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -113,7 +118,7 @@ def sync_detailed(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
@@ -160,7 +165,7 @@ def sync(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
@@ -202,7 +207,7 @@ async def asyncio_detailed(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
@@ -247,7 +252,7 @@ async def asyncio(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.

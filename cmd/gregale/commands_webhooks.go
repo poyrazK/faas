@@ -106,7 +106,7 @@ func cmdWebhooksList(args []string) int {
 	// project.
 	positional, err := mergeAppFlag(fs.Args(), strings.TrimSpace(*app), 1)
 	if err != nil || len(positional) > 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks list [<slug>|--app <slug>]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhook list [<slug>|--app <slug>]", "webhooks")
 		return 1
 	}
 	explicit := ""
@@ -115,7 +115,7 @@ func cmdWebhooksList(args []string) int {
 	}
 	resolved, err := resolveRequiredAppSlug(explicit)
 	if err != nil || resolved == "" {
-		PrintUsage(os.Stderr, "usage: gregale webhooks list [<slug>|--app <slug>]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhook list [<slug>|--app <slug>]", "webhooks")
 		return 1
 	}
 	slug := &resolved
@@ -153,7 +153,7 @@ func cmdWebhooksAdd(args []string) int {
 		return 1
 	}
 	if *slug == "" || *target == "" {
-		PrintUsage(os.Stderr, "usage: gregale webhooks add --app <slug> --target-url <url> [--event <evt>]... [--retry-policy default|aggressive|none] [--delivery-format json|cloudevents] [--secret <hmac-secret>]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhook create --app <slug> --target-url <url> [--event <evt>]... [--retry-policy default|aggressive|none] [--delivery-format json|cloudevents] [--secret <hmac-secret>]", "webhooks")
 		return 1
 	}
 	generatedSecret := false
@@ -223,7 +223,7 @@ func cmdWebhooksUpdate(args []string) int {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks update --app <slug> <id> [--target-url X] [--retry-policy X] [--delivery-format X] [--enable|--disable]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhook update --app <slug> <id> [--target-url X] [--retry-policy X] [--delivery-format X] [--enable|--disable]", "webhooks")
 		return 1
 	}
 	id := fs.Args()[0]
@@ -281,7 +281,7 @@ func cmdWebhooksRm(args []string) int {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks rm --app <slug> <id> [--yes]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhook delete --app <slug> <id> [--yes]", "webhooks")
 		return 1
 	}
 	id := fs.Args()[0]
@@ -315,7 +315,7 @@ func cmdWebhookDeliveries(args []string) int {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks deliveries --app <slug> <id> [--status X] [--limit N] [--cursor T] [--all]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhook deliveries --app <slug> <id> [--status X] [--limit N] [--cursor T] [--all]", "webhooks")
 		return 1
 	}
 	id := fs.Args()[0]
@@ -367,7 +367,7 @@ func cmdWebhookInfo(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks info --app <slug> <webhook-id>", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhook get --app <slug> <webhook-id>", "webhooks")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -404,7 +404,7 @@ func cmdWebhookRetry(args []string) int {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks retry --app <slug> <webhook-id> <delivery-id>", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhook retry --app <slug> <webhook-id> <delivery-id>", "webhooks")
 		return 1
 	}
 	webhookID, deliveryID := fs.Args()[0], fs.Args()[1]
@@ -438,7 +438,7 @@ func cmdWebhookRotateSecret(args []string) int {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks rotate-secret --app <slug> (--secret <value>|--from-stdin) <webhook-id>", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhook secret rotate --app <slug> (--secret <value>|--from-stdin) <webhook-id>", "webhooks")
 		return 1
 	}
 	id := fs.Args()[0]

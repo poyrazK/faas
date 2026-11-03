@@ -21,7 +21,7 @@ T = TypeVar("T", bound="OutboundAIRouteStats")
 
 @_attrs_define
 class OutboundAIRouteStats:
-    """Each target's settled attempts since window_start, the window latency and cost routes judge (ADR-1434)."""
+    """Each target's settled attempts since window_start, the window latency and cost routes judge."""
 
     strategy: OutboundAIRouteStatsStrategy
     window_start: datetime.datetime

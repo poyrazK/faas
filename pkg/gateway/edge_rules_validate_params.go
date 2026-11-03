@@ -117,7 +117,7 @@ func (h *Handler) writeEdgeRuleValidateError(w http.ResponseWriter, r *http.Requ
 			"validate rule schema is broken"))
 	default:
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			api.CodeInternal, "Edge rule validator error", err.Error()))
+			api.CodeInternal, "Edge rule validator error", "validate rule could not be evaluated"))
 	}
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, map[string]any{

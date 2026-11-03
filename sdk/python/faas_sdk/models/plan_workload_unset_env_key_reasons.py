@@ -16,7 +16,7 @@ T = TypeVar("T", bound="PlanWorkloadUnsetEnvKeyReasons")
 
 @_attrs_define
 class PlanWorkloadUnsetEnvKeyReasons:
-    """For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values."""
+    """For an unset_env_keys name with a Compose value, why that value is not imported. Never values."""
 
     additional_properties: dict[str, PlanWorkloadUnsetEnvKeyReasonsAdditionalProperty] = _attrs_field(
         init=False, factory=dict

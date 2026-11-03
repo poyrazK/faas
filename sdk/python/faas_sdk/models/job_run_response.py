@@ -31,7 +31,10 @@ T = TypeVar("T", bound="JobRunResponse")
 
 @_attrs_define
 class JobRunResponse:
-    """Wire projection of state.JobRun. Aggregate counters are recomputed by schedd after every terminal task transition."""
+    """Wire projection of state.JobRun. Aggregate counters are recomputed by the scheduler after every terminal task
+    transition.
+
+    """
 
     id: UUID
     job_id: UUID

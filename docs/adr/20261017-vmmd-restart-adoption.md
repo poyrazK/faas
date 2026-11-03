@@ -1134,6 +1134,54 @@ Each slice is one reviewable change on a branch. Slices 2–4 are behind
      without it sets no planned-restart notice and hands no bridge unit
      over. The canary's first rollout with step 2 therefore drains, and the
      next one can skip the drain.
+   - **Gone guests do not force a drain (2026-10-29).** fsn-2 drained on
+     every rollout after step 2 (rc.302–rc.304, 0 live guests at each
+     stop): its journal held 12 records of guests that no longer ran, and
+     the check counted every refusal as unadoptable. A refusal whose guest
+     process provably no longer runs (`other_boot`, `process_absent`,
+     `process_reused`) is now `gone`: nothing is lost by restarting, so
+     `adoption-check` lists it under `gone` and still exits 0. The running
+     vmmd's inventory proves this for records without an adoption block
+     too, from their process provenance. After the restart,
+     `adoption-report --already-gone` excuses only the guests the check had
+     found gone; a guest that died across the restart still fails the
+     rollout. The restarted vmmd keeps quarantining a gone guest's
+     surviving resources. 11 of the 12 were dead guests on claimed prepared
+     networks, which ADR-971's retirement had skipped: it now retires them
+     (see ADR-971's amendment). A read-only dry run on fsn-2's journal
+     (rc.304 host) retires those 11, keeps a dead build VM whose jail and
+     namespace survive, marking it gone, and keeps the 4 live guests.
+   - **Re-staged bind sources (2026-10-30).** The first production no-drain
+     restart (rc.306, fsn-2) adopted 1 of 2 guests: the release's base
+     pre-stage had published a refreshed file over the cache path the other
+     guest's base drive was bound from, and adoption reopened the source by
+     path and refused it (`source was replaced`). The guest kept running
+     on the recorded inode through its jail. When the path names another
+     file, adoption now opens the bind target beneath the adopted
+     Firecracker's root (`/proc/<pid>/root`, openat2 `RESOLVE_BENEATH |
+     RESOLVE_NO_SYMLINKS`, `O_PATH` until the device and inode match the
+     record) and pins that inode under its (path, inode) key, as a live
+     vmmd already does for a source the cache renamed (rc.236). A new bind
+     of the refreshed file counts apart. That handle comes through the
+     jail's read-only bind, so teardown cannot restore the mode through it
+     and does not wait on it (#6032; before, the guest's lease was kept for
+     good). `TestVMMDRestartKeepsRunningAppMetal` re-stages one of the
+     guest's run-owned bind sources before the restart and requires the
+     adopted guest to park.
+   - **Second canary (2026-10-31).** `fsn-3.faas` joins the list before
+     fsn-2's first clean no-drain restart: its first rollout with the switch
+     drains anyway, so the release that proves the rc.309 fixes on fsn-2 also
+     arms fsn-3. A release that changes a runtime base generation still
+     drains every node (ADR-20261024085817).
+   - **A restart without bridge units cuts requests briefly (2026-10-31).**
+     The guests survive, but `faas-vmmd.service` (`KillMode=control-group`)
+     reaps vmmd's bridge processes when it stops, so a guest is unreachable
+     until the successor starts new ones: 6 of 51 requests got 503 across a
+     1.2 s restart on gregale-internal-test-1 with vmmd under the production
+     unit (`FAAS_E2E_VMMD_SYSTEMD=1`). A harness vmmd outside systemd left its
+     bridges running, which hid the gap. Only the bridge units
+     (`vmmd_bridge_canary_nodes`, connection-survival P1c) carry requests
+     through the restart.
 5. **fsn-4 acceptance** (§5), then flip `adopt_running_vms` to true by default.
 
 ## Risks
@@ -1194,3 +1242,32 @@ Each slice is one reviewable change on a branch. Slices 2–4 are behind
 - **Building on `native_process_recovery`.** It is off in production. Turning it
   on changes pmem, prepared networks and image staging. This design uses the
   journal that production runs.
+
+### No-drain restarts lost every guest in production (2026-10-31)
+
+rc.312 and rc.313 both restarted fsn-2's vmmd without a drain. The new vmmd
+adopted every live guest (5, then 6), and within the same second its startup
+orphan reaper killed them. Their teardown then failed every minute ("remove
+bind target: … no such file"), and vmmd kept their leases until the next
+restart. The bridge units were stopped correctly, because their guests were
+gone.
+
+Two causes:
+- node_join's release install passed `--defer-activation` on every existing
+  node, so `gregalectl release install` set fsn-2's `compute_nodes` row to
+  `unavailable` even on the no-drain path. The recovery arbiter evacuates an
+  unavailable node: fsn-3's scheduler parked the frozen guests (leaving the
+  VMs to vmmd's reaper), and live migration of the running ones failed, so
+  recreate parked them. All six rows were `parked` at 21:05:36. vmmd restarted
+  at 21:05:57.
+- The startup jail reaper (`ReapOrphanedJails`) asked durable state alone. The
+  adopted guests' rows were `parked`, so it killed them behind the Manager,
+  which still owned them. The metal restart test never saw this: its guest is
+  younger than the reaper's two-minute minimum age, and its row stays
+  `running`.
+
+The fix: a no-drain install keeps the row active (`--defer-activation=false`).
+The jail reaper uses the same ownership gate as the layer-clone sweep: the
+Manager, the resource journal, then durable state. An adopted guest whose row
+is no longer live is the live-VM reaper's, which tears it down through the
+Manager.

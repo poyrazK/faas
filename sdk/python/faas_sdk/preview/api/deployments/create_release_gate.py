@@ -88,12 +88,11 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateReleaseGateRequest,
 ) -> Response[Problem | ReleaseGate]:
-    """Add a release gate (ADR-20261019071734).
+    """Add a release gate.
 
      An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced
     first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI
-    gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's
-    defaults.
+    gateway calls got worse than its baseline's. Omitted numbers take Gregale's defaults.
 
     Args:
         slug (str):
@@ -126,12 +125,11 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateReleaseGateRequest,
 ) -> Problem | ReleaseGate | None:
-    """Add a release gate (ADR-20261019071734).
+    """Add a release gate.
 
      An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced
     first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI
-    gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's
-    defaults.
+    gateway calls got worse than its baseline's. Omitted numbers take Gregale's defaults.
 
     Args:
         slug (str):
@@ -159,12 +157,11 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateReleaseGateRequest,
 ) -> Response[Problem | ReleaseGate]:
-    """Add a release gate (ADR-20261019071734).
+    """Add a release gate.
 
      An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced
     first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI
-    gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's
-    defaults.
+    gateway calls got worse than its baseline's. Omitted numbers take Gregale's defaults.
 
     Args:
         slug (str):
@@ -195,12 +192,11 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateReleaseGateRequest,
 ) -> Problem | ReleaseGate | None:
-    """Add a release gate (ADR-20261019071734).
+    """Add a release gate.
 
      An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced
     first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI
-    gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's
-    defaults.
+    gateway calls got worse than its baseline's. Omitted numbers take Gregale's defaults.
 
     Args:
         slug (str):

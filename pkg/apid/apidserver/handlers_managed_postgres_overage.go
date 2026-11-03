@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -52,6 +53,16 @@ func managedPostgresComputeCeiling(limits api.ManagedPostgresPlanLimits, overage
 		return limits.MonthlyComputeUnitSeconds * api.ManagedPostgresOverageCeilingMultiplier
 	}
 	return limits.MonthlyComputeUnitSeconds
+}
+
+// managedPostgresStoragePool is the subject's pooled storage the storage pass
+// keeps it inside: the plan's, or twice it with overage on
+// (ADR-20261025094915 decision 9).
+func managedPostgresStoragePool(limits api.ManagedPostgresPlanLimits, overage bool) int64 {
+	if overage {
+		return limits.StorageLimitBytes * api.ManagedPostgresOverageCeilingMultiplier
+	}
+	return limits.StorageLimitBytes
 }
 
 func (s *server) getManagedPostgresOverage(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -108,4 +119,11 @@ func (s *server) managedPostgresOverageLimits(w http.ResponseWriter, acct state.
 		return api.ManagedPostgresPlanLimits{}, false
 	}
 	return limits, true
+}
+
+// managedPostgresChargeSink is the billing provider's managed PostgreSQL
+// overage sink, or nil without one (ADR-20261031110037).
+func (s *server) managedPostgresChargeSink() billing.ManagedPostgresChargeSink {
+	sink, _ := s.billingProvider.(billing.ManagedPostgresChargeSink)
+	return sink
 }

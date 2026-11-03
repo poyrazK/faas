@@ -16,7 +16,7 @@ T = TypeVar("T", bound="OperationSubjectSignalRequest")
 
 @_attrs_define
 class OperationSubjectSignalRequest:
-    """One named event for every active operation of a definition about one business subject (ADR-1197)."""
+    """One named event for every active operation of a definition about one business subject."""
 
     scope: str
     operation: str

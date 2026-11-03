@@ -19,11 +19,48 @@ func (s *PgStore) ListSnapshotsPendingDelete(ctx context.Context) ([]SnapshotFor
 	return s.snapshotGarbageCollection(ctx, "pending", 0)
 }
 
+// snapshotGCPageRows bounds one read of the GC projection. A variable so
+// tests can page with a handful of rows.
+var snapshotGCPageRows int32 = 10000
+
 // One bounded join carries original environment ownership, immutable warm
 // policy and physical layer keys through every GC path, including retries.
+// The active set is read in pages of whole apps: the rollback window needs
+// every row of an app, and the old single newest-first page over the fleet
+// dropped the oldest generations once the live set passed the limit (bug
+// hunt 2026-10-28 H66).
 func (s *PgStore) snapshotGarbageCollection(ctx context.Context, mode string, retentionSeconds int64) ([]SnapshotForGC, error) {
+	if mode != "active" {
+		return s.snapshotGarbageCollectionPage(ctx, mode, retentionSeconds, "")
+	}
+	var out []SnapshotForGC
+	after := ""
+	for {
+		page, err := s.snapshotGarbageCollectionPage(ctx, mode, 0, after)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) < int(snapshotGCPageRows) {
+			return append(out, page...), nil
+		}
+		// The last app may continue past the page; read it again from the
+		// start of the next page, unless it fills the page on its own.
+		last := page[len(page)-1].AppID
+		cut := len(page)
+		for cut > 0 && page[cut-1].AppID == last {
+			cut--
+		}
+		if cut == 0 {
+			cut = len(page)
+		}
+		out = append(out, page[:cut]...)
+		after = page[cut-1].AppID
+	}
+}
+
+func (s *PgStore) snapshotGarbageCollectionPage(ctx context.Context, mode string, retentionSeconds int64, afterAppID string) ([]SnapshotForGC, error) {
 	rows, err := sqlc.New().ReadSnapshotGarbageCollection(ctx, s.pool, sqlc.ReadSnapshotGarbageCollectionParams{
-		Mode: mode, RetentionSeconds: retentionSeconds,
+		Mode: mode, RetentionSeconds: retentionSeconds, AfterAppID: afterAppID, RowLimit: snapshotGCPageRows,
 	})
 	if err != nil {
 		return nil, mapErr(err)

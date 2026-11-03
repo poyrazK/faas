@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -134,6 +135,9 @@ func compileSchema(raw json.RawMessage, maxBytes int) (*jsonschema.Schema, json.
 		return nil, nil, err
 	}
 	if err := validateSchemaReferences(doc); err != nil {
+		return nil, nil, err
+	}
+	if err := edgevalidate.CheckSchemaComplexity(doc); err != nil {
 		return nil, nil, err
 	}
 	c := jsonschema.NewCompiler()

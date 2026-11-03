@@ -849,6 +849,15 @@ gregale platform-tenants plan-history --id TENANT_ID
 - **Limits.** An account keeps up to 100 tenant plans. A plan's currency must
   match the tenant's existing cards.
 
+## Company apps
+
+Billing connections and billing runs belong to your account, so a company
+app you created bills its customers through your Stripe connection and your
+runs. That lasts while you are a member of the company: once you leave, your
+runs stop billing the company app's customers, its sign-up page closes and
+its customers' billing portal is unavailable. Customers keep reading their
+own usage and statements. See ADR-20261026151103 amendment 2.
+
 ## Limits
 
 - Units are requests, optionally weighted by route, the compute seconds or

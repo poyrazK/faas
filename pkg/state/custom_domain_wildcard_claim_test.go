@@ -62,11 +62,12 @@ func TestForeignVerifiedWildcard(t *testing.T) {
 	owner, _ := store.CreateAccount(ctx, "zone-owner@example.test", api.PlanScale)
 	other, _ := store.CreateAccount(ctx, "other@example.test", api.PlanScale)
 	ownerApp, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "zone-owner"})
+	ownerSecondApp, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "zone-owner-2"})
 	otherApp, _ := store.CreateApp(ctx, App{AccountID: other.ID, Slug: "zone-other"})
 	if _, err := store.CreateCustomDomain(ctx, "*.example.test", ownerApp.ID, "tok"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := ForeignVerifiedWildcard(ctx, store, "api.example.test", other.ID); err != nil || got != "" {
+	if got, err := ForeignVerifiedWildcard(ctx, store, "api.example.test", otherApp); err != nil || got != "" {
 		t.Fatalf("pending wildcard = %q, %v; an unproved wildcard must not block", got, err)
 	}
 	if err := store.MarkDomainVerified(ctx, "*.example.test"); err != nil {
@@ -76,26 +77,109 @@ func TestForeignVerifiedWildcard(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		domain, account, want string
+		domain string
+		app    App
+		want   string
 	}{
-		{"api.example.test", other.ID, "*.example.test"},
-		{"a.b.deep.example.test", other.ID, "*.example.test"},
-		{"*.shop.example.test", other.ID, "*.example.test"},
-		{"api.example.test", owner.ID, ""},
-		{"*.shop.example.test", owner.ID, ""},
-		{"example.test", other.ID, ""},
-		{"*.example.test", other.ID, ""},
-		{"api.badexample.test", other.ID, ""},
+		{"api.example.test", otherApp, "*.example.test"},
+		{"a.b.deep.example.test", otherApp, "*.example.test"},
+		{"*.shop.example.test", otherApp, "*.example.test"},
+		{"api.example.test", ownerApp, ""},
+		{"api.example.test", ownerSecondApp, ""},
+		{"*.shop.example.test", ownerApp, ""},
+		{"example.test", otherApp, ""},
+		{"*.example.test", otherApp, ""},
+		{"api.badexample.test", otherApp, ""},
 	} {
-		got, err := ForeignVerifiedWildcard(ctx, store, tc.domain, tc.account)
+		got, err := ForeignVerifiedWildcard(ctx, store, tc.domain, tc.app)
 		if err != nil || got != tc.want {
-			t.Errorf("ForeignVerifiedWildcard(%q, %s) = %q, %v; want %q", tc.domain, tc.account, got, err, tc.want)
+			t.Errorf("ForeignVerifiedWildcard(%q, %s) = %q, %v; want %q", tc.domain, tc.app.Slug, got, err, tc.want)
 		}
 	}
 	failing := failingDomainLookup{err: errors.New("db down")}
-	if _, err := ForeignVerifiedWildcard(ctx, failing, "api.example.test", other.ID); err == nil {
+	if _, err := ForeignVerifiedWildcard(ctx, failing, "api.example.test", otherApp); err == nil {
 		t.Fatal("lookup failure was not reported; the create must fail closed")
 	}
+}
+
+// A company's verified wildcard covers names for every company app, whoever
+// created it: keyed by the creator's account, a member could not attach a
+// name below the company's zone to an app they created, and once the
+// wildcard's creator left the company no member could (bug hunt 32 M5). A
+// member's personal app is another tenant.
+func TestForeignVerifiedWildcardIsKeyedByTheOrganization(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	creator, _ := store.CreateAccount(ctx, "wildcard-creator@example.test", api.PlanScale)
+	member, _ := store.CreateAccount(ctx, "member@example.test", api.PlanScale)
+	company, err := store.CreateOrg(ctx, Org{Slug: "zone-company", Name: "Company", Plan: api.PlanScale})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rival, err := store.CreateOrg(ctx, Org{Slug: "zone-rival", Name: "Rival", Plan: api.PlanScale})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wildcardApp, _ := store.CreateApp(ctx, App{AccountID: creator.ID, OrgID: company.ID, Slug: "company-wildcard"})
+	memberCompanyApp, _ := store.CreateApp(ctx, App{AccountID: member.ID, OrgID: company.ID, Slug: "company-member"})
+	memberPersonalApp, _ := store.CreateApp(ctx, App{AccountID: member.ID, Slug: "member-personal"})
+	creatorPersonalApp, _ := store.CreateApp(ctx, App{AccountID: creator.ID, Slug: "creator-personal"})
+	rivalApp, _ := store.CreateApp(ctx, App{AccountID: creator.ID, OrgID: rival.ID, Slug: "rival-app"})
+	if _, err := store.CreateCustomDomain(ctx, "*.company.test", wildcardApp.ID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDomainVerified(ctx, "*.company.test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		app  App
+		want string
+	}{
+		{memberCompanyApp, ""},
+		{wildcardApp, ""},
+		{memberPersonalApp, "*.company.test"},
+		{creatorPersonalApp, "*.company.test"},
+		{rivalApp, "*.company.test"},
+	} {
+		got, err := ForeignVerifiedWildcard(ctx, store, "shop.company.test", tc.app)
+		if err != nil || got != tc.want {
+			t.Errorf("ForeignVerifiedWildcard(shop.company.test, %s) = %q, %v; want %q", tc.app.Slug, got, err, tc.want)
+		}
+	}
+}
+
+func TestAppTenantID(t *testing.T) {
+	owner := "acct-1"
+	orgs := orgLookup{
+		"org-shared":   {ID: "org-shared"},
+		"org-personal": {ID: "org-personal", Personal: true, PersonalOwnerAccountID: &owner},
+	}
+	for _, tc := range []struct {
+		app     App
+		want    string
+		wantErr bool
+	}{
+		{App{AccountID: owner}, "account:acct-1", false},
+		{App{AccountID: owner, OrgID: "org-personal"}, "account:acct-1", false},
+		{App{AccountID: owner, OrgID: "org-shared"}, "org:org-shared", false},
+		{App{AccountID: "acct-2", OrgID: "org-shared"}, "org:org-shared", false},
+		{App{AccountID: owner, OrgID: "org-missing"}, "", true},
+	} {
+		got, err := AppTenantID(context.Background(), orgs, tc.app)
+		if got != tc.want || (err != nil) != tc.wantErr {
+			t.Errorf("AppTenantID(%+v) = %q, %v; want %q (error %v)", tc.app, got, err, tc.want, tc.wantErr)
+		}
+	}
+}
+
+type orgLookup map[string]Org
+
+func (o orgLookup) OrgByID(_ context.Context, id string) (Org, error) {
+	org, ok := o[id]
+	if !ok {
+		return Org{}, ErrNotFound
+	}
+	return org, nil
 }
 
 type failingDomainLookup struct{ err error }
@@ -106,4 +190,8 @@ func (f failingDomainLookup) DomainByName(context.Context, string) (CustomDomain
 
 func (f failingDomainLookup) AppByID(context.Context, string) (App, error) {
 	return App{}, f.err
+}
+
+func (f failingDomainLookup) OrgByID(context.Context, string) (Org, error) {
+	return Org{}, f.err
 }

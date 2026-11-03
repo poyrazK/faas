@@ -97,7 +97,7 @@ def sync_detailed(
 ) -> Response[AppForkListResponse | Problem]:
     """List production forks for an app.
 
-     Returns the app's production forks, newest first (ADR-732). Answers
+     Returns the app's production forks, newest first. Answers
     501 `app_forks_not_enabled` until the operator enables forks.
 
     Args:
@@ -132,7 +132,7 @@ def sync(
 ) -> AppForkListResponse | Problem | None:
     """List production forks for an app.
 
-     Returns the app's production forks, newest first (ADR-732). Answers
+     Returns the app's production forks, newest first. Answers
     501 `app_forks_not_enabled` until the operator enables forks.
 
     Args:
@@ -162,7 +162,7 @@ async def asyncio_detailed(
 ) -> Response[AppForkListResponse | Problem]:
     """List production forks for an app.
 
-     Returns the app's production forks, newest first (ADR-732). Answers
+     Returns the app's production forks, newest first. Answers
     501 `app_forks_not_enabled` until the operator enables forks.
 
     Args:
@@ -195,7 +195,7 @@ async def asyncio(
 ) -> AppForkListResponse | Problem | None:
     """List production forks for an app.
 
-     Returns the app's production forks, newest first (ADR-732). Answers
+     Returns the app's production forks, newest first. Answers
     501 `app_forks_not_enabled` until the operator enables forks.
 
     Args:

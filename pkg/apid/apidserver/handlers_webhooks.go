@@ -248,6 +248,7 @@ func (s *server) listAppWebhooks(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	out := make([]api.AppWebhookResponse, 0, len(rows))
+	reveal := appWebhookTargetVisible(r)
 	for _, row := range rows {
 		// Defence-in-depth: loadApp already verified app.AccountID,
 		// but the per-app store query could in principle return a
@@ -256,7 +257,7 @@ func (s *server) listAppWebhooks(w http.ResponseWriter, r *http.Request, acct st
 		if row.AccountID != acct.ID {
 			continue
 		}
-		out = append(out, appWebhookResponse(row))
+		out = append(out, maskedAppWebhookResponse(row, reveal))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -306,6 +307,10 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 			api.WriteProblem(w, prob)
 			return
 		}
+	}
+	if prob := s.datadogIntegrationProblem(flagSubject(r, acct), req.DeliveryFormat == api.AppWebhookDeliveryFormatDatadog); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	if prob := validateDatadogAppWebhook(req.DeliveryFormat, req.TargetURL, req.EventFilter, &req.WebhookSecret, true); prob != nil {
 		api.WriteProblem(w, prob)
@@ -489,7 +494,7 @@ func (s *server) getAppWebhook(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "webhook not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, appWebhookResponse(row))
+	writeJSON(w, http.StatusOK, maskedAppWebhookResponse(row, appWebhookTargetVisible(r)))
 }
 
 // updateAppWebhook partial-updates the row. Same phase order as
@@ -557,6 +562,12 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if req.Enabled != nil {
 		params.Enabled = req.Enabled
+	}
+	switching := params.DeliveryFormat != nil && string(*params.DeliveryFormat) == api.AppWebhookDeliveryFormatDatadog &&
+		string(existing.DeliveryFormat) != api.AppWebhookDeliveryFormatDatadog
+	if prob := s.datadogIntegrationProblem(flagSubject(r, acct), switching); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	if prob := validateUpdatedDatadogAppWebhook(existing, params, req.WebhookSecret); prob != nil {
 		api.WriteProblem(w, prob)
@@ -932,6 +943,23 @@ func appWebhookResponse(r state.AppWebhook) api.AppWebhookResponse {
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
 	})
+}
+
+// appWebhookTargetVisible reports whether the caller sees webhook targets in
+// full. Receivers such as Zapier catch hooks carry their credential in the
+// URL path, so the rule is the log drains' one: only a caller who may change
+// the webhook sees it, and viewers, developers and read-only keys get the
+// scheme and host (bug hunt 36; logs audit 2026-10-31 D9).
+func appWebhookTargetVisible(r *http.Request) bool { return appLogDrainTargetVisible(r) }
+
+// maskedAppWebhookResponse is appWebhookResponse with the target masked
+// unless reveal.
+func maskedAppWebhookResponse(row state.AppWebhook, reveal bool) api.AppWebhookResponse {
+	out := appWebhookResponse(row)
+	if !reveal {
+		out.TargetURL = api.MaskAppLogDrainTargetURL(out.TargetURL)
+	}
+	return out
 }
 
 // appWebhookDeliveryResponse maps a delivery row to the wire DTO.

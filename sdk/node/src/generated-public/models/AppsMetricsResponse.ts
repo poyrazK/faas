@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Account-wide per-app metrics rollup for `GET /v1/apps/metrics?range=`
- * (issue #393). One call replaces N per-app
+ * Account-wide per-app metrics rollup for `GET /v1/apps/metrics?range=`. One call replaces N per-app
  * `/v1/apps/{slug}/metrics` calls.
  *
  * `apps` is keyed by `app_slug` so the dashboard can render the

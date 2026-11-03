@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -47,6 +48,7 @@ func TestBuildEnvDiffResponse_SecretCellsCarryValueHashNeverValue(t *testing.T) 
 		{AccountID: "a", AppID: "b", Scope: "prod", Key: "STRIPE_KEY", ValueHash: "abcdef0123456789"},
 		{AccountID: "a", AppID: "b", Scope: "staging", Key: "STRIPE_KEY", ValueHash: "1111111111111111"},
 	}
+	key := withEnvDiffHMACKey(t)
 	got := apidserver.BuildEnvDiffResponse("sec-app", secrets, nil)
 	if len(got.Rows) != 1 {
 		t.Fatalf("want 1 row, got %d", len(got.Rows))
@@ -62,15 +64,15 @@ func TestBuildEnvDiffResponse_SecretCellsCarryValueHashNeverValue(t *testing.T) 
 	if !prod.Present {
 		t.Error("prod cell Present = false, want true")
 	}
-	if prod.ValueHash != "abcdef0123456789" {
-		t.Errorf("prod.ValueHash = %q, want abcdef0123456789", prod.ValueHash)
+	if want := secretbox.OwnerValueFingerprint("abcdef0123456789", "a", key); prod.ValueHash != want {
+		t.Errorf("prod.ValueHash = %q, want the owner-keyed %q", prod.ValueHash, want)
 	}
 	if prod.Value != "" {
 		t.Errorf("prod.Value = %q, want \"\" (secret cells must NEVER carry plaintext)", prod.Value)
 	}
 	staging := got.Rows[0].Cells["staging"]
-	if !staging.Present || staging.ValueHash != "1111111111111111" || staging.Value != "" {
-		t.Errorf("staging cell = %+v, want {Present:true,ValueHash:1111111111111111,Value:\"\"}", staging)
+	if want := secretbox.OwnerValueFingerprint("1111111111111111", "a", key); !staging.Present || staging.ValueHash != want || staging.Value != "" {
+		t.Errorf("staging cell = %+v, want {Present:true,ValueHash:%s,Value:\"\"}", staging, want)
 	}
 }
 
@@ -121,6 +123,7 @@ func TestBuildEnvDiffResponse_MissingScopeRendersPresentFalse(t *testing.T) {
 		{AccountID: "a", AppID: "b", Scope: "staging", Key: "STRIPE_KEY", ValueHash: "1234567890abcdef"},
 		{AccountID: "a", AppID: "b", Scope: "dev", Key: "OTHER_KEY", ValueHash: "feedfacefeedface"},
 	}
+	withEnvDiffHMACKey(t)
 	got := apidserver.BuildEnvDiffResponse("miss-scope", secrets, nil)
 	// Scopes are unioned: dev, prod, staging (sorted ASC).
 	if len(got.Scopes) != 3 {
@@ -150,8 +153,8 @@ func TestBuildEnvDiffResponse_MissingScopeRendersPresentFalse(t *testing.T) {
 		t.Errorf("dev.ValueHash = %q, want \"\" (missing row has no hash)", dev.ValueHash)
 	}
 	prod := stripeRow.Cells["prod"]
-	if !prod.Present || prod.ValueHash != "deadbeefdeadbeef" {
-		t.Errorf("prod cell = %+v, want {Present:true,ValueHash:deadbeefdeadbeef}", prod)
+	if !prod.Present || prod.ValueHash == "" || prod.ValueHash == "deadbeefdeadbeef" {
+		t.Errorf("prod cell = %+v, want present with the owner-keyed fingerprint", prod)
 	}
 }
 
@@ -205,5 +208,32 @@ func TestBuildEnvDiffResponse_UnionByKeyNotByKind(t *testing.T) {
 	}
 	if got.Rows[1].Kind != api.EnvDiffKindSecret {
 		t.Errorf("Rows[1].Kind = %q, want secret", got.Rows[1].Kind)
+	}
+}
+
+func withEnvDiffHMACKey(t *testing.T) []byte {
+	t.Helper()
+	key := []byte("env-diff-test-host-hmac-key-0123")
+	previous := *apidserver.HostHMACKey
+	*apidserver.HostHMACKey = func() []byte { return key }
+	t.Cleanup(func() { *apidserver.HostHMACKey = previous })
+	return key
+}
+
+// The stored fingerprint is keyed by one host key every tenant shares, so
+// an account could compare a guessed value's fingerprint with another
+// owner's secret it could only view. Responses re-key it per owner: equal
+// within an owner, unrelated across owners (bug hunt 2026-10-28 H37).
+func TestBuildEnvDiffResponse_FingerprintsAreOwnerScoped(t *testing.T) {
+	withEnvDiffHMACKey(t)
+	cell := func(owner string) api.EnvDiffCell {
+		got := apidserver.BuildEnvDiffResponse("app", []state.AppSecret{{AccountID: owner, AppID: "b", Scope: "prod", Key: "K", ValueHash: "abcdef0123456789"}}, nil)
+		return got.Rows[0].Cells["prod"]
+	}
+	if a, again := cell("owner-a"), cell("owner-a"); a.ValueHash == "" || a.ValueHash != again.ValueHash {
+		t.Fatalf("one owner's fingerprints differ: %q vs %q", a.ValueHash, again.ValueHash)
+	}
+	if a, b := cell("owner-a"), cell("owner-b"); a.ValueHash == b.ValueHash {
+		t.Fatalf("two owners share fingerprint %q for one value", a.ValueHash)
 	}
 }

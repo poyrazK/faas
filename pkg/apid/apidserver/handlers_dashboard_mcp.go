@@ -223,7 +223,7 @@ func (s *server) renderMCPOperations(w http.ResponseWriter, r *http.Request, log
 		}
 		data.PreviousAppsURL = dashboardMCPURL(query, "offset", strconv.Itoa(previous)) + "#applications"
 	}
-	s.dashboardMCPRetirements(w, r, ctx, account, query, hidden, appsKnown, &data)
+	s.dashboardMCPRetirements(w, r, ctx, account, query, appsKnown, &data)
 	page := dashboard.Page{Title: "MCP operations", Body: "mcp_operations", Account: dashboardAccountView(account, len(apps)), Data: data}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)

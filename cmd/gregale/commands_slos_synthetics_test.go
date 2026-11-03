@@ -44,7 +44,7 @@ func TestCmdSLOsAndSyntheticsJSONOutput(t *testing.T) {
 	defer func() { main.ResetJSONOutput() }()
 
 	if code := main.CmdSLOs([]string{"list", "--app", "shop"}); code != 0 {
-		t.Fatalf("gregale slos list --json = %d", code)
+		t.Fatalf("gregale alert slo list --json = %d", code)
 	}
 	var slos []api.SLOResponse
 	if err := json.Unmarshal(buf.Bytes(), &slos); err != nil || len(slos) != 2 || slos[1].LatencyThresholdMS != 250 {
@@ -53,7 +53,7 @@ func TestCmdSLOsAndSyntheticsJSONOutput(t *testing.T) {
 
 	buf.Reset()
 	if code := main.CmdSynthetics([]string{"list", "--app", "shop"}); code != 0 {
-		t.Fatalf("gregale synthetics list --json = %d", code)
+		t.Fatalf("gregale alert check list --json = %d", code)
 	}
 	var checks []api.SyntheticCheckResponse
 	if err := json.Unmarshal(buf.Bytes(), &checks); err != nil || len(checks) != 1 || checks[0].IntervalSeconds != 300 {

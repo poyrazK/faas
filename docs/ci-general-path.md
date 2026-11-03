@@ -77,6 +77,26 @@ minutes:
 | `TestE2E_Routes_ProductionMonitorOpensIncident` | the production route monitor opens an incident from sustained 5xx on one route while another stays healthy |
 | `TestE2E_Routes_CanaryHealthGateHoldsRegressionAndAdvancesHealthy` | the canary guard compares candidate and stable per route, holds a regressed 50% canary with `route_health_blocked` and its history, and advances a healthy one to 100% with the gateway following |
 
+Multi-service projects have their own group. The test applies a Compose
+repository through `POST /v1/projects` and calls between its services through
+the real gateways:
+
+| Test | Regression class |
+| --- | --- |
+| `TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName` | a `billing_api` service is called `billing-api` (injected URL, imported Compose address and Postgres name lookup), the project lists what each service calls, a call wakes the parked service, a declared service cannot call an undeclared one, waking a service wakes the dependency it declared, and a PR preview calls its own sibling |
+
+Edge rules have their own group. The tests create, change, roll back and
+delete rules through the API, which answers only after the gateways applied
+the change, and check each one on the app's public URL:
+
+| Test | Regression class |
+| --- | --- |
+| `TestE2E_EdgeRules_KindsActOnPublicTraffic` | one rule of each Hobby kind (redirect, rewrite, headers, CORS, IP with HEAD covered by a GET rule, limit, validate, maintenance, throttle, JWT, cache) acts on public traffic, a deleted rule stops acting, and a `*` method or an `X-Forwarded-For` header op is refused |
+| `TestE2E_EdgeRules_ListsAndRollback` | a list edit reaches the rule that uses it, a rollback restores an earlier rule set on the gateways, a list in use cannot be deleted, and a rollback to a version whose list is gone is refused |
+| `TestE2E_EdgeRules_DeletedAppRulesStopApplying` | a deleted app's `*` rule stops applying to the account's other apps |
+| `TestE2E_EdgeRules_TraceMatchesGateway` | `gregale edge rule trace` (the real CLI, the dashboard's engine) predicts what the gateway does: its status, Location, Retry-After and problem code when the edge answers, the app's final path and response headers when the request continues |
+| `TestE2E_EdgeRules_ManifestRoutesServePaths` | a `gregale.yaml` route applied with a project sends a custom host's path to another service with its prefix stripped, the rest of the host stays on the domain's app, and `routes: []` removes the route |
+
 The tests seed a deployment after the source/build/image pipeline has produced
 its durable state. They must not become a second KVM suite. Add a scenario here
 when the bug is in daemon wiring, durable state propagation, routing, bridge
@@ -85,8 +105,10 @@ requires a real guest, jail, network namespace, image, or Firecracker lifecycle.
 
 All files under `cmd/e2e` are discovered by `scripts/ci/e2eshard`, so both
 groups run in the mega tier's E2E shards (`ci.yml`, nightly). The
-`e2e-general` workflow runs them on every pull request that changes Go code,
-migrations or the Makefile, as two jobs (`normal-path`, `routes`). It is not a
+`e2e-general` workflow runs them before merge only on a pull request labelled
+`e2e-general`, or by dispatch on a branch, as four jobs (`normal-path`,
+`routes`, `multi-service`, `edge-rules`); it never runs on merges to `main`
+(ADR-20261029121500). Label gateway, routing and daemon-wiring changes. It is not a
 `ci-light` job because a failed post-merge `ci-light` run fails automatic
 deploys, and the routes tests wait on wall-clock windows.
 
@@ -94,10 +116,12 @@ deploys, and the routes tests wait on wall-clock windows.
 example `E2E_GENERAL_RUN='^TestE2E_Routes_' make e2e-general`. The daemons need
 Linux.
 
-The gateway answers `503 rate_limit_unavailable` with `Retry-After` when its
-shared rate allowance cannot be checked in time (ADR-570), which a loaded
-runner can hit. A test that needs every request answered retries that refusal
-as a client would (`routesFixture.get`).
+The gateway answers `503` with `Retry-After` in two transient cases (ADR-570):
+`rate_limit_unavailable` when its shared rate allowance cannot be checked in
+time, which a loaded runner can hit, and `traffic_policy_unavailable` when a
+request races the edge policy change that follows a rule write. A test that
+needs every request answered retries both as a client would (`edgeRetry` in
+`cmd/e2e/routes_e2e_test.go`).
 
 The remaining general-path gaps are intentionally tracked rather than hidden:
 

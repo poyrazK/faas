@@ -63,6 +63,11 @@ def _parse_response(
 
         return response_502
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -98,9 +103,8 @@ def sync_detailed(
     returned.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
-        body (PutBillingConnectionRequest): The account's own key for one billing provider
-            (ADR-1502, ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
+        body (PutBillingConnectionRequest): The account's own key for one billing provider.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,9 +144,8 @@ def sync(
     returned.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
-        body (PutBillingConnectionRequest): The account's own key for one billing provider
-            (ADR-1502, ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
+        body (PutBillingConnectionRequest): The account's own key for one billing provider.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,9 +180,8 @@ async def asyncio_detailed(
     returned.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
-        body (PutBillingConnectionRequest): The account's own key for one billing provider
-            (ADR-1502, ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
+        body (PutBillingConnectionRequest): The account's own key for one billing provider.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -217,9 +219,8 @@ async def asyncio(
     returned.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
-        body (PutBillingConnectionRequest): The account's own key for one billing provider
-            (ADR-1502, ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
+        body (PutBillingConnectionRequest): The account's own key for one billing provider.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -72,7 +72,7 @@ def sync_detailed(
     """Get one data upstream.
 
      Returns the single upstream row by id. Plaintext host NEVER
-    appears in the response (§11 invariant).
+    appears in the response (invariant).
 
     Args:
         slug (str):
@@ -107,7 +107,7 @@ def sync(
     """Get one data upstream.
 
      Returns the single upstream row by id. Plaintext host NEVER
-    appears in the response (§11 invariant).
+    appears in the response (invariant).
 
     Args:
         slug (str):
@@ -137,7 +137,7 @@ async def asyncio_detailed(
     """Get one data upstream.
 
      Returns the single upstream row by id. Plaintext host NEVER
-    appears in the response (§11 invariant).
+    appears in the response (invariant).
 
     Args:
         slug (str):
@@ -170,7 +170,7 @@ async def asyncio(
     """Get one data upstream.
 
      Returns the single upstream row by id. Plaintext host NEVER
-    appears in the response (§11 invariant).
+    appears in the response (invariant).
 
     Args:
         slug (str):

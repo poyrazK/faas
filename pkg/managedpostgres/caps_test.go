@@ -172,7 +172,9 @@ func TestCapEnforcerSweep(t *testing.T) {
 		ceilings := map[string]int64{"acct-a": 18000, "acct-b": 18000, "acct-c": 18000, "acct-f": 18000}
 		enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
 			Mode: mode, Now: func() time.Time { return now }, Qualification: testCapQualification(backend),
-			Ceiling: func(_ context.Context, accountID string) (int64, error) { return ceilings[accountID], nil },
+			Ceiling: func(_ context.Context, accountID string) (CapLimits, error) {
+				return CapLimits{Allowance: ceilings[accountID], Ceiling: ceilings[accountID]}, nil
+			},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -224,7 +226,7 @@ func TestCapEnforcerSweep(t *testing.T) {
 
 func TestCapEnforcerOnNeedsTheUsageLedger(t *testing.T) {
 	registry := testRegistry(t, &fakeProvider{capabilities: testCapabilities()}, nil)
-	ceiling := func(context.Context, string) (int64, error) { return 1, nil }
+	ceiling := func(context.Context, string) (CapLimits, error) { return CapLimits{Allowance: 1, Ceiling: 1}, nil }
 	if _, err := NewCapEnforcer(registry, &capTestStore{}, CapEnforcerOptions{Mode: CapEnforcementOn, Ceiling: ceiling}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("on without the ledger: %v", err)
 	}
@@ -240,7 +242,7 @@ func TestCapEnforcerSkipsProvidersWithoutQuotas(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &capTestStore{databases: []Database{{ID: "db", AccountID: "acct", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, ProviderResourceID: "p", State: StateReady}}}
-	enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{Mode: CapEnforcementShadow, Ceiling: func(context.Context, string) (int64, error) { return 1, nil }})
+	enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{Mode: CapEnforcementShadow, Ceiling: func(context.Context, string) (CapLimits, error) { return CapLimits{Allowance: 1, Ceiling: 1}, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,9 +319,9 @@ func TestCapEnforcerPoolsAnOrganizationAcrossNamespaces(t *testing.T) {
 	var asked []string
 	enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
 		Mode: CapEnforcementShadow, Now: func() time.Time { return now },
-		Ceiling: func(_ context.Context, subject string) (int64, error) {
+		Ceiling: func(_ context.Context, subject string) (CapLimits, error) {
 			asked = append(asked, subject)
-			return 18000, nil
+			return CapLimits{Allowance: 18000, Ceiling: 18000}, nil
 		},
 	})
 	if err != nil {

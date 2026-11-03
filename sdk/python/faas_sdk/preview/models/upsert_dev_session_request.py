@@ -41,14 +41,14 @@ class UpsertDevSessionRequest:
     """How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's
     developer lease maximum return 403 plan_limit_developer_lease."""
     watch: DevWatch | Unset = UNSET
-    """Watch mode (ADR-1170). The environment runs this development server instead of the production build, and
-    live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the
-    next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM
-    or does not require authentication."""
+    """Watch mode. The environment runs this development server instead of the production build, and live source
+    patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the next developer
+    build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM or does not
+    require authentication."""
     go_command: str | Unset = UNSET
-    """Builds cmd/<go_command> of the Go module at the source root (ADR-20261026120412), as a project service's Go
-    command does. Omit to build what the source builds by default; applies from the next developer build. Refused
-    with 400 for a function or a name that is not a cmd/ directory name."""
+    """Builds cmd/<go_command> of the Go module at the source root, as a project service's Go command does. Omit to
+    build what the source builds by default; applies from the next developer build. Refused with 400 for a function
+    or a name that is not a cmd/ directory name."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

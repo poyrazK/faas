@@ -2404,6 +2404,29 @@ func TestEngineWake_RestoreFallbackMarksSnapshotStale(t *testing.T) {
 	_ = snap
 }
 
+// A restore that failed for the node's own reasons (a full disk, an identity
+// record it could not read) says nothing about the snapshot, which stays live
+// for every other node (bug hunt 2026-10-28 B12).
+func TestEngineWake_NodeLocalRestoreFallbackKeepsSnapshot(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	snap, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "node-local"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &fakeVMM{forceColdFallback: true, restoreFallbackReason: fcvm.RestoreFallbackNodeLocal}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if res, err := e.Wake(context.Background(), app.ID, "", "", ""); err != nil || res.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+		t.Fatalf("Wake = %+v, %v; want a cold-boot fallback", res, err)
+	}
+	if live, err := store.LatestSnapshot(context.Background(), dep.ID); err != nil || live.ID != snap.ID {
+		t.Fatalf("latest snapshot = %+v, %v; want %s kept live", live, err, snap.ID)
+	}
+}
+
 func TestEngineWake_AdmissionDeniedReturnsProblem(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanFree, 128, 1)
@@ -3908,13 +3931,10 @@ func TestEngineWake_RejectsTransientVerifierIO(t *testing.T) {
 	if !errors.As(err, &p) {
 		t.Fatalf("err = %v, want *api.Problem so gatewayd-internal can write Retry-After", err)
 	}
-	// Verify the engine tagged the underlying storage error in
-	// the Detail so log greps still find it (the customer-facing
-	// 503 carries "verifier I/O error for layer ...",
-	// operator-facing logs/Sentry carry the verbatim
-	// "storage backend unreachable" via the Detail).
-	if !strings.Contains(err.Error(), "storage backend unreachable") {
-		t.Errorf("err = %v, want Detail to preserve underlying storage error", err)
+	// The storage error goes to the engine's log, not the 503: the
+	// problem reaches the app's visitors through the gateway.
+	if strings.Contains(err.Error(), "storage backend unreachable") {
+		t.Errorf("err = %v, want the storage error kept out of the Detail", err)
 	}
 	if vmm.coldBoots != 0 {
 		t.Errorf("vmm invoked on transient verifier I/O: coldBoots=%d, want 0", vmm.coldBoots)

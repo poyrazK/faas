@@ -122,6 +122,23 @@ log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), tracing.Handler(mux)))
 Pass the request's context to outgoing calls so they appear under the
 request. See [`docs/tracing.md`](../../docs/tracing.md#go).
 
+## Profiling
+
+The `preview/profiling` package (on-demand profile captures are a preview
+capability) answers CPU, heap, goroutine, block and mutex captures and, when
+the app sets `profiling.enabled`, sends continuous CPU and heap profiles,
+using only the standard library:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/preview/profiling"
+
+profiling.Start(appContext) // does nothing outside a profiled deployment
+log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), profiling.ServeMux(mux)))
+```
+
+`ServeMux` labels CPU with the matched route. See
+[`docs/profiling.md`](../../docs/profiling.md#capture-a-running-instance-on-demand).
+
 ## Gregale Issues exception reporting
 
 Create a deployment-bound issue ingest token with `gregale issues create-token`
@@ -560,7 +577,7 @@ policy, err := c.PutObjectBucketLifecycle(ctx, "demo", bucketID,
 A replacement must contain at least one rule; use DELETE to clear it. Starting
 or resuming a due scan returns its durable ID. A completed scan means discovery
 finished; admitted cleanup can still be retrying. Removing rules preserves that
-cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules-and-discovery).
+cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules).
 ## Internal HTTP Operations preview
 
 Operations is staged; production admission remains disabled. The typed client
@@ -604,7 +621,7 @@ protection operation inspection. Use an explicit owned public version UUIDv4
 operation ID and return a durable receipt; retain the returned ID for retries
 and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
-See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+See [the protection contract](../../docs/object-storage.md#object-lock-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
 
 ## Recovery receipt protection
@@ -613,7 +630,7 @@ Set `protect_receipts: true` when creating an event recovery job (Go:
 `EventRecoveryRequest.ProtectReceipts`). Selected receipts remain held while
 items are pending and the job is active, until its original 24-hour expiry.
 Preview reserves nothing. Held receipts continue counting against account
-storage limits. See [recovery protection](../../docs/event-driven.md#protect-receipts-during-bulk-recovery).
+storage limits. See [recovery protection](../../docs/events-operations.md#protect-receipts-during-bulk-recovery).
 
 ## Durable recovery outcomes
 
@@ -622,7 +639,7 @@ exact admitted replay generation. `execution.source` is `recovery_result`, with
 `recorded_at` and original `evidence_source`; job execution summaries include
 `saved_results`. These results survive execution-history pruning until the
 recovery job is pruned. Uncertain outcomes remain unknown. See
-[terminal recovery results](../../docs/event-driven.md#durable-terminal-recovery-results).
+[terminal recovery results](../../docs/events-operations.md#durable-terminal-recovery-results).
 
 Recovery webhook filters support `event_recovery.execution_finished`, separately
 from admission completion. Its `EventRecoveryExecutionFinishedWebhookPayload`
@@ -640,7 +657,7 @@ retained terminal recovery in the same app. Child creation requires a stable
 retained child. Changed selections conflict, and the original audit reason wins.
 Items expose historical `parent_job_id`/`parent_position` links. Changed or pruned
 execution evidence is skipped at admission; newer replays are never substituted.
-See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-recovery-job).
+See [parent-scoped retries](../../docs/events-operations.md#retry-failures-from-one-recovery-job).
 
 Application-scoped producer keys:
 

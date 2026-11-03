@@ -61,12 +61,12 @@ def sync_detailed(
     the state and verifier cookies, exchanges
     the code at `oauth2.googleapis.com/token`, fetches the
     userinfo, and verifies `email_verified=true` before
-    minting a session (issue #165 PR #2, ADR-032).
+    minting a session.
 
     Returns 503 `oauth_provider_unavailable` when the operator
     did not configure Google sign-in on this host (both
     `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` unset at
-    boot, issue #419 / ADR-046). The same shape is returned
+    boot). The same shape is returned
     for the half-set case, which fails to boot.
 
     Raises:
@@ -98,12 +98,12 @@ def sync(
     the state and verifier cookies, exchanges
     the code at `oauth2.googleapis.com/token`, fetches the
     userinfo, and verifies `email_verified=true` before
-    minting a session (issue #165 PR #2, ADR-032).
+    minting a session.
 
     Returns 503 `oauth_provider_unavailable` when the operator
     did not configure Google sign-in on this host (both
     `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` unset at
-    boot, issue #419 / ADR-046). The same shape is returned
+    boot). The same shape is returned
     for the half-set case, which fails to boot.
 
     Raises:
@@ -131,12 +131,12 @@ async def asyncio_detailed(
     the state and verifier cookies, exchanges
     the code at `oauth2.googleapis.com/token`, fetches the
     userinfo, and verifies `email_verified=true` before
-    minting a session (issue #165 PR #2, ADR-032).
+    minting a session.
 
     Returns 503 `oauth_provider_unavailable` when the operator
     did not configure Google sign-in on this host (both
     `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` unset at
-    boot, issue #419 / ADR-046). The same shape is returned
+    boot). The same shape is returned
     for the half-set case, which fails to boot.
 
     Raises:
@@ -166,12 +166,12 @@ async def asyncio(
     the state and verifier cookies, exchanges
     the code at `oauth2.googleapis.com/token`, fetches the
     userinfo, and verifies `email_verified=true` before
-    minting a session (issue #165 PR #2, ADR-032).
+    minting a session.
 
     Returns 503 `oauth_provider_unavailable` when the operator
     did not configure Google sign-in on this host (both
     `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` unset at
-    boot, issue #419 / ADR-046). The same shape is returned
+    boot). The same shape is returned
     for the half-set case, which fails to boot.
 
     Raises:

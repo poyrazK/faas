@@ -28,7 +28,7 @@ func (s *server) renderDevBridgesDashboard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if data.Enabled {
-		data.CSRFToken, err = middleware.IssueForAuthenticatedNamed(s.sessions, dashboardDevBridgeAction, acct.ID, dashboardDevBridgeCSRFCookie)
+		data.CSRFToken, err = middleware.IssueForAuthenticatedNamed(s.sessions, dashboardDevBridgeAction, actorAccount(r, acct).ID, dashboardDevBridgeCSRFCookie)
 		if err != nil {
 			renderProblem(w, s.log, err)
 			return

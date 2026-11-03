@@ -98,3 +98,54 @@ func TestMigrateStorage(t *testing.T) {
 		t.Fatalf("second run = %+v, %v; want the rotated credential re-sealed", again, err)
 	}
 }
+
+// TestCheckStorage counts the credentials a legacy identity still opens
+// without writing any: the precondition for s3-gatewayd dropping the fleet
+// and host identities.
+func TestCheckStorage(t *testing.T) {
+	domain, fleet, stranger := mustIdentity(t), mustIdentity(t), mustIdentity(t)
+	seal := func(to ...*age.X25519Identity) []byte {
+		var rs []*age.X25519Recipient
+		for _, id := range to {
+			rs = append(rs, id.Recipient())
+		}
+		b, err := secretbox.SealBytesTo(rs, s3gateway.CredentialSecretNamespace, []byte("0123456789abcdef0123456789abcdef01234567"), 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	f := &s3Credentials{rows: map[string]state.ObjectS3Credential{
+		"c1": {ID: "c1", KID: fleet.Recipient().String(), SecretSealed: seal(fleet)},
+		"c2": {ID: "c2", KID: fleet.Recipient().String(), SecretSealed: seal(domain, fleet)},
+		"c3": {ID: "c3", KID: domain.Recipient().String(), SecretSealed: seal(domain)},
+		"c4": {ID: "c4", KID: "age1other", SecretSealed: seal(stranger)},
+	}}
+	before := map[string][]byte{}
+	for id, c := range f.rows {
+		before[id] = c.SecretSealed
+	}
+	ctx := context.Background()
+	report, err := sealmigrate.CheckStorage(ctx, f, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sealmigrate.MigrationReport{Domain: sealdomain.Storage, Target: domain.Recipient().String(), Scanned: 4, Current: 1, Failed: 1, Pending: 2}
+	if report != want {
+		t.Fatalf("report = %+v, want %+v", report, want)
+	}
+	for id, c := range f.rows {
+		if !bytes.Equal(c.SecretSealed, before[id]) {
+			t.Fatalf("the check rewrote %s", id)
+		}
+	}
+	if _, err := sealmigrate.MigrateStorage(ctx, f, domain, []*age.X25519Identity{fleet}); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := sealmigrate.CheckStorage(ctx, f, domain, []*age.X25519Identity{fleet}); err != nil || report.Pending != 0 || report.Current != 3 {
+		t.Fatalf("check after the re-seal = %+v, %v; want nothing pending", report, err)
+	}
+	if report, err := sealmigrate.CheckStorage(ctx, f, domain, nil); err != nil || report.Pending != 0 {
+		t.Fatalf("check without legacy identities = %+v, %v; want nothing pending", report, err)
+	}
+}

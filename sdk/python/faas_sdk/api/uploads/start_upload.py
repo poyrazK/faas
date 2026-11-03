@@ -91,7 +91,7 @@ def sync_detailed(
         body (UploadStartRequest): Body of POST /v1/uploads. `total_size` must be ≤ the per-plan
             SourceTarballMaxMB cap (Free/Hobby 100 MB, Pro/Scale 250 MB); the handler returns 413 +
             `source_too_large` otherwise. `sha256_hex` is recorded for the build_provenance audit row
-            only — the server does NOT re-verify it at commit time (ADR-115 trust boundary).
+            only — the server does NOT re-verify it at commit time (trust boundary).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -123,7 +123,7 @@ def sync(
         body (UploadStartRequest): Body of POST /v1/uploads. `total_size` must be ≤ the per-plan
             SourceTarballMaxMB cap (Free/Hobby 100 MB, Pro/Scale 250 MB); the handler returns 413 +
             `source_too_large` otherwise. `sha256_hex` is recorded for the build_provenance audit row
-            only — the server does NOT re-verify it at commit time (ADR-115 trust boundary).
+            only — the server does NOT re-verify it at commit time (trust boundary).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,7 +150,7 @@ async def asyncio_detailed(
         body (UploadStartRequest): Body of POST /v1/uploads. `total_size` must be ≤ the per-plan
             SourceTarballMaxMB cap (Free/Hobby 100 MB, Pro/Scale 250 MB); the handler returns 413 +
             `source_too_large` otherwise. `sha256_hex` is recorded for the build_provenance audit row
-            only — the server does NOT re-verify it at commit time (ADR-115 trust boundary).
+            only — the server does NOT re-verify it at commit time (trust boundary).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,7 +180,7 @@ async def asyncio(
         body (UploadStartRequest): Body of POST /v1/uploads. `total_size` must be ≤ the per-plan
             SourceTarballMaxMB cap (Free/Hobby 100 MB, Pro/Scale 250 MB); the handler returns 413 +
             `source_too_large` otherwise. `sha256_hex` is recorded for the build_provenance audit row
-            only — the server does NOT re-verify it at commit time (ADR-115 trust boundary).
+            only — the server does NOT re-verify it at commit time (trust boundary).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

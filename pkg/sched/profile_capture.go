@@ -14,7 +14,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/profileproto"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+// profileCapturesCapability is the product capability whose platform flag
+// releases on-demand captures to an account (ADR-20261023115741); schedd
+// queues automatic captures only for accounts it is released to.
+const profileCapturesCapability = "profile-captures"
+
+// WithProfileCaptureMetrics installs the capture metrics (ADR-1155); nil
+// records nothing.
+func (e *Engine) WithProfileCaptureMetrics(m *wire.ProfileCaptureMetrics) *Engine {
+	e.profileCaptureMetrics = m
+	return e
+}
 
 // ErrNoRunningInstance means an on-demand profile capture found no RUNNING
 // instance to profile. Captures never wake a parked app: a fresh process would
@@ -47,7 +60,7 @@ func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string
 	if !ok {
 		return ProfileCaptureOutcome{}, errors.New("sched: vmm router does not support profile captures")
 	}
-	rows, err := e.store.ListInstancesForApp(ctx, appID)
+	rows, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return ProfileCaptureOutcome{}, fmt.Errorf("sched: CaptureAppProfile list instances: %w", err)
 	}
@@ -76,6 +89,21 @@ func (e *Engine) QueueMemoryPressureCapture(ctx context.Context, instanceID stri
 		Trigger:         api.ProfileCaptureTriggerMemoryPressure,
 		TriggerDetail:   fmt.Sprintf("guest memory available fell to %d MiB of %d MiB (%d MiB anonymous)", availableMB, totalMB, anonMB)}
 	return e.queueAutomaticCapture(ctx, instanceID, capture, api.ProfileCaptureAutomaticMinInterval)
+}
+
+// RecordMemoryPressure folds a guest's memory-pressure report into its app's
+// rollup for app health (ADR-20261102124306). An instance of any state is
+// recorded: the episode happened whether or not the instance still runs.
+func (e *Engine) RecordMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) error {
+	store, ok := e.store.(state.AppMemoryPressureStore)
+	if !ok {
+		return nil
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	return store.RecordAppMemoryPressure(ctx, ins.AppID, time.Now().UTC(), availableMB, totalMB, anonMB)
 }
 
 // QueueSlowRequestCapture turns a gateway report of a request in flight for
@@ -120,38 +148,59 @@ func truncateRunes(s string, n int) string {
 // instance whose plan includes profiling, at most once per minInterval per
 // app and trigger, and notifies the capture drain.
 func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, capture api.ProfileCapture, minInterval time.Duration) (bool, string, error) {
+	skip := func(code, reason string) (bool, string, error) {
+		e.profileCaptureMetrics.AutomaticSkipped(capture.Trigger, code)
+		return false, reason, nil
+	}
 	queue, ok := e.store.(state.ProfileCaptureQueue)
 	if !ok {
-		return false, "profile capture storage is unavailable", nil
+		return skip("unavailable", "profile capture storage is unavailable")
 	}
 	ins, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
 		return false, "", err
 	}
 	if ins.State != string(state.StateRunning) {
-		return false, "instance is not running", nil
+		return skip("not_running", "instance is not running")
 	}
 	app, err := e.store.AppByID(ctx, ins.AppID)
 	if err != nil {
 		return false, "", err
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	// An organization's app counts under the organization: its plan, not the
+	// creator's (bug hunt 2026-10-28 B37), and its pool, as apid counts manual
+	// captures (ADR-1155).
+	owner, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return false, "", err
 	}
-	if limits, ok := api.LimitsFor(acct.Plan); !ok || !limits.Profiling.Enabled {
-		return false, "plan does not include profiling", nil
+	limits, ok := api.LimitsFor(owner.Plan)
+	if !ok || !limits.Profiling.Enabled {
+		return skip("plan", "plan does not include profiling")
+	}
+	if !e.appCapabilityAllowed(ctx, app, profileCapturesCapability) {
+		return skip("not_released", "on-demand profile captures are not released to this account")
+	}
+	if !app.Manifest.Profiling.AutomaticCapturesEnabled() {
+		return skip("opted_out", "the app turned automatic captures off")
 	}
 	now := time.Now().UTC()
 	capture.ID, capture.AppID, capture.RequestedInstanceID = uuid.NewString(), app.ID, ins.ID
 	capture.CreatedAt, capture.ExpiresAt = now, now.Add(api.ProfileCaptureRetention)
-	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval); {
+	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval,
+		state.ProfileCaptureLimits{StorageBytes: limits.Profiling.CaptureStorageBytes, Pool: owner.ResourceOwnerID()}); {
 	case errors.Is(err, state.ErrProfileCaptureRecent):
-		return false, "an automatic capture ran for this app within the minimum interval", nil
+		return skip("interval", "an automatic capture ran for this app within the minimum interval")
 	case errors.Is(err, state.ErrProfileCaptureActive):
-		return false, "a capture is already queued or running for this app", nil
+		return skip("active", "a capture is already queued or running for this app")
 	case errors.Is(err, state.ErrProfileCaptureQuota):
-		return false, "the account's hourly capture quota is used", nil
+		return skip("quota", "the account's hourly automatic capture quota is used")
+	case errors.Is(err, state.ErrProfileCaptureStorage):
+		var full *state.ProfileCaptureStorageError
+		if errors.As(err, &full) && full.Automatic {
+			return skip("storage_share", "automatic captures fill their share of the account's capture storage")
+		}
+		return skip("storage_full", "the account's profile capture storage is full")
 	case err != nil:
 		return false, "", err
 	}

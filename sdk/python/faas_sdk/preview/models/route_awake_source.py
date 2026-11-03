@@ -19,11 +19,11 @@ T = TypeVar("T", bound="RouteAwakeSource")
 
 @_attrs_define
 class RouteAwakeSource:
-    """Awake time one non-request cause explains (ADR-1199, ADR-20261022184757)."""
+    """Awake time one non-request cause explains."""
 
     source: RouteAwakeSourceSource
-    """route_probe: synthetic canary probes the app answered (ADR-847; kept for a day). prewarm: instances a
-    scheduled prewarm admitted. The others are deliveries schedd made to the app, by invocation source; a delivery
+    """route_probe: synthetic canary probes the app answered (kept for a day). prewarm: instances a scheduled
+    prewarm admitted. The others are deliveries the scheduler made to the app, by invocation source; a delivery
     counts from when it reached the instance until it completed, at most 60 minutes."""
     events: int
     """Probe requests answered without a 5xx or an auth rejection, prewarmed instances, or deliveries that started

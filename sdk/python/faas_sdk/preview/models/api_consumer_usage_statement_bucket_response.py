@@ -32,10 +32,9 @@ class APIConsumerUsageStatementBucketResponse:
     """Units per step of a tiered rate card's ladder. In an adjustment revision, entries are differences and can be
     negative when late usage moved billed units into a cheaper step."""
     trial: bool | Unset = UNSET
-    """A minute of the consumer's free trial, billed at zero (ADR-1314)."""
+    """A minute of the consumer's free trial, billed at zero."""
     unit: str | Unset = UNSET
-    """The billed minute's price stream when it is not request: compute_second, response_megabyte or app:<meter>
-    (ADR-1317)."""
+    """The billed minute's price stream when it is not request: compute_second, response_megabyte or app:<meter>."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

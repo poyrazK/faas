@@ -13,7 +13,7 @@ T = TypeVar("T", bound="EdgeWAFExclusionsRequest")
 
 @_attrs_define
 class EdgeWAFExclusionsRequest:
-    """CRS rule IDs to add to and remove from a kind=waf rule's exclude_rule_ids (ADR-831 amendment 13)."""
+    """CRS rule IDs to add to and remove from a kind=waf rule's exclude_rule_ids."""
 
     add: list[int] | Unset = UNSET
     remove: list[int] | Unset = UNSET

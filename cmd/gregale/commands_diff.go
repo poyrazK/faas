@@ -169,21 +169,7 @@ func previewScalingPolicyFromManifest(cwd string) *api.ScalingPolicy {
 	if err != nil || !ok || m == nil {
 		return nil
 	}
-	if m.Worker != nil && m.Worker.Scale.Metric != "" {
-		return &api.ScalingPolicy{
-			MinInstances: m.Worker.Scale.Min,
-			MaxInstances: m.Worker.Scale.Max,
-			Target: &api.ScalingTarget{
-				Metric: m.Worker.Scale.Metric,
-				Name:   m.Worker.Scale.Name,
-				Value:  m.Worker.Scale.Target,
-			},
-		}
-	}
-	if m.Scaling == nil {
-		return nil
-	}
-	return m.Scaling.ToAPI()
+	return m.ScalingPolicyRequest()
 }
 
 // buildPreviewBuildPlan projects the same source signals used by the deploy

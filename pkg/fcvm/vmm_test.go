@@ -2371,6 +2371,105 @@ func TestWaitReady_HealthcheckRefusedIsAppNotListening(t *testing.T) {
 	}
 }
 
+// A raw TCP echo service accepted every probe after it bound :5432, yet the
+// wake failed "got ECONNREFUSED ... the app never listened": only the probes
+// before the bind were counted (container qualification, 2026-10-26).
+func TestHealthcheckNonHTTPReplyIsNotReportedAsNeverListened(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 512)
+				n, _ := conn.Read(buf)
+				_, _ = conn.Write(append([]byte("tcp-echo:"), buf[:n]...))
+			}()
+		}
+	}()
+	_, transportErr, probeErr := healthcheckProbeResult(context.Background(), &http.Client{Timeout: 2 * time.Second}, ln.Addr().String(), "/healthz")
+	if probeErr != nil || !isNonHTTPReply(transportErr) {
+		t.Fatalf("probe of a raw TCP echo = (%v, %v), want a non-HTTP reply", transportErr, probeErr)
+	}
+	p := (&JailerVMM{}).healthcheckNotReadyProblem(Lease{Instance: "i", AppPort: 5432}, "/healthz", readinessObservation{connRefused: 107, nonHTTP: 40}, 30*time.Second)
+	if p.Code != api.CodeAppStartupTimeout || !strings.Contains(p.Detail, "GET /healthz on :5432 but answered without HTTP") || strings.Contains(p.Detail, "never listened") {
+		t.Fatalf("problem = %+v", p)
+	}
+}
+
+// #5709: a release whose /healthz answered 503 was refused as
+// cold_boot_timeout. The watchdog stopped the guest before vmmd's readiness
+// window ended, and the cut-short wait reported "context canceled".
+func TestReadinessCutShortKeepsTheHealthcheckReason(t *testing.T) {
+	v := &JailerVMM{}
+	lease := Lease{Instance: "i-gate"}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+	started := time.Now().Add(-16 * time.Second)
+	for _, tc := range []struct {
+		name     string
+		ctx      context.Context
+		seen     readinessObservation
+		wantCode string
+		wantText string
+	}{
+		{name: "stopped after 503s", ctx: cancelled, seen: readinessObservation{responses: 9, lastStatus: 503}, wantCode: api.CodeAppStartupTimeout, wantText: "last status 503) before 16s"},
+		{name: "stopped after non-HTTP replies", ctx: cancelled, seen: readinessObservation{nonHTTP: 3}, wantCode: api.CodeAppStartupTimeout, wantText: "answered without HTTP"},
+		{name: "stopped before any answer", ctx: cancelled},
+		{name: "deadline", ctx: expired, seen: readinessObservation{connRefused: 4}, wantCode: api.CodeAppNotListening},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := v.readinessCutShort(tc.ctx, lease, "/healthz", tc.seen, 30*time.Second, started)
+			var p *api.Problem
+			if tc.wantCode == "" {
+				if !errors.Is(err, context.Canceled) || errors.As(err, &p) {
+					t.Fatalf("err = %v, want context.Canceled", err)
+				}
+				return
+			}
+			if !errors.As(err, &p) || p.Code != tc.wantCode || !strings.Contains(p.Detail, tc.wantText) {
+				t.Fatalf("err = %v, want %s containing %q", err, tc.wantCode, tc.wantText)
+			}
+		})
+	}
+}
+
+// The readiness window starts after the guest boots, so the caller's deadline
+// can end first. waitReady answers before it rather than letting the caller
+// time out without a reason (#5709).
+func TestWaitReadyAnswersBeforeTheCallerDeadline(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	host, _, _ := net.SplitHostPort(ln.Addr().String())
+	_ = ln.Close()
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &JailerVMM{readyTimeout: 30 * time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*readinessAnswerMargin+500*time.Millisecond)
+	defer cancel()
+	err = v.waitReady(ctx, Lease{Instance: "i-slow", HostIP: addr}, "/healthz")
+	var p *api.Problem
+	if !errors.As(err, &p) || p.Code != api.CodeAppNotListening {
+		t.Fatalf("waitReady = %v, want app_not_listening", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("waitReady answered only after the caller's deadline")
+	}
+}
+
 func TestHealthcheckNotReadyProblemNamesTheLastStatus(t *testing.T) {
 	p := (&JailerVMM{}).healthcheckNotReadyProblem(Lease{Instance: "i"}, "/healthz", readinessObservation{responses: 7, lastStatus: 503}, time.Second)
 	if p.Code != api.CodeAppStartupTimeout || !strings.Contains(p.Detail, "last status 503") {

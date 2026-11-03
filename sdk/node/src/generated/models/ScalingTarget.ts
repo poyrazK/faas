@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * (metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed, and since ADR-194 every member of it is backed by a live source and read by a scheduler trigger. `p99_latency_ms` was removed: it validated for releases with no latency source behind it, and is now rejected with 422 pointing at concurrent_requests. The unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path.
+ * (metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed, and every member of it is backed by a live source and read by a scheduler trigger. `p99_latency_ms` was removed: it validated for releases with no latency source behind it, and is now rejected with 422 pointing at concurrent_requests. The unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path.
  */
 export type ScalingTarget = {
   /**
@@ -11,7 +11,7 @@ export type ScalingTarget = {
    */
   metric?: 'rps' | 'cpu' | 'concurrent_requests' | 'queue_depth';
   /**
-   * Which custom metric this target watches (ADR-202). Required when metric is `custom`, and REJECTED otherwise — a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove.
+   * Which custom metric this target watches. Required when metric is `custom`, and REJECTED otherwise — a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove.
    */
   name?: string;
   /**

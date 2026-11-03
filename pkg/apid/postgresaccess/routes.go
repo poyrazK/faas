@@ -15,6 +15,7 @@ var actions = map[string]authz.OrgAction{
 	"GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}": authz.OrgActionReadPostgres,
 	"POST /v1/postgres/databases":                                        authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/restore":                           authz.OrgActionManagePostgres,
+	"POST /v1/postgres/databases/{id}/undelete":                          authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/resize":                            authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/compute-policy":                    authz.OrgActionManagePostgres,
 	"DELETE /v1/postgres/databases/{id}":                                 authz.OrgActionManagePostgres,

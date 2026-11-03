@@ -36,7 +36,7 @@ export type ProjectSourceRefScanRequest = {
   environment?: string;
   no_triggers?: boolean;
   /**
-   * Prepare a manual migration: preserve repository service names, suggest project-prefixed app names, leave the project unbound from GitHub push deployments and suppress schedules and async routes. Credentials remain inside githubd.
+   * Prepare a manual migration: preserve repository service names, suggest project-prefixed app names, leave the project unbound from GitHub push deployments and suppress schedules and async routes. Credentials remain inside the GitHub integration.
    */
   migration?: boolean;
 };

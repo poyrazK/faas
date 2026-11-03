@@ -62,7 +62,7 @@ func cmdRoutes(args []string) int {
 			return unknownSubcommandChoices(osStderr, "routes", nestedCliCommand("routes"), args[0])
 		}
 	}
-	PrintUsage(osStderr, "usage: gregale routes <status|advise|awake|insights|priority|requirements|gate|health|monitor|check|results|plan|apply|impact|contract|lifecycle|sunsets|migration> [slug] [flags]", "cli")
+	PrintUsage(osStderr, "usage: gregale api route <status|advise|awake|insights|priority|requirements|gate|health|monitor|check|results|plan|apply|impact|contract|lifecycle|sunsets|migration> [slug] [flags]", "cli")
 	return 1
 }
 
@@ -81,7 +81,7 @@ func cmdRoutesPlan(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) || *saved == (*requirements != "") || *burst < 0 {
-		PrintUsage(osStderr, "usage: gregale routes plan <slug> (--requirements PATH | --saved) [--deployment ID] [--expected-revision N] [--consolidate-budgets] [--out PATH] [--throttle-burst N] [--fail-on-unresolved]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route plan <slug> (--requirements PATH | --saved) [--deployment ID] [--expected-revision N] [--consolidate-budgets] [--out PATH] [--throttle-burst N] [--fail-on-unresolved]", "cli")
 		return 1
 	}
 	request := api.RoutePolicyPlanRequest{Saved: *saved, ThrottleBurst: *burst, DeploymentID: *deployment, ConsolidateBudgets: *consolidate}

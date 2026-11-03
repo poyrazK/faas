@@ -24,8 +24,8 @@ class AutomationRevisionResponse:
     version: int
     """Immutable published revision identifier."""
     definition: WorkflowSpec
-    """A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances
-    for this workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
+    """A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
+    workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
     max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler
     queue while all action slots are occupied."""
     definition_hash: str

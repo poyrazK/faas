@@ -85,6 +85,57 @@ func TestManifestSettings(t *testing.T) {
 	}
 }
 
+// TestProfilingSettingsSplitByCapability pins ADR-1155 on capture
+// releases: continuous profiling owns the profiling block, on-demand captures
+// own its pprof port and automatic-capture switch, and turning something off
+// is never a setting.
+func TestProfilingSettingsSplitByCapability(t *testing.T) {
+	on, off, port := true, false, 6060
+	for _, tc := range []struct {
+		name    string
+		cfg     *api.ProfilingConfig
+		current any
+		want    []string
+	}{
+		{"opt out of automatic captures", &api.ProfilingConfig{AutomaticCaptures: &off}, nil, nil},
+		{"pprof port only", &api.ProfilingConfig{PprofPort: port}, nil, []string{"app.profiling.pprof_port"}},
+		{"continuous with a port", &api.ProfilingConfig{Enabled: true, PprofPort: port, AutomaticCaptures: &on},
+			nil, []string{"app.profiling", "app.profiling.automatic_captures", "app.profiling.pprof_port"}},
+		{"unchanged port", &api.ProfilingConfig{PprofPort: port, AutomaticCaptures: &off},
+			map[string]any{"profiling": map[string]any{"enabled": false, "pprof_port": port}}, nil},
+		{"enabling continuous beside a kept port", &api.ProfilingConfig{Enabled: true, PprofPort: port},
+			map[string]any{"profiling": map[string]any{"enabled": false, "pprof_port": port}}, []string{"app.profiling"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AppSettings(api.UpdateAppRequest{Profiling: tc.cfg}, tc.current); !slices.Equal(got, tc.want) {
+				t.Fatalf("AppSettings = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	got := ManifestSettings(&gregalemanifest.Manifest{Profiling: &api.ProfilingConfig{PprofPort: port, AutomaticCaptures: &off}})
+	if !slices.Equal(got, []string{"manifest.profiling.pprof_port"}) {
+		t.Fatalf("ManifestSettings = %v, want only the pprof port", got)
+	}
+
+	catalog, err := productcap.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	capturesKey, _ := platformflags.CapabilityFlag("profile-captures")
+	allow := true
+	set := platformflags.NewSet(map[string]platformflags.Definition{
+		capturesKey: {Enabled: true, Default: false, Rules: []platformflags.Rule{{ID: "design-partner", Accounts: []string{account}, Value: &allow}}},
+	})
+	g := New(catalog, set.Snapshot)
+	subject := platformflags.Subject{AccountID: account}
+	if _, _, refused := g.RefusedSetting([]string{"app.profiling.pprof_port", "app.profiling.automatic_captures"}, subject); refused {
+		t.Fatal("capture settings refused for an account captures are released to")
+	}
+	if setting, capability, refused := g.RefusedSetting([]string{"app.profiling"}, subject); !refused || setting != "app.profiling" || capability != "continuous-profiling" {
+		t.Fatalf("continuous profiling = %q %q %v, want refused", setting, capability, refused)
+	}
+}
+
 // ungatedAppFields are app request fields that belong to the core app (or are
 // gated elsewhere, as runtime is by RuntimeSetting) rather than to a capability.
 var ungatedAppFields = map[string]string{

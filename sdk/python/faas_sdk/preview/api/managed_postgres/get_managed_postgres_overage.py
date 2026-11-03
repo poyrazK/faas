@@ -51,8 +51,7 @@ def sync_detailed(
 
      With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly
     compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the
-    default; the databases are then suspended at the allowance. A cap never deletes a database
-    (ADR-20261025094915).
+    default; the databases are then suspended at the allowance. A cap never deletes a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -79,8 +78,7 @@ def sync(
 
      With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly
     compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the
-    default; the databases are then suspended at the allowance. A cap never deletes a database
-    (ADR-20261025094915).
+    default; the databases are then suspended at the allowance. A cap never deletes a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -103,8 +101,7 @@ async def asyncio_detailed(
 
      With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly
     compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the
-    default; the databases are then suspended at the allowance. A cap never deletes a database
-    (ADR-20261025094915).
+    default; the databases are then suspended at the allowance. A cap never deletes a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -129,8 +126,7 @@ async def asyncio(
 
      With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly
     compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the
-    default; the databases are then suspended at the allowance. A cap never deletes a database
-    (ADR-20261025094915).
+    default; the databases are then suspended at the allowance. A cap never deletes a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

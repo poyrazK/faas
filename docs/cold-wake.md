@@ -66,7 +66,7 @@ both the loopback peer address and the header.
 
 If the callback fails during the first capture, the deployment fails with
 `before_checkpoint_failed`. If it fails on a later park, no new snapshot is
-published and the instance stops. `gregale wake-timeline <slug> <wake-id>`
+published and the instance stops. `gregale app wake-timeline <slug> <wake-id>`
 shows `wake.park_failed` with that closed reason; `gregale logs <slug>` shows
 the guest's HTTP or timeout cause. Other capture failures appear as
 `snapshot_failed` in the timeline. Enabling `before_checkpoint` disables

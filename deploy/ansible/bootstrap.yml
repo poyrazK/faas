@@ -215,6 +215,16 @@
         - faas_cp_converge_roles | default(none) is none or 'livequeryd_service' in faas_cp_converge_roles
     - role: githubd_service
       when: faas_cp_converge_roles | default(none) is none or 'githubd_service' in faas_cp_converge_roles
+    # ADR-20261027090010, ADR-20261027090014: agent runs, after schedd and githubd whose sockets they use.
+    - role: agentd_service
+      when:
+        - faas_agentd_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'agentd_service' in faas_cp_converge_roles
+    # ADR-20261102081618: the app hosts' records for direct entry to the compute edges.
+    - role: edgednsd_service
+      when:
+        - faas_edgednsd_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'edgednsd_service' in faas_cp_converge_roles
     - role: log_archive
       when: faas_cp_converge_roles | default(none) is none or 'log_archive' in faas_cp_converge_roles
     - role: optional_credentials
@@ -299,6 +309,9 @@
     # ADR-1343: the app edge (Cloudflare Tunnel connector + gatewayd-public in
     # compute edge mode); removes itself unless the manifest turns it on.
     - role: gatewayd_public_edge_service
+    # ADR-20261031122757: the S3 gateway beside the app edge; removes itself
+    # unless the manifest's object_storage.compute_nodes turns it on.
+    - role: s3_gateway_compute_service
     - role: builderd_service
     - role: compute_only_service
     - role: profiled_service

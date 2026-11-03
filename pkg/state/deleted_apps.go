@@ -42,7 +42,7 @@ func (m *MemStore) ListAccountDeletedApps(_ context.Context, accountID string, b
 	defer m.mu.Unlock()
 	rows := make([]DeletedAppRecord, 0)
 	for _, app := range m.apps {
-		if app.AccountID != accountID || app.Status != AppDeleted {
+		if app.AccountID != accountID || app.Status != AppDeleted || previewTornDown(app) {
 			continue
 		}
 		r := m.deletedAppRecordLocked(app)
@@ -67,7 +67,7 @@ func (m *MemStore) AccountDeletedAppByID(_ context.Context, accountID, id string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
-	if !ok || a.AccountID != accountID || a.Status != AppDeleted {
+	if !ok || a.AccountID != accountID || a.Status != AppDeleted || previewTornDown(a) {
 		return DeletedAppRecord{}, ErrNotFound
 	}
 	return m.deletedAppRecordLocked(a), nil

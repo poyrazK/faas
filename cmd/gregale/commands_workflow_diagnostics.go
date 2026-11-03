@@ -64,7 +64,7 @@ func renderWorkflowRunDiagnostics(w io.Writer, result api.WorkflowRunDiagnostics
 	}
 	_, _ = fmt.Fprintln(w, "Preview only; resume rechecks the current state and capacity.")
 	if result.Resume.Eligible && len(result.Resume.Blockers) == 0 && result.Resume.ExpectedResumeCount >= 0 && workflowUUIDPattern.MatchString(result.RunID) {
-		_, _ = fmt.Fprintf(w, "\nResume command: gregale workflows resume %s --expected-resume-count %d\n", result.RunID, result.Resume.ExpectedResumeCount)
+		_, _ = fmt.Fprintf(w, "\nResume command: gregale workflow resume %s --expected-resume-count %d\n", result.RunID, result.Resume.ExpectedResumeCount)
 		_, _ = fmt.Fprintln(w, "Review the reopened steps before running this command; completed effects remain preserved.")
 	}
 	_, _ = fmt.Fprintln(w, "\nSTEP  KIND  STATUS  ATTEMPT")

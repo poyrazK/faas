@@ -39,6 +39,12 @@ import (
 //   - FAAS_APID_ADVISORY_SOCK=/run/faas/apid.sock is the stateless-advisory
 //     gRPC listener vmmd dials to forward guest-init fanotify batches
 //     (Wave 0 PR-C / ADR-047).
+//   - FAAS_APID_GITHUBD_BRIDGE_SOCK=/run/faas/apid-githubd.sock is the
+//     build-enqueue bridge githubd dials for every push and pull-request
+//     preview (issue #432 phase 5). Without it githubd refuses every build
+//     and apid reports GitHub deploys unavailable (bug hunt #8 H8-10);
+//     UnitGithubd sets the same path. ReadWritePaths includes /run/faas so
+//     apid can bind it under ProtectSystem=strict.
 //   - FAAS_STATUSPAGE_PATH points cmd/apid at the statuspage HTML under
 //     /etc/faas; without this the alert-driven "degraded" pill never
 //     renders.
@@ -88,6 +94,11 @@ func UnitApid() daemonunit.Unit {
 		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/profiling.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "GOMEMLIMIT", Value: fmt.Sprintf("%dMiB", api.APIDGoMemLimitMB)},
+			// Operation artifacts and account exports spool to TMPDIR.
+			// PrivateTmp puts /tmp on the host /tmp, tmpfs on some hosts,
+			// where those bytes count against MemoryMax; the state
+			// directory is on disk (bug hunt 2026-10-27 B5).
+			{Key: "TMPDIR", Value: "/var/lib/faas-apid"},
 			{Key: "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED", Value: "0"},
@@ -97,11 +108,15 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_INTERNAL_MAIL_MFA_DISABLED_ALERT_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_DEPLOYMENT_FAILED_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_AGENT_RUN_DELIVERED_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_SUBSCRIPTION_ENDED_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_QUOTA_WARNING_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_ACCOUNT_RESTORED_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_MFA_ENABLED_ALERT_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_MFA_RECOVERY_ALERT_OUTBOX_ENABLED", Value: "0"},
@@ -116,6 +131,7 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_HOST_HMAC_KEY_PATH", Value: "%d/faas_host_hmac_key"},
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 			{Key: "FAAS_APID_ADVISORY_SOCK", Value: "/run/faas/apid.sock"},
+			{Key: "FAAS_APID_GITHUBD_BRIDGE_SOCK", Value: GithubdBridgeSocket},
 			{Key: "FAAS_STATUSPAGE_PATH", Value: "/etc/faas/statuspage/index.html"},
 			{Key: "FAAS_DPA_PATH", Value: "/etc/faas/dpa.md"},
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
@@ -170,7 +186,8 @@ func UnitApid() daemonunit.Unit {
 		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/srv/fc", "/var/lib/faas", "/var/log/faas", "/var/spool/faas"},
+		ReadWritePaths: []string{"/srv/fc", "/var/lib/faas", "/var/log/faas", "/var/spool/faas", "/run/faas"},
+		StateDirectory: "faas-apid",
 
 		WantedBy: "multi-user.target",
 	}

@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[AppStaticEgressIPResponse | Problem]:
-    """Read the per-app static egress IP pin (ADR-119).
+    """Read the per-app static egress IP pin.
 
      Returns the customer's pinned IPv4 + the audit timestamp +
     the per-app quota cap (StaticEgressIPsPerApp, 1 in v1). A
@@ -109,7 +109,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> AppStaticEgressIPResponse | Problem | None:
-    """Read the per-app static egress IP pin (ADR-119).
+    """Read the per-app static egress IP pin.
 
      Returns the customer's pinned IPv4 + the audit timestamp +
     the per-app quota cap (StaticEgressIPsPerApp, 1 in v1). A
@@ -143,7 +143,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[AppStaticEgressIPResponse | Problem]:
-    """Read the per-app static egress IP pin (ADR-119).
+    """Read the per-app static egress IP pin.
 
      Returns the customer's pinned IPv4 + the audit timestamp +
     the per-app quota cap (StaticEgressIPsPerApp, 1 in v1). A
@@ -180,7 +180,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> AppStaticEgressIPResponse | Problem | None:
-    """Read the per-app static egress IP pin (ADR-119).
+    """Read the per-app static egress IP pin.
 
      Returns the customer's pinned IPv4 + the audit timestamp +
     the per-app quota cap (StaticEgressIPsPerApp, 1 in v1). A

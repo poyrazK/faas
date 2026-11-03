@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const traceUsage = "usage: gregale trace <trace-id> [--watch] [--interval <DURATION>] [--timeout <DURATION>]"
+const traceUsage = "usage: gregale debug trace <trace-id> [--watch] [--interval <DURATION>] [--timeout <DURATION>]"
 
 const (
 	defaultTraceWatchInterval = time.Second

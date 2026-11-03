@@ -685,17 +685,58 @@ func (c *PreviewClient) DomainDoctor(ctx context.Context, domain string) (Domain
 	return out, c.do(ctx, "GET", "/v1/domains/"+domain+"/doctor", nil, &out)
 }
 
-// ListCrons returns every cron on the account when slug is empty,
-// or every cron for the given app when slug is non-empty. The slug
-// filter is added to the wire only when non-empty so the request
-// matches the spec (zero documented parameters) and the server-side
-// listCrons handler returns 200 with the full account-scoped list.
+// ListCrons returns every cron on the account when slug is empty, or
+// every cron of the app named by slug (a slug or id). The ?slug= filter
+// is sent only when slug is non-empty.
 func (c *Client) ListCrons(ctx context.Context, slug string) ([]CronResponse, error) {
 	path := "/v1/crons"
 	if slug != "" {
-		path += "?slug=" + slug
+		q := url.Values{}
+		q.Set("slug", slug)
+		path += "?" + q.Encode()
 	}
 	var out []CronResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetCron returns one cron. A missing cron and another account's cron both
+// answer 404.
+func (c *Client) GetCron(ctx context.Context, id string) (CronResponse, error) {
+	var out CronResponse
+	return out, c.do(ctx, "GET", "/v1/crons/"+url.PathEscape(id), nil, &out)
+}
+
+// FireCron runs a cron now without moving its schedule. The 202 carries a
+// request id to poll with GetFireCronRequest; a cron with five manual runs
+// waiting or running answers 429 cron_fire_now_busy.
+func (c *Client) FireCron(ctx context.Context, id string) (FireCronResponse, error) {
+	var out FireCronResponse
+	return out, c.do(ctx, "POST", "/v1/crons/"+url.PathEscape(id)+"/run", nil, &out)
+}
+
+// GetFireCronRequest reads a manual run's status. Poll until Status is
+// succeeded, failed or cancelled.
+func (c *Client) GetFireCronRequest(ctx context.Context, requestID string) (FireCronRequestResponse, error) {
+	var out FireCronRequestResponse
+	return out, c.do(ctx, "GET", "/v1/cron-fire-now-requests/"+url.PathEscape(requestID), nil, &out)
+}
+
+// ListCronRuns returns a page of a cron's runs, newest first. before is the
+// id of the last run on the previous page; limit is 1..100 and 0 uses the
+// server default.
+func (c *Client) ListCronRuns(ctx context.Context, id, before string, limit int) (ListCronRunsResponse, error) {
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/crons/" + url.PathEscape(id) + "/runs"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out ListCronRunsResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 func (c *Client) CreateCron(ctx context.Context, slug string, req CreateCronRequest) (CronResponse, error) {

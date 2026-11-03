@@ -17,7 +17,7 @@ func cmdEventsSubscriptionHealth(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-health <app> <subscription-id> [--window 5m]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription health <app> <subscription-id> [--window 5m]", "events")
 		return 1
 	}
 	if _, err := api.EventConsumerHealthWindow(*window); err != nil {

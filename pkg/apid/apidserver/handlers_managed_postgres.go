@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	managedpostgresapi "github.com/onebox-faas/faas/pkg/apid/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -17,6 +19,10 @@ import (
 )
 
 func managedPostgresProblem(w http.ResponseWriter, err error) {
+	if problem := managedpg.LimitProblem(err); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if managedpostgresapi.WriteCapacityProblem(w, err) {
 		return
 	}
@@ -25,6 +31,10 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, managedpostgres.ErrProvisioningClosed):
 		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_provisioning_not_enabled", "Managed PostgreSQL provisioning is closed", managedpostgres.ProvisioningClosedDetail
+	case errors.Is(err, managedpostgres.ErrFleetFreePaused):
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_new_databases_paused", "New managed PostgreSQL databases are paused", managedpostgres.FleetFreePausedDetail
+	case errors.Is(err, managedpostgres.ErrFleetPaused):
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_new_databases_paused", "New managed PostgreSQL databases are paused", managedpostgres.FleetPausedDetail
 	case errors.Is(err, managedpostgres.ErrUnavailable):
 		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_unavailable", "Managed PostgreSQL unavailable", managedpostgres.UnavailableDetail
 	case errors.Is(err, managedpostgres.ErrNotFound):
@@ -63,25 +73,35 @@ func managedPostgresNotConfiguredProblem(w http.ResponseWriter) {
 		http.StatusServiceUnavailable,
 		"managed_postgres_unavailable",
 		"Managed PostgreSQL unavailable",
-		"Managed PostgreSQL is an operator preview and is not configured for this environment. The platform operator must qualify and configure a provider before this command can be used.",
+		"Managed PostgreSQL is not configured for this environment. The platform operator must configure a provider before this command can be used.",
 	).WithDocs("https://gregale.dev/docs/managed-postgres"))
+}
+
+// managedPostgresFreeClosed reports whether a Free-plan owner is refused a
+// new database. Free has no overage to pay for compute past its allowance,
+// and only enforced caps (FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on) suspend
+// it there. Under shadow or off a Free database with steady traffic ran its
+// provider compute all month (~730 compute-unit hours against 5) at
+// Gregale's cost, and Free sign-ups are unlimited. Every create path checks
+// it: the create route, Compose and dev databases here, and the service's
+// admission for the rest (bug hunt 33 H1).
+func managedPostgresFreeClosed(plan api.Plan, mode managedpostgres.CapEnforcementMode) bool {
+	return plan == api.PlanFree && mode != managedpostgres.CapEnforcementOn
 }
 
 func managedPostgresPlanDenied(w http.ResponseWriter, plan api.Plan, detail string) {
 	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan", fmt.Sprintf("plan %q: %s", plan, detail)))
 }
 
+// managedPostgresSpecWithinPlan is the plan check a restore or an undelete
+// makes of an existing database's spec, after a downgrade among others.
+func managedPostgresSpecWithinPlan(limits api.ManagedPostgresPlanLimits, spec managedpostgres.Spec) bool {
+	return managedPostgresPlanAllows(limits, spec) && (spec.ScaleToZero || limits.AlwaysOnAllowed) &&
+		spec.StorageLimitBytes <= limits.StorageLimitBytes && spec.RestoreWindowSeconds <= limits.RestoreWindowSeconds
+}
+
 func managedPostgresPlanAllows(limits api.ManagedPostgresPlanLimits, spec managedpostgres.Spec) bool {
-	switch spec.Class {
-	case managedpostgres.ClassDevelopment:
-		return limits.DevelopmentAllowed
-	case managedpostgres.ClassBurstable:
-		return limits.BurstableAllowed
-	case managedpostgres.ClassProduction:
-		return limits.ProductionAllowed
-	default:
-		return false
-	}
+	return managedpg.PlanAllowsClass(limits, spec.Class)
 }
 
 func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest, limits api.ManagedPostgresPlanLimits) (managedpostgres.Spec, error) {
@@ -145,7 +165,36 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 	if database.DeletedAt != nil {
 		out.DeletedAt = database.DeletedAt.UTC().Format(time.RFC3339Nano)
 	}
+	if managedPostgresDeleteScheduled(database) {
+		out.RestorableUntil = database.PurgeAfter.UTC().Format(time.RFC3339Nano)
+	}
+	if !database.RestoreSlotUntil.IsZero() && database.State != managedpostgres.StateDeleted {
+		out.RestoreSlotUntil = database.RestoreSlotUntil.UTC().Format(time.RFC3339Nano)
+	}
+	if earliest, latest, ok := database.RestoreRange(time.Now().UTC()); ok {
+		out.RestoreRange = &api.ManagedPostgresRestoreRange{Earliest: earliest.UTC().Format(time.RFC3339Nano), Latest: latest.UTC().Format(time.RFC3339Nano)}
+	}
 	return out
+}
+
+// recordManagedPostgresRestoreSlotExpired audits a copy whose delete the
+// restore slot sweep scheduled (ADR-20261031123259); the system, not the
+// customer, deleted it.
+func (s *server) recordManagedPostgresRestoreSlotExpired(ctx context.Context, database managedpostgres.Database) {
+	if s.audit == nil {
+		return
+	}
+	accountID := database.AccountID
+	s.audit.Emit(ctx, "managed_postgres.database.restore_slot_expired", &accountID, map[string]any{
+		"database_id": database.ID, "source_database_id": database.RestoreSourceDatabaseID,
+		"restorable_until": database.PurgeAfter.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// managedPostgresDeleteScheduled reports a customer delete still in its undo
+// window (ADR-20261029174950); a purge clears PurgeAfter.
+func managedPostgresDeleteScheduled(database managedpostgres.Database) bool {
+	return database.State == managedpostgres.StateDeleting && !database.PurgeAfter.IsZero()
 }
 
 func managedPostgresBindingView(binding managedpostgres.Binding) api.ManagedPostgresBinding {
@@ -162,9 +211,24 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 		managedPostgresProblem(w, err)
 		return
 	}
+	ids := make([]string, len(databases))
+	for i, database := range databases {
+		ids[i] = database.ID
+	}
+	filter, problem := s.listLabels(r, acct, state.LabelKindDatabase, ids)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	excess := s.managedPostgresPlanExcess(databases, acct.Plan)
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
-		items = append(items, managedPostgresView(database))
+		if filter.keep(database.ID) {
+			view := managedPostgresView(database)
+			view.Labels = filter.labelsOf(database.ID)
+			view.PlanExcess = excess[database.ID]
+			items = append(items, view)
+		}
 	}
 	writeJSON(w, http.StatusOK, api.ManagedPostgresDatabaseList{Items: items})
 }
@@ -254,12 +318,20 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL usage is not available for this plan")
 		return
 	}
-	summary, overage, err := s.managedPostgresUsageFor(r.Context(), acct, acct.ResourceOwnerID(), limits)
+	subject := acct.ResourceOwnerID()
+	summary, overage, err := s.managedPostgresUsageFor(r.Context(), acct, subject, limits)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage))
+	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage)
+	if view.ComputeCapState == api.ManagedPostgresComputeCapSuspended {
+		if view.ComputeSuspendedAt, err = s.managedPostgres.CapSuspendedAt(r.Context(), subject, time.Now().UTC()); err != nil {
+			managedPostgresProblem(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
@@ -349,6 +421,10 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
 		return
 	}
+	if managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
+		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL opens to the Free plan once compute caps are enforced; upgrade to a paid plan to create a database")
+		return
+	}
 	var req api.CreateManagedPostgresDatabaseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
@@ -385,7 +461,10 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresView(database))
+	view := managedPostgresView(database)
+	view.Labels = s.resourceLabels(r, acct, state.LabelKindDatabase, database.ID)
+	view.PlanExcess = s.managedPostgresPlanExcessOf(r.Context(), acct, database.ID)
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -393,14 +472,75 @@ func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresNotConfiguredProblem(w)
 		return
 	}
-	database, err := s.managedPostgres.Delete(r.Context(), acct.ID, r.PathValue("id"))
+	// A customer's delete keeps the database for the grace period;
+	// purge=true deletes at once, as internal deletes do (ADR-20261029174950).
+	purge, err := managedPostgresPurgeParam(r)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
-	s.audit.Emit(r.Context(), "managed_postgres.database.deleted", &acct.ID, map[string]any{
-		"database_id": database.ID, "state": database.State,
-	})
+	var database managedpostgres.Database
+	if purge {
+		database, err = s.managedPostgres.Delete(r.Context(), acct.ID, r.PathValue("id"))
+	} else {
+		database, err = s.managedPostgres.ScheduleDelete(r.Context(), acct.ID, r.PathValue("id"))
+	}
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	if managedPostgresDeleteScheduled(database) {
+		s.audit.Emit(r.Context(), "managed_postgres.database.delete_scheduled", &acct.ID, map[string]any{
+			"database_id": database.ID, "restorable_until": database.PurgeAfter.UTC().Format(time.RFC3339Nano),
+		})
+	} else {
+		s.audit.Emit(r.Context(), "managed_postgres.database.deleted", &acct.ID, map[string]any{
+			"database_id": database.ID, "state": database.State, "purge": purge,
+		})
+	}
+	writeJSON(w, http.StatusOK, managedPostgresView(database))
+}
+
+func managedPostgresPurgeParam(r *http.Request) (bool, error) {
+	raw := r.URL.Query().Get("purge")
+	if raw == "" {
+		return false, nil
+	}
+	purge, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%w: purge must be true or false", managedpostgres.ErrInvalid)
+	}
+	return purge, nil
+}
+
+// undeleteManagedPostgresDatabase returns a scheduled database to ready while
+// its restorable_until is in the future. The plan check a restore makes
+// applies here too: a downgrade can leave the spec outside the plan.
+func (s *server) undeleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if s.managedPostgres == nil {
+		managedPostgresNotConfiguredProblem(w)
+		return
+	}
+	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
+	if !ok || limits.DatabasesMax == 0 {
+		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to undelete a database")
+		return
+	}
+	scheduled, err := s.managedPostgres.Get(r.Context(), acct.ID, r.PathValue("id"))
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	if !managedPostgresSpecWithinPlan(limits, scheduled.Spec) {
+		managedPostgresPlanDenied(w, acct.Plan, "the database exceeds the current plan allowance")
+		return
+	}
+	database, err := s.managedPostgres.Undelete(r.Context(), acct.ID, scheduled.ID)
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	s.audit.Emit(r.Context(), "managed_postgres.database.undeleted", &acct.ID, map[string]any{"database_id": database.ID})
 	writeJSON(w, http.StatusOK, managedPostgresView(database))
 }
 
@@ -419,7 +559,7 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
-	if !managedPostgresPlanAllows(limits, source.Spec) || (!source.Spec.ScaleToZero && !limits.AlwaysOnAllowed) || source.Spec.StorageLimitBytes > limits.StorageLimitBytes || source.Spec.RestoreWindowSeconds > limits.RestoreWindowSeconds {
+	if !managedPostgresSpecWithinPlan(limits, source.Spec) {
 		managedPostgresPlanDenied(w, acct.Plan, "the source database exceeds the current plan allowance")
 		return
 	}
@@ -480,6 +620,10 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 	// Application Auth is a dark launch: without it the mode is unknown.
 	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(flagSubject(r, acct)) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return
+	}
+	if problem := s.dataAPIAccessProblem(appFlagSubject(acct, app), managedpostgres.CredentialAccess(req.Access), `access "data_api"`); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: app.AccountID, DatabaseAccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})

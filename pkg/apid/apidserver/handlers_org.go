@@ -23,6 +23,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -78,6 +79,10 @@ func (s *server) createSharedOrg(w http.ResponseWriter, r *http.Request, acct st
 			api.CodeValidation, "Name required", "name must be a non-empty string"))
 		return
 	}
+	if prob := s.freeOrganizationLimit(r.Context(), acct.ID); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	// Plan defaults to Free; CreateOrg stamps it. The caller seeds
 	// the exactly-one-owner partial unique (zero owners at insert
 	// time), so AddOrgMember cannot trip ErrOrgLastOwner.
@@ -118,6 +123,37 @@ func (s *server) createSharedOrg(w http.ResponseWriter, r *http.Request, acct st
 		"org_id": newOrg.ID, "slug": newOrg.Slug, "name": newOrg.Name,
 	})
 	writeJSON(w, http.StatusCreated, api.OrgResponseFromRow(orgToRow(newOrg)))
+}
+
+// freeOrganizationLimit refuses a new organization while the caller owns
+// api.FreeOrganizationsOwnedMax organizations on the Free plan
+// (ADR-20261031090658). A new organization starts on Free and owns its
+// resources, so each one is another Free app and allowance.
+func (s *server) freeOrganizationLimit(ctx context.Context, accountID string) *api.Problem {
+	orgs, err := s.store.ListOrgsForAccount(ctx, accountID)
+	if err != nil {
+		return api.ErrCapacity("could not read your organizations")
+	}
+	owned := 0
+	for _, org := range orgs {
+		if org.Personal || org.DeletedPending || org.Plan != api.PlanFree {
+			continue
+		}
+		members, err := s.store.ListOrgMembers(ctx, org.ID)
+		if err != nil {
+			return api.ErrCapacity("could not read your organizations")
+		}
+		for _, m := range members {
+			if m.AccountID == accountID && m.Role == state.OrgRoleOwner && m.RemovedAt == nil {
+				owned++
+				break
+			}
+		}
+	}
+	if owned >= api.FreeOrganizationsOwnedMax {
+		return api.ErrOrgFreeLimitExceeded(api.FreeOrganizationsOwnedMax, owned)
+	}
+	return nil
 }
 
 // getOrg returns the active org by slug. Authorise org.view first
@@ -249,6 +285,21 @@ func (s *server) softDeleteOrg(w http.ResponseWriter, r *http.Request, acct stat
 	org, ok := s.loadMutableOrgByMembership(r.Context(), w, mem)
 	if !ok {
 		return
+	}
+	// Organizations are never purged, so deleting one with apps left them,
+	// their deployments, secrets and artifacts, in place forever, and blocked
+	// their creators' own account erasure (bug hunt 2026-10-28 B20).
+	if lister, ok := s.store.(state.OrgAppLister); ok {
+		apps, err := lister.ListAppsByOrg(r.Context(), org.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not check the organization's apps; try again"))
+			return
+		}
+		if len(apps) > 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization has apps",
+				fmt.Sprintf("delete the organization's %d apps before deleting the organization", len(apps))))
+			return
+		}
 	}
 	// A deleted organization must not keep paying (Hunt 17 H17-2), and
 	// organizations are never hard-deleted, so this is the only chance.

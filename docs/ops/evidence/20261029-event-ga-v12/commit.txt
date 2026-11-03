@@ -1,0 +1,1 @@
+5fa05503 docs(events): the event GA gate: targets, durability and the failover drill (ADR-20261029093000)

@@ -90,18 +90,18 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ScheduleReleaseRequest,
 ) -> Response[Problem | ScheduledRelease]:
-    """Schedule, or move, the start of a release waiting without traffic (ADR-20261021152201).
+    """Schedule, or move, the start of a release waiting without traffic.
 
      The release must be live without traffic and without a canary ladder, or still building to go live
-    without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on
-    apid's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless
+    without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on the
+    API's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless
     override_freeze gives a reason. An app that requires approvals needs a canary: 409
     `release_approval_canary_required`. An app's earlier pending schedule is cancelled.
 
     Args:
         id (str):
         body (ScheduleReleaseRequest): When and how a release waiting without traffic starts its
-            rollout (ADR-20261021152201).
+            rollout.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -129,18 +129,18 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ScheduleReleaseRequest,
 ) -> Problem | ScheduledRelease | None:
-    """Schedule, or move, the start of a release waiting without traffic (ADR-20261021152201).
+    """Schedule, or move, the start of a release waiting without traffic.
 
      The release must be live without traffic and without a canary ladder, or still building to go live
-    without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on
-    apid's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless
+    without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on the
+    API's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless
     override_freeze gives a reason. An app that requires approvals needs a canary: 409
     `release_approval_canary_required`. An app's earlier pending schedule is cancelled.
 
     Args:
         id (str):
         body (ScheduleReleaseRequest): When and how a release waiting without traffic starts its
-            rollout (ADR-20261021152201).
+            rollout.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,18 +163,18 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ScheduleReleaseRequest,
 ) -> Response[Problem | ScheduledRelease]:
-    """Schedule, or move, the start of a release waiting without traffic (ADR-20261021152201).
+    """Schedule, or move, the start of a release waiting without traffic.
 
      The release must be live without traffic and without a canary ladder, or still building to go live
-    without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on
-    apid's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless
+    without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on the
+    API's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless
     override_freeze gives a reason. An app that requires approvals needs a canary: 409
     `release_approval_canary_required`. An app's earlier pending schedule is cancelled.
 
     Args:
         id (str):
         body (ScheduleReleaseRequest): When and how a release waiting without traffic starts its
-            rollout (ADR-20261021152201).
+            rollout.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -200,18 +200,18 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ScheduleReleaseRequest,
 ) -> Problem | ScheduledRelease | None:
-    """Schedule, or move, the start of a release waiting without traffic (ADR-20261021152201).
+    """Schedule, or move, the start of a release waiting without traffic.
 
      The release must be live without traffic and without a canary ladder, or still building to go live
-    without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on
-    apid's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless
+    without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on the
+    API's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless
     override_freeze gives a reason. An app that requires approvals needs a canary: 409
     `release_approval_canary_required`. An app's earlier pending schedule is cancelled.
 
     Args:
         id (str):
         body (ScheduleReleaseRequest): When and how a release waiting without traffic starts its
-            rollout (ADR-20261021152201).
+            rollout.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

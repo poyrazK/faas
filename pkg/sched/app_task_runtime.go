@@ -147,7 +147,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		apiEnv = appendRehearsalPlatformAPI(apiEnv)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, request.ArtifactKey)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
@@ -166,7 +166,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		EgressPorts:         app.EgressPorts,
 		PrivateNetworkCIDRs: privateNetwork.CIDRs, PrivateNetworkAllowedCIDRs: privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules, PrivateNetworkID: privateNetwork.NetworkID,
-		PrivateNetworkAddress: privateNetwork.Address, StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		PrivateNetworkAddress: privateNetwork.Address, StaticEgressIP: deploymentStaticEgressIP(app, dep),
 		Port: deploymentRuntimePort(dep), HealthcheckPath: healthcheckPath,
 		HealthcheckGRPC:        healthcheckGRPC,
 		HealthcheckGRPCService: healthcheckGRPCService,

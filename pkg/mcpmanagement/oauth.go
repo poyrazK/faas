@@ -40,8 +40,12 @@ func (r *remoteServer) registerClient(w http.ResponseWriter, req *http.Request) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pruneLocked()
-	if len(r.clients) >= maxOAuthEntries {
+	if len(r.clients) >= r.capacity() {
 		oauthError(w, 429, "temporarily_unavailable", "Client registration capacity reached")
+		return
+	}
+	if !r.registrationAllowedLocked(req) {
+		oauthError(w, 429, "temporarily_unavailable", "Too many client registrations from this address; try again later")
 		return
 	}
 	r.clients[id] = &oauthClient{ID: id, Name: safetext.Truncate(safetext.Clean(input.ClientName), 80), Redirects: append([]string(nil), input.RedirectURIs...), Expires: time.Now().Add(24 * time.Hour)}

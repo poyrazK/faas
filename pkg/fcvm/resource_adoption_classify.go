@@ -66,6 +66,10 @@ type AdoptionVerdict struct {
 	Reason string
 	// Detail is a human-readable explanation for logs.
 	Detail string
+	// Gone marks a refusal whose guest process no longer runs (another
+	// kernel boot, its pid absent or reused): restarting vmmd loses nothing
+	// for it, so it does not stand in the way of a no-drain restart.
+	Gone bool
 	// FenceRepair marks an adoptable guest whose cgroup memory.max drifted
 	// from the recorded fence; adoption repairs it first (proof step 4).
 	FenceRepair bool
@@ -224,14 +228,53 @@ func refuse(instance, reason, detail string) AdoptionVerdict {
 	return AdoptionVerdict{Instance: instance, Reason: reason, Detail: detail}
 }
 
+// AdoptionGuestGone reports whether a refusal reason means the recorded guest
+// process no longer runs.
+func AdoptionGuestGone(reason string) bool {
+	switch reason {
+	case adoptionRefusedOtherBoot, adoptionRefusedProcessAbsent, adoptionRefusedProcessReused:
+		return true
+	}
+	return false
+}
+
+// guestGone refuses a record whose guest process provably no longer runs:
+// recorded on another kernel boot, its pid absent, or naming another process.
+// It needs only the record's process provenance, so it also judges records
+// without an adoption block, which classifyRecord refuses before any proof.
+func (c adoptionClassifier) guestGone(r resourceJournalRecord) (AdoptionVerdict, bool) {
+	if r.Process == nil {
+		return AdoptionVerdict{}, false
+	}
+	id, want := r.Lease.Instance, *r.Process
+	var v AdoptionVerdict
+	switch current, err := readResourceProcessIdentity(c.procRoot, want.PID); {
+	case want.BootID != c.bootID:
+		v = refuse(id, adoptionRefusedOtherBoot, "recorded on boot "+want.BootID)
+	case errors.Is(err, errResourceProcessAbsent):
+		v = refuse(id, adoptionRefusedProcessAbsent, "pid "+strconv.Itoa(want.PID)+" is gone")
+	case err == nil && current != want:
+		v = refuse(id, adoptionRefusedProcessReused, "pid "+strconv.Itoa(want.PID)+" names another process")
+	default:
+		return AdoptionVerdict{}, false
+	}
+	v.Gone = true
+	return v, true
+}
+
 // classify applies proof steps 1–6 in order and reports the first failure.
+// A record whose guest is gone says so, whatever step would refuse it first.
 func (c adoptionClassifier) classify(ctx context.Context, r resourceJournalRecord) AdoptionVerdict {
 	resolved, refused, ok := classifyRecord(r)
 	if !ok {
+		if gone, isGone := c.guestGone(r); isGone {
+			return gone
+		}
 		return refused
 	}
 	repair, v, ok := c.prove(ctx, r)
 	if !ok {
+		v.Gone = AdoptionGuestGone(v.Reason)
 		return v
 	}
 	return AdoptionVerdict{Instance: r.Lease.Instance, Adoptable: true, FenceRepair: repair, Resolved: resolved}

@@ -190,7 +190,7 @@ func TestAnalyzeAppliesHostingOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.StartCommand != "npm run serve" || got.Port != 8787 || got.HealthPath != "/ready" {
+	if got.StartCommand != "npm run serve" || got.Port != 8787 || got.HealthPath != "/ready" || !got.HealthFromConfig {
 		t.Fatalf("profile = %+v, want configured run contract", got)
 	}
 	if got.ConfigFile != "gregale.yaml" || !got.Inferred {
@@ -210,8 +210,8 @@ func TestAnalyzePythonUsesNestedApplicationEntrypoint(t *testing.T) {
 	if got.PackageManager != "uv" || got.StartCommand != "uvicorn src.api:api --host 0.0.0.0 --port $PORT" {
 		t.Fatalf("profile = %+v, want uv + nested FastAPI entrypoint", got)
 	}
-	if got.HealthPath != "/health" {
-		t.Fatalf("health path = %q, want /health", got.HealthPath)
+	if got.HealthPath != "/health" || got.HealthFromConfig {
+		t.Fatalf("health path = %q from config %v, want inferred /health", got.HealthPath, got.HealthFromConfig)
 	}
 }
 

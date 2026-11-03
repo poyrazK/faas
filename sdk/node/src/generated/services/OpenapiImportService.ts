@@ -18,10 +18,10 @@ export class OpenapiImportService {
    *
    * - `manual_import` (default): returns the customer's uploaded
    * doc verbatim. Mirrors item #1's /deployments/{dep}/openapi
-   * but on the app-keyed `app_openapi_docs` table (ADR-126 D1).
+   * but on the app-keyed `app_openapi_docs` table.
    *
-   * - `auto`: runs pkg/openapidiff.GenerateFromApp with the
-   * imported doc + observed routes (ADR-093 bridge) +
+   * - `auto`: generates a document from the
+   * imported doc + observed routes (bridge) +
    * existing edge rules; the merged spec is cached for 5 min
    * per (app_id, sha(doc), sha(routes), sha(rules)). Cache
    * headers: X-Faas-Cache: hit|miss, X-OpenAPI-Doc-Source:
@@ -32,7 +32,7 @@ export class OpenapiImportService {
    * including Free can import. Per-account row cap is
    * Plan.OpenAPIImportsPerAccount (Free 100, Hobby 1000,
    * Pro 10000, Scale 10000). Plan-tier gate is intentionally
-   * absent on this surface (ADR-126 D6).
+   * absent on this surface.
    *
    * @returns any The OpenAPI document (imported or auto-generated).
    * @throws ApiError
@@ -69,9 +69,8 @@ export class OpenapiImportService {
   }
   /**
    * Import an OpenAPI document for an app.
-   * Customer-facing import (ADR-126 / issue #975 item #2).
-   * Reads the body, validates via
-   * pkg/openapiimport.ValidateImport (structural-minimum
+   * Customer-facing import.
+   * Reads the body, validates it (structural-minimum
    * OpenAPI 3.0 / 3.1 check), enforces size + endpoint
    * caps, persists via UpsertAppOpenAPIDoc, emits
    * app.openapi_import.replaced audit + pg_notify on
@@ -200,7 +199,7 @@ export class OpenapiImportService {
   /**
    * Preview declared routes, observed routes, and matching edge policies.
    * Read-only route-policy preview for API-hosting roadmap item 11.
-   * Joins the persisted OpenAPI declaration with gatewayd's observed
+   * Joins the persisted OpenAPI declaration with the gateway's observed
    * route labels and the app's edge rules. Each route is classified as
    * `matched`, `declared_only`, or `observed_only`; `covered` is true
    * when at least one enabled edge rule matches the path and method.
@@ -279,7 +278,7 @@ export class OpenapiImportService {
   }
   /**
    * Preview the production OpenAPI contract gate.
-   * Read-only ADR-121 contract diff. Compares the current projected
+   * Read-only contract diff. Compares the current projected
    * OpenAPI surface against the latest captured live snapshot in the
    * requested scope (default `prod`). `blocking=true` means a production
    * promotion would be rejected while `FAAS_API_CONTRACT_DIFF_ENABLED`

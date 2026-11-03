@@ -9,3 +9,13 @@ func TestPgComputeNodeReadiness(t *testing.T) {
 	store, _, _ := pgWithPool(t)
 	testComputeNodeReadiness(t, store)
 }
+
+func TestPgComputeNodeWakeBreaker(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testComputeNodeWakeBreaker(t, store)
+}
+
+func TestPgComputeNodeCPUPressure(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testComputeNodeCPUPressure(t, store)
+}

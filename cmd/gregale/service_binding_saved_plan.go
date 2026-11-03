@@ -99,7 +99,7 @@ func cmdBindingsServiceApply(args []string) int {
 	path := fs.String("plan", "", "saved service binding plan")
 	flags, pos := splitArgsForFlags(args)
 	if fs.Parse(flags) != nil || fs.NArg() != 0 || len(pos) != 1 || !api.ValidAppSlug(pos[0]) || *path == "" {
-		return printErr("Invalid service plan", fmt.Errorf("usage: gregale bindings service apply APP --plan plan.json"))
+		return printErr("Invalid service plan", fmt.Errorf("usage: gregale app binding service apply APP --plan plan.json"))
 	}
 	plan, err := readServiceBindingPlan(*path)
 	if err != nil {

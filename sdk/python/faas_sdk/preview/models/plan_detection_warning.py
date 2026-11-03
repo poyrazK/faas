@@ -15,8 +15,7 @@ T = TypeVar("T", bound="PlanDetectionWarning")
 
 @_attrs_define
 class PlanDetectionWarning:
-    """One detector decision that did not become a standalone workload
-    (issue #742). Outcome is merged when the candidate collapsed into
+    """One detector decision that did not become a standalone workload. Outcome is merged when the candidate collapsed into
     the winning workload, or skipped when the detector rejected it.
     The legacy warnings string list remains available for compatibility.
 

@@ -51,6 +51,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
+
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
 
@@ -89,7 +94,8 @@ def sync_detailed(
      Returns every trigger owned by the calling account, optional
     ?app_id filter to scope to one app, ?kind to scope to one
     kind. Newest-first by created_at; result is unbounded but
-    the typical account has well under 200.
+    the typical account has well under 200. Cron schedules are
+    not triggers: list them with GET /v1/crons.
 
     Args:
         app_id (str | Unset):
@@ -126,7 +132,8 @@ def sync(
      Returns every trigger owned by the calling account, optional
     ?app_id filter to scope to one app, ?kind to scope to one
     kind. Newest-first by created_at; result is unbounded but
-    the typical account has well under 200.
+    the typical account has well under 200. Cron schedules are
+    not triggers: list them with GET /v1/crons.
 
     Args:
         app_id (str | Unset):
@@ -158,7 +165,8 @@ async def asyncio_detailed(
      Returns every trigger owned by the calling account, optional
     ?app_id filter to scope to one app, ?kind to scope to one
     kind. Newest-first by created_at; result is unbounded but
-    the typical account has well under 200.
+    the typical account has well under 200. Cron schedules are
+    not triggers: list them with GET /v1/crons.
 
     Args:
         app_id (str | Unset):
@@ -193,7 +201,8 @@ async def asyncio(
      Returns every trigger owned by the calling account, optional
     ?app_id filter to scope to one app, ?kind to scope to one
     kind. Newest-first by created_at; result is unbounded but
-    the typical account has well under 200.
+    the typical account has well under 200. Cron schedules are
+    not triggers: list them with GET /v1/crons.
 
     Args:
         app_id (str | Unset):

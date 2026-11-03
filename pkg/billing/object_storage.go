@@ -12,8 +12,8 @@ import (
 )
 
 // ObjectStorageLineItemPolicy is the explicit commercial rollout boundary for
-// month-close object-storage charges. EffectiveFrom must be a UTC month
-// boundary. Off is represented by a sink returning ok=false.
+// object-storage charges. EffectiveFrom must be a UTC month boundary. Off is
+// represented by a sink returning ok=false.
 type ObjectStorageLineItemPolicy struct {
 	Provider      string
 	Mode          MeterDeliveryMode
@@ -28,17 +28,18 @@ func (p ObjectStorageLineItemPolicy) valid() bool {
 		p.EffectiveFrom.Equal(state.ObjectStoragePeriod(p.EffectiveFrom))
 }
 
-// ObjectStorageLineItemSink is the provider adapter seam for a finalized
-// period. Implementations must expose an explicit rollout policy, use
-// record.ID as their external idempotency key, and translate millicents into
-// the provider's native currency unit. chargeMillicents is what to bill: the
-// record's total held under the account's overage cap (ADR-1320), never more
-// than record.TotalMillicents. Keeping this optional interface separate from
-// Provider avoids forcing every billing integration to support object-storage
-// line items at once.
+// ObjectStorageLineItemSink is the provider adapter seam for object-storage
+// charges, delivered in steps during the month and finished at month close
+// (ADR-20261027093220). Implementations must expose an explicit rollout
+// policy, bill each step's TargetMillicents − DeliveredMillicents, key their
+// external idempotency on the account, the month and TargetMillicents, and
+// translate millicents into the provider's native currency unit. Steps are
+// already held under the account's overage cap (ADR-1320). Keeping this
+// optional interface separate from Provider avoids forcing every billing
+// integration to support object-storage charges at once.
 type ObjectStorageLineItemSink interface {
 	ObjectStorageLineItemPolicy() (ObjectStorageLineItemPolicy, bool)
-	PublishObjectStorageLineItem(ctx context.Context, record state.ObjectStorageBillingRecord, chargeMillicents int64) error
+	PublishObjectStorageCharge(ctx context.Context, step ObjectStorageChargeStep) error
 }
 
 // ObjectStorageAccountSource is the narrow account-walk seam used by the
@@ -50,10 +51,12 @@ type ObjectStorageAccountSource interface {
 }
 
 // FinalizeObjectStoragePeriods closes the completed UTC month for every
-// account that had object-storage activity and optionally publishes each
-// immutable record to the configured billing provider. The ledger write
-// happens before publication; a later retry therefore reuses the same record
-// ID and lets the sink deduplicate an ambiguous provider response.
+// account that had object-storage activity. With a sink, a last step brings
+// the charge delivered during the month up to the record's total under the
+// cap, and a receipt records the month's cumulative charge
+// (ADR-20261027093220). The ledger write happens before publication; a retry
+// reuses the same record, and the step's idempotency key lets the sink
+// deduplicate an ambiguous provider response.
 //
 // Accounts without buckets, reports, or authorizations are skipped so a
 // deployment does not manufacture zero-value invoice rows for every compute
@@ -68,19 +71,10 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 	if !periodStart.Before(state.ObjectStoragePeriod(now)) {
 		return nil, state.ErrObjectBillingOpen
 	}
-	var policy ObjectStorageLineItemPolicy
-	if sink != nil {
-		var enabled bool
-		policy, enabled = sink.ObjectStorageLineItemPolicy()
-		if !enabled {
-			sink = nil
-		} else if !policy.valid() {
-			return nil, errors.New("billing: invalid object storage line item policy")
-		}
+	run, deliver, err := newObjectStorageChargeRun(store, sink, now)
+	if err != nil {
+		return nil, err
 	}
-	// The sink's egress policy prices the live egress that the overage cap
-	// reserves before object storage, as meterd prices it (ADR-1320).
-	policies, _ := sink.(MeterUsagePolicyProvider)
 	all, err := accounts.ListAllAccounts(ctx)
 	if err != nil {
 		return nil, err
@@ -109,47 +103,20 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 			failures = append(failures, fmt.Errorf("account %s: finalize object usage: %w", account.ID, err))
 			continue
 		}
-		if sink != nil {
-			if _, err := store.GetObjectStorageBillingDelivery(ctx, policy.Provider, record.ID); err == nil {
+		if deliver {
+			if _, err := store.GetObjectStorageBillingDelivery(ctx, run.policy.Provider, record.ID); err == nil {
 				finalized = append(finalized, record)
 				continue
 			} else if !errors.Is(err, state.ErrNotFound) {
 				failures = append(failures, fmt.Errorf("account %s: read object billing delivery: %w", account.ID, err))
 				continue
 			}
-
-			delivery := state.ObjectStorageBillingDelivery{
-				Provider:           policy.Provider,
-				BillingRecordID:    record.ID,
-				AccountID:          record.AccountID,
-				PeriodStart:        record.PeriodStart,
-				QuantityMillicents: record.TotalMillicents,
-				DeliveredAt:        now,
-			}
-			switch {
-			case record.PeriodStart.Before(policy.EffectiveFrom):
-				delivery.Mode = state.ObjectStorageDeliveryPreActivation
-				delivery.QuantityMillicents = 0
-			case !account.Plan.IsPaid():
-				delivery.Mode = state.ObjectStorageDeliveryPlanIneligible
-				delivery.QuantityMillicents = 0
-			default:
-				// Shadow records what live would bill, so both stay under the
-				// overage cap (ADR-1320).
-				charge, err := objectStorageChargeWithinCap(ctx, store, policies, account, record)
-				if err != nil {
-					failures = append(failures, fmt.Errorf("account %s: object storage spend cap: %w", account.ID, err))
-					continue
-				}
-				delivery.QuantityMillicents = charge
-				delivery.Mode = state.ObjectStorageDeliveryShadow
-				if policy.Mode == MeterDeliveryLive {
-					delivery.Mode = state.ObjectStorageDeliveryLive
-					if err := sink.PublishObjectStorageLineItem(ctx, record, charge); err != nil {
-						failures = append(failures, fmt.Errorf("account %s: publish object usage: %w", account.ID, err))
-						continue
-					}
-				}
+			// Shadow records what live would bill, so both stay under the
+			// overage cap (ADR-1320).
+			delivery, err := run.closeMonth(ctx, account, record)
+			if err != nil {
+				failures = append(failures, fmt.Errorf("account %s: deliver object usage: %w", account.ID, err))
+				continue
 			}
 			if _, err := store.RecordObjectStorageBillingDelivery(ctx, delivery); err != nil {
 				failures = append(failures, fmt.Errorf("account %s: record object billing delivery: %w", account.ID, err))

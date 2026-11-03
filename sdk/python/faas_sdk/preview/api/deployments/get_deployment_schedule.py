@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ScheduledRelease]:
-    """Show a release's schedule (ADR-20261021152201).
+    """Show a release's schedule.
 
      The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the
     release was never scheduled.
@@ -102,7 +102,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ScheduledRelease | None:
-    """Show a release's schedule (ADR-20261021152201).
+    """Show a release's schedule.
 
      The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the
     release was never scheduled.
@@ -129,7 +129,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ScheduledRelease]:
-    """Show a release's schedule (ADR-20261021152201).
+    """Show a release's schedule.
 
      The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the
     release was never scheduled.
@@ -159,7 +159,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ScheduledRelease | None:
-    """Show a release's schedule (ADR-20261021152201).
+    """Show a release's schedule.
 
      The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the
     release was never scheduled.

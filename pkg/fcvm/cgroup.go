@@ -97,15 +97,21 @@ var cgroupRoot = "/sys/fs/cgroup"
 // the quota must land in cpu.max so the kernel enforces it.
 //
 // A zero CPU value is accepted for legacy callers and resolves to the plan
-// quota.
-func writeAppCgroup(instance string, plan api.Plan, planMB, cpuMillicores int) error {
+// quota. cpu.max comes from leaseCPUMax, the same value the lease's fence
+// records, so an agent run's whole vCPUs (ADR-20261027090014 §3) are written as well
+// as tracked.
+func writeLeaseCgroup(l Lease, planMB int) error {
 	if planMB < 1 {
 		return fmt.Errorf("fcvm: cgroup: planMB %d < 1", planMB)
 	}
-	if !plan.Valid() {
-		return fmt.Errorf("fcvm: cgroup: invalid plan %q (issue #301 / ADR-044)", plan)
+	if !l.Plan.Valid() {
+		return fmt.Errorf("fcvm: cgroup: invalid plan %q (issue #301 / ADR-044)", l.Plan)
 	}
-	return writeAppCgroupAt(ParentCgroupFor(plan), instance, plan, planMB, cpuMillicores)
+	cpuMax, err := leaseCPUMax(l)
+	if err != nil {
+		return err
+	}
+	return writeCgroupValuesAt(ParentCgroupFor(l.Plan), l.Instance, planMB, cpuMax)
 }
 
 // perInstanceControllers are the cgroup v2 controllers a per-VM scope needs.
@@ -175,6 +181,14 @@ func ensureSubtreeControllers(parentAbs string, want []string) error {
 	return nil
 }
 
+// EnsureCgroupParentControllers enables the per-VM controllers (memory, cpu,
+// pids) on parent, a path relative to the cgroup v2 mount, so the scopes
+// jailer creates under it get memory.max. Database VMs use their own parent
+// slice and call this before their first boot (ADR-1027).
+func EnsureCgroupParentControllers(parent string) error {
+	return ensureSubtreeControllers(filepath.Join(cgroupRoot, parent), perInstanceControllers)
+}
+
 // readCgroupSet reads a whitespace-separated cgroup pseudo-file into a set.
 // A missing file is reported as an error by the callers above, which is the
 // honest outcome: the parent slice must exist before a VM lands under it.
@@ -190,7 +204,7 @@ func readCgroupSet(path string) (map[string]bool, error) {
 	return out, nil
 }
 
-func writeAppCgroupAt(parent, instance string, plan api.Plan, planMB, cpuMillicores int) error {
+func writeCgroupValuesAt(parent, instance string, planMB int, cpuMax string) error {
 	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(instance))
 	if err := ensureSubtreeControllers(filepath.Join(cgroupRoot, parent), perInstanceControllers); err != nil {
 		return err
@@ -198,7 +212,7 @@ func writeAppCgroupAt(parent, instance string, plan api.Plan, planMB, cpuMillico
 	if err := writeMemoryMaxTo(scope, planMB); err != nil {
 		return err
 	}
-	if err := writeAppCPUMaxTo(scope, plan, cpuMillicores); err != nil {
+	if err := writeCPUMaxValueTo(scope, cpuMax); err != nil {
 		return err
 	}
 	// A running guest never swaps (ADR-906 decision 6); only a frozen one
@@ -305,6 +319,20 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 	}, nil
 }
 
+// leaseCPUMax returns the cpu.max value for a VM lease. An agent run's
+// networkless VM is sized in whole vCPUs (ADR-20261027090014 §3), beyond the app CPU
+// tiers; every other lease keeps the app rules.
+func leaseCPUMax(l Lease) (string, error) {
+	if !l.Networkless || l.CPUMillicores <= api.DefaultAppCPUMillicores || !api.ValidAgentRunCPUMillicores(l.CPUMillicores) {
+		return appCPUMax(l.Plan, l.CPUMillicores)
+	}
+	period := l.Plan.CPUPeriodUS()
+	if l.Plan.CPUQuotaUS() <= 0 || period <= 0 {
+		return "", fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", l.Plan, l.Plan.CPUQuotaUS(), period)
+	}
+	return fmt.Sprintf("%d %d", l.CPUMillicores*period/1000, period), nil
+}
+
 // appCPUMax returns the cpu.max value ("<quota> <period>") for an app VM.
 func appCPUMax(plan api.Plan, cpuMillicores int) (string, error) {
 	quota := plan.CPUQuotaUS()
@@ -338,6 +366,10 @@ func writeAppCPUMaxTo(scope string, plan api.Plan, cpuMillicores int) error {
 	if err != nil {
 		return err
 	}
+	return writeCPUMaxValueTo(scope, value)
+}
+
+func writeCPUMaxValueTo(scope, value string) error {
 	path := filepath.Join(scope, "cpu.max")
 	if err := os.WriteFile(path, []byte(value+"\n"), 0o644); err != nil {
 		if os.IsNotExist(err) {

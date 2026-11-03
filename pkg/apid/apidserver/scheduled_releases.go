@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/schedule"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -55,7 +57,11 @@ func (s *server) releaseFreezeOrSchedule(r *http.Request, acct state.Account, ap
 		if len(req.ReleaseNotify) > 0 {
 			return nil, api.ErrValidation("release_notify needs release_at")
 		}
-		return nil, s.releaseFreezeProblem(r, acct, app, req.Scope, req.OverrideFreeze)
+		p, overridden := s.checkReleaseFreeze(r, acct, app, req.Scope, req.OverrideFreeze)
+		if p == nil {
+			deferFreezeOverrideAudit(r, overridden)
+		}
+		return nil, p
 	}
 	at, p := api.ParseReleaseAt("release_at", req.ReleaseAt, time.Now().UTC())
 	if p != nil {
@@ -74,7 +80,19 @@ func (s *server) releaseFreezeOrSchedule(r *http.Request, acct state.Account, ap
 	if p != nil {
 		return nil, p
 	}
-	override, overrideIDs, p := s.scheduledFreezeOverride(r.Context(), acct, app, req.Scope, req.OverrideFreeze, at)
+	// A scheduled release is built, and its release command runs, now; only
+	// its traffic waits for release_at. A freeze active now refuses it as it
+	// refuses an immediate release (ADR-20261019071733 amendment 8).
+	nowProblem, overridden := s.checkReleaseFreeze(r, acct, app, req.Scope, req.OverrideFreeze)
+	if nowProblem != nil {
+		if nowProblem.Code == api.CodeReleaseFrozen {
+			nowProblem = nowProblem.WithHint("A scheduled release is built and runs its release command now; only its traffic waits for release_at. " +
+				"Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy with --override-freeze REASON; the override is audited.")
+		}
+		return nil, nowProblem
+	}
+	deferFreezeOverrideAudit(r, overridden)
+	override, overrideIDs, p := s.scheduledFreezeOverride(r, acct, app, req.Scope, req.OverrideFreeze, at)
 	if p != nil {
 		return nil, p
 	}
@@ -96,9 +114,13 @@ func scheduledReleaseEligible(app state.App, scope string) *api.Problem {
 
 // scheduledFreezeOverride evaluates deploy freezes at a release's time. A
 // freeze active then refuses the schedule unless override gives a reason;
-// the override then covers exactly those freezes.
-func (s *server) scheduledFreezeOverride(ctx context.Context, acct state.Account, app state.App, scope, override string, at time.Time) (string, []string, *api.Problem) {
-	active, err := freeze.ActiveFor(ctx, s.store, acct.ID, app.ID, scope, at)
+// the override then covers exactly those freezes. Overriding a company's
+// freeze needs the right to lift it, as an immediate release's override does
+// (ADR-20261019071733 amendments 5 and 7): release_at may be a minute from
+// now, so a schedule must not be how a deploy-only key ships past one.
+func (s *server) scheduledFreezeOverride(r *http.Request, acct state.Account, app state.App, scope, override string, at time.Time) (string, []string, *api.Problem) {
+	ctx := r.Context()
+	active, err := freeze.ActiveFor(ctx, s.store, app, scope, at)
 	if err != nil {
 		logCustomerFailure(s.log, "read deploy freezes", err)
 		return "", nil, api.ErrInternal("Gregale could not read your deploy freezes.").WithHint("Retry in a moment.")
@@ -114,6 +136,12 @@ func (s *server) scheduledFreezeOverride(ctx context.Context, acct state.Account
 	}
 	if p := freeze.ValidateReason("override_freeze", override); p != nil {
 		return "", nil, p
+	}
+	for _, f := range active {
+		if p := s.freezeOverrideProblem(r, acct, f); p != nil {
+			s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+			return "", nil, p
+		}
 	}
 	ids := make([]string, 0, len(active))
 	for _, f := range active {
@@ -137,6 +165,9 @@ func (sched *releaseSchedule) park(req *api.CreateDeploymentRequest) {
 // recordReleaseSchedule stores the schedule of a release that was just
 // created parked.
 func (s *server) recordReleaseSchedule(r *http.Request, acct state.Account, app state.App, d state.Deployment, sched *releaseSchedule) *api.Problem {
+	// Every deploy path records its schedule once the deployment exists, so
+	// a deferred freeze override is audited here.
+	s.auditFreezeOverride(r, acct, d)
 	if sched == nil {
 		return nil
 	}
@@ -193,14 +224,14 @@ func (s *server) deploymentScheduleView(parent context.Context, d state.Deployme
 	return &view
 }
 
-// scheduledReleaseTrafficProblem refuses to give a release traffic by hand
+// scheduledTrafficProblem refuses to give a release traffic by hand
 // while it waits for its scheduled start.
-func (s *server) scheduledReleaseTrafficProblem(r *http.Request, d state.Deployment) *api.Problem {
+func (s *server) scheduledTrafficProblem(ctx context.Context, d state.Deployment) *api.Problem {
 	store, ok := s.scheduledReleases()
 	if !ok || !d.TrafficPercentExplicit || d.TrafficPercent != 0 {
 		return nil
 	}
-	sr, err := store.LatestScheduledRelease(r.Context(), d.ID)
+	sr, err := store.LatestScheduledRelease(ctx, d.ID)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -291,7 +322,7 @@ func (s *server) prepareDeploymentSchedule(r *http.Request, acct state.Account, 
 	if p != nil {
 		return state.ScheduledRelease{}, p
 	}
-	override, overrideIDs, p := s.scheduledFreezeOverride(r.Context(), acct, app, d.Scope, req.OverrideFreeze, at)
+	override, overrideIDs, p := s.scheduledFreezeOverride(r, acct, app, d.Scope, req.OverrideFreeze, at)
 	if p != nil {
 		return state.ScheduledRelease{}, p
 	}
@@ -408,6 +439,13 @@ func (s *server) listScheduledReleases(w http.ResponseWriter, r *http.Request, a
 			"Gregale could not list your scheduled releases.", "Retry in a moment.", err)
 		return
 	}
+	hidden, err := s.hiddenAccountApps(r, acct)
+	if err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "list scheduled releases",
+			"Gregale could not list your scheduled releases.", "Retry in a moment.", err)
+		return
+	}
+	rows = slices.DeleteFunc(rows, func(row state.ScheduledRelease) bool { return hidden[row.AppID] })
 	writeJSON(w, http.StatusOK, api.ScheduledReleaseListResponse{Items: s.scheduleViews(r.Context(), acct.ID, rows)})
 }
 

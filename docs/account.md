@@ -6,16 +6,16 @@ Account settings cover identity, organizations, members, billing, and data expor
 gregale account status
 gregale account export -o export.json
 gregale orgs ls
-gregale orgs members ORG_ID
+gregale org members ORG_ID
 ```
 
-Use organization-scoped keys for automation and grant members the smallest role that supports their work. `gregale orgs members ORG_ID` lists current membership; invitations and role changes are explicit subcommands under `gregale orgs`.
+Use organization-scoped keys for automation and grant members the smallest role that supports their work. `gregale org members ORG_ID` lists current membership; invitations and role changes are explicit subcommands under `gregale orgs`.
 
 ## Feature availability
 
-Run `gregale capabilities` to inspect the features available to the authenticated
+Run `gregale feature list` to inspect the features available to the authenticated
 account. The output includes maturity, eligible plans, and an explanation when
-a feature is unavailable. `gregale capabilities --json` and
+a feature is unavailable. `gregale feature list --json` and
 `GET /v1/capabilities` expose the same account-scoped view.
 
 For a disabled feature, `unavailable_reason` is `plan_not_entitled` when the

@@ -746,7 +746,10 @@ to a legacy overload remain possible when analysis completes and none of the
 over-limit dimensions increases. New or increased overload refuses with 422,
 rolling back saved intent and transactional change events. Analysis exhaustion
 has its own `traffic_policy_too_complex` code and generic limit/observed fields;
-byte bounds additionally retain the explicit byte fields.
+byte bounds additionally retain the explicit byte fields. A time ceiling also
+carries `Retry-After` (2 s): apid does not replay it for the Idempotency-Key, and
+`api.Client` and the SDK retry layers resend the request (ADR-570 amendment,
+2026-10-28).
 
 Metadata, nodes, states, retained state buffers/overhead, transitions and phase
 time are bounded centrally. A local 1,750 ms SQL timeout precedes each two-second
@@ -1467,7 +1470,8 @@ plus the gateway-wide admission queue and browser retry page. Ordinary burst
 expansion retains one app worker and pins every scheduler batch member and
 continuation to the admitted deployment. Steady app/plan limits are retained;
 the existing bounded rollout overlap applies to a cold second positive cohort
-beside a routable cohort and explicit verification. The scheduler owns that
+beside a routable cohort, to a cold cohort beside another deployment's instance
+(a release staged with no traffic, ADR-20261031105227) and explicit verification. The scheduler owns that
 capacity decision. Store failures, missing verdicts, malformed/oversized rosters
 and unavailable cohorts refuse before wake rather than falling back to live
 picker weights or a warm sibling. Existing pin validation and 410/503 release

@@ -6,13 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -25,26 +30,61 @@ func (s *server) releaseFreezes() (state.ReleaseFreezeStore, bool) {
 	return store, ok
 }
 
-// freezeViews renders freezes with their apps' slugs.
+// freezeViews renders freezes with their apps' and organizations' slugs.
 func (s *server) freezeViews(ctx context.Context, freezes []state.ReleaseFreeze, now time.Time) []api.ReleaseFreeze {
-	slugs := map[string]string{}
+	apps, orgs := map[string]string{}, map[string]string{}
 	out := make([]api.ReleaseFreeze, 0, len(freezes))
 	for _, f := range freezes {
 		slug := ""
 		if f.AppID != "" {
-			if cached, ok := slugs[f.AppID]; ok {
+			if cached, ok := apps[f.AppID]; ok {
 				slug = cached
 			} else if app, err := s.store.AppByID(ctx, f.AppID); err == nil {
 				slug = app.Slug
-				slugs[f.AppID] = slug
+				apps[f.AppID] = slug
 			}
 		}
-		out = append(out, freeze.View(f, slug, now))
+		view := freeze.View(f, slug, now)
+		if f.OrgID != "" {
+			if cached, ok := orgs[f.OrgID]; ok {
+				view.Org = cached
+			} else if org, err := s.store.OrgByID(ctx, f.OrgID); err == nil {
+				view.Org = org.Slug
+				orgs[f.OrgID] = org.Slug
+			}
+		}
+		out = append(out, view)
 	}
 	return out
 }
 
-// listReleaseFreezes serves GET /v1/freezes[?app=SLUG].
+// accountFreezeApp loads a personal app that a /v1/freezes request names.
+// A company app's freezes belong to its organization (ADR-20261019071733
+// amendment 4), so naming one is refused with the routes that hold them.
+func (s *server) accountFreezeApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool) {
+	app, ok := s.loadApp(w, r, acct, slug)
+	if !ok {
+		return state.App{}, false
+	}
+	owner, err := freeze.Owner(r.Context(), s.store, app)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read the app's organization"))
+		return state.App{}, false
+	}
+	if owner.OrgID != "" {
+		org, err := s.store.OrgByID(r.Context(), owner.OrgID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read the app's organization"))
+			return state.App{}, false
+		}
+		api.WriteProblem(w, api.ErrReleaseFreezeCompanyApp(app.Slug, org.Slug))
+		return state.App{}, false
+	}
+	return app, true
+}
+
+// listReleaseFreezes serves GET /v1/freezes[?app=SLUG]: the account's
+// freezes, which cover its personal apps.
 func (s *server) listReleaseFreezes(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, ok := s.releaseFreezes()
 	if !ok {
@@ -52,13 +92,13 @@ func (s *server) listReleaseFreezes(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	now := time.Now().UTC()
-	freezes, err := store.ListReleaseFreezes(r.Context(), acct.ID, now)
+	freezes, err := store.ListReleaseFreezes(r.Context(), state.ReleaseFreezeOwner{AccountID: acct.ID}, now)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list freezes"))
 		return
 	}
 	if slug := strings.TrimSpace(r.URL.Query().Get("app")); slug != "" {
-		app, ok := s.loadApp(w, r, acct, slug)
+		app, ok := s.accountFreezeApp(w, r, acct, slug)
 		if !ok {
 			return
 		}
@@ -70,16 +110,30 @@ func (s *server) listReleaseFreezes(w http.ResponseWriter, r *http.Request, acct
 		}
 		freezes = kept
 	}
+	hidden, err := s.hiddenAccountApps(r, acct)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list freezes"))
+		return
+	}
+	freezes = slices.DeleteFunc(freezes, func(f state.ReleaseFreeze) bool { return hidden[f.AppID] })
 	writeJSON(w, http.StatusOK, api.ListReleaseFreezesResponse{Freezes: s.freezeViews(r.Context(), freezes, now)})
 }
 
-// createReleaseFreeze serves POST /v1/freezes.
-func (s *server) createReleaseFreeze(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	store, ok := s.releaseFreezes()
-	if !ok {
-		api.WriteProblem(w, api.ErrCapacity("deploy freezes are unavailable"))
-		return
+// hiddenAccountApps names the account's apps the request's principal may no
+// longer see (appaccess.HiddenApps): a company's apps once their creator has
+// left it. Account-wide lists name no app in their URL, so appaccess.Wrap
+// never decides for them.
+func (s *server) hiddenAccountApps(r *http.Request, acct state.Account) (map[string]bool, error) {
+	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	if err != nil {
+		return nil, err
 	}
+	return appaccess.HiddenApps(r, s.store, actorAccount(r, acct), apps)
+}
+
+// createReleaseFreeze serves POST /v1/freezes: a freeze on the account's
+// personal apps, or on one of them.
+func (s *server) createReleaseFreeze(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateReleaseFreezeRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
@@ -87,14 +141,25 @@ func (s *server) createReleaseFreeze(w http.ResponseWriter, r *http.Request, acc
 	}
 	appID := ""
 	if slug := strings.TrimSpace(req.App); slug != "" {
-		app, ok := s.loadApp(w, r, acct, slug)
+		app, ok := s.accountFreezeApp(w, r, acct, slug)
 		if !ok {
 			return
 		}
 		appID = app.ID
 	}
+	s.storeReleaseFreeze(w, r, req, state.ReleaseFreezeOwner{AccountID: acct.ID}, appID, configActor(r, acct), acct)
+}
+
+// storeReleaseFreeze validates req and stores the freeze for owner, then
+// audits it and answers 201.
+func (s *server) storeReleaseFreeze(w http.ResponseWriter, r *http.Request, req api.CreateReleaseFreezeRequest, owner state.ReleaseFreezeOwner, appID, actor string, acct state.Account) {
+	store, ok := s.releaseFreezes()
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("deploy freezes are unavailable"))
+		return
+	}
 	now := time.Now().UTC()
-	f, prob := freeze.FromRequest(req, acct.ID, appID, configActor(r, acct), now)
+	f, prob := freeze.FromRequest(req, owner, appID, actor, now)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -109,7 +174,7 @@ func (s *server) createReleaseFreeze(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	view := s.freezeViews(r.Context(), []state.ReleaseFreeze{created}, now)[0]
-	s.audit.Emit(r.Context(), "release.freeze_created", &acct.ID, map[string]any{
+	s.auditReleaseFreeze(r.Context(), r, acct, "release.freeze_created", created, view, map[string]any{
 		"freeze": created.ID, "app": view.App, "kind": created.Kind, "reason": created.Reason, "actor": created.CreatedBy,
 	})
 	writeJSON(w, http.StatusCreated, view)
@@ -117,14 +182,19 @@ func (s *server) createReleaseFreeze(w http.ResponseWriter, r *http.Request, acc
 
 // liftReleaseFreeze serves DELETE /v1/freezes/{id}.
 func (s *server) liftReleaseFreeze(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.liftOwnedReleaseFreeze(w, r, state.ReleaseFreezeOwner{AccountID: acct.ID}, r.PathValue("id"), configActor(r, acct), acct)
+}
+
+// liftOwnedReleaseFreeze lifts one of owner's freezes, then audits it and
+// answers with the lifted freeze.
+func (s *server) liftOwnedReleaseFreeze(w http.ResponseWriter, r *http.Request, owner state.ReleaseFreezeOwner, id, actor string, acct state.Account) {
 	store, ok := s.releaseFreezes()
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("deploy freezes are unavailable"))
 		return
 	}
-	id := r.PathValue("id")
 	now := time.Now().UTC()
-	lifted, err := store.LiftReleaseFreeze(r.Context(), acct.ID, id, configActor(r, acct), now)
+	lifted, err := store.LiftReleaseFreeze(r.Context(), owner, id, actor, now)
 	if errors.Is(err, state.ErrNotFound) {
 		api.WriteProblem(w, api.ErrReleaseFreezeNotFound(id))
 		return
@@ -133,16 +203,16 @@ func (s *server) liftReleaseFreeze(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("could not lift freeze"))
 		return
 	}
-	s.audit.Emit(r.Context(), "release.freeze_lifted", &acct.ID, map[string]any{
+	view := s.freezeViews(r.Context(), []state.ReleaseFreeze{lifted}, now)[0]
+	s.auditReleaseFreeze(r.Context(), r, acct, "release.freeze_lifted", lifted, view, map[string]any{
 		"freeze": lifted.ID, "reason": lifted.Reason, "actor": lifted.LiftedBy,
 	})
-	writeJSON(w, http.StatusOK, s.freezeViews(r.Context(), []state.ReleaseFreeze{lifted}, now)[0])
+	writeJSON(w, http.StatusOK, view)
 }
 
 // getReleaseFreezeStatus serves GET /v1/apps/{slug}/freeze-status.
 func (s *server) getReleaseFreezeStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	store, ok := s.releaseFreezes()
-	if !ok {
+	if _, ok := s.releaseFreezes(); !ok {
 		api.WriteProblem(w, api.ErrCapacity("deploy freezes are unavailable"))
 		return
 	}
@@ -150,7 +220,7 @@ func (s *server) getReleaseFreezeStatus(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	status, err := s.releaseFreezeStatus(r.Context(), store, acct.ID, app)
+	status, err := s.releaseFreezeStatus(r.Context(), app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read freezes"))
 		return
@@ -160,20 +230,17 @@ func (s *server) getReleaseFreezeStatus(w http.ResponseWriter, r *http.Request, 
 
 // releaseFreezeStatus reports the freezes covering app now and the next one
 // due to start.
-func (s *server) releaseFreezeStatus(ctx context.Context, store state.ReleaseFreezeStore, accountID string, app state.App) (api.ReleaseFreezeStatus, error) {
+func (s *server) releaseFreezeStatus(ctx context.Context, app state.App) (api.ReleaseFreezeStatus, error) {
 	now := time.Now().UTC()
-	freezes, err := store.ListReleaseFreezes(ctx, accountID, now)
+	freezes, err := freeze.For(ctx, s.store, app, now)
 	if err != nil {
-		return api.ReleaseFreezeStatus{}, fmt.Errorf("list release freezes: %w", err)
+		return api.ReleaseFreezeStatus{}, err
 	}
 	status := api.ReleaseFreezeStatus{App: app.Slug, Active: s.freezeViews(ctx, freeze.Active(freezes, app.ID, now), now)}
 	status.Frozen = len(status.Active) > 0
 	var next *state.ReleaseFreeze
 	var nextAt time.Time
 	for i, f := range freezes {
-		if !freeze.Covers(f, app.ID) {
-			continue
-		}
 		if at, ok := freeze.NextStart(f, now); ok && (next == nil || at.Before(nextAt)) {
 			next, nextAt = &freezes[i], at
 		}
@@ -190,34 +257,97 @@ func (s *server) releaseFreezeStatus(ctx context.Context, store state.ReleaseFre
 // store that cannot read freezes lets the release through: a freeze is a
 // guard rail, not an availability dependency.
 func (s *server) releaseFreezeProblem(r *http.Request, acct state.Account, app state.App, scope, override string) *api.Problem {
+	p, overridden := s.checkReleaseFreeze(r, acct, app, scope, override)
+	if overridden != nil {
+		s.emitFreezeOverride(r, acct, overridden)
+	}
+	return p
+}
+
+// checkReleaseFreeze is releaseFreezeProblem without the audit: it returns
+// the release.freeze_overridden payload of an accepted override.
+func (s *server) checkReleaseFreeze(r *http.Request, acct state.Account, app state.App, scope, override string) (*api.Problem, map[string]any) {
 	if p := s.platformReleasePauseProblem(); p != nil {
-		return p
+		return p, nil
 	}
 	now := time.Now().UTC()
-	active, err := freeze.ActiveFor(r.Context(), s.store, acct.ID, app.ID, scope, now)
+	active, err := freeze.ActiveFor(r.Context(), s.store, app, scope, now)
 	if err != nil {
 		s.log.Warn("deploy freeze: could not read freezes; releasing", "app", app.ID, "err", err)
-		return nil
+		return nil, nil
 	}
 	if len(active) == 0 {
-		return nil
+		return nil, nil
 	}
 	if strings.TrimSpace(override) == "" {
 		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
-		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(r.Context(), active, now))
+		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(r.Context(), active, now)), nil
 	}
 	if prob := freeze.ValidateReason("override_freeze", override); prob != nil {
-		return prob
+		return prob, nil
+	}
+	for _, f := range active {
+		if prob := s.freezeOverrideProblem(r, acct, f); prob != nil {
+			s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+			return prob, nil
+		}
 	}
 	s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "overridden")
 	ids := make([]string, 0, len(active))
 	for _, f := range active {
 		ids = append(ids, f.ID)
 	}
-	s.audit.Emit(r.Context(), "release.freeze_overridden", &acct.ID, map[string]any{
-		"app": app.ID, "freezes": ids, "reason": strings.TrimSpace(override), "actor": configActor(r, acct),
-	})
+	overridden := map[string]any{"app": app.ID, "freezes": ids, "reason": strings.TrimSpace(override), "actor": configActor(r, actorAccount(r, acct))}
+	if orgID := active[0].OrgID; orgID != "" {
+		overridden["org_id"] = orgID
+	}
+	return nil, overridden
+}
+
+// freezeOverrideProblem holds overriding a company organization's freeze to
+// the right to lift it (ADR-20261019071733 amendment 5): an owner or admin,
+// or the member who created a window, signed in or with an admin-scoped key.
+// A member's deploy:write key, as CI holds, could otherwise ship past a freeze
+// an admin set for the whole company. An account's own freezes keep the open
+// override: one person both sets and overrides them.
+func (s *server) freezeOverrideProblem(r *http.Request, acct state.Account, f state.ReleaseFreeze) *api.Problem {
+	if f.OrgID == "" {
+		return nil
+	}
+	if p, ok := principalFrom(r); ok && p.Key != nil && !httpkit.APIKeyCarriesScope(*p.Key, api.ScopeAdmin) {
+		return api.ErrReleaseFreezeOverrideNotAllowed(f.ID,
+			"Overriding a company's freeze needs a signed-in person or an admin key; this key can only deploy.")
+	}
+	owner := state.ReleaseFreezeOwner{OrgID: f.OrgID}
+	if prob := s.freezeLiftProblem(r, owner, f, configActor(r, actorAccount(r, acct))); prob != nil {
+		return api.ErrReleaseFreezeOverrideNotAllowed(f.ID,
+			"Only a member who may lift this freeze can override it: an owner or admin, or the member who created the window.")
+	}
 	return nil
+}
+
+// pendingFreezeOverrideKey carries an accepted deploy override until the
+// deployment exists.
+type pendingFreezeOverrideKey struct{}
+
+// deferFreezeOverrideAudit holds an accepted override's audit until the
+// deployment is created (auditFreezeOverride). Emitted at the check, a deploy
+// that then failed validation left a release.freeze_overridden for a release
+// that never existed (release review 2026-10-28).
+func deferFreezeOverrideAudit(r *http.Request, overridden map[string]any) {
+	if overridden != nil {
+		*r = *r.WithContext(context.WithValue(r.Context(), pendingFreezeOverrideKey{}, overridden))
+	}
+}
+
+// auditFreezeOverride emits the deferred override of the deploy that created d.
+func (s *server) auditFreezeOverride(r *http.Request, acct state.Account, d state.Deployment) {
+	overridden, ok := r.Context().Value(pendingFreezeOverrideKey{}).(map[string]any)
+	if !ok {
+		return
+	}
+	overridden["deployment"] = d.ID
+	s.emitFreezeOverride(r, acct, overridden)
 }
 
 // retryReleaseProblem holds a retry to the guards a new production release
@@ -227,7 +357,7 @@ func (s *server) releaseFreezeProblem(r *http.Request, acct state.Account, app s
 // override; a deploy with override_freeze releases during a freeze.
 func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep state.Deployment) *api.Problem {
 	now := time.Now().UTC()
-	active, err := freeze.ActiveFor(ctx, s.store, app.AccountID, app.ID, dep.Scope, now)
+	active, err := freeze.ActiveFor(ctx, s.store, app, dep.Scope, now)
 	if err != nil {
 		s.log.Warn("deploy freeze: could not read freezes; retrying", "app", app.ID, "err", err)
 	} else if len(active) > 0 {
@@ -248,6 +378,58 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 		return api.ErrReleaseApprovalCanaryRequired(app.Slug)
 	}
 	return nil
+}
+
+// darkReleasePauseProblem refuses the first traffic of a release deployed
+// without traffic, or parked for its schedule, while the break-glass release
+// pause is on (ADR 20261022140000 amendment 1). The pause refuses creating
+// releases, but one built before it could otherwise ship during it through
+// `traffic`, promote or a rollback to it. A release that served before is a
+// rollback target, which the pause never holds.
+func (s *server) darkReleasePauseProblem(d state.Deployment) *api.Problem {
+	if !neverServedDark(d) {
+		return nil
+	}
+	return s.platformReleasePauseProblem()
+}
+
+// neverServedDark reports whether d is live at 0% of traffic by choice and
+// has never completed a rollout: a release deployed with no traffic, or one
+// parked for its schedule.
+func neverServedDark(d state.Deployment) bool {
+	return d.Status == state.DeployLive && d.TrafficPercent == 0 && d.TrafficPercentExplicit && d.RolloutCompletedAt == nil
+}
+
+// darkReleaseFreezeProblem refuses traffic for a release deployed without
+// traffic before the active freeze began (ADR-20261019071733 amendment 3). A
+// freeze refuses creating production releases, but a release parked dark the
+// day before could ship during it through `traffic`, promote or a rollback to
+// it, with no override and no audit (release review 2026-10-28). A release
+// deployed during the freeze passed the freeze check, or its audited
+// override, when it was created; one that completed a rollout served before
+// and is a rollback target, which freezes never refuse.
+func (s *server) darkReleaseFreezeProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
+	if !neverServedDark(d) {
+		return nil
+	}
+	now := time.Now().UTC()
+	active, err := freeze.ActiveFor(ctx, s.store, app, d.Scope, now)
+	if err != nil {
+		s.log.Warn("deploy freeze: could not read freezes; releasing", "app", app.ID, "err", err)
+		return nil
+	}
+	var predate []state.ReleaseFreeze
+	for _, f := range active {
+		if start, ok := freeze.CurrentStart(f, now); ok && d.CreatedAt.Before(start) {
+			predate = append(predate, f)
+		}
+	}
+	if len(predate) == 0 {
+		return nil
+	}
+	s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+	return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, predate, now)).
+		WithHint("This release was deployed without traffic before the freeze began and has not served. Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
 }
 
 // promotionFreezeProblem applies releaseFreezeProblem to every app a new
@@ -288,14 +470,16 @@ func automaticRollbackCause(trigger string, d state.Deployment) string {
 
 // freezeAfterAutomaticRollback turns an after-rollback policy covering app
 // into a window freeze once Gregale has rolled rolledBackID back on its own.
-// Failures are logged: the rollback already happened and must not fail.
-func (s *server) freezeAfterAutomaticRollback(ctx context.Context, accountID string, app state.App, rolledBackID, cause string) {
+// The freeze belongs to the policy's owner: the company organization of a
+// company app. Failures are logged: the rollback already happened and must
+// not fail.
+func (s *server) freezeAfterAutomaticRollback(ctx context.Context, app state.App, rolledBackID, cause string) {
 	store, ok := s.releaseFreezes()
 	if !ok || rolledBackID == "" {
 		return
 	}
 	now := time.Now().UTC()
-	freezes, err := store.ListReleaseFreezes(ctx, accountID, now)
+	freezes, err := freeze.For(ctx, s.store, app, now)
 	if err != nil {
 		s.log.Warn("deploy freeze: could not read after-rollback policies", "app", app.ID, "err", err)
 		return
@@ -309,14 +493,17 @@ func (s *server) freezeAfterAutomaticRollback(ctx context.Context, accountID str
 	if len([]rune(reason)) > api.ReleaseFreezeReasonMax {
 		reason = string([]rune(reason)[:api.ReleaseFreezeReasonMax])
 	}
-	created, err := store.CreateRollbackReleaseFreeze(ctx, state.ReleaseFreeze{AccountID: accountID, AppID: app.ID,
-		StartsAt: &now, EndsAt: &end, Reason: reason, SourceDeploymentID: rolledBackID, CreatedBy: automaticFreezeActor})
+	f := state.ReleaseFreeze{ID: uuid.NewString(), AccountID: policy.AccountID, OrgID: policy.OrgID, AppID: app.ID,
+		Kind: state.ReleaseFreezeWindow, Source: state.ReleaseFreezeSourceAutomaticRollback,
+		StartsAt: &now, EndsAt: &end, Reason: reason, SourceDeploymentID: rolledBackID, CreatedBy: automaticFreezeActor, CreatedAt: now}
+	created, err := store.CreateRollbackReleaseFreeze(ctx, f)
 	if err != nil {
 		s.log.Warn("deploy freeze: could not freeze after automatic rollback", "app", app.ID, "deployment", rolledBackID, "err", err)
 		return
 	}
 	if created {
-		s.audit.Emit(ctx, "release.freeze_created", &accountID, map[string]any{
+		view := freeze.View(f, app.Slug, now)
+		s.auditReleaseFreeze(ctx, nil, state.Account{ID: app.AccountID}, "release.freeze_created", f, view, map[string]any{
 			"app": app.ID, "kind": state.ReleaseFreezeWindow, "source": state.ReleaseFreezeSourceAutomaticRollback,
 			"deployment": rolledBackID, "policy": policy.ID, "ends_at": end.Format(time.RFC3339), "actor": automaticFreezeActor,
 		})

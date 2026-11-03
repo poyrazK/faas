@@ -93,6 +93,10 @@ func classifyCommandCron(r state.CommandCronObservation, now time.Time) (command
 	if cursor.IsZero() {
 		cursor = r.CreatedAt
 	}
+	// The scheduler counts from a later schedule anchor (ADR-20261026201726).
+	if r.ScheduleAnchorAt.After(cursor) {
+		cursor = r.ScheduleAnchorAt
+	}
 	due := schedule.NextFireAt(cursor)
 	if due.IsZero() || !due.After(cursor) {
 		return commandCronUnknown, time.Time{}

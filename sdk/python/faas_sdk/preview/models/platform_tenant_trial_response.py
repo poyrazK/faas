@@ -13,7 +13,7 @@ T = TypeVar("T", bound="PlatformTenantTrialResponse")
 
 @_attrs_define
 class PlatformTenantTrialResponse:
-    """A platform tenant's free trial: its usage in [starts_at, ends_at) is priced at zero (ADR-1322)."""
+    """A platform tenant's free trial: its usage in [starts_at, ends_at) is priced at zero."""
 
     tenant_id: UUID
     starts_at: datetime.datetime

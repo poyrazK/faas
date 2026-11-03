@@ -3,6 +3,7 @@ package managedpostgres
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -23,6 +24,12 @@ type Metrics struct {
 	provisioningEnabled  prometheus.Gauge
 	canaryAdmissionTotal *prometheus.CounterVec
 	admissionDeniedTotal *prometheus.CounterVec
+	// ADR-20261028103115 fleet ceilings and the production approval window.
+	fleetDatabases     prometheus.Gauge
+	fleetCost          prometheus.Gauge
+	fleetMaxDatabases  prometheus.Gauge
+	fleetMaxCost       prometheus.Gauge
+	productionApproval prometheus.Gauge
 }
 
 const (
@@ -110,12 +117,33 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 			Name: prefix + "_managed_postgres_admission_denied_total",
 			Help: "Managed PostgreSQL admission denials by stable reason.",
 		}, []string{"reason"}),
+		fleetDatabases: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_managed_postgres_fleet_databases",
+			Help: "Managed PostgreSQL databases across every account, counted as the fleet database cap counts them.",
+		}),
+		fleetCost: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_managed_postgres_fleet_cost_millicents",
+			Help: "Provider cost the managed PostgreSQL usage ledger has recorded this UTC month across every account, in millicents.",
+		}),
+		fleetMaxDatabases: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_managed_postgres_fleet_max_databases",
+			Help: "Configured fleet database cap; zero means unset.",
+		}),
+		fleetMaxCost: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_managed_postgres_fleet_max_monthly_cost_millicents",
+			Help: "Configured monthly provider-spend breaker in millicents; zero means unset.",
+		}),
+		productionApproval: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_managed_postgres_production_approval_until_timestamp_seconds",
+			Help: "Unix timestamp at which the production provisioning approval ends; zero outside production or without an approval.",
+		}),
 	}
 	collectors := []prometheus.Collector{
 		m.reconcileTotal, m.reconcileDuration, m.usageDatabaseTotal,
 		m.usageSweepTotal, m.usageDatabases, m.usageLastSuccess,
 		m.usagePolicyEnabled, m.provisioningEnabled, m.canaryAdmissionTotal,
-		m.admissionDeniedTotal,
+		m.admissionDeniedTotal, m.fleetDatabases, m.fleetCost, m.fleetMaxDatabases,
+		m.fleetMaxCost, m.productionApproval,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -281,4 +309,28 @@ func (m *Metrics) ObserveUsageSweep(summary UsageCollectionSummary, sweepErr err
 	if !summary.CompletedAt.IsZero() {
 		m.usageLastSuccess.Set(float64(summary.CompletedAt.UTC().Unix()))
 	}
+}
+
+// ObserveFleet records the fleet totals and the configured ceilings.
+func (m *Metrics) ObserveFleet(totals FleetTotals, policy FleetPolicy) {
+	if m == nil {
+		return
+	}
+	m.fleetDatabases.Set(float64(totals.Databases))
+	m.fleetCost.Set(float64(totals.CostMillicents))
+	m.fleetMaxDatabases.Set(float64(policy.MaxDatabases))
+	m.fleetMaxCost.Set(float64(policy.MaxMonthlyCostMillicents))
+}
+
+// SetProductionApprovalUntil records when the production approval ends; a
+// zero time records zero.
+func (m *Metrics) SetProductionApprovalUntil(until time.Time) {
+	if m == nil {
+		return
+	}
+	if until.IsZero() {
+		m.productionApproval.Set(0)
+		return
+	}
+	m.productionApproval.Set(float64(until.Unix()))
 }

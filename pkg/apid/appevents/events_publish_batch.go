@@ -24,14 +24,14 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 	if err := httpkit.DecodeJSONSized(r, &wire, api.EventPublishBatchBodyMaxBytes); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, "event_publish_batch_too_large", "Batch too large", "batch body exceeds the byte limit").WithLimit(api.EventPublishBatchBodyMaxBytes, api.EventPublishBatchBodyMaxBytes+1).WithDocs("https://gregale.dev/docs/event-driven#batch-event-publishing"))
+			api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, "event_publish_batch_too_large", "Batch too large", "batch body exceeds the byte limit").WithLimit(api.EventPublishBatchBodyMaxBytes, api.EventPublishBatchBodyMaxBytes+1).WithDocs("https://gregale.dev/docs/events#batch-event-publishing"))
 		} else {
 			api.WriteProblem(w, api.ErrValidation("invalid batch JSON body"))
 		}
 		return
 	}
 	if len(wire.Events) == 0 || len(wire.Events) > api.EventPublishBatchMaxEvents {
-		api.WriteProblem(w, api.ErrValidation("batch must contain 1–100 events").WithLimit(int64(api.EventPublishBatchMaxEvents), int64(len(wire.Events))).WithDocs("https://gregale.dev/docs/event-driven#batch-event-publishing"))
+		api.WriteProblem(w, api.ErrValidation("batch must contain 1–100 events").WithLimit(int64(api.EventPublishBatchMaxEvents), int64(len(wire.Events))).WithDocs("https://gregale.dev/docs/events#batch-event-publishing"))
 		return
 	}
 	store, ok := s.Host.Store().(state.PublishedEventAcceptanceStore)
@@ -90,6 +90,18 @@ func (s *Service) publishEventBatchItem(ctx context.Context, store state.Publish
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		return batchPublishFailure("rejected", false, api.ErrValidation("invalid event data"))
+	}
+	if !api.WorkflowEventEnvelopeFits(payload) {
+		if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
+			accepted, lookupErr := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
+			if lookupErr == nil {
+				return api.PublishEventBatchResult{Status: "duplicate", Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
+			}
+			if errors.Is(lookupErr, state.ErrConflict) {
+				return batchEventAcceptanceFailure(lookupErr)
+			}
+		}
+		return batchPublishFailure("rejected", false, api.ErrWorkflowEventEnvelopeTooLarge())
 	}
 	accepted, err := store.AcceptPublishedEvent(ctx, "apid", acct.ID, payload)
 	if err != nil {

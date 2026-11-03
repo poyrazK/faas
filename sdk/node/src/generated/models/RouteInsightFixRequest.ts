@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Applies the fix an insight listed; refused when the fix changed since (ADR-20261020161310).
+ * Applies the fix an insight listed; refused when the fix changed since.
  */
 export type RouteInsightFixRequest = {
   /**

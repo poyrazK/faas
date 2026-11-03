@@ -50,9 +50,12 @@ class AccountResponse:
     """Free-form billing address used on future invoices."""
     tax_id: str | Unset = UNSET
     """Customer tax/VAT identifier used on future invoices."""
+    key_scopes: list[str] | Unset = UNSET
+    """Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope
+    agent) lists the tools the hosted MCP server offers it."""
     abuse_hold: AccountAbuseHold | Unset = UNSET
-    """Present while the account is on an abuse hold (ADR-361): outbound traffic from its workloads matched a
-    scanning or abuse pattern, so nothing runs or deploys until an operator releases it."""
+    """Present while the account is on an abuse hold: outbound traffic from its workloads matched a scanning or
+    abuse pattern, so nothing runs or deploys until an operator releases it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,6 +103,10 @@ class AccountResponse:
 
         tax_id = self.tax_id
 
+        key_scopes: list[str] | Unset = UNSET
+        if not isinstance(self.key_scopes, Unset):
+            key_scopes = self.key_scopes
+
         abuse_hold: dict[str, Any] | Unset = UNSET
         if not isinstance(self.abuse_hold, Unset):
             abuse_hold = self.abuse_hold.to_dict()
@@ -135,6 +142,8 @@ class AccountResponse:
             field_dict["billing_address"] = billing_address
         if tax_id is not UNSET:
             field_dict["tax_id"] = tax_id
+        if key_scopes is not UNSET:
+            field_dict["key_scopes"] = key_scopes
         if abuse_hold is not UNSET:
             field_dict["abuse_hold"] = abuse_hold
 
@@ -202,6 +211,8 @@ class AccountResponse:
 
         tax_id = d.pop("tax_id", UNSET)
 
+        key_scopes = cast(list[str], d.pop("key_scopes", UNSET))
+
         _abuse_hold = d.pop("abuse_hold", UNSET)
         abuse_hold: AccountAbuseHold | Unset
         if isinstance(_abuse_hold, Unset):
@@ -227,6 +238,7 @@ class AccountResponse:
             business_name=business_name,
             billing_address=billing_address,
             tax_id=tax_id,
+            key_scopes=key_scopes,
             abuse_hold=abuse_hold,
         )
 

@@ -55,7 +55,7 @@ class OperatorIntentResponse:
     account_id: UUID | Unset = UNSET
     """Owning account. Omitted for fleet-level node lifecycle intents."""
     started_at: datetime.datetime | Unset = UNSET
-    """Set when schedd claims the intent (pending → running)."""
+    """Set when the scheduler claims the intent (pending → running)."""
     finished_at: datetime.datetime | Unset = UNSET
     """Set on terminal status (succeeded/failed/cancelled)."""
     error: str | Unset = UNSET
@@ -65,11 +65,11 @@ class OperatorIntentResponse:
     trace_id: None | str | Unset = UNSET
     """Obs-Meta + Trace-IDs Mega-PR / C4. OTel W3C 32-char
     hex identifier shared with the inbound HTTP request
-    and the schedd dispatch context. NULL when the row
+    and the scheduler dispatch context. NULL when the row
     predates C4 or when the inbound request carried no
     trace_id (e.g. cron-fired reaper paths). Joins
     "this alert" ↔ "this operator action" ↔ "this
-    schedd dispatch" on one column.
+    scheduler dispatch" on one column.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -28,7 +28,7 @@ class EdgeRuleRedirectAction:
     headers: EdgeRuleRedirectActionHeaders | Unset = UNSET
     """Headers stamped on the redirect response."""
     template: bool | Unset = UNSET
-    """ADR-968. Expand ${name} request values in `to` and in the
+    """Expand ${name} request values in `to` and in the
     header values (host, path, method, query, client_ip, country, asn, request_id, header:<name>, query:<name>,
     cookie:<name>; $$ is a
     literal $). The target must start with a literal "/" or

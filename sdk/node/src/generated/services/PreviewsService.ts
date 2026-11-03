@@ -85,9 +85,8 @@ export class PreviewsService {
   }
   /**
    * Tear down a preview app.
-   * One-click destroy of a preview app row (issue #961 Mega-C PR-1,
-   * leaf 3). Typically fired from a "Tear down this preview" link
-   * posted to the GitHub PR by `pkg/githubd`. Distinct from
+   * One-click destroy of a preview app row. Typically fired from a "Tear down this preview" link
+   * posted to the GitHub pull request by the GitHub integration. Distinct from
    * `DELETE /v1/apps/{slug}` because the preview teardown also
    * stamps `apps.preview_pr_state='torn_down'` so the janitor
    * doesn't re-process the row on a subsequent tick, and emits a

@@ -31,45 +31,42 @@ class PutOutboundAIPolicyRequest:
     daily_cost_limit_millicents: int | None | Unset = UNSET
     monthly_cost_limit_millicents: int | None | Unset = UNSET
     request_log_enabled: bool | Unset = UNSET
-    """Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires
-    ai_provider."""
+    """Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days. Requires ai_provider."""
     request_log_content: bool | Unset = UNSET
     """Also keep the first 32 KiB of each logged call's request and response bodies, never headers, for 3 days and
-    at most 1,000 calls per UTC day (ADR-996). Requires request_log_enabled."""
+    at most 1,000 calls per UTC day. Requires request_log_enabled."""
     log_export: bool | Unset = UNSET
     """Send each settled app call to the app's log drains as one JSON line of metadata, never prompts or
-    completions, about 15 seconds after it settles (ADR-1340). Requires ai_provider."""
+    completions, about 15 seconds after it settles. Requires ai_provider."""
     allow_unmetered: bool | Unset = UNSET
     """Let through writes the gateway can neither meter nor knows to be free, such as realtime client secrets,
     vector stores, containers, fine-tuning jobs and context caches. They are otherwise refused with 403
     outbound_ai_endpoint_unmetered; let through, they carry X-Gregale-AI-Unmetered and their spend is outside the
-    caps (ADR-1432). Requires ai_provider."""
+    caps. Requires ai_provider."""
     auto_prompt_cache: bool | Unset = UNSET
     """Add prompt-cache breakpoints to Claude requests on the Anthropic API, Vertex AI and Amazon Bedrock that
     carry none: after a system prompt or tool list seen again within five minutes, and after the last message of a
     conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
-    marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
-   """
+    marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache. Requires ai_provider."""
     trace_max_calls: int | Unset = UNSET
     """Refuse a trace's call once the trace made this many calls, settled and in flight, with 429
-    outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit (ADR 20261020202035). Requires
-    ai_provider."""
+    outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit. Requires ai_provider."""
     trace_max_cost_millicents: int | Unset = UNSET
-    """Refuse a trace's call that would take the trace's cost past this, with trace_cost_limit (ADR
-    20261020202035). Requires ai_provider."""
+    """Refuse a trace's call that would take the trace's cost past this, with trace_cost_limit. Requires
+    ai_provider."""
     trace_max_repeated_tool_calls: int | Unset = UNSET
     """Refuse a trace's call once this many consecutive calls requested the same tools with the same arguments,
-    with trace_tool_loop: the agent is looping (ADR 20261020202035). Requires ai_provider."""
+    with trace_tool_loop: the agent is looping. Requires ai_provider."""
     user_daily_token_limit: int | None | Unset = UNSET
-    """Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""
+    """Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User. Requires ai_provider."""
     user_daily_cost_limit_millicents: int | None | Unset = UNSET
-    """Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""
+    """Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User. Requires ai_provider."""
     online_evaluation: OutboundAIOnlineEvaluation | Unset = UNSET
     """Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of
-    the account's AI integrations, metered under the caller evaluation (ADR 20261021171712)."""
+    the account's AI integrations, metered under the caller evaluation."""
     quality_alerts: bool | Unset = UNSET
     """Alert bound apps with outbound.ai_quality.drift when a model's quality signals move away from its previous 7
-    days (ADR 20261021171712). Requires ai_provider."""
+    days. Requires ai_provider."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

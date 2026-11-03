@@ -253,6 +253,11 @@ func LoadConfig(path string) (*Config, error) {
 			// RoleSingleBox when the env is unset.
 			c.Role = role.FromConfig(string(c.Role), "FAAS_APID_ROLE")
 			c.overlayEventAcknowledgmentWriterEnv()
+			// The node identity is deployment-owned too, so it applies
+			// without a TOML file as well (the node verifier needs it).
+			if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
+				c.NodeName = v
+			}
 			return c, nil
 		}
 		return nil, fmt.Errorf("apid: read %q: %w", path, err)

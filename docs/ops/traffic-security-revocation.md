@@ -183,3 +183,18 @@ and keep all four account/source/target/deployment registrations until joined
 forwarding cleanup. The security store and forwarding owner are fixtures.
 Full daemon, native
 VM/network/leak, deployment and complete policy-path acceptance remain pending.
+
+## Kill switch
+
+The platform flag `traffic_revocation_fence` (default on) turns the fence off
+without a deploy. Disable the flag to turn it off platform-wide; an account
+rule with `value: false` turns it off for that account only. While it is off,
+gatewayd-internal serves the affected requests without enrolling their scopes,
+stamps their answers `X-Faas-Traffic-Security: v1;fence-off`, and the public
+edge passes those answers unverified (counted in
+`gatewayd_public_traffic_security_unverified_total`). Suspension, deletion and
+deployment quarantine then stop cutting in-flight traffic for those accounts;
+new requests are still refused by the ordinary account and app checks.
+`gateway_traffic_revocation_fence_off_total{path}` counts every request served
+this way. Managed service calls honour a platform-wide switch from their first
+enrollment and an account rule once the caller account is authorized.

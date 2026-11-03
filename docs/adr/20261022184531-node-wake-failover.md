@@ -200,6 +200,55 @@ Each schedd keeps its own breaker in memory and writes the verdict to
 canary wake per node per minute, which proves readiness without customer
 traffic, is optional and stays behind a flag until its cost is measured.
 
+As built (step 3):
+
+- **Durable breaker.** The breaker lives in two new nullable columns,
+  `wake_breaker_open_until` and `wake_breaker_reason`. It is not written
+  into `readiness`, which stays the heartbeat's Ping-derived verdict. If the
+  breaker were folded into `readiness`, the heartbeat and every schedd's
+  breaker would overwrite one another.
+  - A node is degraded while `now < wake_breaker_open_until`. Every schedd
+    sees this through `compute_node_changed`, so one schedd's breaker
+    degrades the node fleet-wide.
+  - Once that time passes, the breaker is half-open, and the node takes
+    wakes again. The first platform failure there reopens it at once (no
+    count needed). The first successful wake closes it (`NULL`).
+- **Counting.** Each schedd counts in memory the consecutive
+  platform-attributable failures on each node within
+  `NodeWakeBreakerWindowSeconds`. A successful wake on the node resets the
+  count.
+  - Customer failures neither count nor reset it.
+  - Ambiguous errors (`internal`, deadline) are ignored.
+- **The vmmd marker** covers only the failures that are certainly node-local
+  and certainly before guest code: jail lease acquisition and network setup.
+  They wrap `fcvm.ErrWakeNotStarted`. The wake RPCs send ErrorInfo metadata
+  `wake_stage=pre_start`, and schedd lifts it into `ErrVMMWakeNotStarted`.
+  Jailer start, cgroup and disk-full failures happen inside the VMM's boot,
+  where "did the VM start" is not yet provable. They stay out until the VMM
+  reports its own boundary.
+  - The same marker makes those failures re-placeable by step 1, under
+    `reason="node_setup"`.
+  - schedd never forwards the marker: the gateway sees the same Problem as
+    before.
+- **Limits** (`pkg/api/limits.go`): `NodeWakeBreakerFailures` 3,
+  `NodeWakeBreakerWindowSeconds` 60, `NodeWakeBreakerCooldownSeconds` 30.
+- **Observability.**
+  - `schedd_node_wake_breaker_total{transition}`, with transition `opened`,
+    `reopened` or `closed`.
+  - The readiness gauge reads degraded while the breaker is open.
+  - `FaasComputeNodeDegraded` (warn, 5 m) and `FaasNoComputeNodeReady`
+    (page, 2 m), with a promtool fixture and a runbook.
+- **Beside ADR-20261029085904's boot breaker.** That breaker is
+  process-local: each schedd counts its own node-caused boot failures (three
+  from three apps) and treats the node as degraded for itself. It covers the
+  ambiguous failures this breaker ignores, because three different apps make
+  an app fault unlikely. This breaker is durable and counts only refusals
+  vmmd proves are node-local. Placement avoids a node either one marks.
+  - A `vmmd_unreachable` refusal is re-placed (step 1), but it does not count
+    here. One schedd failing to reach a vmmd says nothing about the others,
+    so only that schedd's boot breaker counts it.
+- **Not built:** the canary wake.
+
 ### 4. The previous base generation stays adoptable
 
 This was the root cause of the incident. A node rolled back in the middle of
@@ -214,6 +263,24 @@ sidecar naming that generation, and the fixable-CRITICAL refusal applies to
 it unchanged. ADR-510's backing identity (digest sidecar) is checked the same
 way. The step 4 PR records the storage layout here after reading imaged's
 publication path.
+
+As built (step 4): delivered by
+[ADR-20261026181418](20261026181418-generation-addressed-runtime-base-keys.md)
+(#5587), which this ADR's step 4 does not duplicate.
+
+- Each gated runtime base generation has its own shared keys. A release
+  reads and writes only the keys of the generation it configures, so a node
+  rolled back in the middle of a release, or on N-1 beside N, still adopts
+  its configured generation.
+- vmmd adopts that generation's scan sidecar first, as the commit marker,
+  then its base and digest sidecar under the base's logical cache names. It
+  falls back to the legacy logical keys only when the generation's own scan
+  does not exist, and only while the legacy scan names the generation.
+- Nodes keep the logical names for the cache entry, drive0 and snapshots, so
+  the scan gate and ADR-510's backing identity judge the adopted group as
+  before.
+- A narrower implementation of this step (retained copies beside the single
+  logical key) was built and metal-tested, then dropped as superseded.
 
 ### 5. gatewayd-public retries responses that were never dispatched
 
@@ -237,6 +304,54 @@ Nothing that reached customer code is retried, so POSTs stay at-most-once.
 This is the "retries requests that were refused before any byte reached a
 guest" mechanism that ADR-1344 §6 requires.
 
+As built (step 5):
+
+- **The marker cannot be forged.** gatewayd-public sends a random per-request
+  nonce in `X-Faas-Dispatch-Nonce`. gatewayd-internal moves it into the
+  request context on entry, and every gatewayd-internal release strips
+  `x-faas-*` request headers before the guest, so a guest never sees it.
+  gatewayd-internal answers `X-Faas-Not-Dispatched: <reason>; nonce=<nonce>`,
+  and the edge acts only on its own nonce. gatewayd-internal also drops a
+  guest's copy of the header, and the edge strips the marker from every
+  response. A gatewayd-internal before this change never marks, so the edge
+  is safe beside N-1.
+- **What gatewayd-internal marks:**
+  - `wake_refused`: a wake schedd refused with `scan_critical` or an internal
+    error, after schedd's own failover (step 1) found no node.
+  - `wake_hold_expired`: the wake hold expired with no wake in progress. A
+    wake still in progress is answered as before, without a marker.
+  - `proxy_refused`: a forward proven undelivered (ADR-1133). This gateway
+    has no client for the target's vmmd, the forward stream could not be
+    opened, or vmmd refused the instance before dialing its guest.
+- **What it does not mark:** customer outcomes (an app that failed to
+  start, the app's concurrency limits and queues), this gateway's own wake
+  queues, and fleet capacity. Every node asks the same schedd, so a capacity
+  retry only adds load exactly when capacity is short.
+- **The edge retries on another node.** The compute pool and a compute
+  edge's local-first dialer record which node each attempt reached, and a
+  retry excludes the nodes already tried (`gateway.DialRecord`). A dialer
+  that cannot name the node it reached (a fixed unix socket, a fixed TCP
+  target) gets no retry. The edge retries only when every condition holds:
+  - the body is absent or buffered (at most
+    `GatewayFailoverMaxBufferedBodyBytes`, 64 KiB, the internal hop's
+    existing buffer);
+  - at most `GatewayFailoverMaxExtraNodes` (2) other nodes;
+  - `WakeFailoverMinRemainingMs` (2 s) of the request budget is left;
+  - the retry budget allows it: every request deposits
+    `GatewayFailoverRetryBudgetPct` (10 %) of a token, a retry spends one,
+    and the bank holds at most `GatewayFailoverRetryBudgetBurst` (10).
+
+  The edge holds each refusal, at most `GatewayFailoverMaxRefusalBodyBytes`,
+  so it can still answer with it if every retry fails at the transport.
+- **Off by default.** `FAAS_GATEWAY_WAKE_FAILOVER=1` on gatewayd-public turns
+  it on. The marker and nonce cost nothing while it is off.
+- **Observability.** `gateway_wake_failover_total{reason,outcome}`. Outcome
+  is how a retry ended (`succeeded`, `refused_again`, `failed`) or why the
+  edge did not retry (`max_nodes`, `body_not_replayable`, `out_of_time`,
+  `node_unknown`, `no_alternate`, `no_budget`, `refusal_too_large`). The
+  `outcome` label is added to the name the owner's brief gave, so a refusal
+  the edge could not retry is visible.
+
 ## Observability (spec §12)
 
 | Metric | Step | Alert |
@@ -244,7 +359,7 @@ guest" mechanism that ADR-1344 §6 requires.
 | `schedd_wake_failover_total{reason,outcome}` (counter; `outcome` ∈ `succeeded`, `refused_again`, `no_alternate`, `out_of_time`, `failed`) | 1 | none. A diagnostic: `outcome="succeeded"` is a wake the incident would have failed |
 | `schedd_compute_node_readiness{node,state}` (one-hot gauge) | 2 | — |
 | `FaasComputeNodeDegraded` | 3 | `state="degraded"` for 5 m warn; no node `ready` for 2 m page |
-| `gateway_wake_failover_total{reason}` (gatewayd-public) | 5 | none yet; collect before setting a threshold |
+| `gateway_wake_failover_total{reason,outcome}` (gatewayd-public) | 5 | none yet; collect before setting a threshold |
 
 The owner's brief named `gateway_wake_failover_total{reason}`. Step 1's
 failover happens in schedd, which names its metrics `schedd_*`, so it gets

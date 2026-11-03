@@ -56,7 +56,7 @@ func cmdLogsSavedList(args []string) int {
 // cmdLogsSavedSave implements `gregale logs saved save <name> [<slug>]` with
 // the search filter flags; windows are not stored.
 func cmdLogsSavedSave(args []string) int {
-	const usage = "usage: gregale logs saved save <name> [<slug>] [--q TEXT] [--source S] [--level error,warn] [--route R] [--status 5xx] [--deployment ID] [--request ID] [--trace ID]"
+	const usage = "usage: gregale logs saved save <name> [<slug>] [--q TEXT] [--source S] [--level error,warn] [--route R] [--status 5xx] [--release ID] [--request ID] [--trace ID]"
 	fs := newFlagSet("logs saved save", flag.ContinueOnError)
 	f := newLogSearchFlags(fs)
 	name, slug, ok := parseLogSavedNameArgs(fs, f, args, usage)

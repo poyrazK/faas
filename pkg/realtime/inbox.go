@@ -53,7 +53,7 @@ func (m *Manager) resumeInboxSubscribe(ctx context.Context, c *connection, frame
 	c.mu.RLock()
 	occupied := c.inboxSub != nil || len(c.resumeSubs) >= maxResumePerConnection
 	c.mu.RUnlock()
-	if occupied || !m.reserveResume(c.account()) {
+	if occupied || !m.reserveResume(c.state) {
 		m.inboxError(ctx, c, frame.Consumer, "subscription_limit")
 		return
 	}
@@ -183,9 +183,9 @@ func (m *Manager) pumpInbox(ctx context.Context, c *connection, client ManagedRe
 				return
 			}
 		}
-		readCtx, cancel := context.WithTimeout(ctx, resumeHistoryReadTimeout)
-		next, err := client.ReadInbox(readCtx, c.info.EndpointID, c.info.Principal, lastSent, resumeHistoryPageSize)
-		cancel()
+		next, err := retryHistoryRead(ctx, c, func(readCtx context.Context) (state.ManagedRealtimeChannelHistory, error) {
+			return client.ReadInbox(readCtx, c.info.EndpointID, c.info.Principal, lastSent, resumeHistoryPageSize)
+		})
 		if err != nil {
 			m.inboxError(ctx, c, sub.consumer, "history_read_failed")
 			_ = c.close(websocket.CloseTryAgainLater, "inbox history unavailable")
@@ -206,9 +206,16 @@ func (m *Manager) resumeInboxAck(ctx context.Context, c *connection, frame resum
 	c.mu.RLock()
 	sub := c.inboxSub
 	valid := sub != nil && frame.Consumer == sub.consumer && frame.Sequence >= sub.lastAck && frame.Sequence <= sub.lastSent && frame.After == 0 && frame.Channel == ""
+	// A repeated ack is already stored; it spends a command token instead
+	// of a cursor write.
+	repeat := valid && frame.Sequence == sub.lastAck
 	c.mu.RUnlock()
 	if !valid {
 		m.inboxError(ctx, c, frame.Consumer, "invalid_ack")
+		return
+	}
+	if repeat && !c.allowResumeCommand("repeated_ack") {
+		m.inboxError(ctx, c, frame.Consumer, "command_rate_limited")
 		return
 	}
 	client, ok := m.cfg.HistoryReader.(ManagedRealtimeInboxClient)
@@ -216,13 +223,15 @@ func (m *Manager) resumeInboxAck(ctx context.Context, c *connection, frame resum
 		m.inboxError(ctx, c, frame.Consumer, "inbox_unavailable")
 		return
 	}
-	ackCtx, cancel := context.WithTimeout(ctx, resumeHistoryReadTimeout)
-	_, err := client.AdvanceInboxCursor(ackCtx, c.info.EndpointID, c.info.Principal, sub.consumer, frame.Sequence)
-	cancel()
-	if err != nil {
-		m.inboxError(ctx, c, sub.consumer, "checkpoint_write_failed")
-		_ = c.close(websocket.CloseTryAgainLater, "inbox checkpoint unavailable")
-		return
+	if !repeat {
+		ackCtx, cancel := context.WithTimeout(ctx, resumeHistoryReadTimeout)
+		_, err := client.AdvanceInboxCursor(ackCtx, c.info.EndpointID, c.info.Principal, sub.consumer, frame.Sequence)
+		cancel()
+		if err != nil {
+			m.inboxError(ctx, c, sub.consumer, "checkpoint_write_failed")
+			_ = c.close(websocket.CloseTryAgainLater, "inbox checkpoint unavailable")
+			return
+		}
 	}
 	c.mu.Lock()
 	if c.inboxSub != sub {

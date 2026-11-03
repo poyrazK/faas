@@ -23,22 +23,22 @@ type realtimePushRegistration = receivers.RealtimePushRegistration
 var _ receivers.PushRegistrar = (*Service)(nil).RegisterRealtimePush
 
 func pushProviderLabel(ep, provider string) string {
-	return "realtime-push-provider:" + ep + ":" + provider
+	return api.RealtimePushProviderNamespacePrefix + ep + ":" + provider
 }
 func pushDeviceLabel(ep, principal, device string) string {
 	pk, _ := state.ManagedRealtimeReadPrincipalKey(principal)
-	return "realtime-push-device:" + ep + ":" + pk + ":" + device
+	return api.RealtimePushDeviceNamespacePrefix + ep + ":" + pk + ":" + device
 }
 func (s *Service) sealPush(value any, label string, max int) ([]byte, error) {
-	recipient := s.Host.SecretRecipient()
-	if recipient == nil {
+	recipients, err := s.Host.SecretRecipients()
+	if err != nil {
 		return nil, errors.New("push sealing unavailable")
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
 	}
-	return secretbox.SealBytes(recipient, label, data, max)
+	return secretbox.SealBytesTo(recipients, label, data, max)
 }
 func (s *Service) openPush(ctx context.Context, sealed []byte, label string, value any) error {
 	ns, data, err := secretbox.OpenBytesMulti(s.Host.HostIdentitiesForUnseal(ctx), sealed)
@@ -61,7 +61,7 @@ func (s *Service) RegisterRealtimePush(ctx context.Context, store state.ManagedR
 	}
 	raw, _ := json.Marshal(registration)
 	fingerprint := sha256.Sum256(raw)
-	sealed, err := s.sealPush(registration.Target, pushDeviceLabel(ep, principal, device), 8192)
+	sealed, err := s.sealPush(registration.Target, pushDeviceLabel(ep, principal, device), api.RealtimePushTargetSealMaxBytes)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (s *Service) ManagedRealtimePush(w http.ResponseWriter, r *http.Request, ac
 				api.WriteProblem(w, api.ErrRealtimeInvalid("invalid push provider configuration"))
 				return
 			}
-			sealed, e := s.sealPush(req.Config, pushProviderLabel(ep.ID, provider), 16384)
+			sealed, e := s.sealPush(req.Config, pushProviderLabel(ep.ID, provider), api.RealtimePushConfigSealMaxBytes)
 			if e != nil {
 				api.WriteProblem(w, api.ErrCapacity("push credential sealing unavailable"))
 				return

@@ -63,7 +63,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Delete a synthetic check (ADR-748)
+    """Delete a synthetic check
 
      Removes the check and its run history.
 
@@ -97,7 +97,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Delete a synthetic check (ADR-748)
+    """Delete a synthetic check
 
      Removes the check and its run history.
 
@@ -126,7 +126,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Delete a synthetic check (ADR-748)
+    """Delete a synthetic check
 
      Removes the check and its run history.
 
@@ -158,7 +158,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Delete a synthetic check (ADR-748)
+    """Delete a synthetic check
 
      Removes the check and its run history.
 

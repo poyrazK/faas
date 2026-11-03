@@ -78,7 +78,7 @@ func TestAutomationRecoveryCancellationSubmission(t *testing.T) {
 func TestAutomationRecoveryHealthActionHints(t *testing.T) {
 	var out bytes.Buffer
 	main.WriteAutomationRecoveryAttention(&out, "consumer", recoveryInvocationID, api.WorkflowRecoveryExecutionAttention{StalledCount: 1, Targets: []api.WorkflowRecoveryExecutionAttentionTarget{{Position: 2, RunID: inspectorRunID, ResumeCount: 3, Status: "stalled", DiagnosticsURL: "/diagnostics", RunURL: "/run"}}})
-	for _, want := range []string{"recovery-cancel-preview", "--position 2 --resume-count 3", "/diagnostics", "recovery-retry-plan", "recovery-history"} {
+	for _, want := range []string{"recovery-cancel-preview", "--position 2 --resume-count 3", "/diagnostics", "recovery-retry-plan", "event recovery history"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %s: %s", want, out.String())
 		}

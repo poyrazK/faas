@@ -69,8 +69,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[APIConsumerCreditListResponse | Problem]:
-    """List a consumer's prepaid credit grants, newest first, with the usable balance per currency
-    (ADR-1306).
+    """List a consumer's prepaid credit grants, newest first, with the usable balance per currency.
 
     Args:
         slug (str):
@@ -102,8 +101,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> APIConsumerCreditListResponse | Problem | None:
-    """List a consumer's prepaid credit grants, newest first, with the usable balance per currency
-    (ADR-1306).
+    """List a consumer's prepaid credit grants, newest first, with the usable balance per currency.
 
     Args:
         slug (str):
@@ -130,8 +128,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[APIConsumerCreditListResponse | Problem]:
-    """List a consumer's prepaid credit grants, newest first, with the usable balance per currency
-    (ADR-1306).
+    """List a consumer's prepaid credit grants, newest first, with the usable balance per currency.
 
     Args:
         slug (str):
@@ -161,8 +158,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> APIConsumerCreditListResponse | Problem | None:
-    """List a consumer's prepaid credit grants, newest first, with the usable balance per currency
-    (ADR-1306).
+    """List a consumer's prepaid credit grants, newest first, with the usable balance per currency.
 
     Args:
         slug (str):

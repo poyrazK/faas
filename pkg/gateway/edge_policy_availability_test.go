@@ -22,9 +22,11 @@ func TestEdgeRuleCacheInvalidateAccountHosts(t *testing.T) {
 	a2 := EdgeRuleCacheKey("a2.example.com", "app-a2")
 	b := EdgeRuleCacheKey("b.example.com", "app-b")
 	unscoped := EdgeRuleCacheKey("u.example.com", "app-u")
+	// A host-only set, pinned before the owner is known, holds no app-wide rules.
+	hostOnly := EdgeRuleCacheKey("h.example.com", "")
 	fill := func() *EdgeRuleCache {
 		c := NewEdgeRuleCache(10)
-		for key, owner := range map[string]string{a: "acct-a", a2: "acct-a", b: "acct-b", unscoped: ""} {
+		for key, owner := range map[string]string{a: "acct-a", a2: "acct-a", b: "acct-b", unscoped: "", hostOnly: ""} {
 			e := &HostEntry{}
 			e.SetOwner(owner)
 			c.Put(key, e)
@@ -32,7 +34,7 @@ func TestEdgeRuleCacheInvalidateAccountHosts(t *testing.T) {
 		return c
 	}
 	cached := func(c *EdgeRuleCache) map[string]bool {
-		return map[string]bool{"a": c.HasHost(a), "a2": c.HasHost(a2), "b": c.HasHost(b), "u": c.HasHost(unscoped)}
+		return map[string]bool{"a": c.HasHost(a), "a2": c.HasHost(a2), "b": c.HasHost(b), "u": c.HasHost(unscoped), "h": c.HasHost(hostOnly)}
 	}
 	for _, tc := range []struct {
 		name     string
@@ -42,13 +44,13 @@ func TestEdgeRuleCacheInvalidateAccountHosts(t *testing.T) {
 		want     map[string]bool
 	}{
 		{name: `"*" by account A keeps account B`, account: "acct-a", app: "app-a", patterns: []string{"*"},
-			want: map[string]bool{"a": false, "a2": false, "b": true, "u": false}},
+			want: map[string]bool{"a": false, "a2": false, "b": true, "u": false, "h": false}},
 		{name: `"@app" drops only the rule's app`, account: "acct-a", app: "app-a", patterns: []string{api.EdgeRuleAppHosts},
-			want: map[string]bool{"a": false, "a2": true, "b": true, "u": true}},
+			want: map[string]bool{"a": false, "a2": true, "b": true, "u": true, "h": true}},
 		{name: "an exact host drops only that host", account: "acct-b", app: "app-b", patterns: []string{"b.example.com"},
-			want: map[string]bool{"a": true, "a2": true, "b": false, "u": true}},
+			want: map[string]bool{"a": true, "a2": true, "b": false, "u": true, "h": true}},
 		{name: "no account falls back to every owner", patterns: []string{"*"},
-			want: map[string]bool{"a": false, "a2": false, "b": false, "u": false}},
+			want: map[string]bool{"a": false, "a2": false, "b": false, "u": false, "h": false}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := fill()

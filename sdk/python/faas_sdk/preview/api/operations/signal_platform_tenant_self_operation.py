@@ -116,7 +116,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: OperationSignalRequest,
 ) -> Response[OperationSignalReceipt | Problem]:
-    """Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
+    """Deliver a named event to this customer's own waiting operation.
 
      Requires platform_tenant:operations:manage. Works like the account signal route on the customer's
     own operation only; another customer's operation is not found. The operation's history records the
@@ -125,7 +125,7 @@ def sync_detailed(
 
     Args:
         id (UUID):
-        body (OperationSignalRequest): One named event for an operation (ADR-1197).
+        body (OperationSignalRequest): One named event for an operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -153,7 +153,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: OperationSignalRequest,
 ) -> OperationSignalReceipt | Problem | None:
-    """Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
+    """Deliver a named event to this customer's own waiting operation.
 
      Requires platform_tenant:operations:manage. Works like the account signal route on the customer's
     own operation only; another customer's operation is not found. The operation's history records the
@@ -162,7 +162,7 @@ def sync(
 
     Args:
         id (UUID):
-        body (OperationSignalRequest): One named event for an operation (ADR-1197).
+        body (OperationSignalRequest): One named event for an operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -185,7 +185,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: OperationSignalRequest,
 ) -> Response[OperationSignalReceipt | Problem]:
-    """Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
+    """Deliver a named event to this customer's own waiting operation.
 
      Requires platform_tenant:operations:manage. Works like the account signal route on the customer's
     own operation only; another customer's operation is not found. The operation's history records the
@@ -194,7 +194,7 @@ async def asyncio_detailed(
 
     Args:
         id (UUID):
-        body (OperationSignalRequest): One named event for an operation (ADR-1197).
+        body (OperationSignalRequest): One named event for an operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -220,7 +220,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: OperationSignalRequest,
 ) -> OperationSignalReceipt | Problem | None:
-    """Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
+    """Deliver a named event to this customer's own waiting operation.
 
      Requires platform_tenant:operations:manage. Works like the account signal route on the customer's
     own operation only; another customer's operation is not found. The operation's history records the
@@ -229,7 +229,7 @@ async def asyncio(
 
     Args:
         id (UUID):
-        body (OperationSignalRequest): One named event for an operation (ADR-1197).
+        body (OperationSignalRequest): One named event for an operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

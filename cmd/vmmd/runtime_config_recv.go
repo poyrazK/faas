@@ -355,7 +355,7 @@ func loadRuntimeSecretsForWorkloadIfChanged(ctx context.Context, store runtimeSe
 	if knownRevision != "" && knownRevision == selection.Revision {
 		return runtimeConfigResponse{Revision: selection.Revision, Unchanged: true}, nil
 	}
-	secrets, err := mgr.UnsealRuntimeSecrets(selection.Entries, accountID)
+	secrets, err := mgr.UnsealRuntimeSecrets(ctx, selection.Entries, accountID)
 	if err != nil {
 		return runtimeConfigResponse{}, fmt.Errorf("unseal runtime secrets: %w", err)
 	}

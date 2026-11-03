@@ -116,7 +116,10 @@ the 70,000-line generated `queries.sql.go`, above queries vmmd runs.
    still take a small interface where that makes a fake easier.
 4. **Every pull request reports its blast radius.** `blast-radius.yml`
    (report-only, poyrazK/faas#5056) comments the closure set and, of it,
-   the binaries whose code or only line table changes.
+   the binaries whose code or only line table changes. *Amended by
+   ADR-20261029121500:* it runs only on a pull request labelled
+   `blast-radius`; `scripts/ci/blast_radius.py` gives the same report
+   locally.
 
 ## Next step: selection by code (decided 2026-10-21)
 

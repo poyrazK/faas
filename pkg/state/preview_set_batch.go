@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -47,6 +48,23 @@ var (
 	_ PreviewTombstoneStore = (*PgStore)(nil)
 	_ PreviewTombstoneStore = (*MemStore)(nil)
 )
+
+// retiredPreviewSetRoot reports whether a preview set's root app is deleted
+// or torn down, so another owner may take the set's (installation,
+// repository, PR) key.
+func retiredPreviewSetRoot(status AppStatus, prState string) bool {
+	return status == AppDeleted || prState == PreviewPrStateTearingDown || prState == PreviewPrStateTornDown
+}
+
+// previewTornDown reports a preview the janitor or a destroy has torn down
+// (or is tearing down). Such a tombstone is never restored: the janitor skips
+// torn-down rows and a preview that is not open holds no allowance, so a
+// restored one would serve its PR code forever outside the quota and keep the
+// PR from getting a new preview.
+func previewTornDown(app App) bool {
+	return app.PreviewOfSlug != "" &&
+		(app.PreviewPrState == PreviewPrStateTearingDown || app.PreviewPrState == PreviewPrStateTornDown)
+}
 
 // releasesPreviewTombstone reports whether existing is a deleted row of the
 // preview desired re-creates: same account, organization, project, parent and
@@ -239,17 +257,23 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 		return nil, fmt.Errorf("state: lock PR preview account: %w", mapErr(err))
 	}
 	var previous []string
-	var previousAccount, previousProject string
+	var previousAccount, previousProject, previousStatus, previousState string
 	err = tx.QueryRow(ctx, `select preview_set.member_app_ids, root.account_id::text,
-		coalesce(root.project_id::text, '')
+		coalesce(root.project_id::text, ''), root.status::text, coalesce(root.preview_pr_state, '')
 		from pr_preview_sets preview_set join apps root on root.id = preview_set.root_app_id
 		where preview_set.installation_id = $1 and preview_set.repo_full_name = $2 and preview_set.pr_number = $3`,
-		head.InstallationID, head.RepoFullName, head.PRNumber).Scan(&previous, &previousAccount, &previousProject)
+		head.InstallationID, head.RepoFullName, head.PRNumber).Scan(&previous, &previousAccount, &previousProject, &previousStatus, &previousState)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("state: load previous PR preview set: %w", err)
 	}
 	if err == nil && (previousAccount != apps[0].AccountID || previousProject != apps[0].ProjectID) {
-		return nil, ErrConflict
+		if !retiredPreviewSetRoot(AppStatus(previousStatus), previousState) {
+			return nil, ErrConflict
+		}
+		// Another owner's set whose root is gone: the repository moved, and
+		// the old set only blocked the PR's previews until its root was
+		// purged (bug hunt 33). Nothing of it is left to retire.
+		previous = nil
 	}
 	if err := retireReplacedPreviewMembersTx(ctx, tx, head, apps, previous); err != nil {
 		return nil, err
@@ -326,7 +350,9 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 // reused preview row. githubd derives them from the production app on every
 // PR head, so a gate the production app gained since the preview was created
 // (or a preview created before gates were copied) applies on the next push.
-// A changed row is announced so gateways drop their cached copy.
+// The WebSocket and streaming switches follow the same way, so the preview
+// serves the protocols production serves. A changed row is announced so
+// gateways drop their cached copy.
 func refreshPreviewGatesTx(ctx context.Context, tx pgx.Tx, id string, desired App) error {
 	publicAuthMode := desired.PublicAuthMode
 	if publicAuthMode == "" {
@@ -337,19 +363,26 @@ func refreshPreviewGatesTx(ctx context.Context, tx pgx.Tx, id string, desired Ap
 		consumerAuth = ConsumerAuthModeOptional
 	}
 	visibility := string(api.NormalizeAppVisibility(desired.Visibility))
-	_, err := tx.Exec(ctx, `with changed as (
+	declaredRoutes, err := json.Marshal(previewDeclaredRoutes(desired.DeclaredRoutes))
+	if err != nil {
+		return fmt.Errorf("state: encode PR preview declared routes: %w", err)
+	}
+	_, err = tx.Exec(ctx, `with changed as (
 			update apps set require_authn = $2, public_auth_mode = $3, public_auth_basic = $4,
 			       public_auth_ip_allowlist = $5, consumer_auth_mode = $6, require_signed = $7,
-			       egress_allowlist = $8, visibility = $9
+			       egress_allowlist = $8, visibility = $9, only_declared_routes = $10, declared_routes = $11::jsonb,
+			       websocket_enabled = $12, streaming_enabled = $13, platform_tenant_required = $14, security_policy = $15
 			where id = $1
 			  and (require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist,
-			       consumer_auth_mode, require_signed, egress_allowlist, visibility)
-			      is distinct from ($2, $3, $4::bytea, $5::cidr[], $6, $7, $8::cidr[], $9)
+			       consumer_auth_mode, require_signed, egress_allowlist, visibility, only_declared_routes, declared_routes,
+			       websocket_enabled, streaming_enabled, platform_tenant_required, security_policy)
+			      is distinct from ($2, $3, $4::bytea, $5::cidr[], $6, $7, $8::cidr[], $9, $10, $11::jsonb, $12, $13, $14, $15)
 			returning id)
 		select pg_notify('app_changed', id::text) from changed`,
 		id, desired.RequireAuthn, publicAuthMode, desired.PublicAuthBasicSealed,
 		cidrPrefixesToArray(desired.PublicAuthIPAllowlist), string(consumerAuth), desired.RequireSigned,
-		cidrPrefixesToArray(desired.EgressAllowlist), visibility)
+		cidrPrefixesToArray(desired.EgressAllowlist), visibility, desired.OnlyAllowDeclaredRoutes, string(declaredRoutes),
+		desired.WebSocketEnabled, desired.StreamingEnabled, desired.PlatformTenantRequired, string(previewSecurityPolicy(desired.SecurityPolicy)))
 	if err != nil {
 		return fmt.Errorf("state: refresh PR preview gates: %w", err)
 	}
@@ -366,7 +399,29 @@ func copyPreviewGates(row, desired App) App {
 	row.RequireSigned = desired.RequireSigned
 	row.EgressAllowlist = append([]netip.Prefix(nil), desired.EgressAllowlist...)
 	row.Visibility = desired.Visibility
+	row.OnlyAllowDeclaredRoutes = desired.OnlyAllowDeclaredRoutes
+	row.DeclaredRoutes = previewDeclaredRoutes(desired.DeclaredRoutes)
+	row.WebSocketEnabled = desired.WebSocketEnabled
+	row.StreamingEnabled = desired.StreamingEnabled
+	row.PlatformTenantRequired = desired.PlatformTenantRequired
+	row.SecurityPolicy = previewSecurityPolicy(desired.SecurityPolicy)
 	return row
+}
+
+// previewSecurityPolicy is the column value for a copied security posture
+// policy: unset is off, the column's default.
+func previewSecurityPolicy(policy api.AppSecurityPolicy) api.AppSecurityPolicy {
+	if policy == "" {
+		return api.AppSecurityPolicyOff
+	}
+	return policy
+}
+
+// previewDeclaredRoutes copies a production app's declared-route contract
+// for its preview. An empty list encodes as [] (the column's default), never
+// JSON null.
+func previewDeclaredRoutes(routes []DeclaredRoute) []DeclaredRoute {
+	return append(make([]DeclaredRoute, 0, len(routes)), routes...)
 }
 
 // PRPreviewSetupFailureStore records why githubd could not reserve or start
@@ -535,7 +590,9 @@ func (m *MemStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, 
 	previous := m.previewSets[key]
 	if previous.RootAppID != "" {
 		root, ok := m.apps[previous.RootAppID]
-		if !ok || root.AccountID != apps[0].AccountID || root.ProjectID != apps[0].ProjectID {
+		if ok && (root.AccountID != apps[0].AccountID || root.ProjectID != apps[0].ProjectID) && retiredPreviewSetRoot(root.Status, root.PreviewPrState) {
+			previous = PRPreviewSet{} // mirrors PgStore: replace another owner's retired set
+		} else if !ok || root.AccountID != apps[0].AccountID || root.ProjectID != apps[0].ProjectID {
 			return nil, ErrConflict
 		}
 	}

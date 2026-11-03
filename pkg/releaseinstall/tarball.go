@@ -415,11 +415,42 @@ func (t *Tarball) Extract(root string) error {
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("releaseinstall: lstat extract path %s: %w", outPath, err)
 		}
-		if err := os.WriteFile(outPath, body, 0o755); err != nil {
+		if err := replaceFile(outPath, body, 0o755); err != nil {
 			return fmt.Errorf("releaseinstall: extract write %s: %w", outPath, err)
 		}
 	}
 	return nil
+}
+
+// replaceFile publishes body at path through a temp file and a rename, never
+// by writing through an existing file. A no-drain rollout keeps the active
+// release's daemons running through the install, so re-installing that
+// release (a rerun after a later step failed) finds its binaries executing:
+// writing through one fails with ETXTBSY (v0.1.18-rc.312, fsn-3). The rename
+// leaves a running process on its old inode.
+func replaceFile(path string, body []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // trustedArchiveEntries returns the only archive names Extract may write.

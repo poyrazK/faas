@@ -15,8 +15,8 @@ T = TypeVar("T", bound="CreateBillingRunRequest")
 
 @_attrs_define
 class CreateBillingRunRequest:
-    """A month-end billing run (ADR-1503). Omitted options bill both sources, finalize, do not export, and hold consumers
-    with completeness gaps.
+    """A month-end billing run. Omitted options bill both sources, finalize, do not export, and hold consumers with
+    completeness gaps.
 
     """
 
@@ -25,12 +25,12 @@ class CreateBillingRunRequest:
     sources: list[BillingRunSourcesItem] | Unset = UNSET
     """Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the
     tenant statement and its app item is skipped. product_customers bills each Product Control customer's statement
-    for the month and needs Product Control to be enabled (ADR-20261018212918)."""
+    for the month and needs Product Control to be enabled."""
     finalize: bool | Unset = UNSET
     """Finalize each drafted statement (default true)."""
     export: BillingRunExport | Unset = UNSET
-    """Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1507; requires
-    finalize and a connected key)."""
+    """Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (requires finalize
+    and a connected key)."""
     hold_on_gaps: bool | Unset = UNSET
     """Hold an app consumer whose usage ledger misses requests telemetry saw (default true)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

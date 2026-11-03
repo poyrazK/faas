@@ -14,8 +14,8 @@ T = TypeVar("T", bound="AccountAbuseHold")
 
 @_attrs_define
 class AccountAbuseHold:
-    """Present while the account is on an abuse hold (ADR-361): outbound traffic from its workloads matched a scanning or
-    abuse pattern, so nothing runs or deploys until an operator releases it.
+    """Present while the account is on an abuse hold: outbound traffic from its workloads matched a scanning or abuse
+    pattern, so nothing runs or deploys until an operator releases it.
 
     """
 

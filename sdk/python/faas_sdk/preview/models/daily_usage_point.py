@@ -14,7 +14,7 @@ T = TypeVar("T", bound="DailyUsagePoint")
 
 @_attrs_define
 class DailyUsagePoint:
-    """One day in the account's trailing 30 UTC calendar day usage trend (issue #308)."""
+    """One day in the account's trailing 30 UTC calendar day usage trend."""
 
     date: datetime.date
     """UTC calendar day."""

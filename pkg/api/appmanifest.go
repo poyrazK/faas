@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // AppManifestPath is where imaged writes the manifest inside the app layer and
@@ -534,7 +535,7 @@ func (c *PreAuthRateLimitConfig) ValidateRoutes() error {
 	return nil
 }
 
-var versionAffinityCookieNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
+var versionAffinityCookieNameRe = lazyregexp.New(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
 
 // ValidateVersionAffinityCookieName keeps the configured lookup unambiguous
 // and bounded. The empty name disables cookie-derived affinity.
@@ -572,7 +573,7 @@ type WorkloadPort struct {
 	Internal bool `json:"internal,omitempty"`
 }
 
-var workloadPortNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
+var workloadPortNameRe = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,30}$`)
 
 // EffectiveProtocol maps the omitted protocol used by old callers to TCP.
 func (p WorkloadPort) EffectiveProtocol() WorkloadPortProtocol {
@@ -779,8 +780,11 @@ func (m AppManifest) ValidateLifecyclePlan(plan Plan) error {
 //
 //	Free    : StopGracePeriod ≤  15s, StartupDeadlineS ≤  15s, MaxRetries ≤   3
 //	Hobby   : StopGracePeriod ≤  30s, StartupDeadlineS ≤  30s, MaxRetries ≤   5
-//	Pro     : StopGracePeriod ≤  60s, StartupDeadlineS ≤  60s, MaxRetries ≤  10
-//	Scale   : StopGracePeriod ≤ 120s, StartupDeadlineS ≤ 120s, MaxRetries ≤  20
+//	Pro     : StopGracePeriod ≤  60s, StartupDeadlineS ≤  30s, MaxRetries ≤  10
+//	Scale   : StopGracePeriod ≤ 120s, StartupDeadlineS ≤  30s, MaxRetries ≤  20
+//
+// Pro and Scale startup deadlines are capped at ColdBootReadyWindowS, the
+// §6.1 cold-boot window the watchdog enforces (Limits.DefaultStartupDeadlineS).
 //
 // (replaces the gross 5 min / 300 s / 20-retry ceilings)
 //

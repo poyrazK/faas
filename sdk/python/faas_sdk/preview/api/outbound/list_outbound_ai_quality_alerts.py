@@ -98,8 +98,8 @@ def sync_detailed(
 ) -> Response[OutboundAIQualityAlertList | Problem]:
     """List an integration's AI quality drift alerts.
 
-     Requires MFA and read scope (ADR 20261021171712). Alerts are newest first and kept for 31 days; each
-    fires once per model, metric and UTC day.
+     Requires MFA and read scope. Alerts are newest first and kept for 31 days; each fires once per
+    model, metric and UTC day.
 
     Args:
         integration (UUID):
@@ -133,8 +133,8 @@ def sync(
 ) -> OutboundAIQualityAlertList | Problem | None:
     """List an integration's AI quality drift alerts.
 
-     Requires MFA and read scope (ADR 20261021171712). Alerts are newest first and kept for 31 days; each
-    fires once per model, metric and UTC day.
+     Requires MFA and read scope. Alerts are newest first and kept for 31 days; each fires once per
+    model, metric and UTC day.
 
     Args:
         integration (UUID):
@@ -163,8 +163,8 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIQualityAlertList | Problem]:
     """List an integration's AI quality drift alerts.
 
-     Requires MFA and read scope (ADR 20261021171712). Alerts are newest first and kept for 31 days; each
-    fires once per model, metric and UTC day.
+     Requires MFA and read scope. Alerts are newest first and kept for 31 days; each fires once per
+    model, metric and UTC day.
 
     Args:
         integration (UUID):
@@ -196,8 +196,8 @@ async def asyncio(
 ) -> OutboundAIQualityAlertList | Problem | None:
     """List an integration's AI quality drift alerts.
 
-     Requires MFA and read scope (ADR 20261021171712). Alerts are newest first and kept for 31 days; each
-    fires once per model, metric and UTC day.
+     Requires MFA and read scope. Alerts are newest first and kept for 31 days; each fires once per
+    model, metric and UTC day.
 
     Args:
         integration (UUID):

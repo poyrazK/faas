@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A secret the account owner is asked to enter on a one-time page (ADR-20261026174727).
+ * A secret the account owner is asked to enter on a one-time page.
  */
 export type SecretEntryRequest = {
   key: string;

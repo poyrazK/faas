@@ -21,8 +21,8 @@ class EventStorageUsageResponseLimits:
     retained_events: int
     retained_bytes: int
     settled_retention_seconds: int | Unset = UNSET
-    """How long a settled receipt is kept on the plan (ADR-20261023215834); it bounds duplicate acceptance,
-    recovery and replay ranges. Absent from servers that predate per-plan windows."""
+    """How long a settled receipt is kept on the plan; it bounds duplicate acceptance, recovery and replay ranges.
+    Absent from servers that predate per-plan windows."""
 
     def to_dict(self) -> dict[str, Any]:
         retained_events = self.retained_events

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Data delivered with outbound.ai_quality.drift to every app bound to the integration when a model's quality signal moves away from its previous 7 days (ADR 20261021171712). alert_id is stable across retries.
+ * Data delivered with outbound.ai_quality.drift to every app bound to the integration when a model's quality signal moves away from its previous 7 days. alert_id is stable across retries.
  */
 export type OutboundAIQualityDriftWebhookPayload = {
   alert_id: string;

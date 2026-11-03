@@ -11,7 +11,7 @@ With Node.js 22+, npm, a local Docker daemon and an approved matching bundle:
 ```sh
 gregale data-api onboard --template data-api-teams --path team-orders --bundle /path/to/data-api-bundle.json
 cd team-orders
-gregale data-api dev --port 0 --check
+gregale data-api serve --port 0 --check
 ```
 
 Alternatively, initialize with `gregale init --template data-api-teams --path

@@ -49,6 +49,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -71,6 +73,39 @@ var cgroupRoot = "/sys/fs/cgroup"
 // preserved and no child leaf is created.
 func prepareWorkloadCgroup(typ, name string, ramMB int, log *slog.Logger, cpuMillicoresOpt ...int) (string, error) {
 	return prepareWorkloadCgroupWithIO(typ, name, ramMB, log, firstCPUOption(cpuMillicoresOpt), "")
+}
+
+// prepareMainWorkloadCgroup creates the main workload's leaf. Unlike
+// prepareWorkloadCgroup it also creates the leaf when no limit is configured,
+// so a single-process app's OOM kills are counted in its own memory.events
+// (ADR-121 amendment): the kernel charges a global OOM kill to the victim's
+// cgroup too. The unlimited leaf only observes; if it cannot be created, the
+// app starts in the root cgroup as before and its OOM kills go unreported.
+func prepareMainWorkloadCgroup(ramMB int, log *slog.Logger, cpuMillicoresOpt ...int) (string, error) {
+	cpuMillicores := firstCPUOption(cpuMillicoresOpt)
+	if ramMB != 0 || cpuMillicores != 0 {
+		return prepareWorkloadCgroup("main", "app", ramMB, log, cpuMillicoresOpt...)
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	leaf := leafDir("main", "app")
+	if err := partitionIntoWithIO(leaf, 0, 0, ""); err != nil {
+		log.Warn("main workload OOM leaf unavailable; OOM kills will not be reported", "leaf", leaf, "err", err)
+		return "", nil
+	}
+	return leaf, nil
+}
+
+func (s *Supervisor) setWorkloadLeaf(leaf string) { s.workloadLeaf.Store(&leaf) }
+
+// WorkloadLeaf returns the cgroup leaf the workload last started in, or ""
+// for the root cgroup or before the first start.
+func (s *Supervisor) WorkloadLeaf() string {
+	if leaf := s.workloadLeaf.Load(); leaf != nil {
+		return *leaf
+	}
+	return ""
 }
 
 // updateMainWorkloadCPULimit changes the main workload's guest cgroup in
@@ -394,11 +429,11 @@ type workloadOOMEMitter func(peakMB, planMB int)
 //  1. ctx is cancelled — the VM is shutting down, clean
 //     exit.
 //  2. The leaf records a new oom_kill event — the
-//     listener samples the leaf's memory.current (or
-//     memory.high watermark if available), invokes emit
-//     (peakMB, planMB), and returns. The workload is
-//     dead; the host's Manager.ReportWorkloadOOM relay
-//     tears the VM down on its end.
+//     listener samples the leaf's memory.peak (or
+//     memory.current where memory.peak is absent),
+//     invokes emit(peakMB, planMB), and returns. The
+//     host's Manager.ReportWorkloadOOM relay tears the
+//     VM down on its end.
 //
 // Wire protocol (issue #470 / PR #470-FU-B port 1027 +
 // Cluster C type=0x05): the emit is a guest-init
@@ -448,6 +483,16 @@ func WatchOOM(ctx context.Context, leaf string, planMB int, emit workloadOOMEMit
 	if leaf == "" {
 		return errors.New("WatchOOM: empty leaf")
 	}
+	baseline, _ := readMemoryEventsOOMKills(leaf)
+	return watchOOMFrom(ctx, leaf, planMB, baseline, emit, log)
+}
+
+// watchOOMFrom is WatchOOM with the oom_kill baseline supplied by the caller,
+// so kills after a workload starts but before the listener runs still count.
+func watchOOMFrom(ctx context.Context, leaf string, planMB int, baseline uint64, emit workloadOOMEMitter, log *slog.Logger) error {
+	if leaf == "" {
+		return errors.New("WatchOOM: empty leaf")
+	}
 	if emit == nil {
 		return errors.New("WatchOOM: nil emitter")
 	}
@@ -463,11 +508,10 @@ func WatchOOM(ctx context.Context, leaf string, planMB int, emit workloadOOMEMit
 	}
 	defer func() { _ = unix.Close(fd) }()
 
-	// Track the baseline oom_kill counter so a leaf that
-	// already has kills on watch-start does not fire
-	// spuriously. We re-read on every wakeup and compare
-	// against this baseline.
-	baseline, _ := readMemoryEventsOOMKills(leafDir)
+	// The baseline oom_kill counter keeps a leaf that
+	// already has kills (an earlier run of the workload)
+	// from firing spuriously. We re-read on every wakeup
+	// and compare against it.
 
 	pollFds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLPRI}}
 	buf := make([]byte, 4096)
@@ -524,16 +568,9 @@ func WatchOOM(ctx context.Context, leaf string, planMB int, emit workloadOOMEMit
 			// polling.
 			continue
 		}
-		// delta > 0 — fire the emit. peakMB is the
-		// leaf's current usage at the moment of the
-		// kill (rounded to MB); reading memory.high
-		// would be ideal but it's a "high watermark"
-		// that the leaf may or may not have (it's
-		// emitted under memory.events.high). Fall back
-		// to memory.current (the live usage) if high
-		// is unavailable.
-		peakBytes, _ := readMemoryHighOrCurrent(leafDir)
-		peakMB := int((peakBytes + (1 << 20) - 1) >> 20) // ceil to MB
+		// delta > 0 — fire the emit with the leaf's
+		// usage high-watermark, rounded up to MB.
+		peakMB := workloadPeakMB(leafDir)
 		// planMB on the wire signature is the customer's
 		// plan cap. The caller must pass the real
 		// plan MB (mirroring how the schedd stamps
@@ -605,32 +642,85 @@ func readMemoryEventsOOMKills(leafDir string) (uint64, error) {
 	return 0, nil
 }
 
-// readMemoryHighOrCurrent prefers memory.events.high
-// (the cgroup v2 high-watermark since the last reset),
-// falls back to memory.current if the high field is
-// absent (kernel pre-6.x). Returns 0 + nil on read
-// failure — the listener treats 0 as "unknown peak"
-// rather than "0 MB peak", and the silent-zero path
-// matches the readMemoryEventsOOMKills contract (a
-// fresh cgroup leaf with no populated events stays
-// quiet rather than erroring out).
-func readMemoryHighOrCurrent(leafDir string) (uint64, error) {
-	if b, err := os.ReadFile(filepath.Join(leafDir, "memory.events")); err == nil {
-		for _, line := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(line, "high ") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 {
-					return strconv.ParseUint(fields[1], 10, 64)
-				}
+// readMemoryPeakOrCurrent returns the leaf's usage high-watermark from
+// memory.peak (Linux 5.19+), or memory.current where memory.peak is absent.
+// The OOM-killed process has already been uncharged when the listener reads,
+// so memory.current understates the usage at the kill; memory.peak keeps it.
+// (memory.events' "high" line is a count of memory.high breaches, not bytes.)
+// Absent files return 0 + nil, which the caller treats as "unknown peak".
+func readMemoryPeakOrCurrent(leafDir string) (uint64, error) {
+	for _, name := range []string{"memory.peak", "memory.current"} {
+		b, err := os.ReadFile(filepath.Join(leafDir, name))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
 			}
+			return 0, err
 		}
+		return strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
 	}
-	b, err := os.ReadFile(filepath.Join(leafDir, "memory.current"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
+	return 0, nil
+}
+
+// workloadPeakMB is readMemoryPeakOrCurrent rounded up to MB, 0 when unknown.
+func workloadPeakMB(leafDir string) int {
+	peakBytes, _ := readMemoryPeakOrCurrent(leafDir)
+	return int((peakBytes + (1 << 20) - 1) >> 20)
+}
+
+// workloadOOMWatch reports at most one OOM kill for one run of a workload.
+// The listener reports a kill while the workload is still running (a child
+// killed while the parent lives on); stop repeats the check after the
+// workload exited, because the exit can win the race against the listener's
+// wakeup and stopping the listener would otherwise drop the report.
+type workloadOOMWatch struct {
+	leaf     string
+	planMB   int
+	baseline uint64
+	emit     workloadOOMEMitter
+	once     sync.Once
+	reported atomic.Bool
+	cancel   context.CancelFunc
+	done     chan struct{}
+}
+
+// startWorkloadOOMWatch reads the leaf's oom_kill baseline and starts the
+// listener. Call it before the workload starts so a kill during startup
+// counts. A nil watch (empty leaf) is valid and does nothing.
+func startWorkloadOOMWatch(leaf string, planMB int, emit workloadOOMEMitter, log *slog.Logger) *workloadOOMWatch {
+	if leaf == "" || emit == nil {
+		return nil
+	}
+	baseline, _ := readMemoryEventsOOMKills(leaf)
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &workloadOOMWatch{leaf: leaf, planMB: planMB, baseline: baseline, emit: emit, cancel: cancel, done: make(chan struct{})}
+	go func() {
+		defer close(w.done)
+		err := watchOOMFrom(ctx, leaf, planMB, baseline, w.report, log)
+		if err != nil && !errors.Is(err, context.Canceled) && log != nil {
+			log.Debug("WatchOOM listener returned", "err", err, "leaf", leaf)
 		}
-		return 0, err
+	}()
+	return w
+}
+
+func (w *workloadOOMWatch) report(peakMB, planMB int) {
+	w.once.Do(func() {
+		w.reported.Store(true)
+		w.emit(peakMB, planMB)
+	})
+}
+
+// stop ends the listener and reports a kill it missed. It returns whether an
+// OOM kill was reported for this run.
+func (w *workloadOOMWatch) stop() bool {
+	if w == nil {
+		return false
 	}
-	return strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	w.cancel()
+	<-w.done
+	if current, err := readMemoryEventsOOMKills(w.leaf); err == nil && current > w.baseline {
+		w.report(workloadPeakMB(w.leaf), w.planMB)
+	}
+	return w.reported.Load()
 }

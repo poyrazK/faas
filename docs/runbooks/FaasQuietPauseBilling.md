@@ -22,6 +22,11 @@ Switches, all off by default:
   `meterd_quiet_pause_unbilled_seconds_total{mode="shadow"}`, bill as before)
   or `on` (subtract). Turning it off restores full billing from the next
   rolled minute; rolled minutes stay as they were.
+- platform flag `quiet_pause_unbilled` (docs/ops/platform-flags.md): in `on`
+  mode, the accounts paused seconds are subtracted for. Off by default; the
+  others are counted as `mode="shadow"` and billed in full. Turning the flag
+  off for an account stops subtracting for it from the next rolled minute,
+  without touching meterd.
 
 ```sh
 curl -fsS http://127.0.0.1:9103/metrics | grep -E '^schedd_quiet_pause_ledger_'
@@ -50,7 +55,7 @@ billed.
 
 meterd rolled instance-minutes whose open pause ran past its node's
 watermark, so it billed the uncovered part. Normal watermark lag is a few
-seconds, against meterd's 60-120 s roll delay, so a sustained count means a
+seconds, against meterd's 75-135 s roll delay, so a sustained count means a
 node stopped writing.
 
 1. Find the node: `time() - schedd_quiet_pause_ledger_watermark_seconds` is
@@ -62,7 +67,11 @@ node stopped writing.
 3. The over-billed minutes cannot be re-rolled: `usage_minutes` keeps the
    first value. If the incident was large, credit affected accounts with the
    `meterd_quiet_pause_unproven_minutes_total` window as evidence (spec
-   §4.7.1).
+   §4.7.1). meterd keeps ended pauses for 3 days
+   (`api.QuietPauseLedgerRetentionDays`); copy the incident's
+   `instance_quiet_pauses` rows before then if the credit needs them. What
+   each minute did not bill stays in `usage_minutes.paused_mb_seconds`, which
+   customers see as `quiet_paused_gb_hours` in their usage summary.
 
 ## FaasQuietPauseUnbilledExceedsMeasured
 

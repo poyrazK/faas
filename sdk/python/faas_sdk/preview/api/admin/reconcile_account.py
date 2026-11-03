@@ -69,6 +69,11 @@ def _parse_response(
 
         return response_502
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -95,7 +100,7 @@ def sync_detailed(
 
      Loads the account, calls billing.Provider.ReconcileUsage for
     a rolling 30-day window [start, end). Stripe implements
-    this (ADR-049 §B.1); Paddle returns billing.ErrNotImplemented
+    this; Paddle returns billing.ErrNotImplemented
     and the handler maps to 501. The response surfaces the
     SDK-returned mb_seconds total so an operator can diff
     against the local usage_minutes sum.
@@ -131,7 +136,7 @@ def sync(
 
      Loads the account, calls billing.Provider.ReconcileUsage for
     a rolling 30-day window [start, end). Stripe implements
-    this (ADR-049 §B.1); Paddle returns billing.ErrNotImplemented
+    this; Paddle returns billing.ErrNotImplemented
     and the handler maps to 501. The response surfaces the
     SDK-returned mb_seconds total so an operator can diff
     against the local usage_minutes sum.
@@ -162,7 +167,7 @@ async def asyncio_detailed(
 
      Loads the account, calls billing.Provider.ReconcileUsage for
     a rolling 30-day window [start, end). Stripe implements
-    this (ADR-049 §B.1); Paddle returns billing.ErrNotImplemented
+    this; Paddle returns billing.ErrNotImplemented
     and the handler maps to 501. The response surfaces the
     SDK-returned mb_seconds total so an operator can diff
     against the local usage_minutes sum.
@@ -196,7 +201,7 @@ async def asyncio(
 
      Loads the account, calls billing.Provider.ReconcileUsage for
     a rolling 30-day window [start, end). Stripe implements
-    this (ADR-049 §B.1); Paddle returns billing.ErrNotImplemented
+    this; Paddle returns billing.ErrNotImplemented
     and the handler maps to 501. The response surfaces the
     SDK-returned mb_seconds total so an operator can diff
     against the local usage_minutes sum.

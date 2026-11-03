@@ -206,6 +206,8 @@ func TestHealthObservationRejectsDriftAndInvalidProviderResults(t *testing.T) {
 		{"invalid compute", func(o *ObservedDatabase) { o.ComputeState = "vendor-internal-state" }, "observation_invalid", false},
 		{"unknown compute", func(o *ObservedDatabase) { o.ComputeState = ComputeStateUnknown }, "observation_invalid", true},
 		{"spec drift", func(o *ObservedDatabase) { o.Spec.StorageLimitBytes++ }, "spec_mismatch", true},
+		{"storage pool lowered the limit", func(o *ObservedDatabase) { o.Spec.StorageLimitBytes /= 2 }, "", true},
+		{"storage limit removed", func(o *ObservedDatabase) { o.Spec.StorageLimitBytes = 0 }, "spec_mismatch", true},
 		{"provider failed", func(o *ObservedDatabase) { o.Status = ProviderStatusFailed }, "provider_failed", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

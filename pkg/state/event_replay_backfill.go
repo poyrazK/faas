@@ -197,7 +197,8 @@ func getEventReplayBackfill(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, 
 		Progress: api.EventReplayBackfillProgress{Scanned: row.ScannedCount, Matched: row.MatchedCount, Filtered: row.FilteredCount,
 			Pending: row.PendingCount, Processing: row.ProcessingCount, Enqueued: row.EnqueuedCount, Failed: row.FailedCount, RetryableFailed: row.RetryableFailedCount,
 			SkippedCaptured: row.SkippedCapturedCount, SkippedUnknown: row.SkippedUnknownCount,
-			SkippedExisting: row.SkippedExistingCount, SkippedUnsettled: row.SkippedUnsettledCount},
+			SkippedExisting: row.SkippedExistingCount, SkippedUnsettled: row.SkippedUnsettledCount, Cancelled: row.CancelledCount},
+		LastFailure: row.LastFailure,
 	}
 	if row.ConsumerKind == "workflow" {
 		response.WorkflowName = row.WorkflowName
@@ -217,30 +218,55 @@ func getEventReplayBackfill(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, 
 	return response, nil
 }
 
+// ProcessNextEventReplayBackfill scans one page of the next due job. A job
+// whose page fails is backed off and the failure returned as an
+// *EventJobError, so the caller can go on to the next job
+// (ADR-20261028095548).
 func (s *PgStore) ProcessNextEventReplayBackfill(ctx context.Context, now time.Time) (bool, error) {
+	jobID, worked, err := s.processNextEventReplayBackfill(ctx, now)
+	if err == nil || !jobID.Valid || ctx.Err() != nil {
+		return worked, err
+	}
+	return s.recordEventReplayBackfillFailure(ctx, jobID, now, err)
+}
+
+func (s *PgStore) processNextEventReplayBackfill(ctx context.Context, now time.Time) (pgtype.UUID, bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return false, err
+		return pgtype.UUID{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 	q := sqlc.New()
-	job, err := q.EventReplayBackfillNextJob(ctx, tx, api.EventReplayBackfillInFlightMax)
+	job, err := q.EventReplayBackfillNextJob(ctx, tx, sqlc.EventReplayBackfillNextJobParams{NowAt: pgtypeFromTime(now), InFlightMax: api.EventReplayBackfillInFlightMax})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return pgtype.UUID{}, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("claim event replay backfill scan: %w", err)
+		return pgtype.UUID{}, false, fmt.Errorf("claim event replay backfill scan: %w", err)
 	}
+	worked, err := scanEventReplayBackfillPage(ctx, q, tx, job, now)
+	if err != nil {
+		return job.ID, false, err
+	}
+	if job.FailureCount > 0 {
+		if err := q.EventReplayBackfillClearFailures(ctx, tx, job.ID); err != nil {
+			return job.ID, false, err
+		}
+	}
+	return job.ID, worked, tx.Commit(ctx)
+}
+
+func scanEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job sqlc.EventReplayJob, now time.Time) (bool, error) {
 	var target PublishedEventRecipient
 	if err := json.Unmarshal(job.Recipient, &target); err != nil {
-		return false, fmt.Errorf("decode event replay target snapshot: %w", err)
+		return false, fmt.Errorf("%w: decode event replay target snapshot: %w", errEventJobInvalid, err)
 	}
 	if job.ConsumerKind == "workflow" {
 		if err := validateWorkflowEventReplayBackfillTarget(job, target); err != nil {
-			return false, fmt.Errorf("validate workflow replay target snapshot: %w", err)
+			return false, fmt.Errorf("%w: validate workflow replay target snapshot: %w", errEventJobInvalid, err)
 		}
 	} else if err := validateEventReplayBackfillTarget(job, target); err != nil {
-		return false, fmt.Errorf("validate event replay target snapshot: %w", err)
+		return false, fmt.Errorf("%w: validate event replay target snapshot: %w", errEventJobInvalid, err)
 	}
 	inFlight, err := q.EventReplayBackfillInFlightCount(ctx, tx, job.ID)
 	if err != nil {
@@ -265,7 +291,7 @@ func (s *PgStore) ProcessNextEventReplayBackfill(ctx context.Context, now time.T
 		if err := q.EventReplayBackfillFinalize(ctx, tx, job.ID); err != nil {
 			return false, err
 		}
-		return true, tx.Commit(ctx)
+		return true, nil
 	}
 	var progress eventReplayBackfillPageProgress
 	if job.ConsumerKind == "workflow" {
@@ -288,7 +314,7 @@ func (s *PgStore) ProcessNextEventReplayBackfill(ctx context.Context, now time.T
 	if err := q.EventReplayBackfillFinalize(ctx, tx, job.ID); err != nil {
 		return false, err
 	}
-	return true, tx.Commit(ctx)
+	return true, nil
 }
 
 func validateEventReplayBackfillTarget(job sqlc.EventReplayJob, target PublishedEventRecipient) error {

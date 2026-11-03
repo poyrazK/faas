@@ -297,19 +297,13 @@ func (m *MemStore) PutManagedRealtimeReducer(ctx context.Context, row ManagedRea
 		old.Entities = append(json.RawMessage(nil), old.Entities...)
 		return old, nil
 	}
+	if err := m.checkRetainedChannelMem(row.EndpointID, row.Channel); err != nil {
+		return row, err
+	}
 	h := m.managedRealtimeHistory[key]
 	if h == nil {
 		if row.Sequence != 0 {
 			return row, ErrConflict
-		}
-		channels := 0
-		for key := range m.managedRealtimeHistory {
-			if key.endpointID == row.EndpointID {
-				channels++
-			}
-		}
-		if channels >= 32 {
-			return row, ErrManagedRealtimeHistoryLimit
 		}
 		h = &managedRealtimeHistoryState{next: 1, oldest: 1}
 	}
@@ -387,18 +381,8 @@ func (s *PgStore) PutManagedRealtimeReducer(ctx context.Context, row ManagedReal
 		}
 		return row, err
 	}
-	var exists bool
-	if err = tx.QueryRow(ctx, `select exists(select 1 from managed_realtime_channel_heads where endpoint_id=$1 and channel=$2)`, row.EndpointID, row.Channel).Scan(&exists); err != nil {
+	if err = checkRetainedChannelPG(ctx, tx, row.EndpointID, row.Channel); err != nil {
 		return row, err
-	}
-	if !exists {
-		var count int
-		if err = tx.QueryRow(ctx, `select count(*) from managed_realtime_channel_heads where endpoint_id=$1`, row.EndpointID).Scan(&count); err != nil {
-			return row, err
-		}
-		if count >= 32 {
-			return row, ErrManagedRealtimeHistoryLimit
-		}
 	}
 	if _, err = tx.Exec(ctx, `insert into managed_realtime_channel_heads(endpoint_id,channel) values($1,$2) on conflict do nothing`, row.EndpointID, row.Channel); err != nil {
 		return row, err

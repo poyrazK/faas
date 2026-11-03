@@ -123,7 +123,10 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	defer measureTrafficPhase(r.Context(), trafficPolicy)()
-	bounded, cancel := context.WithTimeout(r.Context(), api.TrafficPublicRoutingReadTimeout)
+	// A warm view answers from memory. A cold read keeps the routing read
+	// bound for its first attempt and may retry within the cold bound
+	// (ADR-20261027085556 amendment 1).
+	bounded, cancel := context.WithTimeout(r.Context(), api.TrafficPublicRoutingColdReadTimeout)
 	defer cancel()
 	source, err := h.publicRoutingPolicy(bounded, app, inputs)
 	if err == nil {
@@ -160,6 +163,16 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 				"No deployment available", "The app has no routable deployment. Retry after a deployment is available."))
 			return true
+		}
+		// A verified refusal of an alias pin is the target's lifecycle, not an
+		// unverified policy: after a rollback superseded the alias target it
+		// answered 503 traffic_policy_unavailable instead of hunt #8's 409.
+		if frozen.HostChecked && !frozen.HostAllowed {
+			if notServing := h.pinnedDeploymentNotServing(r.Context(), app, inputs.HostDeploymentID); notServing != nil {
+				recordTrafficPolicyStage(r.Context(), publicRoutingSelectionStage(frozen))
+				api.WriteProblem(w, notServing)
+				return true
+			}
 		}
 		return h.refusePublicRouting(w, r, app, publicRoutingSelectionStage(frozen), nil, &frozen)
 	}

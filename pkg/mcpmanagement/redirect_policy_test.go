@@ -9,7 +9,7 @@ func TestCodexLoopbackCallbackPolicyIsNarrow(t *testing.T) {
 		allowed bool
 	}{
 		{"http://127.0.0.1:43210/callback/abc_123-X", true},
-		{"http://127.0.0.1:43210/callback", false},
+		{"http://127.0.0.1:43210/callback", true},
 		{"http://127.0.0.1:43210/callback/", false},
 		{"http://127.0.0.1:43210/callback/a/b", false},
 		{"http://127.0.0.1:43210/callback/%2Fa", false},

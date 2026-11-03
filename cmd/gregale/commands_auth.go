@@ -107,7 +107,7 @@ func cmdAuthCreate(args []string) int {
 		}
 	}
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || opts.database == "" || api.ValidateScope(opts.scope) != nil || !authRedirectURL(opts.siteURL) {
-		PrintUsage(os.Stderr, "usage: gregale auth create NAME --database DATABASE --site-url URL [--redirect-urls URLS] [--scope SCOPE] [--autoconfirm] [--disable-signup] [--resume]", "auth")
+		PrintUsage(os.Stderr, "usage: gregale auth create NAME --database DATABASE --site-url URL [--redirect-urls URLS] [--env SCOPE] [--autoconfirm] [--disable-signup] [--resume]", "auth")
 		return 1
 	}
 	if *emailProvider != "" || *emailFrom != "" || *emailKeyStdin {

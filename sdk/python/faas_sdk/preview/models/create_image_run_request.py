@@ -19,7 +19,7 @@ T = TypeVar("T", bound="CreateImageRunRequest")
 
 @_attrs_define
 class CreateImageRunRequest:
-    """Body of POST /v1/image-runs (ADR-1161)."""
+    """Body of POST /v1/image-runs."""
 
     image: str
     """OCI image reference; normalized before use (alpine → docker.io/library/alpine:latest)."""
@@ -36,19 +36,19 @@ class CreateImageRunRequest:
     pull: CreateImageRunRequestPull | Unset = "missing"
     """always re-pulls a cached image so a moved tag is resolved again."""
     interactive: bool | Unset = UNSET
-    """ADR-1330: hold the command until one client attaches to the run's task. The run has no retries and
-    timeout_sec is at most 3600. Needs the operator gate FAAS_INTERACTIVE_IMAGE_RUNS; otherwise 501."""
+    """Hold the command until one client attaches to the run's task. The run has no retries and timeout_sec is at
+    most 3600. Needs the operator gate FAAS_INTERACTIVE_IMAGE_RUNS; otherwise 501."""
     tty: bool | Unset = UNSET
     """Give the interactive command a pseudo-terminal. Requires interactive."""
     user: str | Unset = UNSET
-    """ADR-1790: run as name|uid[:group|gid], resolved in the image's passwd and group files, instead of the image
-    USER (docker run -u)."""
+    """Run as name|uid[:group|gid], resolved in the image's passwd and group files, instead of the image USER
+    (docker run -u)."""
     workdir: str | Unset = UNSET
-    """ADR-1790: absolute working directory instead of the image WORKDIR (docker run -w); created when missing."""
+    """Absolute working directory instead of the image WORKDIR (docker run -w); created when missing."""
     registry_auth: ImageRunRegistryAuth | Unset = UNSET
-    """ADR-1790: credential for a private image's registry. apid stores it sealed on the image's runner job for
-    that registry host, exactly as PUT /v1/jobs/{name}/registry-credentials does, and never returns it. Every run
-    that supplies it refreshes it."""
+    """Credential for a private image's registry. The API stores it sealed on the image's runner job for that
+    registry host, exactly as PUT /v1/jobs/{name}/registry-credentials does, and never returns it. Every run that
+    supplies it refreshes it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

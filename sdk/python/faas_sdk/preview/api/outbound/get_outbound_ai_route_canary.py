@@ -89,8 +89,7 @@ def sync_detailed(
     """Read an AI route's model canary with both targets' counts.
 
      Requires MFA and read scope. Returns the canary with the route's first target's and the canary
-    target's settled attempts over the canary's window (ADR-1340). A route without a canary is not
-    found.
+    target's settled attempts over the canary's window. A route without a canary is not found.
 
     Args:
         route (UUID):
@@ -122,8 +121,7 @@ def sync(
     """Read an AI route's model canary with both targets' counts.
 
      Requires MFA and read scope. Returns the canary with the route's first target's and the canary
-    target's settled attempts over the canary's window (ADR-1340). A route without a canary is not
-    found.
+    target's settled attempts over the canary's window. A route without a canary is not found.
 
     Args:
         route (UUID):
@@ -150,8 +148,7 @@ async def asyncio_detailed(
     """Read an AI route's model canary with both targets' counts.
 
      Requires MFA and read scope. Returns the canary with the route's first target's and the canary
-    target's settled attempts over the canary's window (ADR-1340). A route without a canary is not
-    found.
+    target's settled attempts over the canary's window. A route without a canary is not found.
 
     Args:
         route (UUID):
@@ -181,8 +178,7 @@ async def asyncio(
     """Read an AI route's model canary with both targets' counts.
 
      Requires MFA and read scope. Returns the canary with the route's first target's and the canary
-    target's settled attempts over the canary's window (ADR-1340). A route without a canary is not
-    found.
+    target's settled attempts over the canary's window. A route without a canary is not found.
 
     Args:
         route (UUID):

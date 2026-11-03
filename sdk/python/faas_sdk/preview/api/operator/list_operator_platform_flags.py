@@ -61,7 +61,7 @@ def sync_detailed(
 ) -> Response[OperatorPlatformFlagList | Problem]:
     """List platform flags
 
-     Returns every catalogued platform flag (ADR-1700) with apid's live
+     Returns every catalogued platform flag with the API's live
     definition, the per-daemon apply receipts and convergence, and the
     shared account groups. Change a flag with
     PATCH /v1/admin/config/{config_key}. Operator-only.
@@ -89,7 +89,7 @@ def sync(
 ) -> OperatorPlatformFlagList | Problem | None:
     """List platform flags
 
-     Returns every catalogued platform flag (ADR-1700) with apid's live
+     Returns every catalogued platform flag with the API's live
     definition, the per-daemon apply receipts and convergence, and the
     shared account groups. Change a flag with
     PATCH /v1/admin/config/{config_key}. Operator-only.
@@ -113,7 +113,7 @@ async def asyncio_detailed(
 ) -> Response[OperatorPlatformFlagList | Problem]:
     """List platform flags
 
-     Returns every catalogued platform flag (ADR-1700) with apid's live
+     Returns every catalogued platform flag with the API's live
     definition, the per-daemon apply receipts and convergence, and the
     shared account groups. Change a flag with
     PATCH /v1/admin/config/{config_key}. Operator-only.
@@ -139,7 +139,7 @@ async def asyncio(
 ) -> OperatorPlatformFlagList | Problem | None:
     """List platform flags
 
-     Returns every catalogued platform flag (ADR-1700) with apid's live
+     Returns every catalogued platform flag with the API's live
     definition, the per-daemon apply receipts and convergence, and the
     shared account groups. Change a flag with
     PATCH /v1/admin/config/{config_key}. Operator-only.

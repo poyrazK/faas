@@ -7,7 +7,7 @@ import type { PlanManagedProvision } from './PlanManagedProvision.js';
  * A service the repo declared (compose image:, render.yaml, etc.)
  * but the platform will NOT provision. Surfaced so the customer
  * sees them in the plan and reads a learnable env hint instead of
- * a runtime 422 (two-drive FROM-base contract, ADR-046).
+ * a runtime 422 (two-drive FROM-base contract).
  *
  */
 export type PlanManaged = {
@@ -18,7 +18,7 @@ export type PlanManaged = {
   image: string;
   provision?: PlanManagedProvision;
   /**
-   * Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set.
+   * Why apply does not provide a Compose postgres service. Omitted for other datastores and when provision is set.
    */
   not_provisioned_reason?: 'unavailable' | 'plan' | 'quota' | 'unsupported' | 'configured' | 'not_referenced' | 'permission';
 };

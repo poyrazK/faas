@@ -20,7 +20,7 @@ T = TypeVar("T", bound="AppForkExecResponse")
 
 @_attrs_define
 class AppForkExecResponse:
-    """One command run inside a production fork (ADR-732) and, once finished, its result."""
+    """One command run inside a production fork and, once finished, its result."""
 
     id: UUID
     fork_id: UUID

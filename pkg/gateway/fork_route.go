@@ -78,11 +78,16 @@ func (h *Handler) serveFork(w http.ResponseWriter, r *http.Request, app App) {
 // unexpired, the token to hash to the stored value (constant time), and the
 // recorded instance to be a running fork of the same app on a known node.
 func ForkTargetFromState(fork state.AppFork, instance state.Instance, port int, token string, now time.Time) (Target, bool) {
-	if fork.Status != state.AppForkRunning || !fork.ExpiresAt.After(now) || fork.InstanceID == nil ||
-		len(fork.AccessTokenHash) != sha256.Size || token == "" {
-		return Target{}, false
-	}
-	if subtle.ConstantTimeCompare(api.AppForkAccessTokenHash(token), fork.AccessTokenHash) != 1 {
+	matched := token != "" && len(fork.AccessTokenHash) == sha256.Size &&
+		subtle.ConstantTimeCompare(api.AppForkAccessTokenHash(token), fork.AccessTokenHash) == 1
+	return ForkTargetFromMatchedState(fork, instance, port, matched, now)
+}
+
+// ForkTargetFromMatchedState is ForkTargetFromState for a caller that has
+// already checked the token against the stored hash: through apid, which
+// alone holds the key a keyed hash is computed with (ADR 20261029202403).
+func ForkTargetFromMatchedState(fork state.AppFork, instance state.Instance, port int, tokenMatched bool, now time.Time) (Target, bool) {
+	if fork.Status != state.AppForkRunning || !fork.ExpiresAt.After(now) || fork.InstanceID == nil || !tokenMatched {
 		return Target{}, false
 	}
 	if instance.ID != *fork.InstanceID || instance.AppID != fork.AppID || !state.IsFork(instance.Mode) ||

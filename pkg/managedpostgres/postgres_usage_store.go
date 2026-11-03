@@ -227,3 +227,18 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 	}
 	return snapshot, nil
 }
+
+// FleetTotals reports the fleet's database count and month-to-date provider
+// cost (ADR-20261028103115).
+func (s *PostgresStore) FleetTotals(ctx context.Context, periodStart time.Time) (FleetTotals, error) {
+	if periodStart.IsZero() {
+		return FleetTotals{}, ErrInvalid
+	}
+	periodStart = monthStart(periodStart)
+	row, err := sqlc.New().ManagedPostgresFleetTotals(ctx, s.catalog, sqlc.ManagedPostgresFleetTotalsParams{
+		PeriodStart: databaseNullableTime(periodStart), PeriodEnd: databaseNullableTime(monthStart(periodStart.AddDate(0, 1, 0)))})
+	if err != nil {
+		return FleetTotals{}, mapPostgresError(err)
+	}
+	return FleetTotals{Databases: int(row.Databases), CostMillicents: row.CostMillicents}, nil
+}

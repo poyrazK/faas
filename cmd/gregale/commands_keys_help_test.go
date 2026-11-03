@@ -5,7 +5,6 @@ import (
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
@@ -21,23 +20,20 @@ func TestKeysListMarksRevokedKeys(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldStdout := os.Stdout
-	os.Stdout = writer
-	code := main.CmdKeys([]string{"list"})
-	os.Stdout = oldStdout
-	_ = writer.Close()
 	var out bytes.Buffer
-	_, _ = out.ReadFrom(reader)
+	previous := *main.OsStdout
+	*main.OsStdout = &out
+	code := main.CmdKeys([]string{"list"})
+	*main.OsStdout = previous
 	if code != 0 {
 		t.Fatalf("keys list = %d: %s", code, out.String())
 	}
+	// A header, then one row per key whose STATUS column tells revoked keys
+	// from live ones.
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 || strings.Contains(lines[0], "active") || !strings.HasSuffix(strings.TrimSpace(lines[1]), "revoked") {
-		t.Fatalf("keys list output = %q, want the live row unchanged and the revoked row marked", out.String())
+	if len(lines) != 3 || !strings.Contains(lines[0], "STATUS") ||
+		!strings.Contains(lines[1], "active") || !strings.Contains(lines[2], "revoked") {
+		t.Fatalf("keys list output = %q, want a header, the live row and the revoked row marked", out.String())
 	}
 }
 
@@ -83,7 +79,7 @@ func TestKeysListHelpNeverRequestsAPI(t *testing.T) {
 			if calls != 0 {
 				t.Fatalf("help made %d API request(s)", calls)
 			}
-			if !strings.Contains(stdout.String(), "gregale keys list") {
+			if !strings.Contains(stdout.String(), "gregale key list") {
 				t.Fatalf("help output does not identify the list command: %q", stdout.String())
 			}
 		})

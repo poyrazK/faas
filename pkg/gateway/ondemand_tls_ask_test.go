@@ -22,6 +22,14 @@ func onDemandTLSFixture(t *testing.T) (*state.MemStore, *OnDemandTLSPolicy, *pro
 	t.Helper()
 	ctx := context.Background()
 	s := state.NewMemStore()
+	owner, err := s.CreateAccount(ctx, "tls-owner@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "tls-app", Type: state.AppTypeApp, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for domain, verified := range map[string]bool{
 		"shop.example.com":          true,
 		"pending.example.com":       false,
@@ -29,7 +37,7 @@ func onDemandTLSFixture(t *testing.T) (*state.MemStore, *OnDemandTLSPolicy, *pro
 		"*.unverified.example.org":  false,
 		"exact.tenants.example.net": false,
 	} {
-		if _, err := s.CreateCustomDomain(ctx, domain, "app-1", "tok"); err != nil {
+		if _, err := s.CreateCustomDomain(ctx, domain, app.ID, "tok"); err != nil {
 			t.Fatal(err)
 		}
 		if verified {
@@ -77,10 +85,65 @@ func TestOnDemandTLSPolicyDecide(t *testing.T) {
 	}
 }
 
+// The plan is checked when a wildcard domain is created; after a downgrade
+// to a plan without wildcard domains it must stop drawing new certificates.
+// Exact domains are unaffected.
+func TestOnDemandTLSPolicyWildcardFollowsOwnersPlan(t *testing.T) {
+	s, p, _ := onDemandTLSFixture(t)
+	ctx := context.Background()
+	owner, err := s.AccountByEmail(ctx, "tls-owner@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateAccountPlan(ctx, owner.ID, api.PlanFree); err != nil {
+		t.Fatal(err)
+	}
+	if ok, decision := p.Decide(ctx, "new.tenants.example.net"); ok || decision != OnDemandTLSDenyPlan {
+		t.Fatalf("wildcard host after downgrade = %v, %q; want deny %q", ok, decision, OnDemandTLSDenyPlan)
+	}
+	if ok, decision := p.Decide(ctx, "shop.example.com"); !ok {
+		t.Fatalf("exact domain after downgrade refused: %s", decision)
+	}
+}
+
+// A company wildcard follows the organization's plan, not the personal plan
+// of the member who created its app (bug hunt 2026-10-28 B37).
+func TestOnDemandTLSPolicyCompanyWildcardFollowsTheOrganizationsPlan(t *testing.T) {
+	ctx := context.Background()
+	s := state.NewMemStore()
+	member, err := s.CreateAccount(ctx, "company-member@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Free organization owns its resources from the start; it then upgrades.
+	org, err := s.CreateOrg(ctx, state.Org{Slug: "acme-tls", Name: "Acme", Plan: api.PlanFree})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateOrgPlan(ctx, org.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: member.ID, OrgID: org.ID, Slug: "acme-tls-app", Type: state.AppTypeApp, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomain(ctx, "*.acme.example.net", app.ID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.MarkDomainVerifiedIfChallenge(ctx, "*.acme.example.net", "tok"); err != nil || !ok {
+		t.Fatalf("verify wildcard = %v, %v", ok, err)
+	}
+	p := NewOnDemandTLSPolicy(s, "gregale.dev", prometheus.NewRegistry(), nil)
+	p.SetNow(func() time.Time { return time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC) })
+	if ok, decision := p.Decide(ctx, "shop.acme.example.net"); !ok {
+		t.Fatalf("a Pro organization's wildcard refused for its creator's Free plan: %s", decision)
+	}
+}
+
 func TestOnDemandTLSPolicyWildcardBudgetSparesKnownHosts(t *testing.T) {
 	_, p, _ := onDemandTLSFixture(t)
 	ctx := context.Background()
-	limit := api.OnDemandTLSWildcardNewHostsPerWeek
+	limit := api.OnDemandTLSRegisteredDomainNewHostsPerWeek
 	for i := 0; i < limit; i++ {
 		if ok, decision := p.Decide(ctx, fmt.Sprintf("t%d.tenants.example.net", i)); !ok {
 			t.Fatalf("host %d within budget refused: %s", i, decision)

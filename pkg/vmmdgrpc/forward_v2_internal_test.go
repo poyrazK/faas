@@ -102,11 +102,11 @@ func TestCurrentStreamBridgeVersion_LiveRollback(t *testing.T) {
 		t.Errorf("currentStreamBridgeVersion() with empty env = %q, want %q", got, "v2")
 	}
 
-	// Set to v1: must return v1 on the NEXT call, not the original
-	// v2 capture. This is the regression the code review caught.
+	// v1 (the shell bridge that corrupted request bodies, bug hunt
+	// 2026-10-28 B23) is no longer selectable.
 	t.Setenv("FAAS_STREAM_BRIDGE_VERSION", "v1")
-	if got := currentStreamBridgeVersion(); got != "v1" {
-		t.Errorf("currentStreamBridgeVersion() with v1 env = %q, want %q", got, "v1")
+	if got := currentStreamBridgeVersion(); got != "v2" {
+		t.Errorf("currentStreamBridgeVersion() with v1 env = %q, want %q", got, "v2")
 	}
 
 	// Flip back to v2: must return v2. Live rollback is two-way.

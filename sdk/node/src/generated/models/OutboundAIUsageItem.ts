@@ -7,7 +7,7 @@
  */
 export type OutboundAIUsageItem = {
   /**
-   * App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).
+   * App UUID, "runs" for stateless Runs, or "replay" for replayed calls.
    */
   caller: string;
   /**
@@ -29,7 +29,7 @@ export type OutboundAIUsageItem = {
    */
   cost_millicents?: number;
   /**
-   * Images billed per image (ADR-997).
+   * Images billed per image.
    */
   images: number;
   /**
@@ -41,23 +41,23 @@ export type OutboundAIUsageItem = {
    */
   characters: number;
   /**
-   * Seconds of generated video (ADR-1432).
+   * Seconds of generated video.
    */
   video_seconds: number;
   /**
-   * Web searches as the provider bills them: per call, query or grounded prompt (ADR-1433).
+   * Web searches as the provider bills them: per call, query or grounded prompt.
    */
   web_searches: number;
   /**
-   * File search calls (ADR-1433).
+   * File search calls.
    */
   file_searches: number;
   /**
-   * GB of code-interpreter container sessions (ADR-1433).
+   * GB of code-interpreter container sessions.
    */
   code_session_gb: number;
   /**
-   * Requests the response cache served, with no tokens or cost (ADR-1440).
+   * Requests the response cache served, with no tokens or cost.
    */
   cached_requests: number;
   /**
@@ -69,7 +69,7 @@ export type OutboundAIUsageItem = {
    */
   prompt_cache_saved_millicents: number;
   /**
-   * Audio part of input_tokens, priced at the audio input price (ADR 20261019072722).
+   * Audio part of input_tokens, priced at the audio input price.
    */
   input_audio_tokens: number;
   /**
@@ -77,7 +77,7 @@ export type OutboundAIUsageItem = {
    */
   output_audio_tokens: number;
   /**
-   * Answered calls that stopped at the output-token limit (ADR 20261021171712).
+   * Answered calls that stopped at the output-token limit.
    */
   truncated_requests: number;
   /**
@@ -97,7 +97,7 @@ export type OutboundAIUsageItem = {
    */
   tool_error_requests: number;
   /**
-   * Calls rated good (ADR 20261021171712).
+   * Calls rated good.
    */
   good_feedback: number;
   /**

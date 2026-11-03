@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const alertActionsUsage = "usage: gregale alerts actions --app <slug> [--fire UUID [--wait] [--timeout 10m] [--poll-interval 2s]]"
+const alertActionsUsage = "usage: gregale alert actions --app <slug> [--fire UUID [--wait] [--timeout 10m] [--poll-interval 2s]]"
 
 type alertRollbackClient interface {
 	GetAlertRollback(context.Context, string, string) (api.AlertRollback, error)

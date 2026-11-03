@@ -98,7 +98,8 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 		t.Fatal("default JSON deploy did not poll the deployment before timing out")
 	}
 	problem := assertOneProblem(t, stderr.String())
-	if problem.Code != "transport_error" || !strings.Contains(problem.Detail, "timed out") || !strings.Contains(problem.Hint, "saved deploy") {
+	// A wait deadline is not a network failure (CLI audit 2026-10-31).
+	if problem.Code != "deployment_wait_stopped" || !strings.Contains(problem.Detail, "timed out") || !strings.Contains(problem.Hint, "saved deploy") {
 		t.Fatalf("stderr missing timeout recovery: %+v", problem)
 	}
 	var receipt DeployReceipt
@@ -114,7 +115,7 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	if !validDeploySessionID(receipt.SessionID) {
 		t.Fatalf("timeout receipt missing valid session ID: %q", receipt.SessionID)
 	}
-	if got, want := receipt.ResumeCommand, "gregale deploy resume "+receipt.SessionID; got != want {
+	if got, want := receipt.ResumeCommand, "gregale release resume "+receipt.SessionID; got != want {
 		t.Fatalf("timeout receipt resume_command = %q, want %q", got, want)
 	}
 }

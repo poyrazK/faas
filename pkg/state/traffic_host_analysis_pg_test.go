@@ -276,47 +276,52 @@ func TestPgTrafficHostConcurrentReferencesAndPresetRollback(t *testing.T) {
 }
 
 func TestPgTrafficHostCanonicalOverlapAndDisjointWrites(t *testing.T) {
-	store, _, account, app := trafficHostPGFixture(t)
-	apiHost, webHost := "api.example.test", "web.example.test"
-	in := trafficHostRule(account, app, apiHost)
-	in.Action.Validate = &EdgeRuleValidateAction{Schema: json.RawMessage("[" + strings.Repeat("1e130000,", 259) + "1e130000]")}
-	first, err := store.CreateEdgeRule(t.Context(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	in.MatchHost = webHost
-	second, err := store.CreateEdgeRuleIfUnderQuota(t.Context(), in, api.MustLimitsFor(account.Plan))
-	if err != nil {
-		t.Fatalf("disjoint hosts became an account quota: %v", err)
-	}
-	before, err := store.LatestEdgeRuleChangeID(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	in.MatchHost = "*"
-	_, err = store.CreateEdgeRule(t.Context(), in)
-	var aggregate *TrafficPolicyAggregateError
-	if !errors.As(err, &aggregate) || aggregate.Scope != "host_rule_projection" {
-		t.Fatalf("overlapping numeric expansion accepted: %v", err)
-	}
-	_, err = store.UpdateEdgeRule(t.Context(), second.ID, UpdateEdgeRuleParams{MatchHost: &apiHost})
-	if !errors.As(err, &aggregate) || aggregate.Scope != "host_rule_projection" {
-		t.Fatalf("retargeted aggregate accepted: %v", err)
-	}
-	after, err := store.LatestEdgeRuleChangeID(t.Context())
-	if err != nil || after != before {
-		t.Fatalf("refused rules emitted changes: before=%d after=%d err=%v", before, after, err)
-	}
-	saved, err := store.GetEdgeRuleByID(t.Context(), second.ID)
-	if err != nil || saved.MatchHost != webHost || !saved.UpdatedAt.Equal(second.UpdatedAt) {
-		t.Fatalf("retarget refusal changed intent: %v", err)
-	}
-	enabled := false
-	if _, err := store.UpdateEdgeRule(t.Context(), first.ID, UpdateEdgeRuleParams{Enabled: &enabled}); err != nil {
-		t.Fatalf("disable recovery: %v", err)
-	}
-	if _, err := store.UpdateEdgeRule(t.Context(), second.ID, UpdateEdgeRuleParams{MatchHost: &apiHost}); err != nil {
-		t.Fatalf("repaired retarget: %v", err)
+	for _, scoped := range []bool{false, true} {
+		t.Run(trafficGuardName(scoped), func(t *testing.T) {
+			_, pool, account, app := trafficHostPGFixture(t)
+			store := NewPgStore(pool, WithTrafficScopedBindingGuard(scoped))
+			apiHost, webHost := "api.example.test", "web.example.test"
+			in := trafficHostRule(account, app, apiHost)
+			in.Action.Validate = &EdgeRuleValidateAction{Schema: json.RawMessage("[" + strings.Repeat("1e130000,", 259) + "1e130000]")}
+			first, err := store.CreateEdgeRule(t.Context(), in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			in.MatchHost = webHost
+			second, err := store.CreateEdgeRuleIfUnderQuota(t.Context(), in, api.MustLimitsFor(account.Plan))
+			if err != nil {
+				t.Fatalf("disjoint hosts became an account quota: %v", err)
+			}
+			before, err := store.LatestEdgeRuleChangeID(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			in.MatchHost = "*"
+			_, err = store.CreateEdgeRule(t.Context(), in)
+			var aggregate *TrafficPolicyAggregateError
+			if !errors.As(err, &aggregate) || aggregate.Scope != "host_rule_projection" {
+				t.Fatalf("overlapping numeric expansion accepted: %v", err)
+			}
+			_, err = store.UpdateEdgeRule(t.Context(), second.ID, UpdateEdgeRuleParams{MatchHost: &apiHost})
+			if !errors.As(err, &aggregate) || aggregate.Scope != "host_rule_projection" {
+				t.Fatalf("retargeted aggregate accepted: %v", err)
+			}
+			after, err := store.LatestEdgeRuleChangeID(t.Context())
+			if err != nil || after != before {
+				t.Fatalf("refused rules emitted changes: before=%d after=%d err=%v", before, after, err)
+			}
+			saved, err := store.GetEdgeRuleByID(t.Context(), second.ID)
+			if err != nil || saved.MatchHost != webHost || !saved.UpdatedAt.Equal(second.UpdatedAt) {
+				t.Fatalf("retarget refusal changed intent: %v", err)
+			}
+			enabled := false
+			if _, err := store.UpdateEdgeRule(t.Context(), first.ID, UpdateEdgeRuleParams{Enabled: &enabled}); err != nil {
+				t.Fatalf("disable recovery: %v", err)
+			}
+			if _, err := store.UpdateEdgeRule(t.Context(), second.ID, UpdateEdgeRuleParams{MatchHost: &apiHost}); err != nil {
+				t.Fatalf("repaired retarget: %v", err)
+			}
+		})
 	}
 }
 

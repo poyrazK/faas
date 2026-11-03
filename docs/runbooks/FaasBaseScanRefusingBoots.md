@@ -21,6 +21,7 @@ says why the boot was refused:
 | `critical` | The scan found a fix-available CRITICAL finding. A base that passed the release scan can fail here later, because the node scans with a newer vulnerability database |
 | `sidecar_missing` | No sidecar for the base (not staged yet, or the storage read failed) |
 | `incomplete` | The sidecar has no CRITICAL total |
+| `scan_failed` | imaged's Grype scan of the base failed, and it wrote the fail-closed `CRITICAL=9999` placeholder (`wire.BaseScanFailedCount`). Customers see "Base image scan unavailable" |
 | `generation_mismatch`, `generation_unavailable` | The sidecar names a different base generation than the release configured, or the node could not adopt the configured one |
 
 ## Triage
@@ -37,5 +38,32 @@ says why the boot was refused:
 - `critical`: rebuild the runtime image (for Wolfi bases a rebuild picks up
   the patched packages), release it, and let imaged stage the new base. Do not
   edit the sidecar by hand.
-- Missing or stale sidecar: restart `faas-imaged` on the node so it restages and
-  rescans the base; a fail-closed `CRITICAL=9999` sidecar is replaced on restart.
+- Missing or stale sidecar, or `scan_failed`: check why Grype failed in the
+  `faas-imaged` logs (`grype scan failed; writing fail-closed sidecar`; a full
+  `/srv/fc` or a stale vulnerability database are the usual causes), fix that,
+  then restart `faas-imaged` on the node so it restages and rescans the base;
+  the fail-closed `CRITICAL=9999` sidecar is replaced on restart.
+
+## FaasBaseScanFailureHeld
+
+> **Severity:** page. **Component:** imaged. **Metric:** `imaged_base_scan_failures_held_total{base, reason}`.
+
+imaged renews a shared base's scan every two minutes. When a renewal of the same
+bytes fails because of the scanner (`scanner_unavailable`, `scanner_invalid`) or
+a storage read (`artifact_read`), imaged keeps the last complete scan of those
+bytes in force instead of writing the `scan_failed` refusal, and counts the
+failure here (bug hunt 2026-10-28 H102). Boots keep working. Once that scan is
+older than `api.SharedBaseScanFailureGrace` (24 hours) the next failure
+publishes the refusal and `FaasBaseScanRefusingBoots` follows.
+
+1. Read imaged's log for `shared base scan failed; the last complete scan of
+   these bytes stays in force`: it names the failure, the scan in force and when
+   the base will be refused.
+2. `scanner_unavailable` / `scanner_invalid`: check Grype on the node (`grype
+   version`, `grype db status`) and the database download; a broken database
+   update is the usual cause.
+3. `artifact_read`: check the artifact store (GCS or the node cache) for the
+   base key named in the alert.
+
+Changed bytes (`artifact_mismatch`) and scans that complete with blocking
+findings are never held: they refuse at once.

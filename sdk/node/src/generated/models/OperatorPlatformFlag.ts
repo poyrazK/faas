@@ -21,7 +21,7 @@ export type OperatorPlatformFlag = {
   adr: string;
   consumers: Array<string>;
   /**
-   * Subject attributes every consumer can supply, so rules may constrain them; a write using any other is refused (ADR 20261021080640).
+   * Subject attributes every consumer can supply, so rules may constrain them; a write using any other is refused.
    */
   attributes: Array<'account' | 'plan' | 'org'>;
   legacy_env: Array<string>;
@@ -36,7 +36,7 @@ export type OperatorPlatformFlag = {
   convergence: OperatorPlatformFlagConvergence;
   opt_ins: OperatorPlatformFlagOptIns;
   /**
-   * Tier of the capability the flag releases (ADR-20261023115741).
+   * Tier of the capability the flag releases.
    */
   maturity?: 'ga' | 'beta' | 'preview' | 'internal';
   /**

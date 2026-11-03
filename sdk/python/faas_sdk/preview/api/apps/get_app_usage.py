@@ -110,15 +110,15 @@ def sync_detailed(
 
     Window resolution: `since` and `until` are RFC3339 timestamps.
     Both default to UTC midnight snaps; `until` defaults to
-    `now()` snapped down, `since` defaults to `until - 30d`. The
+    `now` snapped down, `since` defaults to `until - 30d`. The
     handler clamps `since` to `until - 90d` so a customer cannot
-    unbounded-scan `usage_minutes` (ADR-048 retention is 30d; the
+    unbounded-scan `usage_minutes` (retention is 30d; the
     90d ceiling is a forward-compatibility ceiling for when
     `usage_daily` lands).
 
     Overage computation: `overage_gb_hours = max(0, gb_hours -
     plan_included_gb_hours)`. The included band is echoed from
-    `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
+    `acct.Plan.PlanIncludedGBHours`; the overage figure is the
     integer-rounded float the Stripe pusher bills at $0.01/GB-h.
 
     Source: `usage_minutes` today (after the 30d retention cap).
@@ -167,15 +167,15 @@ def sync(
 
     Window resolution: `since` and `until` are RFC3339 timestamps.
     Both default to UTC midnight snaps; `until` defaults to
-    `now()` snapped down, `since` defaults to `until - 30d`. The
+    `now` snapped down, `since` defaults to `until - 30d`. The
     handler clamps `since` to `until - 90d` so a customer cannot
-    unbounded-scan `usage_minutes` (ADR-048 retention is 30d; the
+    unbounded-scan `usage_minutes` (retention is 30d; the
     90d ceiling is a forward-compatibility ceiling for when
     `usage_daily` lands).
 
     Overage computation: `overage_gb_hours = max(0, gb_hours -
     plan_included_gb_hours)`. The included band is echoed from
-    `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
+    `acct.Plan.PlanIncludedGBHours`; the overage figure is the
     integer-rounded float the Stripe pusher bills at $0.01/GB-h.
 
     Source: `usage_minutes` today (after the 30d retention cap).
@@ -219,15 +219,15 @@ async def asyncio_detailed(
 
     Window resolution: `since` and `until` are RFC3339 timestamps.
     Both default to UTC midnight snaps; `until` defaults to
-    `now()` snapped down, `since` defaults to `until - 30d`. The
+    `now` snapped down, `since` defaults to `until - 30d`. The
     handler clamps `since` to `until - 90d` so a customer cannot
-    unbounded-scan `usage_minutes` (ADR-048 retention is 30d; the
+    unbounded-scan `usage_minutes` (retention is 30d; the
     90d ceiling is a forward-compatibility ceiling for when
     `usage_daily` lands).
 
     Overage computation: `overage_gb_hours = max(0, gb_hours -
     plan_included_gb_hours)`. The included band is echoed from
-    `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
+    `acct.Plan.PlanIncludedGBHours`; the overage figure is the
     integer-rounded float the Stripe pusher bills at $0.01/GB-h.
 
     Source: `usage_minutes` today (after the 30d retention cap).
@@ -274,15 +274,15 @@ async def asyncio(
 
     Window resolution: `since` and `until` are RFC3339 timestamps.
     Both default to UTC midnight snaps; `until` defaults to
-    `now()` snapped down, `since` defaults to `until - 30d`. The
+    `now` snapped down, `since` defaults to `until - 30d`. The
     handler clamps `since` to `until - 90d` so a customer cannot
-    unbounded-scan `usage_minutes` (ADR-048 retention is 30d; the
+    unbounded-scan `usage_minutes` (retention is 30d; the
     90d ceiling is a forward-compatibility ceiling for when
     `usage_daily` lands).
 
     Overage computation: `overage_gb_hours = max(0, gb_hours -
     plan_included_gb_hours)`. The included band is echoed from
-    `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
+    `acct.Plan.PlanIncludedGBHours`; the overage figure is the
     integer-rounded float the Stripe pusher bills at $0.01/GB-h.
 
     Source: `usage_minutes` today (after the 30d retention cap).

@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
@@ -18,12 +19,14 @@ import (
 const maxResolvedEgressAddresses = 256
 
 type resolvedEgressAllower interface {
-	AllowResolvedEgress(ctx context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration) error
+	AllowResolvedEgress(ctx context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error
 }
 
 // AllowResolvedEgress implements the ADR-373 DNS-gated egress hook: the
 // node's bridge resolver reports a guest's answer and vmmd adds the
-// addresses to that instance's egress_resolved set.
+// addresses to that instance's egress_resolved set. A database_port names a
+// bound managed database's port (ADR 20261026150000); vmmd opens it to the
+// addresses unless ADR-361 forbids the port outright.
 func (s *Server) AllowResolvedEgress(ctx context.Context, req *vmmdpb.AllowResolvedEgressRequest) (*vmmdpb.AllowResolvedEgressAck, error) {
 	allower, ok := s.vmm.(resolvedEgressAllower)
 	if !ok {
@@ -45,7 +48,14 @@ func (s *Server) AllowResolvedEgress(ctx context.Context, req *vmmdpb.AllowResol
 		addrs = append(addrs, a)
 	}
 	ttl := time.Duration(req.GetTtlSeconds()) * time.Second
-	if err := allower.AllowResolvedEgress(ctx, source, addrs, ttl); err != nil {
+	databasePort := req.GetDatabasePort()
+	if databasePort > 65535 {
+		return nil, status.Errorf(codes.InvalidArgument, "vmmd: AllowResolvedEgress: database_port %d out of range", databasePort)
+	}
+	if _, forbidden := api.TenantEgressForbiddenPort(int(databasePort)); databasePort != 0 && forbidden {
+		return nil, status.Errorf(codes.InvalidArgument, "vmmd: AllowResolvedEgress: database_port %d is never opened", databasePort)
+	}
+	if err := allower.AllowResolvedEgress(ctx, source, addrs, ttl, uint16(databasePort)); err != nil {
 		if errors.Is(err, fcvm.ErrResolvedEgressNoInstance) {
 			return &vmmdpb.AllowResolvedEgressAck{Matched: false}, nil
 		}

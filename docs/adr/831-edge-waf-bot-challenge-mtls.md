@@ -1253,3 +1253,144 @@ Decision:
    the protected app itself still spends that app's budget and then skips as
    `budget`; throttle rules, the pre-auth limit and the penalty box remain the
    defence there.
+
+## Amendment 17 (2026-10-27): a challenge holds across gateways, routing gates and apps
+
+An end-to-end review before releasing `edge_challenge` found three ways a
+visitor could never pass the challenge:
+
+1. **Gateways signed with different keys.** The signing key derived from
+   each gateway's session key, and `gregalectl secrets init` writes a random
+   `session.key` on every host, so the production compute nodes held
+   different keys. gatewayd-public sends each request to the next compute
+   gateway in turn, so a solution reached a gateway other than the page's
+   about half the time and was refused, and a pass held only on the gateway
+   that issued it.
+2. **Routing gates took the solution.** The solution post met the redirect,
+   rewrite and declared-route gates before the gateway checked it. On an app
+   that allows only declared routes it was answered `404 undeclared_route`;
+   under a rewrite of every path it no longer reached `ChallengeSolvePath`.
+   Attack mode on such an app would have locked every browser out.
+3. **Tokens and passes were bound to one app.** On a host whose paths route
+   to several of the account's apps (`kind=route`), the page for a routed
+   app was solved where the host's own app serves `ChallengeSolvePath`. The
+   solve refused a token of another app, and the host's app does not load
+   the routed app's `@app` rules, so it did not even own the post.
+
+Decision:
+
+1. **One fleet key.** `FAAS_EDGE_CHALLENGE_KEY_FILE` names a 32-byte hex key
+   that Ansible installs on every gateway from the fleet vault
+   (`gatewayd_edge_challenge_key`, through `LoadCredential`). The role fails
+   when gateways in a play hold different keys, or, with
+   `gatewayd_edge_challenge_key_required`, when one holds none. Without the
+   variable a gateway still signs with its session key, which serves a single
+   gateway. Each gateway exports `gateway_edge_challenge_key_info{key_id,
+   source}`, a 12-hex-digit HMAC of the key, and `FaasEdgeChallengeKeyMismatch`
+   warns while gateways report more than one `key_id`. It fires before any
+   challenge is served, so the fleet is put right before the flag is
+   released.
+2. **The solution is the gateway's own request.** The page posts to
+   `ChallengeSolvePath?token=<token>`. A post there that carries a current
+   token in its query, or that reaches a host with an enforced challenge rule
+   of the app's account, skips the redirect, rewrite and declared-route
+   gates. It still meets the penalty box, maintenance, ingress, IP and geo
+   gates before it is checked, so a blocked client cannot earn a pass.
+3. **Tokens and passes bind the host and its account.** A token carries the
+   host and account it was issued for, and the app whose rule challenged, for
+   events and metrics. The solve accepts it on that host while the same
+   account owns the host's app. The pass names the host and account, and
+   every challenge rule of the account on that host honours it: a visitor
+   solves once per site, whichever of the account's apps serves a path. A
+   pass is never valid on another host or for another account.
+4. **Version 2.** Tokens and passes are now `c2.` and `p2.`. A gateway of
+   either version refuses the other's, which sends a visitor back to the
+   challenge once. `edge_challenge` is off for every account, so no pass is
+   in use while the release rolls out.
+
+Releasing `edge_challenge` or `edge_attack_mode` on a fleet of more than one
+gateway now requires the fleet key first, with `FaasEdgeChallengeKeyMismatch`
+quiet (ADR-20261024082000 amendment 5). The tests walk a browser through
+`ServeHTTP` with declared routes and a rewrite of every path
+(`TestChallengeSolvePassesRouteGates`, which fails on the previous gate
+order), solve a routed app's page where the host's app serves the solve
+path (`TestChallengePassCoversTheHostForTheAccount`), refuse another host's
+or account's token (`TestChallengeSolveRefusesForeignTokens`), and load the
+key (`TestEdgeChallengeSecret`).
+
+## Amendment 18 (2026-10-31): planted cookies and cross-origin calls
+
+An edge-security review found three ways the challenge and the WAF failed
+real visitors. Tenant apps share `gregale.dev`, which is not on the Public
+Suffix List (ADR-20261026112500), so any tenant's page can set a cookie with
+`Domain=gregale.dev`, and the visitor's browser then sends it to every app on
+the domain. Browsers also send CORS preflights without cookies or
+`Authorization`.
+
+1. **A planted cookie hid the pass.** `gregale_challenge` was read with the
+   first cookie of that name, and a browser lists an older cookie of the same
+   path first. A tenant page that planted one left its visitors unable to pass
+   any challenge or attack mode on the domain: each solve set a new pass that
+   the planted cookie still shadowed. The pass is now
+   `__Host-gregale_challenge`. A browser accepts a `__Host-` cookie only from
+   the host itself (Secure, `Path=/`, no `Domain`), so no other host can set
+   one. Every cookie of that name is tried, so one the app sets on a longer
+   path cannot hide the pass either. A pass under the old name is no longer
+   honoured; `edge_challenge` is off for every account, so none is in use.
+2. **A planted cookie boxed visitors.** The in-path WAF scores every request
+   header, cookies included, and the CRS SQL injection and XSS signatures
+   inspect cookies at paranoia level 1. A tenant page could plant a cookie
+   that looks like an attack: every `block` rule on the domain then refused
+   the visitor, and a rule with a penalty boxed the visitor's address, which
+   refuses everyone behind it before any other gate, API keys included.
+   Cookie-borne attacks are real, so such a detection still blocks, but a
+   detection whose every scoring match is in a request cookie's name or value
+   (`CookiesOnly`) no longer counts toward a penalty. The planted cookie's
+   blocks themselves end only when apps move to a registrable domain on the
+   Public Suffix List (ADR-20261026100000 amendment 1); until then the docs
+   name the risk and point to custom domains, which are not affected.
+3. **Challenged preflights failed cross-origin calls.** Only a `kind=cors`
+   rule answered preflights at the edge. On a challenged route the preflight
+   of an app that handles CORS in its own code got 403 `challenge_required`
+   with no CORS headers, so every non-simple cross-origin call failed, even
+   from a browser holding a pass or sending a JWT the challenge would have let
+   through; attack mode broke every single-page app served from another
+   site. The challenge gate now answers a well-formed preflight (an `Origin`
+   of http(s) scheme and host only, a token method, at most 32 token header
+   names) with 204, echoing the origin, method and headers, without
+   `Access-Control-Allow-Credentials`: the browser then sends the request
+   itself without cookies, the challenge still decides it (a JWT, API key or
+   consumer key passes; nothing else does), and the app's own response still
+   decides whether the page may read it. The trace simulator predicts the
+   answer (`challenge_preflight`); `gateway_edge_challenge_total` counts it as
+   `outcome="preflight"`. A cross-site request that relies on cookies still
+   cannot pass, because the pass is `SameSite=Lax`, and the challenge page
+   may not be framed, so an app embedded in another site cannot pass either;
+   the docs say so.
+
+Tests: `TestChallengePassSurvivesAShadowingCookie`,
+`TestWAFCookieOnlyDetectionBlocksWithoutBoxing`,
+`TestCheckInlineMarksCookieOnlyDetections`,
+`TestChallengedPreflightIsAnsweredAtTheEdge` and the trace's preflight case.
+
+## Amendment 19 (2026-11-02): a check scores bounded headers
+
+The cost of a WAF check grows faster than its input. Measured on a loaded
+workstation, one in-path check took 0.29 ms with no extra header, 1.7 ms
+with a 1 KiB cookie, 16 ms with 8 KiB, 307 ms with 32 KiB and 10 s with
+512 KiB. The edge accepts 1 MiB of headers, a check cannot be stopped once it
+holds a slot (three per production compute node), and the app's budget is
+charged after the check. A few requests a second with large headers, to any
+app with a `warn` or `block` rule, could hold every slot, so every other
+app's checks on the node failed open as `busy`, and burn gateway CPU.
+
+A check (in-path and sampled) now scores each header value up to
+`api.EdgeWAFMaxInspectHeaderValueBytes` (4 KiB) and at most
+`api.EdgeWAFMaxInspectHeaderBytes` (16 KiB) of header names and values in all,
+taken in name order; a longer value is cut on a character boundary and
+headers past the total are not scored. The URI and query are scored in full.
+This bounds every check, so the per-app budget again bounds what one app's
+traffic can take from the node. Like a body past its inspection limit,
+header content past the bound is not inspected; the docs say so.
+
+Tests: `TestBoundHeaders`.

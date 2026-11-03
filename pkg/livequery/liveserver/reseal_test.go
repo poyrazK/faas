@@ -65,11 +65,16 @@ func (s *resealRows) SealedLoginsAfter(_ context.Context, after string, limit in
 	return page(s.logins, after, limit), nil
 }
 
-func (s *resealRows) ResealLogin(_ context.Context, login livekeys.Sealed, blob []byte) (bool, error) {
-	return swap(s.logins, login, blob), nil
+func (s *resealRows) DropLegacyLogin(_ context.Context, login livekeys.Sealed) (bool, error) {
+	current, ok := s.logins[login.ID]
+	if !ok || !bytes.Equal(current.Blob, login.Blob) || current.Recipient != login.Recipient {
+		return false, nil
+	}
+	delete(s.logins, login.ID)
+	return true, nil
 }
 
-func TestResealBindsLegacyRowsToTheirDatabase(t *testing.T) {
+func TestResealBindsLegacyKeysAndDropsLegacyLogins(t *testing.T) {
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +138,7 @@ func TestResealBindsLegacyRowsToTheirDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ResealReport{Keys: ResealCounts{Resealed: 1, Bound: 1, Changed: 1, Refused: 3}, Logins: ResealCounts{Resealed: resealPage + 1}}
+	want := ResealReport{Keys: ResealCounts{Resealed: 1, Bound: 1, Changed: 1, Refused: 3}, Logins: ResealCounts{Dropped: resealPage + 1}}
 	if report != want {
 		t.Fatalf("report = %+v, want %+v", report, want)
 	}
@@ -149,10 +154,8 @@ func TestResealBindsLegacyRowsToTheirDatabase(t *testing.T) {
 			t.Errorf("key %s was changed; it must be left as it is", id)
 		}
 	}
-	for id, dsn := range dsns {
-		if !opens(store.logins[id].Blob, livekeys.LoginSealNamespaceFor(id), dsn) {
-			t.Fatalf("login %s was not re-sealed to its database", id)
-		}
+	if len(store.logins) != 0 {
+		t.Fatalf("%d legacy logins remain; the re-seal must drop every one for apid to issue again", len(store.logins))
 	}
 	for _, plain := range append([]string{secrets[legacy], secrets[copied]}, dsns["00000000-0000-4000-8000-000000000000"]) {
 		if strings.Contains(logs.String(), plain) {
@@ -167,16 +170,18 @@ func TestResealBindsLegacyRowsToTheirDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Keys.Resealed != 0 || again.Logins.Resealed != 0 || again.Keys.Bound != 2 || again.Logins.Bound != resealPage+1 {
-		t.Fatalf("a second re-seal = %+v; it must find every row it re-sealed already bound", again)
+	if again.Keys.Resealed != 0 || again.Keys.Bound != 2 || again.Logins != (ResealCounts{}) {
+		t.Fatalf("a second re-seal = %+v; it must find every key it re-sealed already bound and no login left", again)
 	}
 }
 
-// A database writer controls each row's recipient column and can copy a
-// legacy login (which names no database) onto another row. The re-seal must
-// neither seal a plaintext to a recipient it was not loaded with nor bind a
-// login that two rows hold.
-func TestResealRefusesARedirectedRecipientAndACopiedLogin(t *testing.T) {
+// A database writer controls each row's recipient column and can copy or
+// move a legacy login, which names no database, onto another database's row.
+// The re-seal binds no legacy login: it drops each one, copied, moved or
+// redirected, for apid to issue its database a new login. A login already
+// bound to its database stays, and one bound to another database is left as
+// it is.
+func TestResealDropsLegacyLoginsItCannotPlace(t *testing.T) {
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +198,8 @@ func TestResealRefusesARedirectedRecipientAndACopiedLogin(t *testing.T) {
 		}
 		return blob
 	}
-	const victim, thief, redirected = "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003"
+	const victim, thief, redirected, bound, foreign = "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002",
+		"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000005"
 	victimLogin := "postgresql://gregale_live_victim:SECRET@db.internal/app"
 	store := &resealRows{keys: map[string]livekeys.Sealed{}, logins: map[string]livekeys.Sealed{
 		victim: {ID: victim, DatabaseID: victim, Blob: sealTo(livekeys.LoginSealNamespace, victimLogin), Recipient: identity.Recipient().String()},
@@ -202,21 +208,27 @@ func TestResealRefusesARedirectedRecipientAndACopiedLogin(t *testing.T) {
 		// A row whose recipient column now names the attacker's key.
 		redirected: {ID: redirected, DatabaseID: redirected, Blob: sealTo(livekeys.LoginSealNamespace, "postgresql://gregale_live_3:PW@db.internal/app"),
 			Recipient: attacker.Recipient().String()},
+		bound: {ID: bound, DatabaseID: bound, Blob: sealTo(livekeys.LoginSealNamespaceFor(bound), "postgresql://gregale_live_4:PW@db.internal/app"),
+			Recipient: identity.Recipient().String()},
+		foreign: {ID: foreign, DatabaseID: foreign, Blob: sealTo(livekeys.LoginSealNamespaceFor(bound), "postgresql://gregale_live_4:PW@db.internal/app"),
+			Recipient: identity.Recipient().String()},
 	}}
-	before := map[string][]byte{}
-	for id, row := range store.logins {
-		before[id] = row.Blob
-	}
 	report, err := Reseal(t.Context(), store, []*age.X25519Identity{identity}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Logins != (ResealCounts{Refused: 3}) {
-		t.Fatalf("logins = %+v, want all three refused", report.Logins)
+	if report.Logins != (ResealCounts{Dropped: 3, Bound: 1, Refused: 1}) {
+		t.Fatalf("logins = %+v, want the three legacy ones dropped, the bound one kept and the foreign one refused", report.Logins)
 	}
-	for id, row := range store.logins {
-		if !bytes.Equal(row.Blob, before[id]) {
-			t.Errorf("login %s was re-sealed; it must be left as it is", id)
+	for _, id := range []string{victim, thief, redirected} {
+		if _, ok := store.logins[id]; ok {
+			t.Errorf("legacy login %s remains", id)
+		}
+	}
+	for _, id := range []string{bound, foreign} {
+		row, ok := store.logins[id]
+		if !ok {
+			t.Fatalf("login %s was removed", id)
 		}
 		if _, _, err := secretbox.OpenBytes(attacker, row.Blob); err == nil {
 			t.Errorf("login %s opens with the key a database row named", id)

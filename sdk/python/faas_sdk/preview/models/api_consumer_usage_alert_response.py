@@ -13,7 +13,7 @@ T = TypeVar("T", bound="APIConsumerUsageAlertResponse")
 
 @_attrs_define
 class APIConsumerUsageAlertResponse:
-    """One plan alert threshold a consumer crossed in one UTC month (ADR-849)."""
+    """One plan alert threshold a consumer crossed in one UTC month."""
 
     id: UUID
     consumer_id: UUID

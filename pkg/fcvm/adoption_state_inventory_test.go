@@ -21,10 +21,14 @@ import (
 //	bootonly  daemon wiring, or only for kinds that are never adopted
 var adoptionStateInventory = map[string]map[string]string{
 	"Manager": {
+		"agentWaits":                        "reset",    // agent-run guests are refused at adoption, so no run has one
 		"appCPUPolicies":                    "repushed", // per-app CPU policy revisions; the lease keeps the applied quota
 		"appEgressPolicies":                 "repushed", // egress policy revisions; per-netns rules survive in the netns
 		"appResolved":                       "reset",    // DNS-gated egress resolution cache
+		"appDatabaseResolved":               "reset",    // bound database pairs for seeding (ADR-20261026150000)
 		"backingDigests":                    "reset",    // file digest cache
+		"backingHashing":                    "reset",    // in-flight file digests
+		"backingPending":                    "reset",    // in-flight instance identities; adoption restores instanceBacking
 		"baseGenerations":                   "reset",    // base image generation cache
 		"cidToID":                           "rebuilt",
 		"cooldownByDeployment":              "reset",    // crash-loop cooldown timestamps
@@ -112,6 +116,9 @@ var adoptionInstanceInventory = map[string]string{
 	"ExecutionLeaseToken":             "refused",
 	"ExecutionOutboundIntegrationIDs": "refused",
 	"AppTaskOnly":                     "refused", // app-task kind
+	"AgentRunOnly":                    "refused", // agent runs record the execution kind and are killed
+	"AgentRunRelay":                   "refused", // agent-run guests only
+	"AgentWaitPauseAfter":             "refused", // agent-run guests only
 	"QualificationOnly":               "refused", // qualification kind
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",
@@ -159,6 +166,7 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressFanoutValid":               "reset",
 	"EgressFloodDropsPerMin":          "reset",
 	"resolvedEgress":                  "reset", // cache; the nft entries keep their own timeouts
+	"databaseEgress":                  "reset", // same for egress_db pairs (ADR-20261026150000)
 	"TailCount":                       "reset", // the host only ever sees decrements
 	"tailSecondsAccum":                "reset", // informational, not billed
 	"adoptionVCPUs":                   "rebuilt",

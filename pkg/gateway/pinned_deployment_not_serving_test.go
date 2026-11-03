@@ -5,13 +5,37 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// The public routing gate (ADR-570) refused the superseded alias target's
+// host pin before admission ran, so after a rollback the alias answered 503
+// traffic_policy_unavailable instead of the 409 below.
+func TestDeploymentAliasRefusedByPublicRoutingSaysNotServing(t *testing.T) {
+	h, base, _ := newTestHandler(t)
+	base.mu.Lock()
+	base.app.PinnedDeploymentID, base.app.PinnedDeploymentScope = uuid.NewString(), "default"
+	base.mu.Unlock()
+	h.backend = &pinnedStatusBackend{fakeBackend: base, label: "v2", status: "superseded"}
+	h.WithPublicRoutingPolicy(func(_ context.Context, app App, inputs PublicRoutingInputs) (PublicRoutingSnapshot, error) {
+		snapshot := publicSnapshotFixture(app, inputs)
+		snapshot.HostChecked = true
+		return snapshot, nil
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+base.host+"/", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "deployment v2 is superseded and no longer serves traffic") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+}
 
 type pinnedStatusBackend struct {
 	*fakeBackend
@@ -48,6 +72,13 @@ func TestDeploymentAliasToSupersededRevisionSaysNotServing(t *testing.T) {
 					atCapForCalls: 1,
 				},
 				serving: tc.serving, label: "v2", status: "superseded",
+			}
+			if tc.serving {
+				// The other three slots hold live instances of another
+				// revision, so the 429 reports a true count (#5709).
+				for i := range 3 {
+					backend.AddTarget(Target{NodeID: "node-1", InstanceID: fmt.Sprintf("live-%d", i), DeploymentID: "dep-v3", AddedAt: time.Now()})
+				}
 			}
 			handler := NewHandlerWith(backend, NewMetrics(), nil)
 			req := httptest.NewRequest(http.MethodGet, "http://tag-nocpu-app1.gregale.dev/", nil)

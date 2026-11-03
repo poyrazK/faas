@@ -129,6 +129,31 @@ func TestStatusCountsEligibleApprovals(t *testing.T) {
 	}
 }
 
+// adr: 20261020085706 amendment 3 — a GitHub push has no recorded deployer,
+// so its author could approve it. Without self-approval it needs one more
+// approval, so someone other than its author approves it.
+func TestStatusAsksOneMoreApprovalWhenTheDeployerIsUnknown(t *testing.T) {
+	app := state.App{ID: "app", Slug: "shop"}
+	pushed := candidate()
+	pushed.DeployedByUserID = ""
+	two := []state.ReleaseApproval{
+		{ApproverAccountID: "ana", Decision: state.ReleaseApprovalApprove, CreatedAt: t0},
+		{ApproverAccountID: "bo", Decision: state.ReleaseApprovalApprove, CreatedAt: t0},
+	}
+	now := t0.Add(150 * time.Minute)
+	if got := Status(testPolicy(), app, pushed, two, now); got.State != api.ReleaseApprovalStateWaiting || got.RequiredApprovals != 3 || got.Remaining() != 1 {
+		t.Fatalf("pushed release with two approvals = %+v, want waiting for a third", got)
+	}
+	selfAllowed := testPolicy()
+	selfAllowed.AllowSelfApproval = true
+	if got := Status(selfAllowed, app, pushed, two, now); got.State != api.ReleaseApprovalStateApproved || got.RequiredApprovals != 2 {
+		t.Fatalf("pushed release under self-approval = %+v, want approved by two", got)
+	}
+	if got := Status(testPolicy(), app, candidate(), two, now); got.State != api.ReleaseApprovalStateApproved || got.RequiredApprovals != 2 {
+		t.Fatalf("release with a known deployer = %+v, want approved by two", got)
+	}
+}
+
 func TestStatusBeforeTheWaitingStage(t *testing.T) {
 	policy := testPolicy()
 	policy.AfterStage = 2

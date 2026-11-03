@@ -20,7 +20,7 @@ T = TypeVar("T", bound="ProfileCaptureDiff")
 
 @_attrs_define
 class ProfileCaptureDiff:
-    """One kind compared between two ready captures of an app (ADR-1155). Values keep the kind's unit and are not rescaled."""
+    """One kind compared between two ready captures of an app. Values keep the kind's unit and are not rescaled."""
 
     baseline: ProfileCapture
     """An on-demand capture. processes counts instrumented processes that saw the capture; zero means the instance

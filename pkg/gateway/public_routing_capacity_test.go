@@ -108,6 +108,11 @@ func TestPublicRoutingCapacityRetainsReadinessAndAppIsolation(t *testing.T) {
 	if b.HealthyCountForDeployments("app", nil) != 0 || b.HealthyCountForDeployments("absent", []string{"first"}) != 0 {
 		t.Fatal("empty or unknown app inherited eligible capacity")
 	}
+	// A deployment's capacity keeps its withdrawn residents and no other app's.
+	if b.CapacityCountForDeployment("app", "first") != 3 || b.CapacityCountForDeployment("foreign", "first") != 1 ||
+		b.CapacityCountForDeployment("app", "absent") != 0 || b.CapacityCountForDeployment("absent", "first") != 0 {
+		t.Fatalf("deployment capacity: first=%d foreign=%d", b.CapacityCountForDeployment("app", "first"), b.CapacityCountForDeployment("foreign", "first"))
+	}
 	// Count-only inspection must not make the legacy weighted picker routable.
 	if b.Pick("app").OK {
 		t.Fatal("count installed mutable deployment weights")

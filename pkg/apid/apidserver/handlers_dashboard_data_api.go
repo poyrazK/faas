@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -33,33 +32,28 @@ func (s *server) dashboardDataAPIApp(w http.ResponseWriter, r *http.Request) (st
 		return acct, state.App{}, false
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID || app.Status == state.AppDeleted {
+	if err != nil || !dashboardAppOwner(r, &acct, app) || app.Status == state.AppDeleted {
 		http.NotFound(w, r)
 		return acct, state.App{}, false
 	}
 	return acct, app, true
 }
 
+// dataAPITaskCommand is the dashboard's subset of the contract tasks: the
+// schema view and the TypeScript download.
 func dataAPITaskCommand(kind string) []string {
-	if kind == "schema" {
-		return []string{"node", "/app/types.mjs", "--snapshot"}
-	}
-	if kind == "types" {
-		return []string{"node", "/app/types.mjs"}
+	if kind == string(api.DataAPIContractSchema) || kind == string(api.DataAPIContractTypes) {
+		return api.DataAPIContractTaskKind(kind).Command()
 	}
 	return nil
 }
 
 func dataAPITaskKind(task state.AppTask) string {
-	if task.CommandShell {
+	kind := string(api.DataAPIContractTaskKindOf(task.Command, task.CommandShell))
+	if dataAPITaskCommand(kind) == nil {
 		return ""
 	}
-	for _, kind := range []string{"schema", "types"} {
-		if slices.Equal(task.Command, dataAPITaskCommand(kind)) {
-			return kind
-		}
-	}
-	return ""
+	return kind
 }
 
 func (s *server) renderDashboardDataAPI(w http.ResponseWriter, r *http.Request) {
@@ -160,15 +154,15 @@ func (s *server) runDashboardDataAPI(w http.ResponseWriter, r *http.Request) {
 	if !ok || !s.verifyDashboardConfigCSRF(w, r, dashboardDataAPIAction, dashboardDataAPICookie, acct.ID) {
 		return
 	}
-	command := dataAPITaskCommand(r.PathValue("operation"))
-	if command == nil {
+	operation := r.PathValue("operation")
+	if dataAPITaskCommand(operation) == nil {
 		http.NotFound(w, r)
 		return
 	}
 	if !s.requireAppTaskAPI(w) {
 		return
 	}
-	resolved, problem := (api.CreateAppTaskRequest{Command: command, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes}).Resolve()
+	resolved, problem := api.DataAPIContractTaskKind(operation).Request().Resolve()
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return

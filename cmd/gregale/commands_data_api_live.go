@@ -62,7 +62,7 @@ func cmdDataAPILiveRun(args []string, enable bool) int {
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope of the Data API's database binding")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || (!enable && *noRestart) {
-		PrintUsage(os.Stderr, "usage: gregale data-api live enable NAME [--scope SCOPE] [--no-restart] | gregale data-api live status NAME [--scope SCOPE]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api live enable NAME [--env SCOPE] [--no-restart] | gregale data-api live status NAME [--env SCOPE]", "data-api")
 		return 1
 	}
 	client, err := authedClient()

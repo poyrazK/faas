@@ -15,7 +15,7 @@ T = TypeVar("T", bound="ScenarioCapturedEvent")
 @_attrs_define
 class ScenarioCapturedEvent:
     """An event an enrolled app published. It never reached the account's event bus; the sealed snapshot is its only
-    record. Platform-generated IDs and times do not compare (ADR-20261020090000).
+    record. Platform-generated IDs and times do not compare.
 
     """
 

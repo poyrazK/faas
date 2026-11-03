@@ -15,7 +15,7 @@ export class InvocationsService {
    * Sync-invoke an app; long-poll for the result.
    * Enqueues an invocation row and waits for the drain to drive it
    * to a terminal state. Server-side cap is 30s on paid plans, 5s
-   * on Free. Returns 504 (long_poll_timeout) when the cap elapses;
+   * on Free. Returns 503 (long_poll_timeout) when the cap elapses;
    * the customer can immediately re-call /v1/invocations/{id}
    * to pick up the eventual result.
    *
@@ -63,6 +63,7 @@ export class InvocationsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `code: long_poll_timeout — server-side long-poll budget elapsed without a terminal row.`,
         504: `code: long_poll_timeout — server-side long-poll budget elapsed without a terminal row.`,
       },
     });

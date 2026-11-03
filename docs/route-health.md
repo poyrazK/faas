@@ -219,6 +219,18 @@ healthy windows produce healthy evidence. Missing, sparse or mixed evidence is
 unknown and holds an enforced rollout. The stable comparison must be the sole
 other live serving deployment in the same scope.
 
+A 5xx the gateway returns because a Gregale dependency could not admit the
+request is not counted for either deployment: node admission, traffic policy,
+rate-limit or revocation state was unavailable, and neither deployment caused
+it. Deadlines, open circuits, capacity refusals and failed wakes or boots still
+count, because a candidate can cause each of them.
+
+Route evidence does not depend on per-route metrics: request telemetry labels
+routes whether or not the app turned on per-route Prometheus series. Each app
+has 50 route labels per gateway; the routes a guard or a production monitor
+selects always keep theirs, so a rarely called selected route is never folded
+into `__route_other__`.
+
 Coverage is explicitly `observed_only`: the system cannot establish how many
 requests were dropped before telemetry storage. The ingestion allowance helps
 with normal publishing delay but does not guarantee completeness. This compares
@@ -282,8 +294,14 @@ flag increments the revision and requires fresh observations.
 Percentiles are estimates weighted by collapsed telemetry request counts. Each
 publisher bucket contributes its inclusive upper-bound latency with its request
 weight; the original individual latency distribution cannot be recovered. Measurements
-include all observed statuses and the gateway's end-to-end request latency,
-including cold boot time. They retain the `observed_only` coverage limitation and
+include all observed statuses and the gateway's end-to-end request latency of
+requests that did not cold boot. A scale-to-zero canary with a small traffic
+share cold boots more often than the stable deployment, so counting cold boots
+would make a healthy candidate look slower. Each window reports the warm
+requests it ranked as `latency_requests`, and the 100-request minimum applies to
+that count; latency investigations and examples use the same warm requests.
+Safe Deploy's circuit breaker still compares cold-boot p95 between the two
+deployments. Measurements retain the `observed_only` coverage limitation and
 do not certify a latency SLO.
 
 ## Explain a saved rollout decision
@@ -354,6 +372,49 @@ reopen an aborted candidate or claim a healthy resume.
 `on_regression` is replacement intent: omission, including in older SDK calls,
 means hold. Use `--on-regression hold` with the current revision to turn off
 route-specific automatic recovery while retaining the rest of the guard.
+
+## Lost telemetry
+
+The guard reads request telemetry the gateways record. When a gateway may have
+lost some of it in the evidence windows (it restarted, missed a heartbeat, or
+has telemetry off or sampled; a gateway already silent before the windows is
+ignored), every window is unknown with reason
+`telemetry_incomplete` and the advance waits. This is Gregale's gap, not your
+traffic: it sends no `routes.health.blocked` webhook, starts no hold, is not
+counted by `route_health_holds`, and never triggers the hold deadline. The
+canary advances once complete windows show healthy evidence, usually within a
+few minutes. Rows dropped because an account exceeds its telemetry rate are not
+lost evidence: the remaining rows stay comparable.
+
+## Hold deadline
+
+An enforced guard holds a canary for at most 24 hours. When the canary worker's
+advance is still held after that, counted from the hold's first blocking
+decision in its stage and configuration, Gregale aborts the rollout and restores
+the stable deployment, as for a timed-out release approval. The decision history
+records rule `abort_route_health_timeout`, app webhooks receive
+`routes.health.aborted` with reason `hold_deadline_exceeded` (naming the hold's
+first blocking decision), and `route_health_holds` counts the abort for its
+window. Changing the guard's configuration or the canary stage starts a new
+hold. The deadline is applied on the worker's advance: with no Safe Deploy
+worker running, nothing advances or aborts. While the canary is held,
+`gregale routes health report` shows when the hold began and when it aborts
+(`hold.since`, `hold.aborts_at`).
+
+To hear about a hold before the deadline without a webhook receiver, alert on
+`route_health_holds`: the app's canaries the guard holds now plus those it
+aborted within the window. The "Canary held by route health" preset fires on
+any hold over 15 minutes; see
+[route alerts](alerts.md#route-monitor-and-canary-hold-alerts).
+
+Saving the guard returns `warnings` (the CLI prints them to stderr):
+
+- each selector whose method/path label had no request within your plan's
+  request telemetry retention, at most the last 7 days; an enforced guard on
+  such a route holds every canary on unknown evidence until the deadline;
+- `on_regression: abort` while no Safe Deploy worker holds the rollout lease,
+  because only that worker runs the recovery; until one does, a confirmed
+  regression holds the canary.
 
 ## Notifications for held and resumed releases
 

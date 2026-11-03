@@ -127,7 +127,8 @@ func (s *PgStore) ClaimRuntimeUpgradeOperation(ctx context.Context) (RuntimeUpgr
 	if err != nil {
 		return RuntimeUpgradeOperationClaim{}, mapErr(err)
 	}
-	return RuntimeUpgradeOperationClaim{ID: pgUUIDString(row.ID), LeaseToken: pgUUIDString(row.LeaseToken)}, nil
+	return RuntimeUpgradeOperationClaim{ID: pgUUIDString(row.ID), LeaseToken: pgUUIDString(row.LeaseToken),
+		AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), ServingDeploymentID: pgUUIDString(row.ServingDeploymentID)}, nil
 }
 
 func (s *PgStore) AdvanceRuntimeUpgradeOperation(ctx context.Context, c RuntimeUpgradeOperationClaim) (RuntimeUpgradeOperation, error) {
@@ -148,7 +149,7 @@ func (s *PgStore) AdvanceRuntimeUpgradeOperation(ctx context.Context, c RuntimeU
 		return RuntimeUpgradeOperation{}, fmt.Errorf("lock runtime upgrade lease: %w", err)
 	}
 	op := runtimeUpgradeOperationFromRow(row)
-	phase, blocker, wake, err := advanceRuntimeUpgradeOperationDB(ctx, tx, op)
+	phase, blocker, wake, err := advanceRuntimeUpgradeOperationDB(ctx, tx, op, c.HoldCutover)
 	if err != nil {
 		return RuntimeUpgradeOperation{}, fmt.Errorf("advance runtime upgrade: %w", err)
 	}
@@ -169,7 +170,7 @@ func (s *PgStore) AdvanceRuntimeUpgradeOperation(ctx context.Context, c RuntimeU
 	return runtimeUpgradeOperationFromRow(row), nil
 }
 
-func advanceRuntimeUpgradeOperationDB(ctx context.Context, tx pgx.Tx, op RuntimeUpgradeOperation) (RuntimeUpgradeOperationPhase, string, string, error) {
+func advanceRuntimeUpgradeOperationDB(ctx context.Context, tx pgx.Tx, op RuntimeUpgradeOperation, holdCutover bool) (RuntimeUpgradeOperationPhase, string, string, error) {
 	q, r := sqlc.New(), op.RuntimeUpgradeOperationRequest
 	old, err := q.GetDeploymentRuntimeUpgradeCutover(ctx, tx, mustPgUUID(r.DeploymentID))
 	if err == nil {
@@ -258,6 +259,9 @@ func advanceRuntimeUpgradeOperationDB(ctx context.Context, tx pgx.Tx, op Runtime
 	}
 	if err != nil {
 		return "", "", "", err
+	}
+	if holdCutover {
+		return RuntimeUpgradeWaiting, "", "", nil
 	}
 	cutover, err := runtimeUpgradeCutoverDB(ctx, tx, r.cutover(pgUUIDString(acceptance.WakeID)))
 	if errors.Is(err, ErrConflict) {

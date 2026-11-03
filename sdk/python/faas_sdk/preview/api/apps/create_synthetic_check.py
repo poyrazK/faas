@@ -90,7 +90,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateSyntheticCheckRequest,
 ) -> Response[Problem | SyntheticCheckResponse]:
-    """Define a synthetic check on the app (ADR-748)
+    """Define a synthetic check on the app
 
      Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes,
     through the public edge. A probe that wakes a parked app is billed like any request. An app can have
@@ -98,8 +98,7 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (CreateSyntheticCheckRequest): Defines a scheduled HTTP check against the app
-            (ADR-748).
+        body (CreateSyntheticCheckRequest): Defines a scheduled HTTP check against the app.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -127,7 +126,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateSyntheticCheckRequest,
 ) -> Problem | SyntheticCheckResponse | None:
-    """Define a synthetic check on the app (ADR-748)
+    """Define a synthetic check on the app
 
      Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes,
     through the public edge. A probe that wakes a parked app is billed like any request. An app can have
@@ -135,8 +134,7 @@ def sync(
 
     Args:
         slug (str):
-        body (CreateSyntheticCheckRequest): Defines a scheduled HTTP check against the app
-            (ADR-748).
+        body (CreateSyntheticCheckRequest): Defines a scheduled HTTP check against the app.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -159,7 +157,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateSyntheticCheckRequest,
 ) -> Response[Problem | SyntheticCheckResponse]:
-    """Define a synthetic check on the app (ADR-748)
+    """Define a synthetic check on the app
 
      Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes,
     through the public edge. A probe that wakes a parked app is billed like any request. An app can have
@@ -167,8 +165,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (CreateSyntheticCheckRequest): Defines a scheduled HTTP check against the app
-            (ADR-748).
+        body (CreateSyntheticCheckRequest): Defines a scheduled HTTP check against the app.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +191,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateSyntheticCheckRequest,
 ) -> Problem | SyntheticCheckResponse | None:
-    """Define a synthetic check on the app (ADR-748)
+    """Define a synthetic check on the app
 
      Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes,
     through the public edge. A probe that wakes a parked app is billed like any request. An app can have
@@ -202,8 +199,7 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (CreateSyntheticCheckRequest): Defines a scheduled HTTP check against the app
-            (ADR-748).
+        body (CreateSyntheticCheckRequest): Defines a scheduled HTTP check against the app.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

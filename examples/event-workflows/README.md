@@ -8,11 +8,11 @@ preview workflow runtime on both apid and schedd.
 Deploy the manifest with your app, then preview and publish a sample:
 
 ```bash
-gregale events preview billing.stripe invoice.paid \
+gregale event preview billing.stripe invoice.paid \
   --data '{"invoice_id":"inv_123","amount":150}'
-gregale events publish billing.stripe invoice.paid --id invoice-paid-inv_123 \
+gregale event publish billing.stripe invoice.paid --id invoice-paid-inv_123 \
   --data '{"invoice_id":"inv_123","amount":150}'
-gregale workflows list --app billing
+gregale workflow list --app billing
 ```
 
 Reuse the same source and ID when retrying a publish. The workflow receives the

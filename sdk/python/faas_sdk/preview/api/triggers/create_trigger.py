@@ -101,13 +101,13 @@ def sync_detailed(
     `plan_triggers_not_allowed` for Free plan. A 403 may be
     `trigger_kind_not_allowed`, `plan_trigger_quota`,
     `trigger_batch_window_too_large`, or
-    `trigger_tls_skip_verify_not_allowed`; see ADR-100.
+    `trigger_tls_skip_verify_not_allowed`.
 
     Args:
         idempotency_key (str | Unset):
         body (CreateTriggerRequest): Trigger create payload. Kind is immutable after create. Per-
             kind
-            gating mirrors pkg/gregalemanifest.validateKindConfig:
+            gating matches the app manifest's trigger rules:
               - cron: requires schedule + path (slug ignored)
               - non-cron: requires slug + config
             Omitted delivery settings use the platform default capped to the
@@ -145,13 +145,13 @@ def sync(
     `plan_triggers_not_allowed` for Free plan. A 403 may be
     `trigger_kind_not_allowed`, `plan_trigger_quota`,
     `trigger_batch_window_too_large`, or
-    `trigger_tls_skip_verify_not_allowed`; see ADR-100.
+    `trigger_tls_skip_verify_not_allowed`.
 
     Args:
         idempotency_key (str | Unset):
         body (CreateTriggerRequest): Trigger create payload. Kind is immutable after create. Per-
             kind
-            gating mirrors pkg/gregalemanifest.validateKindConfig:
+            gating matches the app manifest's trigger rules:
               - cron: requires schedule + path (slug ignored)
               - non-cron: requires slug + config
             Omitted delivery settings use the platform default capped to the
@@ -184,13 +184,13 @@ async def asyncio_detailed(
     `plan_triggers_not_allowed` for Free plan. A 403 may be
     `trigger_kind_not_allowed`, `plan_trigger_quota`,
     `trigger_batch_window_too_large`, or
-    `trigger_tls_skip_verify_not_allowed`; see ADR-100.
+    `trigger_tls_skip_verify_not_allowed`.
 
     Args:
         idempotency_key (str | Unset):
         body (CreateTriggerRequest): Trigger create payload. Kind is immutable after create. Per-
             kind
-            gating mirrors pkg/gregalemanifest.validateKindConfig:
+            gating matches the app manifest's trigger rules:
               - cron: requires schedule + path (slug ignored)
               - non-cron: requires slug + config
             Omitted delivery settings use the platform default capped to the
@@ -226,13 +226,13 @@ async def asyncio(
     `plan_triggers_not_allowed` for Free plan. A 403 may be
     `trigger_kind_not_allowed`, `plan_trigger_quota`,
     `trigger_batch_window_too_large`, or
-    `trigger_tls_skip_verify_not_allowed`; see ADR-100.
+    `trigger_tls_skip_verify_not_allowed`.
 
     Args:
         idempotency_key (str | Unset):
         body (CreateTriggerRequest): Trigger create payload. Kind is immutable after create. Per-
             kind
-            gating mirrors pkg/gregalemanifest.validateKindConfig:
+            gating matches the app manifest's trigger rules:
               - cron: requires schedule + path (slug ignored)
               - non-cron: requires slug + config
             Omitted delivery settings use the platform default capped to the
