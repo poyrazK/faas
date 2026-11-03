@@ -27,6 +27,12 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"DefaultCustomDomain":                    true,
+	"DefaultCustomDomains":                   true,
+	"DeploymentWorkerDrainStatus":            true,
+	"DeploymentWorkerDrainStatuses":          true,
+	"MCPTaskPromotionHold":                   true,
+	"MCPTaskPromotionHolds":                  true,
 	"DeleteAppPermanently":                   true,
 	"ListApplicationStandardRebinds":         true,
 	"RecordApplicationStandardRebind":        true,
@@ -301,6 +307,60 @@ func (s *Mem) RuntimeConfigReceiptRequired(ctx context.Context, appID, scope str
 		return o.RuntimeConfigReceiptRequired(ctx, appID, scope)
 	}
 	return s.MemStore.RuntimeConfigReceiptRequired(ctx, appID, scope)
+}
+
+func (s *Mem) DefaultCustomDomain(ctx context.Context, appID string) (string, error) {
+	if o, ok := s.over.(interface {
+		DefaultCustomDomain(context.Context, string) (string, error)
+	}); ok {
+		return o.DefaultCustomDomain(ctx, appID)
+	}
+	return s.MemStore.DefaultCustomDomain(ctx, appID)
+}
+
+func (s *Mem) DefaultCustomDomains(ctx context.Context, appIDs []string) (map[string]string, error) {
+	if o, ok := s.over.(interface {
+		DefaultCustomDomains(context.Context, []string) (map[string]string, error)
+	}); ok {
+		return o.DefaultCustomDomains(ctx, appIDs)
+	}
+	return s.MemStore.DefaultCustomDomains(ctx, appIDs)
+}
+
+func (s *Mem) DeploymentWorkerDrainStatus(ctx context.Context, id string) (*state.DeploymentWorkerDrainStatus, error) {
+	if o, ok := s.over.(interface {
+		DeploymentWorkerDrainStatus(context.Context, string) (*state.DeploymentWorkerDrainStatus, error)
+	}); ok {
+		return o.DeploymentWorkerDrainStatus(ctx, id)
+	}
+	return s.MemStore.DeploymentWorkerDrainStatus(ctx, id)
+}
+
+func (s *Mem) DeploymentWorkerDrainStatuses(ctx context.Context, ids []string) (map[string]*state.DeploymentWorkerDrainStatus, error) {
+	if o, ok := s.over.(interface {
+		DeploymentWorkerDrainStatuses(context.Context, []string) (map[string]*state.DeploymentWorkerDrainStatus, error)
+	}); ok {
+		return o.DeploymentWorkerDrainStatuses(ctx, ids)
+	}
+	return s.MemStore.DeploymentWorkerDrainStatuses(ctx, ids)
+}
+
+func (s *Mem) MCPTaskPromotionHold(ctx context.Context, id string) (*state.MCPTaskPromotionHold, error) {
+	if o, ok := s.over.(interface {
+		MCPTaskPromotionHold(context.Context, string) (*state.MCPTaskPromotionHold, error)
+	}); ok {
+		return o.MCPTaskPromotionHold(ctx, id)
+	}
+	return s.MemStore.MCPTaskPromotionHold(ctx, id)
+}
+
+func (s *Mem) MCPTaskPromotionHolds(ctx context.Context, ids []string) (map[string]*state.MCPTaskPromotionHold, error) {
+	if o, ok := s.over.(interface {
+		MCPTaskPromotionHolds(context.Context, []string) (map[string]*state.MCPTaskPromotionHold, error)
+	}); ok {
+		return o.MCPTaskPromotionHolds(ctx, ids)
+	}
+	return s.MemStore.MCPTaskPromotionHolds(ctx, ids)
 }
 
 func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {

@@ -63,37 +63,54 @@ func TestSampler_MinInstancesFloorSkipsInactiveAccount(t *testing.T) {
 }
 
 // A company app's floor follows its organization, like its live rows. An
-// owning organization's floor row names the organization and its plan. Either
-// kind of organization's suspension stops the floor even though the creator's
-// account is active: schedd reads the same resource account.
+// owning organization's floor row names the organization and its plan, and
+// the organization's plan decides the floor, not the creator's: a paid
+// organization of a Free member is billed its floor, a Free organization has
+// none (ADR-20261101113742). Either kind of organization's suspension stops
+// the floor even though the creator's account is active: schedd reads the
+// same resource account.
+// adr: 20261101113742
 func TestSampler_CompanyFloorFollowsOrganization(t *testing.T) {
 	at := func() time.Time { return time.Date(2026, 10, 8, 8, 5, 0, 0, time.UTC) }
 	for _, tc := range []struct {
 		name string
-		// MemStore turns resource ownership on for a Free organization; a paid
-		// one without a billing identity stays a legacy organization.
-		plan      api.Plan
-		status    state.OrgStatus
-		wantFloor bool
+		// MemStore turns resource ownership on for an organization created
+		// Free; owning ones then move to plan. A paid one without a billing
+		// identity stays a legacy organization.
+		owning      bool
+		plan        api.Plan
+		creatorPlan api.Plan
+		status      state.OrgStatus
+		wantFloor   bool
 	}{
-		{name: "owning_active", plan: api.PlanFree, status: state.OrgStatusActive, wantFloor: true},
-		{name: "owning_suspended", plan: api.PlanFree, status: state.OrgStatusSuspended},
-		{name: "legacy_active", plan: api.PlanScale, status: state.OrgStatusActive, wantFloor: true},
-		{name: "legacy_suspended", plan: api.PlanScale, status: state.OrgStatusSuspended},
+		{name: "owning_paid_active", owning: true, plan: api.PlanScale, creatorPlan: api.PlanFree, status: state.OrgStatusActive, wantFloor: true},
+		{name: "owning_paid_suspended", owning: true, plan: api.PlanScale, creatorPlan: api.PlanScale, status: state.OrgStatusSuspended},
+		{name: "owning_free", owning: true, plan: api.PlanFree, creatorPlan: api.PlanScale, status: state.OrgStatusActive},
+		{name: "legacy_active", plan: api.PlanScale, creatorPlan: api.PlanHobby, status: state.OrgStatusActive, wantFloor: true},
+		{name: "legacy_suspended", plan: api.PlanScale, creatorPlan: api.PlanHobby, status: state.OrgStatusSuspended},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			acct, err := store.CreateAccount(ctx, "member@example.com", api.PlanHobby)
+			acct, err := store.CreateAccount(ctx, "member@example.com", tc.creatorPlan)
 			if err != nil {
 				t.Fatalf("CreateAccount: %v", err)
 			}
-			org, err := store.CreateOrg(ctx, state.Org{Slug: "team", Name: "Team", Plan: tc.plan, Status: tc.status})
+			createPlan := tc.plan
+			if tc.owning {
+				createPlan = api.PlanFree
+			}
+			org, err := store.CreateOrg(ctx, state.Org{Slug: "team", Name: "Team", Plan: createPlan, Status: tc.status})
 			if err != nil {
 				t.Fatalf("CreateOrg: %v", err)
 			}
-			if org.ResourceOwnershipEnabled != (tc.plan == api.PlanFree) {
-				t.Fatalf("organization resource ownership %v, want it only for the Free organization", org.ResourceOwnershipEnabled)
+			if org.ResourceOwnershipEnabled != tc.owning {
+				t.Fatalf("organization resource ownership %v, want %v", org.ResourceOwnershipEnabled, tc.owning)
+			}
+			if tc.owning && tc.plan != api.PlanFree {
+				if err := store.UpdateOrgPlan(ctx, org.ID, tc.plan); err != nil {
+					t.Fatalf("UpdateOrgPlan: %v", err)
+				}
 			}
 			app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, OrgID: org.ID, Slug: "floor", RAMMB: 256, Type: state.AppTypeApp})
 			if err != nil {
@@ -110,15 +127,15 @@ func TestSampler_CompanyFloorFollowsOrganization(t *testing.T) {
 			floor := syntheticFloorRows(rows, app.ID)
 			if !tc.wantFloor {
 				if len(floor) != 0 {
-					t.Fatalf("suspended organization: %d synthetic floor rows, want none", len(floor))
+					t.Fatalf("%d synthetic floor rows, want none", len(floor))
 				}
 				return
 			}
 			if len(floor) != 1 {
 				t.Fatalf("%d synthetic floor rows, want 1", len(floor))
 			}
-			wantSubject, wantPlan := acct.ID, api.PlanHobby
-			if org.ResourceOwnershipEnabled {
+			wantSubject, wantPlan := acct.ID, tc.creatorPlan
+			if tc.owning {
 				wantSubject, wantPlan = org.ID, tc.plan
 			}
 			if floor[0].AccountID != wantSubject || floor[0].Plan != string(wantPlan) {

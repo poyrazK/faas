@@ -45,6 +45,11 @@ func (s *readCountingStore) ComputeNodeByID(ctx context.Context, id string) (sta
 	return s.MemStore.ComputeNodeByID(ctx, id)
 }
 
+func (s *readCountingStore) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
+	s.count("DeploymentByID")
+	return s.MemStore.DeploymentByID(ctx, id)
+}
+
 func (s *readCountingStore) AppByID(ctx context.Context, id string) (state.App, error) {
 	s.count("AppByID")
 	return s.MemStore.AppByID(ctx, id)
@@ -104,6 +109,11 @@ func TestWakeFastPathReadsTheAppAndTheBarrierOnce(t *testing.T) {
 	// instance-mode check resolves the deployment-pinned app separately.
 	if reads["ManagedPostgresAdmissionFenced"] != 1 || reads["AppByID"] > 2 {
 		t.Fatalf("fast path reads = %v, want one barrier check and at most two app reads", reads)
+	}
+	// The mode check and the answer share one read of the instance's
+	// deployment (they read it twice, one after another, before).
+	if reads["DeploymentByID"] != 1 {
+		t.Fatalf("fast path reads = %v, want one read of the instance's deployment", reads)
 	}
 	if result.Identity.TenantID != f.app.AccountID {
 		t.Fatalf("identity tenant = %q, want %q", result.Identity.TenantID, f.app.AccountID)

@@ -7931,6 +7931,10 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
+	// Mirrors PgStore: rebinding to another repository retires its previews.
+	if previous, bound := m.githubBindings[b.AppID]; bound && githubBindingRepoChanged(previous, b) {
+		m.markAppPRPreviewsStaleLocked(app)
+	}
 	// Mirrors PgStore: a re-bind keeps the app's GitHub policy.
 	b.ProductionTrigger = m.githubBindings[b.AppID].ProductionTrigger
 	b.PreviewsOff = m.githubBindings[b.AppID].PreviewsOff
@@ -7981,7 +7985,14 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 	if !ok {
 		return ErrNotFound
 	}
-	// Mirrors PgStore: the app's PR preview environments go stale.
+	m.markAppPRPreviewsStaleLocked(parent)
+	delete(m.githubBindings, appID)
+	return nil
+}
+
+// markAppPRPreviewsStaleLocked mirrors PgStore's markAppPRPreviewsStaleTx.
+// Callers hold m.mu.
+func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 	anchors := make(map[string]string)
 	for _, set := range m.previewSets {
 		if root, ok := m.apps[set.RootAppID]; ok {
@@ -8006,8 +8017,6 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 			m.apps[id] = preview
 		}
 	}
-	delete(m.githubBindings, appID)
-	return nil
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
@@ -19970,19 +19979,21 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 	checkpoint := m.networkUsageCheckpoints[instanceID]
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
-		if !checkpoint.netTxValid {
-			netTxDelta = netTxCumulative
-		} else if netTxCumulative >= checkpoint.netTx {
+		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
+		if checkpoint.netTxValid && netTxCumulative >= checkpoint.netTx {
 			netTxDelta = netTxCumulative - checkpoint.netTx
+		} else {
+			netTxDelta = netTxCumulative
 		}
 		checkpoint.netTx = netTxCumulative
 		checkpoint.netTxValid = true
 	}
 	if netRxValid {
-		if !checkpoint.netRxValid {
-			netRxDelta = netRxCumulative
-		} else if netRxCumulative >= checkpoint.netRx {
+		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
+		if checkpoint.netRxValid && netRxCumulative >= checkpoint.netRx {
 			netRxDelta = netRxCumulative - checkpoint.netRx
+		} else {
+			netRxDelta = netRxCumulative
 		}
 		checkpoint.netRx = netRxCumulative
 		checkpoint.netRxValid = true
