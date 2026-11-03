@@ -688,6 +688,26 @@ var cliCommands = []cliCommand{
 				{Name: "dry-run", Short: "show the plan without changing anything"},
 				{Name: "remove", Short: "remove the app's Datadog log drain and webhook"},
 			}},
+			{Name: "ai", Short: "Set up the AI gateway for an app in one step", Notes: []string{
+				"Creates an AI integration for the provider, or reuses one of the same name or --integration, stores the key from an environment variable, stdin or a file, and binds it to the app.",
+				"Sets GREGALE_AI_BASE_URL and, for OpenAI and Anthropic, the SDK's base URL and a placeholder key, so the app needs no code change. The app sees them on its next deploy or restart.",
+			}, Examples: []string{
+				"OPENAI_API_KEY=sk-... gregale add ai --app my-api --provider openai",
+				"gregale add ai --app my-api --provider vertex --region us-central1 --key-file key.json",
+				"gregale add ai --app my-api --provider azure_openai --origin https://my-resource.openai.azure.com --key-stdin",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "provider", Short: "AI provider", Req: true, Value: "PROVIDER", ClosedSet: []string{"openai", "anthropic", "gemini", "azure_openai", "bedrock", "vertex"}},
+				{Name: "integration", Short: "existing AI integration to bind instead of creating one", Value: "ID"},
+				{Name: "name", Short: "integration name (default the provider)", Value: "NAME"},
+				{Name: "origin", Short: "provider origin, for Azure OpenAI or an OpenAI-compatible API", Value: "URL"},
+				{Name: "region", Short: "provider region, for Bedrock and Vertex", Value: "REGION"},
+				{Name: "key-env", Short: "environment variable holding the provider key (default the provider's usual one)", Value: "NAME"},
+				{Name: "key-stdin", Short: "read the provider key from stdin"},
+				{Name: "key-file", Short: "file holding the provider key, such as a Vertex service-account key", Value: "PATH"},
+				{Name: "no-env", Short: "do not set the app's SDK settings"},
+				{Name: "scope", Short: "environment scope for the app's SDK settings", Value: "SCOPE"},
+			}},
 		},
 	},
 	{
@@ -1037,6 +1057,12 @@ var cliCommands = []cliCommand{
 			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
 				{Name: "daily-tokens", Short: "token limit, or none", Req: true, Value: "N"},
+			}},
+			{Name: "request-policy", Short: "Show or set an AI integration's rate, concurrency and timeout", Notes: []string{"Flags you omit keep their values. The timeout bounds the wait for a response's headers; a streamed answer may take longer."}, Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "rate", Short: "calls per second", Value: "N"},
+				{Name: "burst", Short: "calls above the rate allowed at once", Value: "N"},
+				{Name: "max-in-flight", Short: "calls in flight at once", Value: "N"},
+				{Name: "timeout", Short: "seconds to wait for a response's headers", Value: "SECONDS"},
 			}},
 			{Name: "guardrails", Short: "Set an app's per-minute limits, model allow-list and output cap", Notes: []string{"Flags you omit keep their values."}, Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
@@ -5229,6 +5255,14 @@ var cliCommands = []cliCommand{
 				{Name: "rotate", Short: "Rotate an org API key; the new plaintext is shown once", Positionals: []string{"<key-id>"}, Flags: []cliFlag{
 					orgSlugFlag,
 					{Name: "label", Short: "new label (empty keeps the current one)", Value: "TEXT"},
+				}},
+			}},
+			{Name: "agent-policy", Short: "Show or set whether agents may act in the org", Notes: []string{"The policy also caps the capabilities agents may hold beyond inspection."}, Subcommands: []cliSub{
+				{Name: "get", Short: "Show the org's agent policy", Flags: []cliFlag{orgSlugFlag}},
+				{Name: "set", Short: "Allow or deny agents and cap their capabilities", Notes: []string{"Owners and admins only. Without --capabilities, an allowed policy keeps its current capabilities.", "Revokes, at once, the agent connections the new policy no longer allows."}, Examples: []string{"gregale org agent policy set --org acme --agents allow --capabilities deploy:write,secrets:request", "gregale org agent policy set --org acme --agents deny"}, Flags: []cliFlag{
+					orgSlugFlag,
+					{Name: "agents", Short: "allow or deny agents in the org", Value: "allow|deny", Req: true},
+					{Name: "capabilities", Short: "comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only", Value: "LIST"},
 				}},
 			}},
 			{Name: "transfer-ownership", Short: "Transfer org ownership", Flags: []cliFlag{

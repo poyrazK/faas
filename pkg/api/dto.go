@@ -4256,6 +4256,16 @@ type AccountResponse struct {
 	// KeyScopes are the scopes of the API key that authenticated GET
 	// /v1/account; absent for a dashboard session (ADR-20261029085359).
 	KeyScopes []string `json:"key_scopes,omitempty"`
+	// KeyOrg is the shared organization that key acts in; absent for a
+	// personal key or a session (ADR-20261101225122).
+	KeyOrg *KeyOrg `json:"key_org,omitempty"`
+}
+
+// KeyOrg names the shared organization an API key acts in.
+type KeyOrg struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives

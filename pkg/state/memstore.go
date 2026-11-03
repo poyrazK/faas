@@ -1373,10 +1373,11 @@ type MemStore struct {
 	// token hash (hex-encoded for map safety). All maps are guarded
 	// by m.mu and never escape the package — handlers go through
 	// Store (this interface) so the sqlc vs memstore parity holds.
-	orgs        map[string]Org
-	orgsBySlug  map[string]string // lower(slug) -> id
-	memberships map[orgAccountKey]OrgMembership
-	invitations map[string]OrgInvitation // hex(hash) -> OrgInvitation
+	orgs             map[string]Org
+	orgAgentPolicies map[string]OrgAgentPolicy // ADR-20261101225122
+	orgsBySlug       map[string]string         // lower(slug) -> id
+	memberships      map[orgAccountKey]OrgMembership
+	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation
 	// computeNodes mirrors the compute_nodes table; keyed by id (issue
 	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
 	// seeded by NewMemStore so tests don't have to call

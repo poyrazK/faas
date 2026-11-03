@@ -148,7 +148,7 @@ func newEdgeMetrics() *edgeMetrics {
 		}),
 		refused: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gatewayd_public_edge_refused_total",
-			Help: "Connections and requests a compute edge's per-client-address limits turned away, by reason: open_connections, connection_rate and handshakes (reset before TLS), request_rate (answered 429) (ADR-20261103163954 §4).",
+			Help: "Connections and requests a compute edge's client limits turned away, by reason: open_connections, connection_rate and handshakes (reset before TLS), request_rate (answered 429), body_rate (a body slower than the minimum rate, its read failed) and forward_in_flight (answered 503 at the cap on requests forwarded to the control plane) (ADR-20261103163954 §4).",
 		}, []string{"reason"}),
 	}
 	for _, reason := range clientlimit.Reasons {

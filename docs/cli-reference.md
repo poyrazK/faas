@@ -1271,6 +1271,38 @@ gregale add datadog --app my-api --dry-run
 gregale add datadog --app my-api --remove
 ```
 
+### add ai
+
+Set up the AI gateway for an app in one step
+
+`gregale add ai --app <APP> --provider <PROVIDER> [--integration <ID>] [--name <NAME>] [--origin <URL>] [--region <REGION>] [--key-env <NAME>] [--key-stdin] [--key-file <PATH>] [--no-env] [--env <SCOPE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | app slug | required |
+| `--provider <PROVIDER>` | AI provider | required; one of `openai` · `anthropic` · `gemini` · `azure_openai` · `bedrock` · `vertex` |
+| `--integration <ID>` | existing AI integration to bind instead of creating one |  |
+| `--name <NAME>` | integration name (default the provider) |  |
+| `--origin <URL>` | provider origin, for Azure OpenAI or an OpenAI-compatible API |  |
+| `--region <REGION>` | provider region, for Bedrock and Vertex |  |
+| `--key-env <NAME>` | environment variable holding the provider key (default the provider&#39;s usual one) |  |
+| `--key-stdin` | read the provider key from stdin |  |
+| `--key-file <PATH>` | file holding the provider key, such as a Vertex service-account key |  |
+| `--no-env` | do not set the app&#39;s SDK settings |  |
+| `--env <SCOPE>` | environment scope for the app&#39;s SDK settings (also --scope) |  |
+
+Examples:
+
+```sh
+OPENAI_API_KEY=sk-... gregale add ai --app my-api --provider openai
+gregale add ai --app my-api --provider vertex --region us-central1 --key-file key.json
+gregale add ai --app my-api --provider azure_openai --origin https://my-resource.openai.azure.com --key-stdin
+```
+
+Creates an AI integration for the provider, or reuses one of the same name or --integration, stores the key from an environment variable, stdin or a file, and binds it to the app.
+
+Sets GREGALE_AI_BASE_URL and, for OpenAI and Anthropic, the SDK&#39;s base URL and a placeholder key, so the app needs no code change. The app sees them on its next deploy or restart.
+
 
 ## link
 
@@ -9919,6 +9951,51 @@ Set or clear one app&#39;s own daily AI token limit
 | `--app <slug>` | bound app slug | required |
 | `--daily-tokens <N>` | token limit, or none | required |
 
+### ai request-policy
+
+Show or set an AI integration&#39;s rate, concurrency and timeout
+
+`gregale ai request-policy <get|set> [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--rate <N>` | calls per second |  |
+| `--burst <N>` | calls above the rate allowed at once |  |
+| `--max-in-flight <N>` | calls in flight at once |  |
+| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
+
+Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
+
+#### ai request-policy get
+
+Show or set an AI integration&#39;s rate, concurrency and timeout
+
+`gregale ai request-policy get [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--rate <N>` | calls per second |  |
+| `--burst <N>` | calls above the rate allowed at once |  |
+| `--max-in-flight <N>` | calls in flight at once |  |
+| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
+
+Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
+
+#### ai request-policy set
+
+Show or set an AI integration&#39;s rate, concurrency and timeout
+
+`gregale ai request-policy set [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--rate <N>` | calls per second |  |
+| `--burst <N>` | calls above the rate allowed at once |  |
+| `--max-in-flight <N>` | calls in flight at once |  |
+| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
+
+Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
+
 ### ai policy
 
 Set the AI provider and token or cost limits
@@ -16597,10 +16674,11 @@ List or revoke the agents connected to your account
 
 List connected agents: hosted MCP sign-ins and agent keys
 
-`gregale mcp connection list [--socket <PATH>] [--limit <N>] [--offset <N>]`
+`gregale mcp connection list [--org <SLUG>] [--socket <PATH>] [--limit <N>] [--offset <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--org <SLUG>` | an organization&#39;s agents, for its owners and admins |  |
 | `--socket <PATH>` | owner-protected management control socket (operators) |  |
 | `--limit <N>` | page size from 1 to 100 (with --socket, default 20) |  |
 | `--offset <N>` | non-negative page offset (with --socket) |  |
@@ -16617,11 +16695,12 @@ With --socket, an operator lists a bridge&#39;s grants through its local admin s
 
 Revoke one connected agent, or all of them
 
-`gregale mcp connection revoke [--all] [--socket <PATH>] [--grant-id <ID>] [<id>]`
+`gregale mcp connection revoke [--all] [--org <SLUG>] [--socket <PATH>] [--grant-id <ID>] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--all` | revoke every agent connected to the account |  |
+| `--org <SLUG>` | an organization&#39;s agents, for its owners and admins |  |
 | `--socket <PATH>` | owner-protected management control socket (operators) |  |
 | `--grant-id <ID>` | exact active bridge grant ID to revoke (with --socket) |  |
 
@@ -18438,6 +18517,51 @@ Show account status
 Manage orgs, members and invitations
 
 `gregale org [<subcommand>]`
+
+### org agent
+
+policy
+
+#### org agent policy
+
+Show or set whether agents may act in the org
+
+`gregale org agent policy <get|set>`
+
+The policy also caps the capabilities agents may hold beyond inspection.
+
+##### org agent policy get
+
+Show the org&#39;s agent policy
+
+`gregale org agent policy get --org <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+##### org agent policy set
+
+Allow or deny agents and cap their capabilities
+
+`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--agents <allow|deny>` | allow or deny agents in the org | required |
+| `--capabilities <LIST>` | comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only |  |
+
+Examples:
+
+```sh
+gregale org agent policy set --org acme --agents allow --capabilities deploy:write,secrets:request
+gregale org agent policy set --org acme --agents deny
+```
+
+Owners and admins only. Without --capabilities, an allowed policy keeps its current capabilities.
+
+Revokes, at once, the agent connections the new policy no longer allows.
 
 ### org invitation
 

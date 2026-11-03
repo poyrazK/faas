@@ -2378,6 +2378,18 @@ const (
 	OutboundAIRealtimeMaxMessageBytes     int64 = 4 << 20
 	OutboundAIRealtimeInputReserveTokens  int64 = 4096
 	OutboundAIRealtimeOutputReserveTokens int64 = 4096
+	// AI call bounds (ADR 20261027132936): a billable AI call's request
+	// timeout bounds the wait for its response headers; the call then runs
+	// at most OutboundAICallMaxSeconds from its start, and a streamed answer
+	// at most OutboundAIStreamIdleSeconds without a byte. Its admission
+	// lease is renewed every third of max(request timeout,
+	// OutboundAILeaseRenewMinSeconds) while it runs.
+	OutboundAICallMaxSeconds       = 1800
+	OutboundAIStreamIdleSeconds    = 600
+	OutboundAILeaseRenewMinSeconds = 15
+	// OutboundAIAccessTokenLookupsMax bounds the database lookups of
+	// uncached access tokens that run at once (ADR 20261027132936).
+	OutboundAIAccessTokenLookupsMax = 8
 	// Batches (ADR-1431): the share of the list price a batch costs; the
 	// largest OpenAI input file read at creation, Anthropic batch body and
 	// JSONL line the gateway parses; how often open batches are polled and
@@ -17215,6 +17227,17 @@ const (
 	EdgeClientTrackedAddrsMax          = 200_000
 	EdgeTLSHandshakesInFlightPerCPU    = 128
 	EdgeTLSHandshakeTimeout            = 10 * time.Second
+	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
+	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
+	// the public server's read timeout is the whole request envelope.
+	// gRPC client streams are exempt.
+	EdgeClientBodyMinBytesPerWindow = 4096
+	EdgeClientBodyRateWindow        = 10 * time.Second
+	// EdgeControlPlaneForwardsInFlightMax bounds the requests one compute
+	// edge forwards to the control plane's private listener at once
+	// (uploads, public reads, OTLP), so direct clients cannot push more at
+	// the control plane than Cloudflare let through.
+	EdgeControlPlaneForwardsInFlightMax = 256
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
