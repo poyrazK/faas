@@ -2672,7 +2672,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// H5-34: one gate across both telemetry listeners bounds their share of
 	// apid's database pool.
-	ingest := receivers.NewIngestGate(api.TelemetryIngestDBConcurrency)
+	// ADR-20261103113952: one analytics rollup aggregator counts the rows of
+	// every request telemetry listener and flushes them together.
+	// A store without rollups (the in-memory dev store) leaves them off.
+	var rollups *receivers.RequestAnalyticsRollups
+	if rollupStore, ok := srv.store.(state.RequestAnalyticsRollupStore); ok {
+		rollups = receivers.NewRequestAnalyticsRollups(rollupStore, srv.ops.Registry(), log)
+		go rollups.Run(ctx, api.RequestAnalyticsRollupFlushInterval)
+	}
+	ingest := telemetryIngest{gate: receivers.NewIngestGate(api.TelemetryIngestDBConcurrency), rollups: rollups}
 	// ADR-20261101085552: gateways that keep the request-ID journal on their
 	// node hold a lookup stream on whichever listener carries their request
 	// telemetry; one hub serves both and the debug request lookup.
@@ -3337,7 +3345,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest telemetryIngest, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -3356,7 +3364,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 		wire.ServerCredsOrEmpty(tlsCfg),
 		wire.TraceServerOptions()...,
 	)...)
-	receivers.RegisterAppErrorsReceiver(srv, store, ops, appErrorsEnabled, ingest)
+	receivers.RegisterAppErrorsReceiver(srv, store, ops, appErrorsEnabled, ingest.gate)
 	// The private history reader shares this authenticated listener for
 	// compute-only realtimed nodes in split-box deployments. So does
 	// credential lookup: a compute node's gatewayd-internal cannot key a
@@ -3376,7 +3384,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// request_telemetry.sock server below, preserving the separate DAC
 	// boundaries for the legacy Unix sockets.
 	if !isUnixSocketPath(target) {
-		receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest)
+		receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest.gate, ingest.rollups)
 	}
 	// gatewayd-internal's platform-owned spans use the same private mTLS
 	// listener in split-box deployments. The dedicated Unix socket remains the
@@ -3400,13 +3408,13 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest telemetryIngest, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest)
+	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest.gate, ingest.rollups)
 	// Single-box realtimed reaches apid through this DAC-protected socket,
 	// and asks it to match Data API server keys there (ADR 20261029202403
 	// amendment 1).
@@ -3460,6 +3468,13 @@ func runAuthServer(ctx context.Context, target string, store state.Store, log *s
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	receivers.RegisterAuthReceiver(srv, store, tracing, sessions)
 	return srv, lis, nil
+}
+
+// telemetryIngest is the request telemetry wiring every listener shares:
+// the database concurrency gate and the analytics rollups.
+type telemetryIngest struct {
+	gate    receivers.IngestGate
+	rollups *receivers.RequestAnalyticsRollups
 }
 
 // spansIngest is the span-ingest wiring every telemetry listener shares:

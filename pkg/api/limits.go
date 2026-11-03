@@ -14241,6 +14241,48 @@ const DashboardRequestAnalyticsTimeout = 5 * time.Second
 // arriving. Route removal excludes the same two minutes.
 const RequestAnalyticsSettleLag = 2 * time.Minute
 
+// Request analytics rollups (ADR-20261103113952). apid adds every telemetry
+// row a plan keeps, before the debugger ingest cap, to per-minute rollups
+// and writes them every RequestAnalyticsRollupFlushInterval in statements of
+// at most RequestAnalyticsRollupFlushRowsMax rows. For each app, minute and
+// non-route dimension a flush keeps RequestAnalyticsRollupDimensionsMax
+// distinct values and folds the rest into "__other__". The aggregator counts
+// a replayed event ID once among the last RequestAnalyticsRollupSeenEventsMax
+// rows; a gateway replays a batch within seconds of the original. Past
+// RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
+// Postgres is failing, new rows are dropped and counted.
+const (
+	RequestAnalyticsRollupFlushInterval  = 10 * time.Second
+	RequestAnalyticsRollupFlushRowsMax   = 1000
+	RequestAnalyticsRollupDimensionsMax  = 50
+	RequestAnalyticsRollupSeenEventsMax  = 200_000
+	RequestAnalyticsRollupPendingRowsMax = 200_000
+)
+
+// RequestAnalyticsSampledMeasuresTimeout bounds the raw telemetry read that
+// adds sampled measures (guest execution, CPU, RSS, cold request and wake
+// boot p95) to analytics answered from rollups; past it they are left out
+// and the response still carries its counts and latencies.
+const RequestAnalyticsSampledMeasuresTimeout = 3 * time.Second
+
+// RequestAnalyticsLatencyBoundsMS are the upper bounds of the rollup latency
+// histogram (ADR-20261103113952); latency_hist has one bucket per bound plus
+// an overflow bucket, whose percentile is the rollup's latency_max_ms. Up to
+// 100 ms buckets are 10 ms wide, as the gateway's latency representatives
+// are; from 100 ms to 10 s an upper bound is at most 25% above the bucket's
+// lower bound. Changing the
+// bounds changes the meaning of stored rows: add a new column instead.
+var RequestAnalyticsLatencyBoundsMS = [...]int{
+	10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+	125, 150, 175, 200, 250, 300, 350, 400, 450, 500,
+	600, 700, 800, 900, 1000, 1250, 1500, 1750, 2000, 2500,
+	3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 9000, 10000,
+	15000, 20000, 30000, 60000,
+}
+
+// RequestAnalyticsLatencyBuckets is latency_hist's fixed width.
+const RequestAnalyticsLatencyBuckets = len(RequestAnalyticsLatencyBoundsMS) + 1
+
 // RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
 // rule for a route with at least RouteAdviceMinRequests in the window.

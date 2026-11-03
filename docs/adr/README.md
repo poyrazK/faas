@@ -273,6 +273,7 @@
 - [ADR-20261019120046: Preserve configuration when deployment acceptance is uncertain](20261019120046-deploy-submission-outcomes.md) — explicit submission outcomes and commit uncertainty across processes
 
 - [ADR-20261019120045: Deploy upload recovery across CLI processes](20261019120045-deploy-upload-recovery.md) — content and intent checkpoints, interruption recovery, and expired-session replacement keys
+- [ADR-20261103113952: Request analytics from per-minute rollups](20261103113952-request-analytics-rollups.md) — accepted; amends ADR-127 and ADR-20261026143210: apid folds every telemetry row a plan keeps into per-minute rollups before the debugger ingest cap, and analytics counts and latencies read them for windows they cover; sampled measures stay on raw rows
 
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in
 [`../faas_implementation_spec.md`](../faas_implementation_spec.md) §3, not as
@@ -1047,6 +1048,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 20261027090018 | [Agent web capabilities: better fetch, bring-your-own web-data providers and egress, and web monitors](20261027090018-agent-web-capabilities.md) | proposed | Amends ADR-20261027090014 §4: Markdown fetch results with provenance and sandboxed document conversion, a per-account cache, bring-your-own search/scrape/crawl providers with block fallback, a contract-only seller egress proxy chained after Gregale's deny rules, and web monitors that run no model when nothing changed |
 | 20261027090019 | [Agent contexts: declared, versioned context attached to runs and sessions](20261027090019-agent-contexts.md) | proposed | Contexts as apid intent (sources, permissions, build recipe); per-commit source images and per-lockfile dependency images built in builder microVMs and assembled by imaged with the app-layer pipeline; attached as read-only drives under a per-run copy-on-write overlay, with empty slots in warm snapshots; dynamic sources (Gregale app data, point-in-time database clones, S3, connections, MCP) pinned per run through ADR-20261027090016; per-account node cache and affinity |
 | 20261030125501 | [Stateless agents on functions: event-driven agents that hold nothing while they wait](20261030125501-stateless-agents-on-functions.md) | proposed | A second agent shape beside harness runs: a seller's loop runs as one function invocation per inbox message (realtime consumer group ordered by thread, ADR-1322 trigger), tools answer through signed RAP callback URLs, and an idle agent is only its stored history: 0 CPU, 0 RAM |
+| 20261103113952 | [Request analytics from per-minute rollups](20261103113952-request-analytics-rollups.md) | accepted | Analytics totals stop depending on the debugger ingest cap: per-minute rollups (route+status, country, referrer, UA, consumer; 45-bucket latency histogram) written by apid every 10 s, read for covered windows, swept on the telemetry plan ladder |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
