@@ -19,7 +19,7 @@ var portal = template.Must(template.ParseFS(assets, "web/index.html"))
 func (s *Service) HideDisabled(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if !s.Enabled() && (path == "/r" || strings.HasPrefix(path, "/r/") || path == "/v1/sales" || strings.HasPrefix(path, "/v1/sales/") || path == "/v1/referrals" || strings.HasPrefix(path, "/v1/referrals/") || path == "/dashboard/sales" || path == "/dashboard/referrals" || strings.HasPrefix(path, "/dashboard/referral-assets/")) {
+		if !s.Enabled() && (path == "/v1/sales" || strings.HasPrefix(path, "/v1/sales/") || path == "/v1/referrals" || strings.HasPrefix(path, "/v1/referrals/") || path == "/dashboard/sales" || path == "/dashboard/referrals" || strings.HasPrefix(path, "/dashboard/referral-assets/")) {
 			w.Header().Set("Cache-Control", "no-store")
 			http.NotFound(w, r)
 			return

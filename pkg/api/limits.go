@@ -24,14 +24,15 @@ import (
 // Referral program bounds. Rewards are estimates only; payout execution is
 // deliberately unavailable until a separately reviewed payment integration.
 const (
-	ReferralPageSize         = 25
-	ReferralNoteMaxBytes     = 2000
-	ReferralBodyMaxBytes     = 8192
-	ReferralRewardMaxCents   = 100_000_000
-	ReferralCommissionMaxBPS = 10_000
-	ReferralPolicyMaxDays    = 365
-	ReferralTrackingTTL      = 30 * 24 * time.Hour
-	ReferralReadTimeout      = 10 * time.Second
+	ReferralPageSize               = 25
+	ReferralCodeGenerationAttempts = 8
+	ReferralNoteMaxBytes           = 2000
+	ReferralBodyMaxBytes           = 8192
+	ReferralRewardMaxCents         = 100_000_000
+	ReferralCommissionMaxBPS       = 10_000
+	ReferralPolicyMaxDays          = 365
+	ReferralSelectionTTL           = 15 * time.Minute
+	ReferralReadTimeout            = 10 * time.Second
 )
 
 // Shared traffic counters bound each admission round trip and aggregate replay.

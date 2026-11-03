@@ -53427,9 +53427,11 @@ CREATE TABLE public.referral_links (
     kind text NOT NULL,
     active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    share_code text,
     CONSTRAINT referral_links_code_check CHECK ((code ~ '^[A-Za-z0-9_-]{22}$'::text)),
     CONSTRAINT referral_links_created_at_check CHECK (isfinite(created_at)),
-    CONSTRAINT referral_links_kind_check CHECK ((kind = ANY (ARRAY['customer'::text, 'sales'::text])))
+    CONSTRAINT referral_links_kind_check CHECK ((kind = ANY (ARRAY['customer'::text, 'sales'::text]))),
+    CONSTRAINT referral_links_share_code_check CHECK (((share_code IS NULL) OR (share_code ~ '^[A-Z0-9]{6}$'::text)))
 );
 
 
@@ -78930,6 +78932,13 @@ CREATE INDEX recent_build_claims_org_id_idx ON public.recent_build_claims USING 
 --
 
 CREATE INDEX referral_attributions_link ON public.referral_attributions USING btree (code, account_id);
+
+
+--
+-- Name: referral_links_share_code_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX referral_links_share_code_unique ON public.referral_links USING btree (share_code) WHERE (share_code IS NOT NULL);
 
 
 --

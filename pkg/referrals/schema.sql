@@ -65,3 +65,5 @@ JOIN referral_links l ON l.code=r.code
 JOIN accounts a ON a.id=r.account_id
 JOIN accounts owner ON owner.id=l.owner_id
 LEFT JOIN invoices i ON i.id=r.first_paid_invoice_id AND i.account_id=r.account_id;
+ALTER TABLE referral_links ADD COLUMN share_code text CHECK (share_code IS NULL OR share_code ~ '^[A-Z0-9]{6}$');
+CREATE UNIQUE INDEX referral_links_share_code_unique ON referral_links(share_code) WHERE share_code IS NOT NULL;

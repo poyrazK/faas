@@ -50,7 +50,6 @@ func (s *server) salesRoutes(mux *http.ServeMux) {
 		}
 		http.Redirect(w, r, "/dashboard/sales", http.StatusSeeOther)
 	})
-	mux.HandleFunc("GET /r/{code}", s.sales.Track)
 	mux.HandleFunc("GET /dashboard/referral-assets/{file}", s.sales.Asset)
 	mux.Handle("GET /dashboard/sales", s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		acct, _ := AccountFrom(r.Context())
@@ -61,12 +60,12 @@ func (s *server) salesRoutes(mux *http.ServeMux) {
 		s.sales.CustomerPage(w, r, acct)
 	})))
 	mux.HandleFunc("GET /v1/sales/me", s.authLimited(s.requireSessionPrincipal(s.sales.SalesData)))
-	mux.HandleFunc("POST /v1/sales/links", s.authLimited(s.requireSessionPrincipal(s.sales.SalesLink)))
-	mux.HandleFunc("PATCH /v1/sales/links/{code}", s.authLimited(s.requireSessionPrincipal(s.sales.SetLinkActive)))
+	mux.HandleFunc("POST /v1/sales/codes", s.authLimited(s.requireSessionPrincipal(s.sales.SalesLink)))
+	mux.HandleFunc("PATCH /v1/sales/codes/{code}", s.authLimited(s.requireSessionPrincipal(s.sales.SetLinkActive)))
 	mux.HandleFunc("PATCH /v1/sales/customers/{account}", s.authLimited(s.requireSessionPrincipal(s.sales.UpdateLead)))
 	mux.HandleFunc("GET /v1/referrals/me", s.authLimited(s.requireSessionPrincipal(s.sales.CustomerData)))
-	mux.HandleFunc("POST /v1/referrals/links", s.authLimited(s.requireSessionPrincipal(s.sales.CustomerLink)))
-	mux.HandleFunc("PATCH /v1/referrals/links/{code}", s.authLimited(s.requireSessionPrincipal(s.sales.SetLinkActive)))
+	mux.HandleFunc("POST /v1/referrals/codes", s.authLimited(s.requireSessionPrincipal(s.sales.CustomerLink)))
+	mux.HandleFunc("PATCH /v1/referrals/codes/{code}", s.authLimited(s.requireSessionPrincipal(s.sales.SetLinkActive)))
 }
 
 func (s *server) isSalesMember(acct state.Account) bool {

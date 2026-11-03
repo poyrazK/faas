@@ -40,15 +40,15 @@
       const card=el('article',undefined,'metric');card.append(el('span',title,'eyebrow'),el('strong',value),el('small',detail));return card;
     }));
   }
-  function renderLink() {
-    const hasLink = Boolean(snapshot.link_url);
-    byId('referral-link').value = snapshot.link_url || '';
-    byId('copy').disabled = !hasLink;
-    byId('create-link').hidden = hasLink;
-    byId('create-link').disabled = false;
-    byId('toggle-link').hidden = !hasLink;
-    byId('toggle-link').textContent = snapshot.link?.active ? 'Pause link' : 'Resume link';
-    byId('link-status').textContent = hasLink ? (snapshot.link.active ? '● Active' : 'Paused for new signups') : '';
+  function renderCode() {
+    const hasCode = Boolean(snapshot.referral_code?.code);
+    byId('referral-code').value = snapshot.referral_code?.code || '';
+    byId('copy').disabled = !hasCode;
+    byId('create-code').hidden = hasCode;
+    byId('create-code').disabled = false;
+    byId('toggle-code').hidden = !hasCode;
+    byId('toggle-code').textContent = snapshot.referral_code?.active ? 'Pause code' : 'Resume code';
+    byId('code-status').textContent = hasCode ? (snapshot.referral_code.active ? '● Active' : 'Paused for new signups') : '';
   }
   function filteredRows() {
     const query=(byId('search')?.value || '').toLowerCase();
@@ -59,7 +59,7 @@
     const rows=filteredRows();
     byId('rows').replaceChildren();
     if (!rows.length) {
-      const row=el('tr');const cell=el('td',snapshot.referrals.length ? 'No referrals match these filters on this page.' : 'No referrals yet. Share your link to start a new introduction.','empty');cell.colSpan=staff?7:4;row.append(cell);byId('rows').append(row);
+      const row=el('tr');const cell=el('td',snapshot.referrals.length ? 'No referrals match these filters on this page.' : 'No referrals yet. Share your code to start a new introduction.','empty');cell.colSpan=staff?7:4;row.append(cell);byId('rows').append(row);
     }
     rows.forEach((record,index) => {
       const row=el('tr');const customer=el('td');customer.append(el('strong',staff ? record.email : `Referral ${index+1}`));
@@ -84,7 +84,7 @@
     byId('first').hidden=!cursor;
   }
   function render() {
-    renderMetrics();renderLink();renderRows();
+    renderMetrics();renderCode();renderRows();
     byId('identity').textContent=snapshot.email;
     byId('scope-label').textContent=staff ? (snapshot.manager ? 'Manager view · all customer and sales referrals' : 'Your assigned sales referrals and customers') : 'Only signup and reward status are shared. Customer contact details stay private.';
     const p=snapshot.policy;
@@ -96,7 +96,7 @@
   async function load() {
     if (loading) return; loading=true;byId('refresh').disabled=true;byId('error').hidden=true;
     try { snapshot=await request(`${base}/me${cursor ? `?after=${encodeURIComponent(cursor)}` : ''}`);render(); }
-    catch (error) { snapshot=null;byId('referral-link').value='';byId('copy').disabled=true;byId('export').disabled=true;byId('next').disabled=true;byId('identity').textContent='Session data unavailable';byId('metrics').replaceChildren();showError(error);byId('rows').replaceChildren();const row=el('tr');const cell=el('td','Referral data is unavailable. Use Refresh data to try again.','empty');cell.colSpan=7;row.append(cell);byId('rows').append(row); }
+    catch (error) { snapshot=null;byId('referral-code').value='';byId('copy').disabled=true;byId('export').disabled=true;byId('next').disabled=true;byId('identity').textContent='Session data unavailable';byId('metrics').replaceChildren();showError(error);byId('rows').replaceChildren();const row=el('tr');const cell=el('td','Referral data is unavailable. Use Refresh data to try again.','empty');cell.colSpan=7;row.append(cell);byId('rows').append(row); }
     finally { loading=false;byId('refresh').disabled=false; }
   }
   async function action(button, fn) {
@@ -104,11 +104,11 @@
     try { await fn();await load(); } catch (error) { showError(error); } finally { button.disabled=false; }
   }
   byId('refresh').addEventListener('click',load);
-  byId('create-link').addEventListener('click',event => action(event.currentTarget,()=>request(`${base}/links`,{method:'POST',body:'{}'})));
-  byId('toggle-link').addEventListener('click',event => action(event.currentTarget,()=>request(`${base}/links/${encodeURIComponent(snapshot.link.code)}`,{method:'PATCH',body:JSON.stringify({active:!snapshot.link.active})})));
+  byId('create-code').addEventListener('click',event => action(event.currentTarget,()=>request(`${base}/codes`,{method:'POST',body:'{}'})));
+  byId('toggle-code').addEventListener('click',event => action(event.currentTarget,()=>request(`${base}/codes/${encodeURIComponent(snapshot.referral_code.code)}`,{method:'PATCH',body:JSON.stringify({active:!snapshot.referral_code.active})})));
   byId('copy').addEventListener('click',async () => {
-    try { await navigator.clipboard.writeText(byId('referral-link').value);byId('copy-status').textContent='Link copied. Ready for your next introduction.'; }
-    catch { byId('referral-link').select();byId('copy-status').textContent='Select and copy the link from the field above.'; }
+    try { await navigator.clipboard.writeText(byId('referral-code').value);byId('copy-status').textContent='Code copied. Ready to share.'; }
+    catch { byId('referral-code').select();byId('copy-status').textContent='Select and copy the code from the field above.'; }
   });
   byId('next').addEventListener('click',()=>{cursor=snapshot.next_cursor;history.replaceState(null,'',`${location.pathname}?after=${encodeURIComponent(cursor)}#referrals`);load();});
   byId('first').addEventListener('click',()=>{cursor='';history.replaceState(null,'',`${location.pathname}#referrals`);load();});

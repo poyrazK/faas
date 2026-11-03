@@ -94,7 +94,7 @@ func TestStaffRequiresMembershipVerificationAndMFA(t *testing.T) {
 		a := acct
 		mutate(&a)
 		w := httptest.NewRecorder()
-		s.SalesLink(w, httptest.NewRequest("POST", "/v1/sales/links", nil), a)
+		s.SalesLink(w, httptest.NewRequest("POST", "/v1/sales/codes", nil), a)
 		if w.Code != http.StatusForbidden || store.writes != 0 {
 			t.Fatal(w.Code, store.writes)
 		}
@@ -105,7 +105,7 @@ func TestDisabledSurfacePrecedesAuthentication(t *testing.T) {
 	s, _, _ := serviceFixture()
 	s.Config.Enabled = false
 	h := s.HideDisabled(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(401) }))
-	for _, path := range []string{"/r/code", "/v1/sales/me", "/v1/sales/unknown", "/v1/referrals/links", "/dashboard/sales", "/dashboard/referrals", "/dashboard/referral-assets/portal.js"} {
+	for _, path := range []string{"/v1/sales/me", "/v1/sales/unknown", "/v1/referrals/codes", "/dashboard/sales", "/dashboard/referrals", "/dashboard/referral-assets/portal.js"} {
 		for _, method := range []string{"GET", "POST", "PATCH", "DELETE"} {
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, httptest.NewRequest(method, path, nil))
@@ -116,36 +116,107 @@ func TestDisabledSurfacePrecedesAuthentication(t *testing.T) {
 	}
 }
 
-func TestTrackingFirstTouchAndRevokedRep(t *testing.T) {
+func TestExplicitCodeSelectionAndRevokedRep(t *testing.T) {
 	s, store, acct := serviceFixture()
-	code := store.link.Code
-	r := httptest.NewRequest("GET", "/r/"+code, nil)
-	r.SetPathValue("code", code)
+	r := httptest.NewRequest("POST", "/v1/referrals/selection", strings.NewReader(`{"referral_code":"`+strings.ToLower(store.link.Code)+`"}`))
 	w := httptest.NewRecorder()
-	s.Track(w, r)
-	if w.Code != 303 || w.Header().Get("Location") != "/signup" || len(w.Result().Cookies()) != 1 {
-		t.Fatal(w.Code, w.Header())
+	s.SelectCode(w, r)
+	if w.Code != 200 || len(w.Result().Cookies()) != 1 {
+		t.Fatal(w.Code, w.Body.String())
 	}
 	cookie := w.Result().Cookies()[0]
-	if !cookie.Secure || !cookie.HttpOnly || cookie.Domain != "" || cookie.Path != "/" {
+	if !cookie.Secure || !cookie.HttpOnly || cookie.Domain != "" || cookie.MaxAge != 900 {
 		t.Fatal(cookie)
 	}
-	r.AddCookie(cookie)
-	w = httptest.NewRecorder()
-	s.Track(w, r)
-	if len(w.Result().Cookies()) != 0 {
-		t.Fatal("first touch was renewed")
-	}
-	if attr, err := s.SignupAttribution(r); err != nil || attr == nil || attr.Code != code {
-		t.Fatal(attr)
+	callback := httptest.NewRequest("GET", "/v1/auth/google/callback", nil)
+	callback.AddCookie(cookie)
+	if attr, err := s.SignupAttribution(callback); err != nil || attr == nil || attr.Code != store.link.Code {
+		t.Fatal(attr, err)
 	}
 	store.link.Kind = "sales"
 	delete(s.Config.Members, acct.Email)
-	w = httptest.NewRecorder()
-	s.Track(w, r)
-	attr, err := s.SignupAttribution(r)
-	if w.Code != 404 || attr != nil || err != nil {
-		t.Fatal("revoked sales rep still attributes new signups")
+	if attr, err := s.SignupAttribution(callback); err != nil || attr != nil {
+		t.Fatal("removed sales member received attribution", attr, err)
+	}
+}
+
+func TestSignupAcceptsTypedCodeInJSONAndForm(t *testing.T) {
+	for _, tc := range []struct{ kind, body string }{{"application/json", `{"email":"new@example.com","password":"a-good-password","referral_code":" poju43 "}`}, {"application/x-www-form-urlencoded", "email=new%40example.com&password=a-good-password&referral_code=poju43"}} {
+		t.Run(tc.kind, func(t *testing.T) {
+			s, store, _ := serviceFixture()
+			store.link.Code = "POJU43"
+			r := httptest.NewRequest("POST", "/signup", strings.NewReader(tc.body))
+			r.Header.Set("Content-Type", tc.kind)
+			reached := false
+			handler := s.WithSignupCode(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				attr, err := s.SignupAttribution(r)
+				if err != nil || attr == nil || attr.Code != "POJU43" {
+					t.Fatal(attr, err)
+				}
+				if tc.kind == "application/json" {
+					var login struct {
+						Email    string `json:"email"`
+						Password string `json:"password"`
+					}
+					d := json.NewDecoder(r.Body)
+					d.DisallowUnknownFields()
+					if err := d.Decode(&login); err != nil || login.Email != "new@example.com" {
+						t.Fatal(login, err)
+					}
+				}
+			}))
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if !reached {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestInvalidCodesNeverReachAccountCreation(t *testing.T) {
+	for _, code := range []string{"BAD", "BAD!!!", "UNKNWN"} {
+		s, store, _ := serviceFixture()
+		store.linkErr = referrals.ErrNotFound
+		r := httptest.NewRequest("POST", "/signup", strings.NewReader(`{"referral_code":"`+code+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		reached := false
+		w := httptest.NewRecorder()
+		s.WithSignupCode(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })).ServeHTTP(w, r)
+		if reached || w.Code != 400 || !strings.Contains(w.Body.String(), "referral_code_invalid") {
+			t.Fatal(code, w.Code, w.Body.String())
+		}
+	}
+	s, store, _ := serviceFixture()
+	store.link.Active = false
+	r := httptest.NewRequest("POST", "/signup", strings.NewReader(`{"referral_code":"`+store.link.Code+`"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.WithSignupCode(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("paused code reached signup") })).ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestNativeSignupDoesNotUseAnEarlierOAuthSelection(t *testing.T) {
+	for _, body := range []string{`{"referral_code":""}`, `{}`} {
+		t.Run(body, func(t *testing.T) {
+			s, store, _ := serviceFixture()
+			r := httptest.NewRequest("POST", "/signup", strings.NewReader(body))
+			r.Header.Set("Content-Type", "application/json")
+			r.AddCookie(&http.Cookie{Name: touchCookie, Value: referrals.SignTouch(s.Key(), store.link.Code, time.Now())})
+			w := httptest.NewRecorder()
+			s.WithSignupCode(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attr, err := s.SignupAttribution(r)
+				if attr != nil || err != nil {
+					t.Fatal(attr, err)
+				}
+			})).ServeHTTP(w, r)
+			if w.Code != 200 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

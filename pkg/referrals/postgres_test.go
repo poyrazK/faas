@@ -30,6 +30,27 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 	if _, err = pool.Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
+	raw, err = migrations.FS.ReadFile("20261103190000000_short_referral_codes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, _, _ = strings.Cut(string(raw), "-- +goose Down")
+	if _, err = pool.Exec(ctx, up); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = migrations.FS.ReadFile("20261103191000000_validate_referral_codes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, _, _ = strings.Cut(string(raw), "-- +goose Down")
+	// NO TRANSACTION migrations commit each statement independently.
+	for _, statement := range strings.Split(up, ";") {
+		if strings.TrimSpace(statement) != "" {
+			if _, err = pool.Exec(ctx, statement); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	owner, other := uuid.NewString(), uuid.NewString()
 	if _, err = pool.Exec(ctx, "INSERT INTO accounts(id,email) VALUES ($1,'rep@example.com'),($2,'other@example.com')", owner, other); err != nil {
 		t.Fatal(err)

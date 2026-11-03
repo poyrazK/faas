@@ -319,12 +319,13 @@ var routeExclude = map[string]bool{
 	// BOTH this list AND cmd/apid/spec_compliance_test.go::routeExclude;
 	// the two lists must move together.
 	"GET /v1/sales/me":                          true, // private session-only sales workspace
-	"POST /v1/sales/links":                      true,
-	"PATCH /v1/sales/links/{code}":              true,
+	"POST /v1/sales/codes":                      true,
+	"PATCH /v1/sales/codes/{code}":              true,
 	"PATCH /v1/sales/customers/{account}":       true,
+	"POST /v1/referrals/selection":              true, // explicit pre-signup code selection, no customer data
 	"GET /v1/referrals/me":                      true, // private browser referral program
-	"POST /v1/referrals/links":                  true,
-	"PATCH /v1/referrals/links/{code}":          true,
+	"POST /v1/referrals/codes":                  true,
+	"PATCH /v1/referrals/codes/{code}":          true,
 	"GET /v1/admin/obs/overview":                true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/capacity":                true, // operator-only capacity projection
 	"GET /v1/admin/obs/tenants":                 true, // ADR-091 — operator-only

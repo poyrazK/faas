@@ -105,12 +105,9 @@ func (s *Service) data(w http.ResponseWriter, r *http.Request, acct state.Accoun
 			summary[i].PaidCents = 0
 		}
 	}
-	linkURL := ""
-	if link.Code != "" {
-		linkURL = s.Config.PublicOrigin + "/r/" + link.Code
-	}
+
 	s.emit(ctx, "sales.referrals_read", acct.ID, map[string]any{"staff": staff, "team_scope": scope.All})
-	writeJSON(w, map[string]any{"staff": staff, "manager": scope.All, "email": acct.Email, "policy": policy, "payouts_enabled": false, "link": link, "link_url": linkURL, "referrals": rows, "summary": summary, "next_cursor": next, "observed_at": time.Now().UTC()})
+	writeJSON(w, map[string]any{"staff": staff, "manager": scope.All, "email": acct.Email, "policy": policy, "payouts_enabled": false, "referral_code": link, "referrals": rows, "summary": summary, "next_cursor": next, "observed_at": time.Now().UTC()})
 }
 
 func redact(rows []referrals.Record) {
@@ -152,7 +149,7 @@ func (s *Service) createLink(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 	s.emit(ctx, "sales.referral_link_created", acct.ID, map[string]any{"kind": kind})
-	writeJSON(w, map[string]any{"link": link, "url": s.Config.PublicOrigin + "/r/" + link.Code})
+	writeJSON(w, map[string]any{"referral_code": link})
 }
 
 func (s *Service) UpdateLead(w http.ResponseWriter, r *http.Request, acct state.Account) {

@@ -8,15 +8,40 @@ import (
 	"encoding/base64"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 )
 
 var ErrNotFound = errors.New("referral not found")
-var codePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
+var codePattern = regexp.MustCompile(`^[A-Z0-9]{6}$`)
+
+func NormalizeCode(code string) string { return strings.ToUpper(strings.TrimSpace(code)) }
 
 func ValidCode(code string) bool { return codePattern.MatchString(code) }
 
 func NewCode() string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	var code [6]byte
+	for i := 0; i < len(code); {
+		var random [16]byte
+		_, _ = rand.Read(random[:])
+		for _, value := range random {
+			if value >= 252 {
+				continue
+			} // reject the uneven tail before reducing modulo 36
+			code[i] = alphabet[int(value)%len(alphabet)]
+			i++
+			if i == len(code) {
+				break
+			}
+		}
+	}
+	return string(code[:])
+}
+
+// The original identifier remains private so historical attribution FKs never
+// change when a short, shareable code is assigned to an existing source.
+func newLinkID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return base64.RawURLEncoding.EncodeToString(b[:])

@@ -5120,8 +5120,9 @@ type PasswordLoginResponse struct {
 // equivalence ("wrong password" vs "no account" vs "weak password") is
 // kept intact under the same JSON keys.
 type PasswordSignupRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
 }
 
 // ProgrammaticAuthResponse is the body for the JSON-only
@@ -5162,7 +5163,8 @@ type ProgrammaticAPIKey struct {
 // body regardless of whether the email is bound, so the surface
 // cannot be used to enumerate accounts.
 type MagicLinkSignupRequest struct {
-	Email string `json:"email"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
 }
 
 // PasswordResetRequest is the body of POST /login/forgot. The email

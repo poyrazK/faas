@@ -17,7 +17,7 @@ import (
 func TestSalesRoutesDefaultOff(t *testing.T) {
 	srv := apidserver.NewServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 	h := srv.Handler()
-	for _, path := range []string{"/dashboard/sales", "/dashboard/referrals", "/v1/sales/me", "/v1/referrals/me", "/r/test", "/dashboard/referral-assets/portal.js"} {
+	for _, path := range []string{"/dashboard/sales", "/dashboard/referrals", "/v1/sales/me", "/v1/referrals/me", "/v1/referrals/selection", "/dashboard/referral-assets/portal.js"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", "https://sales.gregale.dev"+path, nil))
 		if w.Code != 404 {

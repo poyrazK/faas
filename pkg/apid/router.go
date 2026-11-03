@@ -60,7 +60,6 @@ const (
 	ApidRootReadyz      = "/readyz"
 	ApidRootCliAuth     = "/cli-auth"
 	ApidRootDocs        = "/docs"
-	ApidRootReferral    = "/r"
 )
 
 // IsApidPath returns true when the inbound request path matches one
@@ -96,7 +95,6 @@ func IsApidPath(p string) bool {
 		ApidRootStatus,
 		ApidRootCliAuth,
 		ApidRootDocs,
-		ApidRootReferral,
 	} {
 		if hasApidPrefix(p, root) {
 			return true

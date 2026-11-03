@@ -13288,6 +13288,38 @@ paths:
         '401': { $ref: '#/components/responses/InvalidCredentials' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/referrals/selection:
+    post:
+      tags: [auth]
+      x-internal: true
+      operationId: selectReferralCode
+      summary: Preserve an explicitly entered referral code for OAuth signup.
+      description: Rate limited pre-signup request. An empty code clears the pending selection; no customer identity is returned. The host-only selection expires in 15 minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [referral_code]
+              properties:
+                referral_code: { type: string, pattern: '^([A-Za-z0-9]{6})?$' }
+      responses:
+        '200':
+          description: Selection accepted; it grants no account access.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/auth/signup/magic-link:
     post:
       tags: [auth]
@@ -85654,10 +85686,14 @@ components:
         enabled: { type: boolean }
 
     PasswordSignupRequest:
-      description: "Email + password for signup. Same shape as PasswordLoginRequest so the create-or-claim race detection reuses the verifier."
+      description: "Email + password for signup. Same shape as PasswordLoginRequest with an optional referral code."
       type: object
       required: [email, password]
       properties:
+        referral_code:
+          type: string
+          pattern: '^([A-Za-z0-9]{6})?$'
+          description: Optional six-character customer or salesperson referral code; case-insensitive. Requires the referral program to be enabled.
         email: { type: string, format: email }
         password: { type: string, minLength: 12, maxLength: 256 }
 
@@ -85712,6 +85748,7 @@ components:
         accounts.
       type: object
       properties:
+        referral_code: { type: string, pattern: '^([A-Za-z0-9]{6})?$' }
         email: { type: string, format: email }
 
     PasswordResetRequest:

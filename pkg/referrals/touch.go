@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// Touch tokens retain the original first-touch time across login and OAuth.
+// Selection tokens preserve an explicitly entered code across OAuth.
 // They carry no personal data and are bound to this deployment's session key.
 func SignTouch(key []byte, code string, at time.Time) string {
 	payload := code + "." + strconv.FormatInt(at.Unix(), 10)
 	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte("gregale-referral-v1:" + payload))
+	_, _ = mac.Write([]byte("gregale-referral-code-v1:" + payload))
 	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 

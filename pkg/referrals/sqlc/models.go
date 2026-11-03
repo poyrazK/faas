@@ -59,6 +59,7 @@ type ReferralLink struct {
 	Kind      string
 	Active    bool
 	CreatedAt pgtype.Timestamptz
+	ShareCode pgtype.Text
 }
 
 type SalesReferralOverview struct {

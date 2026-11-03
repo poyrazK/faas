@@ -1,18 +1,18 @@
 -- name: EnsureLink :one
-INSERT INTO referral_links(code,owner_id,kind) VALUES ($1,$2,$3)
-ON CONFLICT (owner_id,kind) DO UPDATE SET owner_id=EXCLUDED.owner_id
+INSERT INTO referral_links(code,owner_id,kind,share_code) VALUES ($1,$2,$3,$4)
+ON CONFLICT (owner_id,kind) DO UPDATE SET share_code=COALESCE(referral_links.share_code,EXCLUDED.share_code)
 RETURNING *;
 
 -- name: GetLink :one
 SELECT l.* FROM referral_links l JOIN accounts a ON a.id=l.owner_id
-WHERE l.code=$1 AND a.status='active';
+WHERE l.share_code=$1 AND a.status='active';
 
 -- name: OwnLink :one
 SELECT * FROM referral_links WHERE owner_id=$1 AND kind=$2;
 
 -- name: SetLinkActive :execrows
 UPDATE referral_links SET active=$1
-WHERE code=$2 AND (owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean);
+WHERE share_code=$2 AND (owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean);
 
 -- name: AttributeSignup :execrows
 INSERT INTO referral_attributions(account_id,code,currency,customer_reward_cents,referred_reward_cents,commission_bps,hold_days,conversion_days)
@@ -20,7 +20,7 @@ SELECT sqlc.arg(account_id)::uuid,l.code,sqlc.arg(currency)::text,
  sqlc.arg(customer_reward_cents)::bigint,sqlc.arg(referred_reward_cents)::bigint,
  sqlc.arg(commission_bps)::integer,sqlc.arg(hold_days)::integer,sqlc.arg(conversion_days)::integer
 FROM referral_links l JOIN accounts a ON a.id=l.owner_id
-WHERE l.code=sqlc.arg(code)::text AND l.active AND a.status='active' AND l.owner_id<>sqlc.arg(account_id)::uuid
+WHERE l.share_code=sqlc.arg(code)::text AND l.active AND a.status='active' AND l.owner_id<>sqlc.arg(account_id)::uuid
 ON CONFLICT (account_id) DO NOTHING;
 
 -- name: RecordReferralPayment :exec

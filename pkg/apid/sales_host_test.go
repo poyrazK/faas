@@ -14,7 +14,7 @@ func TestSalesHostIsAnExactPlatformHost(t *testing.T) {
 			t.Fatalf("%s: %v", tc.host, got)
 		}
 	}
-	if !apid.IsApidPath("/r/code") || apid.IsApidPath("/reports") {
-		t.Fatal("referral root is not anchored")
+	if apid.IsApidPath("/r/code") || apid.IsApidPath("/reports") {
+		t.Fatal("referral links should not own a routing prefix")
 	}
 }

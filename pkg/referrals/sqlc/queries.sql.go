@@ -17,7 +17,7 @@ SELECT $1::uuid,l.code,$2::text,
  $3::bigint,$4::bigint,
  $5::integer,$6::integer,$7::integer
 FROM referral_links l JOIN accounts a ON a.id=l.owner_id
-WHERE l.code=$8::text AND l.active AND a.status='active' AND l.owner_id<>$1::uuid
+WHERE l.share_code=$8::text AND l.active AND a.status='active' AND l.owner_id<>$1::uuid
 ON CONFLICT (account_id) DO NOTHING
 `
 
@@ -50,19 +50,25 @@ func (q *Queries) AttributeSignup(ctx context.Context, db DBTX, arg AttributeSig
 }
 
 const ensureLink = `-- name: EnsureLink :one
-INSERT INTO referral_links(code,owner_id,kind) VALUES ($1,$2,$3)
-ON CONFLICT (owner_id,kind) DO UPDATE SET owner_id=EXCLUDED.owner_id
-RETURNING code, owner_id, kind, active, created_at
+INSERT INTO referral_links(code,owner_id,kind,share_code) VALUES ($1,$2,$3,$4)
+ON CONFLICT (owner_id,kind) DO UPDATE SET share_code=COALESCE(referral_links.share_code,EXCLUDED.share_code)
+RETURNING code, owner_id, kind, active, created_at, share_code
 `
 
 type EnsureLinkParams struct {
-	Code    string
-	OwnerID pgtype.UUID
-	Kind    string
+	Code      string
+	OwnerID   pgtype.UUID
+	Kind      string
+	ShareCode pgtype.Text
 }
 
 func (q *Queries) EnsureLink(ctx context.Context, db DBTX, arg EnsureLinkParams) (ReferralLink, error) {
-	row := db.QueryRow(ctx, ensureLink, arg.Code, arg.OwnerID, arg.Kind)
+	row := db.QueryRow(ctx, ensureLink,
+		arg.Code,
+		arg.OwnerID,
+		arg.Kind,
+		arg.ShareCode,
+	)
 	var i ReferralLink
 	err := row.Scan(
 		&i.Code,
@@ -70,17 +76,18 @@ func (q *Queries) EnsureLink(ctx context.Context, db DBTX, arg EnsureLinkParams)
 		&i.Kind,
 		&i.Active,
 		&i.CreatedAt,
+		&i.ShareCode,
 	)
 	return i, err
 }
 
 const getLink = `-- name: GetLink :one
-SELECT l.code, l.owner_id, l.kind, l.active, l.created_at FROM referral_links l JOIN accounts a ON a.id=l.owner_id
-WHERE l.code=$1 AND a.status='active'
+SELECT l.code, l.owner_id, l.kind, l.active, l.created_at, l.share_code FROM referral_links l JOIN accounts a ON a.id=l.owner_id
+WHERE l.share_code=$1 AND a.status='active'
 `
 
-func (q *Queries) GetLink(ctx context.Context, db DBTX, code string) (ReferralLink, error) {
-	row := db.QueryRow(ctx, getLink, code)
+func (q *Queries) GetLink(ctx context.Context, db DBTX, shareCode pgtype.Text) (ReferralLink, error) {
+	row := db.QueryRow(ctx, getLink, shareCode)
 	var i ReferralLink
 	err := row.Scan(
 		&i.Code,
@@ -88,6 +95,7 @@ func (q *Queries) GetLink(ctx context.Context, db DBTX, code string) (ReferralLi
 		&i.Kind,
 		&i.Active,
 		&i.CreatedAt,
+		&i.ShareCode,
 	)
 	return i, err
 }
@@ -154,7 +162,7 @@ func (q *Queries) ListReferrals(ctx context.Context, db DBTX, arg ListReferralsP
 }
 
 const ownLink = `-- name: OwnLink :one
-SELECT code, owner_id, kind, active, created_at FROM referral_links WHERE owner_id=$1 AND kind=$2
+SELECT code, owner_id, kind, active, created_at, share_code FROM referral_links WHERE owner_id=$1 AND kind=$2
 `
 
 type OwnLinkParams struct {
@@ -171,6 +179,7 @@ func (q *Queries) OwnLink(ctx context.Context, db DBTX, arg OwnLinkParams) (Refe
 		&i.Kind,
 		&i.Active,
 		&i.CreatedAt,
+		&i.ShareCode,
 	)
 	return i, err
 }
@@ -247,12 +256,12 @@ func (q *Queries) ReferralSummary(ctx context.Context, db DBTX, arg ReferralSumm
 
 const setLinkActive = `-- name: SetLinkActive :execrows
 UPDATE referral_links SET active=$1
-WHERE code=$2 AND (owner_id=$3::uuid OR $4::boolean)
+WHERE share_code=$2 AND (owner_id=$3::uuid OR $4::boolean)
 `
 
 type SetLinkActiveParams struct {
 	Active    bool
-	Code      string
+	ShareCode pgtype.Text
 	OwnerID   pgtype.UUID
 	AllOwners bool
 }
@@ -260,7 +269,7 @@ type SetLinkActiveParams struct {
 func (q *Queries) SetLinkActive(ctx context.Context, db DBTX, arg SetLinkActiveParams) (int64, error) {
 	result, err := db.Exec(ctx, setLinkActive,
 		arg.Active,
-		arg.Code,
+		arg.ShareCode,
 		arg.OwnerID,
 		arg.AllOwners,
 	)
