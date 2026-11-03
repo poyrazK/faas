@@ -11,8 +11,8 @@ The manifest's `public_edge.dns` turns it on and renders its settings:
 
 | Variable | From |
 |---|---|
-| `faas_edgednsd_names` | `public_edge.dns.zone_id` with each of `public_edge.dns.names` |
-| `faas_edgednsd_node_addresses` | each compute host's `public_ipv4`, under its registry name |
+| `faas_edgednsd_names` | `public_edge.dns.zone_id` with each of `public_edge.dns.names`, `:dns-only` under `public_edge.front: none`, and each of `public_edge.dns.proxied`, proxied |
+| `faas_edgednsd_node_addresses` | each compute host's `public_ipv4`, or its `entry_ipv4` under `public_edge.front: none`, under its registry name |
 | `faas_edgednsd_dry_run` | `public_edge.dns.live`, inverted: dry run until set |
 
 The role installs two secrets at 0400 root under `/etc/faas/secrets/edgednsd/`:
