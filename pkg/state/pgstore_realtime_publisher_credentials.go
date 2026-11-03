@@ -25,7 +25,7 @@ func scanRealtimePublisherCredential(row pgx.Row) (RealtimePublisherCredential, 
 }
 func lockRealtimePublisherEndpoint(ctx context.Context, tx pgx.Tx, ep string, enabled bool) error {
 	var id string
-	err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 and (not $2::boolean or enabled) for update`, ep, enabled).Scan(&id)
+	err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 and (not $2::boolean or enabled) for no key update`, ep, enabled).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

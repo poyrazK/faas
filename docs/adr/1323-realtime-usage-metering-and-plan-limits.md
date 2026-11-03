@@ -381,5 +381,8 @@ ticket connections keep their own per-second recheck.
   unsubscribe under one node-wide lock held across the apid call, and apid
   recorded it, like each 30-second node snapshot, under the endpoint row's
   lock. Reports now serialize per channel only, and route bookkeeping takes a
-  per-endpoint advisory lock instead of the endpoint row, so it no longer
-  waits on, or holds up, cursor, read-marker and history writes.
+  per-endpoint advisory lock instead of the endpoint row. The endpoint locks
+  realtime cap checks take (cursors, read markers, history, receipts, tickets,
+  groups and the rest) are now `FOR NO KEY UPDATE`: they still serialize with
+  each other, but a row inserted under the endpoint's foreign key, such as a
+  route, no longer waits for them.

@@ -206,7 +206,8 @@ func TestPgStoreManagedRealtimeReconnectPathsSkipTheEndpointLock(t *testing.T) {
 
 // adr: 1323 (amendment of 2026-11-03) — channel route bookkeeping no longer
 // locks the endpoint row: a channel's first subscriber is recorded while
-// another transaction holds that row.
+// another transaction holds the endpoint lock every realtime cap check takes
+// (FOR NO KEY UPDATE, which a route's foreign-key check does not wait on).
 func TestPgStoreManagedRealtimeChannelRoutesSkipTheEndpointLock(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-realtime-route-lock", "realtime-route-lock")
@@ -223,7 +224,7 @@ func TestPgStoreManagedRealtimeChannelRoutesSkipTheEndpointLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = holder.Rollback(ctx) }()
-	if _, err := holder.Exec(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpoint.ID); err != nil {
+	if _, err := holder.Exec(ctx, `select id from managed_realtime_endpoints where id = $1 for no key update`, endpoint.ID); err != nil {
 		t.Fatal(err)
 	}
 	quick, cancel := context.WithTimeout(ctx, 5*time.Second)
