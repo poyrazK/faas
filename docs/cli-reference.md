@@ -9951,6 +9951,51 @@ Set or clear one app&#39;s own daily AI token limit
 | `--app <slug>` | bound app slug | required |
 | `--daily-tokens <N>` | token limit, or none | required |
 
+### ai request-policy
+
+Show or set an AI integration&#39;s rate, concurrency and timeout
+
+`gregale ai request-policy <get|set> [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--rate <N>` | calls per second |  |
+| `--burst <N>` | calls above the rate allowed at once |  |
+| `--max-in-flight <N>` | calls in flight at once |  |
+| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
+
+Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
+
+#### ai request-policy get
+
+Show or set an AI integration&#39;s rate, concurrency and timeout
+
+`gregale ai request-policy get [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--rate <N>` | calls per second |  |
+| `--burst <N>` | calls above the rate allowed at once |  |
+| `--max-in-flight <N>` | calls in flight at once |  |
+| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
+
+Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
+
+#### ai request-policy set
+
+Show or set an AI integration&#39;s rate, concurrency and timeout
+
+`gregale ai request-policy set [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--rate <N>` | calls per second |  |
+| `--burst <N>` | calls above the rate allowed at once |  |
+| `--max-in-flight <N>` | calls in flight at once |  |
+| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
+
+Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
+
 ### ai policy
 
 Set the AI provider and token or cost limits
@@ -10035,51 +10080,6 @@ List an app&#39;s AI gateway calls, errors and cost per deployment
 | `--app <slug>` | app slug (defaults to linked project app) |  |
 
 Covers the last 14 days, including flagged answers and cost per call.
-
-### ai request-policy
-
-Show or set an AI integration&#39;s rate, concurrency and timeout
-
-`gregale ai request-policy <get|set> [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--rate <N>` | calls per second |  |
-| `--burst <N>` | calls above the rate allowed at once |  |
-| `--max-in-flight <N>` | calls in flight at once |  |
-| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
-
-Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
-
-#### ai request-policy get
-
-Show or set an AI integration&#39;s rate, concurrency and timeout
-
-`gregale ai request-policy get [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--rate <N>` | calls per second |  |
-| `--burst <N>` | calls above the rate allowed at once |  |
-| `--max-in-flight <N>` | calls in flight at once |  |
-| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
-
-Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
-
-#### ai request-policy set
-
-Show or set an AI integration&#39;s rate, concurrency and timeout
-
-`gregale ai request-policy set [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--rate <N>` | calls per second |  |
-| `--burst <N>` | calls above the rate allowed at once |  |
-| `--max-in-flight <N>` | calls in flight at once |  |
-| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
-
-Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
 
 ### ai guardrails
 
