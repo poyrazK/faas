@@ -2097,6 +2097,9 @@ func (m *MemStore) CreateAccount(_ context.Context, email string, plan api.Plan)
 // callers so the partial-unique invariant the SQL partial index
 // enforces is preserved in MemStore.
 func (m *MemStore) CreateAccountWithPersonalOrg(_ context.Context, params CreateAccountWithPersonalOrgParams) (CreateAccountWithPersonalOrgResult, error) {
+	if params.Referral != nil {
+		return CreateAccountWithPersonalOrgResult{}, errors.New("referrals require PostgreSQL")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

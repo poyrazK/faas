@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow"><title>{{if .Staff}}Sales workspace{{else}}Your referrals{{end}} · Gregale</title>
+  <link rel="stylesheet" href="/dashboard/referral-assets/portal.css">
+  <script nonce="{{.Nonce}}" src="/dashboard/referral-assets/portal.js" defer></script>
+</head>
+<body data-staff="{{.Staff}}">
+  <a class="skip" href="#main">Skip to content</a>
+  <aside class="rail">
+    <a class="brand" href="/dashboard/"><span class="brand-mark">g</span> gregale<span class="brand-dot">●</span></a>
+    <span class="eyebrow rail-label">{{if .Staff}}SALES WORKSPACE{{else}}REFERRAL PROGRAM{{end}}</span>
+    <nav aria-label="Workspace">
+      <a href="#overview" class="nav-item active" aria-current="page"><span>◈</span> Overview</a>
+      <a href="#referrals" class="nav-item"><span>↗</span> {{if .Staff}}Customers & referrals{{else}}Your referrals{{end}}</a>
+      {{if .Staff}}<a href="#kit" class="nav-item"><span>▤</span> Sales kit</a>{{end}}
+      <a href="/dashboard/" class="nav-item"><span>←</span> Product console</a>
+    </nav>
+    <div class="rail-bottom"><span class="live-dot"></span> Connected to Gregale<p id="identity">Checking your session…</p><a href="/dashboard/account">Account & security ↗</a></div>
+  </aside>
+  <main id="main">
+    <header class="topbar"><span>Workspace <span class="slash">/</span> {{if .Staff}}Sales{{else}}Referrals{{end}}</span><span class="environment">PRIVATE WORKSPACE</span></header>
+    <section id="overview" class="page-section">
+      <div class="page-heading"><div><p class="eyebrow">{{if .Staff}}GROW WITH GREGale{{else}}GOOD THINGS ARE BETTER SHARED{{end}}</p><h1>{{if .Staff}}Make the next connection.{{else}}Bring someone on board.{{end}}</h1><p class="subtitle">{{if .Staff}}Your referral pipeline, customer signals, and tools to move conversations forward.{{else}}Share Gregale. Follow new signups and see your potential referral rewards.{{end}}</p></div><button id="refresh" class="button secondary">↻ Refresh data</button></div>
+      <div class="notice"><span class="notice-icon">i</span><p><strong>Rewards are in preview. Payouts are disabled.</strong> Amounts shown are estimates. No cash or account credit is issued. Terms are captured when a new customer signs up.</p></div>
+      <div id="error" class="error" role="alert" hidden></div>
+      <div id="metrics" class="metrics" aria-live="polite"><article class="metric"><span class="eyebrow">REFERRED SIGNUPS</span><strong>—</strong><small>Loading verified data</small></article></div>
+      <div class="overview-grid">
+        <article class="panel link-panel"><div class="panel-heading"><span class="eyebrow">YOUR NEXT INTRODUCTION</span><span class="pill">{{if .Staff}}Sales referral{{else}}Customer referral{{end}}</span></div><h2>One link. Every introduction.</h2><p>Share your personal link. New accounts are attributed to the first valid referral they visit within 30 days.</p><label for="referral-link" class="field-label">Your referral link</label><div class="copy-field"><input id="referral-link" readonly placeholder="Create your referral link" aria-label="Your referral link"><button id="copy" class="button primary" disabled>Copy link ↗</button></div><div class="link-actions"><button id="create-link" class="button secondary" disabled>Create referral link</button><button id="toggle-link" class="text-button" hidden>Pause link</button><span id="link-status" class="muted"></span></div><p id="copy-status" class="muted" role="status"></p></article>
+        <article class="panel terms-panel"><span class="eyebrow">PROGRAM TERMS</span><h2>A clear path to a reward.</h2><ol class="steps"><li><span>01</span><div><strong>A new customer signs up</strong><p>Existing accounts and self-referrals do not qualify.</p></div></li><li><span>02</span><div><strong>The first invoice is paid</strong><p id="conversion-terms">Loading program terms…</p></div></li><li><span>03</span><div><strong>The reward passes its hold</strong><p id="reward-terms">Loading reward terms…</p></div></li></ol></article>
+      </div>
+    </section>
+    <section id="referrals" class="page-section">
+      <div class="section-heading"><div><p class="eyebrow">FROM INTRODUCTION TO ACTIVATION</p><h2>{{if .Staff}}Your customer pipeline{{else}}Your referrals{{end}}</h2><p id="scope-label" class="muted">Loading your permitted view…</p></div><button id="export" class="button secondary" disabled>↓ Export this page</button></div>
+      {{if .Staff}}<div class="filters"><label class="search-label"><span>⌕</span><input id="search" type="search" placeholder="Search customers on this page" aria-label="Search customers on this page"></label><label>Stage <select id="stage"><option value="">All stages</option><option>new</option><option>contacted</option><option>qualified</option><option>lost</option></select></label></div>{{end}}
+      <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>{{if .Staff}}Customer{{else}}Referral{{end}}</th><th>Joined</th>{{if .Staff}}<th>Plan / apps</th><th>Follow-up</th>{{end}}<th>Conversion</th><th>Reward estimate</th>{{if .Staff}}<th><span class="sr-only">Actions</span></th>{{end}}</tr></thead><tbody id="rows"><tr><td colspan="7" class="empty">Loading referrals…</td></tr></tbody></table></div><div class="table-footer"><span id="page-info">Each page contains up to 25 referrals.</span><div><button id="first" class="button secondary small" hidden>First page</button><button id="next" class="button secondary small" disabled>Next page →</button></div></div></div>
+    </section>
+    {{if .Staff}}<section id="kit" class="page-section"><p class="eyebrow">TOOLS FOR THE CONVERSATION</p><h2>The sales kit</h2><div class="kit-grid"><a class="panel kit-card" href="https://gregale.dev" target="_blank" rel="noopener noreferrer"><span class="kit-icon">↗</span><h3>Product & plans</h3><p>Use the published product information and current plan descriptions.</p><span class="text-link">Open product site ↗</span></a><a class="panel kit-card" href="/docs/" target="_blank" rel="noopener noreferrer"><span class="kit-icon">▤</span><h3>Technical documentation</h3><p>Find deployment, runtime, security, and billing details for customer questions.</p><span class="text-link">Browse documentation ↗</span></a><a class="panel kit-card" href="/status/" target="_blank" rel="noopener noreferrer"><span class="kit-icon">◉</span><h3>Service status</h3><p>Check published availability and incidents before your next customer call.</p><span class="text-link">View service status ↗</span></a></div></section>{{end}}
+    <footer class="footer"><span>gregale · {{if .Staff}}sales workspace{{else}}referral program{{end}}</span><span id="observed">Waiting for data</span></footer>
+  </main>
+  {{if .Staff}}<dialog id="lead-dialog"><form id="lead-form"><div class="dialog-heading"><h2>Customer follow-up</h2><button type="button" id="close-dialog" class="text-button" aria-label="Close">✕</button></div><p id="lead-email" class="muted"></p><label>Stage<select id="lead-stage" required><option>new</option><option>contacted</option><option>qualified</option><option>lost</option></select></label><label>Next follow-up<input type="date" id="lead-follow-up"></label><label>Internal notes<textarea id="lead-note" rows="5" maxlength="2000" placeholder="Context and next steps for this conversation"></textarea></label><p class="muted">Notes are visible to the assigned rep and sales managers. Keep credentials and sensitive payment details out of notes.</p><p id="lead-error" role="alert"></p><button id="save-lead" class="button primary" type="submit">Save follow-up</button></form></dialog>{{end}}
+</body></html>

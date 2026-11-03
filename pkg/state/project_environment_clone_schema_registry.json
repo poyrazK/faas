@@ -19959,5 +19959,38 @@
       "volume_bytes"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "referral_links",
+    "columns": [
+      "active",
+      "code",
+      "created_at",
+      "kind",
+      "owner_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "referral_attributions",
+    "columns": [
+      "account_id",
+      "code",
+      "commission_bps",
+      "conversion_days",
+      "created_at",
+      "currency",
+      "customer_reward_cents",
+      "first_paid_at",
+      "first_paid_invoice_id",
+      "follow_up",
+      "hold_days",
+      "note",
+      "referred_reward_cents",
+      "stage",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "account_identity"
   }
 ]

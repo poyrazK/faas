@@ -31,6 +31,7 @@
       <a href="/dashboard/pricing">Pricing</a>
       <a href="/dashboard/invoices">Invoices</a>
       <a href="/dashboard/account">Account</a>
+      {{if .Data}}{{if .Data.ReferralsEnabled}}<a href="/dashboard/referrals">Referrals</a>{{end}}{{if .Data.SalesEnabled}}<a href="/dashboard/sales">Sales workspace</a>{{end}}{{end}}
     </nav>
   </header>
   <main>

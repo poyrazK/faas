@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/referrals"
 	quotasql "github.com/onebox-faas/faas/pkg/state/appquota/sqlc"
 	ownersql "github.com/onebox-faas/faas/pkg/state/resourceownership/sqlc"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -356,6 +357,12 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 		values ($1, $2, 'owner', null)
 	`, org.ID, acct.ID); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, mapErr(err)
+	}
+
+	if params.Referral != nil {
+		if err := referrals.Attribute(ctx, tx, acct.ID, *params.Referral); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

@@ -1,0 +1,11 @@
+# Managed by Ansible. Sales access grants no operator permissions.
+[Service]
+Environment=FAAS_SALES_ENABLED={{ '1' if faas_sales_enabled | bool else '0' }}
+Environment={{ ('FAAS_SALES_EMAILS=' ~ (faas_sales_emails | join(','))) | to_json }}
+Environment={{ ('FAAS_SALES_MANAGER_EMAILS=' ~ (faas_sales_manager_emails | join(','))) | to_json }}
+Environment=FAAS_REFERRAL_CURRENCY={{ faas_referral_currency }}
+Environment=FAAS_REFERRAL_REWARD_CENTS={{ faas_referral_reward_cents }}
+Environment=FAAS_REFERRAL_NEW_CUSTOMER_REWARD_CENTS={{ faas_referral_new_customer_reward_cents }}
+Environment=FAAS_SALES_COMMISSION_BPS={{ faas_sales_commission_bps }}
+Environment=FAAS_REFERRAL_HOLD_DAYS={{ faas_referral_hold_days }}
+Environment=FAAS_REFERRAL_CONVERSION_DAYS={{ faas_referral_conversion_days }}

@@ -53380,6 +53380,60 @@ CREATE TABLE public.recent_build_claims (
 
 
 --
+-- Name: referral_attributions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.referral_attributions (
+    account_id uuid NOT NULL,
+    code text NOT NULL,
+    currency text NOT NULL,
+    customer_reward_cents bigint NOT NULL,
+    referred_reward_cents bigint NOT NULL,
+    commission_bps integer NOT NULL,
+    hold_days integer NOT NULL,
+    conversion_days integer NOT NULL,
+    first_paid_invoice_id uuid,
+    first_paid_at timestamp with time zone,
+    stage text DEFAULT 'new'::text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    follow_up date,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT referral_attributions_check CHECK (((first_paid_invoice_id IS NULL) = (first_paid_at IS NULL))),
+    CONSTRAINT referral_attributions_commission_bps_check CHECK (((commission_bps >= 0) AND (commission_bps <= 10000))),
+    CONSTRAINT referral_attributions_conversion_days_check CHECK (((conversion_days >= 1) AND (conversion_days <= 365))),
+    CONSTRAINT referral_attributions_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT referral_attributions_currency_check CHECK ((currency = ANY (ARRAY['usd'::text, 'eur'::text]))),
+    CONSTRAINT referral_attributions_customer_reward_cents_check CHECK (((customer_reward_cents >= 0) AND (customer_reward_cents <= 100000000))),
+    CONSTRAINT referral_attributions_first_paid_at_check CHECK (((first_paid_at IS NULL) OR isfinite(first_paid_at))),
+    CONSTRAINT referral_attributions_first_paid_invoice_id_check CHECK (((first_paid_invoice_id IS NULL) OR (first_paid_invoice_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT referral_attributions_follow_up_check CHECK (((follow_up IS NULL) OR isfinite(follow_up))),
+    CONSTRAINT referral_attributions_hold_days_check CHECK (((hold_days >= 0) AND (hold_days <= 365))),
+    CONSTRAINT referral_attributions_note_check CHECK ((octet_length(note) <= 2000)),
+    CONSTRAINT referral_attributions_referred_reward_cents_check CHECK (((referred_reward_cents >= 0) AND (referred_reward_cents <= 100000000))),
+    CONSTRAINT referral_attributions_stage_check CHECK ((stage = ANY (ARRAY['new'::text, 'contacted'::text, 'qualified'::text, 'lost'::text]))),
+    CONSTRAINT referral_attributions_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: referral_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.referral_links (
+    code text NOT NULL,
+    owner_id uuid NOT NULL,
+    kind text NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT referral_links_code_check CHECK ((code ~ '^[A-Za-z0-9_-]{22}$'::text)),
+    CONSTRAINT referral_links_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT referral_links_kind_check CHECK ((kind = ANY (ARRAY['customer'::text, 'sales'::text])))
+);
+
+
+--
 -- Name: release_approval_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55092,6 +55146,53 @@ CREATE TABLE public.safe_release_worker_lease (
     CONSTRAINT safe_release_worker_lease_expiry CHECK ((expires_at > healthy_at)),
     CONSTRAINT safe_release_worker_lease_singleton_check CHECK (singleton)
 );
+
+
+--
+-- Name: sales_referral_overview; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.sales_referral_overview AS
+ SELECT r.account_id,
+    l.owner_id,
+    l.kind,
+    a.email,
+    a.plan,
+    a.status AS account_status,
+    r.created_at,
+    r.stage,
+    r.note,
+    r.follow_up,
+    r.currency,
+    ( SELECT count(*) AS count
+           FROM public.apps ap
+          WHERE (ap.account_id = a.id)) AS apps,
+    COALESCE((i.status = 'paid'::text), false) AS paid,
+    COALESCE(i.amount_paid_cents, (0)::bigint) AS paid_cents,
+    (r.first_paid_at + make_interval(days => r.hold_days)) AS eligible_at,
+        CASE
+            WHEN (r.first_paid_at IS NULL) THEN 'registered'::text
+            WHEN (i.id IS NULL) THEN 'review'::text
+            WHEN ((i.status <> 'paid'::text) OR (i.amount_refunded_cents > 0) OR (i.amount_refund_pending_cents > 0)) THEN 'reversed'::text
+            WHEN (i.currency <> r.currency) THEN 'currency_mismatch'::text
+            WHEN ((a.status <> 'active'::text) OR (a.email_verified_at IS NULL) OR (owner.status <> 'active'::text)) THEN 'review'::text
+            WHEN (((l.kind = 'customer'::text) AND (r.customer_reward_cents = 0) AND (r.referred_reward_cents = 0)) OR ((l.kind = 'sales'::text) AND (r.commission_bps = 0))) THEN 'unconfigured'::text
+            WHEN (now() < (r.first_paid_at + make_interval(days => r.hold_days))) THEN 'holding'::text
+            ELSE 'eligible'::text
+        END AS reward_status,
+        CASE
+            WHEN (l.kind = 'customer'::text) THEN r.customer_reward_cents
+            ELSE COALESCE((trunc((((LEAST(i.subtotal_cents, GREATEST((i.amount_paid_cents - i.tax_cents), (0)::bigint)))::numeric * (r.commission_bps)::numeric) / (10000)::numeric)))::bigint, (0)::bigint)
+        END AS reward_cents,
+        CASE
+            WHEN (l.kind = 'customer'::text) THEN r.referred_reward_cents
+            ELSE (0)::bigint
+        END AS referred_reward_cents
+   FROM ((((public.referral_attributions r
+     JOIN public.referral_links l ON ((l.code = r.code)))
+     JOIN public.accounts a ON ((a.id = r.account_id)))
+     JOIN public.accounts owner ON ((owner.id = l.owner_id)))
+     LEFT JOIN public.invoices i ON (((i.id = r.first_paid_invoice_id) AND (i.account_id = r.account_id))));
 
 
 --
@@ -68309,6 +68410,30 @@ ALTER TABLE ONLY public.realtime_usage_hours
 
 
 --
+-- Name: referral_attributions referral_attributions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: referral_links referral_links_owner_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_links
+    ADD CONSTRAINT referral_links_owner_id_kind_key UNIQUE (owner_id, kind);
+
+
+--
+-- Name: referral_links referral_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_links
+    ADD CONSTRAINT referral_links_pkey PRIMARY KEY (code);
+
+
+--
 -- Name: release_approval_events release_approval_events_deployment_id_event_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78798,6 +78923,13 @@ CREATE INDEX recent_build_claims_claimed_at_idx ON public.recent_build_claims US
 --
 
 CREATE INDEX recent_build_claims_org_id_idx ON public.recent_build_claims USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: referral_attributions_link; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX referral_attributions_link ON public.referral_attributions USING btree (code, account_id);
 
 
 --
@@ -101213,6 +101345,38 @@ ALTER TABLE ONLY public.recent_build_claims
 
 ALTER TABLE ONLY public.recent_build_claims
     ADD CONSTRAINT recent_build_claims_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: referral_attributions referral_attributions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: referral_attributions referral_attributions_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_code_fkey FOREIGN KEY (code) REFERENCES public.referral_links(code) ON DELETE CASCADE;
+
+
+--
+-- Name: referral_attributions referral_attributions_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: referral_links referral_links_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_links
+    ADD CONSTRAINT referral_links_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

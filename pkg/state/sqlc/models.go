@@ -13566,6 +13566,33 @@ type RecentBuildClaim struct {
 	OrgID     pgtype.UUID
 }
 
+type ReferralAttribution struct {
+	AccountID           pgtype.UUID
+	Code                string
+	Currency            string
+	CustomerRewardCents int64
+	ReferredRewardCents int64
+	CommissionBps       int32
+	HoldDays            int32
+	ConversionDays      int32
+	FirstPaidInvoiceID  pgtype.UUID
+	FirstPaidAt         pgtype.Timestamptz
+	Stage               string
+	Note                string
+	FollowUp            pgtype.Date
+	UpdatedBy           pgtype.UUID
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type ReferralLink struct {
+	Code      string
+	OwnerID   pgtype.UUID
+	Kind      string
+	Active    bool
+	CreatedAt pgtype.Timestamptz
+}
+
 type ReleaseApprovalEvent struct {
 	ID            pgtype.UUID
 	AccountID     pgtype.UUID
@@ -14477,6 +14504,27 @@ type SafeReleaseWorkerLease struct {
 	Singleton bool
 	HealthyAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
+}
+
+type SalesReferralOverview struct {
+	AccountID           pgtype.UUID
+	OwnerID             pgtype.UUID
+	Kind                string
+	Email               interface{}
+	Plan                string
+	AccountStatus       string
+	CreatedAt           pgtype.Timestamptz
+	Stage               string
+	Note                string
+	FollowUp            pgtype.Date
+	Currency            string
+	Apps                int64
+	Paid                interface{}
+	PaidCents           int64
+	EligibleAt          int32
+	RewardStatus        string
+	RewardCents         interface{}
+	ReferredRewardCents int64
 }
 
 type SavedRouteRequirement struct {
