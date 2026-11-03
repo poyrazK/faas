@@ -355,3 +355,34 @@ ticket connections keep their own per-second recheck.
   `api.RealtimeNodeHandshakesPerSecond` (1,000, bursts of 5,000) new
   connections; past that a handshake gets 503 with a `Retry-After` of 1-5
   seconds. Counter: `realtimed_handshakes_throttled_total`.
+
+## Amendment (2026-11-03): restarts keep endpoints; reconcile and route costs
+
+- **Endpoints survive a restart.** realtimed started with no endpoints and
+  learned them only from apid's endpoint reconcile (every 30 s) or a later
+  change, so after every deploy or hand-off reconnects were refused with 404
+  until apid's pass reached their endpoint. realtimed now saves its
+  registrations after each change to `/run/faas/realtimed/endpoints.json`
+  (`FAAS_REALTIME_ENDPOINT_SNAPSHOT`; tmpfs, mode 0600, so endpoint
+  credentials never reach disk and a reboot clears it) and restores them
+  before it serves. apid's reconcile still corrects whatever changed while no
+  process ran.
+- **Endpoint reconcile.** The pass synced endpoints one at a time, each with
+  an app read, two account reads, an active-node list, three credential
+  decryptions and a registration per node, and outgrew its 30 seconds at a
+  few thousand endpoints. It now syncs eight endpoints at a time, reads each
+  account once per pass, reuses the node list for 5 s and decrypted
+  credentials by their sealed bytes, and skips a node that already holds the
+  same registration: the node listed the endpoint in this pass's inventory and
+  apid sent it the same fingerprint (`realtime.EndpointFingerprint`) in the
+  last 10 minutes. The fingerprint changes when a previous token's grace ends,
+  so that re-registration, which closes the token's sockets, still happens.
+- **Channel routes.** A node reported a channel's first subscriber or last
+  unsubscribe under one node-wide lock held across the apid call, and apid
+  recorded it, like each 30-second node snapshot, under the endpoint row's
+  lock. Reports now serialize per channel only, and route bookkeeping takes a
+  per-endpoint advisory lock instead of the endpoint row. The endpoint locks
+  realtime cap checks take (cursors, read markers, history, receipts, tickets,
+  groups and the rest) are now `FOR NO KEY UPDATE`: they still serialize with
+  each other, but a row inserted under the endpoint's foreign key, such as a
+  route, no longer waits for them.

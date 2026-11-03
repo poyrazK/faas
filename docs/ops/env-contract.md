@@ -769,6 +769,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL` | realtimed | `default` |  |  | `` | maximum persistent callback retry delay; defaults to one minute and is capped at one hour |
 | `FAAS_REALTIME_CALLBACK_TIMEOUT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CHANNEL_ROUTING_ENABLED` | apid | `default` |  | 0 | `` | enable recipient-aware realtime publish only after every apid replica runs a route-writing version |
+| `FAAS_REALTIME_ENDPOINT_SNAPSHOT` | realtimed | `default` |  |  | `` | where realtimed saves endpoint registrations for the process that replaces it; default /run/faas/realtimed/endpoints.json (tmpfs, 0600) |
 | `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | `unit` |  |  | `` | the apid and realtimed units set 1: plan connection limits per account and the fleet-wide count, synced through apid, and the 6000 node connection default that keeps realtimed inside its 512 MB MemoryMax (ADR-1323); unset, apid sends no allowance and the node default is 10000 |
 | `FAAS_REALTIME_HEALTH_LISTEN` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HEARTBEAT` | realtimed | `default` |  |  | `` |  |
