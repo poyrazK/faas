@@ -2056,3 +2056,10 @@ var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
 func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
 	return newOIDCAccountLookup(store, repos)
 }
+
+// ResolveSourceReleaseCommand exposes the release command precedence of a
+// source deployment (ADR-20261102192943).
+func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
+	return resolved.command, resolved.shell, problem
+}
