@@ -41,8 +41,8 @@ func TestCustomDomainTLSExactActivationPreservesExistingCertificates(t *testing.
 		t.Fatal(err)
 	}
 	for _, migration := range []string{
-		"20261103120000002_custom_domain_tls_exact_activation.sql",
-		"20261103120000003_custom_domain_tls_existing_exact_hosts.sql",
+		"20261103232750058_custom_domain_tls_exact_activation.sql",
+		"20261103232750064_custom_domain_tls_existing_exact_hosts.sql",
 	} {
 		source, err := os.ReadFile(migration)
 		if err != nil {

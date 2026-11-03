@@ -243,7 +243,7 @@ headroom for renewals and retries. Previously admitted names stay free, includin
 after a gateway restart. The `wildcard_domain` column retains its legacy name;
 for an exact claim it holds the hostname itself.
 
-Apply migrations `20261103120000000` through `20261103120000003` before deploying
+Apply migrations `20261103232750043` through `20261103232750064` before deploying
 the edge changes. The first adds broader checks without validation, the second
 validates them without blocking writers, and the third removes the old checks.
 A fourth migration, after the DDL transaction commits, seeds known-host rows for
