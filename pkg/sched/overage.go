@@ -158,7 +158,11 @@ func (c *memCacheOverageChecker) Check(ctx context.Context, accountID string) (O
 		return e.status, e.observedCents, e.capCents, nil
 	}
 	c.mu.RUnlock()
+	return c.load(ctx, accountID, now)
+}
 
+// load reads accountID's cap status from the store and caches it.
+func (c *memCacheOverageChecker) load(ctx context.Context, accountID string, now time.Time) (OverageStatus, int64, int64, error) {
 	// Slow path: re-read from the store. GetAccountOverageCapCents +
 	// CurrentMonthOverageCents is two round-trips; for the one-box
 	// FaaS scale both are bounded (~1ms each), so we do not batch.
