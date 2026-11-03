@@ -22214,25 +22214,28 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
 	// missing durable checkpoint therefore means the whole reported value is
-	// new usage. Counter regression means vmmd or the interface restarted: move
-	// the baseline back without turning unsigned wraparound into a huge charge.
+	// new usage. A counter below its checkpoint means vmmd or the interface
+	// restarted and counts from zero again, so its whole value is new usage
+	// too; dropping it lost each restart's first reading of egress
+	// (ADR-20261101113742). The baseline moves to the new value either way, and
+	// a delta is never negative.
 	netTxDelta, netRxDelta := int64(0), int64(0)
 	nextTx, nextRx := previousTx, previousRx
 	nextTxValid, nextRxValid := previousTxValid, previousRxValid
 	if netTxValid {
-		if !previousTxValid {
-			netTxDelta = netTxCumulative
-		} else if netTxCumulative >= previousTx {
+		if previousTxValid && netTxCumulative >= previousTx {
 			netTxDelta = netTxCumulative - previousTx
+		} else {
+			netTxDelta = netTxCumulative
 		}
 		nextTx = netTxCumulative
 		nextTxValid = true
 	}
 	if netRxValid {
-		if !previousRxValid {
-			netRxDelta = netRxCumulative
-		} else if netRxCumulative >= previousRx {
+		if previousRxValid && netRxCumulative >= previousRx {
 			netRxDelta = netRxCumulative - previousRx
+		} else {
+			netRxDelta = netRxCumulative
 		}
 		nextRx = netRxCumulative
 		nextRxValid = true

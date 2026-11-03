@@ -19969,19 +19969,21 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 	checkpoint := m.networkUsageCheckpoints[instanceID]
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
-		if !checkpoint.netTxValid {
-			netTxDelta = netTxCumulative
-		} else if netTxCumulative >= checkpoint.netTx {
+		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
+		if checkpoint.netTxValid && netTxCumulative >= checkpoint.netTx {
 			netTxDelta = netTxCumulative - checkpoint.netTx
+		} else {
+			netTxDelta = netTxCumulative
 		}
 		checkpoint.netTx = netTxCumulative
 		checkpoint.netTxValid = true
 	}
 	if netRxValid {
-		if !checkpoint.netRxValid {
-			netRxDelta = netRxCumulative
-		} else if netRxCumulative >= checkpoint.netRx {
+		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
+		if checkpoint.netRxValid && netRxCumulative >= checkpoint.netRx {
 			netRxDelta = netRxCumulative - checkpoint.netRx
+		} else {
+			netRxDelta = netRxCumulative
 		}
 		checkpoint.netRx = netRxCumulative
 		checkpoint.netRxValid = true

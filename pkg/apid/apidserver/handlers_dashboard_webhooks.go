@@ -72,6 +72,11 @@ func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *
 				rows = rows[:dashboardWebhooksPageLimit]
 			}
 			data.Webhooks = s.projectDashboardWebhooks(ctx, log, rows, app.ID, acct.ID)
+			if !appWebhookTargetVisible(r) {
+				for i := range data.Webhooks {
+					data.Webhooks[i].TargetURL = api.MaskAppLogDrainTargetURL(data.Webhooks[i].TargetURL)
+				}
+			}
 		}
 		if deliveryID := r.URL.Query().Get("delivery_id"); deliveryID != "" {
 			delivery, readErr := s.store.AppWebhookDeliveryByID(ctx, deliveryID)

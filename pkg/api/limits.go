@@ -2423,6 +2423,33 @@ const (
 	RealtimeNodeClientMessageBurst      = 4_000
 )
 
+// Signals, presence updates and read receipts reach the other realtime nodes
+// through apid, one control-plane call each. A node relays at most
+// RealtimeNodeEphemeralRelaysPerSecond (bursts of
+// RealtimeNodeEphemeralRelayBurst), and one endpoint at most
+// RealtimeEndpointEphemeralRelaysPerSecond of them on a node; past either,
+// the frame is refused with its rate-limited code and nothing is relayed
+// (ADR-1323, amendment of 2026-11-03).
+const (
+	RealtimeNodeEphemeralRelaysPerSecond     = 500
+	RealtimeNodeEphemeralRelayBurst          = 1_000
+	RealtimeEndpointEphemeralRelaysPerSecond = 200
+	RealtimeEndpointEphemeralRelayBurst      = 400
+)
+
+// Live query frames live.subscribe and live.renew start or change a
+// subscription on the database's live hub. A connection may send
+// RealtimeLiveFramesPerSecond (bursts of RealtimeLiveFrameBurst) and a node
+// RealtimeNodeLiveFramesPerSecond (bursts of RealtimeNodeLiveFrameBurst); past
+// either, the frame is answered with live.error code "live_query_limit"
+// (ADR-1323, amendment of 2026-11-03).
+const (
+	RealtimeLiveFramesPerSecond     = 10
+	RealtimeLiveFrameBurst          = 40
+	RealtimeNodeLiveFramesPerSecond = 1_000
+	RealtimeNodeLiveFrameBurst      = 2_000
+)
+
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (
