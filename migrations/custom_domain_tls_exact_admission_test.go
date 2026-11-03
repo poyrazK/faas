@@ -40,22 +40,29 @@ func TestCustomDomainTLSExactActivationPreservesExistingCertificates(t *testing.
 		VALUES ('existing.example.com', '*.example.com', now())`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{
-		"20261103232750058_custom_domain_tls_exact_activation.sql",
-		"20261103232750064_custom_domain_tls_existing_exact_hosts.sql",
-	} {
-		source, err := os.ReadFile(migration)
-		if err != nil {
-			t.Fatal(err)
-		}
-		up, _, ok := strings.Cut(string(source), "-- +goose Down")
-		if !ok {
-			t.Fatal("missing migration downgrade marker")
-		}
-		if _, err := pool.Exec(ctx, up); err != nil {
-			t.Fatal(err)
+	// Schema-ahead-of-ledger recovery replays the complete tail. Running it
+	// twice must retain both constraint definitions and existing admissions.
+	for pass := 0; pass < 2; pass++ {
+		for _, migration := range []string{
+			"20261103232750043_custom_domain_tls_exact_admission.sql",
+			"20261103232750050_custom_domain_tls_exact_validation.sql",
+			"20261103232750058_custom_domain_tls_exact_activation.sql",
+			"20261103232750064_custom_domain_tls_existing_exact_hosts.sql",
+		} {
+			source, err := os.ReadFile(migration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			up, _, ok := strings.Cut(string(source), "-- +goose Down")
+			if !ok {
+				t.Fatal("missing migration downgrade marker")
+			}
+			if _, err := pool.Exec(ctx, up); err != nil {
+				t.Fatalf("migration %s, pass %d: %v", migration, pass+1, err)
+			}
 		}
 	}
+
 	var known, charged int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM custom_domain_tls_hosts`).Scan(&known); err != nil || known != 1 {
 		t.Fatalf("grandfathered exact hosts=%d, %v; want only existing.example.com", known, err)
