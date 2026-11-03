@@ -42,9 +42,21 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 	}
 	token := strings.Fields(msgs[0].TextBody[i+len(marker):])[0]
 
-	verifyReq := httptest.NewRequest(http.MethodGet, apidserver.EmailVerificationPath+"?token="+token, nil)
+	// Opening the link (or a mail scanner prefetching it) only shows the
+	// confirmation; it must not consume the token.
+	openRec := httptest.NewRecorder()
+	openReq := httptest.NewRequest(http.MethodGet, apidserver.EmailVerificationPath+"?token="+token, nil)
+	openReq.Header.Set("Accept", "text/html,application/xhtml+xml")
+	h.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusOK || !strings.Contains(openRec.Body.String(), `method="post"`) {
+		t.Fatalf("open link = %d: %s", openRec.Code, openRec.Body.String())
+	}
+	if opened, err := store.AccountByEmail(context.Background(), "verify-me@example.com"); err != nil || opened.EmailVerified() {
+		t.Fatalf("opening the link verified the account (err=%v)", err)
+	}
+
 	verifyRec := httptest.NewRecorder()
-	h.ServeHTTP(verifyRec, verifyReq)
+	h.ServeHTTP(verifyRec, verifyEmailPost(apidserver.EmailVerificationPath, token))
 	if verifyRec.Code != http.StatusOK {
 		t.Fatalf("verify status = %d: %s", verifyRec.Code, verifyRec.Body.String())
 	}
@@ -56,12 +68,19 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 		t.Fatal("verification link did not verify account")
 	}
 
-	replayReq := httptest.NewRequest(http.MethodGet, apidserver.EmailVerificationPath+"?token="+token, nil)
 	replayRec := httptest.NewRecorder()
-	h.ServeHTTP(replayRec, replayReq)
+	h.ServeHTTP(replayRec, verifyEmailPost(apidserver.EmailVerificationPath, token))
 	if replayRec.Code != http.StatusGone {
 		t.Fatalf("replay status = %d, want 410", replayRec.Code)
 	}
+}
+
+// verifyEmailPost is the confirmation page's form post of a verification
+// token.
+func verifyEmailPost(target, token string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, target, strings.NewReader("token="+token))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return r
 }
 
 // TestUnverifiedAccountCannotReachDeployOrBilling_Property exercises the

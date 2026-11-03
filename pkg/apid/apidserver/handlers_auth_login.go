@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"sort"
@@ -1427,11 +1428,56 @@ func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acc
 	}
 }
 
-// verifyEmail consumes a verification token without authenticating the
+// verifyEmailConfirm is GET /v1/auth/verify-email. A browser gets a button
+// that posts the token back, and nothing is consumed: the GET used to consume
+// the token, so mail scanners that prefetch links (Safe Links, Proofpoint,
+// Mimecast) verified the address and the person then saw "verification link
+// invalid" (bug hunt round 8). Magic links already confirm the same way. A
+// client that does not ask for HTML keeps the old one-step verification.
+func (s *server) verifyEmailConfirm(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if !api.AcceptsHTML(r) {
+		s.verifyEmailToken(w, r, token)
+		return
+	}
+	if raw, err := base64.RawURLEncoding.DecodeString(token); err != nil || len(raw) != 32 {
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	_ = emailVerificationConfirmPage.Execute(w, token)
+}
+
+var emailVerificationConfirmPage = template.Must(template.New("verify-email-confirm").Parse(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verify your email</title></head>
+<body>
+<main>
+<h1>Verify your email address</h1>
+<form method="post" action="/v1/auth/verify-email">
+<input type="hidden" name="token" value="{{.}}">
+<button type="submit">Verify email</button>
+</form>
+</main>
+</body>
+</html>
+`))
+
+// verifyEmail is POST /v1/auth/verify-email, the confirmation page's form.
+func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return
+	}
+	s.verifyEmailToken(w, r, strings.TrimSpace(r.PostFormValue("token")))
+}
+
+// verifyEmailToken consumes a verification token without authenticating the
 // browser. The success page explicitly sends the customer back through sign
 // in, so possession of the email link never becomes a session credential.
-func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
+func (s *server) verifyEmailToken(w http.ResponseWriter, r *http.Request, token string) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(raw) != 32 {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
