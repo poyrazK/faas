@@ -17123,6 +17123,17 @@ const (
 	DataRepairPurgeLockTimeoutMS       = 2000
 )
 
+// HTTP/2 on a compute edge that serves clients directly (ADR-20261103163954
+// §2) gets explicit limits rather than library defaults: concurrent streams
+// per connection, the largest frame it reads (16 KiB, the protocol's
+// minimum) and the HPACK table in each direction. The header list is capped
+// by the server's MaxHeaderBytes, as an HTTP/1.1 header is.
+const (
+	EdgeHTTP2MaxConcurrentStreams = 100
+	EdgeHTTP2MaxReadFrameSize     = 16 << 10
+	EdgeHTTP2MaxHeaderTableSize   = 4096
+)
+
 // Resource labels (ADR-20261031100025) use Kubernetes label syntax and are the
 // same on every plan: labels hold no resources. A resource carries at most
 // LabelsPerResourceMax labels. A key is an optional DNS-subdomain prefix of at
