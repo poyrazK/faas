@@ -56,10 +56,7 @@ func (s *server) listAppDeployments(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("could not list app deployments"))
 		return
 	}
-	resp := api.DeploymentListResponse{Items: make([]api.DeploymentResponse, 0, len(rows))}
-	for _, d := range rows {
-		resp.Items = append(resp.Items, s.deploymentResponse(r.Context(), d, app))
-	}
+	resp := api.DeploymentListResponse{Items: s.deploymentResponses(r.Context(), rows, func(state.Deployment) state.App { return app })}
 	if len(rows) == limit && len(rows) > 0 {
 		resp.NextBefore = rows[len(rows)-1].CreatedAt.UTC().Format(time.RFC3339Nano)
 	}

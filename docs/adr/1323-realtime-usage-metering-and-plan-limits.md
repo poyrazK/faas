@@ -278,3 +278,41 @@ ticket connections keep their own per-second recheck.
   was accepted and, for durable subscriptions and the inbox, rewrote the
   cursor row each time. Such an ack is now answered without a write and spends
   a command token.
+
+## Amendment (2026-11-03): relay, read-marker, live-frame and worker bounds
+
+- **Ephemeral relays.** Every signal, presence update and read receipt went
+  from realtimed to apid (`RelayEphemeral`), which read the endpoint and the
+  node from Postgres each time, with only per-connection and per-channel
+  rates. A node now relays at most `api.RealtimeNodeEphemeralRelaysPerSecond`
+  (500, bursts of 1,000) and one endpoint at most
+  `RealtimeEndpointEphemeralRelaysPerSecond` (200, bursts of 400) on a node.
+  Past either, the frame is refused with its existing code
+  (`signal_rate_limited`, `presence_rate_limited`, `read_rate_limited`)
+  before anything is delivered, so every node sees the same frames. apid
+  caches the relay's endpoint and node lookups for 5 seconds; a disabled
+  endpoint or deactivated node stops relaying within that time. Counter:
+  `realtimed_ephemeral_relays_throttled_total`.
+- **Read markers.** Each advance locked the endpoint row and counted its
+  markers, even for a repeated sequence. A repeated or older sequence is now
+  answered without a lock or write, and a marker already counted toward the
+  cap advances under its own row lock. Only a new marker takes the endpoint
+  lock that keeps the cap exact.
+- **Live query frames.** `live.subscribe` and `live.renew` start or change a
+  hub subscription and had no rate. A connection sends
+  `api.RealtimeLiveFramesPerSecond` (10, bursts of 40) and a node
+  `RealtimeNodeLiveFramesPerSecond` (1,000, bursts of 2,000); past either the
+  frame gets `live.error` `live_query_limit` (closed for a subscribe).
+  Counter: `realtimed_live_frames_throttled_total`.
+- **Inbox read receipts** reach their reader's connections through an index
+  by endpoint and principal instead of a scan of every connection on the node.
+- **Push delivery** claimed 8 deliveries every 5 seconds per apid (about
+  1.6/s for the platform). It now runs up to 32 sends at once and claims again
+  as soon as a sender is free. Endpoints take turns within the 2,048
+  longest-due deliveries, so one endpoint's backlog does not hold the others'
+  behind it. Retention deletes left the claim transaction for a batched prune
+  once a minute, and a claim cancels or fails at most the due head.
+- **Scheduled messages** were published one at a time, at most 128 every
+  5 seconds (about 25/s, below one Scale account's 200/s write rate). A pass
+  now publishes 8 channels at once, each channel's schedules in due order,
+  and a full list is followed at once by the next, up to 20 lists per tick.

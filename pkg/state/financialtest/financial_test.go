@@ -123,6 +123,14 @@ func financialRows(t *testing.T, store state.FinancialStore, account string, hea
 func financialRowsWithContext(t *testing.T, ctx context.Context, store state.FinancialStore, account string, head int64) []state.FinancialUsageRecord {
 	t.Helper()
 	start, end := financialPeriod()
+	return financialRowsInPeriod(t, ctx, store, account, start, end, head)
+}
+
+// financialRowsInPeriod pages an account's evidence in [start, end). Tests
+// that bill at the wall clock read their own period, not financialPeriod's
+// fixed month.
+func financialRowsInPeriod(t *testing.T, ctx context.Context, store state.FinancialStore, account string, start, end time.Time, head int64) []state.FinancialUsageRecord {
+	t.Helper()
 	var all []state.FinancialUsageRecord
 	var after int64
 	for {

@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -89,6 +90,10 @@ func (s *server) createFinancialBudget(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	req.Spec = state.NormalizeFinancialBudgetSpec(req.Spec)
+	if problem := orgFinancialBudgetProblem(acct, req.Spec); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if problem := s.strictBudgetReleaseProblem(acct, req.Spec, nil); problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -130,6 +135,10 @@ func (s *server) updateFinancialBudget(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	req.Spec = state.NormalizeFinancialBudgetSpec(req.Spec)
+	if problem := orgFinancialBudgetProblem(acct, req.Spec); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if strictBudgetActivation(req.Spec) && !s.platformFlagEnabled(platformflags.StrictBudgets, acct) {
 		current, err := store.GetFinancialBudget(r.Context(), acct.ID, r.PathValue("id"))
 		if err != nil {
@@ -308,7 +317,29 @@ func financialBudgetProblem(err error) *api.Problem {
 	if errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrNotFound) {
 		return financialProblem(err)
 	}
+	// The response stays generic; the cause is kept for operators. Budget
+	// errors carry no secret values.
+	slog.Default().Warn("financial budget state unavailable", "err", err)
 	return api.ErrCapacity("could not commit or read budget policy state")
+}
+
+// orgFinancialBudgetProblem refuses what an organization's budgets do not yet
+// support (ADR-20261031211500). Its subject must own its resources, because
+// only then is its usage recorded and billed under it, and strict budgets stay
+// with accounts until organization strict funding passes native acceptance.
+func orgFinancialBudgetProblem(acct state.Account, spec financial.BudgetSpec) *api.Problem {
+	if acct.ResourceOrgID == "" {
+		return nil
+	}
+	if !acct.ResourceOwnershipEnabled {
+		return api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Organization budgets unavailable",
+			"This organization does not own its resources yet, so its usage is billed to the members who created it. Budgets follow the subject that pays.")
+	}
+	if spec.Mode == "strict" {
+		return api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Strict budgets not available for organizations",
+			"Organization budgets can notify and stop previews. Strict compute and egress budgets remain available to accounts only.")
+	}
+	return nil
 }
 
 func writeFinancialBudgetJSON(w http.ResponseWriter, status int, body any) {

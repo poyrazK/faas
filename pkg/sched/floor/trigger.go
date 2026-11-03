@@ -172,6 +172,33 @@ type PlanResolver interface {
 	ResolvePlan(ctx context.Context, accountID string) (api.Plan, bool)
 }
 
+// AppPlanResolver resolves the plan of an app's billing subject: its
+// organization when the organization owns its resources, else its account.
+// A resolver that implements it decides the floor of a company app by the
+// organization's plan and status, the subject meterd bills the floor to
+// (ADR-20261101113742). cmd/schedd's resolver implements it.
+type AppPlanResolver interface {
+	ResolveAppPlan(ctx context.Context, app state.App) (api.Plan, bool)
+}
+
+// resolvePlan is the plan that gates app's floor: Free without a resolver
+// or when the subject cannot be resolved (fail-closed).
+func (t *Trigger) resolvePlan(ctx context.Context, app state.App) api.Plan {
+	if t.planResolver == nil {
+		return api.PlanFree
+	}
+	if byApp, ok := t.planResolver.(AppPlanResolver); ok {
+		if resolved, ok := byApp.ResolveAppPlan(ctx, app); ok {
+			return resolved
+		}
+		return api.PlanFree
+	}
+	if resolved, ok := t.planResolver.ResolvePlan(ctx, app.AccountID); ok {
+		return resolved
+	}
+	return api.PlanFree
+}
+
 // AppStats is the input to the pure decide() function. Tick
 // populates this struct per-app; the table-driven decide_test.go
 // drives it directly. Keeping the input a typed struct (rather
@@ -284,6 +311,12 @@ type Trigger struct {
 	// (recordSuccess / recordFailure) likewise take it briefly.
 	mu      sync.Mutex
 	backoff map[string]*backoffEntry
+
+	// reuseMu guards the per-deployment sweep's reused resolutions and
+	// plans (ADR 20261103094355; deployment_reuse.go).
+	reuseMu     sync.Mutex
+	resolutions map[string]resolvedDeployment
+	plans       map[string]resolvedPlan
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -540,6 +573,8 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 		headroom = t.ledger.HeadroomMB()
 	}
 	serving := servingScopes(deps)
+	t.pruneReuse(now)
+	listed := t.listedApps(ctx, deps)
 	for _, d := range deps {
 		// A configured floor is serviceable only after the deployment is
 		// live. ListAllDeployments intentionally includes historical and
@@ -551,82 +586,35 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 			t.observe(d.AppID, OutcomeDisabled)
 			continue
 		}
-		app, appErr := state.AppForDeployment(ctx, t.deploymentStore, d)
+		// ADR 20261103094355: decide from the listed app, its resolution
+		// and plan reused for up to floorReuseMaxAge, and resolve all of it
+		// again before admitting. A floor that is met, the usual state,
+		// costs no read.
+		app, fresh, appErr := t.deploymentApp(ctx, d, listed, now)
 		if appErr != nil {
 			t.observe(d.AppID, OutcomeError)
 			continue
 		}
-		if !t.manages(app) || !floorRunsFor(app) {
-			continue
-		}
-		effective := app.EffectiveMinInstances()
-		if inheritsNoFloor(d, serving) {
-			effective = 0
-		}
-		if dFloor := d.EffectiveMinInstances(); dFloor > effective {
-			effective = dFloor
-		}
-		if effective <= 0 {
-			t.observe(d.AppID, OutcomeDisabled)
-			continue
-		}
-		plan := api.PlanFree
-		if t.planResolver != nil {
-			if resolved, ok := t.planResolver.ResolvePlan(ctx, app.AccountID); ok {
-				plan = resolved
+		ev := t.evaluateDeployment(ctx, d, app, serving, now, residentRAM, headroom, false)
+		if ev.decision.AdmitNow {
+			if !fresh {
+				t.forgetResolution(d.ID)
+				app, appErr = state.AppForDeployment(ctx, t.deploymentStore, d)
+				if appErr != nil {
+					t.observe(d.AppID, OutcomeError)
+					continue
+				}
 			}
+			ev = t.evaluateDeployment(ctx, d, app, serving, now, residentRAM, headroom, true)
 		}
-		if !plan.MinInstancesAllowed() {
-			t.observe(d.AppID, OutcomeDisabled)
+		if ev.skip {
 			continue
 		}
-		if app.WorkloadClass == state.WorkloadClassWorker {
-			t.observe(d.AppID, OutcomeDisabled)
+		t.observe(d.AppID, ev.decision.Outcome)
+		if !ev.decision.AdmitNow {
 			continue
 		}
-		var conc int
-		if t.ledger != nil {
-			conc = t.ledger.ConcurrencyForDeployment(d.AppID, d.ID)
-		}
-		if conc >= effective {
-			t.observe(d.AppID, OutcomeFloorMet)
-			continue
-		}
-		if conc >= effectiveMaxConcurrency(app, plan) {
-			t.observe(d.AppID, OutcomeAtCapacity)
-			continue
-		}
-		// RAM ceiling pre-check (same as tickPerApp).
-		isRamCeiling := false
-		if t.ledger != nil && api.BillableRAMMB(app.RAMMB) > headroom {
-			isRamCeiling = true
-		}
-		var lastScaleOut time.Time
-		if app.LastScaleOutAt != nil {
-			lastScaleOut = *app.LastScaleOutAt
-		}
-		stats := AppStats{
-			AppID:             d.AppID,
-			AccountID:         app.AccountID,
-			Plan:              plan,
-			Floor:             effective,
-			Concurrency:       conc,
-			MaxConcurrency:    effectiveMaxConcurrency(app, plan),
-			ResidentRAMMB:     residentRAM,
-			HeadroomMB:        headroom,
-			RAMMB:             app.RAMMB,
-			WorkloadClass:     app.WorkloadClass,
-			LastScaleOutAt:    lastScaleOut,
-			ScaleOutCooldownS: scalingOutCooldownS(app),
-			Now:               now,
-			BackoffUntil:      t.peekBackoff(d.AppID),
-			IsRamCeiling:      isRamCeiling,
-		}
-		decision := decide(stats)
-		t.observe(d.AppID, decision.Outcome)
-		if !decision.AdmitNow {
-			continue
-		}
+		effective, conc := ev.effective, ev.conc
 		result, err := t.engine.AdmitInstanceForDeployment(ctx, d.AppID, d.ID, "", wakeBootTriggerFloorDep)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -705,12 +693,7 @@ func (t *Trigger) tickPerApp(ctx context.Context) error {
 			t.observe(app.ID, OutcomeDisabled)
 			continue
 		}
-		plan := api.PlanFree
-		if t.planResolver != nil {
-			if resolved, ok := t.planResolver.ResolvePlan(ctx, app.AccountID); ok {
-				plan = resolved
-			}
-		}
+		plan := t.resolvePlan(ctx, app)
 		if !plan.MinInstancesAllowed() {
 			t.observe(app.ID, OutcomeDisabled)
 			continue
