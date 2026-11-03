@@ -329,7 +329,7 @@ func TestVerifyPasswordOrPad_TimingPadEqualisesThreeFailurePaths(t *testing.T) {
 
 	measure := func(label, email string) time.Duration {
 		t0 := time.Now()
-		_, ok := srv.verifyPasswordOrPad(context.Background(), email, password)
+		_, ok, _ := srv.verifyPasswordOrPad(context.Background(), email, password)
 		d := time.Since(t0)
 		if ok {
 			t.Fatalf("%s: verifyPasswordOrPad returned ok=true (want false)", label)

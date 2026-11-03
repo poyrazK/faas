@@ -213,7 +213,13 @@ func TestPasswordChangedAlertPublicPathsAndAtomicFailures(t *testing.T) {
 				if success && mode != "off" {
 					wantEvents = 1
 				}
-				if events != wantEvents || recorder.calls != 0 {
+				// With the alert outbox off, a change mails the owner inline
+				// (bug hunt H99).
+				wantInline := 0
+				if success && mode == "off" {
+					wantInline = 1
+				}
+				if events != wantEvents || recorder.calls != wantInline {
 					t.Fatal("alert missing, duplicated or sent inline", events, recorder.calls)
 				}
 				var revoked, currentRevoked bool

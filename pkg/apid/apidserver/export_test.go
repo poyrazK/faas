@@ -2066,6 +2066,17 @@ func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.Accoun
 	return newOIDCAccountLookup(store, repos)
 }
 
+// Inline security alerts (bug hunt H99).
+func (r *server) AlertPasswordChangedInline(ctx context.Context, acct state.Account, method string) {
+	r.alertPasswordChangedInline(ctx, acct, method)
+}
+func (r *server) AlertMFAEnabledInline(ctx context.Context, acct state.Account) {
+	r.alertMFAEnabledInline(ctx, acct)
+}
+func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account, method string) {
+	r.alertMFADisabledInline(ctx, acct, method)
+}
+
 // ResolveSourceReleaseCommand exposes the release command precedence of a
 // source deployment (ADR-20261102192943).
 func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
