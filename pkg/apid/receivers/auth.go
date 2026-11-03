@@ -182,9 +182,12 @@ func (r *authReceiver) VerifySession(_ context.Context, req *apidpb.VerifySessio
 	if r.sessions == nil {
 		return nil, status.Error(codes.Unavailable, "sessions are not configured")
 	}
-	env, err := r.sessions.Verify(req.GetCookie())
-	if err != nil {
+	env, verifyErr := r.sessions.Verify(req.GetCookie())
+	switch {
+	case errors.Is(verifyErr, session.ErrInvalid):
 		return &apidpb.VerifySessionResponse{}, nil
+	case verifyErr != nil:
+		return nil, status.Error(codes.Internal, "open session cookie")
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {
