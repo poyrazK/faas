@@ -62,11 +62,10 @@ type ObjectUsageSnapshot struct {
 }
 
 // objectStoragePlanLimits returns the plan's object-storage limits with the
-// storage ceiling the account's spend cap pays for (ADR-20261101214152), or
-// none for an unknown plan.
-func objectStoragePlanLimits(plan api.Plan, capCents *int64) api.ObjectStoragePlanLimits {
-	limits, _ := api.LimitsFor(plan)
-	return limits.ObjectStorage.WithSpendCap(capCents)
+// ceiling support granted the subject and tightened by what its spend cap
+// pays for (ADR-20261101214152), or none for an unknown plan.
+func objectStoragePlanLimits(plan api.Plan, grantBytes, capCents *int64) api.ObjectStoragePlanLimits {
+	return api.ObjectStorageLimitsFor(plan, grantBytes, capCents)
 }
 
 // storedOverPlanCeiling refuses object bodies while the account stores more

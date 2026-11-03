@@ -483,6 +483,9 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	// Compose secrets become files for built and prebuilt images alike
 	// (ADR-20261023090000).
 	manifest.ProjectSecretFiles = api.CloneSecretFiles(w.SecretFiles)
+	// A Compose service run to completion is this app's release command
+	// (ADR-20261102192943); every deploy path reads it from here.
+	manifest.ProjectReleaseCommand, manifest.ProjectReleaseCommandShell = composeReleaseCommand(w)
 	if w.Image == "" {
 		return
 	}
@@ -493,6 +496,16 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	if len(w.Ports) > 0 {
 		manifest.ProjectImagePort = w.Ports[0]
 	}
+}
+
+// composeReleaseCommand is the release command an app keeps for w: the
+// command of the Compose service w waits for to complete. A Procfile release
+// command stays with the source and is not stored on the app.
+func composeReleaseCommand(w reposcan.Workload) ([]string, bool) {
+	if w.ReleaseService == "" || len(w.ReleaseCommand) == 0 {
+		return nil, false
+	}
+	return append([]string(nil), w.ReleaseCommand...), w.ReleaseCommandShell
 }
 
 // releaseScanWorkerMode clears the worker mode the scan gave an app once the
