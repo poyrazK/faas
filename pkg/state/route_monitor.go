@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/routemonitor"
 )
 
@@ -182,7 +182,7 @@ func decideRouteMonitorRollback(c api.RouteMonitorConfig, i *api.RouteMonitorInc
 }
 
 // routeMonitorRefusalCode is the shape of an API problem code.
-var routeMonitorRefusalCode = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+var routeMonitorRefusalCode = lazyregexp.New(`^[a-z0-9_]{1,64}$`)
 
 // recordRouteMonitorRollback replaces a claim with its final outcome.
 func recordRouteMonitorRollback(i *api.RouteMonitorIncident, outcome api.RouteMonitorIncidentRollback) error {

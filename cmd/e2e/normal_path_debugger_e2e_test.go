@@ -535,8 +535,12 @@ func exerciseOutboundDependencySpan(t *testing.T, f *normalPathFixture, tracepar
 			MaxSpansPerTrace: func(string) int {
 				return 1000
 			},
-			WriteFn: func(ctx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-				return writer.WriteSpansSummary(ctx, traceID, summaryJSON, accountID)
+			// outboundd names the calling app on its span (tracing tenancy
+			// T4, #6304), so the trace is an app-narrowed target that only
+			// WriteTargetFn writes; the account-only WriteFn refuses it, as
+			// gatewayd and outboundd are wired.
+			WriteTargetFn: func(ctx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+				return writer.WriteSummary(ctx, target.Request(traceID, summaryJSON))
 			},
 		})
 	}()

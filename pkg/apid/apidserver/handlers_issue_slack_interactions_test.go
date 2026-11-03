@@ -202,8 +202,10 @@ func TestNativeSlackInteractionDashboardAndCallbackPostgres(t *testing.T) {
 	}
 	failedReply := lastReply
 	first := callback(raw, ts, false)
-	if first.Code != 200 || first.Body.Len() != 0 || lastReply != failedReply {
-		t.Fatal(first.Code, first.Body.String())
+	// A retried click rotates the link token (only its hash is stored), so the
+	// retry's reply carries a fresh link and the failed reply's link is dead.
+	if first.Code != 200 || first.Body.Len() != 0 || lastReply == failedReply || !strings.Contains(failedReply, "slack_link=") {
+		t.Fatalf("%d %q failed=%q last=%q", first.Code, first.Body.String(), failedReply, lastReply)
 	}
 	match := regexp.MustCompile(`slack_link=([a-f0-9]{64})`).FindStringSubmatch(lastReply)
 	if len(match) != 2 {
@@ -214,6 +216,9 @@ func TestNativeSlackInteractionDashboardAndCallbackPostgres(t *testing.T) {
 	linkPage := get(triageURL + "?slack_link=" + challenge)
 	if linkPage.Code != 200 || !strings.Contains(linkPage.Body.String(), "Confirm my Slack account") || linkPage.Header().Get("Referrer-Policy") != "no-referrer" {
 		t.Fatal(linkPage.Code, linkPage.Body.String())
+	}
+	if stale := regexp.MustCompile(`slack_link=([a-f0-9]{64})`).FindStringSubmatch(failedReply); len(stale) != 2 || strings.Contains(get(triageURL+"?slack_link="+stale[1]).Body.String(), "Confirm my Slack account") {
+		t.Fatal("rotated link token still confirms")
 	}
 	linkCookie := csrfFrom(linkPage)
 	before, err := st.GetIssueApplicationTriage(t.Context(), app.ID, app.AccountID, app.AccountID, issue)

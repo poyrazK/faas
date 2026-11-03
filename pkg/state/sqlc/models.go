@@ -1390,6 +1390,17 @@ type AppMcpTaskCompatibility struct {
 	ObservedAt pgtype.Timestamptz
 }
 
+// ADR-20261102124306 per-app memory-pressure rollup written by schedd from guest reports.
+type AppMemoryPressure struct {
+	AppID             pgtype.UUID
+	WindowStartedAt   pgtype.Timestamptz
+	Episodes          int32
+	LowestAvailableMb int32
+	TotalMb           int32
+	PeakAnonMb        int32
+	LastAt            pgtype.Timestamptz
+}
+
 type AppOpenapiDoc struct {
 	AppID          pgtype.UUID
 	AccountID      pgtype.UUID
@@ -1657,6 +1668,13 @@ type AppSloHourly struct {
 	Hour  pgtype.Timestamptz
 	Good  int64
 	Total int64
+}
+
+type AppSlugHold struct {
+	Slug      string
+	AccountID pgtype.UUID
+	HeldUntil pgtype.Timestamptz
+	Reason    string
 }
 
 type AppTask struct {
@@ -2380,6 +2398,7 @@ type Build struct {
 	CancelledByDeploymentCascade bool
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
+	CoalescedWith                pgtype.UUID
 }
 
 type BuildExportPublication struct {
@@ -6279,6 +6298,7 @@ type GithubWebhookDelivery struct {
 	InstallationID pgtype.Int8
 	RepoFullName   pgtype.Text
 	CommitSha      pgtype.Text
+	SkipReason     string
 }
 
 type GithubWebhookSecret struct {
@@ -8381,6 +8401,14 @@ type ManagedPostgresOverageDelivery struct {
 	DeliveredMillicents      int64
 	UpdatedAt                pgtype.Timestamptz
 	BilledStorageByteSeconds int64
+}
+
+// Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
+type ManagedPostgresPlanExcessNotice struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	MailIntentID pgtype.UUID
 }
 
 type ManagedPostgresResize struct {

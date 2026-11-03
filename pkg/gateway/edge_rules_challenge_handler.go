@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"crypto/rand"
 	"net/http"
 	"strings"
@@ -47,7 +48,9 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 	if m == nil || deploymentSmoke || !h.edgeFeatureReleased(platformflags.EdgeChallenge, app) {
 		return false
 	}
-	rule := m.MatchChallenge(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleChallengeResolved {
+		return m.MatchChallenge(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		h.metrics.ObserveEdgeRuleMatch("challenge", "miss")
 		return false

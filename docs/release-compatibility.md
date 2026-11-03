@@ -579,6 +579,13 @@ root), as the other `gregalectl release` commands do.
   Neither is built.
 - The full release pipeline still has to enforce that no unit lags more than
   one release. The unit lanes do enforce it.
-- Gate 1 checks protos and guest JSON only. HTTP headers and trailers
-  between gatewayd-public and gatewayd-internal have no CI skew check; the
+- Gate 1 checks protos and guest JSON only. Edge-rule rows (apid writes
+  them, gatewayd-internal compiles them) have no CI skew check either. A
+  gateway fails a host closed on an enabled rule whose kind it does not know
+  or whose action is missing (ADR-091 amendment 2026-11-02), so release a new
+  kind behind a capability that is turned on after the edge rollout. A new
+  field on an existing kind is ignored by older gateways: if it makes a rule
+  refuse more, gate it the same way.
+- HTTP headers and trailers between gatewayd-public and gatewayd-internal
+  have no CI skew check; the
   tests named under Deploy order are the guard.

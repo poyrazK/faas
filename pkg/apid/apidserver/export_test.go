@@ -31,6 +31,7 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
+	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
@@ -787,6 +788,7 @@ var ValidateAnnotationForm = validateAnnotationForm
 var ValidateCapturedProjectEnvironmentDatabaseResources = validateCapturedProjectEnvironmentDatabaseResources
 var ValidateCapturedProjectEnvironmentObjectResources = validateCapturedProjectEnvironmentObjectResources
 var ValidateCloneCoordinatorInventory = validateCloneCoordinatorInventory
+var FullProjectEnvironmentCloneAdmissionProblem = fullProjectEnvironmentCloneAdmissionProblem
 var ValidateOverrides = validateOverrides
 var ValidateProjectEnvironmentPromotionResume = validateProjectEnvironmentPromotionResume
 var ValidateScannedSchedules = validateScannedSchedules
@@ -1950,6 +1952,13 @@ func (r *server) SetManagedPostgresCapModeForTest(mode managedpostgres.CapEnforc
 	r.managedPostgresCapMode = mode
 }
 
+// SetManagedPostgresPlanExcessForTest sets whether the views report databases
+// past their plan, as configureManagedPostgresCapMode would with
+// FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT and the compute cap both on.
+func (r *server) SetManagedPostgresPlanExcessForTest(on bool) {
+	r.managedPostgresPlanExcessOn = on
+}
+
 // EnsureDevPostgresForTest provisions a developer environment's database as
 // `gregale dev --postgres` does.
 func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Account, app state.App) (*api.DevPostgresResponse, error) {
@@ -1991,6 +2000,17 @@ var ProjectReadinessOverrides = projectReadinessOverrides
 // SetEventPublishClock pins the event publish rate limiter's clock.
 func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }
 
+// XPrepareDeliveryCrons runs the GitHub bridge's cron staging for one push
+// against store; staged marks a release staged without traffic.
+func XPrepareDeliveryCrons(ctx context.Context, store *state.MemStore, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, m *gregalemanifest.Manifest, kind state.DeploymentKind, staged bool) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
+	g := &githubdBridge{store: store, log: slog.Default()}
+	params := apidsource.EnqueueParams{}
+	if staged {
+		params.TrafficPercentExplicit = true
+	}
+	return g.prepareDeliveryCrons(ctx, req, resource, app, m, kind, params)
+}
+
 // GitHub connector bearer handlers (ADR-20261101160300).
 func (r *server) ListGitHubRepositoriesForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
 	r.listGitHubRepositories(w, req, acct)
@@ -2025,6 +2045,6 @@ var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
 // OIDCAccountLookup is the OIDC exchange's account lookup with project
 // repository bindings confirmed through repos (ADR-20261101160300,
 // amendment 1).
-func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLister) oidc.AccountLookup {
+func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
 	return newOIDCAccountLookup(store, repos)
 }

@@ -8002,6 +8002,17 @@ func (q *Queries) ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX
 	return err
 }
 
+const clearManagedPostgresPlanExcessNotices = `-- name: ClearManagedPostgresPlanExcessNotices :exec
+DELETE FROM managed_postgres_plan_excess_notices WHERE database_id=ANY($1::uuid[])
+`
+
+// ADR-20261102125208: a database back inside its plan loses its notice, so a
+// later suspension is noticed again.
+func (q *Queries) ClearManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearManagedPostgresPlanExcessNotices, databaseIds)
+	return err
+}
+
 const clearManagedPostgresRestoreSlot = `-- name: ClearManagedPostgresRestoreSlot :execrows
 UPDATE managed_postgres_databases SET restore_slot_until=NULL,updated_at=$1::timestamptz
 WHERE id=$2::uuid AND restore_slot_until IS NOT NULL
@@ -33246,7 +33257,19 @@ INSERT INTO environment_desired_revisions
 VALUES ($1::uuid, $2::text,
         $3::text, $4::jsonb, $5::text)
 ON CONFLICT (source_id, commit_sha, definition_digest) DO UPDATE
-    SET source_id = excluded.source_id
+    SET source_id = excluded.source_id,
+        approved_by = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                            AND NOT EXISTS (SELECT 1 FROM environment_git_sources g
+                                             WHERE g.id = environment_desired_revisions.source_id
+                                               AND g.approval_policy = 'protected_branch')
+                           THEN excluded.approved_by ELSE environment_desired_revisions.approved_by END,
+        approved_at = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                            AND NOT EXISTS (SELECT 1 FROM environment_git_sources g
+                                             WHERE g.id = environment_desired_revisions.source_id
+                                               AND g.approval_policy = 'protected_branch')
+                           THEN now() ELSE environment_desired_revisions.approved_at END
 RETURNING id, source_id, commit_sha, definition_digest, definition, approved_by, approved_at
 `
 
@@ -33258,6 +33281,11 @@ type InsertEnvironmentDesiredRevisionParams struct {
 	ApprovedBy       string
 }
 
+// Approving the same revision again keeps its row. A person's approval
+// replaces a key's ("api_key:<id>"), never the reverse, so a person can stand
+// in for the apps' release approvals after CI approved the revision
+// (ADR-20261020085706 amendment 8). A protected-branch source's revisions are
+// immutable (their approval is the merge provenance), so they keep theirs.
 func (q *Queries) InsertEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg InsertEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error) {
 	row := db.QueryRow(ctx, insertEnvironmentDesiredRevision,
 		arg.SourceID,
@@ -53920,6 +53948,56 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 	return items, nil
 }
 
+const listUnmailedManagedPostgresPlanExcessNotices = `-- name: ListUnmailedManagedPostgresPlanExcessNotices :many
+SELECT n.database_id,n.reason,n.recorded_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.mail_intent_id IS NULL AND n.recorded_at>$1::timestamptz AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.recorded_at,n.database_id LIMIT $2
+`
+
+type ListUnmailedManagedPostgresPlanExcessNoticesParams struct {
+	Since     pgtype.Timestamptz
+	BatchSize int32
+}
+
+type ListUnmailedManagedPostgresPlanExcessNoticesRow struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	AccountID    pgtype.UUID
+	Name         string
+	ServiceClass string
+}
+
+// The notices still to mail: recorded after since, not yet linked to an
+// intent, for databases not being deleted.
+func (q *Queries) ListUnmailedManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresPlanExcessNoticesParams) ([]ListUnmailedManagedPostgresPlanExcessNoticesRow, error) {
+	rows, err := db.Query(ctx, listUnmailedManagedPostgresPlanExcessNotices, arg.Since, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnmailedManagedPostgresPlanExcessNoticesRow{}
+	for rows.Next() {
+		var i ListUnmailedManagedPostgresPlanExcessNoticesRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Reason,
+			&i.RecordedAt,
+			&i.AccountID,
+			&i.Name,
+			&i.ServiceClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnmailedManagedPostgresRestoreSlotNotices = `-- name: ListUnmailedManagedPostgresRestoreSlotNotices :many
 SELECT n.database_id,n.kind,n.slot_until,n.restorable_until,n.recorded_at,d.account_id,d.name
 FROM managed_postgres_restore_slot_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
@@ -58499,6 +58577,39 @@ func (q *Queries) LockProductionQueueTriggerInvocationRow(ctx context.Context, d
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockProjectEnvironmentCloneAdmissionSwitches = `-- name: LockProjectEnvironmentCloneAdmissionSwitches :many
+SELECT config_key, desired_value FROM runtime_config_entries
+WHERE scope = 'global' AND scope_id = '' AND config_key = ANY($1::text[])
+FOR SHARE
+`
+
+type LockProjectEnvironmentCloneAdmissionSwitchesRow struct {
+	ConfigKey    string
+	DesiredValue []byte
+}
+
+// Admission holds every switch it decides on until it commits, so turning one
+// off waits for the admissions already reading it.
+func (q *Queries) LockProjectEnvironmentCloneAdmissionSwitches(ctx context.Context, db DBTX, configKeys []string) ([]LockProjectEnvironmentCloneAdmissionSwitchesRow, error) {
+	rows, err := db.Query(ctx, lockProjectEnvironmentCloneAdmissionSwitches, configKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockProjectEnvironmentCloneAdmissionSwitchesRow{}
+	for rows.Next() {
+		var i LockProjectEnvironmentCloneAdmissionSwitchesRow
+		if err := rows.Scan(&i.ConfigKey, &i.DesiredValue); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockProjectEnvironmentCloneApps = `-- name: LockProjectEnvironmentCloneApps :many
@@ -90545,6 +90656,27 @@ func (q *Queries) RecordManagedPostgresLifecycleResource(ctx context.Context, db
 	return result.RowsAffected(), nil
 }
 
+const recordManagedPostgresPlanExcessNotice = `-- name: RecordManagedPostgresPlanExcessNotice :execrows
+INSERT INTO managed_postgres_plan_excess_notices(database_id,reason,recorded_at)
+VALUES($1::uuid,$2::text,$3::timestamptz)
+ON CONFLICT (database_id) DO NOTHING
+`
+
+type RecordManagedPostgresPlanExcessNoticeParams struct {
+	DatabaseID pgtype.UUID
+	Reason     string
+	RecordedAt pgtype.Timestamptz
+}
+
+// One notice per suspension; later sweeps leave it alone.
+func (q *Queries) RecordManagedPostgresPlanExcessNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresPlanExcessNoticeParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresPlanExcessNotice, arg.DatabaseID, arg.Reason, arg.RecordedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordManagedPostgresProviderResource = `-- name: RecordManagedPostgresProviderResource :execrows
 UPDATE managed_postgres_databases
 SET provider_resource_id = $1::text, accounting_required = true, updated_at = $2::timestamptz
@@ -92477,6 +92609,38 @@ func (q *Queries) ReleaseApplicationStandardOperationWorker(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const releaseCanariesForVerification = `-- name: ReleaseCanariesForVerification :execrows
+UPDATE deployments d SET status = CASE WHEN
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state='aborted', rollout_aborted_at=$1::timestamptz,
+    rollout_aborted_reason='superseded by deployment ' || ($2::uuid)::text
+WHERE d.id = ANY($3::uuid[]) AND d.status='live'
+AND d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+`
+
+type ReleaseCanariesForVerificationParams struct {
+	AbortedAt   pgtype.Timestamptz
+	CandidateID pgtype.UUID
+	ReleasedIds []pgtype.UUID
+}
+
+// A newer candidate that cannot be verified beside the serving deployment
+// and an older in-flight canary takes the canary's rollout grant before its
+// smoke (ADR-20261030102813 amendment, Hunt 31 H31-4). The released canaries
+// leave traffic and end their rollouts as aborted; a retained revision stays
+// live at 0%, as in RetireLiveDeploymentSiblings.
+func (q *Queries) ReleaseCanariesForVerification(ctx context.Context, db DBTX, arg ReleaseCanariesForVerificationParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseCanariesForVerification, arg.AbortedAt, arg.CandidateID, arg.ReleasedIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const releaseCloneCheckpointConfiguration = `-- name: ReleaseCloneCheckpointConfiguration :execrows
 UPDATE project_environment_clone_configuration_guards g SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',
  held_at=NULL,generation=g.generation+1
@@ -92859,15 +93023,17 @@ func (q *Queries) ReleaseProductionNamedQueueClaims(ctx context.Context, db DBTX
 const releaseProjectEnvironmentCloneWorkerLease = `-- name: ReleaseProjectEnvironmentCloneWorkerLease :execrows
 UPDATE project_environment_clone_operations
 SET lease_token = NULL, lease_until = NULL, revision = revision + 1, updated_at = clock_timestamp(),
-    next_attempt_at = clock_timestamp() + $1::bigint * interval '1 microsecond'
-WHERE id = $2::uuid AND account_id = $3::uuid AND project_id = $4::uuid
-  AND lease_token = $5::uuid AND lease_until > clock_timestamp()
-  AND revision = $6::bigint AND status = $7::text
+    next_attempt_at = clock_timestamp() + $1::bigint * interval '1 microsecond',
+    attempt_count = CASE WHEN $2::int BETWEEN 1 AND attempt_count THEN $2::int ELSE attempt_count END
+WHERE id = $3::uuid AND account_id = $4::uuid AND project_id = $5::uuid
+  AND lease_token = $6::uuid AND lease_until > clock_timestamp()
+  AND revision = $7::bigint AND status = $8::text
   AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
 `
 
 type ReleaseProjectEnvironmentCloneWorkerLeaseParams struct {
 	RetryMicroseconds int64
+	KeepAttempts      int32
 	OperationID       pgtype.UUID
 	AccountID         pgtype.UUID
 	ProjectID         pgtype.UUID
@@ -92876,9 +93042,12 @@ type ReleaseProjectEnvironmentCloneWorkerLeaseParams struct {
 	Status            string
 }
 
+// keep_attempts may only lower the count, never below 1: zero with no lease
+// would readmit unleased legacy writers.
 func (q *Queries) ReleaseProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg ReleaseProjectEnvironmentCloneWorkerLeaseParams) (int64, error) {
 	result, err := db.Exec(ctx, releaseProjectEnvironmentCloneWorkerLease,
 		arg.RetryMicroseconds,
+		arg.KeepAttempts,
 		arg.OperationID,
 		arg.AccountID,
 		arg.ProjectID,
@@ -102476,6 +102645,33 @@ func (q *Queries) SupersedeInFlightCanarySiblings(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const supersedeOutpacedDeployment = `-- name: SupersedeOutpacedDeployment :execrows
+UPDATE deployments d SET status='superseded', traffic_percent=0,
+    error_code='deployment_superseded',
+    error='deployment ' || n.id::text || ' was deployed after this one, so this one did not go live',
+    rollout_state = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'aborted' ELSE d.rollout_state END,
+    rollout_aborted_at = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN now() ELSE d.rollout_aborted_at END,
+    rollout_aborted_reason = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'superseded by deployment ' || n.id::text ELSE d.rollout_aborted_reason END
+FROM (SELECT o.id FROM deployments o, deployments c
+       WHERE c.id=$1::uuid AND o.app_id=c.app_id AND o.scope=c.scope AND o.revision>c.revision
+       ORDER BY o.revision DESC LIMIT 1) n
+WHERE d.id=$1::uuid AND d.status<>'superseded'
+`
+
+// A deployment a newer revision overtook before it went live (ADR-681 fence,
+// outpaced builds) records why, and an in-flight canary rollout ends as
+// aborted instead of staying pending on a superseded row (Hunt 31 H31-3).
+func (q *Queries) SupersedeOutpacedDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, supersedeOutpacedDeployment, deploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const supersedeTriggerRecordItems = `-- name: SupersedeTriggerRecordItems :execrows
