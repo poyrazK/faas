@@ -1514,6 +1514,44 @@ returning id, account_id, app_id, source, type, filter, enabled,
 delete from event_subscriptions
 where id = $1 and account_id = $2 and app_id = $3;
 
+-- name: InsertDeploymentEventSubscriptionIntent :exec
+-- ADR-20261101030512: the event subscriptions a production manifest deploy
+-- declares, applied once the deployment serves all production traffic.
+INSERT INTO deployment_event_subscription_intents (deployment_id, app_id, declared_subscription_ids)
+VALUES (sqlc.arg(deployment_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(declared_subscription_ids)::uuid[])
+ON CONFLICT (deployment_id) DO NOTHING;
+
+-- name: ListPreparedEventSubscriptionIntents :many
+SELECT deployment_id::text AS deployment_id FROM deployment_event_subscription_intents
+WHERE status = 'prepared' ORDER BY updated_at, deployment_id LIMIT 64;
+
+-- name: LockEventSubscriptionIntentDeployment :one
+-- The same disposition inputs as ReadCronActivationDeployment, so event
+-- subscriptions and staged crons go live under one rule.
+SELECT i.app_id::text AS app_id, i.declared_subscription_ids::text[] AS declared,
+ d.id::text AS deployment_id, d.status, d.scope, d.traffic_percent, d.traffic_percent_explicit,
+ d.canary_total_steps, d.rollout_state,
+ coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id
+ AND coalesce(nullif(n.scope,''),'default')='default'
+ AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
+ ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
+ EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
+ AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+FROM deployment_event_subscription_intents i JOIN deployments d ON d.id = i.deployment_id
+WHERE i.deployment_id = sqlc.arg(deployment_id)::uuid AND i.status = 'prepared'
+FOR UPDATE OF i;
+
+-- name: ApplyEventSubscriptionIntent :many
+-- Enable exactly the declared subscriptions of the app.
+UPDATE event_subscriptions SET enabled = (id = ANY(sqlc.arg(declared)::uuid[])), updated_at = now()
+WHERE app_id = sqlc.arg(app_id)::uuid AND enabled IS DISTINCT FROM (id = ANY(sqlc.arg(declared)::uuid[]))
+RETURNING id::text AS id, enabled;
+
+-- name: SettleEventSubscriptionIntent :exec
+UPDATE deployment_event_subscription_intents
+SET status = sqlc.arg(status)::text, reason = sqlc.arg(reason)::text, updated_at = now()
+WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND status = 'prepared';
+
 -- name: SetEventSubscriptionEnabled :execrows
 -- ADR-20261031130000: a deploy disables the subscriptions its manifest no
 -- longer declares; rolling the deploy back enables them again.
@@ -8047,6 +8085,10 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
 -- ADR-20261022105723: a pending queue message past its plan's retention
 -- moves to the dead letter. A message a worker holds (dispatching) is not
 -- touched. The plan resolves as StampDefaultInvocationRetention's does.
+-- ADR-20261101093812: retention counts from the message's last replay, so a
+-- message replayed from the dead letter gets the whole retention again. A
+-- replay is never earlier than the send, so the created_at bound still
+-- narrows invocations_queue_pending_created_idx.
 WITH plan_retention AS (
     SELECT unnest(sqlc.arg(plans)::text[]) AS plan, unnest(sqlc.arg(retention_seconds)::bigint[]) AS seconds
 ), batch AS (
@@ -8057,7 +8099,7 @@ WITH plan_retention AS (
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
       AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => sqlc.arg(min_retention_seconds)::bigint)
-      AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
+      AND coalesce(i.last_replayed_at, i.created_at) < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
     ORDER BY i.created_at
     LIMIT sqlc.arg(batch_limit)::integer
     FOR UPDATE OF i SKIP LOCKED
@@ -8124,6 +8166,17 @@ SELECT i.* FROM invocations i JOIN production_invocation_work p ON p.id=i.id
 WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue' AND i.state='dead_letter'
     AND (sqlc.narg(cursor_id)::uuid IS NULL OR (i.created_at,i.id)<(SELECT created_at,id FROM anchor))
 ORDER BY i.created_at DESC,i.id DESC LIMIT sqlc.arg(page_limit)::bigint;
+
+-- name: ReadQueueReplayAdmission :one
+-- ADR-20261101093812: a production queue message replayed from the dead
+-- letter re-enters its app's queue under the caps a send meets. The plan
+-- resolves as ExpirePendingQueueMessages' does. Environment-owned messages
+-- are not production work and keep their own caps.
+SELECT p.app_id, p.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM production_invocation_work p
+LEFT JOIN accounts a ON a.id = p.account_id
+LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE p.id = sqlc.arg(id)::uuid AND p.source = 'queue' AND p.state = 'dead_letter';
 
 -- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,

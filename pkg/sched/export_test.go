@@ -90,6 +90,7 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const DueWalkHeadPages = dueWalkHeadPages
 const WorkAppReconcile = workAppReconcile
 const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
@@ -227,7 +228,11 @@ var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
 var ReaperAbortedCanary = reaperAbortedCanary
 var RequireWorkerBlocker = requireWorkerBlocker
-var ResolvePriority = resolvePriority
+
+func ResolvePriority(snapshot []InstanceInfo, instanceID string) (string, bool) {
+	return resolvePriority(indexInstanceInfos(snapshot), instanceID)
+}
+
 var RowState = rowState
 var RunningInstance = runningInstance
 var RunningTransitions = runningTransitions
@@ -325,6 +330,23 @@ func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep
 // XRunTriggerTick runs one trigger tick as the loop's trigger work does.
 // adr: 20261027162741 — broker triggers run on lanes of their own.
 func (l *Loop) XRunTriggerTick(ctx context.Context) { l.runTriggerTick(ctx) }
+
+// XBrokerLanesHeld is how many broker trigger lanes the account holds.
+// adr: 20261101093015 — the lanes are shared between accounts.
+func (l *Loop) XBrokerLanesHeld(accountID string) int {
+	l.brokerLanes.mu.Lock()
+	defer l.brokerLanes.mu.Unlock()
+	return l.brokerLanes.held[accountID]
+}
+
+// XBrokerTriggerLaneSlots is the node's broker trigger lanes.
+const XBrokerTriggerLaneSlots = api.BrokerTriggerDispatchSlotsPerNode
+
+// XNewTriggerRecordRateLimiter returns a record rate limiter on a fake clock.
+// adr: 20261101093015 — the per-plan record rate defers, never drops.
+func XNewTriggerRecordRateLimiter(now func() time.Time) *TriggerRecordRateLimiter {
+	return newTriggerRecordRateLimiter(now)
+}
 
 // XWaitDispatches waits for every dispatch the drain started, including those
 // that outlived their tick.
@@ -1176,6 +1198,15 @@ func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
 	}
 	return due
 }
+
+// NextLogFollowPoll exposes the follow stream's discovery backoff (O20).
+var NextLogFollowPoll = nextLogFollowPoll
+
+// Bounds of the follow stream's discovery poll.
+const (
+	LogFollowPollMin = logFollowPollMin
+	LogFollowPollMax = logFollowPollMax
+)
 
 // FailInterruptedFireNowRequests runs the interrupted manual-run sweep once.
 func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {

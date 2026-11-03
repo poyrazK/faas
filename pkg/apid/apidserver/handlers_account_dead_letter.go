@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
@@ -118,36 +119,49 @@ func (a *deadLetterAccess) visibleEvent(ctx context.Context, eventID string) (st
 	return ev, nil
 }
 
-// visibleEvents pages the account's dead letters and returns up to limit this
-// principal may see (only ones replay can redrive when replayable is set).
-// Collecting before acting keeps the keyset cursor on rows a purge has not
-// removed.
-func (a *deadLetterAccess) visibleEvents(ctx context.Context, limit int, replayable bool) ([]state.DeadLetterEvent, error) {
-	var out []state.DeadLetterEvent
+// eachVisibleEvent pages the account's dead letters and calls fn with each
+// one this principal may see (only ones replay can redrive when replayable is
+// set) until fn returns false or an error, or the scan ends.
+func (a *deadLetterAccess) eachVisibleEvent(ctx context.Context, replayable bool, fn func(state.DeadLetterEvent) (bool, error)) error {
 	before := ""
 	for range deadLetterAccountScanPages {
 		page, err := a.s.store.ListDeadLetterEventsForAccount(ctx, a.acct.ID, deadLetterEventsMaxLimit, before)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, ev := range page {
 			if replayable && (ev.ReplayedAt != nil || !state.DeadLetterReplayable(ev.Source)) {
 				continue
 			}
-			if ok, err := a.visible(ctx, ev.AppID); err != nil {
-				return nil, err
-			} else if ok {
-				if out = append(out, ev); len(out) == limit {
-					return out, nil
-				}
+			ok, err := a.visible(ctx, ev.AppID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
+			if more, err := fn(ev); err != nil || !more {
+				return err
 			}
 		}
 		if len(page) < deadLetterEventsMaxLimit {
-			return out, nil
+			return nil
 		}
 		before = page[len(page)-1].ID
 	}
-	return out, nil
+	return nil
+}
+
+// visibleEvents returns up to limit dead letters this principal may see.
+// Collecting before acting keeps the keyset cursor on rows a purge has not
+// removed.
+func (a *deadLetterAccess) visibleEvents(ctx context.Context, limit int) ([]state.DeadLetterEvent, error) {
+	var out []state.DeadLetterEvent
+	err := a.eachVisibleEvent(ctx, false, func(ev state.DeadLetterEvent) (bool, error) {
+		out = append(out, ev)
+		return len(out) < limit, nil
+	})
+	return out, err
 }
 
 // deadLetterAccountScanPages bounds how far a batch looks past events it may
@@ -314,30 +328,60 @@ func (s *server) purgeAccountDeadLetterEvents(w http.ResponseWriter, r *http.Req
 }
 
 // replayVisibleAccountDeadLetters replays up to limit unreplayed events this
-// principal may see, one at a time. A row another request replayed or purged
-// meanwhile is skipped.
+// principal may see, one at a time, paging past the ones replay skips (a
+// first page of them returned 0 on every call): keyed work past its pending
+// deadline, which the store's replay-all leaves out as well, a row another
+// request replayed or purged meanwhile, and a queue message its app or
+// account has no room for (ADR-20261101093812). It stops after limit such
+// refusals, and when nothing replayed it returns the first refusal.
 func (s *server) replayVisibleAccountDeadLetters(r *http.Request, acct state.Account, limit int) (int, error) {
-	events, err := s.deadLetterWriteAccess(r, acct).visibleEvents(r.Context(), limit, true)
-	if err != nil {
-		return 0, err
-	}
-	replayed := 0
-	for _, ev := range events {
-		if _, err := s.store.ReplayDeadLetterEventForAccount(r.Context(), acct.ID, ev.ID); err != nil {
-			if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrKeyedReplayExpired) {
-				continue
-			}
-			return replayed, err
+	ctx := r.Context()
+	replayed, refused := 0, 0
+	var capped error
+	err := s.deadLetterWriteAccess(r, acct).eachVisibleEvent(ctx, true, func(ev state.DeadLetterEvent) (bool, error) {
+		if s.deadLetterKeyedReplayExpired(ctx, ev) {
+			return true, nil
 		}
-		replayed++
+		_, err := s.store.ReplayDeadLetterEventForAccount(ctx, acct.ID, ev.ID)
+		switch {
+		case err == nil:
+			replayed++
+			return replayed < limit, nil
+		case errors.Is(err, state.ErrNotFound), errors.Is(err, state.ErrKeyedReplayExpired):
+			return true, nil
+		case state.IsQueueCapError(err):
+			if capped == nil {
+				capped = err
+			}
+			refused++
+			return refused < limit, nil
+		}
+		return false, err
+	})
+	if err != nil {
+		return replayed, err
+	}
+	if replayed == 0 && capped != nil {
+		return 0, capped
 	}
 	return replayed, nil
+}
+
+// deadLetterKeyedReplayExpired reports whether ev redrives keyed work past its
+// pending deadline, which replay refuses (ADR-20261031101000), without a
+// replay transaction per such event.
+func (s *server) deadLetterKeyedReplayExpired(ctx context.Context, ev state.DeadLetterEvent) bool {
+	if ev.Source != "invocation" {
+		return false
+	}
+	inv, err := s.store.InvocationByID(ctx, ev.SourceID)
+	return err == nil && state.KeyedReplayExpired(inv, time.Now())
 }
 
 // purgeVisibleAccountDeadLetters purges up to limit events this principal may
 // see, one at a time.
 func (s *server) purgeVisibleAccountDeadLetters(r *http.Request, acct state.Account, limit int) (int, error) {
-	events, err := s.deadLetterWriteAccess(r, acct).visibleEvents(r.Context(), limit, false)
+	events, err := s.deadLetterWriteAccess(r, acct).visibleEvents(r.Context(), limit)
 	if err != nil {
 		return 0, err
 	}

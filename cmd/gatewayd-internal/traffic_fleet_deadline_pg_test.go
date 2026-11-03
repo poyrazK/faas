@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +19,13 @@ import (
 )
 
 func TestTrafficFleetDaemonDeadlineSurvivesManagedBridgeChain(t *testing.T) {
-	t.Setenv("FAAS_SESSION_KEY", strings.Repeat("2a", 32))
+	// Both gateways and the node fixture sign and check deadlines under one
+	// gateway fleet key (ADR-20261102191500).
+	keyPath := filepath.Join(t.TempDir(), "gateway-fleet.key")
+	if err := os.WriteFile(keyPath, []byte(strings.Repeat("2a", 32)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(gatewayFleetKeyEnv, keyPath)
 	f, node := prepareFleetAdmission(t)
 	caller, err := f.store.AppByID(t.Context(), f.apps[0].ID)
 	if err != nil {
