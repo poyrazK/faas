@@ -647,6 +647,14 @@ var ParseIssueListFilter = parseIssueListFilter
 var ParseRequestAnalyticsGroupBy = parseRequestAnalyticsGroupBy
 var ParseRequestAnalyticsRouteFilter = parseRequestAnalyticsRouteFilter
 var ParseRequestAnalyticsWindow = parseRequestAnalyticsWindow
+
+// RequestAnalyticsCompleteness judges the window [from, until) read at asOf.
+func RequestAnalyticsCompleteness(ctx context.Context, reader interface {
+	RequestTelemetryCompleteness(context.Context, string, time.Time, time.Time) ([]string, error)
+}, appID string, from, until, asOf time.Time) (*bool, []string) {
+	return requestAnalyticsCompletenessFrom(ctx, reader, nil, appID, requestAnalyticsWindow{From: from, Until: until, AsOf: asOf})
+}
+
 var ParseScanMultipart = parseScanMultipart
 var ParseSuspectedDependency = parseSuspectedDependency
 var ParseSweepOlderThan = parseSweepOlderThan
@@ -1184,6 +1192,9 @@ func (r *server) DashboardSaveProfileInvestigation(p0 http.ResponseWriter, p1 *h
 }
 func (r *server) DeleteProjectEnvironment(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteProjectEnvironment(p0, p1, p2)
+}
+func (r *server) DeleteProjectForTest(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.deleteProject(p0, p1, p2)
 }
 func (r *server) DeleteQueueBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteQueueBinding(p0, p1, p2)
@@ -2047,4 +2058,11 @@ var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
 // amendment 1).
 func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
 	return newOIDCAccountLookup(store, repos)
+}
+
+// ResolveSourceReleaseCommand exposes the release command precedence of a
+// source deployment (ADR-20261102192943).
+func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
+	return resolved.command, resolved.shell, problem
 }

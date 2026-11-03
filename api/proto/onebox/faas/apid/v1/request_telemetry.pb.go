@@ -1342,9 +1342,11 @@ func (x *IncrementRequestTelemetryRequest) GetLongLived() bool {
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the
-// server returns. outcome ∈ {inserted, rate_limited, db_error}.
-// `inserted` is a successful INSERT; `rate_limited` means the
-// per-account token bucket was empty (caller should NOT retry —
+// server returns. outcome ∈ {inserted, not_retained, rate_limited,
+// db_error}. `inserted` is a successful INSERT; `not_retained` means
+// the app's plan keeps no request telemetry and its usage is already
+// recorded (caller treats the row as delivered); `rate_limited` means
+// the per-account token bucket was empty (caller should NOT retry —
 // the customer's plan cap is exhausted); `db_error` is a transient
 // Postgres failure (caller may retry).
 type IncrementRequestTelemetryResponse struct {

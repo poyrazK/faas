@@ -339,3 +339,36 @@ func TestProtectedPromotionApprovalMeetsTheAppsPolicy(t *testing.T) {
 		t.Fatalf("one approval for a two-approval policy = %+v, want release_approval_canary_required", p)
 	}
 }
+
+// A key or token, as CI holds, does not approve a protected production
+// promotion that stands in for an app's release approval policy; a person
+// does, and a key still approves promotions no policy covers (amendment 9).
+func TestProtectedPromotionApprovalByKeyNeedsAPerson(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	store := *e.Store()
+	acct := *e.Acct()
+	srv := *e.S()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "keyed-shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardLiveDeployment(t, store, app.ID, "production")
+	key := &state.APIKey{ID: "ci-key", AccountID: acct.ID}
+	apps := []state.App{app}
+	if p := srv.PromotionApprovalKeyProblemForTest(acct, key, apps, "production"); p != nil {
+		t.Fatalf("a key approving a promotion no policy covers = %+v", p)
+	}
+	if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+		RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if p := srv.PromotionApprovalKeyProblemForTest(acct, key, apps, "production"); p == nil || p.Code != api.CodeReleaseApprovalSessionRequired {
+		t.Fatalf("a key approving a policy-covered promotion = %+v, want release_approval_session_required", p)
+	}
+	if p := srv.PromotionApprovalKeyProblemForTest(acct, nil, apps, "production"); p != nil {
+		t.Fatalf("a person approving = %+v", p)
+	}
+	if p := srv.PromotionApprovalKeyProblemForTest(acct, key, apps, "staging"); p != nil {
+		t.Fatalf("a key approving a staging promotion = %+v", p)
+	}
+}

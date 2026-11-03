@@ -1461,7 +1461,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Optional RFC3339 upper-bound timestamp for the historical window.
+     * Optional RFC3339 upper-bound timestamp for the historical window. It must be within the plan's telemetry retention, counted back from now.
      */
     until?: string,
     /**
@@ -1603,7 +1603,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Exclusive end timestamp; omitted means current server time.
+     * Exclusive end timestamp; omitted means current server time. It must be within the plan's telemetry retention, counted back from now.
      */
     until?: string,
     /**
